@@ -4845,6 +4845,8 @@ test('matches Bluesky and exposes a mirrored publish-post workflow', () => {
   assert.deepEqual(firefoxAdapter?.workflow, chromeAdapter?.workflow);
   assert.deepEqual(chromeAdapter?.jobs, ['publish-post']);
   assert.match(chromeAdapter?.notes || '', /hidden <input type=file>/i);
+  assert.equal(chromeAdapter?.notes, firefoxAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /download_public_media[\s\S]*HLS into one MP4 with audio/);
   assert.match(chromeAdapter?.notes || '', /complete text, mentions, link card, media, language, and account/i);
   assert.match(chromeAdapter?.notes || '', /new bsky\.app\/profile\/<account>\/post\/<id> link/i);
   for (const [getAdapter, resolveWorkflow, adapters] of [
@@ -24464,6 +24466,12 @@ test('public media recommendations carry immediate download_public_media fast pa
     { url: 'https://www.linkedin.com/posts/example_123', title: 'LinkedIn public post video', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://www.linkedin.com/feed/update/urn:li:activity:123', title: 'LinkedIn public feed update', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://threads.net/@user/post/abc', title: 'Threads photo', media: { imageCount: 1, videoCount: 0 }, expectedKind: 'image' },
+    { url: 'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g', title: 'Bluesky', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g/?ref=share', title: 'Bluesky', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://fosstodon.org/@alice/123', title: 'Fosstodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://social.example.org/@alice/123', title: 'Self-hosted Mastodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://mastodon.social/users/alice/statuses/123', title: 'Mastodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://mastodon.social/web/statuses/123', title: 'Mastodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
   ];
 
   for (const buildRecommendedActions of [buildRecommendedActionsCh, buildRecommendedActionsFx]) {
@@ -24491,6 +24499,16 @@ test('public media recommendations carry immediate download_public_media fast pa
     assert.equal(unsupported?.runOptions, undefined, 'unsupported public-media host should not get the skill fast path');
     assert.doesNotMatch(unsupported?.prompt || '', /download_public_media/, 'unsupported public-media host should not force the skill tool');
 
+    for (const url of [
+      'http://fosstodon.org/@alice/123', 'http://mastodon.social/home',
+      'https://alice:secret@fosstodon.org/@alice/123', 'https://fosstodon.org:8443/@alice/123',
+    ]) {
+      const action = buildRecommendedActions({ url, media: { videoCount: 1 } })
+        .find(item => item.id === 'download-media');
+      assert.equal(action?.runOptions, undefined, `unsupported Mastodon URL must not get a skill fast path: ${url}`);
+      assert.doesNotMatch(action?.prompt || '', /download_public_media/, `unsupported URL should use generic download advice: ${url}`);
+    }
+
     const feedAction = buildRecommendedActions({
       url: 'https://www.instagram.com/',
       title: 'Instagram',
@@ -24516,6 +24534,24 @@ test('public media recommendations carry immediate download_public_media fast pa
       }).find((a) => a.id === 'download-media');
       assert.equal(linkedinFeedAction?.runOptions?.firstTool, 'screenshot', `empty LinkedIn permalink should resolve a visible target first for ${url}`);
       assert.match(linkedinFeedAction?.prompt || '', /exact public post\/reel URL/i, `empty LinkedIn permalink should require an explicit target for ${url}`);
+    }
+
+    for (const url of [
+      'https://bsky.app/', 'https://bsky.app/home', 'https://bsky.app/profile/bsky.app',
+      'https://bsky.app/profile/bsky.app/post/',
+      'https://mastodon.social/', 'https://mastodon.social/home', 'https://mastodon.social/@alice',
+      'https://fosstodon.org/tags/videos',
+    ]) {
+      const action = buildRecommendedActions({ url, media: { videoCount: 1 } })
+        .find(item => item.id === 'download-media');
+      assert.equal(action?.runOptions?.tool, 'download_public_media', `feed should use the public downloader: ${url}`);
+      assert.equal(action?.runOptions?.firstTool, 'screenshot', `feed should identify its visible target: ${url}`);
+      assert.match(action?.prompt || '', /explicit url/i, `feed should require a permalink: ${url}`);
+    }
+    for (const url of ['https://bsky.app.evil.example/profile/alice/post/123', 'https://x.com/@alice/123']) {
+      const action = buildRecommendedActions({ url, media: { videoCount: 1 } })
+        .find(item => item.id === 'download-media');
+      assert.doesNotMatch(action?.prompt || '', /omit url so it uses the active media page/i, `lookalike paths must not become direct media: ${url}`);
     }
 
     const mobileFeedAction = buildRecommendedActions({
@@ -30641,6 +30677,184 @@ test('executeHttpSkillTool caps FreeSkillz transcript segments while leaving tex
   }
 });
 
+function mastodonNodeInfoResponse(url) {
+  const parsed = new URL(url);
+  if (parsed.pathname === '/.well-known/nodeinfo') {
+    return new Response(JSON.stringify({ links: [{
+      rel: 'http://nodeinfo.diaspora.software/ns/schema/2.0',
+      href: `${parsed.origin}/nodeinfo/2.0`,
+    }] }));
+  }
+  if (parsed.pathname === '/nodeinfo/2.0') {
+    return new Response(JSON.stringify({ version: '2.0', software: { name: 'mastodon' } }));
+  }
+  return null;
+}
+
+test('FreeSkillz resolves Bluesky and federated Mastodon posts without broadening the URL allowlist', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, prefix, executeTool, normalizeSkills, buildRegistry] of [
+      ['chrome', 'src/chrome', executeHttpSkillToolCh, normalizeCustomSkillsCh, buildSkillToolRegistryCh],
+      ['firefox', 'src/firefox', executeHttpSkillToolFx, normalizeCustomSkillsFx, buildSkillToolRegistryFx],
+    ]) {
+      const tool = buildRegistry(normalizeSkills([packagedFreeSkillzRecord(prefix)])).get('resolve_public_media');
+      const calls = [];
+      globalThis.fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return mastodonNodeInfoResponse(url)
+          || { ok: true, status: 200, text: async () => JSON.stringify({ ext: 'mp4', formats: [{ ext: 'mp4' }] }) };
+      };
+      for (const url of [
+        'https://bsky.app.evil.example/profile/alice/post/123', 'https://bsky.app/home',
+        'https://example.com/video/123', 'https://mastodon.social/home', 'https://mastodon.social/@alice',
+        'http://fosstodon.org/@alice/123',
+        'https://alice:secret@fosstodon.org/@alice/123', 'https://fosstodon.org:8443/@alice/123',
+        'https://localhost/@alice/123', 'https://192.168.1.1/@alice/123',
+        'https://127.0.0.1/@alice/123', 'https://[::1]/@alice/123',
+        'https://instance.local/@alice/123', 'https://metadata.google.internal/@alice/123',
+        'https://intranet/@alice/123', 'https://instance.lan/@alice/123',
+      ]) {
+        const result = await executeTool(tool, { url });
+        assert.equal(result.success, false, `${label}: unsupported/private URL should be rejected: ${url}`);
+      }
+      const mastodonOnly = { ...tool, allowedInputUrls: [{ siteAdapter: 'mastodon' }] };
+      const wrongAdapter = await executeTool(mastodonOnly, { url: 'https://x.com/@alice/123' });
+      assert.equal(wrongAdapter.success, false, `${label}: known sites must keep their own adapters`);
+      assert.equal(calls.length, 0, `${label}: rejected URLs must not reach FreeSkillz`);
+      for (const url of [
+        'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g',
+        'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g',
+        'https://fosstodon.org/@alice/123', 'https://mastoturk.org/@alice/123',
+        'https://social.example.org/@alice/123', 'https://social.example.org/@alice@fosstodon.org/123',
+        'https://social.example.org/users/alice/statuses/123', 'https://mastodon.social/web/statuses/123',
+      ]) {
+        const result = await executeTool(tool, { url });
+        assert.equal(result.success, true, `${label}: public post should resolve: ${url}`);
+        assert.equal(result.data.ext, 'mp4');
+        assert.equal(calls.at(-1).url, 'https://freeskillz.xyz/v1/media/resolve');
+        assert.equal(calls.at(-1).opts.credentials, 'omit');
+        assert.deepEqual(JSON.parse(calls.at(-1).opts.body), { url });
+      }
+    }
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+  }
+});
+
+test('Mastodon media allowlists verify unknown hosts and never forward unverified URLs or query tokens', async () => {
+  const originalFetch = globalThis.fetch;
+  const origin = 'https://social.example.org';
+  const discoveryUrl = `${origin}/.well-known/nodeinfo`;
+  const metadataUrl = `${origin}/nodeinfo/2.0`;
+  const discovery = (href = metadataUrl) => new Response(JSON.stringify({ links: [{
+    rel: 'http://nodeinfo.diaspora.software/ns/schema/2.0', href,
+  }] }));
+  const cases = [
+    ['unrelated status-shaped page', 'https://example.com/@alice/123?token=secret', () => new Response('{}'), 1],
+    ['prefix heuristic is not proof', 'https://mastodon.example.org/@alice/123', () => new Response('{}'), 1],
+    ['known host suffix is not proof', 'https://fosstodon.org.evil.example/@alice/123', () => new Response('{}'), 1],
+    ['other fediverse software', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response(JSON.stringify({ software: { name: 'pleroma' } })), 2],
+    ['cross-origin metadata', `${origin}/@alice/123`, () => discovery('https://mastodon.social/nodeinfo/2.0'), 1],
+    ['HTTP metadata', `${origin}/@alice/123`, () => discovery('http://social.example.org/nodeinfo/2.0'), 1],
+    ['local metadata', `${origin}/@alice/123`, () => discovery('https://127.0.0.1/nodeinfo/2.0'), 1],
+    ['credentialed metadata', `${origin}/@alice/123`, () => discovery('https://user:secret@social.example.org/nodeinfo/2.0'), 1],
+    ['redirecting discovery', `${origin}/@alice/123`, () => new Response('', { status: 302, headers: { Location: 'https://mastodon.social/.well-known/nodeinfo' } }), 1],
+    ['redirecting metadata', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response('', { status: 302 }), 2],
+    ['oversized discovery', `${origin}/@alice/123`, () => new Response(' '.repeat(65537)), 1],
+    ['oversized metadata', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response(' '.repeat(65537)), 2],
+    ['invalid metadata JSON', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response('<html>'), 2],
+    ['network failure', `${origin}/@alice/123`, () => { throw new Error('offline'); }, 1],
+  ];
+  try {
+    for (const [label, prefix, executeTool, normalizeSkills, buildRegistry] of [
+      ['chrome', 'src/chrome', executeHttpSkillToolCh, normalizeCustomSkillsCh, buildSkillToolRegistryCh],
+      ['firefox', 'src/firefox', executeHttpSkillToolFx, normalizeCustomSkillsFx, buildSkillToolRegistryFx],
+    ]) {
+      const registry = buildRegistry(normalizeSkills([packagedFreeSkillzRecord(prefix)]));
+      for (const name of ['resolve_public_media', 'download_public_media']) {
+        const tool = registry.get(name);
+        for (const [scenario, url, response, expectedCount] of cases) {
+          const calls = [];
+          globalThis.fetch = async (requestUrl, opts) => {
+            calls.push({ url: requestUrl, opts });
+            assert.notEqual(new URL(requestUrl).hostname, 'freeskillz.xyz', `${label}/${name}: ${scenario} must not reach provider`);
+            return response(requestUrl);
+          };
+          const result = await executeTool(tool, { url });
+          assert.equal(result.success, false, `${label}/${name}: reject ${scenario}`);
+          assert.equal(calls.length, expectedCount, `${label}/${name}: ${scenario} probe count`);
+          assert.equal(calls[0].url, `${new URL(url).origin}/.well-known/nodeinfo`);
+          for (const call of calls) {
+            assert.equal(call.opts.credentials, 'omit');
+            assert.equal(call.opts.redirect, 'manual');
+            assert.equal(call.opts.method, 'GET');
+            assert.equal(call.opts.signal.aborted, true, 'verification deadline must be disposed');
+            assert.equal(new URL(call.url).search, '', 'post query must not enter verification');
+            assert.equal(new URL(call.url).hash, '', 'post fragment must not enter verification');
+          }
+        }
+      }
+      for (const [url, expected, expectedProbes] of [
+        ['https://fosstodon.org/@alice/123?token=secret#private', 'https://fosstodon.org/@alice/123', 0],
+        [`${origin}/@alice/123?token=secret#private`, `${origin}/@alice/123`, 2],
+        ['https://social.みんな/@alice/123?token=secret#private', 'https://social.xn--q9jyb4c/@alice/123', 2],
+      ]) {
+        const probes = [];
+        const providerCalls = [];
+        globalThis.fetch = async (requestUrl, opts) => {
+          const metadata = mastodonNodeInfoResponse(requestUrl);
+          if (metadata) { probes.push({ url: requestUrl, opts }); return metadata; }
+          providerCalls.push({ url: requestUrl, opts });
+          return new Response(JSON.stringify({ ext: 'mp4' }));
+        };
+        const result = await executeTool(registry.get('resolve_public_media'), { url });
+        assert.equal(result.success, true, `${label}: verified public URL ${url}`);
+        assert.equal(probes.length, expectedProbes, `${label}: known hosts must not require discovery`);
+        assert.equal(providerCalls.length, 1);
+        assert.deepEqual(JSON.parse(providerCalls[0].opts.body), { url: expected });
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Mastodon instance verification bounds stalled response headers and bodies', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  try {
+    // Exercise the real timeout/abort path without waiting ten seconds per case.
+    globalThis.setTimeout = (fn, ms, ...args) => originalSetTimeout(fn, ms === 10000 ? 5 : ms, ...args);
+    for (const [prefix, executeTool, normalizeSkills, buildRegistry] of [
+      ['src/chrome', executeHttpSkillToolCh, normalizeCustomSkillsCh, buildSkillToolRegistryCh],
+      ['src/firefox', executeHttpSkillToolFx, normalizeCustomSkillsFx, buildSkillToolRegistryFx],
+    ]) {
+      const tool = buildRegistry(normalizeSkills([packagedFreeSkillzRecord(prefix)])).get('resolve_public_media');
+      let calls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        calls++;
+        return new Promise((resolve, reject) => opts.signal.addEventListener('abort', () => reject(opts.signal.reason), { once: true }));
+      };
+      assert.equal((await executeTool(tool, { url: 'https://social.example.org/@alice/123' })).success, false);
+      assert.equal(calls, 1, 'stalled headers must not reach the provider');
+      let cancelled = false;
+      calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return new Response(new ReadableStream({ cancel() { cancelled = true; } }));
+      };
+      assert.equal((await executeTool(tool, { url: 'https://social.example.org/@alice/123' })).success, false);
+      assert.equal(calls, 1, 'stalled body must not reach the provider');
+      assert.equal(cancelled, true, 'stalled reader must be cancelled');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test('executeHttpSkillTool runs FreeSkillz media download jobs and cleans up', async () => {
   const originalFetch = globalThis.fetch;
   const originalChrome = globalThis.chrome;
@@ -30662,6 +30876,8 @@ test('executeHttpSkillTool runs FreeSkillz media download jobs and cleans up', a
         text: async () => JSON.stringify(body),
       });
       globalThis.fetch = async (url, opts = {}) => {
+        const metadata = mastodonNodeInfoResponse(url);
+        if (metadata) return metadata;
         providerCalls.push({ url, opts });
         if (url === 'https://freeskillz.xyz/v1/media/jobs' && opts.method === 'POST') {
           return jsonResponse(200, { job_id: 'job_123' });
@@ -30764,6 +30980,24 @@ test('executeHttpSkillTool runs FreeSkillz media download jobs and cleans up', a
         },
         `${label}: wrong create job payload`,
       );
+
+      for (const url of [
+        'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g',
+        'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g',
+        'https://fosstodon.org/@alice/123', 'https://social.example.org/users/alice/statuses/123',
+      ]) {
+        providerCalls.length = 0;
+        downloadCalls.length = 0;
+        const downloaded = await executeTool(tool, { url, kind: 'video', max_height: 360 });
+        assert.equal(downloaded.success, true, `${label}: public video job should succeed: ${url}`);
+        assert.equal(downloaded.downloadId, label === 'chrome' ? 7101 : 8101);
+        assert.equal(downloaded.cleanup?.success, true, `${label}: public video job must be cleaned up`);
+        assert.equal(downloadCalls.length, 1, `${label}: exactly one file should be saved`);
+        assert.match(downloadCalls[0].url, /^data:video\/mp4;base64,/);
+        assert.deepEqual(providerCalls.map(call => call.opts.method), ['POST', 'GET', 'GET', 'DELETE']);
+        assert.deepEqual(JSON.parse(providerCalls[0].opts.body), { kind: 'video', max_height: 360, url });
+        assert.ok(providerCalls.every(call => call.opts.credentials === 'omit'), `${label}: browser cookies must stay local`);
+      }
     }
   } finally {
     if (originalFetch === undefined) delete globalThis.fetch;
@@ -70379,7 +70613,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
     azure-cognitive-services bailing baseten berget cerebras chutes clarifai
     cloudferro-sherlock cohere cortecs deepinfra demonroute digitalocean dinference drun
-    evroc fastrouter friendli google-vertex google-vertex-anthropic helicone
+    evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
     minimax-coding-plan moark modelscope morph nano-gpt nearai nebius nova novita-ai
@@ -70391,7 +70625,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 80);
+  assert.equal(expectedIds.length, 81);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -70405,7 +70639,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 113 : 112;
+    const expectedDefaultCount = label === 'chrome' ? 114 : 113;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -70422,7 +70656,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
         expectedAskStreaming,
         `${label}: ${id} Ask streaming capability mismatch`,
       );
-      assert.ok(config.model || id === 'azure-cognitive-services', `${label}: ${id} missing model`);
+      assert.ok(config.model || config.requiresModel === true || id === 'azure-cognitive-services', `${label}: ${id} missing model`);
 
       const icon = path.join(ROOT, prefix, 'icons/providers', `${id}.svg`);
       assert.equal(fs.existsSync(icon), true, `${label}: missing icon for ${id}`);
@@ -80117,6 +80351,32 @@ test('agent blocks generic feed URLs until the visible media permalink is resolv
     assert.equal(agent._publicMediaUrlNeedsExplicitTarget('https://m.twitter.com/user/status/123'), false, `${label}: mobile Twitter status should be a direct target`);
     assert.equal(agent._publicMediaUrlNeedsExplicitTarget('https://www.facebook.com/user/videos/123'), false, `${label}: Facebook user video should be a direct target`);
     assert.equal(agent._publicMediaUrlNeedsExplicitTarget('https://www.youtube.com/embed/abc'), false, `${label}: YouTube embed should be a direct target`);
+
+    for (const url of [
+      'https://bsky.app/', 'https://bsky.app/home', 'https://bsky.app/profile/bsky.app',
+      'https://bsky.app/profile/bsky.app/post/', 'https://bsky.app/profile/bsky.app/post/123/extra',
+      'https://mastodon.social/', 'https://mastodon.social/home', 'https://mastodon.social/@alice',
+      'https://fosstodon.org/tags/video', 'https://mastodon.social/web/statuses/',
+    ]) {
+      agent._currentUrl = async () => url;
+      const implicitFeed = await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { kind: 'video' });
+      const explicitFeed = await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { url });
+      assert.equal(implicitFeed?.needsExplicitMediaUrl, true, `${label}: active feed must require a post: ${url}`);
+      assert.equal(explicitFeed?.needsExplicitMediaUrl, true, `${label}: explicit feed must require a post: ${url}`);
+    }
+    for (const url of [
+      'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g',
+      'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g/?ref=share',
+      'https://fosstodon.org/@alice/123', 'https://social.example.org/@alice/123',
+      'https://social.example.org/users/alice/statuses/123', 'https://mastodon.social/web/statuses/123',
+    ]) {
+      agent._currentUrl = async () => url;
+      assert.equal(await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', {}), null,
+        `${label}: active public post should pass: ${url}`);
+      assert.equal(await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { url }), null,
+        `${label}: explicit public post should pass: ${url}`);
+    }
+    agent._currentUrl = async () => 'https://www.instagram.com/';
 
     const implicit = await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { kind: 'video' });
     assert.equal(implicit.needsExplicitMediaUrl, true, `${label}: generic active URL should be blocked`);
