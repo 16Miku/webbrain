@@ -1,12 +1,12 @@
 import { chromium, firefox } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, sep } from 'node:path';
 import assert from 'node:assert/strict';
 const root = resolve('.');
 const { version } = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
 const server = createServer(async (req, res) => {
-  try { const file = resolve(root, '.' + new URL(req.url, 'http://localhost').pathname); if (!file.startsWith(root + '/')) throw Error();
+  try { const file = resolve(root, '.' + new URL(req.url, 'http://localhost').pathname); if (!file.startsWith(root + sep)) throw Error();
     res.setHeader('Content-Type', ({ '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.svg': 'image/svg+xml' })[extname(file)] || 'text/plain'); res.end(await readFile(file));
   } catch { res.statusCode = 404; res.end(); }
 });

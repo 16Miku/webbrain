@@ -2,14 +2,14 @@ import { chromium, firefox } from 'playwright';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, sep } from 'node:path';
 const root=resolve('web');
 const output='/tmp/webbrain-captcha-review';await mkdir(output,{recursive:true});
 const server=createServer(async(req,res)=>{
   try {
     if(req.url==='/fixture') { res.setHeader('Content-Type','text/html');res.end('<!doctype html><input id="response"><div id="grid" style="width:300px;height:200px;background:#ddd"></div><script>window.answers=[];window.clickPoints=[];window.captcha={done(value){answers.push(value)}};document.querySelector("#grid").addEventListener("click",e=>clickPoints.push([e.clientX,e.clientY]));</script>');return; }
     let pathname=new URL(req.url,'http://localhost').pathname;if(pathname.endsWith('/'))pathname+='index.html';
-    const file=resolve(root,'.'+pathname);if(!file.startsWith(root+'/'))throw Error();
+    const file=resolve(root,'.'+pathname);if(!file.startsWith(root+sep))throw Error();
     res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png'})[extname(file)]||'application/octet-stream');res.end(await readFile(file));
   }catch{res.statusCode=404;res.end();}
 });

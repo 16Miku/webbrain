@@ -1,7 +1,7 @@
 import { chromium, firefox } from 'playwright';
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
-import { resolve, extname } from 'node:path';
+import { resolve, extname, sep } from 'node:path';
 import assert from 'node:assert/strict';
 const root = resolve('.');
 const output = process.env.CAPTCHA_UI_OUTPUT || '/tmp/webbrain-captcha-review';
@@ -11,7 +11,7 @@ const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url, 'http://localhost').pathname;
     const file = resolve(root, '.' + path);
-    if (!file.startsWith(root + '/')) throw Error('outside root');
+    if (!file.startsWith(root + sep)) throw Error('outside root');
     res.setHeader('Content-Type', mime[extname(file)] || 'text/plain'); res.end(await readFile(file));
   } catch { res.statusCode = 404; res.end(); }
 });
