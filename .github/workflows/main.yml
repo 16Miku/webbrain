@@ -76,6 +76,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test fixtures
+        run: npm run test:fixtures
+
       - name: Push release commits
         run: git push origin HEAD:${{ github.ref_name }}
 
