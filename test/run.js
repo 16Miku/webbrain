@@ -70378,7 +70378,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   const expectedIds = `
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
     azure-cognitive-services bailing baseten berget cerebras chutes clarifai
-    cloudferro-sherlock cohere cortecs deepinfra digitalocean dinference drun
+    cloudferro-sherlock cohere cortecs deepinfra demonroute digitalocean dinference drun
     evroc fastrouter friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
@@ -70391,7 +70391,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 79);
+  assert.equal(expectedIds.length, 80);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -70405,7 +70405,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 112 : 111;
+    const expectedDefaultCount = label === 'chrome' ? 113 : 112;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -70527,6 +70527,30 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.nearai.suggestions,
     ['z-ai/glm-5.3-flash', 'Qwen/Qwen3.8-27B'],
+  );
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.model,
+      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.contextWindow,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://api.demonroute.com/v1',
+      model: 'dphn/Dolphin3.0-Llama3.1-8B',
+      contextWindow: 131072,
+      supportsVision: false,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://demonroute.com',
+    },
+  );
+  assert.deepEqual(
+    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.demonroute.suggestions,
+    ['dphn/Dolphin3.0-Llama3.1-8B', 'NousResearch/Hermes-3-Llama-3.1-8B'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
