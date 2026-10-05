@@ -43,8 +43,9 @@ export function createQuotaController({ t, locale, request, openUrl, providers, 
     status.setAttribute('role', 'status'); status.setAttribute('aria-live', 'polite');
     const share = button(t('quota.get'), async () => {
       host.dataset.claimOpen = 'true';
-      operations.version++;
       try {
+        if (social?.status === 'pending') { await inflight; await refresh(); return; }
+        operations.version++;
         if (!social?.share_url) social = await request('/promotions/social');
         if (cards.get(host)?.refresh !== refresh) return;
         renderState(); showClaim();

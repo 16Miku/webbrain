@@ -11,7 +11,7 @@ Both repositories were clean before implementation. No applicable `AGENTS.md` wa
 | Cloud Plus, portal subscription recovery, renewal notices | Passed |
 | Cloud PHP syntax | Passed for service, promotion trait, routes, and both new CLI scripts |
 | Extension `npm run test:compass-quota` | 19 tests passed across Chrome and Firefox |
-| Extension `npm run test:compass-quota:ui` | 404 assertions passed in Chromium and Firefox, all 23 supported locales |
+| Extension `npm run test:compass-quota:ui` | 406 assertions passed in Chromium and Firefox, all 23 supported locales |
 | Extension billing/payment notice | Passed in both builds |
 | Extension runtime lifecycle suite | 218 tests and 14 UI/content lifecycle checks passed |
 | Extension provider limits | Passed |
@@ -39,9 +39,11 @@ Ordinary quota reads now use a shared read lock without creating lifetime claims
 
 Both browsers emit one recovery signal on response-only quota failure. Provider switching checks connection results, exceptions, and stale tests before reporting readiness. The rendered fixture server selects locales from a fixed allowlist, with malicious locale query regressions. The PDF browser test captures its Chrome tab ID at creation instead of rediscovering it by URL. GitHub CodeQL confirmed the fixture injection alert was fixed, and PDF/WebMCP CI passed after the first review fixes.
 
-The full **npm test** passed, including **2,426 legacy tests** and **60 security checks**. Focused quota tests passed 19 cases, and the browser fixture passed 404 assertions across both engines and 23 locales. Both extension builds, payment notices, and real Chrome PDF/WebMCP tests passed; English and Arabic narrow-panel screenshots were inspected again.
+The full **npm test** passed, including **2,426 legacy tests** and **60 security checks**. Focused quota tests passed 19 cases, and the browser fixture passed 406 assertions across both engines and 23 locales. Both extension builds, payment notices, and real Chrome PDF/WebMCP tests passed; English and Arabic narrow-panel screenshots were inspected again.
 
 The full cloud **composer check** and the real HTTP/review-CLI suite passed after the latest cloud fixes. Earlier validation blockers were resolved: shell fixtures use LF line endings, the default-model test uses an isolated root without a developer .env, the PII CLI recognizes absolute Windows lock paths, and stale provider/structured-error source assertions match the current behavior. The actual .env was untouched. Expected fault-case diagnostics remain in passing test logs.
+
+Further review regressions verify that the pending claim button fetches status in both browsers, concurrent rotating device headers cannot exceed the global telemetry cap, dropped events do not rewrite the ledger, and exact checkout timestamps outside 30 days cannot convert. Linux PHP durability tests verify file-then-directory sync and safe approval retry after an injected directory-sync failure. The Linux social test could not run because that PHP installation lacks PDO SQLite; the complete cloud check and social/concurrency suite passed with Windows PHP. Windows PHP cannot sync directory handles, so production power-loss durability requires a POSIX filesystem with directory fsync.
 
 Fresh Codex reviews and GitHub checks are recorded on each PR.
 

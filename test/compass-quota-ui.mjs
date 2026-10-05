@@ -154,8 +154,13 @@ try {
           assert.equal(await page.locator('.quota-claim form button[type=submit]').isDisabled(), false);
           assert.equal(await page.evaluate(() => continuations.length), 0); checks += 2;
           await page.evaluate(() => { window.rejectSubmission = false; });
+          await page.locator('.quota-claim form button[type=submit]').click();
+          await page.waitForFunction(() => !document.querySelector('.quota-claim form'));
           await page.evaluate(() => { claim.status = 'approved'; claim.eligible = false; claim.remaining_credit_usd = 0.5; });
-          await page.evaluate(() => controller.refreshAll());
+          const usageReadsBeforeCheck = await page.evaluate(() => requests.filter(r => r.path === '/usage').length);
+          await page.getByRole('button', { name: 'Check claim status', exact: true }).click();
+          await page.waitForFunction(() => document.querySelector('.quota-share')?.hidden);
+          assert.equal(await page.evaluate(() => requests.filter(r => r.path === '/usage').length), usageReadsBeforeCheck + 1); checks++;
           assert.equal(await page.locator('.quota-share:visible').count(), 0);
           assert.match(await page.locator('.quota-balance').textContent(), /\$0\.50/);
           assert.equal(await page.evaluate(() => continuations.length), 0); checks += 3;

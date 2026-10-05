@@ -13,6 +13,8 @@ Local configuration inspected on 2026-10-05: neither the process environment nor
 
 The backend now uses a stable **`USAGE_PATH.lock`** and atomically replaces the usage JSON. For the first upgrade from the old in-place writer, stop and drain **all** old web workers and review/report CLI processes before starting the new version; do not mix the two lock protocols. Confirm the store owner can create the lock and temporary files and replace the JSON on the same filesystem. Never remove the lock file while any worker is running. Keep the `0.75` override throughout this backend migration and the extension release.
 
+Production storage must support POSIX directory `fsync`: verify file and parent-directory syncing on the actual usage-store filesystem. Windows PHP cannot sync directory handles; its local validation covers process interruptions, while the Linux durability test exercises directory-sync failures and idempotent retries. Client telemetry is best-effort and globally capped at 10,000 retained device/day observations; excess events return `recorded: false`. Actual metered consumption and lifetime awards are independent of that telemetry cap.
+
 ## Manual review
 
 Run as the usage-store owner on the backend host:
