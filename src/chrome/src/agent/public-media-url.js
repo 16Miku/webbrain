@@ -30,7 +30,7 @@ function hasPathId(path, pattern) {
 export function isMastodonMediaPage(rawUrl) {
   let parsed;
   try { parsed = new URL(rawUrl); } catch { return false; }
-  if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) return false;
   const adapter = getActiveAdapter(rawUrl);
   return adapter?.name === 'mastodon' || (!adapter && isLikelyMastodonHost(parsed.hostname));
 }
@@ -38,7 +38,7 @@ export function isMastodonMediaPage(rawUrl) {
 export function isMastodonPublicMediaUrl(rawUrl) {
   let parsed;
   try { parsed = new URL(rawUrl); } catch { return false; }
-  if (!['http:', 'https:'].includes(parsed.protocol) || !isMastodonMediaPage(rawUrl)) return false;
+  if (!isMastodonMediaPage(rawUrl)) return false;
   return /^\/@[A-Za-z0-9_]+(?:@[A-Za-z0-9.-]+)?\/\d+\/?$/.test(parsed.pathname)
     || /^\/users\/[A-Za-z0-9_]+\/statuses\/\d+\/?$/.test(parsed.pathname)
     || /^\/web\/statuses\/\d+\/?$/.test(parsed.pathname);

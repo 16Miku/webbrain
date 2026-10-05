@@ -469,9 +469,14 @@ tracks as a successful video or hand ffmpeg work to the user.
 The packaged FreeSkillz resolver and downloader allow Bluesky post URLs.
 Mastodon uses an `inputUrlAllowlist` rule of `{ "siteAdapter": "mastodon" }`
 so supported instances do not need a fixed host list in the skill manifest.
-That rule accepts only exact HTTPS status permalinks recognized by the Mastodon
-adapter, rejects credentials, custom ports, and local-network destinations, and
-keeps feeds/profiles behind the visible-target guard. Both sites use the existing
+That rule accepts only exact HTTPS status permalinks on known instances or
+instances independently verified through same-origin NodeInfo discovery and
+`software.name: mastodon`. The credentialless verification rejects redirects,
+limits metadata reads to 64 KiB and 10 seconds, and never probes the post URL.
+Internationalized domains are accepted using URL-normalized IDNA hostnames.
+Credentials, custom ports, and local-network destinations are rejected; query
+strings and fragments are removed before forwarding Mastodon status URLs.
+Feeds/profiles stay behind the visible-target guard. Both sites use the existing
 provider job lifecycle to deliver one final media file and clean up the job.
 
 | User intent | Expected skill | Catalog modes | Notes |

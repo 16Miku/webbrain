@@ -15660,6 +15660,12 @@ const KNOWN_MASTODON_HOSTS = new Set([
   'zzz.frotz.net',
 ]);
 
+// Exact generated instance membership can be used by network allowlists.
+// The broader routing heuristic below is not proof of a Mastodon server.
+export function isKnownMastodonHost(hostname) {
+  return KNOWN_MASTODON_HOSTS.has(String(hostname || '').toLowerCase());
+}
+
 // Keep direct URL matching conservative: bare /@user and /users/user routes are
 // only Mastodon when the host is in the generated known-instance list.
 export function isLikelyMastodonHost(hostname) {
