@@ -1,4 +1,5 @@
 import { createRequestDeadline, readResponseText, responseAbortError } from './response-body.js';
+import { isMastodonPublicMediaUrl } from '../agent/public-media-url.js';
 import { firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
 
@@ -377,6 +378,12 @@ function inputUrlAllowed(rawUrl, rules = []) {
   const host = u.hostname.toLowerCase();
   const path = u.pathname || '/';
   return rules.some((rule) => {
+    if (rule.siteAdapter === 'mastodon') {
+      return u.protocol === 'https:' && !u.username && !u.password && !u.port
+        && /^(?:[a-z0-9-]+\.)+[a-z]{2,63}$/i.test(host)
+        && !/\.(?:local|internal|localhost|lan|home|corp)$/i.test(host)
+        && validateFetchUrl(rawUrl).ok && isMastodonPublicMediaUrl(rawUrl);
+    }
     const ruleHost = String(rule.host || '').toLowerCase();
     if (!ruleHost) return false;
     const hostMatches = host === ruleHost || host.endsWith(`.${ruleHost}`);

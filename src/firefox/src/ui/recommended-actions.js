@@ -1,9 +1,9 @@
-import { isDirectPublicMediaUrl } from '../agent/public-media-url.js';
+import { isDirectPublicMediaUrl, isMastodonMediaPage } from '../agent/public-media-url.js';
 import { COUPON_MERCHANT_DOMAINS } from './coupon-domains.js';
 import { t } from './i18n.js';
 
 const SOCIAL_HOST_RE = /(^|\.)(instagram\.com|tiktok\.com|x\.com|twitter\.com|facebook\.com|fb\.com|threads\.net|youtube\.com|youtu\.be|reddit\.com|pinterest\.com|snapchat\.com)$/i;
-const PUBLIC_MEDIA_HOST_RE = /(^|\.)(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com|reddit\.com|redd\.it|facebook\.com|fb\.com|fb\.watch|pinterest\.com|pin\.it|linkedin\.com|threads\.net)$/i;
+const PUBLIC_MEDIA_HOST_RE = /(^|\.)(youtube\.com|youtu\.be|tiktok\.com|instagram\.com|x\.com|twitter\.com|reddit\.com|redd\.it|facebook\.com|fb\.com|fb\.watch|pinterest\.com|pin\.it|linkedin\.com|threads\.net|bsky\.app)$/i;
 const DATING_HOST_RE = /(^|\.)(tinder\.com|bumble\.com|hinge\.co|okcupid\.com|match\.com|pof\.com|badoo\.com|happn\.com|coffeemeetsbagel\.com)$/i;
 const SHOPPING_HOST_RE = /(^|\.)(amazon\.(?:(?:com|co)\.)?[a-z]{2,}|ebay\.(?:(?:com|co)\.)?[a-z]{2,}|etsy\.com|walmart\.com|target\.com|bestbuy\.com|shopify\.com|aliexpress\.com|mercadolibre\.(?:(?:com|co)\.)?[a-z]{2,}|mercadolivre\.com\.br|hepsiburada\.com|trendyol\.com|n11\.com|shopee\.(?:(?:com|co)\.)?[a-z]{2,}|shopeekh\.com|lazada\.(?:(?:com|co)\.)?[a-z]{2,})$/i;
 const PRODUCT_PATH_RE = /\/(dp|gp\/product|itm|p|product|products|prod|item|listing|ilan|urun)\b/i;
@@ -459,7 +459,7 @@ export function buildRecommendedActions(pageInfo = {}, options = {}) {
     });
   }
 
-  const publicMediaHost = PUBLIC_MEDIA_HOST_RE.test(host);
+  const publicMediaHost = PUBLIC_MEDIA_HOST_RE.test(host) || isMastodonMediaPage(pageInfo.url || '');
   if ((publicMediaHost || SOCIAL_HOST_RE.test(host) || /\b(post|status|reel|shorts|watch|pin)\b/i.test(path)) && hasMedia(pageInfo)) {
     const kind = publicMediaKind(pageInfo, path);
     const needsExplicitUrl = publicMediaHost && !isDirectPublicMediaUrl(pageInfo.url || '');

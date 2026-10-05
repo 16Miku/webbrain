@@ -493,6 +493,10 @@ function normalizeAllowedInputUrls(value) {
       continue;
     }
     if (!isPlainObject(item)) continue;
+    if (item.siteAdapter === 'mastodon') {
+      rules.push({ siteAdapter: 'mastodon' });
+      continue;
+    }
     const host = cleanSingleLine(item.host || item.hostname).toLowerCase();
     if (!/^[a-z0-9.-]+$/.test(host)) continue;
     const pathsRaw = item.paths || item.pathPrefixes || item.path_prefixes || item.path || '/';

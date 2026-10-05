@@ -466,6 +466,14 @@ re-enables browser fallback. The browser MSE path fails closed before saving
 split or unverifiably muxed video/audio buffers, so it cannot report separate
 tracks as a successful video or hand ffmpeg work to the user.
 
+The packaged FreeSkillz resolver and downloader allow Bluesky post URLs.
+Mastodon uses an `inputUrlAllowlist` rule of `{ "siteAdapter": "mastodon" }`
+so supported instances do not need a fixed host list in the skill manifest.
+That rule accepts only exact HTTPS status permalinks recognized by the Mastodon
+adapter, rejects credentials, custom ports, and local-network destinations, and
+keeps feeds/profiles behind the visible-target guard. Both sites use the existing
+provider job lifecycle to deliver one final media file and clean up the job.
+
 | User intent | Expected skill | Catalog modes | Notes |
 | --- | --- | --- | --- |
 | Find, read, copy, or enter a code visible in browser email/message content | OTP / verification-code helper | Ask, Act, Dev | Guides narrow current-page reads; on Mid/Full, loading it also exposes one fixed reader for an already-open signed-in supported webmail tab. |
