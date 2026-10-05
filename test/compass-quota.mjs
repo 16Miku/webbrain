@@ -114,6 +114,27 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(events.filter(e => e.type === 'error').length, 0);
     assert.equal(messages[0].content, 'Keep this question');
     assert.equal(messages.at(-1).content, result.content);
+    const background = fs.readFileSync(new URL('background.js', base), 'utf8');
+    const classifiers = background.slice(background.indexOf('function isClarificationRequiredRunUpdate('), background.indexOf('async function getRunUiSnapshot('));
+    const { terminalRunUiStatus, runUpdatesSucceeded, askCompletionSucceededForBadge } = vm.runInNewContext(`${classifiers}; ({ terminalRunUiStatus, runUpdatesSucceeded, askCompletionSucceededForBadge })`);
+    assert.equal(terminalRunUiStatus('Localized quota stop', events), 'failed');
+    assert.equal(runUpdatesSucceeded(events), false, 'user memory must see the stopped turn as unsuccessful');
+    assert.equal(askCompletionSucceededForBadge('Localized quota stop', events), false);
+    const journal = new RunUiJournal(); journal.begin(41, 'response-only-quota');
+    for (const event of events) journal.record(41, 'response-only-quota', event.type, event.data);
+    const snapshot = journal.finish(41, 'response-only-quota', terminalRunUiStatus(result.content, events), result.content);
+    const reconnected = await runDetachedWithReconnect({ initialAction: 'chat_start', payload: { requestId: 'response-only-quota' },
+      start: async () => ({ accepted: true, requestId: 'response-only-quota' }),
+      probe: async () => ({ submittedTurnDurable: true, runUi: snapshot }), wait: async () => {}, pollIntervalMs: 0 });
+    assert.equal(reconnected.success, false);
+    assert.equal(reconnected.quota.code, payload.error.code);
+    assert.equal(reconnected.updates.filter(e => e.type === 'error').length, 0, 'failed classification must preserve a single quota card');
+    const panel = fs.readFileSync(new URL('ui/sidepanel.js', base), 'utf8');
+    const askEnd = panel.indexOf('\n}\n', panel.indexOf('function isSuccessfulAskCompletion(')) + 3;
+    const askClassifiers = panel.slice(panel.indexOf('function updatesContainStoreReviewFailure('), askEnd);
+    const isSuccessfulAskCompletion = vm.runInNewContext(`${askClassifiers}; isSuccessfulAskCompletion`, { parseSubscribeError: () => null, parseCostAllowanceError: () => null });
+    assert.equal(isSuccessfulAskCompletion('ask', { content: 'Localized quota stop', updates: events }), false);
+    assert.equal(isSuccessfulAskCompletion('ask', { content: 'Localized quota stop', quota: error.quota, updates: [] }), false);
     agent._generateContextOnlyResponse = async () => { throw new Error('Other failure'); };
     events.length = 0;
     await agent._completeResponseOnlyTurn(41, messages, (type, data) => events.push({ type, data }));

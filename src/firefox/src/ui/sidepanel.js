@@ -1642,7 +1642,7 @@ function updatesContainSuccessfulDone(updates) {
 
 function updatesContainStoreReviewFailure(updates) {
   return Array.isArray(updates) && updates.some((u) => (
-    u?.type === 'error' ||
+    u?.type === 'error' || u?.type === 'quota' ||
     u?.type === 'attachment_rejected' ||
     u?.type === 'max_steps_reached' ||
     u?.error ||
@@ -1652,7 +1652,7 @@ function updatesContainStoreReviewFailure(updates) {
 
 function isSuccessfulAskCompletion(mode, response) {
   if (mode !== 'ask') return false;
-  if (!response || response.success === false || response.ok === false) return false;
+  if (!response || response.quota || response.success === false || response.ok === false) return false;
   if (updatesContainStoreReviewFailure(response.updates)) return false;
   const content = typeof response.content === 'string' ? response.content.trim() : '';
   return !!content && !parseSubscribeError(content) && !parseCostAllowanceError(content);
