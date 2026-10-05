@@ -11,7 +11,7 @@ Most brand marks come from [Lobe Icons](https://github.com/lobehub/lobe-icons)
 | osaurus | [Osaurus official logo](https://github.com/osaurus-ai/osaurus/blob/main/App/osaurus/Assets.xcassets/osaurus-logo.imageset/osaurus-logo-black.svg) (`osaurus-ai/osaurus`, MIT) |
 | localai | LocalAI official logo (`mudler/LocalAI`) |
 | gpt4all | Simple mark (not an official GPT4All brand asset) |
-| local_openai_proxy | WebBrain-authored generic proxy mark |
+| local_openai_proxy, freebuff2api | WebBrain-authored generic proxy marks |
 | ods | [Official ODS product logo](https://osmantic.com/assets/images/products/ods-logo.png) (Osmantic) |
 | unsloth | Unsloth official `images/unsloth logo only.png` (`unslothai/unsloth`), vectorized |
 | sglang | SGLang official `logo_square` (`sgl-project/sglang`) |
