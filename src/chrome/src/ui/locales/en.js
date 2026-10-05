@@ -323,7 +323,7 @@ export default {
   'sp.retry.attachments_unavailable': 'Attachments from the failed attempt are no longer available; retrying the text only.',
 
   'sp.error_prefix': 'Error: {msg}',
-  'sp.subscribe.allowance_used': 'Daily free WebBrain Compass allowance used.',
+  'sp.subscribe.allowance_used': 'Weekly free WebBrain Compass allowance used.',
   'sp.subscribe.btn': 'Subscribe',
   'sp.subscribe.upgrade': 'Upgrade to Plus',
   'sp.subscribe.resume_payment': 'Payment method updated — retry',
@@ -571,7 +571,7 @@ export default {
   'ob.btn.done': 'Get Started',
   'ob.btn.skip': 'Skip for now',
   'ob.btn.start': 'Start',
-  'ob.cloud.body': 'WebBrain Compass is ready with a free daily allowance. Selected Compass conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.',
+  'ob.cloud.body': 'WebBrain Compass is ready with a free weekly allowance. Selected Compass conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.',
   'ob.cloud.change': 'Change',
   'ob.cloud.using': 'Using WebBrain Compass. ',
 
@@ -781,11 +781,11 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'System',
   'st.providers.compat.value.developer': 'Developer',
-  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are only collected by WebBrain when you turn on the per-provider “Share queries for research” option.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Free weekly WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are only collected by WebBrain when you turn on the per-provider “Share queries for research” option.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.share_research.label': 'Share queries for research',
   'st.providers.share_research.hint': 'Send bounded prompts, responses, tool interactions, and diagnostic trace metadata (steps, tool names, statuses, errors, and timings) from this provider to WebBrain for evaluation and improvement. Images and binary attachments are stripped; text is truncated before sharing.',
   'st.providers.share_research.confirm': 'Share queries and diagnostic traces from this provider with WebBrain for research?\n\nWhen on, your prompts, responses, tool interactions, and bounded diagnostic trace metadata—including failed runs, tool names, statuses, errors, and timings—will be sent to WebBrain with the provider and model name. Screenshots and binary attachments are not uploaded. Other text is sent as-is after truncation, so avoid sharing sensitive personal data. You can turn this off at any time to stop future sharing.',
-  'st.providers.webbrain_note.body': 'Free daily WebBrain Compass usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_note.body': 'Free weekly WebBrain Compass usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Privacy policy',
 
   'st.skills.desc_html': 'Enabled skills are available on demand in Mid and Full tiers; Compact does not load skills. A small catalog sends only each eligible skill\'s ID, name, summary, and optional semantic intents. The planner can select relevant skills from this routing metadata; full instructions and compatible <code>webbrain-tools</code> are exposed only after activation for the current run. Optional <code>webbrain-skill</code> metadata controls the summary, semantic intents, and Ask/Act compatibility.',

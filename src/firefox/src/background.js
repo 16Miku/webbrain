@@ -2431,6 +2431,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     data: {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
+      quota: snapshot.quota || null,
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
       attachmentDeliveryState,
@@ -2459,7 +2460,7 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.target !== 'background') return;
 
-  return handleMessage(msg, sender).catch(e => ({ error: e.message }));
+  return handleMessage(msg, sender).catch(e => ({ error: e.message, quota: e.quota }));
 });
 
 async function handleMessage(msg, sender) {

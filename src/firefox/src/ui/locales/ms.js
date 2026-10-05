@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': 'Mula',
   'ob.btn.skip': 'Langkau buat masa ini',
   'ob.btn.start': 'Mula',
-  'ob.cloud.body': 'WebBrain Compass sedia dengan elaun harian percuma. Perbincangan Compass yang dipilih boleh disimpan dan digunakan untuk meningkatkan WebBrain semasa Bantu Tingkatkan WebBrain didayakan secara lalai. Anda boleh mematikannya di Tetapan → Umum.',
+  'ob.cloud.body': 'WebBrain Compass sedia dengan elaun mingguan percuma. Perbincangan Compass yang dipilih boleh disimpan dan digunakan untuk meningkatkan WebBrain semasa Bantu Tingkatkan WebBrain didayakan secara lalai. Anda boleh mematikannya di Tetapan → Umum.',
   'ob.cloud.change': 'Tukar',
   'ob.cloud.using': 'Menggunakan WebBrain Compass.',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'Data pemulihan tidak dapat disimpan. Tugas langsung boleh diteruskan, tetapi tindakan tidak akan dimainkan semula selepas sambungan terputus. Cuba lagi secara manual.',
 
   'sp.error_prefix': 'Ralat: {msg}',
-  'sp.subscribe.allowance_used': 'Peruntukan harian percuma WebBrain Compass telah digunakan.',
+  'sp.subscribe.allowance_used': 'Peruntukan mingguan percuma WebBrain Compass telah digunakan.',
   'sp.subscribe.btn': 'Langgan',
   'sp.subscribe.upgrade': 'Naik taraf kepada Plus',
   "sp.subscribe.resume_payment": "Kaedah pembayaran dikemas kini — cuba lagi",
@@ -363,7 +363,7 @@ export default {
 
   'st.providers.info.html': '<strong>Bermula dengan llama.cpp:</strong><br>Jalankan <code>llama-server -m your-model.gguf --port 8080</code> untuk memulakan pelayan tempatan.<br>Tiada kunci API diperlukan — semuanya berjalan pada mesin anda.',
   'st.providers.save': 'Simpan',
-  'st.providers.webbrain_note.body': 'Penggunaan harian percuma WebBrain Compass disertakan. Permintaan melalui api.webbrain.one; secara lalai kami mencatat metadata untuk kuota dan penyahpepijatan, bukan teks gesaan, kandungan halaman, tangkapan skrin atau respons model. {privacyLink}. Untuk penggunaan lebih, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.',
+  'st.providers.webbrain_note.body': 'Penggunaan mingguan percuma WebBrain Compass disertakan. Permintaan melalui api.webbrain.one; secara lalai kami mencatat metadata untuk kuota dan penyahpepijatan, bukan teks gesaan, kandungan halaman, tangkapan skrin atau respons model. {privacyLink}. Untuk penggunaan lebih, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Dasar privasi',
   'st.providers.test': 'Uji sambungan',
   'st.providers.duplicate': 'Duplikasi',

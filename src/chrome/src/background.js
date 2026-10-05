@@ -2276,6 +2276,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     data: {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
+      quota: snapshot.quota || null,
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
       attachmentDeliveryState,
@@ -2814,7 +2815,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   handleMessage(msg, sender)
     .then(sendResponse)
-    .catch(e => sendResponse({ error: e.message, status: e.status || 500 }));
+    .catch(e => sendResponse({ error: e.message, status: e.status || 500, quota: e.quota }));
 
   return true; // async response
 });

@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': 'เริ่มต้น',
   'ob.btn.skip': 'ข้ามไปก่อน',
   'ob.btn.start': 'เริ่ม',
-  'ob.cloud.body': 'WebBrain Compass พร้อมพร้อมกับการจัดสรรประจำวันฟรี บทสนทนา Compass ที่เลือกอาจถูกเก็บและใช้เพื่อปรับปรุง WebBrain ในขณะที่ช่วยปรับปรุง WebBrain ถูกเปิดใช้งานตามค่าเริ่มต้น คุณสามารถปิดการใช้งานนี้ในการตั้งค่า → ทั่วไป',
+  'ob.cloud.body': 'WebBrain Compass พร้อมพร้อมกับการจัดสรรรายสัปดาห์ฟรี บทสนทนา Compass ที่เลือกอาจถูกเก็บและใช้เพื่อปรับปรุง WebBrain ในขณะที่ช่วยปรับปรุง WebBrain ถูกเปิดใช้งานตามค่าเริ่มต้น คุณสามารถปิดการใช้งานนี้ในการตั้งค่า → ทั่วไป',
   'ob.cloud.change': 'เปลี่ยน',
   'ob.cloud.using': 'กำลังใช้ WebBrain Compass',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'ไม่สามารถบันทึกข้อมูลการกู้คืนได้ งานที่กำลังทำยังดำเนินต่อได้ แต่จะไม่ทำซ้ำการกระทำหลังการเชื่อมต่อขาด โปรดลองใหม่ด้วยตนเอง',
 
   'sp.error_prefix': 'ข้อผิดพลาด: {msg}',
-  'sp.subscribe.allowance_used': 'ใช้โควตารายวันฟรีของ WebBrain Compass หมดแล้ว',
+  'sp.subscribe.allowance_used': 'ใช้โควตารายสัปดาห์ฟรีของ WebBrain Compass หมดแล้ว',
   'sp.subscribe.btn': 'สมัครสมาชิก',
   'sp.subscribe.upgrade': 'อัปเกรดเป็น Plus',
   "sp.subscribe.resume_payment": "อัปเดตวิธีชำระเงินแล้ว — ลองอีกครั้ง",
@@ -371,7 +371,7 @@ export default {
 
   'st.providers.info.html': '<strong>เริ่มต้นกับ llama.cpp:</strong><br>รัน <code>llama-server -m your-model.gguf --port 8080</code> เพื่อสตาร์ตเซิร์ฟเวอร์ในเครื่อง<br>ไม่ต้องใช้คีย์ API — ทำงานในเครื่องของคุณทั้งหมด',
   'st.providers.save': 'บันทึก',
-  'st.providers.webbrain_note.body': 'รวมการใช้งาน WebBrain Compass รายวันฟรีไว้แล้ว คำขอจะผ่าน api.webbrain.one โดยค่าเริ่มต้นเราจะบันทึกข้อมูลเมตาสำหรับโควตาและการแก้จุดบกพร่อง ไม่ใช่ข้อความพรอมต์ เนื้อหาหน้าเว็บ ภาพหน้าจอ หรือการตอบกลับของโมเดล {privacyLink} หากต้องการใช้งานเพิ่มเติม สมัครสมาชิกที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}',
+  'st.providers.webbrain_note.body': 'รวมการใช้งาน WebBrain Compass รายสัปดาห์ฟรีไว้แล้ว คำขอจะผ่าน api.webbrain.one โดยค่าเริ่มต้นเราจะบันทึกข้อมูลเมตาสำหรับโควตาและการแก้จุดบกพร่อง ไม่ใช่ข้อความพรอมต์ เนื้อหาหน้าเว็บ ภาพหน้าจอ หรือการตอบกลับของโมเดล {privacyLink} หากต้องการใช้งานเพิ่มเติม สมัครสมาชิกที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}',
   'st.providers.webbrain_note.privacy_link': 'นโยบายความเป็นส่วนตัว',
   'st.providers.test': 'ทดสอบการเชื่อมต่อ',
   'st.providers.duplicate': 'ทำสำเนา',

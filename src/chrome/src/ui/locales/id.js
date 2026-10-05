@@ -151,7 +151,7 @@ export default {
   'ob.btn.done': 'Mulai',
   'ob.btn.skip': 'Lewati dulu',
   'ob.btn.start': 'Mulai',
-  'ob.cloud.body': 'WebBrain Compass siap dengan alokasi harian gratis. Percakapan Compass yang dipilih dapat disimpan dan digunakan untuk meningkatkan WebBrain selama Bantu Tingkatkan WebBrain aktif secara default. Anda dapat mematikannya di Pengaturan → Umum.',
+  'ob.cloud.body': 'WebBrain Compass siap dengan alokasi mingguan gratis. Percakapan Compass yang dipilih dapat disimpan dan digunakan untuk meningkatkan WebBrain selama Bantu Tingkatkan WebBrain aktif secara default. Anda dapat mematikannya di Pengaturan → Umum.',
   'ob.cloud.change': 'Ubah',
   'ob.cloud.using': 'Menggunakan WebBrain Compass.',
 
@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'Data pemulihan tidak dapat disimpan. Tugas aktif dapat berlanjut, tetapi tindakan tidak akan diputar ulang setelah koneksi terputus. Coba lagi secara manual.',
 
   'sp.error_prefix': 'Galat: {msg}',
-  'sp.subscribe.allowance_used': 'Kuota harian gratis WebBrain Compass telah habis.',
+  'sp.subscribe.allowance_used': 'Kuota mingguan gratis WebBrain Compass telah habis.',
   'sp.subscribe.btn': 'Berlangganan',
   'sp.subscribe.upgrade': 'Upgrade ke Plus',
   "sp.subscribe.resume_payment": "Metode pembayaran diperbarui — coba lagi",
@@ -371,7 +371,7 @@ export default {
 
   'st.providers.info.html': '<strong>Memulai dengan llama.cpp:</strong><br>Jalankan <code>llama-server -m your-model.gguf --port 8080</code> untuk memulai server lokal.<br>Tidak perlu kunci API — berjalan sepenuhnya di mesin Anda.',
   'st.providers.save': 'Simpan',
-  'st.providers.webbrain_note.body': 'Penggunaan harian gratis WebBrain Compass sudah termasuk. Permintaan melewati api.webbrain.one; secara default kami mencatat metadata untuk kuota dan debugging, bukan teks prompt, konten halaman, tangkapan layar, atau respons model. {privacyLink}. Untuk penggunaan lebih, berlangganan di {subscribeLink}. Kelola penagihan di {accountLink}.',
+  'st.providers.webbrain_note.body': 'Penggunaan mingguan gratis WebBrain Compass sudah termasuk. Permintaan melewati api.webbrain.one; secara default kami mencatat metadata untuk kuota dan debugging, bukan teks prompt, konten halaman, tangkapan layar, atau respons model. {privacyLink}. Untuk penggunaan lebih, berlangganan di {subscribeLink}. Kelola penagihan di {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Kebijakan privasi',
   'st.providers.test': 'Uji koneksi',
   'st.providers.duplicate': 'Duplikat',

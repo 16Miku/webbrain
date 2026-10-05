@@ -568,7 +568,7 @@ export default {
   'ob.btn.done': "Comece",
   'ob.btn.skip': "Pular por enquanto",
   'ob.btn.start': 'Iniciar',
-  'ob.cloud.body': 'WebBrain Compass está pronto com uma alocação diária gratuita. Conversas selecionadas do Compass podem ser retidas e usadas para melhorar o WebBrain enquanto Ajuda a Melhorar o WebBrain está ativado por padrão. Você pode desativá-lo em Configurações → Geral.',
+  'ob.cloud.body': 'WebBrain Compass está pronto com uma alocação semanal gratuita. Conversas selecionadas do Compass podem ser retidas e usadas para melhorar o WebBrain enquanto Ajuda a Melhorar o WebBrain está ativado por padrão. Você pode desativá-lo em Configurações → Geral.',
   'ob.cloud.change': 'Alterar',
   'ob.cloud.using': 'Usando WebBrain Compass.',
 

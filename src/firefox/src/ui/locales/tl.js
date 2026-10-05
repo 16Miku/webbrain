@@ -225,7 +225,7 @@ export default {
   'sp.persistence.unavailable': 'Hindi ma-save ang data sa pagbawi. Maaaring magpatuloy ang kasalukuyang gawain, ngunit hindi uulitin ang mga aksyon kapag naputol ang koneksyon. Subukang muli nang manu-mano.',
 
   'sp.error_prefix': 'Error: {msg}',
-  'sp.subscribe.allowance_used': 'Naubos na ang libreng pang-araw-araw na alokasyon ng WebBrain Compass.',
+  'sp.subscribe.allowance_used': 'Naubos na ang libreng lingguhang na alokasyon ng WebBrain Compass.',
   'sp.subscribe.btn': 'Mag-subscribe',
   'sp.subscribe.upgrade': 'Mag-upgrade sa Plus',
   "sp.subscribe.resume_payment": "Na-update ang paraan ng pagbabayad — subukan muli",
@@ -363,7 +363,7 @@ export default {
 
   'st.providers.info.html': '<strong>Pagsisimula sa llama.cpp:</strong><br>Patakbuhin ang <code>llama-server -m your-model.gguf --port 8080</code> para magsimula ng lokal na server.<br>Hindi na kailangan ng API key — ganap itong tumatakbo sa iyong makina.',
   'st.providers.save': 'I-save',
-  'st.providers.webbrain_note.body': 'Kasama ang libreng pang-araw-araw na paggamit ng WebBrain Compass. Dumadaan ang mga request sa api.webbrain.one; bilang default ay nagla-log kami ng metadata para sa quota at debugging, hindi ang teksto ng prompt, nilalaman ng pahina, mga screenshot, o mga tugon ng modelo. {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang pagsingil sa {accountLink}.',
+  'st.providers.webbrain_note.body': 'Kasama ang libreng lingguhang na paggamit ng WebBrain Compass. Dumadaan ang mga request sa api.webbrain.one; bilang default ay nagla-log kami ng metadata para sa quota at debugging, hindi ang teksto ng prompt, nilalaman ng pahina, mga screenshot, o mga tugon ng modelo. {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang pagsingil sa {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Patakaran sa privacy',
   'st.providers.test': 'Subukan ang Koneksyon',
   'st.providers.duplicate': 'I-duplicate',

@@ -21413,6 +21413,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       if (this._isCostAllowanceError(error)) {
+        if (typeof onUpdate === 'function' && error.quota) onUpdate('quota', { quota: error.quota });
         return { proceed: false, message: error.message, reason: 'cost_limit' };
       }
       if (bestEffort) {
@@ -21644,6 +21645,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
       if (recheckOnly) return this._plannerIntentRecheckFallback();
@@ -22039,6 +22041,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
       if (hasValidPlannerResponse) {
@@ -22469,6 +22472,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet, shareCapture },
       );
     } catch (error) {
+      if (error.quota) onUpdate('quota', { quota: error.quota });
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
       finalResponse = this._isCostAllowanceError(error)
         ? error.message
@@ -43267,6 +43271,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         if (this._checkAbort(tabId)) throw e;
         this._logDebug({ type: 'llm_error', step: steps, error: e.message });
         if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
           finalResponse = e.message;
           _traceStatus = 'cost_limit';
           traceFailureCode = 'COST_LIMIT';
@@ -43297,6 +43302,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (this._checkAbort(tabId)) throw e2;
             this._logDebug({ type: 'llm_error_retry', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
+        if (typeof onUpdate === 'function' && e2.quota) onUpdate('quota', { quota: e2.quota });
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
               traceFailureCode = 'COST_LIMIT';
@@ -43357,6 +43363,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (this._checkAbort(tabId)) throw e2;
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
+        if (typeof onUpdate === 'function' && e2.quota) onUpdate('quota', { quota: e2.quota });
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
               traceFailureCode = 'COST_LIMIT';
@@ -43845,6 +43852,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         await this._persistNow(tabId);
         return finalResponse;
       }
+      if (error.quota) onUpdate('quota', { quota: error.quota });
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
       traceFailureCode = this._traceErrorCodeFor(error);
@@ -44866,6 +44874,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         await closeTraceStep({ ok: false, code: stepErrorCode });
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
         if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
           messages.push({ role: 'assistant', content: caughtMessage });
           onUpdate('warning', { message: caughtMessage });
           this._persist(tabId);
