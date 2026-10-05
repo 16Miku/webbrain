@@ -47,6 +47,8 @@ Further review regressions verify that the pending claim button fetches status i
 
 Concurrent rotating session and device identifiers are bounded to 10,000 retained observations per consumption map. Overflow contributes to exact metered aggregates and disclosed report totals, while existing samples keep accumulating and expiration frees capacity. Regression tests cover concurrent capacity, exact overflow totals, unchanged weekly accounting, and retention. The extension branch includes current main and its upstream social-platform changes; the complete suite passes after integration.
 
+The cloud reporting regression uses deterministic UTC clocks to verify completed weekly distributions on Monday and midweek, a local Monday before the UTC reset, ISO-year boundaries, late request completion, shorter report windows, retention boundaries, and disclosed legacy/overflow coverage. Event/session aggregate windows retain their existing behavior.
+
 Fresh Codex reviews and GitHub checks are recorded on each PR.
 
 ## Local artifacts and rollout
