@@ -13,7 +13,7 @@ export function completionDocumentStamp() {
   }
   const text = (document.body?.innerText || '').slice(0, 20000) + JSON.stringify(states);
   let hash = 2166136261;
-  for (const character of text) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
+  for (let index = 0; index < text.length; index++) hash = Math.imul(hash ^ text.charCodeAt(index), 16777619);
   return [location.href, performance.timeOrigin, text.length, hash].join('|');
 }
 

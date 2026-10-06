@@ -48,6 +48,46 @@ for (const [build, browserType] of [['chrome', chromium], ['firefox', firefox]])
       await browser.close();
     }
   });
+  test(`${build}: astral text and ARIA changes invalidate in-flight AX success`, async () => {
+    const browser = await browserType.launch();
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    try {
+      const page = await browser.newPage();
+      const stamp = () => page.evaluate(COMPLETION_DOCUMENT_STAMP_SCRIPT);
+      globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ decisionProvider: 'local', systemOneEnabled: true }) } } };
+      for (const attribute of [null, 'aria-label']) {
+        await page.setContent('<div id="state" role="status">Published</div>');
+        const replace = value => page.locator('#state').evaluate((element, { attribute, value }) => {
+          if (attribute) element.setAttribute(attribute, value); else element.textContent = value;
+        }, { attribute, value });
+        await replace('😀');
+        const initial = await stamp();
+        await replace('😁');
+        assert.notEqual(await stamp(), initial, 'same-length emojis with a shared leading surrogate must change the stamp');
+        await replace('😀');
+        assert.equal(await stamp(), initial);
+        const provider = { model: 'active', supportsVision: false, config: { category: 'local' } };
+        const agent = {
+          _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
+          _latestTaskText: () => 'Verify the requested emoji', _originalTaskText: () => '', _progressTaskKeyHash: () => 'emoji',
+          _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
+          _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(), _completionDocumentStamp: stamp,
+          executeTool: async () => ({ success: true, pageContent: 'Requested emoji: 😀' }), recordSystemOneVerdict() {},
+          evaluateSystemOne: async () => {
+            await replace('😁');
+            return { model: 'kev-latest', answers: { task_outcome: { choice: 'succeeded', probabilities: { succeeded: .99 } } } };
+          },
+        };
+        const verdict = await verifyBrowserCompletion(agent, 1);
+        assert.equal(verdict.outcome, 'pending');
+        assert.equal(verdict.engine, 'freshness');
+        assert.equal(agent._completionVerdicts.get(1)?.outcome === 'succeeded', false);
+      }
+    } finally {
+      globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
+      await browser.close();
+    }
+  });
   test(`${build}: vision capability probe uses two distinct pixel facts and rejects constant answers`, async () => {
     const browser = await browserType.launch();
     try {
