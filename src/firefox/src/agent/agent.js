@@ -5810,6 +5810,11 @@ export class Agent extends LoopDetector {
     return !!this._steeringRuns.get(tabId)?.messages.length;
   }
 
+  _hasUnvalidatedSteering(tabId) {
+    const run = this._steeringRuns.get(tabId);
+    return !!run && (run.messages.length > 0 || run.revision > run.authorizedRevision);
+  }
+
   _applyPendingSteering(tabId, messages, onUpdate) {
     const run = this._steeringRuns.get(tabId);
     if (!run?.messages.length || this._checkAbort(tabId)) return false;
@@ -8973,7 +8978,12 @@ export class Agent extends LoopDetector {
     const toolCounts = new Map();
     let lastAssistantText = '';
     let lastToolCall = null;
-    for (const m of messages) {
+    const binding = this._activeTaskBinding(messages);
+    // Earlier attempts remain in history, but this handoff describes the
+    // latest authorized revision rather than quoting its superseded answer.
+    const summaryMessages = binding.updates?.some(update => update.kind === 'steering')
+      ? messages.slice(binding.index + 1) : messages;
+    for (const m of summaryMessages) {
       if (m.role === 'assistant') {
         if (Array.isArray(m.tool_calls)) {
           for (const tc of m.tool_calls) {
@@ -36537,7 +36547,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // consider this run. Failures/cancels are still excluded via _traceStatus.
     shareHadProviderCompletion = true;
 
-    while (steps < this.maxSteps) {
+    while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       // Each turn's raw provider text belongs to that turn only: reset so a
       // non-terminal final-text pass can never pair stale output with a later
       // tool-batch result in the shared record.
@@ -36554,6 +36564,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, messages, onUpdate, mode, provider, costState, runId, runOptions,
       );
       if (steeringOutcome?.changed) {
+        // Replace the superseded final turn with one freshly authorized turn.
+        if (steps >= this.maxSteps) steps--;
         forceCompletionVerificationTurn = false;
         allowCompletionFailureTurn = false;
         forceCompletionDoneAfterVerification = false;
@@ -36801,7 +36813,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
-      if (steps < this.maxSteps && this._applyPendingSteering(tabId, messages, onUpdate)) {
+      if (this._applyPendingSteering(tabId, messages, onUpdate)) {
         onUpdate('text', { content: '', replace: true });
         continue;
       }
@@ -36857,7 +36869,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const batchResult = await this._executeToolBatch(
           tabId, result.toolCalls, messages, onUpdate, provider, assistantToolContent, allowedToolNames, steps, runOptions, toolSchemas
         );
-        if (['continue', 'return'].includes(batchResult.action) && !batchResult.status && steps < this.maxSteps
+        if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
             && this._applyPendingSteering(tabId, messages, onUpdate)) {
           onUpdate('text', { content: '', replace: true });
           continue;
@@ -37571,7 +37583,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Past local-only fast paths: the streaming loop below calls the provider.
     shareHadProviderCompletion = true;
 
-    while (steps < this.maxSteps) {
+    while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       // See the non-streaming loop: raw provider text must not survive into
       // a later turn's shared record.
       shareRawResponse = null;
@@ -37587,6 +37599,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabId, messages, onUpdate, mode, provider, costState, runId, runOptions,
       );
       if (steeringOutcome?.changed) {
+        // Replace the superseded final turn with one freshly authorized turn.
+        if (steps >= this.maxSteps) steps--;
         pendingVisionFallbackMessages = null;
         forceCompletionVerificationTurn = false;
         allowCompletionFailureTurn = false;
@@ -37802,7 +37816,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
-        if (steps < this.maxSteps && this._applyPendingSteering(tabId, messages, onUpdate)) {
+        if (this._applyPendingSteering(tabId, messages, onUpdate)) {
           onUpdate('text', { content: '', replace: true });
           continue;
         }
@@ -37845,7 +37859,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const batchResult = await this._executeToolBatch(
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
-          if (['continue', 'return'].includes(batchResult.action) && !batchResult.status && steps < this.maxSteps
+          if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
               && this._applyPendingSteering(tabId, messages, onUpdate)) {
             onUpdate('text', { content: '', replace: true });
             continue;

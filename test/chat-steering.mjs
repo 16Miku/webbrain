@@ -117,6 +117,59 @@ for (const build of ['chrome', 'firefox']) {
 
   for (const streaming of [false, true]) {
     for (const mode of ['act', 'dev']) {
+      for (const phase of ['model', 'tool']) {
+        for (const revisedKind of ['respond', 'execute']) {
+          test(`${build}: ${mode} ${streaming ? 'stream' : 'chat'} final ${phase} step revalidates steering to ${revisedKind}`, async () => {
+            const entered = deferred(), release = deferred(), plans = [], updates = [], dispatched = [];
+            let calls = 0;
+            const next = async () => {
+              if (++calls === 1) {
+                if (phase === 'model') { entered.resolve(); await release.promise; }
+                return { content: 'Obsolete final-step answer', toolCalls: [
+                  { id: 'old-read', function: { name: 'get_accessibility_tree', arguments: '{}' } },
+                  { id: 'old-action', function: { name: 'navigate', arguments: '{"url":"https://example.com/old"}' } },
+                ] };
+              }
+              return revisedKind === 'respond' ? { content: 'Revised answer' } : { toolCalls: [
+                { id: 'revised-action', function: { name: 'navigate', arguments: '{"url":"https://example.com/dashboard"}' } },
+              ] };
+            };
+            const agent = actSetup(Agent, {
+              chat: next,
+              async *chatStream() { const r = await next(); if (r.content) yield { type: 'text', content: r.content }; if (r.toolCalls) yield { type: 'tool_call', content: r.toolCalls.map((call, index) => ({ ...call, index })) }; yield { type: 'done' }; },
+            }, async (_tab, enriched) => {
+              plans.push(enriched.content);
+              return { proceed: true, requestKind: plans.length > 1 ? revisedKind : 'execute',
+                responseOnly: plans.length > 1 && revisedKind === 'respond', requiresStateChange: plans.length > 1 && revisedKind === 'execute' };
+            });
+            agent.maxSteps = 1;
+            agent.executeTool = async (_tab, name, args) => {
+              if (name === 'done') return { done: true, summary: args.summary, outcome: args.outcome };
+              dispatched.push(args.url || name);
+              if (name === 'get_accessibility_tree') { entered.resolve(); await release.promise; return { success: true, pageContent: 'Completed old observation' }; }
+              return { success: true, url: args.url };
+            };
+            const update = (type, data) => updates.push({ type, data });
+            const run = streaming ? agent.processMessageStream(tabId, 'Inspect the page', update, mode, options)
+              : agent.processMessage(tabId, 'Inspect the page', update, mode, [], options);
+            await Promise.race([entered.promise, run.then(r => assert.fail(`Early completion: ${r}`))]);
+            assert.equal(steer(agent, 'Use the corrected task instead').accepted, true); release.resolve();
+            const result = await run;
+            if (revisedKind === 'respond') assert.equal(result, 'Revised answer');
+            else {
+              // The replacement turn keeps the normal step cap and completion verification.
+              assert.match(result, /Step limit reached after 1 steps/);
+              assert.doesNotMatch(result, /Obsolete final-step answer|example\.com\/old/);
+              assert.equal(calls, 2);
+            }
+            assert.equal(plans.length, 2); assert.match(plans[1], /Use the corrected task instead/);
+            assert.deepEqual(dispatched, [...(phase === 'tool' ? ['get_accessibility_tree'] : []), ...(revisedKind === 'execute' ? ['https://example.com/dashboard'] : [])]);
+            assert.equal(updates.some(u => u.type === 'steering_queued'), false);
+            assert.equal(agent.conversations.get(tabId).some(m => m.role === 'assistant' && m.content === 'Obsolete final-step answer' && !m.tool_calls), false);
+            assertPairedTools(agent.conversations.get(tabId));
+          });
+        }
+      }
       for (const [id, tool] of [['summarize-page', 'read_page'], ['download-media', 'screenshot']]) {
         test(`${build}: ${mode} ${streaming ? 'stream' : 'chat'} planner steering skips the original recommended ${tool}`, async () => {
           const entered = deferred(), release = deferred(), plans = [], dispatched = [], recommendedAttempts = [];
@@ -349,11 +402,12 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(agent.isRunning(tabId), false);
     });
 
-    test(`${build}: ${streaming ? 'stream' : 'chat'} returns unconsumed steering when the step budget ends`, async () => {
+    test(`${build}: ${streaming ? 'stream' : 'chat'} final Ask step consumes steering and replaces the obsolete answer`, async () => {
       const entered = deferred(); const release = deferred();
+      let calls = 0;
       const agent = setup(Agent, {
-        chat: async () => { entered.resolve(); await release.promise; return { content: 'Finished' }; },
-        async *chatStream() { entered.resolve(); await release.promise; yield { type: 'text', content: 'Finished' }; yield { type: 'done' }; },
+        chat: async () => { if (++calls === 1) { entered.resolve(); await release.promise; return { content: 'Finished' }; } return { content: 'Corrected answer' }; },
+        async *chatStream() { if (++calls === 1) { entered.resolve(); await release.promise; yield { type: 'text', content: 'Finished' }; } else yield { type: 'text', content: 'Corrected answer' }; yield { type: 'done' }; },
       });
       agent.maxSteps = 1;
       const updates = [];
@@ -364,10 +418,11 @@ for (const build of ['chrome', 'firefox']) {
       await Promise.race([entered.promise, run.then(result => assert.fail(`Early completion: ${result}`))]);
       assert.equal(steer(agent, 'Follow-up').accepted, true);
       release.resolve();
-      await run;
-      assert.deepEqual(updates.find(update => update.type === 'steering_queued').data.messages,
-        [{ id: 'correction-1', text: 'Follow-up' }]);
-      assert.equal(updates.filter(update => update.type === 'steering_applied').length, 0);
+      assert.equal(await run, 'Corrected answer');
+      assert.equal(calls, 2);
+      assert.equal(updates.some(update => update.type === 'steering_queued'), false);
+      assert.equal(updates.filter(update => update.type === 'steering_applied').length, 1);
+      assert.equal(agent.conversations.get(tabId).some(message => message.role === 'assistant' && message.content === 'Finished'), false);
       assert.equal(agent._steeringRuns.size, 0);
     });
   }
