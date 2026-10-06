@@ -606,6 +606,7 @@ const chatNavigationLabelEl = document.getElementById('chat-navigation-label');
 const inputEl = document.getElementById('user-input');
 const inputHighlightEl = document.getElementById('input-highlight');
 const sendBtn = document.getElementById('btn-send');
+const steerBtn = document.getElementById('btn-steer');
 const micBtn = document.getElementById('btn-mic');
 const clearBtn = document.getElementById('btn-clear');
 const appEl = document.getElementById('app');
@@ -1969,6 +1970,8 @@ const tabChatHandoffOwnerId = `sidepanel-chat-${
 const tabInputDrafts = new Map();
 const permissionSkipCommandContextsByTab = new Map();
 const queuedComposerMessagesByTab = new Map();
+const steeringRequestsByTab = new Map();
+const queuedSteeringMessageIds = new Set();
 const composerHistoryNavigationByTab = new Map();
 let queuedComposerMessageSeq = 0;
 
@@ -2234,6 +2237,95 @@ function setQueuedComposerMessages(tabId, messages) {
   if (sameTabId(currentTabId, numericTabId)) renderQueuedComposerMessages(numericTabId);
 }
 
+function queueUnconsumedSteeringMessages(tabId, messages) {
+  const queue = getQueuedComposerMessages(tabId).slice();
+  const incoming = [];
+  for (const item of messages || []) {
+    if (!item?.id || !item.text || queuedSteeringMessageIds.has(item.id)) continue;
+    queuedSteeringMessageIds.add(item.id);
+    while (queuedSteeringMessageIds.size > 1000) {
+      queuedSteeringMessageIds.delete(queuedSteeringMessageIds.values().next().value);
+    }
+    incoming.push({ id: item.id, text: item.text });
+  }
+  if (incoming.length) setQueuedComposerMessages(tabId, [...incoming, ...queue]);
+}
+
+async function steerComposerMessage(tabId, text, { queueId = null, fromComposer = false } = {}) {
+  const numericTabId = Number(tabId);
+  if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)
+      || !isTabProcessing(tabId) || isTabAbortRequested(tabId)
+      || isConversationClearInProgress(tabId) || isAwaitingPlanReviewForTab(tabId)
+      || tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress
+      || steeringRequestsByTab.has(numericTabId)) return false;
+  const draft = String(text || '').trim();
+  if (!draft || draft.startsWith('/')) return false;
+  const requestId = localRunRequestIdForTab(tabId);
+  const messageId = `steer-${createRunRequestId(tabId)}`;
+  steeringRequestsByTab.set(numericTabId, messageId);
+  syncSendButtonState();
+  renderQueuedComposerMessages(tabId);
+  try {
+    const response = await sendToBackground('chat_steer', {
+      tabId: numericTabId, text: draft, messageId,
+      requestId,
+    });
+    if (isConversationClearInProgress(tabId) || clearedConversationRunRequestIds.has(requestId)) return false;
+    if (!response.accepted) {
+      queueUnconsumedSteeringMessages(tabId, [{ id: messageId, text: draft }]);
+    }
+    if (queueId) removeQueuedComposerMessage(tabId, queueId);
+    if (fromComposer) {
+      if (sameTabId(currentTabId, tabId) && inputEl.value.trim() === draft) {
+        resetComposerHistoryNavigation(tabId);
+        saveInputDraftForTab(tabId, '');
+        hideSlashCommandAutocomplete();
+        inputEl.value = '';
+        autoResizeInput();
+      } else if (!sameTabId(currentTabId, tabId)
+          && String(tabInputDrafts.get(numericTabId) || '').trim() === draft) {
+        saveInputDraftForTab(tabId, '');
+      }
+    }
+    if (sameTabId(currentTabId, tabId)) {
+      showComposerToast(t(response.accepted ? 'sp.steer.sent' : 'sp.steer.queued'));
+    }
+    return true;
+  } catch (error) {
+    // An ambiguous transport failure must keep the draft instead of resending
+    // a correction the running agent may already have accepted.
+    if (sameTabId(currentTabId, tabId)) showComposerToast(error?.message || String(error));
+    return false;
+  } finally {
+    steeringRequestsByTab.delete(numericTabId);
+    if (sameTabId(currentTabId, tabId)) {
+      syncSendButtonState();
+      renderQueuedComposerMessages(tabId);
+      void drainQueuedPromptsAfterRunSettles(tabId);
+    }
+  }
+}
+
+function syncSteerButtonState() {
+  if (!steerBtn) return;
+  const draft = inputEl?.value.trim() || '';
+  const sending = steeringRequestsByTab.has(Number(currentTabId));
+  const blocked = sending || !sameTabId(currentTabId, renderedTabId) || isTabAbortRequested(currentTabId)
+    || isAwaitingPlanReviewForTab() || isConversationClearInProgress()
+    || tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress;
+  steerBtn.classList.toggle('hidden', !isProcessing);
+  steerBtn.disabled = !isProcessing || !draft || draft.startsWith('/') || blocked;
+  queuedMessagesEl?.querySelectorAll('.queued-message-steer').forEach(button => {
+    button.classList.toggle('hidden', !isProcessing);
+    button.closest('.queued-message')?.classList.toggle('has-steer', isProcessing);
+    button.disabled = !isProcessing || blocked;
+  });
+  const sendLabel = isProcessing ? 'sp.queue.send' : 'sp.btn.send';
+  sendBtn.title = t(sendLabel);
+  sendBtn.setAttribute('aria-label', t(sendLabel));
+  sendBtn.dataset.i18nTitle = sendLabel;
+}
+
 function queuedComposerButton(className, action, queueId, labelKey, svgPath) {
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -2285,9 +2377,21 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
       '<path d="M18 6L6 18"></path><path d="M6 6l12 12"></path>',
     );
 
-    row.append(label, text, edit, remove);
+    edit.disabled = remove.disabled = steeringRequestsByTab.has(Number(tabId));
+    row.append(label, text);
+    if (isTabProcessing(tabId) && !isTabAbortRequested(tabId)) {
+      const steer = queuedComposerButton(
+        'queued-message-steer', 'steer', item.id, 'sp.steer.title',
+        '<path d="M4 19v-5a7 7 0 0 1 7-7h9"></path><path d="m15 2 5 5-5 5"></path>',
+      );
+      steer.disabled = steeringRequestsByTab.has(Number(tabId)) || isAwaitingPlanReviewForTab(tabId);
+      row.classList.add('has-steer');
+      row.appendChild(steer);
+    }
+    row.append(edit, remove);
     queuedMessagesEl.appendChild(row);
   });
+  syncSteerButtonState();
 }
 
 function shiftQueuedComposerMessage(tabId) {
@@ -2522,6 +2626,7 @@ function clearQueuedComposerMessagesForTab(tabId) {
 function drainQueuedComposerMessageForCurrentTab() {
   if (isProcessing || currentTabId == null || renderedTabId !== currentTabId) return false;
   if (inputEl.value !== '') return false;
+  if (steeringRequestsByTab.has(Number(currentTabId))) return false;
   const item = shiftQueuedComposerMessage(currentTabId);
   if (!item) return false;
   resetComposerHistoryNavigation(currentTabId);
@@ -7993,6 +8098,7 @@ function isOutOfBandSlashDraft(value) {
 
 function syncSendButtonState() {
   if (!sendBtn) return;
+  syncSteerButtonState();
   const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
   if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
     sendBtn.disabled = true;
@@ -8003,6 +8109,10 @@ function syncSendButtonState() {
     return;
   }
   if (isConversationClearInProgress()) {
+    sendBtn.disabled = true;
+    return;
+  }
+  if (steeringRequestsByTab.has(Number(currentTabId))) {
     sendBtn.disabled = true;
     return;
   }
@@ -8913,6 +9023,7 @@ async function sendMessage(extraChatParams = {}) {
     : '';
   const rawAgentTabId = Number(chatExtraParams.__agentTabId);
   const agentTabId = Number.isFinite(rawAgentTabId) ? rawAgentTabId : null;
+  delete chatExtraParams.__deliveryMode;
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
@@ -8987,6 +9098,7 @@ async function sendMessage(extraChatParams = {}) {
     await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
     return false;
   }
+  if (steeringRequestsByTab.has(Number(tabId))) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
   text = normalizeScreenshotCommandText(text);
@@ -9028,6 +9140,9 @@ async function sendMessage(extraChatParams = {}) {
     if (text.startsWith('/')) {
       showBusySlashCommandNotice();
       return false;
+    }
+    if (extraChatParams?.__deliveryMode === 'immediate') {
+      return steerComposerMessage(tabId, text, { fromComposer: true });
     }
     return enqueueQueuedComposerMessage(tabId, text);
   }
@@ -9914,6 +10029,12 @@ function handleAgentUpdateMessage(msg) {
 
   if (msg.requestId && clearedConversationRunRequestIds.has(String(msg.requestId))) return;
 
+  // Fallback queues belong to their source tab even while another tab is visible.
+  if (msg.type === 'steering_queued') {
+    if (isConversationClearInProgress(msg.tabId)) return;
+    queueUnconsumedSteeringMessages(msg.tabId, msg.data?.messages);
+  }
+
   // Drop updates that belong to a different tab's run. agent_update is a
   // window-wide broadcast (chrome.runtime.sendMessage has no per-tab
   // targeting from the service worker), and the side panel mounts a
@@ -9941,6 +10062,16 @@ function handleAgentUpdateMessage(msg) {
   const { type, data } = msg;
 
   switch (type) {
+    case 'steering_applied': {
+      const id = String(data?.id || '');
+      if (id && !messagesEl.querySelector(`[data-steering-message-id="${CSS.escape(id)}"]`)) {
+        const userEl = addMessage('user', data.text, { beforeCurrentAssistant: true });
+        userEl.dataset.steeringMessageId = id;
+        schedulePersist();
+      }
+      break;
+    }
+
     case 'thinking':
       if (data?.note) {
         // Planner notes carry more information than a generic wait state, so
@@ -14454,6 +14585,7 @@ if (selectionAskActionEl) {
 }
 
 sendBtn.addEventListener('click', sendMessage);
+steerBtn?.addEventListener('click', () => sendMessage({ __deliveryMode: 'immediate' }));
 
 document.addEventListener('keydown', handleGlobalKeydown, true);
 
@@ -14464,6 +14596,9 @@ queuedMessagesEl?.addEventListener('click', (e) => {
   const queueId = btn.dataset.queueId;
   if (action === 'edit') {
     editQueuedComposerMessage(currentTabId, queueId);
+  } else if (action === 'steer') {
+    const item = getQueuedComposerMessages(currentTabId).find(item => item.id === queueId);
+    if (item) void steerComposerMessage(currentTabId, item.text, { queueId });
   } else if (action === 'delete') {
     deleteQueuedComposerMessage(currentTabId, queueId);
   }
@@ -14491,7 +14626,7 @@ inputEl.addEventListener('keydown', (e) => {
   }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    sendMessage();
+    sendMessage(e.altKey && isProcessing ? { __deliveryMode: 'immediate' } : {});
     return;
   }
 });
@@ -14501,6 +14636,7 @@ inputEl.addEventListener('scroll', syncSlashCommandHighlightScroll);
 inputEl.addEventListener('focus', updateSlashCommandAutocomplete);
 inputEl.addEventListener('blur', () => setTimeout(hideSlashCommandAutocomplete, 120));
 document.addEventListener('wb-locale-changed', () => {
+  syncSendButtonState();
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
   syncSelectionScopeUi();

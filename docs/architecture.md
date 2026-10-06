@@ -73,6 +73,8 @@ Model tiering is separate from mode: `compact | mid | full` controls how many no
 
 The user types a message, the panel sends a detached `{action: 'chat_start', text, mode, tabId, requestId}` request, then reconnects to the background-owned run journal for `agent_update` events. The acknowledged start becomes the existing `chat` handler and `agent.processMessage()` lifecycle; closing or reloading the panel does not transfer ownership or start the run again. The panel renders tool calls, results, plan-review cards, clarification prompts, and the final answer incrementally.
 
+While a run is active, Send / Enter queues follow-up messages per tab. **Steer** / **Alt+Enter** sends a text correction to that same run; queued messages also have a Steer action. The background accepts corrections only from the extension chat panel and only for the matching run request ID. Both agent loops consume corrections as user messages before the next model request. An already running tool finishes; the remaining tool calls in its batch receive skipped results before the correction enters the conversation. Steering preserves the current mode and permission checks. If the run ends before consuming a correction, a journal event puts it at the front of that tab's queue for the next turn. A transport error retains the draft without automatically resending it.
+
 Each new user/assistant pair starts in a reading-first scroll state: the question
 stays visible while a long response grows instead of being pushed immediately
 to the live edge. A floating control changes between **Follow response**,

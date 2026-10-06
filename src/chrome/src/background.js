@@ -2822,6 +2822,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 async function handleMessage(msg, sender) {
+  if (msg.action === 'chat_steer') {
+    // Content scripts must never turn page text into a trusted human correction.
+    if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+      throw new Error('Steering is available from the chat panel only.');
+    }
+    return agent.steerMessage(Number(msg.tabId), msg.text, {
+      requestId: msg.requestId, messageId: msg.messageId,
+    });
+  }
+
   // Only Settings may start OAuth or change the user's remote-memory choice.
   // Content scripts share this message bus and must not control the connection.
   if (String(msg.action || '').startsWith('memcode_recall_')
