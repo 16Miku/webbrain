@@ -2,7 +2,7 @@ import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confide
 import { redactSystemOneText, wrapSystemOneData } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
@@ -129,7 +129,7 @@ import {
 } from '../providers/provider-compatibility.js';
 import { resolveMaxOutputTokens } from '../providers/context-windows.js';
 import { generateImage, readMediaConfig } from './generative-media.js';
-import { mediaPermissionUrl, validateMediaConfig } from './media-config.js';
+import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
@@ -1051,6 +1051,9 @@ export class Agent extends LoopDetector {
     // at call time so rotating the key doesn't require a restart.
     this.captchaSolverEnabled = false;
     this.captchaProviderIds = [];
+    // Only advertise media generation after valid settings have hydrated.
+    // Keep credentials in storage; tool execution re-reads and validates them.
+    this.imageGenConfigured = false;
     this._captchaGateStates = new Map(); // tabId -> { key, status, publicGate, challengeFrameId? }
     this._cloudflareManagedChallenges = new Map(); // tabId -> sanitized response-backed interstitial state
     this._cloudflareManagedChallengeTransitions = new Map(); // tabId -> serialized transition promise
@@ -21585,6 +21588,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const provider = this._activeProvider(tabId);
     const plannerMessages = buildPlannerIntentMessages(enriched, tabUrl, tabTitle, historyDigest, {
       noThink: this._plannerPrefersNoThinkPrompt(provider),
+      imageGenConfigured: this.imageGenConfigured,
+      tier: this._resolvePromptTier(provider),
       scheduledResume: runOptions?.scheduledResume === true,
       locale,
       priorUserTask: followUpContext.priorUserTask,
@@ -21815,6 +21820,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const skillCatalog = this._skillCatalog(conversationMode, tier);
     const plannerMessages = buildPlannerMessages(enriched, tabUrl, tabTitle, historyDigest, {
       noThink: this._plannerPrefersNoThinkPrompt(provider),
+      imageGenConfigured: this.imageGenConfigured,
+      tier,
       scheduledResume: runOptions?.scheduledResume === true,
       allowApi: this.isApiMutationsAllowed(tabId),
       skillCatalog,
@@ -25562,7 +25569,14 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const tier = this._resolvePromptTier();
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
     if (tier === 'mid') return SYSTEM_PROMPT_ACT_MID;
-    return SYSTEM_PROMPT_ACT;
+    return `${SYSTEM_PROMPT_ACT}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`;
+  }
+
+  setImageGenConfig(config) {
+    const next = isImageGenConfigured(config);
+    if (this.imageGenConfigured === next) return;
+    this.imageGenConfigured = next;
+    this._refreshSystemPrompts();
   }
 
   setWebMCPEnabled(enabled) {
@@ -42944,7 +42958,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const attachmentToolNames = new Set(
-        getToolsForMode(mode, { tier: provider.promptTier })
+        getToolsForMode(mode, { tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured })
           .map(tool => tool?.function?.name)
           .filter(Boolean),
       );
@@ -43054,6 +43068,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     let tools = getToolsForMode(mode, {
       strictSecretMode: this.strictSecretMode,
       tier,
+      imageGenConfigured: this.imageGenConfigured,
       accessibilityTreeMaxChars: readWindow.treePageChars,
       webMcpAvailable: this.webMcpEnabled === true,
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
@@ -43298,6 +43313,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       tools = getToolsForMode(mode, {
         strictSecretMode: this.strictSecretMode,
         tier,
+        imageGenConfigured: this.imageGenConfigured,
         accessibilityTreeMaxChars: readWindow.treePageChars,
         webMcpAvailable: this.webMcpEnabled === true,
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
@@ -44387,6 +44403,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     let tools = getToolsForMode(mode, {
       strictSecretMode: this.strictSecretMode,
       tier,
+      imageGenConfigured: this.imageGenConfigured,
       accessibilityTreeMaxChars: readWindow.treePageChars,
       webMcpAvailable: this.webMcpEnabled === true,
       skillLoaderTool: this._skillLoaderDefinition(mode, tier),
@@ -44467,6 +44484,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       tools = getToolsForMode(mode, {
         strictSecretMode: this.strictSecretMode,
         tier,
+        imageGenConfigured: this.imageGenConfigured,
         accessibilityTreeMaxChars: readWindow.treePageChars,
         webMcpAvailable: this.webMcpEnabled === true,
         skillLoaderTool: this._skillLoaderDefinition(mode, tier),
