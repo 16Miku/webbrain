@@ -1,4 +1,5 @@
 import { BaseLLMProvider } from './base.js';
+import { retryAfterMs } from './model-retry.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
   baseModelNameSniffedVision,
@@ -436,9 +437,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     return body;
   }
 
-  _httpError(status, body, prefix) {
+  _httpError(status, body, prefix, retryAfter = null) {
     const error = new Error(`${prefix}: ${this._formatHttpError(status, body)}`);
     error.httpStatus = status;
+    if (status === 429) error.retryAfterMs = retryAfterMs(retryAfter);
     try {
       const providerCode = JSON.parse(body || '{}')?.error?.code;
       if (typeof providerCode === 'string' && providerCode) error.code = providerCode;
@@ -951,7 +953,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 500, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw this._httpError(res.status, err, `${this.name} error ${res.status}`);
+      throw this._httpError(res.status, err, `${this.name} error ${res.status}`, res.headers?.get?.('retry-after'));
     }
     let data;
     try { data = await res.json(); } catch (error) {
@@ -979,7 +981,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
     if (!res.ok) {
       const err = await this._readErrorResponse(res, 1200, options);
-      const streamError = this._httpError(res.status, err, `${this.name} stream error ${res.status}`);
+      const streamError = this._httpError(res.status, err, `${this.name} stream error ${res.status}`, res.headers?.get?.('retry-after'));
       streamError.isResponsesStreamError = true;
       throw streamError;
     }
@@ -1131,7 +1133,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 500, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw this._httpError(res.status, err, `${this.name} error ${res.status}`);
+      throw this._httpError(res.status, err, `${this.name} error ${res.status}`, res.headers?.get?.('retry-after'));
     }
 
     let data;
@@ -1175,7 +1177,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
 
     if (!res.ok) {
       const err = await this._readErrorResponse(res, 1200, options);
-      throw this._httpError(res.status, err, `${this.name} stream error ${res.status}`);
+      throw this._httpError(res.status, err, `${this.name} stream error ${res.status}`, res.headers?.get?.('retry-after'));
     }
 
     if (!res.body?.getReader) {

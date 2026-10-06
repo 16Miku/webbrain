@@ -16170,7 +16170,9 @@ test('agent trace instrumentation: turn/step boundaries, retries-before-wait, an
     const streamedClose = streamingBody.indexOf('closeTraceStep(this._traceStepEndForResult');
     const streamedToolBatch = streamingBody.indexOf('await this._executeToolBatch(');
     assert.ok(streamedClose >= 0 && streamedClose < streamedToolBatch, `${browser}: streaming LLM step stays open through terminal tool exits`);
-    assert.match(nonStreamingBody, /await trace\.recordLLMRetry\(runId, steps, \{ delayMs: 2000,[\s\S]*?await new Promise\(r => setTimeout\(r, 2000\)\)/, `${browser}: retry record is not durable before backoff`);
+    assert.match(nonStreamingBody, /retryModelCall\(e,[\s\S]*?onRetry: async[\s\S]*?await trace\.recordLLMRetry\(runId, steps, \{ delayMs,/, `${browser}: retry hook must durably record the actual backoff`);
+    const retrySource = fs.readFileSync(path.join(ROOT, `src/${browser}/src/providers/model-retry.js`), 'utf8');
+    assert.match(retrySource, /await onRetry\([\s\S]*?await sleep\(delayMs\)/, `${browser}: retry record is not durable before backoff`);
     assert.match(nonStreamingBody, /await trace\.recordTurnEnd\([\s\S]*?await this\._endTraceRun/, `${browser}: non-streaming turn_end is not flushed before run close`);
     assert.match(streamingBody, /await trace\.recordTurnEnd\([\s\S]*?await this\._endTraceRun/, `${browser}: streaming turn_end is not flushed before run close`);
     const finishStart = streamingBody.indexOf('const finish = (response, status = _traceStatus) => {');
