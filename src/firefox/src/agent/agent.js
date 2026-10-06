@@ -5880,11 +5880,19 @@ export class Agent extends LoopDetector {
         recommendedAction: null,
       };
       const readState = this.readCompletenessStates.get(tabId);
+      const pageUrl = await this._currentUrl(tabId);
+      if (this._checkAbort(tabId) || this._steeringRuns.get(tabId) !== run) break;
+      if (run.revision !== revision || this._hasPendingSteering(tabId)) continue;
+      const adapterName = getActiveAdapter(pageUrl)?.name || '';
+      // A plan or load_skill activates tools for that revision only. Rebuild
+      // the current site's automatic baseline, excluding the old task's
+      // recommended action, before the revised planner can choose new skills.
+      this._resetActiveSkillsForRun(tabId, { refreshPrompt: false });
+      this.lastSeenAdapter.set(tabId, adapterName);
+      this._preactivateNyTimesSkillForRun(tabId, mode);
+      this._preactivateHumanizerSkillForRun(tabId, mode);
+      this._refreshSystemPromptForTab(tabId, mode);
       if (readState) {
-        const pageUrl = await this._currentUrl(tabId);
-        if (this._checkAbort(tabId) || this._steeringRuns.get(tabId) !== run) break;
-        if (run.revision !== revision || this._hasPendingSteering(tabId)) continue;
-        const adapterName = getActiveAdapter(pageUrl)?.name || '';
         // Let this revision's planner establish its own read obligation.
         // Keep run ownership for teardown, but discard earlier coverage and
         // obligations, including ones armed by a superseded planner result.

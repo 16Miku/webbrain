@@ -440,6 +440,53 @@ for (const build of ['chrome', 'firefox']) {
     });
   }
 
+  for (const activatedBy of ['plan', 'load_skill']) {
+    test(`${build}: steering replaces skills activated by ${activatedBy} and refreshes the site baseline`, async () => {
+      let phase = 'original', pageUrl = 'https://mail.google.com/mail/u/0/#inbox';
+      const agent = actSetup(Agent, {}, async () => {
+        if (phase !== 'original') {
+          assert.deepEqual([...(agent.activeSkillIds.get(tabId) || [])], phase === 'dashboard' ? [] : ['humanizer'],
+            'Only the current site baseline may reach the revised planner');
+        }
+        return { proceed: true, requestKind: 'execute', requiresStateChange: false,
+          skillIds: phase === 'original' ? ['freeskillz-xyz'] : phase === 'weather' ? ['open-meteo-weather'] : [] };
+      });
+      const records = [['freeskillz-xyz', 'FreeSkillz.xyz'], ['humanizer', 'Humanizer'], ['open-meteo-weather', 'Open-Meteo weather']]
+        .map(([id, name]) => ({ id, name, sourceType: 'built-in', sourceUrl: `skills/${id}.md`, content: read(build, `../skills/${id}.md`), createdAt: 0 }));
+      records[0].content += '\nSUPERSEDED_SKILL_BODY_SENTINEL\n';
+      agent.setCustomSkills(records);
+      agent.conversationModes.set(tabId, 'act'); agent.lastSeenAdapter.set(tabId, 'gmail');
+      agent._currentUrl = async () => pageUrl;
+      agent._getTabUrlTitle = async () => ({ tabUrl: pageUrl, tabTitle: 'Current page' });
+      await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+      const messages = [{ role: 'system', content: 'sys' }]; agent.conversations.set(tabId, messages);
+      assert.equal(agent._preactivateHumanizerSkillForRun(tabId, 'act'), true);
+      if (activatedBy === 'plan') {
+        await agent._maybeRunPlannerGate(tabId, messages, { role: 'user', content: 'Download this media.' }, () => {}, 'act', null, null, null, options);
+      } else {
+        messages.push({ role: 'user', content: 'Download this media.' });
+        assert.equal(agent._loadSkillForRun(tabId, { skill_id: 'freeskillz-xyz' }).success, true);
+      }
+      agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: false });
+      assert.match(messages[0].content, /SUPERSEDED_SKILL_BODY_SENTINEL/);
+      assert.ok(agent._activeSkillToolForName(tabId, 'download_public_media'), 'Old consequential tool must really be active');
+      const refresh = async text => {
+        assert.equal(steer(agent, text, phase).accepted, true);
+        assert.equal((await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options)).gate.proceed, true);
+        assert.equal(agent._activeSkillToolForName(tabId, 'download_public_media'), null);
+        assert.doesNotMatch(messages[0].content, /SUPERSEDED_SKILL_BODY_SENTINEL/);
+      };
+      phase = 'weather'; await refresh('Cancel the download; check the weather instead.');
+      assert.deepEqual([...(agent.activeSkillIds.get(tabId) || [])], ['humanizer', 'open-meteo-weather']);
+      assert.ok(agent._skillToolDefinitions(tabId, 'act', 'full').length, 'The revised plan must activate its own tool');
+      phase = 'mail'; await refresh('Cancel the weather request; inspect this email instead.');
+      assert.deepEqual([...(agent.activeSkillIds.get(tabId) || [])], ['humanizer']);
+      pageUrl = 'https://example.com/dashboard'; phase = 'dashboard'; await refresh('Use the dashboard instead.');
+      assert.equal(agent.activeSkillIds.has(tabId), false, 'A baseline from the old site cannot survive navigation');
+      agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+    });
+  }
+
   test(`${build}: steering during planning discards the superseded intent`, async () => {
     const entered = deferred(), release = deferred(), plans = [];
     const agent = actSetup(Agent, {}, async (_tab, enriched) => {
