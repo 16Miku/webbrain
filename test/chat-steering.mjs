@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { serializeConversationForSession } from '../src/chrome/src/agent/conversation-persistence.js';
 
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
 const api = {
@@ -57,6 +58,21 @@ function allowBatchPreparation(agent) {
   agent._shouldAutoScreenshot = () => false;
 }
 
+function actSetup(Agent, implementation = {}, classify = async () => ({
+  proceed: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: false,
+})) {
+  const agent = setup(Agent, implementation);
+  delete agent._maybeRunPlannerGate;
+  agent._plannerMode = () => 'off';
+  agent._runPlannerIntentGate = classify;
+  agent._persistSubmittedTurn = async () => {};
+  agent._getTabUrlTitle = async () => ({ tabUrl: 'https://www.linkedin.com/messaging/thread/example/', tabTitle: 'Messaging' });
+  agent._ensureProgressSessionForCurrentTask = async () => {};
+  allowBatchPreparation(agent);
+  agent._completionDoneBlock = () => null;
+  return agent;
+}
+
 function assertPairedTools(messages) {
   let pending = new Set();
   for (const message of messages) {
@@ -92,7 +108,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(await agent._maybeJevFastTurn(tabId, 'Original task', [], 'act', new Set(), {}, null), null);
     const messages = [];
     assert.ok(agent._applyPendingSteering(tabId, messages, (type, data) => updates.push({ type, data })));
-    assert.deepEqual(messages, [{ role: 'user', content: 'Use blue' }, { role: 'user', content: 'Keep the logo' }]);
+    assert.deepEqual(messages.map(({ role, content }) => ({ role, content })), [{ role: 'user', content: 'Use blue' }, { role: 'user', content: 'Keep the logo' }]);
     assert.equal(updates.filter(update => update.type === 'steering_applied').length, 2);
     agent._finishSteeringRun(tabId);
     assert.equal(steer(agent, 'Too late').accepted, false);
@@ -100,6 +116,96 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   for (const streaming of [false, true]) {
+    test(`${build}: ${streaming ? 'stream' : 'chat'} reauthorizes Ipek steering with the real Act guard`, async () => {
+      const entered = deferred(), release = deferred();
+      const plans = [], dispatched = [], requests = [];
+      let calls = 0;
+      const next = async messages => {
+        requests.push(structuredClone(messages));
+        if (++calls === 1) {
+          entered.resolve(); await release.promise;
+          return { toolCalls: [{ id: 'old', function: { name: 'navigate', arguments: '{"url":"https://example.com/old"}' } }] };
+        }
+        if (calls === 2) return { toolCalls: [{ id: 'calendar', function: { name: 'navigate', arguments: '{"url":"https://calendar.google.com/"}' } }] };
+        return { toolCalls: [{ id: 'done', function: { name: 'done', arguments: '{"summary":"Revised task executed","outcome":"success"}' } }] };
+      };
+      const agent = actSetup(Agent, {
+        chat: next,
+        async *chatStream(messages) { const result = await next(messages); yield { type: 'tool_call', content: result.toolCalls }; yield { type: 'done' }; },
+      }, async (_tab, enriched) => {
+        plans.push(enriched.content);
+        return { proceed: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: false };
+      });
+      agent.executeTool = async (_tab, name, args) => {
+        if (name === 'done') {
+          const guard = agent._planExecutionGuards.get(tabId);
+          assert.equal(guard.taskDrifted, false);
+          assert.equal(agent._planOnlyTerminalDecision(tabId, args.summary, { viaDone: true, outcome: args.outcome }), null);
+          return { done: true, summary: args.summary, outcome: args.outcome };
+        }
+        dispatched.push(args.url);
+        return { success: true, url: args.url };
+      };
+      const run = streaming
+        ? agent.processMessageStream(tabId, 'add this event to my google calendar', () => {}, 'act', options)
+        : agent.processMessage(tabId, 'add this event to my google calendar', () => {}, 'act', [], options);
+      await Promise.race([entered.promise, run.then(result => assert.fail(`Early completion: ${result}`))]);
+      steer(agent, 'I mean Ipek’s message'); release.resolve();
+      assert.equal(await run, 'Revised task executed');
+      assert.equal(plans.length, 2);
+      assert.match(plans[1], /add this event to my google calendar/);
+      assert.match(plans[1], /Ipek/);
+      assert.deepEqual(dispatched, ['https://calendar.google.com/']);
+      assertPairedTools(requests.at(-1));
+    });
+
+    for (const replacement of [false, true]) {
+      test(`${build}: ${streaming ? 'stream' : 'chat'} steering ${replacement ? 'replaces' : 'cancels'} the active Act task`, async () => {
+        const entered = deferred(), release = deferred(), dispatched = [];
+        let modelCalls = 0, planCalls = 0;
+        const next = async () => {
+          if (++modelCalls === 1) {
+            entered.resolve(); await release.promise;
+            return { toolCalls: [{ id: 'stale', function: { name: 'navigate', arguments: '{"url":"https://calendar.google.com/"}' } }] };
+          }
+          if (!replacement) return { content: 'Calendar task cancelled.' };
+          if (modelCalls === 2) return { toolCalls: [{ id: 'replacement', function: { name: 'navigate', arguments: '{"url":"https://example.com/dashboard"}' } }] };
+          return { toolCalls: [{ id: 'done', function: { name: 'done', arguments: '{"summary":"Dashboard opened","outcome":"success"}' } }] };
+        };
+        const agent = actSetup(Agent, {
+          chat: next,
+          async *chatStream() {
+            const result = await next();
+            if (result.content) yield { type: 'text', content: result.content };
+            if (result.toolCalls) yield { type: 'tool_call', content: result.toolCalls };
+            yield { type: 'done' };
+          },
+        }, async (_tab, enriched) => {
+          if (++planCalls > 1) {
+            assert.match(enriched.content, /Cancel the calendar task/);
+            if (!replacement) return { proceed: true, responseOnly: true, requestKind: 'respond' };
+          }
+          return { proceed: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: false };
+        });
+        agent.executeTool = async (_tab, name, args) => {
+          if (name === 'done') {
+            assert.equal(agent._planOnlyTerminalDecision(tabId, args.summary, { viaDone: true, outcome: args.outcome }), null);
+            return { done: true, summary: args.summary, outcome: args.outcome };
+          }
+          dispatched.push(args.url); return { success: true, url: args.url };
+        };
+        const run = streaming
+          ? agent.processMessageStream(tabId, 'Add the event to my calendar', () => {}, 'act', options)
+          : agent.processMessage(tabId, 'Add the event to my calendar', () => {}, 'act', [], options);
+        await Promise.race([entered.promise, run.then(result => assert.fail(`Early completion: ${result}`))]);
+        steer(agent, replacement ? 'Cancel the calendar task; open my dashboard instead' : 'Cancel the calendar task; just confirm cancellation');
+        release.resolve();
+        assert.equal(await run, replacement ? 'Dashboard opened' : 'Calendar task cancelled.');
+        assert.equal(planCalls, 2);
+        assert.deepEqual(dispatched, replacement ? ['https://example.com/dashboard'] : []);
+      });
+    }
+
     test(`${build}: ${streaming ? 'stream' : 'chat'} corrects an in-flight response before dispatch`, async () => {
       const entered = deferred();
       const release = deferred();
@@ -166,6 +272,308 @@ for (const build of ['chrome', 'firefox']) {
         [{ id: 'correction-1', text: 'Follow-up' }]);
       assert.equal(updates.filter(update => update.type === 'steering_applied').length, 0);
       assert.equal(agent._steeringRuns.size, 0);
+    });
+  }
+
+  test(`${build}: revisions preserve authority through recovery and reset completion evidence`, async () => {
+    const plans = [];
+    const agent = actSetup(Agent, {}, async (_tab, enriched) => {
+      plans.push(enriched.content);
+      return { proceed: true, requestKind: 'execute', requiresStateChange: true };
+    });
+    await agent._claimRunEntry(tabId, 'interactive', options);
+    agent._beginSteeringRun(tabId, () => {}, options);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event to my calendar.' }];
+    agent.conversations.set(tabId, messages);
+    const original = agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    agent._markPlanExecutionToolCall(tabId, 'click', { success: true }, { consequential: true });
+    assert.equal(agent._executionEvidenceSatisfied(original), true);
+    steer(agent, 'Use Ipek’s message', 'a'); steer(agent, 'Use the work calendar', 'b'); steer(agent, 'Use the work calendar', 'b');
+    const refreshed = await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    assert.equal(refreshed.gate.proceed, true);
+    assert.equal(plans.length, 1);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.equal(guard.successfulConsequentialToolCalls, 0);
+    assert.equal(agent._executionEvidenceSatisfied(guard), false);
+    assert.notEqual(guard.taskKey, original.taskKey);
+    const binding = agent._activeTaskBinding(messages);
+    assert.deepEqual(binding.updates.map(update => update.text), ['Use Ipek’s message', 'Use the work calendar']);
+    messages.push(...Array.from({ length: 70 }, () => ({ role: 'assistant', content: 'Long tool-loop context '.repeat(1000) })));
+    const recovered = serializeConversationForSession(messages, { maxBytes: 40000, preserveMessageIndices: binding.pinnedIndices }).messages;
+    assert.equal(agent._activeTaskBinding(recovered).text, binding.text);
+    recovered.push({ role: 'user', content: 'New task: inspect the dashboard.' });
+    assert.equal(agent._activeTaskBinding(recovered).text, 'New task: inspect the dashboard.');
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  test(`${build}: steering during planning discards the superseded intent`, async () => {
+    const entered = deferred(), release = deferred(), plans = [];
+    const agent = actSetup(Agent, {}, async (_tab, enriched) => {
+      plans.push(enriched.content);
+      if (plans.length === 1) {
+        agent._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: 'complete_thread' });
+        entered.resolve(); await release.promise;
+      }
+      return { proceed: true, requestKind: 'execute', requiresStateChange: true };
+    });
+    delete agent._beginReadCompleteness;
+    agent._currentUrl = async () => 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+    await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
+    agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    const token = await agent._beginReadCompleteness(tabId, messages[1].content, options);
+    steer(agent, 'From Ipek', 'a');
+    const refresh = agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    await entered.promise;
+    assert.ok(agent._readCompletenessBlock(tabId), 'Superseded planner armed a read obligation');
+    steer(agent, 'Tomorrow instead', 'b'); release.resolve();
+    await refresh;
+    assert.equal(plans.length, 2);
+    assert.match(plans[1], /Ipek.*Tomorrow/);
+    assert.equal(agent._steeringRuns.get(tabId).authorizedRevision, 2);
+    assert.equal(agent._readCompletenessBlock(tabId), null, 'Superseded planner obligation cannot leak into the latest revision');
+    agent._clearReadCompleteness(tabId, token);
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  for (const plannerMode of ['off', 'try']) {
+    test(`${build}: ${plannerMode} steering replaces read obligations and discards old coverage`, async () => {
+      const agent = actSetup(Agent);
+      delete agent._beginReadCompleteness;
+      delete agent._runPlannerIntentGate;
+      agent._plannerMode = () => plannerMode;
+      agent.setPlanReviewSettings({ mode: 'never' });
+      let pageUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+      agent._currentUrl = async () => pageUrl;
+      agent._getTabUrlTitle = async () => ({ tabUrl: pageUrl, tabTitle: 'Current page' });
+      const plan = {
+        request_kind: 'execute', requires_state_change: true, requires_submission: false,
+        read_scope: 'none', summary: 'Open the dashboard', confidence: 0.99,
+        steps: [{ id: '1', action: 'Open the dashboard', tools: ['navigate'] }],
+        memory: { use_scratchpad: false, use_progress_ledger: false }, risks: [],
+      };
+      agent._chatWithCostAllowance = async () => ({ content: JSON.stringify(plan) });
+      await agent._claimRunEntry(tabId, 'interactive', options);
+      agent._beginSteeringRun(tabId, () => {}, options);
+      const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Summarize this Gmail thread.' }];
+      agent.conversations.set(tabId, messages);
+      agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: false });
+      const originalOptions = { ...options, recommendedAction: { id: 'summarize-thread' } };
+      const token = await agent._beginReadCompleteness(tabId, messages[1].content, originalOptions);
+      assert.ok(agent._readCompletenessBlock(tabId), 'Original thread read is unfinished');
+
+      steer(agent, 'Cancel the thread summary; open my dashboard instead', 'dashboard');
+      const refresh = () => agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, originalOptions);
+      assert.equal((await refresh()).gate.proceed, true);
+      assert.equal(agent._readCompletenessBlock(tabId), null, 'Cancelled read must not block the replacement task');
+      assert.equal(agent.readCompletenessStates.get(tabId).runToken, token);
+
+      agent._armReadCompletenessFromPlan(tabId, { request_kind: 'execute', read_scope: 'complete_thread' });
+      agent._recordReadCompleteness(tabId, 'get_accessibility_tree', {
+        filter: 'all', maxDepth: 15, maxChars: 12000, ref_id: 'thread', page: 1,
+      }, {
+        pageContent: 'Earlier thread', conversationRootRefId: 'thread', conversationExpansionState: 'expanded',
+        treeRevision: 'earlier-thread', page: 1, hasMore: false, truncated: false,
+      });
+      assert.equal(agent.readCompletenessStates.get(tabId).complete, true, 'Fixture has genuine terminal read coverage');
+      plan.read_scope = 'complete_thread'; plan.summary = 'Read the latest reply';
+      plan.steps = [{ id: '1', action: 'Read the complete thread', tools: ['get_accessibility_tree'] }];
+      steer(agent, 'Read the thread again including the latest reply', 'latest');
+      assert.equal((await refresh()).gate.proceed, true);
+      assert.ok(agent._readCompletenessBlock(tabId), 'Revised full-thread read needs fresh coverage');
+      assert.deepEqual(agent.readCompletenessStates.get(tabId).treePages, []);
+      assert.equal(agent.readCompletenessStates.get(tabId).expansionConfirmed, false);
+
+      pageUrl = 'https://example.com/dashboard'; plan.read_scope = 'none';
+      steer(agent, 'Stay on the dashboard', 'stay');
+      assert.equal((await refresh()).gate.proceed, true);
+      assert.equal(agent.readCompletenessStates.get(tabId).communicationThread, false, 'Classification uses the current page');
+      agent._clearReadCompleteness(tabId, token);
+      assert.equal(agent.readCompletenessStates.has(tabId), false, 'Run teardown still owns the revised state');
+      agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+    });
+  }
+
+  test(`${build}: prior submissions permit verified recovery controls but block ambiguous or consequential actions`, () => {
+    const agent = actSetup(Agent);
+    delete agent._isFormValidationCandidate;
+    agent.conversations.set(tabId, [{ role: 'user', content: 'Inspect the previous publication' }]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    guard.steeringPriorSubmission = { dispatched: true, observedAfterSubmit: false };
+    const safe = { isSubmit: false, resolvedNonSubmitTarget: true };
+    for (const [name, args] of [
+      ['click', { text: 'Close' }], ['click_ax', { ref_id: 'cancel' }],
+      ['iframe_click', { selector: '#keep-editing' }],
+    ]) {
+      assert.equal(agent._steeringPriorSubmissionBlock(tabId, name, args, safe), null);
+      assert.equal(agent._steeringPriorSubmissionBlock(tabId, name, args, null)?.noDispatch, true);
+      assert.equal(agent._steeringPriorSubmissionBlock(tabId, name, args, { ...safe, isSubmit: true })?.noDispatch, true);
+    }
+    assert.equal(agent._steeringPriorSubmissionBlock(tabId, 'fetch_url', { url: 'https://example.com/', method: 'POST' }, safe)?.noDispatch, true);
+    assert.equal(agent._steeringPriorSubmissionBlock(tabId, 'chrome_web_store_publish', {}, safe)?.noDispatch, true);
+  });
+
+  test(`${build}: revalidation retains uncertain submissions and publication attempts`, async () => {
+    const agent = actSetup(Agent);
+    await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Publish the announcement.' }];
+    agent.conversations.set(tabId, messages);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true, requiresSubmission: true });
+    guard.socialPublication = { outcomes: { announcement: { status: 'pending' } } };
+    agent._completionSubmitStates.set(tabId, { dispatched: true, observedAfterSubmit: false });
+    steer(agent, 'Use the updated title');
+    await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    assert.equal(agent._completionSubmitStates.has(tabId), false);
+    assert.equal(agent._planExecutionGuards.get(tabId).socialPublication.outcomes.announcement.status, 'pending');
+    assert.equal(agent._steeringPriorSubmissionBlock(tabId, 'click', { text: 'Publish' }, { isSubmit: true }).noDispatch, true);
+    assert.equal(agent._steeringPriorSubmissionBlock(tabId, 'read_page', {}, null), null);
+    agent._storeContinuationExecutionEvidence(tabId);
+    const carried = agent._startPlanExecutionGuard(tabId, 'act', {
+      requiresStateChange: true, requiresSubmission: false,
+    }, { trustedContinuation: true });
+    assert.equal(carried.steeringPriorSubmission.dispatched, true);
+    assert.equal(carried.successfulConsequentialToolCalls, 0);
+    const restored = actSetup(Agent);
+    restored.conversations.set(tabId, serializeConversationForSession(messages, {
+      preserveMessageIndices: agent._activeTaskBinding(messages).pinnedIndices,
+    }).messages);
+    const restoredGuard = restored._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    assert.equal(restoredGuard.steeringPriorSubmission.dispatched, true);
+    assert.equal(restoredGuard.successfulConsequentialToolCalls, 0);
+    assert.equal(restored._steeringPriorSubmissionBlock(tabId, 'click', { text: 'Publish' }, { isSubmit: true }).noDispatch, true);
+    assert.match(restored.conversations.get(tabId)[0].content, /Inspect and report its existing effect/);
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  test(`${build}: long steering authority survives actual compaction and bounded recovery`, async () => {
+    const agent = actSetup(Agent);
+    await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Original calendar details '.repeat(5000) }];
+    agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    steer(agent, 'Ipek’s corrected event details '.repeat(1000));
+    await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    const original = agent._activeTaskBinding(messages);
+    messages.push(...Array.from({ length: 70 }, () => ({ role: 'assistant', content: 'Earlier observation '.repeat(1000) })));
+    delete agent._manageContext;
+    await agent._manageContext(tabId, messages, () => {}, null, { force: true });
+    assert.equal(agent._activeTaskBinding(messages).text, original.text);
+    assert.match(messages.find(message => message.content?.includes?.('Context window was trimmed'))?.content || '', /original request and ordered genuine user corrections/);
+    const restored = serializeConversationForSession(messages, { maxBytes: 450000, preserveMessageIndices: agent._activeTaskBinding(messages).pinnedIndices });
+    assert.equal(agent._activeTaskBinding(restored.messages).text, original.text);
+    messages.push({ role: 'assistant', content: 'Which calendar?', webbrainPlannerClarification: {
+      taskKey: agent._progressTaskKeyForText(original.text), taskText: original.text.slice(0, 1600),
+    } }, { role: 'user', content: 'The work calendar' });
+    assert.equal(agent._activeTaskBinding(messages).requestText, original.requestText);
+    steer(agent, 'Use October 8', 'second-correction');
+    await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    const clarified = agent._activeTaskBinding(messages);
+    assert.equal(clarified.requestText, original.requestText);
+    assert.deepEqual(clarified.updates.slice(-2).map(update => update.text), ['The work calendar', 'Use October 8']);
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  test(`${build}: steering invalidates a real plan review and requires review of the latest revision`, async () => {
+    const agent = actSetup(Agent);
+    agent._plannerMode = () => 'try'; agent.setPlanReviewSettings({ mode: 'always' });
+    agent._chatWithCostAllowance = async () => ({ content: JSON.stringify({
+      request_kind: 'execute', requires_state_change: true, requires_submission: true,
+      read_scope: 'visible_page', summary: 'Add Ipek’s event to the calendar', confidence: 0.99,
+      steps: [{ id: '1', action: 'Inspect the invitation and save its event', tools: ['read_page', 'click'] }],
+      memory: { use_scratchpad: true, use_progress_ledger: false }, risks: [],
+    }) });
+    await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
+    agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    agent._scratchpadWrite(tabId, { text: 'Existing invitation downloadId=42' });
+    steer(agent, 'From Ipek', 'a');
+    const reviewed = deferred(), revisedReview = deferred();
+    let firstPlanId, secondPlanId;
+    const refresh = agent._revalidatePendingSteering(tabId, messages, (type, data) => {
+      if (type === 'plan_review') {
+        if (!firstPlanId) { firstPlanId = data.planId; reviewed.resolve(); }
+        else { secondPlanId = data.planId; revisedReview.resolve(); }
+      }
+    }, 'act', null, null, options);
+    await Promise.race([reviewed.promise, refresh.then(result => assert.fail(`Review skipped: ${JSON.stringify(result)}`))]);
+    steer(agent, 'Use the work calendar', 'b');
+    await Promise.race([revisedReview.promise, refresh.then(result => assert.fail(`Revised review skipped: ${JSON.stringify(result)}`))]);
+    assert.equal(agent.submitPlanResponse(tabId, firstPlanId, 'approve'), false);
+    assert.equal(agent._steeringRuns.get(tabId).authorizedRevision, 0);
+    assert.equal(agent.submitPlanResponse(tabId, secondPlanId, 'approve'), true);
+    assert.equal((await refresh).gate.proceed, true);
+    assert.equal(agent._steeringRuns.get(tabId).authorizedRevision, 2);
+    assert.match(agent._planExecutionGuards.get(tabId).taskText, /Ipek.*work calendar/);
+    assert.match(messages[agent._findScratchpadIndex(messages)].content, /Existing invitation downloadId=42/);
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  for (const plannerMode of ['try', 'strict']) {
+    test(`${build}: ${plannerMode} full planner fails closed on malformed steering output`, async () => {
+      const agent = actSetup(Agent, { chat: async () => ({ content: 'not structured JSON' }) });
+      agent._plannerMode = () => plannerMode;
+      await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+      const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
+      agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+      steer(agent, 'From Ipek');
+      const result = await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+      assert.equal(result.gate.proceed, false); assert.equal(result.gate.reason, 'planner_error');
+      assert.match(result.gate.message, /invalid_output/); assert.doesNotMatch(result.gate.message, /No tools ran|fresh run/);
+      agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+    });
+  }
+
+  for (const failure of ['transport', 'invalid-output']) {
+    test(`${build}: real intent revalidation fails closed on ${failure}`, async () => {
+      const agent = actSetup(Agent, { chat: async () => {
+        if (failure === 'transport') throw new Error('Provider unavailable for revision');
+        return { content: 'not structured JSON' };
+      } });
+      delete agent._runPlannerIntentGate;
+      await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+      const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
+      agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+      steer(agent, 'From Ipek');
+      const result = await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+      assert.equal(result.gate.proceed, false);
+      assert.equal(result.gate.reason, 'planner_error');
+      assert.doesNotMatch(result.gate.message, /fresh run|No tools ran/);
+      assert.match(result.gate.message, failure === 'transport' ? /Provider unavailable/ : /invalid_output/);
+      agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+    });
+  }
+
+  test(`${build}: Stop during revision planning does not authorize the pending task`, async () => {
+    const entered = deferred(), release = deferred();
+    const agent = actSetup(Agent, {}, async () => {
+      entered.resolve(); await release.promise;
+      return { proceed: true, requestKind: 'execute', requiresStateChange: true };
+    });
+    await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
+    agent.conversations.set(tabId, messages); const original = agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    steer(agent, 'From Ipek');
+    const revision = agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    await entered.promise; agent.abort(tabId); release.resolve();
+    assert.equal((await revision).gate.reason, 'cancelled');
+    assert.equal(agent._planExecutionGuards.get(tabId), original);
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  for (const kind of ['respond', 'clarify', 'plan_only', 'planner_error']) {
+    test(`${build}: revised ${kind} intent cannot dispatch the stale task`, async () => {
+      const agent = actSetup(Agent, {}, async () => kind === 'respond'
+        ? { proceed: true, responseOnly: true, requestKind: kind }
+        : { proceed: false, reason: kind, requestKind: kind === 'planner_error' ? 'respond' : kind, message: kind });
+      agent._completeResponseOnlyTurn = async () => ({ content: 'Cancelled', status: 'done' });
+      agent.executeTool = async () => assert.fail('Stale action dispatched');
+      await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+      const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
+      agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+      steer(agent, 'Cancel that; just explain the event');
+      const outcome = await agent._steeringBoundaryOutcome(tabId, messages, () => {}, 'act', agent._activeProvider(tabId), null, null, options);
+      assert.equal(outcome.terminal, true);
+      assert.equal(outcome.content, kind === 'respond' ? 'Cancelled' : kind);
+      agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
     });
   }
 

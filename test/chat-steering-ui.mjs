@@ -128,7 +128,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       const deliverySetting = page.locator('#select-composer-delivery-mode');
       await page.waitForFunction(() => composerDeliveryMode === 'steer'
         && composerDeliveryModeSelect.value === 'steer');
-      assert.equal(await page.locator('#btn-send').getAttribute('title'), 'sp.steer.title',
+      assert.equal(await page.locator('#btn-send').getAttribute('title'), 'sp.steer.title · sp.queue.send (Alt+Shift+Enter)',
         'Saved preference hydrates both settings and composer');
       assert.equal(await page.locator('#btn-steer').count(), 0, 'No separate composer Steer button');
       await deliverySetting.selectOption('queue');

@@ -5797,7 +5797,15 @@
         // Prefer the semantic conversation row over a nested action link. A
         // plain navigation link can itself be the row only when no stronger
         // row container exists.
+        const nativeLinkedInRow = params.adapterName === 'linkedin'
+          && /^\/messaging(?:\/|$)/.test(location.pathname)
+          ? clicked.closest?.('li') : null;
+        const nativeConversationRow = nativeLinkedInRow
+          && nativeLinkedInRow.parentElement?.matches(
+            'ul.msg-conversations-container__conversations-list,ul[aria-label="Conversation List"],ol[aria-label="Conversation List"]',
+          ) ? nativeLinkedInRow : null;
         const row = clicked.closest?.(semanticRowSelector)
+          || nativeConversationRow
           || clicked.closest?.('a[href]')
           || null;
         if (!row || !visible(row) || editable(row)) return false;
@@ -5819,9 +5827,18 @@
           if (nestedAction && nestedAction !== row && row.contains?.(nestedAction)) return false;
         }
 
+        if (row === nativeConversationRow) {
+          const rect = clicked.getBoundingClientRect();
+          const hit = _shadowAwareElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          if (!_isComposedAncestor(clicked, hit)) return false;
+          for (let node = hit; node && node !== clicked; node = _composedParent(node)) {
+            if (_isInteractive(node) || node.matches?.('label,option,summary,[contenteditable], [role=checkbox],[role=radio],[role=switch]')) return false;
+          }
+        }
+
         const role = String(row.getAttribute?.('role') || '').toLowerCase();
         const tag = String(row.tagName || '').toLowerCase();
-        const hasRowSemantics = /^(option|listitem|treeitem|tab)$/.test(role)
+        const hasRowSemantics = row === nativeConversationRow || /^(option|listitem|treeitem|tab)$/.test(role)
           || row.hasAttribute?.('aria-selected')
           || row.hasAttribute?.('aria-current')
           || ['data-conversation-id', 'data-thread-id', 'data-chat-id']
@@ -5841,6 +5858,36 @@
         // column and deliberately remain inconclusive.
         return rowRect.right <= composerRect.left + 24
           && railRect.right <= composerRect.left + 64;
+      };
+
+      const verifiedLinkedInImagePreview = clicked => {
+        if (params.adapterName !== 'linkedin') return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || compact(button.getAttribute('aria-label')).toLowerCase()
+            !== 'click or press enter to display in the image preview') return false;
+        const painted = el => {
+          if (!visible(el) || !_hasVisibleBox(el)) return false;
+          for (let node = el; node?.nodeType === 1; node = _composedParent(node)) {
+            if (getComputedStyle(node).opacity === '0') return false;
+          }
+          return true;
+        };
+        if (!button || !painted(button) || button.disabled || button.matches(':disabled')
+            || button.getAttribute('aria-disabled') === 'true'
+            || String(button.getAttribute('type') || '').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute('form') || button.hasAttribute('download')
+            || _composedClosestElement(button, 'form,.msg-form,[contenteditable]:not([contenteditable="false"])')) return false;
+        // Attachment previews live in history, not in the composer. Proximity
+        // to the composer cannot turn this verified viewer into a send; labels
+        // alone cannot exempt a message commit or an unrelated image button.
+        if (!_composedClosestElement(button, '[role="log"],.msg-s-message-list,.msg-s-event-listitem')) return false;
+        if ([button.getAttribute('title'), button.getAttribute('data-tooltip'), button.innerText || button.textContent]
+            .some(_hasMessageCommitName)) return false;
+        if (!Array.from(button.querySelectorAll('img[src]')).some(painted)) return false;
+        const rect = button.getBoundingClientRect();
+        return _isComposedAncestor(button, _shadowAwareElementFromPoint(
+          rect.left + rect.width / 2, rect.top + rect.height / 2,
+        ));
       };
 
       const classifyLinkedInNavigation = (clicked, blockingModal = null) => {
@@ -6198,6 +6245,9 @@
         const modal = _findTopmostBlockingModal();
         if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (verifiedLinkedInImagePreview(target)) {
+          return { success: true, messageSend: false, conclusive: true, imagePreview: true, identityCandidates: [] };
         }
         if (verifiedTwitterNavigation(target)) {
           return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };

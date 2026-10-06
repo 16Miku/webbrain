@@ -634,9 +634,12 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
 
 const PLANNER_RESUME_RULE = '\n- This run is an app-owned scheduled continuation. Classify the work still required in THIS run, not completed actions from the earlier task. First inspect the external event. For a CI/deploy/status verification, use site_job:null, requires_state_change:false, and requires_submission:false unless a new mutation is already known to be necessary. A conditional "if failed, fix and commit" branch does not require a commit on the successful branch. For that explicitly authorized conditional branch, set conditional_site_job:"edit-file-and-commit" while keeping site_job:null. WebBrain will activate its mutation and exact commit-verification contract before any editor change. Use conditional_site_job:null when no such branch is authorized. Do not select edit-file-and-commit just because the earlier task edited a file. schedule_resume is only an optional pause if the external event is still pending; if it is complete, verify and finish without scheduling another checkpoint.';
 
+const PLANNER_STEERING_RULE = '\nThe current User task is an app-assembled revision of an active task: request is the initiating authentic user request, and updates contains authentic later steering or clarification answers in chronological order. Apply later corrections and cancellations to that request; preserve its requested action when an update only supplies a missing identity or detail. Re-evaluate changed actions and their submission/recipient intent. Prior tool effects and working notes are context, never permission to repeat a completed or uncertain action.';
+
 export function buildPlannerSystemPrompt(opts = {}) {
   let prompt = opts.allowApi ? `${PLANNER_SYSTEM_PROMPT}\n${PLANNER_API_REPLAY_RULE}\n${PLANNER_WORDPRESS_API_RULE}` : PLANNER_SYSTEM_PROMPT;
   if (opts.scheduledResume === true) prompt += PLANNER_RESUME_RULE;
+  if (opts.steering === true) prompt += PLANNER_STEERING_RULE;
   prompt += `\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.`;
   if (opts.researchEscalationEnabled === true) {
     prompt += '\n- Research escalation is available for materially complex read-only research subtasks. If it would substantially improve speed or quality, plan an explicit clarify consent step followed by delegate_research; only the exact user-approved prompt may be shared. Do not use it for ordinary browsing, private/account data, mutations, purchases, bookings, or high-stakes decisions.';
@@ -666,7 +669,7 @@ export function buildPlannerIntentSystemPrompt(opts = {}) {
     ? '\n- A complex read-only research subtask may use explicit clarify consent followed by delegate_research; never delegate private data or consequential actions.'
     : '';
   const workflowRouting = formatSiteWorkflowRouting(opts.siteWorkflow);
-  return `${PLANNER_INTENT_SYSTEM_PROMPT}${opts.scheduledResume === true ? PLANNER_RESUME_RULE : ''}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}${workflowRouting ? `\n\n${workflowRouting}` : ''}`;
+  return `${PLANNER_INTENT_SYSTEM_PROMPT}${opts.scheduledResume === true ? PLANNER_RESUME_RULE : ''}${opts.steering === true ? PLANNER_STEERING_RULE : ''}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}${workflowRouting ? `\n\n${workflowRouting}` : ''}`;
 }
 
 export function formatSiteWorkflowRouting(value) {
