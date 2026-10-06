@@ -4,6 +4,18 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [39.0.0] - 2026-10-06
+
+### Added
+- Added optional steering for active chat runs. While a run is active, Send / Enter queues follow-ups per tab and Steer / Alt+Enter sends a correction to that same run; queued messages also have a Steer action. Corrections are accepted from the chat panel only for the matching run request ID, consumed as user messages at model/tool boundaries, skip the remaining tool calls in the current batch, preserve mode and permission checks, disable the JEV fast-path once steering is accepted, and requeue via journal event if the run ends first.
+- Added frozen Ling 3.0 Flash VL benchmark against Nex-N2.5 and MiniMax M3, with comparison blog post, verification artifacts, and reporting script (`test/llm/report-ling30-comparison.mjs`).
+- Added `chat_steer` background handling, steering toasts/queue UI, `sp.steer.*` locales across all languages, and `test/chat-steering.mjs` + `test/chat-steering-ui.mjs` coverage wired into `test:runtime-lifecycle` and new `test:chat-steering`.
+
+### Changed
+- Extended the social publication contract and audit prompts with chronological `steering_messageN` sources so later corrections or cancellations supersede the initiating request and earlier revisions.
+- Documented active-run steering in `docs/architecture.md`.
+- Bumped `proxy-addr` 2.0.7 → 2.0.8 in `/mcp-server` and `multidict` 6.7.1 → 6.9.1 in docs vision-model sources.
+
 ## [38.0.15] - 2026-10-05
 
 ### Changed
