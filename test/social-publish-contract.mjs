@@ -149,6 +149,133 @@ for (const browser of ['chrome', 'firefox']) {
     return {agent,tabId,guard,provider,calls,detected};
   }
 
+  function applySteering(f, text) {
+    const { agent, tabId } = f;
+    agent._runningTabs.add(tabId);
+    agent._beginSteeringRun(tabId, () => {}, { detachedRequestId: 'steered-publication' });
+    assert.equal(agent.steerMessage(tabId, text, { requestId: 'steered-publication', messageId: 'revision' }).accepted, true);
+    assert.equal(agent._applyPendingSteering(tabId, agent.conversations.get(tabId), () => {}), true);
+    agent._finishSteeringRun(tabId);
+    agent._runningTabs.delete(tabId);
+  }
+
+  test(`${browser}: steering recompiles exact publication text and reaches the independent audit`, async () => {
+    for (const compileFirst of [false, true]) {
+      const f = setup('Post Monday on X', rawContract([rawAction('p1', 'twitter', 'Monday')]));
+      if (compileFirst) await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+      const original = f.guard.socialPublication;
+      applySteering(f, 'Use Tuesday instead');
+      f.detected.publicationSnapshot = snapshot('Tuesday');
+      f.agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
+        f.calls.push({ messages, meta });
+        const input = JSON.parse(messages[1].content);
+        assert.equal(input.sources.request, 'Post Monday on X', 'the initiating task remains available');
+        assert.equal(input.sources.steering_message0, 'Use Tuesday instead');
+        assert.match(messages[0].content, /steering_messageN/);
+        if (meta.generationName === 'social_publication_authorization') {
+          assert.equal(input.action.posts[0].body.value, 'Tuesday');
+          return { content: JSON.stringify({ key: input.key, actionId: input.action.id, authorized: true, reason: 'Revised request.' }) };
+        }
+        const raw = rawContract([rawAction('revised', 'twitter', 'Tuesday')], 'revised');
+        raw.actions[0].posts[0].body.source = ref('Tuesday', 'steering_message0');
+        return { content: JSON.stringify(raw) };
+      };
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+      assert.notEqual(f.guard.socialPublication, original);
+      assert.equal(f.agent._socialPublicationAction(f.guard).posts[0].body.value, 'Tuesday');
+      assert.equal(f.calls.filter(c => c.meta.generationName === 'social_publication_contract').length, compileFirst ? 2 : 1);
+    }
+  });
+
+  test(`${browser}: steering cancellation invalidates an approved unattempted publication`, async () => {
+    const f = setup();
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    const approved = f.guard.socialPublication;
+    applySteering(f, 'Do not publish anything');
+    f.agent._chatWithCostAllowance = async (_provider, messages) => {
+      assert.equal(JSON.parse(messages[1].content).sources.steering_message0, 'Do not publish anything');
+      return { content: JSON.stringify({ version: 1, status: 'none', actions: [], requirements: null, prohibited: ['twitter'], reason: 'Cancelled.' }) };
+    };
+    const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+    assert.equal(blocked.noDispatch, true);
+    assert.notEqual(f.guard.socialPublication, approved);
+    assert.equal(f.guard.socialPublication.dispatch, null);
+  });
+
+  test(`${browser}: steering invalidates in-flight publication compilation and authorization`, async () => {
+    for (const phase of ['contract', 'authorization']) {
+      const f = setup();
+      if (phase === 'authorization') await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+      let corrected = false;
+      f.agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
+        const input = JSON.parse(messages[1].content);
+        if (!corrected) {
+          corrected = true;
+          applySteering(f, 'Do not publish anything');
+          if (phase === 'authorization') return { content: JSON.stringify({ key: input.key, actionId: input.action.id, authorized: true, reason: 'Stale approval.' }) };
+          return { content: JSON.stringify(rawContract()) };
+        }
+        assert.equal(input.sources.steering_message0, 'Do not publish anything');
+        assert.equal(meta.generationName, 'social_publication_contract');
+        return { content: JSON.stringify({ version: 1, status: 'none', actions: [], requirements: null, prohibited: ['twitter'], reason: 'Cancelled.' }) };
+      };
+      if (phase === 'contract') {
+        const state = await f.agent._ensureSocialPublicationContract(f.tabId, f.provider);
+        assert.equal(state.contract.status, 'none');
+      } else {
+        const result = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+        assert.equal(result.noDispatch, true);
+        assert.match(result.error, /context changed/);
+        assert.equal(f.guard.socialPublication.dispatch, null);
+      }
+    }
+  });
+
+  test(`${browser}: steering and clarifications retain order through compaction and Continue`, async () => {
+    const f = setup('Post Monday on X', rawContract([rawAction('p1', 'twitter', 'Monday')]));
+    await clarify(f, 'Use Monday?', 'Yes');
+    applySteering(f, 'Use Tuesday instead');
+    await clarify(f, 'Use Wednesday?', 'Yes');
+    applySteering(f, 'Keep Wednesday but add a period');
+    const expected = f.agent._socialPublicationSources(f.tabId);
+    assert.equal(expected.request, 'Post Monday on X');
+    assert.deepEqual(Object.keys(expected).filter(key => /^(clarification_|steering_)/.test(key)), [
+      'clarification_question0', 'clarification_answer0', 'steering_message0',
+      'clarification_question1', 'clarification_answer1', 'steering_message1',
+    ]);
+    f.guard.successfulTaskToolCalls = 1;
+    f.guard.evidenceTaskKey = f.guard.taskKey;
+    f.agent._storeContinuationExecutionEvidence(f.tabId);
+    // Compact revision/tool turns while retaining the initiating task anchor.
+    // No compiler state is needed to preserve the app-owned correction sources.
+    f.agent.conversations.set(f.tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Post Monday on X' },
+      { role: 'user', content: 'Continue' },
+    ]);
+    f.agent._startPlanExecutionGuard(f.tabId, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true }, { trustedContinuation: true });
+    assert.deepEqual(f.agent._socialPublicationSources(f.tabId), expected);
+    f.agent.conversations.get(f.tabId).push({ role: 'user', content: 'Another task' });
+    f.agent._startPlanExecutionGuard(f.tabId, 'act', { requestKind: 'execute' });
+    assert.equal(f.agent._socialPublicationSources(f.tabId).steering_message0, undefined);
+  });
+
+  test(`${browser}: steering preserves attempted publication evidence and blocks revised dispatch`, async () => {
+    for (const status of ['pending', 'verified', 'failed']) {
+      const f = await dispatchedFixture();
+      const original = f.guard.socialPublication;
+      original.outcomes.p1.status = status;
+      const outcomes = structuredClone(original.outcomes);
+      applySteering(f, 'Publish a different post instead');
+      assert.equal(await f.agent._ensureSocialPublicationContract(f.tabId, f.provider), original);
+      assert.deepEqual(original.outcomes, outcomes);
+      const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+      assert.equal(blocked.noDispatch, true);
+      assert.match(blocked.error, /prior attempt/);
+      assert.equal(f.calls.filter(c => c.meta.generationName === 'social_publication_contract').length, 1);
+    }
+  });
+
   test(`${browser}: unrelated submissions and social-site visits do not compile publication intent`, async () => {
     for (const url of ['https://shop.example/checkout', 'https://mail.example/inbox', 'https://example.com/form',
       'https://x.com/settings/profile', 'https://bsky.app/settings', 'https://x.com/home']) {
