@@ -73,12 +73,13 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(result.modality, 'ax', 'capture failures should retry with AX');
   });
   test(`${build}: auth/transport skip engine; unsupported image retries AX`, async () => {
-    for (const status of [401, 422]) {
+    for (const field of ['status', 'httpStatus']) for (const status of [401, 500, 400, 413, 415, 422]) for (const name of ['decision', 'llm']) {
       const calls = [];
-      const decision = { name: 'decision', supportsVision: true, evaluate: async (_e, modality) => { calls.push(modality); if (modality === 'vision') throw Object.assign(new Error('HTTP'), { status }); return { outcome: 'failed' }; } };
-      const result = await verifier.verifyCompletion({ decision, capture: async () => ({ identity: 'fresh' }), isCurrent: () => true });
-      assert.deepEqual(calls, status === 401 ? ['vision'] : ['vision', 'ax']);
-      assert.equal(result.outcome, status === 401 ? 'uncertain' : 'failed');
+      const engine = { name, supportsVision: true, evaluate: async (_e, modality) => { calls.push(modality); if (modality === 'vision') throw Object.assign(new Error('HTTP'), { [field]: status }); return { outcome: 'failed' }; } };
+      const result = await verifier.verifyCompletion({ [name]: engine, capture: async () => ({ identity: 'fresh' }), isCurrent: () => true });
+      const unsupportedImage = [400, 413, 415, 422].includes(status);
+      assert.deepEqual(calls, unsupportedImage ? ['vision', 'ax'] : ['vision'], `${name}/${field}/${status}`);
+      assert.equal(result.outcome, unsupportedImage ? 'failed' : 'uncertain');
     }
   });
   test(`${build}: quota, cancellation, budget and stale evidence never fall through`, async () => {
@@ -215,5 +216,60 @@ for (const build of ['chrome', 'firefox']) {
       globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
       if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
     }
+  });
+  test(`${build}: finite screenshot budgets preserve freshness capacity or select AX`, async () => {
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
+    try {
+      for (const engine of ['decision', 'llm']) for (const [cap, used, modality] of [[0, 10, 'vision'], [1, 0, 'ax'], [2, 0, 'vision'], [3, 2, 'ax'], [3, 1, 'vision'], [2, 2, 'ax']]) {
+        globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ decisionProvider: 'local', systemOneEnabled: engine === 'decision', decisionVisionMode: 'on' }) } } };
+        let captures = 0, spent = used, requests = 0;
+        const active = { model: 'local-model', supportsVision: true, config: { category: 'local' }, chat() {} };
+        const agent = {
+          _activeProvider: () => active, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
+          _latestTaskText: () => 'Verify publication', _originalTaskText: () => '', _progressTaskKeyHash: () => 'task',
+          _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
+          _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(),
+          _completionDocumentStamp: async () => 'stable',
+          _canTakeAutoScreenshot: (_tabId, slots = 1) => cap === 0 || spent + slots <= cap,
+          _captureCompletionJudgeImage: async () => { if (cap && spent >= cap) return null; spent++; captures++; return 'data:image/png;base64,stable'; },
+          _budgetForCapture: () => ({ maxTargetPx: 1408, maxTargetTokens: 1400 }), _shrinkImageForBudget: async dataUrl => ({ dataUrl }),
+          executeTool: async () => ({ success: true, pageContent: 'Published requested content' }),
+          _newCostRunState: () => ({}), recordSystemOneVerdict() {},
+          evaluateSystemOne: async () => { requests++; const result = response(); result.model = 'kev-latest'; return result; },
+          _chatWithCostAllowance: async () => { requests++; return { content: '{"outcome":"succeeded","reason":"Published"}' }; },
+        };
+        const verdict = await runtime.verifyBrowserCompletion(agent, 1);
+        assert.equal(verdict.outcome, 'succeeded', `${engine}: cap=${cap}, used=${used}`);
+        assert.equal(verdict.modality, modality);
+        assert.equal(captures, modality === 'vision' ? 2 : 0);
+        assert.equal(requests, 1);
+        if (cap) assert.ok(spent <= cap, 'freshness must honor the user screenshot cap');
+      }
+    } finally {
+      globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
+      if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
+    }
+  });
+  test(`${build}: a replaced run during the final document read cannot establish completion`, async () => {
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ decisionProvider: 'local', systemOneEnabled: true }) } } };
+    let judged = false, current = true;
+    const provider = { model: 'local', config: { category: 'local' } };
+    const agent = {
+      _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => current }),
+      _latestTaskText: () => 'Verify publication', _originalTaskText: () => '', _progressTaskKeyHash: () => 'task',
+      _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
+      _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(),
+      _completionDocumentStamp: async () => { if (judged) current = false; return 'stable'; },
+      executeTool: async () => ({ success: true, pageContent: 'Published' }), recordSystemOneVerdict() {},
+      evaluateSystemOne: async () => { judged = true; const result = response(); result.model = 'kev-latest'; return result; },
+    };
+    try {
+      const verdict = await runtime.verifyBrowserCompletion(agent, 1);
+      assert.equal(verdict.outcome, 'pending');
+      assert.equal(verdict.engine, 'freshness');
+    } finally { globalThis.chrome = previousChrome; globalThis.browser = previousBrowser; }
   });
 }

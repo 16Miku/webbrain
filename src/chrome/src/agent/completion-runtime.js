@@ -37,10 +37,11 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
   const run = agent.completionInvariants.get(tabId);
   const scope = JSON.stringify([run?.runToken, run?.lastAction?.sequence, agent._progressTaskKeyHash(tabId), config.provider, config.model, config.url, provider.model, provider.supportsVision, JSON.stringify(config)]);
   agent._completionVerdicts ??= new Map();
-  const currentIdentity = async evidence => !!evidence.identity && context.isCurrent() && !signal?.aborted && agent._activeProvider(tabId) === provider
+  const currentRun = () => context.isCurrent() && !signal?.aborted && agent._activeProvider(tabId) === provider
+    && scope === JSON.stringify([agent.completionInvariants.get(tabId)?.runToken, agent.completionInvariants.get(tabId)?.lastAction?.sequence, agent._progressTaskKeyHash(tabId), config.provider, config.model, config.url, provider.model, provider.supportsVision, JSON.stringify(config)]);
+  const currentIdentity = async evidence => !!evidence.identity && currentRun()
     && JSON.stringify(resolveDecisionConfig(await chrome.storage.local.get(DECISION_SETTINGS_KEYS), compass)) === JSON.stringify(config)
-    && scope === JSON.stringify([agent.completionInvariants.get(tabId)?.runToken, agent.completionInvariants.get(tabId)?.lastAction?.sequence, agent._progressTaskKeyHash(tabId), config.provider, config.model, config.url, provider.model, provider.supportsVision, JSON.stringify(config)])
-    && evidence.identity === await agent._completionDocumentStamp(tabId);
+    && evidence.identity === await agent._completionDocumentStamp(tabId) && currentRun();
   const current = async evidence => {
     if (!await currentIdentity(evidence)) return false;
     if (evidence.modality !== 'vision') return true;
@@ -61,7 +62,11 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
   const capture = async (modality, refresh = false) => {
     const before = await agent._completionDocumentStamp(tabId);
     const cached = captures.get(modality);
-    if (!refresh && cached?.identity === before && context.isCurrent()) return cached;
+    const reusable = cached?.identity === before && context.isCurrent();
+    // A new vision judgment needs both its evidence and its post-request
+    // freshness capture. With only one slot left, use AX before paying a judge.
+    if (modality === 'vision' && agent._canTakeAutoScreenshot?.(tabId, refresh || reusable ? 1 : 2) === false) return null;
+    if (!refresh && reusable) return cached;
     let observation;
     if (modality === 'vision') {
       let pixels = await agent._captureCompletionJudgeImage(tabId);

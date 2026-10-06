@@ -1,6 +1,7 @@
 import { verifyBrowserCompletion } from './completion-runtime.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
 import { completionStopError } from './completion-verifier.js';
+import { COMPLETION_DOCUMENT_STAMP_SCRIPT } from './completion-document.js';
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
@@ -7041,7 +7042,7 @@ export class Agent extends LoopDetector {
   }
 
   async _completionDocumentStamp(tabId) {
-    const result = await browser.tabs.executeScript(tabId, { code: "(() => { const text = (document.body?.innerText || '').slice(0,20000) + Array.from(document.querySelectorAll('input,textarea,select')).slice(0,100).map(e=>e.value).join('|'); let hash=2166136261; for(const c of text) hash=Math.imul(hash ^ c.charCodeAt(0),16777619); return [location.href,performance.timeOrigin,text.length,hash].join('|'); })()" });
+    const result = await browser.tabs.executeScript(tabId, { code: COMPLETION_DOCUMENT_STAMP_SCRIPT });
     return result?.[0] || '';
   }
 
@@ -14463,10 +14464,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Whether another automatic screenshot is allowed under maxScreenshotsPerTurn
    * (issue #311). 0 means unlimited. Does not mutate the counter.
    */
-  _canTakeAutoScreenshot(tabId) {
+  _canTakeAutoScreenshot(tabId, slots = 1) {
     const cap = Number(this.maxScreenshotsPerTurn) || 0;
     if (cap <= 0) return true;
-    return (this.autoScreenshotCount.get(tabId) || 0) < cap;
+    return (this.autoScreenshotCount.get(tabId) || 0) + slots <= cap;
   }
 
   /**

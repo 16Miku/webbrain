@@ -20665,6 +20665,7 @@ test('image budget helpers: auto-screenshot counter + failed capture does not bu
     const agent = new AgentClass({});
     const tabId = 42;
     agent.maxScreenshotsPerTurn = 1;
+    assert.equal(agent._canTakeAutoScreenshot(tabId, 2), false, `${AgentClass.name}: vision verification must reserve its refresh slot`);
 
     assert.equal(agent._canTakeAutoScreenshot(tabId), true);
     agent._recordAutoScreenshot(tabId);

@@ -48,9 +48,10 @@ export async function verifyCompletion({ decision, llm, capture, isCurrent, sign
         if (verdict.outcome !== 'uncertain') return { ...verdict, engine: engine.name, modality, identity: evidence.identity, evidenceKey: evidence.key };
       } catch (error) {
         if (completionStopError(error, signal)) throw error;
-        onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: error?.code || (error?.status ? `http_${error.status}` : 'unavailable') });
+        const status = error?.status ?? error?.httpStatus;
+        onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: error?.code || (status ? `http_${status}` : 'unavailable') });
         // Only an image-contract error can retry a failed request as AX.
-        if (!(modality === 'vision' && [400, 413, 415, 422].includes(error?.status))) break;
+        if (!(modality === 'vision' && [400, 413, 415, 422].includes(status))) break;
       }
     }
   }
