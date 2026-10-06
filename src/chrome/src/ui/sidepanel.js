@@ -1,3 +1,4 @@
+import { appendGeneratedMedia, restoreGeneratedMedia } from './generated-media-view.js';
 /**
  * WebBrain Side Panel — Chat UI logic.
  * Default: compact history in chat plus the live label; click for status-only mode.
@@ -7231,6 +7232,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
 }
 
 function rebindRestoredMessageControls() {
+  void restoreGeneratedMedia(messagesEl, t);
   restoreStagedScreenshotAttachments();
   rebindCopyButtons();
   rebindMessageInfoToggles();
@@ -10158,6 +10160,10 @@ function handleAgentUpdateMessage(msg) {
 
     case 'tool_result':
       if (currentAssistantEl) {
+        if (data.name === 'generate_image') {
+          void appendGeneratedMedia(currentAssistantEl.querySelector('.message-content'), data.result, t);
+          schedulePersist();
+        }
         if (verboseMode) appendVerboseToolResult(data.name, data.result);
         else markLastStepDone(data.name, data.result);
       }
