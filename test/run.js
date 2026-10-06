@@ -68519,7 +68519,7 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     for (const providerName of ['lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local-openai-proxy']) {
       assert.equal(infer({ category: 'local', providerName, model: 'qwen3.7-plus' }), 16384);
     }
-    for (const model of ['gpt-6-luna-pro', 'gpt-6-sol', 'gpt-6-astra', 'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
+    for (const model of ['gpt-6-luna-pro', 'gpt-6.1-sol', 'gpt-6-astra', 'gpt-5.6', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
       assert.equal(infer({ category: 'cloud', providerName: 'openai', model }), 1050000);
     }
     assert.equal(infer({ category: 'cloud', providerName: 'openai', model: 'gpt-5.5-pro' }), 1050000);
@@ -68527,6 +68527,7 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-4-8' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-4-6' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-fable-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-4-5' }), 200000);
@@ -72677,7 +72678,7 @@ test('built-in catalog defaults opt into vision when the model name is multimoda
 
 test('supported GPT-6 vision capability is mirrored for direct and routed OpenAI models', () => {
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
-    for (const model of ['gpt-6-luna-pro', 'gpt-6-sol', 'gpt-6-astra']) {
+    for (const model of ['gpt-6-luna-pro', 'gpt-6.1-sol', 'gpt-6-astra']) {
       for (const config of [
         { providerName: 'openai', baseUrl: 'https://api.openai.com/v1', model },
         { providerName: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', model: `openai/${model}` },
@@ -72696,7 +72697,7 @@ test('supported GPT-6 vision capability is mirrored for direct and routed OpenAI
 test('OpenAI settings list supported GPT-6 models, the GPT-5.6 family, and current dated models', () => {
   const expectedModels = [
     'gpt-6-luna-pro',
-    'gpt-6-sol',
+    'gpt-6.1-sol',
     'gpt-6-astra',
     'gpt-5.6-terra',
     'gpt-5.6-sol',
@@ -75131,6 +75132,54 @@ test('Anthropic and AWS Bedrock forward a required named tool choice', async () 
   }
 });
 
+test('Claude Opus 5.5 normalizes mandatory-thinking and tool-choice restrictions', async () => {
+  const tool = {
+    type: 'function',
+    function: {
+      name: 'done',
+      description: 'Finish the run.',
+      parameters: { type: 'object', properties: {} },
+    },
+  };
+  const forced = { type: 'function', function: { name: 'done' } };
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const Provider of [AnthropicProviderCh, AnthropicProviderFx]) {
+      const provider = new Provider({
+        baseUrl: 'https://api.anthropic.com',
+        model: 'claude-opus-5-5',
+        apiKey: 'test-key',
+      });
+      const prepared = provider._prepareRequestBody({
+        thinking: { type: 'disabled' },
+        tool_choice: { type: 'tool', name: 'done' },
+      });
+      assert.equal(prepared.thinking, undefined, `${Provider.name}: Opus 5.5 must not disable thinking`);
+      assert.deepEqual(prepared.output_config, { effort: 'low' }, `${Provider.name}: disabled thinking must become low effort`);
+      assert.deepEqual(prepared.tool_choice, { type: 'auto' }, `${Provider.name}: Opus 5.5 must not force named tools`);
+
+      let requestBody = null;
+      globalThis.fetch = async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          content: [{ type: 'tool_use', id: 'done_1', name: 'done', input: {} }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      await provider.chat([{ role: 'user', content: 'Finish.' }], {
+        tools: [tool],
+        toolChoice: forced,
+        extraBody: { thinking: { type: 'disabled' } },
+      });
+      assert.equal(requestBody.thinking, undefined, `${Provider.name}: classifier disable must not reach Opus 5.5`);
+      assert.deepEqual(requestBody.output_config, { effort: 'low' }, `${Provider.name}: classifier must set low effort`);
+      assert.deepEqual(requestBody.tool_choice, { type: 'auto' }, `${Provider.name}: forced tool request must become auto`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('AWS Bedrock provider normalizes usage and indexes parallel tool calls', () => {
   for (const Provider of [AwsBedrockProviderCh, AwsBedrockProviderFx]) {
     const provider = new Provider({
@@ -75287,7 +75336,7 @@ test('OpenAI reasoning and GPT-6 ids use the advertised Chat Completions contrac
     for (const model of legacyContractModels) {
       assert.equal(compatibility.isNewOpenAIContractConfig({ providerName: 'openrouter', model }), false, `${model} should keep the legacy contract`);
     }
-    for (const model of ['gpt-6-luna-pro', 'gpt-6-sol', 'gpt-6-astra']) {
+    for (const model of ['gpt-6-luna-pro', 'gpt-6.1-sol', 'gpt-6-astra']) {
       assert.equal(
         compatibility.requiresOpenAIDefaultTemperature({ providerName: 'openrouter', model: `openai/${model}` }),
         true,
@@ -75308,9 +75357,48 @@ test('OpenAI reasoning and GPT-6 ids use the advertised Chat Completions contrac
         `a custom proxy must not inherit ${model} temperature behavior`,
       );
     }
+    assert.equal(
+      compatibility.shouldUseOpenAIResponsesApi({
+        providerName: 'openai',
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-6.1-sol',
+      }),
+      true,
+      'official GPT-6.1 Sol must use Responses to preserve reasoning and tool state',
+    );
+    assert.equal(
+      compatibility.shouldUseOpenAIResponsesApi({
+        providerName: 'custom-proxy',
+        baseUrl: 'https://proxy.example/v1',
+        model: 'gpt-6.1-sol',
+      }),
+      false,
+      'compatible proxies must retain their explicitly selected Chat Completions contract',
+    );
   }
 
   for (const Provider of [OpenAIProviderCh, OpenAIProviderFx]) {
+    const sol = new Provider({
+      providerName: 'openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-6.1-sol',
+    });
+    assert.equal(sol._usesResponsesApi(), true, 'GPT-6.1 Sol should use Responses');
+    const solBody = sol._buildResponsesBody(messages, { maxTokens: 123, temperature: 0.2 }, false);
+    assert.equal(solBody.model, 'gpt-6.1-sol');
+    assert.equal(solBody.max_output_tokens, 123);
+    assert.equal(solBody.reasoning.effort, 'medium');
+    const solPlannerBody = sol._buildResponsesBody(messages, {
+      maxTokens: 123,
+      extraBody: { reasoning: { effort: 'minimal' } },
+    }, false);
+    assert.equal(solPlannerBody.reasoning.effort, 'low', 'GPT-6.1 Sol must replace unsupported minimal effort');
+    const solDisabledBody = sol._buildResponsesBody(messages, {
+      maxTokens: 123,
+      extraBody: { reasoning: { effort: 'none' } },
+    }, false);
+    assert.equal(solDisabledBody.reasoning.effort, 'low', 'GPT-6.1 Sol must replace unsupported none effort');
+
     for (const model of newContractModels) {
       const provider = new Provider({
         providerName: 'openrouter',
@@ -75337,7 +75425,7 @@ test('OpenAI reasoning and GPT-6 ids use the advertised Chat Completions contrac
       assert.equal(body.temperature, 0.7, `${model} should keep the default temperature`);
     }
 
-    for (const model of ['gpt-6-luna-pro', 'gpt-6-sol', 'gpt-6-astra']) {
+    for (const model of ['gpt-6-luna-pro', 'gpt-6.1-sol', 'gpt-6-astra']) {
       for (const config of [
         {
           label: `OpenRouter ${model}`,
