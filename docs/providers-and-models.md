@@ -49,6 +49,10 @@ are unavailable or inconclusive. Confident pending/failed results require
 recovery. Accepted fresh proof can establish generic publication evidence;
 explicit recipient, payment, download, authorization and workflow contracts
 remain required. Future votes and moderation outcomes are not certified.
+Freshness checks re-capture pixels or re-read the bounded AX observation used
+by the judge, with document/run identity checked separately. Text outside that
+observation does not invalidate an AX verdict; changed observed evidence does.
+Action history includes tool names without typed values or other arguments.
 
 Rollout is additive: deploy Cloud `/v1/decisions` before releasing the extension.
 An older Cloud deployment falls through to the active LLM and existing checks.

@@ -1,7 +1,7 @@
 import { verifyBrowserCompletion } from './completion-runtime.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
 import { completionStopError } from './completion-verifier.js';
-import { COMPLETION_DOCUMENT_STAMP_SCRIPT } from './completion-document.js';
+import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
@@ -7190,8 +7190,8 @@ export class Agent extends LoopDetector {
     return { status: reason, reason, ...(code ? { code } : {}), ...detail };
   }
 
-  async _completionDocumentStamp(tabId) {
-    const result = await cdpClient.evaluate(tabId, COMPLETION_DOCUMENT_STAMP_SCRIPT);
+  async _completionDocumentStamp(tabId, documentOnly = false) {
+    const result = await cdpClient.evaluate(tabId, documentOnly ? COMPLETION_DOCUMENT_IDENTITY_SCRIPT : COMPLETION_DOCUMENT_STAMP_SCRIPT);
     return result?.result?.value || '';
   }
 

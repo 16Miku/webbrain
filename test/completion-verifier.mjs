@@ -135,6 +135,7 @@ for (const build of ['chrome', 'firefox']) {
       conversationIds: new Map([[1, 'session']]), conversations: new Map([[1, [
         { role: 'assistant', tool_calls: [{ id: 'rules', function: { name: 'read_page', arguments: '{}' } }] },
         { role: 'tool', tool_call_id: 'rules', content: '{"text":"Community rules: relevant tools are allowed"}' },
+        { role: 'assistant', tool_calls: ['type_ax', 'type_text', 'set_field', 'fill_form', 'navigate'].map((name, index) => ({ id: `action-${index}`, function: { name, arguments: JSON.stringify({ ref_id: 'observed-ref', text: 'unlabelled-entered-value', value: 'nested-entered-value', fields: [{ text: 'another-entered-value' }], url: 'https://example.test/?data=opaque-entered-value' }) } })) },
       ]]]),
       _completionDocumentStamp: async () => stamp, _captureCompletionJudgeImage: async () => pixels,
       _budgetForCapture: () => ({ maxTargetPx: 1568, maxTargetTokens: 1568 }), _shrinkImageForBudget: async dataUrl => ({ dataUrl }),
@@ -147,6 +148,8 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(verdict.engine, 'compass'); assert.equal(verdict.modality, 'vision'); assert.equal(lastRequest.config.model, config.DEFAULT_DECISION_MODEL);
       assert.equal(lastRequest.headers['X-WebBrain-Help-Improve'], '0'); assert.equal(lastRequest.metadata.session_id, 'session');
       assert.match(JSON.stringify(lastRequest.state), /Community rules/);
+      assert.doesNotMatch(JSON.stringify(lastRequest.state), /entered-value/);
+      assert.deepEqual(lastRequest.state[0].recorded_actions, ['type_ax', 'type_text', 'set_field', 'fill_form', 'navigate'].map(tool => ({ tool })));
       const initialState = JSON.stringify(lastRequest.state);
       await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://old.reddit.com/comments/new' });
       assert.equal(JSON.stringify(lastRequest.state), initialState);
@@ -270,7 +273,7 @@ for (const build of ['chrome', 'firefox']) {
         const engine = stored.systemOneEnabled === true && stored.systemOneDoneEnabled !== false ? 'decision' : 'llm';
         assert.equal(verdict.outcome, 'succeeded'); assert.equal(verdict.modality, 'ax');
         assert.deepEqual(calls, [`${engine}:vision`, `${engine}:ax`]);
-        assert.equal(reads, 1); assert.equal(captures, 2);
+        assert.equal(reads, 2, 'AX evidence must be re-read after its judgment'); assert.equal(captures, 2);
       }
     } finally {
       globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
@@ -282,7 +285,7 @@ for (const build of ['chrome', 'firefox']) {
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
     try {
-      for (const engine of ['decision', 'llm']) for (const [cap, used, modality] of [[0, 10, 'vision'], [1, 0, 'ax'], [2, 0, 'vision'], [3, 2, 'ax'], [3, 1, 'vision'], [2, 2, 'ax']]) {
+      for (const engine of ['decision', 'llm']) for (const [cap, used, modality] of [[0, 10, 'vision'], [1, 0, 'ax'], [2, 0, 'vision'], [3, 0, 'vision'], [3, 2, 'ax'], [3, 1, 'vision'], [2, 2, 'ax']]) {
         globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ decisionProvider: 'local', systemOneEnabled: engine === 'decision', decisionVisionMode: 'on' }) } } };
         let captures = 0, spent = used, requests = 0;
         const active = { model: 'local-model', supportsVision: true, config: { category: 'local' }, chat() {} };
@@ -305,6 +308,12 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(verdict.modality, modality);
         assert.equal(captures, modality === 'vision' ? 2 : 0);
         assert.equal(requests, 1);
+        if (cap === 3 && used === 0) {
+          const repeated = await runtime.verifyBrowserCompletion(agent, 1);
+          assert.equal(repeated.outcome, 'succeeded'); assert.equal(repeated.modality, 'vision');
+          assert.equal(requests, 1, 'a revalidated cached verdict needs no additional judge request');
+          assert.equal(captures, 3, 'the matching freshness capture must be reused after the last slot is spent');
+        }
         if (cap) assert.ok(spent <= cap, 'freshness must honor the user screenshot cap');
       }
     } finally {

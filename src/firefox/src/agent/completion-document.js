@@ -18,3 +18,6 @@ export function completionDocumentStamp() {
 }
 
 export const COMPLETION_DOCUMENT_STAMP_SCRIPT = `(${completionDocumentStamp.toString()})()`;
+// Document identity is separate from evidence freshness: unrelated page text
+// must not invalidate an observation that did not include it.
+export const COMPLETION_DOCUMENT_IDENTITY_SCRIPT = '[location.href, performance.timeOrigin].join("|")';

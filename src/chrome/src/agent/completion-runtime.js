@@ -41,10 +41,15 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
     && scope === JSON.stringify([agent.completionInvariants.get(tabId)?.runToken, agent.completionInvariants.get(tabId)?.lastAction?.sequence, agent._progressTaskKeyHash(tabId), config.provider, config.model, config.url, provider.model, provider.supportsVision, JSON.stringify(config)]);
   const currentIdentity = async evidence => !!evidence.identity && currentRun()
     && JSON.stringify(resolveDecisionConfig(await chrome.storage.local.get(DECISION_SETTINGS_KEYS), compass)) === JSON.stringify(config)
-    && evidence.identity === await agent._completionDocumentStamp(tabId) && currentRun();
+    && evidence.identity === await agent._completionDocumentStamp(tabId, true) && currentRun();
   const current = async evidence => {
     if (!await currentIdentity(evidence)) return false;
-    if (evidence.modality !== 'vision') return true;
+    if (evidence.modality !== 'vision') {
+      // Re-read the bounded AX evidence actually sent to the judge. Full-body
+      // clocks/feeds outside that evidence do not establish staleness.
+      const fresh = await capture('ax', true);
+      return fresh?.key === (evidence.key || evidence.evidenceKey) && await currentIdentity(evidence);
+    }
     // Text and input stamps cannot detect canvas, image or CSS changes. Take a
     // new redacted, budgeted capture after the request; never reuse that cache.
     let fresh;
@@ -61,16 +66,18 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
   const reads = messages.filter(m => m.role === 'tool' && /read_page|get_accessibility_tree|verify_form/.test(toolNames.get(m.tool_call_id) || m.name || ''));
   const selectedReads = [...new Set([...reads.filter(m => /rules|guidelines|moderation/i.test(String(m.content))).slice(-2), ...reads.slice(-2)])];
   const history = selectedReads.map(m => ({ tool: toolNames.get(m.tool_call_id) || m.name, evidence: wrapSystemOneData(boundedText(redactSystemOneText(String(m.content)), 450)) }));
-  const recordedActions = messages.flatMap(m => m.tool_calls || []).filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name, args: wrapSystemOneData(boundedText(redactSystemOneText(String(c.function.arguments || '')), 180)) }));
+  // Entered values can be secrets without recognizable labels. Action names
+  // supply history without sending arbitrary tool arguments to another judge.
+  const recordedActions = messages.flatMap(m => m.tool_calls || []).filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name }));
   const captures = new Map();
   const capture = async (modality, refresh = false) => {
-    const before = await agent._completionDocumentStamp(tabId);
+    const before = await agent._completionDocumentStamp(tabId, true);
     const cached = captures.get(modality);
     const reusable = cached?.identity === before && context.isCurrent();
+    if (!refresh && reusable) return cached;
     // A new vision judgment needs both its evidence and its post-request
     // freshness capture. With only one slot left, use AX before paying a judge.
     if (modality === 'vision' && agent._canTakeAutoScreenshot?.(tabId, refresh || reusable ? 1 : 2) === false) return null;
-    if (!refresh && reusable) return cached;
     let observation;
     if (modality === 'vision') {
       let pixels = await agent._captureCompletionJudgeImage(tabId);
@@ -83,7 +90,7 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
       if (result?.success === false || !result?.pageContent) return null;
       observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.pageContent), 4500)) };
     }
-    const identity = await agent._completionDocumentStamp(tabId);
+    const identity = await agent._completionDocumentStamp(tabId, true);
     if (!identity || identity !== before || !context.isCurrent()) return null;
     const submit = agent._completionSubmitStates.get(tabId);
     const info = {
