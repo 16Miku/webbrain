@@ -106,6 +106,8 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   systemOneFastBrowser: false,
   systemOneWatchThreshold: 0.7,
   systemOneCompletionThreshold: 0.7,
+  decisionProvider: '', decisionModel: '', decisionApiKey: '', decisionLocalApiKey: '', decisionBaseUrl: '', decisionVisionMode: 'auto', decisionVisionSupported: false,
+  decisionInputRate: .04, decisionOutputRate: 0, systemOneDoneEnabled: true, systemOneDoneThreshold: .9,
   typesafeApiKey: '',
   [SAFE_SOCIAL_SETTINGS_KEY]: normalizeSafeSocialSettings(),
 });
@@ -151,6 +153,7 @@ const BOOLEAN_KEYS = new Set([
   'antiCaptchaEnabled',
   'nopechaEnabled',
   'nonecapEnabled',
+  'decisionVisionSupported', 'systemOneDoneEnabled',
   'systemOneEnabled',
   'systemOneWatchEnabled',
   'systemOneCompletionEnabled',
@@ -172,6 +175,7 @@ const NUMBER_KEYS = new Set([
   'costAllowanceSessionUsd',
   'costAllowanceTotalUsd',
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
+  'decisionInputRate', 'decisionOutputRate', 'systemOneDoneThreshold',
   'systemOneWatchThreshold',
   'systemOneCompletionThreshold',
 ]);
@@ -194,6 +198,7 @@ const STRING_KEYS = new Set([
   'antiCaptchaApiKey',
   'nopechaApiKey',
   'nonecapApiKey',
+  'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
   'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([
@@ -266,6 +271,10 @@ function normalizeSettings(source, { strict = false } = {}) {
     settings[key] = clone(value);
   }
   settings.providers = sanitizeProviders(settings.providers, { strict });
+  if (!Object.hasOwn(source, 'decisionInputRate')) {
+    settings.decisionInputRate = source.decisionProvider === 'typesafe' || (!source.decisionProvider && source.typesafeApiKey)
+      ? .042 : source.decisionProvider === 'local' ? 0 : .04;
+  }
   return settings;
 }
 
