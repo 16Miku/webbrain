@@ -55,7 +55,7 @@ export async function launchDriver(build) {
       extensionOrigin=worker.url().split('/').slice(0,3).join('/');
       extensionPage=await context.newPage();await extensionPage.goto(`${extensionOrigin}/src/ui/settings.html`);
     } else {
-      child=spawn(process.env.FIREFOX_BINARY||'/Applications/Firefox.app/Contents/MacOS/firefox',['--headless','--remote-allow-system-access','--no-remote','--profile',profile,'--remote-debugging-port','0'],{stdio:['ignore','pipe','pipe']});
+      child=spawn(process.env.FIREFOX_BINARY||(process.platform==='darwin'?'/Applications/Firefox.app/Contents/MacOS/firefox':'firefox'),['--headless','--remote-allow-system-access','--no-remote','--profile',profile,'--remote-debugging-port','0'],{stdio:['ignore','pipe','pipe']});
       const port=await new Promise((res,rej)=>{const timer=setTimeout(()=>rej(Error('Firefox BiDi startup timeout '+output.slice(-400))),20000);let output='';const outputChunk=chunk=>{output+=chunk;const m=output.match(/WebDriver BiDi listening on ws:\/\/127\.0\.0\.1:(\d+)/);if(m){clearTimeout(timer);res(+m[1]);}};child.stderr.on('data',outputChunk);child.stdout.on('data',outputChunk);child.on('exit',code=>{clearTimeout(timer);rej(Error('Firefox exited: '+code+' '+output.slice(-400)));});child.on('error',error=>{clearTimeout(timer);rej(error);});});
       session=new BidiSession();await session.connect(port);await session.send('webExtension.install',{extensionData:{type:'path',path:resolve('src/firefox')}});
       for(let i=0;i<40;i++){const tree=await session.send('browsingContext.getTree',{});const ext=tree.contexts.find(c=>c.url?.startsWith('moz-extension://'));if(ext){extensionContext=ext.context;extensionOrigin=ext.url.split('/').slice(0,3).join('/');break;}await delay(100);}
@@ -96,7 +96,7 @@ export async function launchDriver(build) {
         } finally {await execute('removeTab',tab.id).catch(()=>{});}
       },
       async getCost(){return (await execute('getStorageCost'))?.meteredProviderCostSpentUsd||0;},
-      async close(){await context?.close();await session?.close();child?.kill();await rm(profile,{recursive:true,force:true});},
+      async close(){await context?.close();await session?.close();child?.kill();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});},
     };
-  } catch(error){await context?.close();await session?.close();child?.kill();await rm(profile,{recursive:true,force:true});throw error;}
+  } catch(error){await context?.close();await session?.close();child?.kill();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:100});throw error;}
 }

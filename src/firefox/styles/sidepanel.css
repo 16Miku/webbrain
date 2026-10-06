@@ -3098,6 +3098,10 @@ html[data-ui-scale="175"] .conversation-action-label {
   box-shadow: var(--shadow);
 }
 
+.queued-message.has-steer {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+
 .queued-message-label {
   color: var(--accent);
   font-size: 11px;
@@ -3289,6 +3293,15 @@ html[data-ui-scale="175"] .conversation-action-label {
 
 #user-input::placeholder {
   color: var(--text-muted);
+}
+
+.queued-message-steer.hidden {
+  display: none;
+}
+
+.queued-message-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 #btn-send {
@@ -4548,3 +4561,19 @@ html[data-ui-scale="175"] .conversation-action-label {
     display: none;
   }
 }
+
+/* Compass quota recovery: controls wrap within narrow side panels. */
+.compass-quota { width: 100%; min-width: 0; }
+.quota-choices, .quota-composers, .quota-providers { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.compass-quota button { appearance: none; font: inherit; border: 1px solid var(--accent); background: transparent; color: var(--accent); max-width: 100%; white-space: normal; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+.quota-choices > button { flex: 1 1 100%; text-align: start; border: 1px solid var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+.quota-choices > .subscribe-btn { background: var(--accent); color: white; }
+.quota-claim, .quota-providers label { width: 100%; min-width: 0; }
+.quota-claim:empty, .quota-providers:empty { display: none; }
+.quota-claim label { display: block; margin-block: 10px 6px; }
+.quota-claim input, .quota-claim textarea, .quota-claim select, .quota-providers select { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin-block: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); }
+.quota-claim textarea { resize: vertical; }
+.compass-quota :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.quota-balance, .quota-reset { font-size: 12px; overflow-wrap: anywhere; }
+.quota-status { line-height: 1.45; overflow-wrap: anywhere; }
+.compass-quota [hidden] { display: none; }

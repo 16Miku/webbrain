@@ -4851,6 +4851,8 @@ test('matches Bluesky and exposes a mirrored publish-post workflow', () => {
   assert.deepEqual(firefoxAdapter?.workflow, chromeAdapter?.workflow);
   assert.deepEqual(chromeAdapter?.jobs, ['publish-post']);
   assert.match(chromeAdapter?.notes || '', /hidden <input type=file>/i);
+  assert.equal(chromeAdapter?.notes, firefoxAdapter?.notes);
+  assert.match(chromeAdapter?.notes || '', /download_public_media[\s\S]*HLS into one MP4 with audio/);
   assert.match(chromeAdapter?.notes || '', /complete text, mentions, link card, media, language, and account/i);
   assert.match(chromeAdapter?.notes || '', /new bsky\.app\/profile\/<account>\/post\/<id> link/i);
   for (const [getAdapter, resolveWorkflow, adapters] of [
@@ -24513,6 +24515,12 @@ test('public media recommendations carry immediate download_public_media fast pa
     { url: 'https://www.linkedin.com/posts/example_123', title: 'LinkedIn public post video', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://www.linkedin.com/feed/update/urn:li:activity:123', title: 'LinkedIn public feed update', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
     { url: 'https://threads.net/@user/post/abc', title: 'Threads photo', media: { imageCount: 1, videoCount: 0 }, expectedKind: 'image' },
+    { url: 'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g', title: 'Bluesky', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g/?ref=share', title: 'Bluesky', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://fosstodon.org/@alice/123', title: 'Fosstodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://social.example.org/@alice/123', title: 'Self-hosted Mastodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://mastodon.social/users/alice/statuses/123', title: 'Mastodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
+    { url: 'https://mastodon.social/web/statuses/123', title: 'Mastodon', media: { videoCount: 1, imageCount: 0 }, expectedKind: 'video' },
   ];
 
   for (const buildRecommendedActions of [buildRecommendedActionsCh, buildRecommendedActionsFx]) {
@@ -24540,6 +24548,16 @@ test('public media recommendations carry immediate download_public_media fast pa
     assert.equal(unsupported?.runOptions, undefined, 'unsupported public-media host should not get the skill fast path');
     assert.doesNotMatch(unsupported?.prompt || '', /download_public_media/, 'unsupported public-media host should not force the skill tool');
 
+    for (const url of [
+      'http://fosstodon.org/@alice/123', 'http://mastodon.social/home',
+      'https://alice:secret@fosstodon.org/@alice/123', 'https://fosstodon.org:8443/@alice/123',
+    ]) {
+      const action = buildRecommendedActions({ url, media: { videoCount: 1 } })
+        .find(item => item.id === 'download-media');
+      assert.equal(action?.runOptions, undefined, `unsupported Mastodon URL must not get a skill fast path: ${url}`);
+      assert.doesNotMatch(action?.prompt || '', /download_public_media/, `unsupported URL should use generic download advice: ${url}`);
+    }
+
     const feedAction = buildRecommendedActions({
       url: 'https://www.instagram.com/',
       title: 'Instagram',
@@ -24565,6 +24583,24 @@ test('public media recommendations carry immediate download_public_media fast pa
       }).find((a) => a.id === 'download-media');
       assert.equal(linkedinFeedAction?.runOptions?.firstTool, 'screenshot', `empty LinkedIn permalink should resolve a visible target first for ${url}`);
       assert.match(linkedinFeedAction?.prompt || '', /exact public post\/reel URL/i, `empty LinkedIn permalink should require an explicit target for ${url}`);
+    }
+
+    for (const url of [
+      'https://bsky.app/', 'https://bsky.app/home', 'https://bsky.app/profile/bsky.app',
+      'https://bsky.app/profile/bsky.app/post/',
+      'https://mastodon.social/', 'https://mastodon.social/home', 'https://mastodon.social/@alice',
+      'https://fosstodon.org/tags/videos',
+    ]) {
+      const action = buildRecommendedActions({ url, media: { videoCount: 1 } })
+        .find(item => item.id === 'download-media');
+      assert.equal(action?.runOptions?.tool, 'download_public_media', `feed should use the public downloader: ${url}`);
+      assert.equal(action?.runOptions?.firstTool, 'screenshot', `feed should identify its visible target: ${url}`);
+      assert.match(action?.prompt || '', /explicit url/i, `feed should require a permalink: ${url}`);
+    }
+    for (const url of ['https://bsky.app.evil.example/profile/alice/post/123', 'https://x.com/@alice/123']) {
+      const action = buildRecommendedActions({ url, media: { videoCount: 1 } })
+        .find(item => item.id === 'download-media');
+      assert.doesNotMatch(action?.prompt || '', /omit url so it uses the active media page/i, `lookalike paths must not become direct media: ${url}`);
     }
 
     const mobileFeedAction = buildRecommendedActions({
@@ -26093,11 +26129,11 @@ test('trace lineage: _startTraceRun and replay plumb parent ids in both builds',
     assert.match(agentSource, /parentRunId: replayParentRunId,[\s\S]*?parentSessionId: replayParentSessionId,/, `${browser}: replay does not pass captured lineage to tracing`);
   }
   const chromeCloudRuns = fs.readFileSync(path.join(ROOT, 'src/chrome/src/cloud-runs.js'), 'utf8');
-  assert.match(chromeCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'cloud-runs does not use the completed parent trace');
+  assert.match(chromeCloudRuns, /(?:const|let) parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'cloud-runs does not use the completed parent trace');
   assert.match(chromeCloudRuns, /workflowTrace\.getRun\(parentTraceRunId\)/, 'cloud-runs does not resolve the parent trace session');
   assert.match(chromeCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'cloud-runs does not thread resolved parent lineage');
   const firefoxCloudRuns = fs.readFileSync(path.join(ROOT, 'src/firefox/src/cloud-runs.js'), 'utf8');
-  assert.match(firefoxCloudRuns, /const parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'Firefox cloud-runs does not use the completed parent trace');
+  assert.match(firefoxCloudRuns, /(?:const|let) parentTraceRunId = parentRun\?\.traceRunId \|\| null;/, 'Firefox cloud-runs does not use the completed parent trace');
   assert.match(firefoxCloudRuns, /parentRunId: parentTraceRunId,[\s\S]*?parentSessionId: parentTraceSessionId,/, 'Firefox cloud-runs does not thread resolved parent lineage');
 });
 
@@ -30692,6 +30728,184 @@ test('executeHttpSkillTool caps FreeSkillz transcript segments while leaving tex
   }
 });
 
+function mastodonNodeInfoResponse(url) {
+  const parsed = new URL(url);
+  if (parsed.pathname === '/.well-known/nodeinfo') {
+    return new Response(JSON.stringify({ links: [{
+      rel: 'http://nodeinfo.diaspora.software/ns/schema/2.0',
+      href: `${parsed.origin}/nodeinfo/2.0`,
+    }] }));
+  }
+  if (parsed.pathname === '/nodeinfo/2.0') {
+    return new Response(JSON.stringify({ version: '2.0', software: { name: 'mastodon' } }));
+  }
+  return null;
+}
+
+test('FreeSkillz resolves Bluesky and federated Mastodon posts without broadening the URL allowlist', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const [label, prefix, executeTool, normalizeSkills, buildRegistry] of [
+      ['chrome', 'src/chrome', executeHttpSkillToolCh, normalizeCustomSkillsCh, buildSkillToolRegistryCh],
+      ['firefox', 'src/firefox', executeHttpSkillToolFx, normalizeCustomSkillsFx, buildSkillToolRegistryFx],
+    ]) {
+      const tool = buildRegistry(normalizeSkills([packagedFreeSkillzRecord(prefix)])).get('resolve_public_media');
+      const calls = [];
+      globalThis.fetch = async (url, opts) => {
+        calls.push({ url, opts });
+        return mastodonNodeInfoResponse(url)
+          || { ok: true, status: 200, text: async () => JSON.stringify({ ext: 'mp4', formats: [{ ext: 'mp4' }] }) };
+      };
+      for (const url of [
+        'https://bsky.app.evil.example/profile/alice/post/123', 'https://bsky.app/home',
+        'https://example.com/video/123', 'https://mastodon.social/home', 'https://mastodon.social/@alice',
+        'http://fosstodon.org/@alice/123',
+        'https://alice:secret@fosstodon.org/@alice/123', 'https://fosstodon.org:8443/@alice/123',
+        'https://localhost/@alice/123', 'https://192.168.1.1/@alice/123',
+        'https://127.0.0.1/@alice/123', 'https://[::1]/@alice/123',
+        'https://instance.local/@alice/123', 'https://metadata.google.internal/@alice/123',
+        'https://intranet/@alice/123', 'https://instance.lan/@alice/123',
+      ]) {
+        const result = await executeTool(tool, { url });
+        assert.equal(result.success, false, `${label}: unsupported/private URL should be rejected: ${url}`);
+      }
+      const mastodonOnly = { ...tool, allowedInputUrls: [{ siteAdapter: 'mastodon' }] };
+      const wrongAdapter = await executeTool(mastodonOnly, { url: 'https://x.com/@alice/123' });
+      assert.equal(wrongAdapter.success, false, `${label}: known sites must keep their own adapters`);
+      assert.equal(calls.length, 0, `${label}: rejected URLs must not reach FreeSkillz`);
+      for (const url of [
+        'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g',
+        'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g',
+        'https://fosstodon.org/@alice/123', 'https://mastoturk.org/@alice/123',
+        'https://social.example.org/@alice/123', 'https://social.example.org/@alice@fosstodon.org/123',
+        'https://social.example.org/users/alice/statuses/123', 'https://mastodon.social/web/statuses/123',
+      ]) {
+        const result = await executeTool(tool, { url });
+        assert.equal(result.success, true, `${label}: public post should resolve: ${url}`);
+        assert.equal(result.data.ext, 'mp4');
+        assert.equal(calls.at(-1).url, 'https://freeskillz.xyz/v1/media/resolve');
+        assert.equal(calls.at(-1).opts.credentials, 'omit');
+        assert.deepEqual(JSON.parse(calls.at(-1).opts.body), { url });
+      }
+    }
+  } finally {
+    if (originalFetch === undefined) delete globalThis.fetch;
+    else globalThis.fetch = originalFetch;
+  }
+});
+
+test('Mastodon media allowlists verify unknown hosts and never forward unverified URLs or query tokens', async () => {
+  const originalFetch = globalThis.fetch;
+  const origin = 'https://social.example.org';
+  const discoveryUrl = `${origin}/.well-known/nodeinfo`;
+  const metadataUrl = `${origin}/nodeinfo/2.0`;
+  const discovery = (href = metadataUrl) => new Response(JSON.stringify({ links: [{
+    rel: 'http://nodeinfo.diaspora.software/ns/schema/2.0', href,
+  }] }));
+  const cases = [
+    ['unrelated status-shaped page', 'https://example.com/@alice/123?token=secret', () => new Response('{}'), 1],
+    ['prefix heuristic is not proof', 'https://mastodon.example.org/@alice/123', () => new Response('{}'), 1],
+    ['known host suffix is not proof', 'https://fosstodon.org.evil.example/@alice/123', () => new Response('{}'), 1],
+    ['other fediverse software', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response(JSON.stringify({ software: { name: 'pleroma' } })), 2],
+    ['cross-origin metadata', `${origin}/@alice/123`, () => discovery('https://mastodon.social/nodeinfo/2.0'), 1],
+    ['HTTP metadata', `${origin}/@alice/123`, () => discovery('http://social.example.org/nodeinfo/2.0'), 1],
+    ['local metadata', `${origin}/@alice/123`, () => discovery('https://127.0.0.1/nodeinfo/2.0'), 1],
+    ['credentialed metadata', `${origin}/@alice/123`, () => discovery('https://user:secret@social.example.org/nodeinfo/2.0'), 1],
+    ['redirecting discovery', `${origin}/@alice/123`, () => new Response('', { status: 302, headers: { Location: 'https://mastodon.social/.well-known/nodeinfo' } }), 1],
+    ['redirecting metadata', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response('', { status: 302 }), 2],
+    ['oversized discovery', `${origin}/@alice/123`, () => new Response(' '.repeat(65537)), 1],
+    ['oversized metadata', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response(' '.repeat(65537)), 2],
+    ['invalid metadata JSON', `${origin}/@alice/123`, url => url === discoveryUrl ? discovery() : new Response('<html>'), 2],
+    ['network failure', `${origin}/@alice/123`, () => { throw new Error('offline'); }, 1],
+  ];
+  try {
+    for (const [label, prefix, executeTool, normalizeSkills, buildRegistry] of [
+      ['chrome', 'src/chrome', executeHttpSkillToolCh, normalizeCustomSkillsCh, buildSkillToolRegistryCh],
+      ['firefox', 'src/firefox', executeHttpSkillToolFx, normalizeCustomSkillsFx, buildSkillToolRegistryFx],
+    ]) {
+      const registry = buildRegistry(normalizeSkills([packagedFreeSkillzRecord(prefix)]));
+      for (const name of ['resolve_public_media', 'download_public_media']) {
+        const tool = registry.get(name);
+        for (const [scenario, url, response, expectedCount] of cases) {
+          const calls = [];
+          globalThis.fetch = async (requestUrl, opts) => {
+            calls.push({ url: requestUrl, opts });
+            assert.notEqual(new URL(requestUrl).hostname, 'freeskillz.xyz', `${label}/${name}: ${scenario} must not reach provider`);
+            return response(requestUrl);
+          };
+          const result = await executeTool(tool, { url });
+          assert.equal(result.success, false, `${label}/${name}: reject ${scenario}`);
+          assert.equal(calls.length, expectedCount, `${label}/${name}: ${scenario} probe count`);
+          assert.equal(calls[0].url, `${new URL(url).origin}/.well-known/nodeinfo`);
+          for (const call of calls) {
+            assert.equal(call.opts.credentials, 'omit');
+            assert.equal(call.opts.redirect, 'manual');
+            assert.equal(call.opts.method, 'GET');
+            assert.equal(call.opts.signal.aborted, true, 'verification deadline must be disposed');
+            assert.equal(new URL(call.url).search, '', 'post query must not enter verification');
+            assert.equal(new URL(call.url).hash, '', 'post fragment must not enter verification');
+          }
+        }
+      }
+      for (const [url, expected, expectedProbes] of [
+        ['https://fosstodon.org/@alice/123?token=secret#private', 'https://fosstodon.org/@alice/123', 0],
+        [`${origin}/@alice/123?token=secret#private`, `${origin}/@alice/123`, 2],
+        ['https://social.みんな/@alice/123?token=secret#private', 'https://social.xn--q9jyb4c/@alice/123', 2],
+      ]) {
+        const probes = [];
+        const providerCalls = [];
+        globalThis.fetch = async (requestUrl, opts) => {
+          const metadata = mastodonNodeInfoResponse(requestUrl);
+          if (metadata) { probes.push({ url: requestUrl, opts }); return metadata; }
+          providerCalls.push({ url: requestUrl, opts });
+          return new Response(JSON.stringify({ ext: 'mp4' }));
+        };
+        const result = await executeTool(registry.get('resolve_public_media'), { url });
+        assert.equal(result.success, true, `${label}: verified public URL ${url}`);
+        assert.equal(probes.length, expectedProbes, `${label}: known hosts must not require discovery`);
+        assert.equal(providerCalls.length, 1);
+        assert.deepEqual(JSON.parse(providerCalls[0].opts.body), { url: expected });
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('Mastodon instance verification bounds stalled response headers and bodies', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalSetTimeout = globalThis.setTimeout;
+  try {
+    // Exercise the real timeout/abort path without waiting ten seconds per case.
+    globalThis.setTimeout = (fn, ms, ...args) => originalSetTimeout(fn, ms === 10000 ? 5 : ms, ...args);
+    for (const [prefix, executeTool, normalizeSkills, buildRegistry] of [
+      ['src/chrome', executeHttpSkillToolCh, normalizeCustomSkillsCh, buildSkillToolRegistryCh],
+      ['src/firefox', executeHttpSkillToolFx, normalizeCustomSkillsFx, buildSkillToolRegistryFx],
+    ]) {
+      const tool = buildRegistry(normalizeSkills([packagedFreeSkillzRecord(prefix)])).get('resolve_public_media');
+      let calls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        calls++;
+        return new Promise((resolve, reject) => opts.signal.addEventListener('abort', () => reject(opts.signal.reason), { once: true }));
+      };
+      assert.equal((await executeTool(tool, { url: 'https://social.example.org/@alice/123' })).success, false);
+      assert.equal(calls, 1, 'stalled headers must not reach the provider');
+      let cancelled = false;
+      calls = 0;
+      globalThis.fetch = async () => {
+        calls++;
+        return new Response(new ReadableStream({ cancel() { cancelled = true; } }));
+      };
+      assert.equal((await executeTool(tool, { url: 'https://social.example.org/@alice/123' })).success, false);
+      assert.equal(calls, 1, 'stalled body must not reach the provider');
+      assert.equal(cancelled, true, 'stalled reader must be cancelled');
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+    globalThis.setTimeout = originalSetTimeout;
+  }
+});
+
 test('executeHttpSkillTool runs FreeSkillz media download jobs and cleans up', async () => {
   const originalFetch = globalThis.fetch;
   const originalChrome = globalThis.chrome;
@@ -30713,6 +30927,8 @@ test('executeHttpSkillTool runs FreeSkillz media download jobs and cleans up', a
         text: async () => JSON.stringify(body),
       });
       globalThis.fetch = async (url, opts = {}) => {
+        const metadata = mastodonNodeInfoResponse(url);
+        if (metadata) return metadata;
         providerCalls.push({ url, opts });
         if (url === 'https://freeskillz.xyz/v1/media/jobs' && opts.method === 'POST') {
           return jsonResponse(200, { job_id: 'job_123' });
@@ -30815,6 +31031,24 @@ test('executeHttpSkillTool runs FreeSkillz media download jobs and cleans up', a
         },
         `${label}: wrong create job payload`,
       );
+
+      for (const url of [
+        'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g',
+        'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g',
+        'https://fosstodon.org/@alice/123', 'https://social.example.org/users/alice/statuses/123',
+      ]) {
+        providerCalls.length = 0;
+        downloadCalls.length = 0;
+        const downloaded = await executeTool(tool, { url, kind: 'video', max_height: 360 });
+        assert.equal(downloaded.success, true, `${label}: public video job should succeed: ${url}`);
+        assert.equal(downloaded.downloadId, label === 'chrome' ? 7101 : 8101);
+        assert.equal(downloaded.cleanup?.success, true, `${label}: public video job must be cleaned up`);
+        assert.equal(downloadCalls.length, 1, `${label}: exactly one file should be saved`);
+        assert.match(downloadCalls[0].url, /^data:video\/mp4;base64,/);
+        assert.deepEqual(providerCalls.map(call => call.opts.method), ['POST', 'GET', 'GET', 'DELETE']);
+        assert.deepEqual(JSON.parse(providerCalls[0].opts.body), { kind: 'video', max_height: 360, url });
+        assert.ok(providerCalls.every(call => call.opts.credentials === 'omit'), `${label}: browser cookies must stay local`);
+      }
     }
   } finally {
     if (originalFetch === undefined) delete globalThis.fetch;
@@ -45902,9 +46136,9 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const styles = fs.readFileSync(path.join(ROOT, styleRel), 'utf8');
-    const start = panel.indexOf("function renderSubscribeError(textEl, content, resumeMode = '') {");
+    const start = panel.indexOf('function renderSubscribeError(');
     assert.notEqual(start, -1, `${label}: renderSubscribeError missing`);
-    const end = panel.indexOf('\n}\n\nfunction addMessage', start);
+    const end = panel.indexOf('\n}\n\nfunction renderCostAllowanceError', start);
     assert.notEqual(end, -1, `${label}: renderSubscribeError boundary missing`);
     const body = panel.slice(start, end + 2);
     const subscribeDeclaration = panel.match(/const SUBSCRIBE_ERROR_RE = [^\n]+;/)?.[0] || '';
@@ -45940,7 +46174,7 @@ test('sidepanel subscribe error card clears DOM without HTML reinterpretation', 
     assert.notEqual(errorUpdateEnd, -1, `${label}: renderAgentErrorUpdate boundary missing`);
     const errorUpdateBody = panel.slice(errorUpdateStart, errorUpdateEnd);
     assert.match(errorUpdateBody, /subscribeResumeMode: active\.retryPayload\?\.mode,/, `${label}: structured error cards should receive the request-scoped run mode`);
-    assert.match(panel, /renderSubscribeError\(textEl, content, options\.subscribeResumeMode\)/, `${label}: error messages should forward their captured run mode to the subscribe card`);
+    assert.match(panel, /renderSubscribeError\(textEl, content, options\.subscribeResumeMode, options\.quota, options\.costAllowanceResume\)/, `${label}: error messages should forward their captured run mode to the subscribe card`);
     assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?includes\(options\?\.mode\) \? options\.mode : agentMode;/, `${label}: continuation should accept a preserved mode`);
     const runCompleteStart = panel.indexOf("case 'run_complete':");
     const runCompleteEnd = panel.indexOf("case 'context_compacted':", runCompleteStart);
@@ -46020,7 +46254,7 @@ test('sidepanel cloud cost allowance stop offers a persisted one-click $10 bump'
     assert.match(panel, /if \(textEl && parseCostAllowanceError\(res\.content\)\) \{[\s\S]*?renderCostAllowanceError\(textEl, res\.content, modeForSend,[\s\S]*?\} else if \(textEl && getStreamedAssistantText\(textEl\) === String\(res\.content\)\)/, `${label}: terminal allowance content should render its card before duplicate-stream formatting`);
     assert.match(panel, /renderCostAllowanceError\(textEl, res\.content, modeForSend, \{[\s\S]*?submittedTurnDurable: res\.submittedTurnDurable,[\s\S]*?\}\)[\s\S]*?&& !renderSubscribeError/, `${label}: returned continuation stops should render with terminal durability proof`);
     assert.match(panel, /data: event\.type === 'run_complete'[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,[\s\S]*?: event\.data,/, `${label}: replayed terminal events should be enriched with current durability proof before rendering`);
-    assert.match(panel, /const restoredAllowanceCardMissing = !!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
+    assert.match(panel, /const restoredAllowanceCardMissing = \(!!parseCostAllowanceError\(runUi\?\.finalContent\)[\s\S]*?\|\| restoredAllowanceCardMissing[\s\S]*?restoredAllowanceCardMissing \? \{\} : \{ seq: runUi\.seq \}/, `${label}: terminal restoration should rebuild a deferred allowance card even after replaying its final text sequence`);
     assert.match(panel, /type: 'run_complete',[\s\S]*?submittedTurnDurable: state\?\.submittedTurnDurable === true,/, `${label}: restored terminal cards should retain durable-turn proof`);
     assert.match(panel, /case 'run_complete':[\s\S]*?if \(textEl && parseCostAllowanceError\(data\.finalContent\)\)[\s\S]*?renderCostAllowanceError\(textEl, data\.finalContent,[\s\S]*?\} else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored terminal allowance cards should render before the empty-text fallback guard`);
     assert.match(panel, /function retryPayloadForRunAssistant\(assistantEl\)[\s\S]*?getComposerHistoryTextFromMessage\(userEl\)[\s\S]*?dataset\.retryAgentPrompt[\s\S]*?displayText,[\s\S]*?attachmentCount:/, `${label}: restored non-durable stops should reconstruct hidden-prompt retry routing from persisted chat metadata`);
@@ -47890,6 +48124,22 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'chrome: tab-chat restore should read through the shared background queue');
   assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'chrome: coordinated load failures should remain distinct from successful empty restores');
   assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'chrome: a failed visibility handoff must preserve the current transcript DOM');
+  assert.match(panel, /const btwSourceTabId = isBtwWindow \? \(Number\(_btwParams\.get\('forkFromTabId'\)\) \|\| null\) : null;/, 'chrome: /btw should retain its source only as fork metadata');
+  assert.match(panel, /if \(isBtwWindow && btwSourceTabId != null && initialTabId != null\) \{[\s\S]*?sendToBackground\('fork_standalone_conversation', \{[\s\S]*?sourceTabId: btwSourceTabId,[\s\S]*?forkTabId: initialTabId,/, 'chrome: /btw must use its popup tab as an independent fork scope');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?const existing = await getBtwWindowState\(tabId\);[\s\S]*?forkFromTabId=\$\{tabId\}/, 'chrome: /btw should only reuse a popup for the same source tab');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?pendingPrompt: prompt[\s\S]*?chrome\.tabs\.sendMessage\(target\.id, \{ action: 'btw_prompt', prompt \}\)\.catch\(\(\) => \{\}\);/, 'chrome: /btw should retain a prompt until its same-tab window receives it');
+  assert.match(panel, /async function consumePendingBtwPrompt\(directPrompt = ''\) \{[\s\S]*?await btwReady;[\s\S]*?pendingPrompts: \[\][\s\S]*?for \(const p of prompts\) \{[\s\S]*?await sendBtwPrompt\(p\);/, 'chrome: a /btw window should drain queued forwarded prompts after readiness');
+  assert.match(panel, /void consumePendingBtwPrompt\(msg\?\.prompt\)/, 'chrome: /btw prompt listener should forward the message payload instead of dropping it');
+  assert.match(panel, /pendingPrompts: queued/, 'chrome: /btw should queue concurrent prompts instead of overwriting a single slot');
+  assert.match(panel, /markBtwReady\(\);[\s\S]*?await sendBtwPrompt\(btwInitialPrompt\)/, 'chrome: /btw auto-send should run after readiness without a fixed delay');
+  assert.match(panel, /try \{\s*await sendToBackground\('fork_standalone_conversation'/, 'chrome: /btw fork bootstrap must not abort panel init on failure');
+  const chromeBackground = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
+  assert.match(chromeBackground, /case 'fork_standalone_conversation':[\s\S]*?agent\.forkConversation\(sourceTabId, forkTabId\);[\s\S]*?tabChatHandoff\.save\(forkTabId, sourceChat\.html\)/, 'chrome: /btw fork bootstrap must copy history and transcript into the popup scope');
+  assert.match(chromeBackground, /if \(!fork\?\.resumed\)/, 'chrome: /btw reload should keep the side conversation instead of re-forking');
+  assert.match(chromeAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'chrome: /btw forks must mint a distinct Ask-only conversation identity');
+  assert.match(chromeAgent, /_trimIncompleteToolTail\(messages\)/, 'chrome: /btw fork should drop a trailing incomplete tool batch');
+  assert.match(chromeAgent, /resumed: true/, 'chrome: /btw fork should report a resumed side conversation on reload');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: visible tab-chat persistence should carry its owner generation through the shared background queue');
   assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
@@ -47916,6 +48166,22 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   assert.match(loadBody, /return await enqueueTabChatOperation\(numericTabId, async \(queuedTabId\) => \{[\s\S]*?sendToBackground\('load_tab_chat', \{[\s\S]*?waitForHandoff,[\s\S]*?\}\);/, 'firefox: tab-chat restore should read through the shared background queue');
   assert.match(loadBody, /catch \(e\) \{\s*if \(waitForHandoff\) return TAB_CHAT_LOAD_FAILED;\s*\}[\s\S]*?return null;/, 'firefox: coordinated load failures should remain distinct from successful empty restores');
   assert.match(panel, /const html = await loadTabChat\(tabId, \{ waitForHandoff: true \}\);\s*if \(html === TAB_CHAT_LOAD_FAILED\) return false;[\s\S]*?messagesEl\.innerHTML = '';/, 'firefox: a failed visibility handoff must preserve the current transcript DOM');
+  assert.match(panel, /const btwSourceTabId = isBtwWindow \? \(Number\(_btwParams\.get\('forkFromTabId'\)\) \|\| null\) : null;/, 'firefox: /btw should retain its source only as fork metadata');
+  assert.match(panel, /if \(isBtwWindow && btwSourceTabId != null && initialTabId != null\) \{[\s\S]*?sendToBackground\('fork_standalone_conversation', \{[\s\S]*?sourceTabId: btwSourceTabId,[\s\S]*?forkTabId: initialTabId,/, 'firefox: /btw must use its popup tab as an independent fork scope');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?const existing = await getBtwWindowState\(tabId\);[\s\S]*?forkFromTabId=\$\{tabId\}/, 'firefox: /btw should only reuse a popup for the same source tab');
+  assert.match(panel, /async function openBtwWindow\(tabId, prompt = ''\) \{[\s\S]*?pendingPrompt: prompt[\s\S]*?browser\.tabs\.sendMessage\(target\.id, \{ action: 'btw_prompt', prompt \}\)\.catch\(\(\) => \{\}\);/, 'firefox: /btw should retain a prompt until its same-tab window receives it');
+  assert.match(panel, /async function consumePendingBtwPrompt\(directPrompt = ''\) \{[\s\S]*?await btwReady;[\s\S]*?pendingPrompts: \[\][\s\S]*?for \(const p of prompts\) \{[\s\S]*?await sendBtwPrompt\(p\);/, 'firefox: a /btw window should drain queued forwarded prompts after readiness');
+  assert.match(panel, /void consumePendingBtwPrompt\(msg\?\.prompt\)/, 'firefox: /btw prompt listener should forward the message payload instead of dropping it');
+  assert.match(panel, /pendingPrompts: queued/, 'firefox: /btw should queue concurrent prompts instead of overwriting a single slot');
+  assert.match(panel, /markBtwReady\(\);[\s\S]*?await sendBtwPrompt\(btwInitialPrompt\)/, 'firefox: /btw auto-send should run after readiness without a fixed delay');
+  assert.match(panel, /try \{\s*await sendToBackground\('fork_standalone_conversation'/, 'firefox: /btw fork bootstrap must not abort panel init on failure');
+  const firefoxBackground = fs.readFileSync(path.join(ROOT, 'src/firefox/src/background.js'), 'utf8');
+  const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
+  assert.match(firefoxBackground, /case 'fork_standalone_conversation':[\s\S]*?agent\.forkConversation\(sourceTabId, forkTabId\);[\s\S]*?tabChatHandoff\.save\(forkTabId, sourceChat\.html\)/, 'firefox: /btw fork bootstrap must copy history and transcript into the popup scope');
+  assert.match(firefoxBackground, /if \(!fork\?\.resumed\)/, 'firefox: /btw reload should keep the side conversation instead of re-forking');
+  assert.match(firefoxAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'firefox: /btw forks must mint a distinct Ask-only conversation identity');
+  assert.match(firefoxAgent, /_trimIncompleteToolTail\(messages\)/, 'firefox: /btw fork should drop a trailing incomplete tool batch');
+  assert.match(firefoxAgent, /resumed: true/, 'firefox: /btw fork should report a resumed side conversation on reload');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: visible tab-chat persistence should carry its owner generation through the shared background queue');
   assert.match(panel, /document\.visibilityState === 'hidden' && allowHidden[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: hidden handoff must bypass the document-local queue and enter the shared queue immediately');
   const clearStart = panel.indexOf('function clearCachedTabChat(tabId) {');
@@ -50764,7 +51030,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
     const slash = loadSlashCommandRuntime(panelRel);
-    for (const command of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/screenshot', '/export', '/export --traces', '/verbose']) {
+    for (const command of ['/help', '/progress', '/btw', '/scratchpad', '/memory', '/schedule --list', '/screenshot', '/export', '/export --traces', '/verbose']) {
       assert.equal(slash.slashInvocationIsOutOfBand(slash.parseSlashInvocation(command)), true, `${label}: ${command} should be allowed while busy`);
     }
     for (const command of ['/schedule task', '/scratchpad --append note', '/scratchpad --clear', '/memory --add note', '/memory --forget id']) {
@@ -50797,7 +51063,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       locale,
-      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
+      /'sp\.slash\.busy_only_oob': 'Messages are queued while WebBrain is busy\. Only \/help, \/progress, \/btw, \/scratchpad, \/memory, \/schedule --list, \/watch, \/dangerously-skip-permissions, \/screenshot, \/export, \/export --traces, and \/verbose can run immediately as slash commands\./,
       `${label}: busy slash notice should explain queued messages and safe slash commands`,
     );
   }
@@ -50823,7 +51089,7 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.match(panel, /queued-message-edit/, `${label}: queued item should render an edit button`);
     assert.match(panel, /queued-message-delete/, `${label}: queued item should render a delete button`);
     assert.match(panel, /queuedMessagesEl\?\.addEventListener\('click', \(e\) => \{[\s\S]*?e\.target\.closest\('button\[data-queue-action\]\[data-queue-id\]'\);[\s\S]*?editQueuedComposerMessage\(currentTabId, queueId\);[\s\S]*?\}\);/, `${label}: queued edit button clicks should call the edit helper`);
-    assert.match(panel, /inputEl\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.isComposing \|\| e\.keyCode === 229\) return;[\s\S]*?if \(handleSlashCommandKeydown\(e\)\) return;[\s\S]*?const isPlainArrow = !e\.altKey && !e\.ctrlKey && !e\.metaKey && !e\.shiftKey;[\s\S]*?if \(e\.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab\(\)\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(e\.key === 'Enter' && !e\.shiftKey\)/, `${label}: plain ArrowUp should edit queued messages before history and Enter handling`);
+    assert.match(panel, /inputEl\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.isComposing \|\| e\.keyCode === 229\) return;[\s\S]*?if \(handleSlashCommandKeydown\(e\)\) return;[\s\S]*?const isPlainArrow = !e\.altKey && !e\.ctrlKey && !e\.metaKey && !e\.shiftKey;[\s\S]*?if \(e\.key === 'ArrowUp' && editLastQueuedComposerMessageForCurrentTab\(\)\) \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(e\.key === 'Enter' && \(!e\.shiftKey \|\| \(e\.altKey && isProcessing\)\)\)/, `${label}: plain ArrowUp should edit queued messages before history and Enter handling`);
     const drainStart = panel.indexOf('function drainQueuedComposerMessageForCurrentTab()');
     const drainEnd = panel.indexOf('function renderClearedConversationForTab', drainStart);
     assert.notEqual(drainStart, -1, `${label}: queued composer drain helper should exist`);
@@ -50849,6 +51115,33 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.match(css, /\.queued-message-action/, `${label}: queued message controls should be styled`);
     assert.match(locale, /'sp\.queue\.edit': 'Edit queued message'/, `${label}: queued edit label should have an English fallback`);
     assert.match(locale, /'sp\.queue\.delete': 'Delete queued message'/, `${label}: queued delete label should have an English fallback`);
+  }
+});
+
+test('sidepanel Alt+Shift+Enter always queues mid-run messages', () => {
+  for (const [label, panelRel, localeRel] of [
+    ['chrome', 'src/chrome/src/ui/sidepanel.js', 'src/chrome/src/ui/locales/en.js'],
+    ['firefox', 'src/firefox/src/ui/sidepanel.js', 'src/firefox/src/ui/locales/en.js'],
+  ]) {
+    const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
+    const locale = fs.readFileSync(path.join(ROOT, localeRel), 'utf8');
+    assert.match(
+      panel,
+      /if \(e\.altKey && e\.shiftKey && isProcessing\) \{[\s\S]*?sendMessage\(\{ __deliveryMode: 'queue' \}\);/,
+      `${label}: Alt+Shift+Enter should force queue delivery while a run is processing`,
+    );
+    assert.match(
+      panel,
+      /__deliveryMode === 'immediate'[\s\S]*?__deliveryMode !== 'queue' && composerDeliveryMode === 'steer'[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);/,
+      `${label}: forced queue delivery should bypass the steer default and enqueue`,
+    );
+    assert.match(
+      panel,
+      /const sendTitle = sendLabel === 'sp\.steer\.title'[\s\S]*?t\('sp\.steer\.title'\)[\s\S]*?t\('sp\.queue\.send'\)[\s\S]*?Alt\+Shift\+Enter/,
+      `${label}: steer-mode send button should advertise the queue shortcut`,
+    );
+    assert.match(locale, /'sp\.steer\.title': 'Steer the current task \(Alt\+Enter\)'/, `${label}: steer tooltip should keep its English fallback`);
+    assert.match(locale, /'sp\.queue\.send': 'Queue message'/, `${label}: queue label should keep its English fallback`);
   }
 });
 
@@ -50921,7 +51214,7 @@ test('sidepanel busy slash notice is updated in every locale', async () => {
       const locale = (await import('file://' + path.join(ROOT, localeDir, filename).replace(/\\/g, '/'))).default;
       const message = locale['sp.slash.busy_only_oob'];
       assert.equal(typeof message, 'string', `${label}/${filename}: busy slash notice key missing`);
-      for (const syntax of ['/help', '/progress', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
+      for (const syntax of ['/help', '/progress', '/btw', '/scratchpad', '/memory', '/schedule --list', '/watch', '/dangerously-skip-permissions', '/screenshot', '/export --traces', '/verbose']) {
         assert.match(message, new RegExp(syntax.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${label}/${filename}: busy notice should mention ${syntax}`);
       }
     }
@@ -62762,59 +63055,97 @@ test('inspect_event_listeners resolves marked ref targets through CDP and always
   }
 });
 
-test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup guidance in sync', () => {
+test('MCP bridge settings are Chromium-only, live under Bridge, and keep setup guidance in sync', async () => {
   const chromeHtml = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.html'), 'utf8');
   const chromeSettings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings.js'), 'utf8');
+  const chromeBridgeSettings = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/settings-cloud-bridge.js'), 'utf8');
   const chromeLocale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
   const firefoxHtml = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.html'), 'utf8');
   const firefoxSettings = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings.js'), 'utf8');
+  const firefoxBridgeSettings = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/settings-cloud-bridge.js'), 'utf8');
   const firefoxLocale = fs.readFileSync(path.join(ROOT, 'src/firefox/src/ui/locales/en.js'), 'utf8');
 
   const generalStart = chromeHtml.indexOf('<section class="tab-panel" data-panel="display"');
   const providersStart = chromeHtml.indexOf('<section class="tab-panel active" data-panel="providers"', generalStart);
   const generalPanel = chromeHtml.slice(generalStart, providersStart);
   const advancedStart = generalPanel.indexOf('<details class="advanced-settings">');
-  const bridgeStart = generalPanel.indexOf('id="cloud-bridge-setting"');
+  const bridgePanelStart = chromeHtml.indexOf('<section class="tab-panel" data-panel="cloudbridge"');
+  const bridgePanel = chromeHtml.slice(bridgePanelStart);
   assert.notEqual(generalStart, -1, 'Chrome General settings panel missing');
   assert.notEqual(advancedStart, -1, 'Chrome General settings should include Advanced');
-  assert.ok(bridgeStart > advancedStart, 'MCP should live inside General > Advanced');
-  assert.match(generalPanel, /id="toggle-cloud-bridge"/, 'Chrome Advanced should expose the bridge toggle');
-  assert.match(generalPanel, /id="input-cloud-bridge-url"/, 'Chrome Advanced should expose the bridge URL');
-  assert.match(generalPanel, /id="cloud-bridge-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
-  assert.doesNotMatch(generalPanel, /id="toggle-cloud-bridge"\s+checked/, 'MCP must default off');
+  assert.notEqual(bridgePanelStart, -1, 'Chrome Bridge panel missing');
+  assert.doesNotMatch(generalPanel, /id="cloud-bridge-setting"|id="toggle-cloud-bridge"|id="input-cloud-bridge-url"|id="toggle-webmcp"/, 'Bridge controls should not live inside General > Advanced');
+  assert.match(bridgePanel, /id="cb-enabled"/, 'Bridge tab should expose the bridge toggle');
+  assert.match(bridgePanel, /id="cb-url"/, 'Bridge tab should expose the bridge URL');
+  assert.match(bridgePanel, /data-cb-preset="ws:\/\/127\.0\.0\.1:17373\/extension"/, 'Bridge tab should offer the Cloud preset');
+  assert.match(bridgePanel, /data-cb-preset="ws:\/\/127\.0\.0\.1:17374\/extension"/, 'Bridge tab should offer the MCP preset');
+  assert.match(bridgePanel, /data-cb-preset="ws:\/\/127\.0\.0\.1:17375\/extension"/, 'Bridge tab should offer the LM Studio preset');
+  assert.match(bridgePanel, /id="cb-preset-custom"/, 'Bridge tab should offer a Custom pill for manual URLs');
+  assert.match(bridgePanel, /class="cb-preset-pill"/, 'Bridge presets should be pill-shaped buttons');
+  assert.ok(!/cb-preset-pill"[^>]*>[^<]*·/.test(bridgePanel), 'Bridge pill labels should not contain port numbers');
+  assert.match(bridgePanel, />MCP</, 'Bridge pill labels should use plain destination names');
+  assert.match(bridgePanel, /data-i18n-title="st\.cb\.preset_mcp_hint"/, 'Bridge pills should explain their destination on hover');
+  assert.match(bridgePanel, /id="cb-approval-details"/, 'Bridge approval fields should hide behind progressive disclosure');
+  assert.match(bridgePanel, /id="toggle-webmcp"/, 'Bridge tab should expose the WebMCP toggle');
+  assert.match(bridgePanel, /id="toggle-webmcp"\s+checked/, 'WebMCP must default on in Bridge tab');
+  assert.match(bridgePanel, /id="cb-status"[^>]*role="status"[^>]*aria-live="polite"/, 'bridge status should be announced accessibly');
+  assert.doesNotMatch(bridgePanel, /id="cb-enabled"\s+checked/, 'MCP must default off');
   assert.match(chromeHtml, /prefers-reduced-motion: reduce[\s\S]*cloud-bridge-status/, 'waiting animation should respect reduced-motion preferences');
   assert.match(chromeHtml, /href="https:\/\/www\.webbrain\.one\/docs\/mcp\/"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/, 'MCP setting should link to the setup guide safely');
 
   assert.doesNotMatch(firefoxHtml, /cloud-bridge-setting|toggle-cloud-bridge|input-cloud-bridge-url/, 'Firefox should not show unsupported bridge controls');
+  assert.match(firefoxHtml, /data-cb-preset="ws:\/\/127\.0\.0\.1:17373\/extension"/, 'Firefox Bridge tab should offer the Cloud preset');
+  assert.match(firefoxHtml, /data-cb-preset="ws:\/\/127\.0\.0\.1:17374\/extension"/, 'Firefox Bridge tab should offer the MCP preset');
+  assert.match(firefoxHtml, /data-cb-preset="ws:\/\/127\.0\.0\.1:17375\/extension"/, 'Firefox Bridge tab should offer the LM Studio preset');
+  assert.match(firefoxHtml, /id="cb-approval-details"/, 'Firefox approval fields should hide behind progressive disclosure');
   assert.doesNotMatch(firefoxSettings, /webbrainCloudBridgeEnabled|webbrainCloudBridgeUrl|cloud_bridge_status/, 'Firefox settings should not wire the Chromium bridge');
   assert.doesNotMatch(firefoxLocale, /st\.display\.cloud_bridge/, 'Firefox should not ship copy for an unavailable setting');
 
-  assert.match(chromeSettings, /const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';/, 'Chrome settings should use the runtime bridge enable key');
-  assert.match(chromeSettings, /const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';/, 'Chrome settings should use the runtime bridge URL key');
-  assert.match(chromeSettings, /const DEFAULT_CLOUD_BRIDGE_URL = 'ws:\/\/127\.0\.0\.1:17374\/extension';/, 'MCP should default to its local listener');
-  assert.match(chromeSettings, /cloudBridgeToggle\.checked = stored\[CLOUD_BRIDGE_ENABLED_KEY\] === true/, 'bridge should hydrate only explicit opt-in');
-  assert.match(chromeSettings, /sendToBackground\('cloud_bridge_start', \{ url: normalized \}\)/, 'bridge controls should start the configured endpoint');
-  assert.match(chromeSettings, /sendToBackground\('cloud_bridge_stop'\)/, 'bridge controls should stop the endpoint');
-  assert.match(chromeSettings, /sendToBackground\('cloud_bridge_status'\)/, 'bridge controls should report live connection status');
-  const saveUrlStart = chromeSettings.indexOf('async function saveCloudBridgeUrl()');
-  const toggleStart = chromeSettings.indexOf('async function toggleCloudBridge()', saveUrlStart);
-  const saveUrlBody = chromeSettings.slice(saveUrlStart, toggleStart);
-  assert.doesNotMatch(saveUrlBody, /setCloudBridgeControlsBusy|cloudBridgeToggle\.disabled/, 'URL blur saves must not disable and cancel the pending bridge-toggle click');
-  assert.match(chromeSettings, /status\.lastError === 'WebSocket error'[\s\S]*status_unreachable/, 'generic WebSocket failures should explain that the local bridge is unreachable');
-  assert.match(chromeSettings, /url\.protocol !== 'ws:'[\s\S]*127\.0\.0\.1[\s\S]*localhost[\s\S]*\[::1\]/, 'settings should reject non-loopback bridge URLs before saving');
-  assert.match(chromeLocale, /'st\.display\.cloud_bridge\.label': 'MCP'/, 'Chrome English MCP label missing');
-  assert.match(chromeLocale, /Connect one local controller to this Chromium profile using port 17374\./, 'MCP copy should explain the local listener');
-  assert.doesNotMatch(chromeLocale, /'st\.display\.cloud_bridge\.desc':[^\n]*(?:WebBrain Cloud|WebBrain Compass)/, 'MCP description should not mention WebBrain Cloud or Compass');
-  for (const filename of fs.readdirSync(path.join(ROOT, 'src/chrome/src/ui/locales')).filter((name) => name.endsWith('.js'))) {
-    const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales', filename), 'utf8');
-    assert.match(locale, /'st\.display\.cloud_bridge\.label': 'MCP'/, `${filename}: MCP title should stay language-neutral`);
-    assert.match(locale, /'st\.display\.cloud_bridge\.url_placeholder': 'ws:\/\/127\.0\.0\.1:17374\/extension'/, `${filename}: MCP placeholder should use the MCP listener`);
-    assert.doesNotMatch(locale, /'st\.display\.cloud_bridge\.desc':[^\n]*(?:WebBrain Cloud|WebBrain Compass|LM Studio|17373|17375)/, `${filename}: MCP description should mention only the MCP destination`);
+  assert.doesNotMatch(chromeSettings, /CLOUD_BRIDGE_ENABLED_KEY|CLOUD_BRIDGE_URL_KEY|initCloudBridgeSettings/, 'Bridge keys should live in settings-cloud-bridge.js, not settings.js');
+  assert.match(chromeBridgeSettings, /enabled: 'webbrainCloudBridgeEnabled'/, 'Bridge tab should use the runtime bridge enable key');
+  assert.match(chromeBridgeSettings, /url: 'webbrainCloudBridgeUrl'/, 'Bridge tab should use the runtime bridge URL key');
+  assert.match(chromeBridgeSettings, /ws:\/\/127\.0\.0\.1:17374\/extension/, 'MCP should default to its local listener');
+  assert.match(chromeBridgeSettings, /send\('cloud_bridge_start', \{ url/, 'bridge controls should start the configured endpoint');
+  assert.match(chromeBridgeSettings, /send\('cloud_bridge_stop'\)/, 'bridge controls should stop the endpoint');
+  assert.match(chromeBridgeSettings, /send\('cloud_bridge_status'\)/, 'bridge controls should report live connection status');
+  assert.match(chromeBridgeSettings, /data-cb-preset/, 'bridge presets should fill the URL from quick-select chips');
+  assert.match(chromeBridgeSettings, /markCustomPill/, 'manual URL edits should stay on the Custom pill');
+  assert.match(chromeBridgeSettings, /cb-approval-details/, 'approval fields should auto-open when a token is stored');
+  assert.match(chromeBridgeSettings, /url\.protocol !== 'ws:'[\s\S]*127\.0\.0\.1[\s\S]*localhost[\s\S]*\[::1\]/, 'settings should reject non-loopback bridge URLs before saving');
+  const chromeBridgeCopy = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/locales/cloud-bridge-copy.mjs')).href);
+  const firefoxBridgeCopy = await import(pathToFileURL(path.join(ROOT, 'src/firefox/src/ui/locales/cloud-bridge-copy.mjs')).href);
+  const bridgeDefaultKeys = Object.keys(chromeBridgeCopy.default).sort();
+  assert.deepEqual(Object.keys(firefoxBridgeCopy.default).sort(), bridgeDefaultKeys, 'Chrome and Firefox Bridge copy should define identical keys');
+  assert.equal(chromeBridgeCopy.default['st.cb.preset_mcp'], 'MCP', 'MCP pill label should stay language-neutral');
+  assert.equal(chromeBridgeCopy.default['st.cb.preset_lmstudio'], 'LM Studio', 'LM Studio pill label should stay language-neutral');
+  assert.match(chromeBridgeCopy.default['st.cb.preset_mcp_hint'], /17374/, 'MCP hint should explain the local listener');
+  assert.doesNotMatch(chromeBridgeCopy.default['st.cb.preset_mcp_hint'], /Compass/, 'MCP hint should not mention Compass');
+  const bridgePlaceholders = (value) => [...String(value).matchAll(/\{(\w+)\}/g)].map((match) => match[1]).sort();
+  const expectedBridgeLocales = ['ar', 'bn', 'de', 'es', 'fa', 'fr', 'he', 'hi', 'id', 'ja', 'ko', 'ms', 'nl', 'pl', 'pt', 'ru', 'th', 'tl', 'tr', 'uk', 'vi', 'zh'];
+  for (const [copyLabel, copy] of [['chrome', chromeBridgeCopy], ['firefox', firefoxBridgeCopy]]) {
+    assert.deepEqual(Object.keys(copy.cloudBridgeTranslations).sort(), expectedBridgeLocales, `${copyLabel}: Bridge translations should cover every locale`);
+    for (const code of expectedBridgeLocales) {
+      const table = copy.cloudBridgeTranslations[code];
+      assert.deepEqual(Object.keys(table).sort(), bridgeDefaultKeys, `${copyLabel}: Bridge translations for ${code} should define every key`);
+      for (const key of bridgeDefaultKeys) {
+        assert.deepEqual(bridgePlaceholders(table[key]), bridgePlaceholders(chromeBridgeCopy.default[key]), `${copyLabel}: Bridge ${code}:${key} must preserve interpolation placeholders`);
+      }
+      assert.equal(table['st.cb.preset_mcp'], 'MCP', `${copyLabel}: ${code} MCP pill label should stay language-neutral`);
+      assert.equal(table['st.cb.preset_lmstudio'], 'LM Studio', `${copyLabel}: ${code} LM Studio pill label should stay language-neutral`);
+    }
+  }
+  const bridgeKeyRefs = (source) => [...source.matchAll(/(?:data-i18n(?:-title)?="|t\(\s*['"])(st\.cb\.[a-z_]+|st\.tab\.cloudbridge)['"]/g)].map((match) => match[1]);
+  for (const [surfaceLabel, source] of [['chrome settings', chromeHtml + chromeBridgeSettings], ['firefox settings', firefoxHtml + firefoxBridgeSettings]]) {
+    const referenced = new Set(bridgeKeyRefs(source));
+    assert.ok(referenced.size > 0, `${surfaceLabel} should reference localized Bridge copy`);
+    for (const key of referenced) {
+      assert.ok(bridgeDefaultKeys.includes(key), `${surfaceLabel} references unknown Bridge key ${key}`);
+    }
   }
 
   for (const rel of ['README.md', 'mcp-server/README.md', 'lmstudio-plugin/README.md']) {
     const readme = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    assert.match(readme, /Settings → General → Advanced → MCP/, `${rel}: bridge setup path should match the Chromium UI`);
+    assert.match(readme, /Settings → Bridge/, `${rel}: bridge setup path should match the Chromium UI`);
   }
   const rootReadme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
   const mcpReadme = fs.readFileSync(path.join(ROOT, 'mcp-server/README.md'), 'utf8');
@@ -62827,7 +63158,7 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   const mcpIndex = fs.readFileSync(path.join(ROOT, 'mcp-server/src/index.ts'), 'utf8');
   const lmBridge = fs.readFileSync(path.join(ROOT, 'lmstudio-plugin/src/util/bridgeClient.ts'), 'utf8');
   for (const [label, source] of [['MCP error', mcpBridge], ['MCP connection', mcpIndex], ['LM Studio connection', lmBridge]]) {
-    assert.match(source, /Settings → General → Advanced → MCP/, `${label}: runtime setup guidance should match the UI`);
+    assert.match(source, /Settings → Bridge/, `${label}: runtime setup guidance should match the UI`);
   }
   const offscreenBridge = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/cloud-bridge.js'), 'utf8');
   assert.match(offscreenBridge, /MCP URL must use ws:\/\/ on localhost\./, 'visible URL validation should use the MCP setting name');
@@ -62841,7 +63172,7 @@ test('MCP bridge settings are Chromium-only, live under Advanced, and keep setup
   ];
   for (const [label, rel] of namingSurfaces) {
     const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    assert.match(source, /General → Advanced → MCP/, `${label}: setup path should match the Chromium UI`);
+    assert.match(source, /Settings → Bridge/, `${label}: setup path should match the Chromium UI`);
     assert.doesNotMatch(source, /General → Advanced → Cloud bridge/, `${label}: retired setting name should not remain`);
   }
 });
@@ -62853,7 +63184,7 @@ test('Experimental WebMCP is Chrome-only, on by default, and present in default 
   const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
   const locale = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/locales/en.js'), 'utf8');
 
-  assert.match(html, /id="toggle-webmcp"/, 'Chrome Advanced settings should expose the toggle');
+  assert.match(html, /id="toggle-webmcp"/, 'Chrome Bridge tab should expose the toggle');
   assert.match(html, /id="toggle-webmcp"\s+checked/, 'WebMCP must default on');
   assert.doesNotMatch(firefoxHtml, /id="toggle-webmcp"/, 'Firefox should not show an unsupported toggle');
   assert.match(settings, /webMcpToggle\.checked = stored\.webMcpEnabled !== false/, 'setting should default on unless explicitly disabled');
@@ -70464,8 +70795,8 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   const expectedIds = `
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
     azure-cognitive-services bailing baseten berget cerebras chutes clarifai
-    cloudferro-sherlock cohere cortecs deepinfra digitalocean dinference drun
-    evroc fastrouter friendli google-vertex google-vertex-anthropic helicone
+    cloudferro-sherlock cohere cortecs deepinfra demonroute digitalocean dinference drun
+    evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
     minimax-coding-plan moark modelscope morph nano-gpt nearai nebius nova novita-ai
@@ -70477,7 +70808,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 79);
+  assert.equal(expectedIds.length, 81);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -70491,7 +70822,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 112 : 111;
+    const expectedDefaultCount = label === 'chrome' ? 114 : 113;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -70508,7 +70839,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
         expectedAskStreaming,
         `${label}: ${id} Ask streaming capability mismatch`,
       );
-      assert.ok(config.model || id === 'azure-cognitive-services', `${label}: ${id} missing model`);
+      assert.ok(config.model || config.requiresModel === true || id === 'azure-cognitive-services', `${label}: ${id} missing model`);
 
       const icon = path.join(ROOT, prefix, 'icons/providers', `${id}.svg`);
       assert.equal(fs.existsSync(icon), true, `${label}: missing icon for ${id}`);
@@ -70613,6 +70944,30 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.nearai.suggestions,
     ['z-ai/glm-5.3-flash', 'Qwen/Qwen3.8-27B'],
+  );
+  assert.deepEqual(
+    {
+      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.baseUrl,
+      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.model,
+      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.contextWindow,
+      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsVision,
+      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsTools,
+      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsAskStreaming,
+      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.apiKeyUrl,
+    },
+    {
+      baseUrl: 'https://api.demonroute.com/v1',
+      model: 'dphn/Dolphin3.0-Llama3.1-8B',
+      contextWindow: 131072,
+      supportsVision: false,
+      supportsTools: true,
+      supportsAskStreaming: true,
+      apiKeyUrl: 'https://demonroute.com',
+    },
+  );
+  assert.deepEqual(
+    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.demonroute.suggestions,
+    ['dphn/Dolphin3.0-Llama3.1-8B', 'NousResearch/Hermes-3-Llama-3.1-8B'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
@@ -80185,6 +80540,32 @@ test('agent blocks generic feed URLs until the visible media permalink is resolv
     assert.equal(agent._publicMediaUrlNeedsExplicitTarget('https://m.twitter.com/user/status/123'), false, `${label}: mobile Twitter status should be a direct target`);
     assert.equal(agent._publicMediaUrlNeedsExplicitTarget('https://www.facebook.com/user/videos/123'), false, `${label}: Facebook user video should be a direct target`);
     assert.equal(agent._publicMediaUrlNeedsExplicitTarget('https://www.youtube.com/embed/abc'), false, `${label}: YouTube embed should be a direct target`);
+
+    for (const url of [
+      'https://bsky.app/', 'https://bsky.app/home', 'https://bsky.app/profile/bsky.app',
+      'https://bsky.app/profile/bsky.app/post/', 'https://bsky.app/profile/bsky.app/post/123/extra',
+      'https://mastodon.social/', 'https://mastodon.social/home', 'https://mastodon.social/@alice',
+      'https://fosstodon.org/tags/video', 'https://mastodon.social/web/statuses/',
+    ]) {
+      agent._currentUrl = async () => url;
+      const implicitFeed = await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { kind: 'video' });
+      const explicitFeed = await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { url });
+      assert.equal(implicitFeed?.needsExplicitMediaUrl, true, `${label}: active feed must require a post: ${url}`);
+      assert.equal(explicitFeed?.needsExplicitMediaUrl, true, `${label}: explicit feed must require a post: ${url}`);
+    }
+    for (const url of [
+      'https://bsky.app/profile/bsky.app/post/3l3vgf77uco2g',
+      'https://www.bsky.app/profile/did:plc:abc123/post/3l3vgf77uco2g/?ref=share',
+      'https://fosstodon.org/@alice/123', 'https://social.example.org/@alice/123',
+      'https://social.example.org/users/alice/statuses/123', 'https://mastodon.social/web/statuses/123',
+    ]) {
+      agent._currentUrl = async () => url;
+      assert.equal(await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', {}), null,
+        `${label}: active public post should pass: ${url}`);
+      assert.equal(await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { url }), null,
+        `${label}: explicit public post should pass: ${url}`);
+    }
+    agent._currentUrl = async () => 'https://www.instagram.com/';
 
     const implicit = await agent._downloadPublicMediaExplicitUrlGuard(1, 'download_public_media', { kind: 'video' });
     assert.equal(implicit.needsExplicitMediaUrl, true, `${label}: generic active URL should be blocked`);
@@ -117798,7 +118179,7 @@ test('sidepanel routes every run-error path through request-scoped deduplication
     assert.match(panel, /import \{ claimRunError \} from '\.\/run-error-dedupe\.js';/, `${label}: sidepanel should use the shared deduper`);
     assert.match(panel, /createActiveChatPayloadState\(retryPayload, requestId\)/, `${label}: active error state should retain request identity`);
     assert.match(panel, /renderAgentErrorUpdate\(returnedErrorUpdate\.data, tabId, requestId(?:, \{[\s\S]*?submittedTurnDurable: res\.submittedTurnDurable,[\s\S]*?\})?\)/, `${label}: returned errors should use request-scoped rendering`);
-    assert.match(panel, /renderAgentErrorUpdate\(\{ message: e\.message \}, tabId, requestId\)/, `${label}: caught errors should use request-scoped rendering`);
+    assert.match(panel, /renderAgentErrorUpdate\(\{ message: e\.message, quota: e\.quota \}, tabId, requestId\)/, `${label}: caught errors should preserve quota metadata and use request-scoped rendering`);
     assert.match(panel, /renderAgentErrorUpdate\(data, currentTabId, msg\.requestId\)/, `${label}: streamed errors should use message request identity`);
     assert.match(panel, /msgEl\.dataset\.tabId = active\.tabId;[\s\S]*?msgEl\.dataset\.runRequestId = active\.requestId;[\s\S]*?msgEl\.dataset\.errorMessageKey = active\.key;/, `${label}: persisted error cards should retain their dedupe identity`);
     assert.match(panel, /if \(active\.duplicate\) return;[\s\S]*?retryPayload: isTabAbortRequested\(tabId\) \? null : active\.retryPayload/, `${label}: only the first copy should retain the Retry action`);

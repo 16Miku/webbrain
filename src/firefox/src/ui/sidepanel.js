@@ -5,6 +5,7 @@ import { saveScreenshot } from './screenshot-download.js';
  * Verbose mode: always-open tool calls with arguments and results.
  */
 
+import { createQuotaController } from './compass-quota.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
@@ -90,6 +91,20 @@ import { installClipboardImagePasteHandler, installFileDropHandlers } from './at
 import { isTextAttachment } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
+
+const _btwParams = new URLSearchParams(window.location.search);
+const isBtwWindow = _btwParams.get('btw') === '1';
+const btwSourceTabId = isBtwWindow ? (Number(_btwParams.get('forkFromTabId')) || null) : null;
+const btwInitialPrompt = isBtwWindow ? (_btwParams.get('prompt') || '') : '';
+let _btwReadyResolve = null;
+let _btwReadySettled = false;
+const btwReady = new Promise((resolve) => { _btwReadyResolve = resolve; });
+if (!isBtwWindow && _btwReadyResolve) { _btwReadySettled = true; _btwReadyResolve(); }
+function markBtwReady() {
+  if (_btwReadySettled) return;
+  _btwReadySettled = true;
+  _btwReadyResolve?.();
+}
 
 // Hydrate the theme from browser.storage.local (the inline <head> bootstrap
 // only sees localStorage; if the user changes the theme on another device
@@ -649,6 +664,7 @@ const SLASH_COMMANDS = [
     ],
   },
   { value: '/progress', usage: '/progress', descriptionKey: 'sp.slash.check_progress', action: 'show', outOfBand: true },
+  { value: '/btw', usage: '/btw [prompt]', descriptionKey: 'sp.slash.btw', action: 'open_btw', acceptsPayload: true, outOfBand: true },
   {
     value: '/scratchpad',
     usage: '/scratchpad [--append <text> | --clear]',
@@ -1626,7 +1642,7 @@ function updatesContainSuccessfulDone(updates) {
 
 function updatesContainStoreReviewFailure(updates) {
   return Array.isArray(updates) && updates.some((u) => (
-    u?.type === 'error' ||
+    u?.type === 'error' || u?.type === 'quota' ||
     u?.type === 'attachment_rejected' ||
     u?.type === 'max_steps_reached' ||
     u?.error ||
@@ -1636,7 +1652,7 @@ function updatesContainStoreReviewFailure(updates) {
 
 function isSuccessfulAskCompletion(mode, response) {
   if (mode !== 'ask') return false;
-  if (!response || response.success === false || response.ok === false) return false;
+  if (!response || response.quota || response.success === false || response.ok === false) return false;
   if (updatesContainStoreReviewFailure(response.updates)) return false;
   const content = typeof response.content === 'string' ? response.content.trim() : '';
   return !!content && !parseSubscribeError(content) && !parseCostAllowanceError(content);
@@ -1816,8 +1832,21 @@ const tabChatHandoffOwnerId = `sidepanel-chat-${
 const tabInputDrafts = new Map();
 const permissionSkipCommandContextsByTab = new Map();
 const queuedComposerMessagesByTab = new Map();
+const steeringRequestsByTab = new Map();
+const queuedSteeringMessageIds = new Set();
 const composerHistoryNavigationByTab = new Map();
 let queuedComposerMessageSeq = 0;
+
+let composerDeliveryMode = 'queue';
+const composerDeliveryModeReady = browser.storage.local.get('composerDeliveryMode').then((stored) => {
+  composerDeliveryMode = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  syncSendButtonState();
+}).catch(() => {});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.composerDeliveryMode) return;
+  composerDeliveryMode = changes.composerDeliveryMode.newValue === 'steer' ? 'steer' : 'queue';
+  syncSendButtonState();
+});
 
 function enqueueTabChatOperation(tabId, fn) {
   const numericTabId = Number(tabId);
@@ -2452,6 +2481,99 @@ function setQueuedComposerMessages(tabId, messages) {
   if (sameTabId(currentTabId, numericTabId)) renderQueuedComposerMessages(numericTabId);
 }
 
+function queueUnconsumedSteeringMessages(tabId, messages) {
+  const queue = getQueuedComposerMessages(tabId).slice();
+  const incoming = [];
+  for (const item of messages || []) {
+    if (!item?.id || !item.text || queuedSteeringMessageIds.has(item.id)) continue;
+    queuedSteeringMessageIds.add(item.id);
+    while (queuedSteeringMessageIds.size > 1000) {
+      queuedSteeringMessageIds.delete(queuedSteeringMessageIds.values().next().value);
+    }
+    incoming.push({ id: item.id, text: item.text });
+  }
+  if (incoming.length) setQueuedComposerMessages(tabId, [...incoming, ...queue]);
+}
+
+async function steerComposerMessage(tabId, text, { queueId = null, fromComposer = false } = {}) {
+  const numericTabId = Number(tabId);
+  if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)
+      || !isTabProcessing(tabId) || isTabAbortRequested(tabId)
+      || isConversationClearInProgress(tabId) || isAwaitingPlanReviewForTab(tabId)
+      || tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress
+      || steeringRequestsByTab.has(numericTabId)) return false;
+  const draft = String(text || '').trim();
+  if (!draft || draft.startsWith('/')) return false;
+  const requestId = localRunRequestIdForTab(tabId);
+  const messageId = `steer-${createRunRequestId(tabId)}`;
+  steeringRequestsByTab.set(numericTabId, messageId);
+  syncSendButtonState();
+  renderQueuedComposerMessages(tabId);
+  try {
+    const response = await sendToBackground('chat_steer', {
+      tabId: numericTabId, text: draft, messageId,
+      requestId,
+    });
+    if (isConversationClearInProgress(tabId) || clearedConversationRunRequestIds.has(requestId)) return false;
+    if (!response.accepted) {
+      queueUnconsumedSteeringMessages(tabId, [{ id: messageId, text: draft }]);
+    }
+    if (queueId) removeQueuedComposerMessage(tabId, queueId);
+    if (fromComposer) {
+      if (sameTabId(currentTabId, tabId) && inputEl.value.trim() === draft) {
+        resetComposerHistoryNavigation(tabId);
+        saveInputDraftForTab(tabId, '');
+        hideSlashCommandAutocomplete();
+        inputEl.value = '';
+        autoResizeInput();
+      } else if (!sameTabId(currentTabId, tabId)
+          && String(tabInputDrafts.get(numericTabId) || '').trim() === draft) {
+        saveInputDraftForTab(tabId, '');
+      }
+    }
+    if (sameTabId(currentTabId, tabId)) {
+      showComposerToast(t(response.accepted ? 'sp.steer.sent' : 'sp.steer.queued'));
+    }
+    return true;
+  } catch (error) {
+    // An ambiguous transport failure must keep the draft instead of resending
+    // a correction the running agent may already have accepted.
+    if (sameTabId(currentTabId, tabId)) showComposerToast(error?.message || String(error));
+    return false;
+  } finally {
+    steeringRequestsByTab.delete(numericTabId);
+    if (sameTabId(currentTabId, tabId)) {
+      syncSendButtonState();
+      renderQueuedComposerMessages(tabId);
+      void drainQueuedPromptsAfterRunSettles(tabId);
+    }
+  }
+}
+
+function syncComposerDeliveryState() {
+  if (!sendBtn) return;
+  const sending = steeringRequestsByTab.has(Number(currentTabId));
+  const blocked = sending || !sameTabId(currentTabId, renderedTabId) || isTabAbortRequested(currentTabId)
+    || isAwaitingPlanReviewForTab() || isConversationClearInProgress()
+    || tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress;
+  queuedMessagesEl?.querySelectorAll('.queued-message-steer').forEach(button => {
+    button.classList.toggle('hidden', !isProcessing);
+    button.closest('.queued-message')?.classList.toggle('has-steer', isProcessing);
+    button.disabled = !isProcessing || blocked;
+  });
+  const sendLabel = isProcessing
+    ? (composerDeliveryMode === 'steer' ? 'sp.steer.title' : 'sp.queue.send')
+    : 'sp.btn.send';
+  // In steer mode the send button steers, so also advertise the opposite
+  // action. Composed from existing keys so every locale already has both halves.
+  const sendTitle = sendLabel === 'sp.steer.title'
+    ? `${t('sp.steer.title')} · ${t('sp.queue.send')} (Alt+Shift+Enter)`
+    : t(sendLabel);
+  sendBtn.title = sendTitle;
+  sendBtn.setAttribute('aria-label', sendTitle);
+  sendBtn.dataset.i18nTitle = sendLabel;
+}
+
 function queuedComposerButton(className, action, queueId, labelKey, svgPath) {
   const btn = document.createElement('button');
   btn.type = 'button';
@@ -2503,9 +2625,21 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
       '<path d="M18 6L6 18"></path><path d="M6 6l12 12"></path>',
     );
 
-    row.append(label, text, edit, remove);
+    edit.disabled = remove.disabled = steeringRequestsByTab.has(Number(tabId));
+    row.append(label, text);
+    if (isTabProcessing(tabId) && !isTabAbortRequested(tabId)) {
+      const steer = queuedComposerButton(
+        'queued-message-steer', 'steer', item.id, 'sp.steer.title',
+        '<path d="M4 19v-5a7 7 0 0 1 7-7h9"></path><path d="m15 2 5 5-5 5"></path>',
+      );
+      steer.disabled = steeringRequestsByTab.has(Number(tabId)) || isAwaitingPlanReviewForTab(tabId);
+      row.classList.add('has-steer');
+      row.appendChild(steer);
+    }
+    row.append(edit, remove);
     queuedMessagesEl.appendChild(row);
   });
+  syncComposerDeliveryState();
 }
 
 function shiftQueuedComposerMessage(tabId) {
@@ -2740,6 +2874,7 @@ function clearQueuedComposerMessagesForTab(tabId) {
 function drainQueuedComposerMessageForCurrentTab() {
   if (isProcessing || currentTabId == null || renderedTabId !== currentTabId) return false;
   if (inputEl.value !== '') return false;
+  if (steeringRequestsByTab.has(Number(currentTabId))) return false;
   const item = shiftQueuedComposerMessage(currentTabId);
   if (!item) return false;
   resetComposerHistoryNavigation(currentTabId);
@@ -3248,7 +3383,7 @@ async function scheduledJobAction(action, jobId) {
     await refreshScheduledJobs({ tabId });
   } catch (e) {
     if (currentTabId === tabId) {
-      addMessage('error', t('sp.error_prefix', { msg: e.message }));
+      addMessage('error', t('sp.error_prefix', { msg: e.message }), { quota: e.quota });
     }
   }
 }
@@ -4513,11 +4648,23 @@ async function init() {
     ? { active: true, windowId: initialWindowId }
     : { active: true, currentWindow: true });
   let initialTabId = tab?.id;
-  try {
-    const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
-    const sourceTabId = researchEscalationSourceTabIdFromState(state);
-    if (sourceTabId != null) initialTabId = sourceTabId;
-  } catch {}
+
+  if (isBtwWindow && btwSourceTabId != null && initialTabId != null) {
+    try {
+      await sendToBackground('fork_standalone_conversation', {
+        sourceTabId: btwSourceTabId,
+        forkTabId: initialTabId,
+      });
+    } catch {
+      // Degrade to an empty standalone window rather than aborting init.
+    }
+  } else {
+    try {
+      const state = await sendToBackground('agent_run_state', { tabId: initialTabId });
+      const sourceTabId = researchEscalationSourceTabIdFromState(state);
+      if (sourceTabId != null) initialTabId = sourceTabId;
+    } catch {}
+  }
   currentTabId = initialTabId;
   renderedTabId = currentTabId;
 
@@ -4525,7 +4672,7 @@ async function init() {
   // them, and each window has its own side panel instance. Without
   // scoping, activity in window B would silently retarget window A's
   // panel to B's tab.
-  const windowScope = createSidePanelWindowScope({
+  const windowScope = isBtwWindow ? null : createSidePanelWindowScope({
     browserApi: browser,
     initialWindowId: initialWindowId ?? tab?.windowId ?? null,
     getCurrentTabId: () => currentTabId,
@@ -4533,24 +4680,26 @@ async function init() {
     switchToTab,
   });
 
-  browser.tabs.onActivated.addListener(async (info) => {
-    await windowScope.handleActivated(info);
-  });
+  if (windowScope) {
+    browser.tabs.onActivated.addListener(async (info) => {
+      await windowScope.handleActivated(info);
+    });
 
-  browser.tabs.onDetached.addListener((tabId, detachInfo) => {
-    windowScope.handleDetached(tabId, detachInfo);
-  });
+    browser.tabs.onDetached.addListener((tabId, detachInfo) => {
+      windowScope.handleDetached(tabId, detachInfo);
+    });
 
-  browser.tabs.onAttached.addListener(async (tabId, attachInfo) => {
-    await windowScope.handleAttached(tabId, attachInfo);
-  });
+    browser.tabs.onAttached.addListener(async (tabId, attachInfo) => {
+      await windowScope.handleAttached(tabId, attachInfo);
+    });
 
-  browser.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
-    if (tabId !== currentTabId || isProcessing) return;
-    if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
-      refreshRecommendedActions();
-    }
-  });
+    browser.tabs.onUpdated?.addListener?.((tabId, changeInfo) => {
+      if (tabId !== currentTabId || isProcessing) return;
+      if (changeInfo.status === 'complete' || changeInfo.url || changeInfo.title) {
+        refreshRecommendedActions();
+      }
+    });
+  }
 
   // Load settings that affect the composer state.
   const stored = await browser.storage.local.get(['verboseMode', 'alwaysAllowApiMutations']);
@@ -4602,7 +4751,7 @@ async function init() {
 
   await loadProviders();
   await testConnection({ skipWebBrainCloud: true });
-  await windowScope.syncActiveTab();
+  if (windowScope) await windowScope.syncActiveTab();
   refreshScheduledJobs({ tabId: currentTabId });
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
@@ -4627,6 +4776,15 @@ async function init() {
       void loadProviders();
     }
   });
+
+  if (isBtwWindow) {
+    markBtwReady();
+    // Auto-send the initial prompt if provided.
+    if (btwInitialPrompt) {
+      await sendBtwPrompt(btwInitialPrompt);
+    }
+    await consumePendingBtwPrompt();
+  }
 }
 
 if (verboseBtn) {
@@ -5050,6 +5208,7 @@ async function adoptRestoredRunState(tabId, state) {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
+    if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
     if (returnedPlannerFailure
         && sameTabId(currentTabId, tabId)
@@ -5079,7 +5238,7 @@ async function adoptRestoredRunState(tabId, state) {
         && !isTabAbortRequested(tabId)
         && !clearedConversationRunRequestIds.has(requestId)
         && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
-      renderAgentErrorUpdate({ message: error.message }, tabId, requestId);
+      renderAgentErrorUpdate({ message: error.message, quota: error.quota }, tabId, requestId);
     }
   } finally {
     adoptedRunRecoveryRequestIds.delete(requestId);
@@ -5254,8 +5413,9 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     setPlanReviewAwaiting(numericTabId, false);
     setTabProcessing(numericTabId, false);
     setTabAbortRequested(numericTabId, false);
-    const restoredAllowanceCardMissing = !!parseCostAllowanceError(runUi?.finalContent)
-      && !currentAssistantEl?.querySelector('.cost-allowance-error');
+    const restoredAllowanceCardMissing = (!!parseCostAllowanceError(runUi?.finalContent)
+      && !currentAssistantEl?.querySelector('.cost-allowance-error'))
+      || (runUi?.quota?.code === 'webbrain_cloud_free_tier_exceeded' && !currentAssistantEl?.querySelector('.compass-quota'));
     if (runUi && ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(runUi.status)
         && (Number(currentAssistantEl?.dataset.lastRenderedSeq || 0) < Number(runUi.seq || 0)
           || restoredAllowanceCardMissing)) {
@@ -5265,6 +5425,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
         data: {
           status: runUi.status,
           finalContent: runUi.finalContent,
+          quota: runUi.quota || null,
           submittedTurnDurable: state?.submittedTurnDurable === true,
           attachmentDeliveryState: runUi.attachmentDeliveryState || '',
           endedAt: runUi.endedAt,
@@ -6554,7 +6715,57 @@ function resumeAfterSubscription(btn) {
   });
 }
 
+const quotaController = createQuotaController({
+  t, locale: getLocale,
+  async request(path, body) {
+    const result = await sendToBackground('get_providers');
+    const device = result?.providers?.webbrain_cloud?.deviceGuid;
+    if (!device) throw new Error(t('quota.unavailable'));
+    const response = await fetch('https://api.webbrain.one' + path, {
+      method: body ? 'POST' : 'GET', credentials: 'omit', cache: 'no-store',
+      headers: { 'X-WebBrain-Device-Id': device, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data?.error?.message || t('quota.unavailable'));
+    return data;
+  },
+  openUrl: openSubscribeUrl,
+  providers: async () => Array.from(providerSelect.options).filter(option => option.value && option.value !== MORE_PROVIDERS_OPTION_VALUE)
+    .map(option => ({ id: option.value, label: option.textContent })),
+  async switchProvider(id) {
+    if (isProcessing) throw new Error(t('sp.retry.busy'));
+    await setActiveChatProvider(id);
+    selectedProviderId = id; providerSelect.value = id; syncProviderPickerButton();
+    const result = await testConnection({ providerId: id });
+    if (!result?.ok) throw new Error(result?.error || t('sp.status.failed'));
+  },
+  openSettings: openProvidersSettingsPage,
+  continueTask(btn, context) {
+    if (context.retry) {
+      const assistant = btn.closest('.message');
+      const payload = retryPayloadForRunAssistant(assistant) || activeRetryPayloadForRequest(currentTabId, assistant?.dataset.runRequestId);
+      if (!payload) { showComposerToast(t('sp.retry.attachments_unavailable')); return; }
+      const proxy = document.createElement('button');
+      if (configureRetryButton(proxy, payload)) proxy.click();
+    } else resumeAfterSubscription(btn);
+  },
+  persist: schedulePersist,
+});
+window.addEventListener('focus', () => { void quotaController.refreshAll(); });
+document.addEventListener('wb-locale-changed', () => quotaController.restore(messagesEl, true));
+document.addEventListener('visibilitychange', () => { if (!document.hidden) void quotaController.refreshAll(); });
+
+function renderReturnedQuota(assistant, response) {
+  const text = assistant?.querySelector('.message-text');
+  const quota = response?.quota || [...(response?.updates || [])].reverse().find(update => update?.data?.quota)?.data.quota;
+  if (!text || !quota) return false;
+  return renderSubscribeError(text, response.content || '', assistant.dataset.runMode, quota,
+    Object.hasOwn(response, 'submittedTurnDurable') ? { submittedTurnDurable: response.submittedTurnDurable } : {});
+}
+
 function rebindSubscribeButtons() {
+  quotaController.restore(messagesEl);
   document.querySelectorAll('.subscribe-btn').forEach(btn => {
     if (btn.dataset.bound) return;
     btn.dataset.bound = 'true';
@@ -6850,6 +7061,7 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
   const msgEl = addMessage('error', t('sp.error_prefix', { msg: message }), {
     retryPayload: isTabAbortRequested(tabId) ? null : active.retryPayload,
     subscribeResumeMode: active.retryPayload?.mode,
+    quota: data?.quota,
     costAllowanceResume: {
       submittedTurnDurable: options.submittedTurnDurable,
       retryPayload: active.retryPayload,
@@ -7321,10 +7533,12 @@ async function testConnection(options = {}) {
     statusDot.title = res.ok
       ? t('sp.status.connected', { model: res.model || providerId })
       : t('sp.status.error', { msg: res.error });
-  } catch {
+    return res;
+  } catch (error) {
     if (requestId !== providerTestRequestId || providerSelect.value !== providerId) return;
     statusDot.className = 'status-dot offline';
     statusDot.title = t('sp.status.failed');
+    return { ok: false, error: error?.message || t('sp.status.failed') };
   }
 }
 
@@ -7693,6 +7907,7 @@ function isOutOfBandSlashDraft(value) {
 
 function syncSendButtonState() {
   if (!sendBtn) return;
+  syncComposerDeliveryState();
   const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
   if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
     sendBtn.disabled = true;
@@ -7703,6 +7918,10 @@ function syncSendButtonState() {
     return;
   }
   if (isConversationClearInProgress()) {
+    sendBtn.disabled = true;
+    return;
+  }
+  if (steeringRequestsByTab.has(Number(currentTabId))) {
     sendBtn.disabled = true;
     return;
   }
@@ -8186,6 +8405,15 @@ async function parseSlashCommands(text, tabId = currentTabId, options = {}) {
     return '';
   }
 
+  if (command.value === '/btw') {
+    if (isBtwWindow) {
+      showComposerToast(t('sp.slash.btw_disabled'), { duration: 3000 });
+      return '';
+    }
+    await openBtwWindow(tabId, payload || '');
+    return '';
+  }
+
   if (command.value === '/reset') {
     const clearingRequestId = localRunRequestIdForTab(tabId);
     let backgroundClearSucceeded = false;
@@ -8511,6 +8739,7 @@ async function sendMessage(extraChatParams = {}) {
     : '';
   const rawAgentTabId = Number(chatExtraParams.__agentTabId);
   const agentTabId = Number.isFinite(rawAgentTabId) ? rawAgentTabId : null;
+  delete chatExtraParams.__deliveryMode;
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
@@ -8548,6 +8777,7 @@ async function sendMessage(extraChatParams = {}) {
   const selectionAction = sourceGrounding ? normalizeSelectionAction(requestedSelectionAction) : '';
   delete chatExtraParams.selectionAction;
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
+  await composerDeliveryModeReady;
   await waitForVisibleSidePanelStateRefresh();
   if (agentPrompt && (
     !agentDisplayText
@@ -8585,6 +8815,7 @@ async function sendMessage(extraChatParams = {}) {
     await releaseOwnedContextMenuClaim({ reason: 'conversation-clear', retryAfterMs: 1_000 });
     return false;
   }
+  if (steeringRequestsByTab.has(Number(tabId))) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
   text = normalizeScreenshotCommandText(text);
@@ -8626,6 +8857,10 @@ async function sendMessage(extraChatParams = {}) {
     if (text.startsWith('/')) {
       showBusySlashCommandNotice();
       return false;
+    }
+    if (extraChatParams?.__deliveryMode === 'immediate'
+        || (extraChatParams?.__deliveryMode !== 'queue' && composerDeliveryMode === 'steer')) {
+      return steerComposerMessage(tabId, text, { fromComposer: true });
     }
     return enqueueQueuedComposerMessage(tabId, text);
   }
@@ -8870,6 +9105,7 @@ async function sendMessage(extraChatParams = {}) {
     accepted = true;
     completedSuccessfully = res?.successfulDone === true || updatesContainSuccessfulDone(res?.updates);
     promptEligibleCompletion = completedSuccessfully || isSuccessfulAskCompletion(modeForSend, res);
+    if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
     if (returnedPlannerFailure
         && renderToCurrentTab
@@ -9012,7 +9248,7 @@ async function sendMessage(extraChatParams = {}) {
           && currentTabId === tabId
           && !isTabAbortRequested(tabId)
           && !clearedConversationRunRequestIds.has(requestId)) {
-        renderAgentErrorUpdate({ message: e.message }, tabId, requestId);
+        renderAgentErrorUpdate({ message: e.message, quota: e.quota }, tabId, requestId);
       }
     }
   } finally {
@@ -9322,6 +9558,12 @@ function handleAgentUpdateMessage(msg) {
 
   if (msg.requestId && clearedConversationRunRequestIds.has(String(msg.requestId))) return;
 
+  // Fallback queues belong to their source tab even while another tab is visible.
+  if (msg.type === 'steering_queued') {
+    if (isConversationClearInProgress(msg.tabId)) return;
+    queueUnconsumedSteeringMessages(msg.tabId, msg.data?.messages);
+  }
+
   // Drop updates that belong to a different tab's run. agent_update is a
   // window-wide broadcast (browser.runtime.sendMessage has no per-tab
   // targeting from the background script), and the side panel can render
@@ -9348,6 +9590,16 @@ function handleAgentUpdateMessage(msg) {
   const { type, data } = msg;
 
   switch (type) {
+    case 'steering_applied': {
+      const id = String(data?.id || '');
+      if (id && !messagesEl.querySelector(`[data-steering-message-id="${CSS.escape(id)}"]`)) {
+        const userEl = addMessage('user', data.text, { beforeCurrentAssistant: true });
+        userEl.dataset.steeringMessageId = id;
+        schedulePersist();
+      }
+      break;
+    }
+
     case 'thinking':
       if (data?.note) {
         // Planner notes carry more information than a generic wait state, so
@@ -9454,6 +9706,13 @@ function handleAgentUpdateMessage(msg) {
       }
       break;
 
+    case 'quota': {
+      const target = eventAssistantEl || currentAssistantEl;
+      const text = target?.querySelector('.message-text');
+      if (text) renderSubscribeError(text, '', '', data.quota);
+      break;
+    }
+
     case 'error':
       hideActivity();
       if (currentAssistantEl) markLastStepFailed();
@@ -9511,6 +9770,11 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'run_complete':
+      if (data?.quota) {
+        const target = eventAssistantEl || currentAssistantEl;
+        const text = target?.querySelector('.message-text');
+        if (text) renderSubscribeError(text, data.finalContent, '', data.quota, { submittedTurnDurable: data.submittedTurnDurable });
+      }
       showActivity(t('tool.done'));
       setMessageCreatedAt(eventAssistantEl || currentAssistantEl, data?.endedAt, { replace: true });
       if (currentAssistantEl) finalizeSteps(currentAssistantEl);
@@ -11106,8 +11370,23 @@ function openSubscribeUrl(url) {
 // caller can skip its normal markdown rendering. The URL is stashed on the
 // button's dataset so it survives chat-history restore (messagesEl.innerHTML),
 // where the click closure is lost and rebindSubscribeButtons re-attaches it.
-function renderSubscribeError(textEl, content, resumeMode = '') {
+function renderSubscribeError(textEl, content, resumeMode = '', quota = null, continuation = {}) {
   const parsed = parseSubscribeError(content);
+  let metadata = quota;
+  if (!metadata && textEl.dataset?.quota) {
+    try { metadata = JSON.parse(textEl.dataset.quota); } catch { /* old history */ }
+  }
+  if (!metadata && parsed?.action === 'subscribe') metadata = { code: 'webbrain_cloud_free_tier_exceeded', subscribe_url: parsed.url, usage: {} };
+  if (metadata?.code === 'webbrain_cloud_free_tier_exceeded' && typeof quotaController !== 'undefined') {
+    let storedContext = {};
+    try { storedContext = JSON.parse(textEl.dataset.quotaContext || '{}'); } catch {}
+    return quotaController.mount(textEl, metadata, {
+      mode: resumeMode || storedContext.mode || textEl.closest('.message')?.dataset.runMode || agentMode,
+      foreground: textEl.closest('.message')?.dataset.retryForeground === 'true',
+      retry: typeof continuation.submittedTurnDurable === 'boolean' ? continuation.submittedTurnDurable === false : storedContext.retry === true,
+    });
+  }
+  if (metadata?.code && metadata.code !== 'webbrain_cloud_free_tier_exceeded' && typeof quotaController !== 'undefined') quotaController.forget(textEl);
   if (!parsed) return false;
 
   textEl.replaceChildren();
@@ -11793,7 +12072,7 @@ function addMessage(role, content, options = {}) {
     options.subscribeResumeMode,
     options.costAllowanceResume,
   )
-      && !renderSubscribeError(textEl, content, options.subscribeResumeMode)) {
+      && !renderSubscribeError(textEl, content, options.subscribeResumeMode, options.quota, options.costAllowanceResume)) {
     textEl.innerHTML = content ? formatMarkdown(content, { recoverNestedMarkdown: role === 'assistant' }) : '';
   }
 
@@ -11996,6 +12275,7 @@ async function continueAgent(options = {}) {
       mode: modeForSend,
       foreground: foregroundForSend,
     });
+    if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
       chatHistoryConversationIdsByTab.set(tabId, res.conversationId);
@@ -13837,6 +14117,9 @@ queuedMessagesEl?.addEventListener('click', (e) => {
   const queueId = btn.dataset.queueId;
   if (action === 'edit') {
     editQueuedComposerMessage(currentTabId, queueId);
+  } else if (action === 'steer') {
+    const item = getQueuedComposerMessages(currentTabId).find(item => item.id === queueId);
+    if (item) void steerComposerMessage(currentTabId, item.text, { queueId });
   } else if (action === 'delete') {
     deleteQueuedComposerMessage(currentTabId, queueId);
   }
@@ -13862,9 +14145,15 @@ inputEl.addEventListener('keydown', (e) => {
       return;
     }
   }
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && (!e.shiftKey || (e.altKey && isProcessing))) {
     e.preventDefault();
-    sendMessage();
+    // Alt+Enter always steers the running task; Alt+Shift+Enter is its mirror
+    // and always queues, even when steering is the default delivery mode.
+    if (e.altKey && e.shiftKey && isProcessing) {
+      sendMessage({ __deliveryMode: 'queue' });
+    } else {
+      sendMessage(e.altKey && isProcessing ? { __deliveryMode: 'immediate' } : {});
+    }
   }
 });
 
@@ -13873,6 +14162,7 @@ inputEl.addEventListener('scroll', syncSlashCommandHighlightScroll);
 inputEl.addEventListener('focus', updateSlashCommandAutocomplete);
 inputEl.addEventListener('blur', () => setTimeout(hideSlashCommandAutocomplete, 120));
 document.addEventListener('wb-locale-changed', () => {
+  syncSendButtonState();
   if (slashCommandMatches.length) renderSlashCommandAutocomplete();
   renderQueuedComposerMessages();
   syncSelectionScopeUi();
@@ -14098,6 +14388,118 @@ function standaloneWindowBounds(display = window.screen) {
     top: availableTop + Math.round((availableHeight - height) / 2),
   };
 }
+
+function btwWindowBounds(display = window.screen) {
+  const availableWidth = Math.max(1, Number(display?.availWidth) || 1280);
+  const availableHeight = Math.max(1, Number(display?.availHeight) || 800);
+  const availableLeft = Number(display?.availLeft) || 0;
+  const availableTop = Number(display?.availTop) || 0;
+  const width = Math.min(availableWidth, Math.max(380, Math.round(availableWidth * 0.45)));
+  const height = Math.min(availableHeight, Math.max(500, Math.round(availableHeight * 0.7)));
+  return {
+    width,
+    height,
+    left: availableLeft + Math.round((availableWidth - width) / 2),
+    top: availableTop + Math.round((availableHeight - height) / 2),
+  };
+}
+
+const BTW_WINDOWS_KEY = 'btwWindows';
+
+async function getBtwWindowStates() {
+  try {
+    const result = await browser.storage.session.get(BTW_WINDOWS_KEY);
+    return result[BTW_WINDOWS_KEY] || {};
+  } catch {
+    return {};
+  }
+}
+
+async function getBtwWindowState(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return null;
+  const states = await getBtwWindowStates();
+  return states[numericTabId] || null;
+}
+
+async function setBtwWindowState(tabId, state) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const states = await getBtwWindowStates();
+  states[numericTabId] = state;
+  await browser.storage.session.set({ [BTW_WINDOWS_KEY]: states }).catch(() => {});
+}
+
+async function clearBtwWindowState(tabId, windowId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId)) return;
+  const states = await getBtwWindowStates();
+  if (windowId != null && states[numericTabId]?.windowId !== windowId) return;
+  delete states[numericTabId];
+  await browser.storage.session.set({ [BTW_WINDOWS_KEY]: states }).catch(() => {});
+}
+
+async function openBtwWindow(tabId, prompt = '') {
+  if (tabId == null) return;
+  const existing = await getBtwWindowState(tabId);
+  if (existing?.windowId != null) {
+    try {
+      const win = await browser.windows.get(existing.windowId, { populate: true });
+      if (win) {
+        await browser.windows.update(win.id, { focused: true });
+        if (prompt) {
+          const queued = Array.isArray(existing.pendingPrompts)
+            ? existing.pendingPrompts.filter((p) => typeof p === 'string' && p)
+            : (typeof existing.pendingPrompt === 'string' && existing.pendingPrompt ? [existing.pendingPrompt] : []);
+          queued.push(prompt);
+          await setBtwWindowState(tabId, { ...existing, pendingPrompt: prompt, pendingPrompts: queued });
+          const target = win.tabs?.[0];
+          if (target?.id != null) {
+            await browser.tabs.sendMessage(target.id, { action: 'btw_prompt', prompt }).catch(() => {});
+          }
+        }
+        return;
+      }
+    } catch {}
+    await clearBtwWindowState(tabId, existing.windowId);
+  }
+  const promptParam = prompt ? `&prompt=${encodeURIComponent(prompt)}` : '';
+  const url = browser.runtime.getURL(`src/ui/sidepanel.html?mode=ask&standalone=true&btw=1&forkFromTabId=${tabId}${promptParam}`);
+  const win = await browser.windows.create({
+    url,
+    type: 'popup',
+    ...btwWindowBounds(),
+  });
+  await setBtwWindowState(tabId, { windowId: win.id, tabId });
+}
+
+async function sendBtwPrompt(prompt) {
+  if (!prompt || !inputEl) return;
+  inputEl.value = prompt;
+  inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  await sendMessage();
+}
+
+async function consumePendingBtwPrompt(directPrompt = '') {
+  if (!isBtwWindow || btwSourceTabId == null) return;
+  await btwReady;
+  const state = await getBtwWindowState(btwSourceTabId);
+  let prompts = Array.isArray(state?.pendingPrompts)
+    ? state.pendingPrompts.filter((p) => typeof p === 'string' && p)
+    : (typeof state?.pendingPrompt === 'string' && state.pendingPrompt ? [state.pendingPrompt] : []);
+  const direct = String(directPrompt || '');
+  if (direct && prompts[prompts.length - 1] !== direct) prompts.push(direct);
+  if (!prompts.length) return;
+  await setBtwWindowState(btwSourceTabId, { ...state, pendingPrompt: '', pendingPrompts: [] });
+  for (const p of prompts) {
+    await sendBtwPrompt(p);
+  }
+}
+
+browser.runtime.onMessage.addListener((msg) => {
+  if (!isBtwWindow || msg?.action !== 'btw_prompt') return;
+  void consumePendingBtwPrompt(msg?.prompt).catch(() => {});
+});
 
 if (expandBtn) {
   if (isStandaloneWindow) {

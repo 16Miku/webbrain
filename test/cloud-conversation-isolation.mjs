@@ -46,7 +46,7 @@ for (const browser of ['chrome', 'firefox']) {
     const racing = await Promise.allSettled([c.startRun({ conversationKey: key1, task: 'held' }), c.startRun({ conversationKey: key1, task: 'race' })]);
     assert.equal(racing.filter(r => r.status === 'fulfilled').length, 1);
     const clearCount = clears.length;
-    await assert.rejects(c.startRun({ conversationKey: key1, task: 'busy' }), /active|starting/);
+    await assert.rejects(c.startRun({ conversationKey: key1, task: 'busy' }), error => error.status === 409 && /busy|starting/.test(error.message));
     assert.equal(clears.length, clearCount);
     release(); hold = null; await finished(racing.find(r => r.status === 'fulfilled').value);
     await assert.rejects(c.startRun({ conversationKey: key1, tabId: 7, task: 'conflict' }), /independent/);

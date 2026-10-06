@@ -73,6 +73,8 @@ Model tiering is separate from mode: `compact | mid | full` controls how many no
 
 The user types a message, the panel sends a detached `{action: 'chat_start', text, mode, tabId, requestId}` request, then reconnects to the background-owned run journal for `agent_update` events. The acknowledged start becomes the existing `chat` handler and `agent.processMessage()` lifecycle; closing or reloading the panel does not transfer ownership or start the run again. The panel renders tool calls, results, plan-review cards, clarification prompts, and the final answer incrementally.
 
+While a run is active, Send / Enter queues follow-up messages per tab. **Steer** / **Alt+Enter** sends a text correction to that same run; queued messages also have a Steer action. The background accepts corrections only from the extension chat panel and only for the matching run request ID. Both agent loops consume corrections as user messages before the next model request. An already running tool finishes; the remaining tool calls in its batch receive skipped results before the correction enters the conversation. Steering preserves the current mode and permission checks. If the run ends before consuming a correction, a journal event puts it at the front of that tab's queue for the next turn. A transport error retains the draft without automatically resending it.
+
 Each new user/assistant pair starts in a reading-first scroll state: the question
 stays visible while a long response grows instead of being pushed immediately
 to the live edge. A floating control changes between **Follow response**,
@@ -466,6 +468,19 @@ re-enables browser fallback. The browser MSE path fails closed before saving
 split or unverifiably muxed video/audio buffers, so it cannot report separate
 tracks as a successful video or hand ffmpeg work to the user.
 
+The packaged FreeSkillz resolver and downloader allow Bluesky post URLs.
+Mastodon uses an `inputUrlAllowlist` rule of `{ "siteAdapter": "mastodon" }`
+so supported instances do not need a fixed host list in the skill manifest.
+That rule accepts only exact HTTPS status permalinks on known instances or
+instances independently verified through same-origin NodeInfo discovery and
+`software.name: mastodon`. The credentialless verification rejects redirects,
+limits metadata reads to 64 KiB and 10 seconds, and never probes the post URL.
+Internationalized domains are accepted using URL-normalized IDNA hostnames.
+Credentials, custom ports, and local-network destinations are rejected; query
+strings and fragments are removed before forwarding Mastodon status URLs.
+Feeds/profiles stay behind the visible-target guard. Both sites use the existing
+provider job lifecycle to deliver one final media file and clean up the job.
+
 | User intent | Expected skill | Catalog modes | Notes |
 | --- | --- | --- | --- |
 | Find, read, copy, or enter a code visible in browser email/message content | OTP / verification-code helper | Ask, Act, Dev | Guides narrow current-page reads; on Mid/Full, loading it also exposes one fixed reader for an already-open signed-in supported webmail tab. |
@@ -839,7 +854,7 @@ OS file pickers. Firefox WebExtensions provide no equivalent native-dialog API;
 those dialogs still require manual handling in Firefox.
 
 WebMCP is an experimental Chrome-only fast path that is on by default. The
-user can disable **Experimental WebMCP** under Settings → General → Advanced;
+user can disable **Experimental WebMCP** under Settings → Bridge;
 when disabled, neither WebMCP tool schemas nor WebMCP prompt guidance enter model
 requests. When enabled, `list_webmcp_tools` is
 available in Ask, Act, and Dev; `execute_webmcp_tool` is restricted to Act/Dev

@@ -16,6 +16,7 @@ WebBrain 接受作为输入框某行开头的斜杠命令。在面板内输入 `
 | `/schedule --list` | 显示计划任务 |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <条件与动作> [/beep]` | 轮询当前页面的某个条件；除非设置 `--keep`，否则首次匹配后停止，并可播放后台提示音 |
 | `/progress` | 显示当前进度记录 |
+| `/btw [提示词]` | 打开一个快速侧边对话 |
 | `/scratchpad` | 显示当前草稿板 |
 | `/scratchpad --append <文本>` | 将文本追加到当前草稿板 |
 | `/scratchpad --clear` | 清除当前草稿板 |

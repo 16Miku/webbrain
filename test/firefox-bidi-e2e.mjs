@@ -33,7 +33,7 @@ const server = createServer(async (_req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const url = `http://127.0.0.1:${server.address().port}/`;
-const firefox = spawn(process.env.FIREFOX_BINARY || '/Applications/Firefox.app/Contents/MacOS/firefox', ['--headless', '--remote-allow-system-access', '--no-remote', '--profile', profile, '--remote-debugging-port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
+const firefox = spawn(process.env.FIREFOX_BINARY || (process.platform === 'darwin' ? '/Applications/Firefox.app/Contents/MacOS/firefox' : 'firefox'), ['--headless', '--remote-allow-system-access', '--no-remote', '--profile', profile, '--remote-debugging-port', '0'], { stdio: ['ignore', 'pipe', 'pipe'] });
 let session;
 try {
   const port = await new Promise((resolve, reject) => {
@@ -279,5 +279,5 @@ try {
   firefox.kill('SIGTERM');
   await new Promise(resolve => { if (firefox.exitCode != null) resolve(); else { firefox.once('exit', resolve); setTimeout(resolve, 3000); } });
   server.close();
-  await rm(profile, { recursive: true, force: true });
+  await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

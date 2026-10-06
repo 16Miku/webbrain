@@ -223,6 +223,7 @@ export class RunUiJournal {
       successfulDone: false,
       hadError: false,
       lastError: '',
+      quota: null,
       pendingToolCall: null,
       streamedText: '',
       streamedTextStartSeq: 0,
@@ -252,6 +253,7 @@ export class RunUiJournal {
     snapshot.status = 'running';
     snapshot.pendingPlanId = null;
     snapshot.finalContent = '';
+    snapshot.quota = null;
     snapshot.successfulDone = false;
     snapshot.endedAt = null;
     return this._changed(tabId, snapshot);
@@ -268,6 +270,7 @@ export class RunUiJournal {
       ts: Date.now(),
     };
     snapshot.events.push(event);
+    if (data?.quota) snapshot.quota = structuredClone(data.quota);
     if (type === 'text_delta') {
       const chunk = String(event.data?.content || '');
       if (!snapshot.streamedText && !snapshot.streamedTextTruncated) {
@@ -362,6 +365,7 @@ export class RunUiJournal {
       data: {
         status: snapshot.status,
         finalContent: snapshot.finalContent,
+        quota: snapshot.quota || null,
         endedAt: snapshot.endedAt,
         attachmentDeliveryState: snapshot.attachmentDeliveryState || '',
       },

@@ -934,6 +934,7 @@ export class Agent extends LoopDetector {
     this._completionSubmitStates = new Map(); // tabId -> trusted submit transition metadata
     this._recentSubmitClicks = new Map();
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
+    this._steeringRuns = new Map(); // tabId -> inbox owned by one interactive run
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
     this._runStartGuard = null;
     this.completionInvariants = new Map(); // tabId -> run-scoped post-action verification state
@@ -5764,6 +5765,64 @@ export class Agent extends LoopDetector {
     return this._runningTabs.has(tabId);
   }
 
+  _beginSteeringRun(tabId, onUpdate, runOptions = {}) {
+    if (runOptions.cloudRun || runOptions.scheduledRun) return;
+    this._steeringRuns.set(tabId, {
+      requestId: String(runOptions.detachedRequestId || ''),
+      messages: [],
+      acceptedIds: new Set(),
+      onUpdate,
+    });
+  }
+
+  steerMessage(tabId, text, { requestId, messageId } = {}) {
+    const run = this._steeringRuns.get(tabId);
+    if (!run || !this.isRunning(tabId) || this._checkAbort(tabId)) {
+      return { accepted: false, reason: 'run-inactive' };
+    }
+    if (!requestId || String(requestId) !== run.requestId) {
+      return { accepted: false, reason: 'run-changed' };
+    }
+    if (typeof text !== 'string' || !text.trim() || !messageId) {
+      return { accepted: false, reason: 'invalid-message' };
+    }
+    const id = String(messageId);
+    if (!run.acceptedIds.has(id)) {
+      run.acceptedIds.add(id);
+      run.messages.push({ id, text: text.trim() });
+      // A cached fast-path action was prepared before this correction.
+      const session = this._jevSessions?.get(tabId);
+      if (session) { session.disabled = true; session.queue = []; }
+    }
+    return { accepted: true, messageId: id };
+  }
+
+  _hasPendingSteering(tabId) {
+    return !!this._steeringRuns.get(tabId)?.messages.length;
+  }
+
+  _applyPendingSteering(tabId, messages, onUpdate) {
+    const run = this._steeringRuns.get(tabId);
+    if (!run?.messages.length || this._checkAbort(tabId)) return false;
+    // Only consume at model/tool boundaries, after all tool results are present.
+    // Human corrections stay ordinary user messages; no page context is added.
+    for (const item of run.messages.splice(0)) {
+      this._recordSocialPublicationSteering(tabId, item.text);
+      messages.push({ role: 'user', content: item.text });
+      onUpdate('steering_applied', item);
+    }
+    this._persist(tabId);
+    return true;
+  }
+
+  _finishSteeringRun(tabId) {
+    const run = this._steeringRuns.get(tabId);
+    this._steeringRuns.delete(tabId);
+    if (run?.messages.length) {
+      run.onUpdate('steering_queued', { messages: run.messages });
+    }
+  }
+
   activeRunState(tabId) {
     const persistenceState = this.persistenceDegradedTabs.get(tabId) || null;
     const state = {
@@ -6240,6 +6299,98 @@ export class Agent extends LoopDetector {
 
   async ensureConversationId(tabId, mode = 'ask') {
     return (await this.getConversationState(tabId, mode)).conversationId;
+  }
+
+  async forkConversation(sourceTabId, forkTabId) {
+    const sourceId = Number(sourceTabId);
+    const forkId = Number(forkTabId);
+    if (!Number.isFinite(sourceId) || !Number.isFinite(forkId) || sourceId === forkId) {
+      throw new Error('Invalid conversation fork');
+    }
+    if (this._runningTabs.has(forkId)) throw new Error('Fork conversation is already running');
+
+    await this._hydrate(sourceId);
+    await this._hydrate(forkId);
+    const existingFork = this.conversations.get(forkId);
+    if (Array.isArray(existingFork) && existingFork.length) {
+      // Reloading a /btw window reuses its popup tab id. Keep the side
+      // conversation instead of resetting it to a fresh source snapshot.
+      if (!this.conversationIds.get(forkId)) {
+        this.conversationIds.set(forkId, `conv_${forkId}_${Date.now()}_${secureRandomBase36Token(12)}`);
+        await this._persistNow(forkId);
+      }
+      return { conversationId: this.conversationIds.get(forkId), resumed: true };
+    }
+
+    const sourceMessages = this.conversations.get(sourceId) || [];
+    let messages = sourceMessages.length
+      ? JSON.parse(JSON.stringify(sourceMessages))
+      : [{ role: 'system', content: this._buildSystemPrompt('ask', forkId) }];
+    // A fork taken mid-run can copy an assistant `tool_calls` turn before its
+    // `tool` results are appended. Providers reject orphaned `tool_calls`
+    // with a 400, so drop the trailing incomplete batch.
+    messages = this._trimIncompleteToolTail(messages);
+    if (messages[0]?.role === 'system') {
+      messages[0].content = this._buildSystemPrompt('ask', forkId);
+    } else {
+      messages.unshift({ role: 'system', content: this._buildSystemPrompt('ask', forkId) });
+    }
+
+    // A fork inherits only durable conversation history. Page state, pending
+    // plans, workflow drafts, and task progress belong exclusively to its source.
+    this.conversations.set(forkId, messages);
+    this.conversationModes.set(forkId, 'ask');
+    this.conversationIds.set(forkId, `conv_${forkId}_${Date.now()}_${secureRandomBase36Token(12)}`);
+    this._latestWorkflowDrafts.delete(forkId);
+    this.selectionGroundingScopes.delete(forkId);
+    this.selectionGroundingRestorationPendingTabs.delete(forkId);
+    this.progressLedgers.delete(forkId);
+    this.progressSessions.delete(forkId);
+    this.submittedRunRequestIds.delete(forkId);
+    this._continuationResponseLanguagePolicies.delete(forkId);
+    this._clarificationAuthorizationGuards.delete(forkId);
+    this.hydratedTabs.add(forkId);
+    await this._persistNow(forkId);
+    return { conversationId: this.conversationIds.get(forkId) };
+  }
+
+  _trimIncompleteToolTail(messages) {
+    let end = messages.length;
+    // Never drop the leading system prompt.
+    while (end > 1) {
+      const last = messages[end - 1];
+      if (last?.role === 'assistant' && Array.isArray(last.tool_calls) && last.tool_calls.length) {
+        // Assistant tool request with no following results in the slice is mid-run.
+        end -= 1;
+        continue;
+      }
+      if (last?.role === 'tool' && last.tool_call_id != null) {
+        let parentIndex = -1;
+        for (let i = end - 2; i >= 0; i--) {
+          const m = messages[i];
+          if (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.some((tc) => tc?.id === last.tool_call_id)) {
+            parentIndex = i;
+            break;
+          }
+        }
+        if (parentIndex === -1) {
+          end -= 1;
+          continue;
+        }
+        const requested = messages[parentIndex].tool_calls.map((tc) => tc?.id).filter(Boolean);
+        const answered = new Set();
+        for (let i = parentIndex + 1; i < end; i++) {
+          const m = messages[i];
+          if (m?.role === 'tool' && m.tool_call_id != null) answered.add(m.tool_call_id);
+        }
+        if (requested.every((id) => answered.has(id))) break;
+        // Incomplete batch — drop the parent request and its partial results.
+        end = parentIndex;
+        continue;
+      }
+      break;
+    }
+    return messages.slice(0, end);
   }
 
   /**
@@ -6780,6 +6931,7 @@ export class Agent extends LoopDetector {
   }
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
+    if (this._steeringRuns.get(tabId)?.acceptedIds.size) return null;
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
     let session;
@@ -10787,6 +10939,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: 'Stopped by user.' });
         return { action: 'abort', value };
       }
+      if (this._hasPendingSteering(tabId)) {
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+          success: false, skipped: true, dispatched: false, noDispatch: true,
+          error: 'Skipped because the user steered the current task. Reconsider the remaining actions using the latest user message.',
+        }));
+        return { action: 'continue' };
+      }
+
       const jevPending = this._jevPendingCalls?.get(tc.id);
       const fnName = tc.function?.name || '';
       if (!allowedToolNames.has(fnName)) {
@@ -11715,6 +11875,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       this._throwIfAborted(this._runAbortSignal(tabId));
       const _toolStart = Date.now();
+      let steeringBeforeDispatch = false;
       let toolbarPreflight = { block: null };
       let rawToolResult;
       let toolResult;
@@ -11736,6 +11897,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const socialDispatchBlock = pipelineToolbarPreflight.block ? null
             : await this._socialPublicationPreSubmitBlock(tabId, fnName, fnArgs, detectedSubmitAction, provider);
           this._throwIfAborted(abortSignal);
+          // Permission, checkpoint and preflight waits can receive a correction.
+          // Recheck after all preparation, before marking or invoking dispatch.
+          if (this._hasPendingSteering(tabId)) return { steered: true };
           if (!pipelineToolbarPreflight.block && !socialDispatchBlock) callState.invoked = true;
           const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || await this.executeTool(
             tabId,
@@ -11832,6 +11996,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._contentActionDeadlineMs(fnName, fnArgs),
             this._runAbortSignal(tabId),
           );
+          steeringBeforeDispatch = pipelineResult.steered === true;
           toolbarPreflight = pipelineResult.toolbarPreflight;
           rawToolResult = pipelineResult.rawToolResult;
           toolResult = pipelineResult.toolResult;
@@ -11851,9 +12016,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       } else {
         const pipelineResult = await runActionPipeline(null);
+        steeringBeforeDispatch = pipelineResult.steered === true;
         toolbarPreflight = pipelineResult.toolbarPreflight;
         rawToolResult = pipelineResult.rawToolResult;
         toolResult = pipelineResult.toolResult;
+      }
+      if (steeringBeforeDispatch) {
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+          success: false, skipped: true, dispatched: false, noDispatch: true,
+          error: 'Skipped because the user steered the current task. Reconsider the remaining actions using the latest user message.',
+        }));
+        return { action: 'continue' };
       }
       if (jevPending) {
         this._jevPendingCalls.delete(tc.id);
@@ -17057,7 +17230,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _socialPublicationSources(tabId) {
     const guard = this._planExecutionGuards.get(tabId);
     // Keep the original task/drafts through a trusted Continue and compaction.
-    const sources = { ...(guard?.socialPublication?.sources || {
+    const sources = { ...(guard?.socialPublication?.sources || guard?.socialPublicationSteering?.sources || {
       request: this._latestTaskText(tabId),
       task: this._progressTaskAnchorText(tabId),
       plan: String(guard?.approvedPlanText || ''),
@@ -17065,7 +17238,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messages = this.conversations.get(tabId) || [];
     let priorRequests = Object.entries(sources).filter(([key]) => /^prior_request\d+$/.test(key));
     priorRequests.forEach(([key]) => { delete sources[key]; });
-    if (!guard?.socialPublication?.sources) {
+    if (!guard?.socialPublication?.sources && !guard?.socialPublicationSteering?.sources) {
       // Short follow-ups such as "do it now" can become the task anchor.
       // Retain only recent, whole user turns; never trim away a correction or
       // skip an oversized turn to revive an older publication instruction.
@@ -17108,11 +17281,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         sources[`draft${draftIndex++}`] = draft;
       }
     });
-    (guard?.socialPublicationClarifications || []).forEach((entry, i) => {
-      sources[`clarification_question${i}`] = entry.question;
-      sources[`clarification_answer${i}`] = entry.answer;
-    });
-    // Current instructions and clarification pairs have priority. Count JSON
+    // Rebuild trusted revisions in chronological field order, including when
+    // earlier compiler sources are cached or the conversation was compacted.
+    for (const key of Object.keys(sources)) {
+      if (/^(?:clarification_question|clarification_answer|steering_message)\d+$/.test(key)) delete sources[key];
+    }
+    const clarifications = guard?.socialPublicationClarifications || [];
+    const steering = guard?.socialPublicationSteering?.messages || [];
+    for (let i = 0; i <= clarifications.length; i++) {
+      steering.forEach((entry, index) => {
+        if (entry.afterClarification === i) sources[`steering_message${index}`] = entry.text;
+      });
+      if (i < clarifications.length) {
+        sources[`clarification_question${i}`] = clarifications[i].question;
+        sources[`clarification_answer${i}`] = clarifications[i].answer;
+      }
+    }
+    // Current instructions, steering and clarification pairs have priority. Count JSON
     // escaping/keys as well as text, including when refreshing cached sources.
     let priorBudget = 120000 - JSON.stringify(sources).length;
     const retained = [];
@@ -17130,6 +17315,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!guard?.enabled || this._planExecutionGuards.get(tabId) !== guard
         || !['user', 'option'].includes(source) || !question || !answer) return;
     (guard.socialPublicationClarifications ||= []).push({ question, answer });
+    this._invalidateSocialPublicationContract(guard);
+  }
+
+  _recordSocialPublicationSteering(tabId, text) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled) return;
+    // Capture the initiating task before appending the human correction. This
+    // also preserves its references when no publication contract exists yet.
+    guard.socialPublicationSteering ||= { sources: this._socialPublicationSources(tabId), messages: [] };
+    guard.socialPublicationSteering.messages.push({
+      text,
+      afterClarification: (guard.socialPublicationClarifications || []).length,
+    });
+    this._invalidateSocialPublicationContract(guard);
+  }
+
+  _invalidateSocialPublicationContract(guard) {
     const social = guard.socialPublication;
     if (!social) return;
     social.needsRecompile = true;
@@ -19158,6 +19360,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       if (this._isCostAllowanceError(error)) {
+        if (typeof onUpdate === 'function' && error.quota) onUpdate('quota', { quota: error.quota });
         return { proceed: false, message: error.message, reason: 'cost_limit' };
       }
       if (bestEffort) {
@@ -19389,6 +19592,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
       if (recheckOnly) return this._plannerIntentRecheckFallback();
@@ -19780,6 +19984,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { proceed: false, message: '[Stopped by user]', reason: 'cancelled' };
       }
       if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
         return { proceed: false, message: e.message, reason: 'cost_limit' };
       }
       if (hasValidPlannerResponse) {
@@ -20168,12 +20373,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     onUpdate('thinking', { step: 1, note: 'Preparing response…' });
     let finalResponse = '';
     let status = 'done';
+    let quotaFailure = false;
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
         { phase: 'response_only', step: 1, runOptions, currentUserMessage, priorMessageSet, shareCapture },
       );
     } catch (error) {
+      if (error.quota) {
+        quotaFailure = true;
+        onUpdate('quota', { quota: error.quota });
+      }
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
       finalResponse = this._isCostAllowanceError(error)
         ? error.message
@@ -20187,7 +20397,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     messages.push({ role: 'assistant', content: finalResponse });
     onUpdate('text', { content: finalResponse, replace: true });
-    if (status !== 'done') onUpdate('error', { message: finalResponse });
+    if (status !== 'done' && !quotaFailure) onUpdate('error', { message: finalResponse });
     this._persist(tabId);
     return { content: finalResponse, status };
   }
@@ -27555,6 +27765,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       socialPublication: carryMatches && carried.socialPublication ? structuredClone(carried.socialPublication) : null,
       socialPublicationClarifications: carryMatches && carried.socialPublicationClarifications
         ? structuredClone(carried.socialPublicationClarifications) : [],
+      socialPublicationSteering: carryMatches && carried.socialPublicationSteering
+        ? structuredClone(carried.socialPublicationSteering) : null,
       socialPublishSatisfiedTargets: carryMatches && Array.isArray(carried.socialPublishSatisfiedTargets)
         ? [...carried.socialPublishSatisfiedTargets]
         : [],
@@ -27959,6 +28171,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
         socialPublication: guard.socialPublication ? structuredClone(guard.socialPublication) : null,
         socialPublicationClarifications: structuredClone(guard.socialPublicationClarifications || []),
+        socialPublicationSteering: guard.socialPublicationSteering ? structuredClone(guard.socialPublicationSteering) : null,
         socialPublishSatisfiedTargets: Array.isArray(guard.socialPublishSatisfiedTargets)
           ? [...guard.socialPublishSatisfiedTargets]
           : [],
@@ -28618,7 +28831,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _scheduleAutoProgressResume(tabId, onUpdate = () => {}) {
-    if (!this.scheduler) return null;
+    const cloudResume = this.cloudRunContexts.get(tabId)?.deferResume;
+    if (!this.scheduler && !cloudResume) return null;
     const mode = this._effectiveRunMode(tabId);
     if (!this._isActionMode(mode)) return null;
     if (!this._shouldBlockDoneForProgress(tabId)) return null;
@@ -28626,16 +28840,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
     let result;
     try {
-      result = await this.scheduler.createResumeJob({
+      const args = {
+        after_seconds: 90,
+        reason: 'The active progress-ledger task hit consecutive stalled model outputs before finishing.',
+        resume_instruction: this._buildAutoProgressResumeInstruction(tabId),
+      };
+      result = cloudResume ? await cloudResume(args) : await this.scheduler.createResumeJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
         resumeTaskId: this._resumeTaskId(tabId, { create: true }),
         mode,
-        args: {
-          after_seconds: 90,
-          reason: 'The active progress-ledger task hit consecutive stalled model outputs before finishing.',
-          resume_instruction: this._buildAutoProgressResumeInstruction(tabId),
-        },
+        args,
         currentUrl: tabUrl,
         currentTitle: tabTitle,
       });
@@ -31035,6 +31250,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._resizeWindow(tabId, args || {});
     }
     if (name === 'schedule_resume') {
+      const cloudResume = this.cloudRunContexts.get(tabId)?.deferResume;
+      if (cloudResume) return cloudResume(this._resumeArgsWithProgressGuard(tabId, args || {}));
       if (!this.scheduler) {
         return {
           success: false,
@@ -35210,6 +35427,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
+    this._beginSteeringRun(tabId, onUpdate, runOptions);
     let continuationEligible = false;
     const emitUpdate = onUpdate;
     onUpdate = (type, data) => {
@@ -35245,7 +35463,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false, deferResume: runOptions.deferResume });
     }
     try {
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
@@ -35253,6 +35471,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
+      this._finishSteeringRun(tabId);
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
@@ -35288,7 +35507,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       onUpdate('run_status', { status: 'cancelled', message: stopped });
       return stopped;
     } finally {
-      this._releaseRunEntry(tabId);
+      try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
     }
   }
 
@@ -36051,6 +36270,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       steps++;
       lastTraceStep = steps;
+      this._applyPendingSteering(tabId, messages, onUpdate);
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
 
@@ -36116,6 +36336,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this._checkAbort(tabId)) throw e;
         this._logDebug({ type: 'llm_error', step: steps, error: e.message });
         if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
           finalResponse = e.message;
           _traceStatus = 'cost_limit';
           traceFailureCode = 'COST_LIMIT';
@@ -36146,6 +36367,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (this._checkAbort(tabId)) throw e2;
             this._logDebug({ type: 'llm_error_retry', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
+        if (typeof onUpdate === 'function' && e2.quota) onUpdate('quota', { quota: e2.quota });
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
               traceFailureCode = 'COST_LIMIT';
@@ -36192,6 +36414,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (this._checkAbort(tabId)) throw e2;
             this._logDebug({ type: 'llm_error_final', step: steps, error: e2.message });
             if (this._isCostAllowanceError(e2)) {
+        if (typeof onUpdate === 'function' && e2.quota) onUpdate('quota', { quota: e2.quota });
               finalResponse = e2.message;
               _traceStatus = 'cost_limit';
               traceFailureCode = 'COST_LIMIT';
@@ -36221,6 +36444,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: 'Stopped by user.' });
         messages.push(this._localCancellationMessage(finalResponse));
         break;
+      }
+
+      if (steps < this.maxSteps && this._applyPendingSteering(tabId, messages, onUpdate)) {
+        onUpdate('text', { content: '', replace: true });
+        continue;
       }
 
       // Fallback: if the LLM emitted tool calls as raw text instead of
@@ -36274,6 +36502,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const batchResult = await this._executeToolBatch(
           tabId, result.toolCalls, messages, onUpdate, provider, assistantToolContent, allowedToolNames, steps, runOptions, toolSchemas
         );
+        if (['continue', 'return'].includes(batchResult.action) && !batchResult.status && steps < this.maxSteps
+            && this._applyPendingSteering(tabId, messages, onUpdate)) {
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         if (batchResult.action === 'return') {
           finalResponse = batchResult.value;
           if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
@@ -36598,6 +36831,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await this._persistNow(tabId);
         return finalResponse;
       }
+      if (error.quota) onUpdate('quota', { quota: error.quota });
       const message = formatErrorMessage(error);
       _traceStatus = 'error';
       traceFailureCode = this._traceErrorCodeFor(error);
@@ -36632,6 +36866,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           shareRequest = messages;
         }
       } catch {}
+      runOptions.onRunFinished?.(_traceStatus);
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }
@@ -36642,6 +36877,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
     await this._claimRunEntry(tabId, 'interactive', runOptions);
     try {
+    this._beginSteeringRun(tabId, onUpdate, runOptions);
     let continuationEligible = false;
     const emitUpdate = onUpdate;
     onUpdate = (type, data) => {
@@ -36677,7 +36913,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._runModeOverrides.set(tabId, mode);
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
-      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false });
+      this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false, deferResume: runOptions.deferResume });
     }
     try {
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
@@ -36685,6 +36921,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
+      this._finishSteeringRun(tabId);
       this.currentCostState.delete(tabId);
       this._discardProvisionalSelectionGroundingScope(tabId);
       this._storeContinuationExecutionEvidence(tabId);
@@ -36720,7 +36957,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       onUpdate('run_status', { status: 'cancelled', message: stopped });
       return stopped;
     } finally {
-      this._releaseRunEntry(tabId);
+      try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
     }
   }
 
@@ -37035,6 +37272,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       steps++;
       lastTraceStep = steps;
+      this._applyPendingSteering(tabId, messages, onUpdate);
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
       let traceStepClosed = false;
@@ -37179,6 +37417,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
+        if (steps < this.maxSteps && this._applyPendingSteering(tabId, messages, onUpdate)) {
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
+
         // Fallback: parse tool calls from streamed text if structured calls are missing.
         if (!hasToolCalls && fullText && !this._containsProviderReplayState(responseItems)) {
           const fallback = this._tryParseToolCallsFromText(fullText, allowedToolNames);
@@ -37217,6 +37460,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const batchResult = await this._executeToolBatch(
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
+          if (['continue', 'return'].includes(batchResult.action) && !batchResult.status && steps < this.maxSteps
+              && this._applyPendingSteering(tabId, messages, onUpdate)) {
+            onUpdate('text', { content: '', replace: true });
+            continue;
+          }
           if (batchResult.action === 'return') {
             if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
               shareRawResponse = batchResult.rawSummary;
@@ -37468,6 +37716,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await closeTraceStep({ ok: false, code: stepErrorCode });
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
         if (this._isCostAllowanceError(e)) {
+        if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
           messages.push({ role: 'assistant', content: caughtMessage });
           onUpdate('warning', { message: caughtMessage });
           this._persist(tabId);
@@ -37565,6 +37814,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           shareRequest = this._pruneOldImages(modelMessagesForRun(), provider);
         }
       } catch {}
+      runOptions.onRunFinished?.(_traceStatus);
       await this._endTraceRun(tabId, runId, _traceStatus, finalResponse, { provider, messages, mode, shareRequest, shareResponse: shareRawResponse, hadProviderCompletion: shareHadProviderCompletion });
     }
   }

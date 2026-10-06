@@ -4,6 +4,70 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [39.0.0] - 2026-10-06
+
+### Added
+- Added optional steering for active chat runs. While a run is active, Send / Enter queues follow-ups per tab and Steer / Alt+Enter sends a correction to that same run; queued messages also have a Steer action. Corrections are accepted from the chat panel only for the matching run request ID, consumed as user messages at model/tool boundaries, skip the remaining tool calls in the current batch, preserve mode and permission checks, disable the JEV fast-path once steering is accepted, and requeue via journal event if the run ends first.
+- Added frozen Ling 3.0 Flash VL benchmark against Nex-N2.5 and MiniMax M3, with comparison blog post, verification artifacts, and reporting script (`test/llm/report-ling30-comparison.mjs`).
+- Added `chat_steer` background handling, steering toasts/queue UI, `sp.steer.*` locales across all languages, and `test/chat-steering.mjs` + `test/chat-steering-ui.mjs` coverage wired into `test:runtime-lifecycle` and new `test:chat-steering`.
+
+### Changed
+- Extended the social publication contract and audit prompts with chronological `steering_messageN` sources so later corrections or cancellations supersede the initiating request and earlier revisions.
+- Documented active-run steering in `docs/architecture.md`.
+- Bumped `proxy-addr` 2.0.7 → 2.0.8 in `/mcp-server` and `multidict` 6.7.1 → 6.9.1 in docs vision-model sources.
+
+## [38.0.15] - 2026-10-05
+
+### Changed
+- Include separately approved reductions in quota reassessment
+- Document the approved fifty-cent Compass transition rollout
+- Clarify completed UTC weeks in quota rollout validation
+- Keep response-only quota stops unsuccessful through replay
+- Refresh pending social claims from the check status action
+- Verify Mastodon instances before forwarding public media URLs
+- Complete quota validation and harden fixture locale coverage
+- Fix reviewed quota recovery and browser test failures
+- Support Bluesky and Mastodon public media downloads via FreeSkillz
+- Add mirrored Compass quota recovery and social claim flows
+- docs: translate workflow editor FAQ
+- docs: link workflow editor from FAQ
+- Fix text click guard target parity
+- fix(cloud-runs): address PR 3138 review - keepalive, resume envelope, delay clamp, success wins, strict URL docs
+- Announce SafeSocial on Google Play
+- Run release fixtures and finish portable browser test support
+- feat(providers): add Freebuff2API integration
+- fix(providers): correct DemonRoute card, ordering, tests and docs
+- Keep Cloud continuations tracked and report actual completion outcomes
+- Add DemonRoute as a built-in provider card
+- Address review regressions in text targeting and LinkedIn guards
+- Preserve guarded key dispatch and portable browser regression checks
+- Fix composer detection and eligible text click preference
+
+## [38.0.14] - 2026-10-04
+
+### Changed
+- Fix /btw fork orphaned tools, reload reset, and prompt loss
+- docs: add 38.1.0 changelog
+- Fork /btw conversations
+- Fix /btw window coordination
+- Fix /btw prompt forwarding and handoff recovery
+- Add /btw side conversation command
+- feat(memory): add opt-in MemCode OAuth recall
+
+## [38.1.0] - 2026-10-04
+
+### Added
+- Added `/btw` side conversations, including prompt forwarding, handoff recovery, independent window coordination, and the ability to fork a conversation.
+- Added opt-in Cloud Bridge browser registration and approval, with documented security controls and Firefox bridge support.
+- Added OpenRouter capability overrides for native tool use and vision, including support for the auto-only Muse Spark tool-choice mode.
+- Added opt-in MemCode OAuth recall.
+
+### Changed
+- Isolated keyed Cloud conversations and reset task roots independently to prevent cross-conversation state leakage.
+- Kept Muse Spark classifier reasoning within output budgets.
+- Updated browser billing recovery notices and their regression coverage.
+- Added full-page Firefox screenshots through BiDi and refreshed the Chrome and Firefox store listing drafts.
+
 ## [38.0.13] - 2026-10-01
 
 ### Changed

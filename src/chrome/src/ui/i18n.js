@@ -3,8 +3,11 @@
 // Works identically in Chrome MV3 and Firefox MV2.
 
 import en from './locales/en.js';
+import { quotaTranslations } from './locales/compass-quota-copy.mjs';
 import { memcodeEnglish } from './locales/memcode-copy.mjs';
 import { captchaEnglish, captchaTranslations } from './locales/captcha-copy.mjs';
+import { composerDeliveryTranslations } from './locales/composer-delivery-copy.mjs';
+import { cloudBridgeTranslations } from './locales/cloud-bridge-copy.mjs';
 import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
 import fr from './locales/fr.js';
@@ -34,6 +37,10 @@ import { pdfViewerEnglish } from './locales/pdf-viewer-copy.mjs';
 const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de })
   .map(([code, dict]) => [code, {
     ...dict,
+    ...(composerDeliveryTranslations[code] || {}),
+    ...(cloudBridgeTranslations[code] || {}),
+    ...quotaTranslations[code],
+    'sp.subscribe.allowance_used': quotaTranslations[code]['quota.used'],
     ...memcodeEnglish,
     ...providerGuideEnglish,
     ...pdfViewerEnglish,

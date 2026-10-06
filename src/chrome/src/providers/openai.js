@@ -387,7 +387,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (status === 402 && providerName === 'webbrain-cloud') {
       let actionUrl = this._webbrainSubscribeUrl();
       let actionLabel = 'Subscribe for more usage';
-      let message = 'Daily free WebBrain Compass allowance used.';
+      let message = 'Weekly free WebBrain Compass allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
         if (parsed.error?.code === 'webbrain_cloud_payment_failed') {
@@ -423,7 +423,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     const error = new Error(`${prefix}: ${this._formatHttpError(status, body)}`);
     error.httpStatus = status;
     try {
-      const providerCode = JSON.parse(body || '{}')?.error?.code;
+      const parsed = JSON.parse(body || '{}');
+      const providerCode = parsed?.error?.code;
+      if (status === 402 && (this.config.providerName || '').toLowerCase() === 'webbrain-cloud') {
+        error.quota = { code: providerCode, usage: parsed.usage || {},
+          subscribe_url: parsed.subscribe_url || this._webbrainSubscribeUrl(),
+          upgrade_url: parsed.upgrade_url, manage_billing_url: parsed.manage_billing_url };
+      }
       if (typeof providerCode === 'string' && providerCode) error.code = providerCode;
     } catch { /* keep the formatted HTTP error without provider metadata */ }
     return error;
