@@ -5978,6 +5978,27 @@ export class Agent extends LoopDetector {
     }
   }
 
+  async _completeInitialResponseOnlyTurn(tabId, messages, onUpdate, mode, provider, costState, runId, runOptions, gate, enriched, priorMessages) {
+    let revalidated = false;
+    while (gate.proceed && gate.responseOnly) {
+      const capture = {};
+      const response = await this._completeResponseOnlyTurn(
+        tabId, messages, onUpdate, provider, costState, runId, runOptions, enriched, priorMessages, capture,
+      );
+      if (!this._hasPendingSteering(tabId)) return { gate, response, capture, revalidated };
+      onUpdate('text', { content: '', replace: true });
+      const refresh = await this._revalidatePendingSteering(
+        tabId, messages, onUpdate, mode, costState, runId, runOptions,
+      );
+      if (refresh?.gate) {
+        gate = refresh.gate;
+        revalidated = true;
+      }
+      enriched = refresh?.enriched || { role: 'user', content: this._activeTaskBinding(messages).text };
+    }
+    return { gate, revalidated };
+  }
+
   activeRunState(tabId) {
     const persistenceState = this.persistenceDegradedTabs.get(tabId) || null;
     const state = {
@@ -20633,6 +20654,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (stopped) return stopped;
+    // An accepted correction supersedes this answer before it reaches the
+    // transcript, UI, persistence, or voluntary generation sharing.
+    if (this._hasPendingSteering(tabId)) return { content: '', status: 'steering_superseded' };
     if (!finalResponse) {
       status = 'empty_output';
       finalResponse = 'I could not generate a usable response from the existing conversation context.';
@@ -30269,6 +30293,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _emergencyTrimModelCopy(messages) {
     const modelCopy = messages.map(message => ({ ...message }));
     this._emergencyTrim(modelCopy);
+    // Linked corrections hash their parent task, so even wrapped source in
+    // that authority must stay verbatim across further overflow retries.
+    if (this._activeTaskBinding(messages).pinnedIndices.length > 1) return modelCopy;
+    // A selected-text request can itself contain the oversized source.
+    // Trim only wrapped page data in this disposable model view, retaining
+    // the surrounding user instructions and the complete saved transcript.
+    for (const message of modelCopy) {
+      if (message.role !== 'user' || typeof message.content !== 'string') continue;
+      message.content = message.content.replace(
+        /<untrusted_page_content\b[^>]*>[\s\S]*?<\/untrusted_page_content\b[^>]*>/g,
+        wrapper => wrapper.length > 5000 ? this._truncatePreservingUntrustedWrapper(wrapper, 5000) : wrapper,
+      );
+    }
     return modelCopy;
   }
 
@@ -30558,6 +30595,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       originalTask = m;
       break;
     }
+    const taskBinding = this._activeTaskBinding(messages);
+    // Authorized corrections must survive even outside the recent window,
+    // without the truncation applied to intermediate tool results.
+    const pinnedTasks = taskBinding.pinnedIndices.map(index => messages[index]).filter(Boolean);
+    if (originalTask && !pinnedTasks.includes(originalTask)) pinnedTasks.unshift(originalTask);
+    const pinnedTaskSet = new Set(pinnedTasks);
     const scheduledResumeIdx = this._findLatestScheduledResumeIndex(messages);
     const scheduledResumeMsg = scheduledResumeIdx >= 0 && messages[scheduledResumeIdx] !== originalTask
       ? messages[scheduledResumeIdx]
@@ -30571,7 +30614,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const progressIdx = this._findProgressLedgerIndex(messages);
     const progressMsg = progressIdx >= 0 ? messages[progressIdx] : null;
     const keepLast = 6; // keep only 6 most recent messages
-    const recent = messages.slice(-keepLast).filter(m => m !== scheduledResumeMsg && !this._isScheduledResumeTurn(m.content) && !this._isPinnedAgentStateMessage(m));
+    const recent = messages.slice(-keepLast).filter(m => !pinnedTaskSet.has(m) && m !== scheduledResumeMsg && !this._isScheduledResumeTurn(m.content) && !this._isPinnedAgentStateMessage(m));
 
     // Drop any leading `tool` messages whose requesting assistant turn fell
     // outside the kept window. Both OpenAI-compatible and Anthropic APIs reject
@@ -30598,16 +30641,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const notice = {
       role: 'user',
-      content: '[Context was too large for the model. Older intermediate steps were removed, but your ORIGINAL TASK is pinned above — keep working on it based on the most recent state you can see.]',
+      content: '[Context was too large for the model. Older intermediate steps were removed, but the active request and ordered genuine user corrections are pinned above. Apply the latest corrections and keep working from the most recent state.]',
     };
     const ack = {
       role: 'assistant',
-      content: 'Understood, some earlier context was trimmed. I\'ll continue with what I have.',
+      content: 'Understood. I\'ll continue the active request with its latest corrections and recent state.',
     };
 
     messages.length = 0;
     messages.push(systemMsg);
-    if (originalTask) messages.push(originalTask);
+    messages.push(...pinnedTasks);
     if (scheduledResumeMsg) messages.push(scheduledResumeMsg);
     if (scratchpadMsg) messages.push(scratchpadMsg);
     if (memoryMsg) messages.push(memoryMsg);
@@ -36197,7 +36240,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     }
 
-    const gateOutcome = await this._maybeRunPlannerGate(
+    let gateOutcome = await this._maybeRunPlannerGate(
       tabId, messages, enriched, onUpdate, mode, costState, runId, plannerTabInfo, runOptions,
     );
     if (!gateOutcome.proceed) {
@@ -36214,28 +36257,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || gateOutcome.responseLanguageApprovedPlanOverride === true,
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
+    let initialResponseRevalidated = false;
     if (gateOutcome.responseOnly === true) {
-      const responseOnlyShareCapture = {};
-      const responseOnly = await this._completeResponseOnlyTurn(
-        tabId, messages, onUpdate, provider, costState, runId,
-        runOptions, enriched, sourceBoundPriorMessages, responseOnlyShareCapture,
+      const responseOutcome = await this._completeInitialResponseOnlyTurn(
+        tabId, messages, onUpdate, mode, provider, costState, runId,
+        runOptions, gateOutcome, enriched, sourceBoundPriorMessages,
       );
-      finalResponse = responseOnly.content;
-      _traceStatus = responseOnly.status;
-      // Response-only turns do call the model (source-grounded + pruned
-      // inside _generateContextOnlyResponse). Only mark shareable on success,
-      // keeping the exact request (with the context-only system prompt).
-      if (responseOnly.status === 'done') {
-        shareHadProviderCompletion = true;
-        shareRawResponse = responseOnlyShareCapture.response;
-        if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
-          currentNonStreamRequestMessages = responseOnlyShareCapture.request;
-        }
+      gateOutcome = responseOutcome.gate;
+      initialResponseRevalidated = responseOutcome.revalidated;
+      if (!gateOutcome.proceed) {
+        _traceStatus = gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled';
+        return (finalResponse = gateOutcome.message || 'More information is required.');
       }
-      return finalResponse;
+      const { response: responseOnly, capture: responseOnlyShareCapture } = responseOutcome;
+      if (responseOnly) {
+        finalResponse = responseOnly.content;
+        _traceStatus = responseOnly.status;
+        // Response-only turns do call the model (source-grounded + pruned
+        // inside _generateContextOnlyResponse). Only mark shareable on success,
+        // keeping the exact request (with the context-only system prompt).
+        if (responseOnly.status === 'done') {
+          shareHadProviderCompletion = true;
+          shareRawResponse = responseOnlyShareCapture.response;
+          if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
+            currentNonStreamRequestMessages = responseOnlyShareCapture.request;
+          }
+        }
+        return finalResponse;
+      }
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
-    this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
+    if (!initialResponseRevalidated) this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
     if (this._isActionMode(mode) && !selectionOnly && !standaloneChatRun) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
@@ -36430,7 +36482,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     }
 
-    const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
+    const recommendedFirstTool = initialResponseRevalidated ? null : await this._maybeExecuteRecommendedActionFirstTool(
       tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
     );
     if (recommendedFirstTool?.action === 'return') {
@@ -37376,7 +37428,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     }
 
-    const gateOutcome = await this._maybeRunPlannerGate(
+    let gateOutcome = await this._maybeRunPlannerGate(
       tabId, messages, enriched, onUpdate, mode, costState, runId, plannerTabInfo, runOptions,
     );
     if (!gateOutcome.proceed) {
@@ -37393,23 +37445,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || gateOutcome.responseLanguageApprovedPlanOverride === true,
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
+    let initialResponseRevalidated = false;
     if (gateOutcome.responseOnly === true) {
-      const responseOnlyShareCapture = {};
-      const responseOnly = await this._completeResponseOnlyTurn(
-        tabId, messages, onUpdate, provider, costState, runId,
-        runOptions, enriched, sourceBoundPriorMessages, responseOnlyShareCapture,
+      const responseOutcome = await this._completeInitialResponseOnlyTurn(
+        tabId, messages, onUpdate, mode, provider, costState, runId,
+        runOptions, gateOutcome, enriched, sourceBoundPriorMessages,
       );
-      if (responseOnly.status === 'done') {
-        shareHadProviderCompletion = true;
-        shareRawResponse = responseOnlyShareCapture.response;
-        if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
-          currentStreamRequestMessages = responseOnlyShareCapture.request;
-        }
+      gateOutcome = responseOutcome.gate;
+      initialResponseRevalidated = responseOutcome.revalidated;
+      if (!gateOutcome.proceed) {
+        const status = gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled';
+        return finish(gateOutcome.message || 'More information is required.', status);
       }
-      return finish(responseOnly.content, responseOnly.status);
+      const { response: responseOnly, capture: responseOnlyShareCapture } = responseOutcome;
+      if (responseOnly) {
+        if (responseOnly.status === 'done') {
+          shareHadProviderCompletion = true;
+          shareRawResponse = responseOnlyShareCapture.response;
+          if (Array.isArray(responseOnlyShareCapture.request) && responseOnlyShareCapture.request.length) {
+            currentStreamRequestMessages = responseOnlyShareCapture.request;
+          }
+        }
+        return finish(responseOnly.content, responseOnly.status);
+      }
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
-    this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
+    if (!initialResponseRevalidated) this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
     if (this._isActionMode(mode) && !selectionOnly && !standaloneChatRun) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
@@ -37460,7 +37521,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // currentStreamRequestMessages is declared at the top of this function so
     // pre-loop exits (e.g. response-only turns) can capture their request.
 
-    const recommendedFirstTool = await this._maybeExecuteRecommendedActionFirstTool(
+    const recommendedFirstTool = initialResponseRevalidated ? null : await this._maybeExecuteRecommendedActionFirstTool(
       tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
     );
     if (recommendedFirstTool?.action === 'return') {

@@ -116,6 +116,60 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   for (const streaming of [false, true]) {
+    for (const mode of ['act', 'dev']) {
+      for (const revisedKind of ['respond', 'execute']) {
+        test(`${build}: ${mode} ${streaming ? 'stream' : 'chat'} initial response-only steering switches to ${revisedKind}`, async () => {
+          const entered = deferred(), release = deferred(), updates = [], persisted = [], dispatched = [];
+          let modelCalls = 0, plannerCalls = 0;
+          const next = async () => {
+            if (++modelCalls === 1) {
+              entered.resolve(); await release.promise;
+              return { content: 'Obsolete initial answer' };
+            }
+            if (revisedKind === 'respond') return { content: 'Revised answer' };
+            if (modelCalls === 2) return { toolCalls: [{ id: 'dashboard', function: { name: 'navigate', arguments: '{"url":"https://example.com/dashboard"}' } }] };
+            return { toolCalls: [{ id: 'finished', function: { name: 'done', arguments: '{"summary":"Dashboard opened","outcome":"success"}' } }] };
+          };
+          const agent = actSetup(Agent, {
+            chat: next,
+            async *chatStream() {
+              const result = await next();
+              if (result.content) yield { type: 'text', content: result.content };
+              if (result.toolCalls) yield { type: 'tool_call', content: result.toolCalls };
+              yield { type: 'done' };
+            },
+          }, async (_tab, enriched) => {
+            if (++plannerCalls > 1) assert.match(enriched.content, /Use the revised request/);
+            return plannerCalls > 1 && revisedKind === 'execute'
+              ? { proceed: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: false }
+              : { proceed: true, responseOnly: true, requestKind: 'respond', requiresStateChange: false, requiresSubmission: false };
+          });
+          agent._persist = () => persisted.push(structuredClone(agent.conversations.get(tabId) || []));
+          if (revisedKind === 'execute') agent._maybeExecuteRecommendedActionFirstTool = async () => assert.fail('Superseded initial recommendations must not run');
+          agent.executeTool = async (_tab, name, args) => {
+            if (name === 'done') {
+              assert.equal(agent._planOnlyTerminalDecision(tabId, args.summary, { viaDone: true, outcome: args.outcome }), null);
+              return { done: true, summary: args.summary, outcome: args.outcome };
+            }
+            dispatched.push(args.url); return { success: true, url: args.url };
+          };
+          const update = (type, data) => updates.push({ type, data });
+          const run = streaming
+            ? agent.processMessageStream(tabId, 'Explain the event', update, mode, options)
+            : agent.processMessage(tabId, 'Explain the event', update, mode, [], options);
+          await Promise.race([entered.promise, run.then(result => assert.fail(`Early completion: ${result}`))]);
+          assert.equal(steer(agent, 'Use the revised request').accepted, true);
+          release.resolve();
+          assert.equal(await run, revisedKind === 'respond' ? 'Revised answer' : 'Dashboard opened');
+          assert.equal(plannerCalls, 2);
+          assert.equal(updates.some(update => update.type === 'steering_queued'), false);
+          assert.equal(updates.some(update => update.type === 'text' && update.data.content === 'Obsolete initial answer'), false);
+          assert.equal(persisted.some(messages => messages.some(message => message.role === 'assistant' && message.content === 'Obsolete initial answer')), false);
+          assert.deepEqual(dispatched, revisedKind === 'execute' ? ['https://example.com/dashboard'] : []);
+        });
+      }
+    }
+
     test(`${build}: ${streaming ? 'stream' : 'chat'} reauthorizes Ipek steering with the real Act guard`, async () => {
       const entered = deferred(), release = deferred();
       const plans = [], dispatched = [], requests = [];
@@ -470,6 +524,50 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(clarified.requestText, original.requestText);
     assert.deepEqual(clarified.updates.slice(-2).map(update => update.text), ['The work calendar', 'Use October 8']);
     agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  test(`${build}: emergency trims preserve authorized steering and attempt receipts verbatim`, async () => {
+    const agent = actSetup(Agent);
+    await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+    const task = `Add the event to my calendar.\n${agent._wrapUntrusted('read_page', 'Invitation source '.repeat(500))}`;
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: task }];
+    agent.conversations.set(tabId, messages);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+    guard.steeringPriorSubmission = { dispatched: true, observedAfterSubmit: false };
+    steer(agent, 'Use Ipek’s corrected details '.repeat(400), 'early');
+    await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    for (let i = 0; i < 8; i++) {
+      messages.push({ role: 'assistant', tool_calls: [{ id: `read-${i}`, function: { name: 'read_page', arguments: '{}' } }] },
+        { role: 'tool', tool_call_id: `read-${i}`, content: agent._wrapUntrusted('read_page', 'Earlier page observation '.repeat(300)) });
+    }
+    steer(agent, 'Use the work calendar '.repeat(400), 'recent');
+    await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+    const binding = agent._activeTaskBinding(messages);
+    const pinned = binding.pinnedIndices.map(index => structuredClone(messages[index]));
+    const before = structuredClone(messages);
+    const modelCopy = agent._emergencyTrimModelCopy(messages);
+    assert.deepEqual(messages, before, 'Model-copy trim does not mutate the transcript');
+    agent._emergencyTrim(messages);
+    for (const trimmed of [messages, modelCopy]) {
+      assert.equal(agent._activeTaskBinding(trimmed).text, binding.text);
+      assert.equal(agent._activeTaskBinding(trimmed).priorSubmission.dispatched, true);
+      for (const message of pinned) assert.equal(trimmed.filter(candidate => JSON.stringify(candidate) === JSON.stringify(message)).length, 1);
+      assertPairedTools(trimmed);
+    }
+    agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+  });
+
+  test(`${build}: emergency model copies trim source data while preserving surrounding instructions`, () => {
+    const agent = setup(Agent);
+    const source = agent._wrapUntrusted('read_page', `${'Selected source '.repeat(600)}SOURCE_TAIL`);
+    const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: `Summarize only this source.\n${source}\nUse the specified output format.` }];
+    const copy = agent._emergencyTrimModelCopy(messages);
+    const request = copy.find(message => message.role === 'user' && message.content.startsWith('Summarize only this source.'));
+    assert.ok(request);
+    assert.equal(agent._hasUntrustedWrapper(request.content), true);
+    assert.doesNotMatch(request.content, /SOURCE_TAIL/);
+    assert.ok(request.content.endsWith('Use the specified output format.'));
+    assert.match(messages[1].content, /SOURCE_TAIL/);
   });
 
   test(`${build}: steering invalidates a real plan review and requires review of the latest revision`, async () => {
