@@ -28717,8 +28717,13 @@ test('completion invariant run tokens isolate overlapping and cleared runs', () 
     const agent = new AgentClass({});
     const tabId = 6049;
     agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [
+      { role: 'assistant', tool_calls: [{ id: 'old-rules-read', function: { name: 'read_page' } }] },
+      { role: 'tool', tool_call_id: 'old-rules-read', content: 'Rules from the previous task' },
+    ]);
 
     const oldToken = agent._beginCompletionInvariant(tabId);
+    assert.deepEqual([...agent.completionInvariants.get(tabId).historyToolCallIdsBeforeRun], ['old-rules-read']);
     agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, { success: true });
     assert.equal(agent.completionInvariants.get(tabId)?.verificationDebt, true);
 

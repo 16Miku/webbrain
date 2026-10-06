@@ -1226,7 +1226,9 @@ export class Agent extends LoopDetector {
   _beginCompletionInvariant(tabId) {
     this._completionRunCounter += 1;
     const token = `completion_${tabId}_${Date.now()}_${this._completionRunCounter}`;
-    this.completionInvariants.set(tabId, createCompletionInvariantState(token));
+    const historyToolCallIdsBeforeRun = new Set((this.conversations.get(tabId) || [])
+      .flatMap(message => [message.tool_call_id, ...(message.tool_calls || []).map(call => call.id)]).filter(Boolean));
+    this.completionInvariants.set(tabId, { ...createCompletionInvariantState(token), historyToolCallIdsBeforeRun });
     this._completionSubmitStates.delete(tabId);
     this._completionVerdicts?.delete(tabId);
     this._doneBlockCount.delete(tabId);

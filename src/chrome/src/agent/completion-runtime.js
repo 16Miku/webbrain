@@ -62,13 +62,17 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
     throw Object.assign(new Error('Visual evidence changed or could not be refreshed.'), { code: 'COMPLETION_VISUAL_CHANGED' });
   };
   const messages = agent.conversations.get(tabId) || [];
-  const toolNames = new Map(messages.flatMap(m => (m.tool_calls || []).map(call => [call.id, call.function?.name])));
-  const reads = messages.filter(m => m.role === 'tool' && /read_page|get_accessibility_tree|verify_form/.test(toolNames.get(m.tool_call_id) || m.name || ''));
+  // Tool IDs survive conversation compaction. Unknown provenance or reused
+  // pre-run IDs cannot certify that this task performed a required read.
+  const calls = run?.historyToolCallIdsBeforeRun instanceof Set
+    ? messages.flatMap(m => m.tool_calls || []).filter(call => call.id && !run.historyToolCallIdsBeforeRun.has(call.id)) : [];
+  const toolNames = new Map(calls.map(call => [call.id, call.function?.name]));
+  const reads = messages.filter(m => m.role === 'tool' && /^(read_page|get_accessibility_tree|verify_form)$/.test(toolNames.get(m.tool_call_id) || ''));
   const selectedReads = [...new Set([...reads.filter(m => /rules|guidelines|moderation/i.test(String(m.content))).slice(-2), ...reads.slice(-2)])];
   const history = selectedReads.map(m => ({ tool: toolNames.get(m.tool_call_id) || m.name, evidence: wrapSystemOneData(boundedText(redactSystemOneText(String(m.content)), 450)) }));
   // Entered values can be secrets without recognizable labels. Action names
   // supply history without sending arbitrary tool arguments to another judge.
-  const recordedActions = messages.flatMap(m => m.tool_calls || []).filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name }));
+  const recordedActions = calls.filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name }));
   const captures = new Map();
   const capture = async (modality, refresh = false) => {
     const before = await agent._completionDocumentStamp(tabId, true);
@@ -93,10 +97,13 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
     const identity = await agent._completionDocumentStamp(tabId, true);
     if (!identity || identity !== before || !context.isCurrent()) return null;
     const submit = agent._completionSubmitStates.get(tabId);
+    const binding = submit?.workflowBinding;
+    const workflowBinding = binding ? { adapterName: binding.adapterName, revision: binding.revision,
+      job: binding.job, verificationKind: binding.verificationKind, recipientBound: binding.recipientBound === true } : null;
     const info = {
       task: boundedText(redactSystemOneText(String(task || '')), 2500),
       requirements: { requiresSubmission: guard?.requiresSubmission, requiresStateChange: guard?.requiresStateChange, workflow: boundedText(guard?.siteWorkflow?.job?.id, 120) },
-      action: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({ lastAction: run?.lastAction, submit: submit ? { dispatched: submit.dispatched, originatingUrl: submit.originatingUrl, resultingUrl: submit.resultingUrl, workflowBinding: submit.workflowBinding } : null })), 1000)),
+      action: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({ lastAction: run?.lastAction, submit: submit ? { dispatched: submit.dispatched, originatingUrl: submit.originatingUrl, resultingUrl: submit.resultingUrl, workflowBinding } : null })), 1000)),
       recorded_reads: history, recorded_actions: recordedActions, document: boundedText(redactSystemOneText(pageUrl), 1000),
       page_errors: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify(pageState?.validationMessages || pageState?.errorMessages || [])), 500)),
       candidate_summary_not_proof: wrapSystemOneData(boundedText(redactSystemOneText(String(summary)), 600)),

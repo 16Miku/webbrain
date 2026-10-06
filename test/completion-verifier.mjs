@@ -130,8 +130,12 @@ for (const build of ['chrome', 'firefox']) {
       strictSecretMode: false, _activeProvider: () => active, _runAbortSignal: () => null,
       systemOneContext: () => ({ isCurrent: () => true }), _latestTaskText: () => 'Read the community rules and publish a WebBrain post', _originalTaskText: () => '',
       _progressTaskKeyHash: () => 'task-key', _planExecutionGuards: new Map([[1, guard]]),
-      completionInvariants: new Map([[1, { runToken: 'run', lastAction: { sequence: 2, name: 'click' } }]]),
-      _completionSubmitStates: new Map([[1, { dispatched: true, observedAfterSubmit: true, currentUrl: 'https://old.reddit.com/comments/new' }]]),
+      completionInvariants: new Map([[1, { runToken: 'run', historyToolCallIdsBeforeRun: new Set(), lastAction: { sequence: 2, name: 'click' } }]]),
+      _completionSubmitStates: new Map([[1, { dispatched: true, observedAfterSubmit: true, currentUrl: 'https://old.reddit.com/comments/new', workflowBinding: {
+        adapterName: 'reddit', revision: '1', job: 'publish', verificationKind: 'published_resource', recipientBound: true,
+        messageBody: 'unlabelled-entered-value', composerBody: 'nested-entered-value', messageSubject: 'another-entered-value',
+        recipientTargets: [{ address: 'opaque-entered-value' }], metadataRequirements: [{ field: 'title', value: 'metadata-entered-value' }],
+      } }]]),
       conversationIds: new Map([[1, 'session']]), conversations: new Map([[1, [
         { role: 'assistant', tool_calls: [{ id: 'rules', function: { name: 'read_page', arguments: '{}' } }] },
         { role: 'tool', tool_call_id: 'rules', content: '{"text":"Community rules: relevant tools are allowed"}' },
@@ -150,6 +154,7 @@ for (const build of ['chrome', 'firefox']) {
       assert.match(JSON.stringify(lastRequest.state), /Community rules/);
       assert.doesNotMatch(JSON.stringify(lastRequest.state), /entered-value/);
       assert.deepEqual(lastRequest.state[0].recorded_actions, ['type_ax', 'type_text', 'set_field', 'fill_form', 'navigate'].map(tool => ({ tool })));
+      assert.match(lastRequest.state[0].action, /published_resource/);
       const initialState = JSON.stringify(lastRequest.state);
       await runtime.verifyBrowserCompletion(agent, 1, { pageUrl: 'https://old.reddit.com/comments/new' });
       assert.equal(JSON.stringify(lastRequest.state), initialState);
@@ -193,6 +198,40 @@ for (const build of ['chrome', 'firefox']) {
       globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
       if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
     }
+  });
+  test(`${build}: completion history excludes previous runs and keeps current reads through compaction`, async () => {
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ decisionProvider: 'local', systemOneEnabled: true }) } } };
+    const provider = { model: 'local', supportsVision: false, config: { category: 'local' } };
+    const messages = [
+      { role: 'assistant', tool_calls: [{ id: 'prior-rules', function: { name: 'read_page' } }, { id: 'prior-type', function: { name: 'type_ax' } }] },
+      { role: 'tool', tool_call_id: 'prior-rules', content: 'STALE community rules from another task and document' },
+      { role: 'tool', name: 'read_page', content: 'STALE unbound rules result' },
+      { role: 'assistant', tool_calls: [{ id: 'current-rules', function: { name: 'read_page' } }, { id: 'current-click', function: { name: 'click_ax' } }] },
+      { role: 'tool', tool_call_id: 'current-rules', content: 'CURRENT community rules inspected in this run' },
+    ];
+    let state;
+    const run = { runToken: 'current', historyToolCallIdsBeforeRun: new Set(['prior-rules', 'prior-type']) };
+    const agent = {
+      _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
+      _latestTaskText: () => 'Read the rules and publish a post', _originalTaskText: () => '', _progressTaskKeyHash: () => 'task',
+      _planExecutionGuards: new Map(), completionInvariants: new Map([[1, run]]), _completionSubmitStates: new Map(),
+      conversationIds: new Map(), conversations: new Map([[1, messages]]), _completionDocumentStamp: async () => 'document',
+      executeTool: async () => ({ success: true, pageContent: 'Requested post published' }), recordSystemOneVerdict() {},
+      evaluateSystemOne: async (_tab, _client, args) => { state = args.state; const result = response(JSON.stringify(state).includes('CURRENT') ? 'succeeded' : 'uncertain'); result.model = 'kev-latest'; return result; },
+    };
+    try {
+      for (const compacted of [false, true]) {
+        if (compacted) agent.conversations.set(1, structuredClone(messages.slice(1)));
+        agent._completionVerdicts?.clear();
+        assert.equal((await runtime.verifyBrowserCompletion(agent, 1)).outcome, 'succeeded');
+        assert.match(JSON.stringify(state), /CURRENT/); assert.doesNotMatch(JSON.stringify(state), /STALE/);
+        assert.deepEqual(state[0].recorded_actions, [{ tool: 'click_ax' }]);
+      }
+      delete run.historyToolCallIdsBeforeRun; agent._completionVerdicts.clear();
+      assert.equal((await runtime.verifyBrowserCompletion(agent, 1)).outcome, 'uncertain', 'unknown read provenance cannot establish task completion');
+      assert.deepEqual(state[0].recorded_reads, []); assert.deepEqual(state[0].recorded_actions, []);
+    } finally { globalThis.chrome = previousChrome; globalThis.browser = previousBrowser; }
   });
   test(`${build}: stale image verdicts cannot succeed without fresh evidence`, async () => {
     const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
