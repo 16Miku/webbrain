@@ -606,7 +606,6 @@ const chatNavigationLabelEl = document.getElementById('chat-navigation-label');
 const inputEl = document.getElementById('user-input');
 const inputHighlightEl = document.getElementById('input-highlight');
 const sendBtn = document.getElementById('btn-send');
-const steerBtn = document.getElementById('btn-steer');
 const micBtn = document.getElementById('btn-mic');
 const clearBtn = document.getElementById('btn-clear');
 const appEl = document.getElementById('app');
@@ -1975,6 +1974,17 @@ const queuedSteeringMessageIds = new Set();
 const composerHistoryNavigationByTab = new Map();
 let queuedComposerMessageSeq = 0;
 
+let composerDeliveryMode = 'queue';
+const composerDeliveryModeReady = chrome.storage.local.get('composerDeliveryMode').then((stored) => {
+  composerDeliveryMode = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  syncSendButtonState();
+}).catch(() => {});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.composerDeliveryMode) return;
+  composerDeliveryMode = changes.composerDeliveryMode.newValue === 'steer' ? 'steer' : 'queue';
+  syncSendButtonState();
+});
+
 function enqueueTabChatOperation(tabId, fn) {
   const numericTabId = Number(tabId);
   if (!Number.isFinite(numericTabId)) return Promise.resolve({ ok: true });
@@ -2306,21 +2316,20 @@ async function steerComposerMessage(tabId, text, { queueId = null, fromComposer 
   }
 }
 
-function syncSteerButtonState() {
-  if (!steerBtn) return;
-  const draft = inputEl?.value.trim() || '';
+function syncComposerDeliveryState() {
+  if (!sendBtn) return;
   const sending = steeringRequestsByTab.has(Number(currentTabId));
   const blocked = sending || !sameTabId(currentTabId, renderedTabId) || isTabAbortRequested(currentTabId)
     || isAwaitingPlanReviewForTab() || isConversationClearInProgress()
     || tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress;
-  steerBtn.classList.toggle('hidden', !isProcessing);
-  steerBtn.disabled = !isProcessing || !draft || draft.startsWith('/') || blocked;
   queuedMessagesEl?.querySelectorAll('.queued-message-steer').forEach(button => {
     button.classList.toggle('hidden', !isProcessing);
     button.closest('.queued-message')?.classList.toggle('has-steer', isProcessing);
     button.disabled = !isProcessing || blocked;
   });
-  const sendLabel = isProcessing ? 'sp.queue.send' : 'sp.btn.send';
+  const sendLabel = isProcessing
+    ? (composerDeliveryMode === 'steer' ? 'sp.steer.title' : 'sp.queue.send')
+    : 'sp.btn.send';
   sendBtn.title = t(sendLabel);
   sendBtn.setAttribute('aria-label', t(sendLabel));
   sendBtn.dataset.i18nTitle = sendLabel;
@@ -2391,7 +2400,7 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
     row.append(edit, remove);
     queuedMessagesEl.appendChild(row);
   });
-  syncSteerButtonState();
+  syncComposerDeliveryState();
 }
 
 function shiftQueuedComposerMessage(tabId) {
@@ -8098,7 +8107,7 @@ function isOutOfBandSlashDraft(value) {
 
 function syncSendButtonState() {
   if (!sendBtn) return;
-  syncSteerButtonState();
+  syncComposerDeliveryState();
   const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
   if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
     sendBtn.disabled = true;
@@ -9061,6 +9070,7 @@ async function sendMessage(extraChatParams = {}) {
   const selectionAction = sourceGrounding ? normalizeSelectionAction(requestedSelectionAction) : '';
   delete chatExtraParams.selectionAction;
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
+  await composerDeliveryModeReady;
   await waitForVisibleSidePanelStateRefresh();
   if (agentPrompt && (
     !agentDisplayText
@@ -9141,7 +9151,8 @@ async function sendMessage(extraChatParams = {}) {
       showBusySlashCommandNotice();
       return false;
     }
-    if (extraChatParams?.__deliveryMode === 'immediate') {
+    if (extraChatParams?.__deliveryMode === 'immediate'
+        || (extraChatParams?.__deliveryMode !== 'queue' && composerDeliveryMode === 'steer')) {
       return steerComposerMessage(tabId, text, { fromComposer: true });
     }
     return enqueueQueuedComposerMessage(tabId, text);
@@ -14585,7 +14596,6 @@ if (selectionAskActionEl) {
 }
 
 sendBtn.addEventListener('click', sendMessage);
-steerBtn?.addEventListener('click', () => sendMessage({ __deliveryMode: 'immediate' }));
 
 document.addEventListener('keydown', handleGlobalKeydown, true);
 

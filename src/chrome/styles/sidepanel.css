@@ -3469,30 +3469,10 @@ html[data-ui-scale="175"] .conversation-action-label {
   color: var(--text-muted);
 }
 
-#btn-steer {
-  flex-shrink: 0;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-input);
-  color: var(--accent);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-#btn-steer.hidden,
 .queued-message-steer.hidden {
   display: none;
 }
 
-#btn-steer:hover:enabled {
-  background: var(--accent-dim);
-}
-
-#btn-steer:disabled,
 .queued-message-action:disabled {
   opacity: 0.4;
   cursor: not-allowed;
