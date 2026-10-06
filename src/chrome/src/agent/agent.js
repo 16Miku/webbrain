@@ -43293,14 +43293,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         || gateOutcome.responseLanguageApprovedPlanOverride === true,
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
-    let initialResponseRevalidated = false;
+    // The initial planner can authorize steering before response-only handling.
+    let initialTaskRevalidated = (this._steeringRuns.get(tabId)?.authorizedRevision || 0) > 0;
     if (gateOutcome.responseOnly === true) {
       const responseOutcome = await this._completeInitialResponseOnlyTurn(
         tabId, messages, onUpdate, mode, provider, costState, runId,
         runOptions, gateOutcome, enriched, sourceBoundPriorMessages,
       );
       gateOutcome = responseOutcome.gate;
-      initialResponseRevalidated = responseOutcome.revalidated;
+      initialTaskRevalidated ||= responseOutcome.revalidated;
       if (!gateOutcome.proceed) {
         _traceStatus = gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled';
         return (finalResponse = gateOutcome.message || 'More information is required.');
@@ -43323,7 +43324,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
-    if (!initialResponseRevalidated) this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
+    if (!initialTaskRevalidated) this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
     if (this._isActionMode(mode) && !selectionOnly && !standaloneChatRun) {
       await this._ensureProgressSessionForCurrentTask(tabId, {
@@ -43529,7 +43530,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       this._appendStandaloneUngroundedPolicy(enriched, standaloneGroundingGap);
     }
 
-    const recommendedFirstTool = initialResponseRevalidated ? null : await this._maybeExecuteRecommendedActionFirstTool(
+    const recommendedFirstTool = initialTaskRevalidated ? null : await this._maybeExecuteRecommendedActionFirstTool(
       tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
     );
     if (recommendedFirstTool?.action === 'return') {
@@ -44650,14 +44651,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         || gateOutcome.responseLanguageApprovedPlanOverride === true,
       trustedContinuation: runOptions?.trustedContinuation === true,
     });
-    let initialResponseRevalidated = false;
+    // The initial planner can authorize steering before response-only handling.
+    let initialTaskRevalidated = (this._steeringRuns.get(tabId)?.authorizedRevision || 0) > 0;
     if (gateOutcome.responseOnly === true) {
       const responseOutcome = await this._completeInitialResponseOnlyTurn(
         tabId, messages, onUpdate, mode, provider, costState, runId,
         runOptions, gateOutcome, enriched, sourceBoundPriorMessages,
       );
       gateOutcome = responseOutcome.gate;
-      initialResponseRevalidated = responseOutcome.revalidated;
+      initialTaskRevalidated ||= responseOutcome.revalidated;
       if (!gateOutcome.proceed) {
         const status = gateOutcome.reason === 'plan_only' ? 'plan_only_output' : gateOutcome.reason || 'cancelled';
         return finish(gateOutcome.message || 'More information is required.', status);
@@ -44675,7 +44677,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
     }
     if (this._consumeSelectionGroundingRestoration(tabId, enriched)) this._persist(tabId);
-    if (!initialResponseRevalidated) this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
+    if (!initialTaskRevalidated) this._startPlanExecutionGuard(tabId, mode, gateOutcome, runOptions);
 
     let standaloneGroundingGap = this._standaloneOfflineGroundingGap(localWikipediaRag, runOptions);
     if (standaloneGroundingGap) {
@@ -44739,7 +44741,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // currentStreamRequestMessages is declared at the top of this function so
     // pre-loop exits (e.g. response-only turns) can capture their request.
 
-    const recommendedFirstTool = initialResponseRevalidated ? null : await this._maybeExecuteRecommendedActionFirstTool(
+    const recommendedFirstTool = initialTaskRevalidated ? null : await this._maybeExecuteRecommendedActionFirstTool(
       tabId, runOptions, messages, onUpdate, provider, allowedToolNames, toolSchemas,
     );
     if (recommendedFirstTool?.action === 'return') {

@@ -187,6 +187,37 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(await page.evaluate(() => window.sentMessages), 0);
     });
 
+    register(`${kind}: form-free LinkedIn previews need no explicit button type`, async page => {
+      for (const tag of ['button', 'div']) {
+        const { guard } = await setupMessageHistory(page);
+        await page.evaluate(tag => {
+          const original = document.querySelector('#preview');
+          original.removeAttribute('type');
+          if (tag === 'div') {
+            const control = document.createElement('div');
+            for (const attribute of original.attributes) control.setAttribute(attribute.name, attribute.value);
+            control.setAttribute('role', 'button'); control.tabIndex = 0;
+            control.append(...original.childNodes); original.replaceWith(control);
+            control.onclick = () => { document.querySelector('#viewer').hidden = false; };
+          }
+        }, tag);
+        const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxChars: 20000 });
+        const ref = /button "Click or press enter to display in the image preview" \[([^\]]+)\]/.exec(tree.pageContent)?.[1];
+        assert.ok(ref, tree.pageContent);
+        const point = await page.locator('#preview').evaluate(el => {
+          const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        for (const [tool, args] of [['click', { selector: '#preview' }], ['click', { text: 'Click or press enter to display in the image preview' }],
+          ['click_ax', { ref_id: ref }], ['click', point]]) {
+          assert.equal(await guard(tool, args), null, `${tag}/${tool}`);
+          assert.equal((await call(page, tool, args)).success, true);
+          assert.equal(await page.locator('#viewer').isVisible(), true);
+          await page.locator('#close-viewer').click();
+        }
+        assert.equal(await page.evaluate(() => window.sentMessages), 0);
+      }
+    });
+
     register(`${kind}: LinkedIn preview lookalikes and hidden or occluded images stay protected`, async page => {
       const { guard } = await setupMessageHistory(page);
       for (const change of ['no-image', 'composer', 'hidden', 'transparent', 'ancestor-transparent', 'occluded', 'disabled', 'commit-label', 'commit-text',
@@ -204,7 +235,7 @@ export function registerMessageRecipientNavigationFixtures({
           if(change==='commit-text'){button.title='View image';button.append('Send');}
           if(change==='localized-send')button.setAttribute('aria-label','Gönder');
           if(change==='submit')button.type='submit';
-          if(change==='external-form')button.setAttribute('form','composer');
+          if(change==='external-form'){button.removeAttribute('type');button.setAttribute('form','composer');}
           if(change==='outside-history')document.body.append(button);
           if(change==='small-icon')button.querySelector('img').style='width:20px;height:20px';
           if(change==='menu')button.setAttribute('aria-haspopup','menu');

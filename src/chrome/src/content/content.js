@@ -5875,7 +5875,7 @@
         };
         if (!button || !painted(button) || button.disabled || button.matches(':disabled')
             || button.getAttribute('aria-disabled') === 'true'
-            || String(button.getAttribute('type') || '').toLowerCase() !== 'button'
+            || (button.hasAttribute('type') && String(button.getAttribute('type')).toLowerCase() !== 'button')
             || button.form || button.hasAttribute('form') || button.hasAttribute('download')
             || /^(?:true|menu|listbox|tree|grid)$/.test(button.getAttribute('aria-haspopup') || '')
             || _composedClosestElement(button, 'form,.msg-form,[contenteditable]:not([contenteditable="false"])')) return false;

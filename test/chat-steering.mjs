@@ -117,6 +117,49 @@ for (const build of ['chrome', 'firefox']) {
 
   for (const streaming of [false, true]) {
     for (const mode of ['act', 'dev']) {
+      for (const [id, tool] of [['summarize-page', 'read_page'], ['download-media', 'screenshot']]) {
+        test(`${build}: ${mode} ${streaming ? 'stream' : 'chat'} planner steering skips the original recommended ${tool}`, async () => {
+          const entered = deferred(), release = deferred(), plans = [], dispatched = [], recommendedAttempts = [];
+          let modelCalls = 0;
+          const next = async () => ++modelCalls === 1
+            ? { toolCalls: [{ id: 'dashboard', function: { name: 'navigate', arguments: '{"url":"https://example.com/dashboard"}' } }] }
+            : { toolCalls: [{ id: 'finished', function: { name: 'done', arguments: '{"summary":"Dashboard opened","outcome":"success"}' } }] };
+          const agent = actSetup(Agent, {
+            supportsVision: true,
+            chat: next,
+            async *chatStream() { yield { type: 'tool_call', content: (await next()).toolCalls }; yield { type: 'done' }; },
+          }, async (_tab, enriched) => {
+            plans.push(enriched.content);
+            if (plans.length === 1) { entered.resolve(); await release.promise; }
+            return { proceed: true, requestKind: 'execute', requiresStateChange: plans.length > 1, requiresSubmission: false };
+          });
+          agent.executeTool = async (_tab, name, args) => {
+            if (name === 'done') {
+              assert.equal(agent._planOnlyTerminalDecision(tabId, args.summary, { viaDone: true, outcome: args.outcome }), null);
+              return { done: true, summary: args.summary, outcome: args.outcome };
+            }
+            dispatched.push(name); return { success: true, url: args.url };
+          };
+          const runOptions = { ...options, recommendedAction: { id, tool, autoExecute: true } };
+          assert.ok(agent._recommendedActionFirstTool(runOptions), 'Fixture must activate the real recommended first tool');
+          const firstTool = agent._maybeExecuteRecommendedActionFirstTool.bind(agent);
+          agent._maybeExecuteRecommendedActionFirstTool = async (...args) => {
+            recommendedAttempts.push(args[1]?.recommendedAction?.tool);
+            return firstTool(...args);
+          };
+          const run = streaming
+            ? agent.processMessageStream(tabId, 'Inspect this page', () => {}, mode, runOptions)
+            : agent.processMessage(tabId, 'Inspect this page', () => {}, mode, [], runOptions);
+          await Promise.race([entered.promise, run.then(result => assert.fail(`Early completion: ${result}`))]);
+          assert.equal(steer(agent, 'Cancel the page inspection; open my dashboard instead').accepted, true);
+          release.resolve();
+          assert.equal(await run, 'Dashboard opened');
+          assert.equal(plans.length, 2);
+          assert.match(plans[1], /Cancel the page inspection; open my dashboard instead/);
+          assert.deepEqual(recommendedAttempts, [], 'Steering must suppress the stale recommendation before any preparation or dispatch');
+          assert.deepEqual(dispatched, ['navigate'], 'The original recommended read/screenshot must never dispatch');
+        });
+      }
       for (const revisedKind of ['respond', 'execute']) {
         test(`${build}: ${mode} ${streaming ? 'stream' : 'chat'} initial response-only steering switches to ${revisedKind}`, async () => {
           const entered = deferred(), release = deferred(), updates = [], persisted = [], dispatched = [];
