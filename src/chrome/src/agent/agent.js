@@ -44425,6 +44425,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         onUpdate('warning', { message: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
         await this._persistNow(tabId);
+        if (runOptions.scheduledRun === true) throw error;
         return finalResponse;
       }
       const message = formatErrorMessage(error);
@@ -45494,6 +45495,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         await closeTraceStep({ ok: false, code: stepErrorCode });
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
         if (this._isCostAllowanceError(e)) {
+          if (runOptions.scheduledRun === true) throw e;
         if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
           messages.push({ role: 'assistant', content: caughtMessage });
           onUpdate('warning', { message: caughtMessage });
@@ -45586,6 +45588,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         onUpdate('warning', { message: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
         await this._persistNow(tabId);
+        if (runOptions.scheduledRun === true) throw error;
         return finalResponse;
       }
       const message = formatErrorMessage(error);

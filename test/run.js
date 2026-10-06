@@ -90661,8 +90661,8 @@ test('decision completion releases forced done into read-only recovery and then 
   }
 });
 
-test('completion decision quota errors stop streaming and non-streaming runs without another model call', async () => {
-  for (const AgentClass of [AgentCh, AgentFx]) for (const streaming of [false, true]) {
+test('completion decision quota errors stop interactive runs and reject scheduled runs without another model call', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) for (const streaming of [false, true]) for (const scheduledRun of [false, true]) {
     let calls = 0, status;
     const tool = { id: 'quota_done', function: { name: 'done', arguments: '{"outcome":"success","summary":"Read the page."}' } };
     const provider = { supportsTools: true, supportsVision: false, promptTier: 'full', contextWindow: 128000, model: 'test-model', name: 'test-provider' };
@@ -90679,11 +90679,28 @@ test('completion decision quota errors stop streaming and non-streaming runs wit
     agent.executeTool = async () => { throw Object.assign(new Error('Decision quota exhausted.'), { code: 'WB_COST_ALLOWANCE', status: 402, quota: { code: 'webbrain_cloud_free_tier_exceeded' } }); };
     const updates = [];
     const run = streaming ? agent.processMessageStream.bind(agent) : agent.processMessage.bind(agent);
-    const options = { onRunFinished: value => { status = value; } };
-    const result = await run(24970, 'Read the page', (type, data) => updates.push({ type, data }), 'act', ...(streaming ? [options] : [[], options]));
+    const options = { scheduledRun, onRunFinished: value => { status = value; } };
+    const operation = run(24970, 'Read the page', (type, data) => updates.push({ type, data }), 'act', ...(streaming ? [options] : [[], options]));
+    if (scheduledRun) await assert.rejects(operation, error => error.code === 'WB_COST_ALLOWANCE' && error.status === 402, `${AgentClass.name}/${streaming}: a scheduled cost stop must reject`);
+    else assert.match(await operation, /quota exhausted/);
     assert.equal(calls, 1, 'quota stops must not call another model');
-    assert.match(result, /quota exhausted/); assert.equal(status, 'cost_limit');
+    assert.equal(status, 'cost_limit');
     assert.equal(updates.filter(update => update.type === 'quota').length, 1);
+    if (scheduledRun) for (const schedule of [{ type: 'once', after_seconds: 0 }, { type: 'recurring', after_seconds: 0, interval_minutes: 5 }]) {
+      const h = makeSchedulerHarness(AgentClass === AgentCh ? SchedulerCh : SchedulerFx, {
+        processMessage: (...args) => run(args[0], args[1], args[2], args[3], ...(streaming ? [args[5]] : [args[4], args[5]])),
+      });
+      const created = await h.manager.createTaskJob({
+        tabId: 77, conversationId: 'quota-job', currentUrl: 'https://example.com/', currentTitle: 'Example',
+        args: { title: 'Quota stop', prompt: 'Read the page', schedule, target: { type: 'current_tab' } },
+      });
+      const before = calls;
+      await h.manager.handleAlarm(h.alarmName(created.jobId));
+      const stopped = h.jobs().find(job => job.id === created.jobId);
+      assert.equal(stopped.status, 'failed', 'cost-limited jobs must not complete or silently reschedule');
+      assert.match(stopped.lastError, /quota exhausted/);
+      assert.equal(stopped.lastOutcome, null); assert.equal(calls, before + 1);
+    }
   }
 });
 

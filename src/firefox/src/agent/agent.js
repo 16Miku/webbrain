@@ -37264,6 +37264,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
         await this._persistNow(tabId);
+        if (runOptions.scheduledRun === true) throw error;
         return finalResponse;
       }
       const message = formatErrorMessage(error);
@@ -38183,6 +38184,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await closeTraceStep({ ok: false, code: stepErrorCode });
         this._logDebug({ type: 'llm_stream_error', step: steps, error: caughtMessage });
         if (this._isCostAllowanceError(e)) {
+          if (runOptions.scheduledRun === true) throw e;
         if (typeof onUpdate === 'function' && e.quota) onUpdate('quota', { quota: e.quota });
           messages.push({ role: 'assistant', content: caughtMessage });
           onUpdate('warning', { message: caughtMessage });
@@ -38265,6 +38267,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: finalResponse });
         onUpdate('text', { content: finalResponse, replace: true });
         await this._persistNow(tabId);
+        if (runOptions.scheduledRun === true) throw error;
         return finalResponse;
       }
       const message = formatErrorMessage(error);
