@@ -75132,6 +75132,54 @@ test('Anthropic and AWS Bedrock forward a required named tool choice', async () 
   }
 });
 
+test('Claude Opus 5.5 normalizes mandatory-thinking and tool-choice restrictions', async () => {
+  const tool = {
+    type: 'function',
+    function: {
+      name: 'done',
+      description: 'Finish the run.',
+      parameters: { type: 'object', properties: {} },
+    },
+  };
+  const forced = { type: 'function', function: { name: 'done' } };
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const Provider of [AnthropicProviderCh, AnthropicProviderFx]) {
+      const provider = new Provider({
+        baseUrl: 'https://api.anthropic.com',
+        model: 'claude-opus-5-5',
+        apiKey: 'test-key',
+      });
+      const prepared = provider._prepareRequestBody({
+        thinking: { type: 'disabled' },
+        tool_choice: { type: 'tool', name: 'done' },
+      });
+      assert.equal(prepared.thinking, undefined, `${Provider.name}: Opus 5.5 must not disable thinking`);
+      assert.deepEqual(prepared.output_config, { effort: 'low' }, `${Provider.name}: disabled thinking must become low effort`);
+      assert.deepEqual(prepared.tool_choice, { type: 'auto' }, `${Provider.name}: Opus 5.5 must not force named tools`);
+
+      let requestBody = null;
+      globalThis.fetch = async (_url, init) => {
+        requestBody = JSON.parse(init.body);
+        return new Response(JSON.stringify({
+          content: [{ type: 'tool_use', id: 'done_1', name: 'done', input: {} }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      };
+      await provider.chat([{ role: 'user', content: 'Finish.' }], {
+        tools: [tool],
+        toolChoice: forced,
+        extraBody: { thinking: { type: 'disabled' } },
+      });
+      assert.equal(requestBody.thinking, undefined, `${Provider.name}: classifier disable must not reach Opus 5.5`);
+      assert.deepEqual(requestBody.output_config, { effort: 'low' }, `${Provider.name}: classifier must set low effort`);
+      assert.deepEqual(requestBody.tool_choice, { type: 'auto' }, `${Provider.name}: forced tool request must become auto`);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('AWS Bedrock provider normalizes usage and indexes parallel tool calls', () => {
   for (const Provider of [AwsBedrockProviderCh, AwsBedrockProviderFx]) {
     const provider = new Provider({
@@ -75340,6 +75388,16 @@ test('OpenAI reasoning and GPT-6 ids use the advertised Chat Completions contrac
     assert.equal(solBody.model, 'gpt-6.1-sol');
     assert.equal(solBody.max_output_tokens, 123);
     assert.equal(solBody.reasoning.effort, 'medium');
+    const solPlannerBody = sol._buildResponsesBody(messages, {
+      maxTokens: 123,
+      extraBody: { reasoning: { effort: 'minimal' } },
+    }, false);
+    assert.equal(solPlannerBody.reasoning.effort, 'low', 'GPT-6.1 Sol must replace unsupported minimal effort');
+    const solDisabledBody = sol._buildResponsesBody(messages, {
+      maxTokens: 123,
+      extraBody: { reasoning: { effort: 'none' } },
+    }, false);
+    assert.equal(solDisabledBody.reasoning.effort, 'low', 'GPT-6.1 Sol must replace unsupported none effort');
 
     for (const model of newContractModels) {
       const provider = new Provider({
