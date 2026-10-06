@@ -19,6 +19,18 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(selected.config.inputCostPerMillionUsd, .042); assert.equal(legacy.systemOneWatchEnabled, true);
     assert.equal(legacy.systemOneWatchThreshold, .85); assert.equal(legacy.systemOneCompletionThreshold, .75); assert.equal(selected.threshold, .9);
   });
+  test(`${build}: full and sparse imports reject invalid decision enums and endpoints before persistence`, () => {
+    for (const parser of [transfer.parseConfigImport, transfer.parseConfigPatchImport]) {
+      for (const settings of [{ decisionProvider: 'unknown' }, { decisionVisionMode: 'maybe' }, { decisionProvider: 'local', decisionBaseUrl: 'not a URL' },
+        { decisionBaseUrl: 'javascript:alert(1)' }, { decisionBaseUrl: 'http://remote.example.com' }, { decisionBaseUrl: 'https://user:secret@example.com' }]) {
+        assert.throws(() => parser(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings })), /Invalid value for configuration setting/);
+      }
+      for (const decisionBaseUrl of ['', 'http://127.0.0.1:8009', 'http://localhost:8009', 'http://[::1]:8009', 'https://example.com/v1']) {
+        const imported = parser(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: { decisionProvider: 'local', decisionBaseUrl } })).settings;
+        assert.doesNotThrow(() => config.resolveDecisionConfig(imported));
+      }
+    }
+  });
   test(`${build}: new defaults and legacy/local configuration`, () => {
     assert.equal(config.resolveDecisionConfig().model, config.DEFAULT_DECISION_MODEL);
     const legacy = config.resolveDecisionConfig({ typesafeApiKey: 'legacy', systemOneEnabled: true, systemOneWatchEnabled: true });
@@ -179,7 +191,7 @@ for (const build of ['chrome', 'firefox']) {
       if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
     }
   });
-  test(`${build}: runtime revalidates pixels changed during a decision or LLM request`, async () => {
+  test(`${build}: stale image verdicts cannot succeed without fresh evidence`, async () => {
     const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
     Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
@@ -188,7 +200,7 @@ for (const build of ['chrome', 'firefox']) {
         const stored = { decisionProvider: 'local', systemOneEnabled: engine === 'decision', decisionVisionMode: 'on' };
         globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => stored } } };
         let pixels = 'data:image/png;base64,original', captures = 0, requests = 0;
-        const active = { model: 'local-model', supportsVision: true, config: { category: 'local' }, chat() {} };
+        const active = { model: 'local-model', supportsVision: true, config: { category: 'local' }, ...(engine === 'llm' ? { chat() {} } : {}) };
         const guard = { semanticSubmissionVerified: true, verifiedSubmissionEvidence: true };
         const agent = {
           _activeProvider: () => active, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
@@ -198,19 +210,67 @@ for (const build of ['chrome', 'firefox']) {
           _completionDocumentStamp: async () => 'unchanged-text-and-inputs',
           _captureCompletionJudgeImage: async () => { captures++; return pixels; },
           _budgetForCapture: () => ({ maxTargetPx: 1408, maxTargetTokens: 1400 }), _shrinkImageForBudget: async dataUrl => ({ dataUrl }),
-          executeTool: async () => { throw new Error('Stale pixels must not be reversed by an AX judge'); },
+          executeTool: async () => ({ success: true, pageContent: 'AX has no evidence establishing the image contents.' }),
           _newCostRunState: () => ({}), recordSystemOneVerdict() {},
         };
         const changePixels = () => { requests++; pixels = change === 'capture_unavailable' ? null : `data:image/png;base64,changed-${change}`; };
-        agent.evaluateSystemOne = async () => { changePixels(); const result = response(); result.model = 'kev-latest'; return result; };
-        agent._chatWithCostAllowance = async () => { changePixels(); return { content: '{"outcome":"succeeded","reason":"Image matches"}' }; };
+        agent.evaluateSystemOne = async (_tab, _client, args) => {
+          const vision = args.state[1].type === 'image_url';
+          if (vision) changePixels(); else requests++;
+          const result = response(vision ? 'succeeded' : 'uncertain'); result.model = 'kev-latest'; return result;
+        };
+        agent._chatWithCostAllowance = async (_provider, messages) => {
+          const vision = Array.isArray(messages[1].content);
+          if (vision) changePixels(); else requests++;
+          return { content: JSON.stringify({ outcome: vision ? 'succeeded' : 'uncertain', reason: 'Image details are not verifiable from AX.' }) };
+        };
         const verdict = await runtime.verifyBrowserCompletion(agent, 1);
-        assert.equal(verdict.outcome, 'pending', `${engine}/${change}: stale pixels must not establish success`);
-        assert.equal(verdict.engine, 'freshness');
+        assert.equal(verdict.outcome, 'uncertain', `${engine}/${change}: stale pixels must not establish success`);
+        assert.equal(verdict.engine, 'legacy');
         assert.equal(captures, 2, 'pixels must be captured again after the response');
-        assert.equal(requests, 1, 'a stale response must not fall through to another judge');
+        assert.equal(requests, 2, 'changed pixels require a new AX judgment, not acceptance of the stale image');
         assert.equal(guard.semanticSubmissionVerified, false);
         assert.equal(guard.verifiedSubmissionEvidence, false);
+      }
+    } finally {
+      globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
+      if (navigatorDescriptor) Object.defineProperty(globalThis, 'navigator', navigatorDescriptor); else delete globalThis.navigator;
+    }
+  });
+  test(`${build}: moving pixels fall back to fresh AX and disabled outsourcing retains the approved LLM route`, async () => {
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { onLine: true } });
+    try {
+      for (const stored of [{ decisionProvider: 'local', systemOneEnabled: true }, {}, { systemOneEnabled: false }, { decisionProvider: 'local', systemOneEnabled: true, systemOneDoneEnabled: false }]) {
+        globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ ...stored, decisionVisionMode: 'on' }) } } };
+        let captures = 0, reads = 0;
+        const calls = [];
+        const provider = { model: 'local', supportsVision: true, config: { category: 'local' }, chat() {} };
+        const agent = {
+          _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
+          _latestTaskText: () => 'Verify the published post', _originalTaskText: () => '', _progressTaskKeyHash: () => 'task',
+          _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
+          _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(),
+          _completionDocumentStamp: async () => 'same-published-document',
+          _captureCompletionJudgeImage: async () => `data:image/png;base64,animation-frame-${++captures}`,
+          _budgetForCapture: () => ({ maxTargetPx: 1408, maxTargetTokens: 1400 }), _shrinkImageForBudget: async dataUrl => ({ dataUrl }),
+          executeTool: async () => { reads++; return { success: true, pageContent: 'Published requested post; no draft or validation error' }; },
+          _newCostRunState: () => ({}), recordSystemOneVerdict() {},
+          evaluateSystemOne: async (_tab, _client, args) => {
+            calls.push('decision:' + (args.state[1].type === 'image_url' ? 'vision' : 'ax'));
+            const result = response(); result.model = 'kev-latest'; return result;
+          },
+          _chatWithCostAllowance: async (_provider, messages) => {
+            calls.push('llm:' + (Array.isArray(messages[1].content) ? 'vision' : 'ax'));
+            return { content: '{"outcome":"succeeded","reason":"Fresh AX establishes publication"}' };
+          },
+        };
+        const verdict = await runtime.verifyBrowserCompletion(agent, 1);
+        const engine = stored.systemOneEnabled === true && stored.systemOneDoneEnabled !== false ? 'decision' : 'llm';
+        assert.equal(verdict.outcome, 'succeeded'); assert.equal(verdict.modality, 'ax');
+        assert.deepEqual(calls, [`${engine}:vision`, `${engine}:ax`]);
+        assert.equal(reads, 1); assert.equal(captures, 2);
       }
     } finally {
       globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;

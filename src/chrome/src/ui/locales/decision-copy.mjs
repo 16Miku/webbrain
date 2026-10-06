@@ -12,6 +12,7 @@ export const decisionEnglish = {
   'st.decision.vision': 'Image support', 'st.decision.auto': 'Auto (model capabilities)',
   'st.decision.on': 'On (custom override)', 'st.decision.off': 'Off (AX only)',
   'st.decision.done': 'Verify completion (done)', 'st.decision.threshold': 'Completion probability threshold (%)',
+  'st.decision.done_desc': 'Use the selected decision model for completion checks. When outsourcing is off or unconfigured, the active LLM still verifies completion before existing checks; its usual cost limits apply.',
   'st.decision.vision_unverified': 'Image support was not verified. Auto mode will use AX.',
   'st.decision.compass': 'Compass verifies completion through its managed decision model automatically. Test checks image-only facts when image support is enabled; unsupported images use AX.',
 };
@@ -25,6 +26,7 @@ export const decisionTranslations = {
     'st.decision.endpoint': 'Sunucu temel adresi', 'st.decision.refresh': 'Mevcut modelleri yükle', 'st.decision.models_loaded': '{count} karar modeli yüklendi',
     'st.decision.vision': 'Görsel desteği', 'st.decision.auto': 'Otomatik (model özellikleri)', 'st.decision.on': 'Açık (özel ayar)', 'st.decision.off': 'Kapalı (yalnızca AX)',
     'st.decision.done': 'Tamamlanmayı doğrula (done)', 'st.decision.threshold': 'Tamamlanma olasılığı eşiği (%)',
+    'st.decision.done_desc': 'Tamamlanma kontrollerinde seçilen karar modelini kullanır. Devretme kapalıysa veya yapılandırılmamışsa, etkin dil modeli mevcut kontrollerden önce tamamlanmayı yine doğrular; normal maliyet sınırları geçerlidir.',
     'st.decision.vision_unverified': 'Görsel desteği doğrulanmadı. Otomatik mod AX kullanacak.',
     'st.decision.compass': 'Compass tamamlanmayı yönetilen karar modeliyle otomatik doğrular. Görsel desteği açıksa test yalnızca görselde bulunan bilgileri kontrol eder; desteklenmeyen görsellerde AX kullanılır.',
   },

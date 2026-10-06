@@ -33,7 +33,18 @@ Verify completion (`done`) defaults on when outsourcing is configured, with a
 90% acceptance threshold separate from the scheduled-check threshold. Compass
 always uses its managed `/v1/decisions` route regardless of personal decision
 settings. The fallback chain is decision model, active LLM, then existing
-completion checks. Each judge prefers a fresh screenshot and tries AX if images
+completion checks. These outsourcing toggles control the decision model only;
+with outsourcing disabled or unconfigured, completion still uses a dedicated
+call to the active LLM, subject to its normal cost allowance, followed by the
+existing checks. Strict Secret Mode disables these additional calls.
+
+| Active provider | First completion verifier | Fallback |
+| --- | --- | --- |
+| WebBrain Compass | Managed decision model | Active LLM, then existing checks |
+| Other provider, completion outsourcing enabled | Selected decision model | Active LLM, then existing checks |
+| Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
+
+Each judge prefers a fresh screenshot and tries AX if images
 are unavailable or inconclusive. Confident pending/failed results require
 recovery. Accepted fresh proof can establish generic publication evidence;
 explicit recipient, payment, download, authorization and workflow contracts

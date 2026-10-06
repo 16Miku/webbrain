@@ -50,8 +50,9 @@ export async function verifyCompletion({ decision, llm, capture, isCurrent, sign
         if (completionStopError(error, signal)) throw error;
         const status = error?.status ?? error?.httpStatus;
         onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: error?.code || (status ? `http_${status}` : 'unavailable') });
-        // Only an image-contract error can retry a failed request as AX.
-        if (!(modality === 'vision' && [400, 413, 415, 422].includes(status))) break;
+        // Moving pixels invalidate the image verdict, not the whole task.
+        // Transport failures still skip this judge without a second request.
+        if (!(modality === 'vision' && (error?.code === 'COMPLETION_VISUAL_CHANGED' || [400, 413, 415, 422].includes(status)))) break;
       }
     }
   }

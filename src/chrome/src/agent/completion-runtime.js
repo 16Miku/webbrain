@@ -49,8 +49,12 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
     // new redacted, budgeted capture after the request; never reuse that cache.
     let fresh;
     try { fresh = await capture('vision', true); }
-    catch (error) { if (completionStopError(error, signal)) throw error; return false; }
-    return fresh?.key === (evidence.key || evidence.evidenceKey) && await currentIdentity(evidence);
+    catch (error) { if (completionStopError(error, signal)) throw error; }
+    if (!await currentIdentity(evidence)) return false;
+    if (fresh?.key === (evidence.key || evidence.evidenceKey)) return true;
+    // Moving pixels cannot certify the old image, but need not mean the task
+    // changed. Discard that verdict and judge a fresh AX read instead.
+    throw Object.assign(new Error('Visual evidence changed or could not be refreshed.'), { code: 'COMPLETION_VISUAL_CHANGED' });
   };
   const messages = agent.conversations.get(tabId) || [];
   const toolNames = new Map(messages.flatMap(m => (m.tool_calls || []).map(call => [call.id, call.function?.name])));
@@ -96,7 +100,11 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
     return evidence;
   };
   const prior = agent._completionVerdicts.get(tabId);
-  if (prior?.scope === scope && prior.outcome !== 'uncertain' && await current(prior)) {
+  const priorCurrent = prior?.scope === scope && prior.outcome !== 'uncertain' && await current(prior).catch(error => {
+    if (error?.code === 'COMPLETION_VISUAL_CHANGED') return false;
+    throw error;
+  });
+  if (priorCurrent) {
     const fresh = await capture(prior.modality);
     if (fresh?.key === prior.evidenceKey) return prior;
   }
@@ -113,6 +121,8 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
       return decisionCompletionVerdict(result, config.threshold);
     },
   } : null;
+  // These switches outsource checks to the decision sidecar. The approved
+  // routing still uses the active LLM when that sidecar is off/unconfigured.
   const llm = typeof provider.chat === 'function' && (online || provider.config?.category === 'local') ? {
     name: 'llm', supportsVision: provider.supportsVision,
     evaluate: async (evidence, modality) => {

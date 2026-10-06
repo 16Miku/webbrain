@@ -13,6 +13,7 @@ import {
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
 import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
+import { resolveDecisionConfig } from './agent/decision-config.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -233,6 +234,13 @@ function sanitizeProviders(value, { strict = false } = {}) {
 }
 
 function validSettingValue(key, value) {
+  if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local'].includes(value);
+  if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
+  if (key === 'decisionBaseUrl') {
+    if (typeof value !== 'string') return false;
+    try { resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: value }); return true; }
+    catch { return false; }
+  }
   if (BOOLEAN_KEYS.has(key)) return typeof value === 'boolean';
   if (NUMBER_KEYS.has(key)) return typeof value === 'number' && Number.isFinite(value);
   if (STRING_KEYS.has(key)) return typeof value === 'string';
