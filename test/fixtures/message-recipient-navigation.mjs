@@ -164,9 +164,33 @@ export function registerMessageRecipientNavigationFixtures({
       assert.equal(await page.evaluate(() => window.sentMessages), 0);
     });
 
+    register(`${kind}: localized LinkedIn attachment viewers open across selector, text, AX, and coordinate targeting`, async page => {
+      const { guard } = await setupMessageHistory(page);
+      for (const label of ['Görsel önizlemesinde görüntülemek için tıklayın veya Enter tuşuna basın',
+        'Cliquez ou appuyez sur Entrée pour afficher un aperçu de l’image',
+        'Clique ou pressione Enter para exibir na visualização da imagem']) {
+        await page.locator('#preview').evaluate((el, label) => el.setAttribute('aria-label', label), label);
+        const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxChars: 20000 });
+        const ref = tree.pageContent.split('\n').find(line => line.includes(`button "${label}"`))?.match(/\[([^\]]+)\]/)?.[1];
+        assert.ok(ref, tree.pageContent);
+        const point = await page.locator('#preview').evaluate(el => {
+          const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        });
+        for (const [tool, args] of [['click', { selector: '#preview' }], ['click', { text: label, textMatch: 'exact' }],
+          ['click_ax', { ref_id: ref }], ['click', point], ['click', { selector: '#preview-image' }]]) {
+          assert.equal(await guard(tool, args), null, `${label}/${tool}`);
+          assert.equal((await call(page, tool, args)).success, true);
+          assert.equal(await page.locator('#viewer').isVisible(), true);
+          await page.locator('#close-viewer').click();
+        }
+      }
+      assert.equal(await page.evaluate(() => window.sentMessages), 0);
+    });
+
     register(`${kind}: LinkedIn preview lookalikes and hidden or occluded images stay protected`, async page => {
       const { guard } = await setupMessageHistory(page);
-      for (const change of ['no-image', 'composer', 'hidden', 'transparent', 'ancestor-transparent', 'occluded', 'disabled', 'commit-label', 'commit-text']) {
+      for (const change of ['no-image', 'composer', 'hidden', 'transparent', 'ancestor-transparent', 'occluded', 'disabled', 'commit-label', 'commit-text',
+        'localized-send', 'submit', 'external-form', 'outside-history', 'small-icon', 'menu', 'image-hidden']) {
         await page.evaluate(change => {
           const button=document.querySelector('#preview');
           window.originalPreview=button.cloneNode(true);
@@ -178,6 +202,13 @@ export function registerMessageRecipientNavigationFixtures({
           if(change==='disabled')button.disabled=true;
           if(change==='commit-label')button.title='Send';
           if(change==='commit-text'){button.title='View image';button.append('Send');}
+          if(change==='localized-send')button.setAttribute('aria-label','Gönder');
+          if(change==='submit')button.type='submit';
+          if(change==='external-form')button.setAttribute('form','composer');
+          if(change==='outside-history')document.body.append(button);
+          if(change==='small-icon')button.querySelector('img').style='width:20px;height:20px';
+          if(change==='menu')button.setAttribute('aria-haspopup','menu');
+          if(change==='image-hidden')button.querySelector('img').style.visibility='hidden';
           if(change==='occluded') {
             const cover=document.createElement('div');cover.id='cover';
             cover.style='position:fixed;left:350px;top:80px;width:400px;height:340px;z-index:20;background:white';document.body.append(cover);

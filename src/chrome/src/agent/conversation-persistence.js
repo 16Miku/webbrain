@@ -8,6 +8,9 @@ function byteLength(value) {
 }
 
 function capText(value, maxChars, marker, state) {
+  // Authority-bearing text must retain the exact parent-task hash. Its data
+  // URLs are part of that text; quota handling may fail, but cannot rewrite it.
+  if (maxChars === Infinity) return String(value || '');
   const sanitized = String(value || '').replace(DATA_URL_RE, () => {
     state.compacted = true;
     return '[embedded binary data omitted from session recovery]';

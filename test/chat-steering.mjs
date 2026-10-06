@@ -360,6 +360,43 @@ for (const build of ['chrome', 'firefox']) {
     agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
   });
 
+  for (const contentKind of ['string', 'text-block']) {
+    test(`${build}: ${contentKind} authority data URLs keep the steering chain after recovery`, async () => {
+      const { serializeConversationForSession: serialize } = await import(`../src/${build}/src/agent/conversation-persistence.js`);
+      const agent = actSetup(Agent);
+      await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
+      const root = 'Add this invitation to my calendar: data:application/pdf;base64,QUJDRA==\nUse the meeting time in it.';
+      const content = contentKind === 'string' ? root : [{ type: 'text', text: root },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJDRA==' } }];
+      const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content }];
+      agent.conversations.set(tabId, messages);
+      agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+      steer(agent, 'Use Ipek’s message: data:image/png;base64,QUJDRA==', 'image-correction');
+      await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+      steer(agent, 'Use the work calendar', 'calendar-correction');
+      await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
+      const live = agent._activeTaskBinding(messages);
+      messages.push({ role: 'assistant', content: 'Observed binary: data:image/png;base64,QUJDRA==' });
+      messages.push(...Array.from({ length: 70 }, () => ({ role: 'assistant', content: 'Earlier observation '.repeat(1000) })));
+      for (const maxBytes of [1_500_000, 450_000]) {
+        const snapshot = serialize(messages, { maxBytes, preserveMessageIndices: live.pinnedIndices });
+        const restored = actSetup(Agent);
+        restored.conversations.set(tabId, snapshot.messages);
+        assert.equal(restored._activeTaskBinding(snapshot.messages).text, live.text);
+        assert.equal(restored._progressTaskKeyHash(tabId), agent._progressTaskKeyHash(tabId));
+        assert.equal(restored._plannerUserAuthoredText(snapshot.messages[1]), root);
+        assert.equal(snapshot.messages[live.pinnedIndices[1]].content, messages[live.pinnedIndices[1]].content);
+        assert.ok(!snapshot.messages.some(message => message.role === 'assistant' && String(message.content).includes('data:image')),
+          'Non-authority binary text must still be omitted');
+        if (contentKind === 'text-block') assert.equal(snapshot.messages[1].content[1].type, 'text', 'Binary attachment blocks remain omitted');
+        restored._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });
+        restored._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
+        assert.equal(restored._planExecutionGuards.get(tabId).taskDrifted, false);
+      }
+      agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId);
+    });
+  }
+
   test(`${build}: steering during planning discards the superseded intent`, async () => {
     const entered = deferred(), release = deferred(), plans = [];
     const agent = actSetup(Agent, {}, async (_tab, enriched) => {

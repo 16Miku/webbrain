@@ -4951,8 +4951,9 @@
       const verifiedLinkedInImagePreview = clicked => {
         if (params.adapterName !== 'linkedin') return false;
         const button = _composedClosestElement(clicked, 'button,[role="button"]');
-        if (!button || compact(button.getAttribute('aria-label')).toLowerCase()
-            !== 'click or press enter to display in the image preview') return false;
+        if (!button) return false;
+        // Reject other controls before preview-specific style and hit probes.
+        if (!_composedClosestElement(button, '[role="log"],.msg-s-message-list,.msg-s-event-listitem')) return false;
         const painted = el => {
           if (!visible(el) || !_hasVisibleBox(el)) return false;
           for (let node = el; node?.nodeType === 1; node = _composedParent(node)) {
@@ -4964,18 +4965,23 @@
             || button.getAttribute('aria-disabled') === 'true'
             || String(button.getAttribute('type') || '').toLowerCase() !== 'button'
             || button.form || button.hasAttribute('form') || button.hasAttribute('download')
+            || /^(?:true|menu|listbox|tree|grid)$/.test(button.getAttribute('aria-haspopup') || '')
             || _composedClosestElement(button, 'form,.msg-form,[contenteditable]:not([contenteditable="false"])')) return false;
         // Attachment previews live in history, not in the composer. Proximity
         // to the composer cannot turn this verified viewer into a send; labels
         // alone cannot exempt a message commit or an unrelated image button.
-        if (!_composedClosestElement(button, '[role="log"],.msg-s-message-list,.msg-s-event-listitem')) return false;
-        if ([button.getAttribute('title'), button.getAttribute('data-tooltip'), button.innerText || button.textContent]
+        if ([button.getAttribute('aria-label'), button.getAttribute('title'), button.getAttribute('data-tooltip'), button.innerText || button.textContent]
             .some(_hasMessageCommitName)) return false;
-        if (!Array.from(button.querySelectorAll('img[src]')).some(painted)) return false;
         const rect = button.getBoundingClientRect();
-        return _isComposedAncestor(button, _shadowAwareElementFromPoint(
-          rect.left + rect.width / 2, rect.top + rect.height / 2,
-        ));
+        const hit = _shadowAwareElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        // LinkedIn localizes the preview label. Verify the attachment itself
+        // at the dispatch point instead; small avatar/reaction/menu icons do
+        // not prove that a button opens an image viewer.
+        return _isComposedAncestor(button, hit) && Array.from(button.querySelectorAll('img[src]')).some(image => {
+          const imageRect = image.getBoundingClientRect();
+          return painted(image) && imageRect.width >= 64 && imageRect.height >= 64
+            && _isComposedAncestor(image, hit);
+        });
       };
 
       const classifyLinkedInNavigation = (clicked, blockingModal = null) => {
