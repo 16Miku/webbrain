@@ -30278,6 +30278,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
   _isExecutionMutationEvidence(name, args = {}, capabilities = []) {
     if (name === 'chrome_web_store_upload' || name === 'chrome_web_store_publish') return true;
+    // Generation creates paid media; its result verifies that mutation without
+    // opting the tool into the fetch_url/research_url /allow-api override.
+    if (name === 'generate_image') return true;
     const mutationCapabilities = new Set([
       Capability.NAVIGATE,
       Capability.CLICK,

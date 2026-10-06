@@ -29192,7 +29192,7 @@ test('getToolsForMode: mode/tier redesign exposes the intended normal and Dev to
     const researchOptions = { researchEscalationEnabled: true };
     assert.equal(getTools('act', { tier: 'compact', ...researchOptions }).length, 25, `[${label}] Compact should expose 25 tools after tab-tool removal`);
     assert.equal(getTools('act', { tier: 'mid', ...researchOptions }).length, 48, `[${label}] Mid should expose 48 tools including CAPTCHA discovery and answer application`);
-    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 55 : 54, `[${label}] Full tool count should include opt-in MemCode recall and chat workflow tools`);
+    assert.equal(getTools('act', researchOptions).length, label === 'chrome' ? 56 : 55, `[${label}] Full tool count should include opt-in MemCode recall, chat workflow tools, and fal.ai generation`);
     assert.equal(ask.includes('recall_memcode'), true, `[${label}] Ask can read connected MemCode memories`);
     assert.equal(compact.includes('recall_memcode'), false, `[${label}] Compact does not expose remote recall`);
     assert.equal(compact.includes('research_url'), false, `[${label}] Compact must not gain research_url as a tab-tool replacement`);
@@ -128488,6 +128488,38 @@ test('fal-media connection test only accepts a successful required-auth response
     else globalThis.chrome = originalChrome;
     if (originalBrowser === undefined) delete globalThis.browser;
     else globalThis.browser = originalBrowser;
+  }
+});
+
+test('generate_image success completes state-changing tasks while failed generation cannot', () => {
+  for (const [build, AgentClass, getCapabilities] of [
+    ['chrome', AgentCh, capabilitiesForCh],
+    ['firefox', AgentFx, capabilitiesFor],
+  ]) {
+    const agent = new AgentClass({});
+    const args = { prompt: 'a red apple' };
+    const consequential = agent._isExecutionMutationEvidence('generate_image', args, getCapabilities('generate_image', args));
+    for (const [tabId, result, expectedCount] of [
+      [1, { success: true, url: 'https://v3.fal.media/out.png', model: 'fal-ai/flux/schnell' }, 1],
+      [2, { success: false, error: 'fal.ai rejected the request.' }, 0],
+      [3, { success: false, error: 'fal.ai generation was cancelled.', cancelled: true }, 0],
+      [4, { success: false, error: 'fal.ai generation timed out.' }, 0],
+    ]) {
+      const state = agent._startPlanExecutionGuard(tabId, 'act', {
+        requestKind: 'execute',
+        requiresStateChange: true,
+        requiresSubmission: false,
+      });
+      agent._markPlanExecutionToolCall(tabId, 'generate_image', result, { consequential });
+      assert.equal(state.successfulConsequentialToolCalls, expectedCount, `${build}: generation must count only after success`);
+      assert.equal(agent._executionEvidenceSatisfied(state), expectedCount === 1, `${build}: successful generation must satisfy mutation evidence`);
+      const decision = agent._planOnlyTerminalDecision(tabId, 'Generated the image: https://v3.fal.media/out.png', {
+        viaDone: true,
+        outcome: 'success',
+      });
+      if (expectedCount === 1) assert.equal(decision, null, `${build}: successful generation must finish without a retry`);
+      else assert.equal(decision?.retry, true, `${build}: failed generation must not claim successful completion`);
+    }
   }
 });
 
