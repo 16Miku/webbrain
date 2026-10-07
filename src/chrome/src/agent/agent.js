@@ -10664,7 +10664,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           success: false,
           denied: true,
           noDispatch: true,
-          error: 'execute_webmcp_tool requires a tool_id from list_webmcp_tools.',
+          error: 'execute_webmcp_tool requires an exact opaque tool_id returned by list_webmcp_tools. Browser functions and JavaScript are not WebMCP tool IDs.',
+          hint: 'If the page has no registered WebMCP tools, use ordinary accessibility, DOM, or execute_js tools instead.',
         },
       };
     }
@@ -10689,10 +10690,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           denied: true,
           noDispatch: true,
           staleToolId: true,
-          error: 'This WebMCP tool ID is no longer registered. Call list_webmcp_tools again.',
+          error: 'This WebMCP tool ID is not registered. Call list_webmcp_tools once and use only an exact returned tool_id; never invent an ID.',
+          hint: 'If the catalog is empty, use ordinary accessibility, DOM, or execute_js tools instead.',
         },
       };
     }
+    // Resolving a real registration repairs this failure class; unrelated
+    // failed browser actions keep their own counters.
+    this.failedActionLoops.get(tabId)?.delete('webmcp-tool-registration');
     const preparedArgs = {
       ...args,
       tool_id: toolId,
@@ -12262,12 +12267,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? { args: fnArgs }
         : await this._prepareWebMCPToolCall(tabId, fnName, fnArgs);
       if (webMcpPreparation.error) {
-        messages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(webMcpPreparation.error),
-        });
-        onUpdate('warning', { message: webMcpPreparation.error.error });
+        const result = {
+          ...webMcpPreparation.error,
+          dispatched: false,
+          failureScope: 'webmcp-tool-registration',
+        };
+        const recovery = await recordPreparationFailure(toolIndex, fnName, fnArgs, result, result.error);
+        if (recovery) return recovery;
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
       fnArgs = webMcpPreparation.args;
@@ -34152,7 +34159,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         };
       }
       try {
-        return await cdpClient.listWebMCPTools(tabId, args || {});
+        const catalog = await cdpClient.listWebMCPTools(tabId, args || {});
+        return catalog.total === 0
+          ? { ...catalog, hint: 'This page has no registered WebMCP capabilities. Use ordinary accessibility, DOM, or execute_js tools; do not invent tool IDs.' }
+          : catalog;
       } catch (error) {
         return {
           success: false,
