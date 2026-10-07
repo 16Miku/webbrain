@@ -2,6 +2,13 @@ import { buildTraceExportPayload } from './export-contract.js';
 import { sanitizeTraceExport } from '../agent/trace-export.js';
 import { buildTraceStats } from './stats.js';
 
+// These fields change independently of retained events; the current row cannot
+// tell us their values when the rating prompt opened.
+const MUTABLE_RUN_FIELDS = [
+  'losslessBytes', 'losslessBytesEncoding', 'feedbackBytes', 'feedbackEventsOmitted',
+  'repairedBy', 'repairedAt', 'repairReason',
+];
+
 // Run in the downloading extension page, never send this JSON through runtime
 // messaging: screenshots can make it larger than the browser message limit.
 // Export the stored session without the Markdown preview's text/run limits.
@@ -32,6 +39,8 @@ export async function exportRecordedSession(store, sessionId, version = '', { sn
       const stats = buildTraceStats(events);
       delete stats.hasLoopError;
       exportedRun = { ...run, ...stats };
+      for (const field of MUTABLE_RUN_FIELDS) delete exportedRun[field];
+      snapshotOmissions.add('Run-level byte counters, diagnostic omission flags, and repair metadata cannot be reconstructed at the recording cutoff and are excluded.');
       if (!beforeSnapshot(run.endedAt)) {
         // Completion fields may have been written after the prompt opened.
         exportedRun = { ...exportedRun, endedAt: null, durationMs: null, status: 'running', finalContent: null, feedbackSnapshotIncomplete: true };

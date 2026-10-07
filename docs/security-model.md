@@ -217,8 +217,9 @@ Feedback prepares a snapshot of the conversation selected when the rating prompt
 opened. A recording cutoff captured before the asynchronous lookup excludes
 later runs, events, screenshots, and completion details, even in the same
 conversation. Untimestamped records are excluded from feedback snapshots;
-ordinary full-session exports remain unbounded. A dedicated dialog must
-authorize the actual attachment before it leaves the browser: GitHub uploads
+mutable byte counters, omission flags, and repair metadata are excluded with
+an explanatory note. Ordinary full-session exports remain unbounded. A dedicated
+dialog must authorize the actual attachment before it leaves the browser: GitHub uploads
 files immediately, even before issue submission.
 Viewing a trace and continuing without it never authorize an upload. The handoff
 is restricted to the chat panel, an exact GitHub repository and destination tab,

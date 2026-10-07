@@ -152,6 +152,33 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     assert.match(await fallback.blob.text(), /CLICK_FAILED/);
   });
 
+  test(`${build}: snapshot headers are unchanged by later accounting, omission flags or repairs`, async () => {
+    const run = { runId: 'r', conversationId: 'chosen', startedAt: 1, endedAt: null, status: 'running',
+      lossless: true, losslessBytes: 100, losslessBytesEncoding: 'utf8', feedbackOnly: true,
+      feedbackBytes: 200, feedbackHistoryOmitted: true };
+    const events = [{ seq: 1, ts: 20, kind: 'tool', data: { name: 'click_ax', result: { success: true } } }];
+    const store = { listRuns: async () => [structuredClone(run)],
+      getRunEvents: async () => structuredClone(events), getScreenshot: async () => null };
+    const first = JSON.parse(await (await prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt: 100 })).blob.text());
+    Object.assign(run, { losslessBytes: 987654, feedbackBytes: 123456, feedbackEventsOmitted: true,
+      endedAt: 250, status: 'error', repairedBy: 'LATER REPAIR', repairedAt: 250, repairReason: 'LATER REASON' });
+    events.push({ seq: 2, ts: 250, kind: 'tool', data: { losslessBudgetOmitted: true } });
+    const second = await prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt: 100 });
+    const payload = JSON.parse(await second.blob.text());
+    assert.deepEqual(payload.runs, first.runs);
+    assert.deepEqual(payload.feedbackOmissions, first.feedbackOmissions);
+    for (const field of ['losslessBytes', 'losslessBytesEncoding', 'feedbackBytes', 'feedbackEventsOmitted', 'repairedBy', 'repairedAt', 'repairReason']) {
+      assert.equal(payload.runs[0].run[field], undefined);
+    }
+    assert.equal(payload.runs[0].run.feedbackHistoryOmitted, true, 'start-time diagnostic policy is immutable');
+    assert.doesNotMatch(await second.originalBlob.text(), /987654|123456|LATER/);
+    const full = JSON.parse((await exportRecordedSession(store, 'chosen', 'test')).json);
+    assert.equal(full.runs[0].run.losslessBytes, 987654);
+    assert.equal(full.runs[0].run.feedbackEventsOmitted, true);
+    assert.equal(full.runs[0].run.repairedAt, 250);
+    assert.equal(run.losslessBytes, 987654, 'snapshot projection must not mutate stored headers');
+  });
+
   test(`${build}: exports preserve diagnostic codes without exposing credential code fields`, async () => {
     const events = [
       { seq: 1, kind: 'tool', data: { name: 'fill_ax', args: { code: 'QUOTA', password: 'private-password' },
@@ -433,6 +460,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     const snapshot = JSON.parse(attachment);
     assert.deepEqual(snapshot.runs.map(entry => entry.run.runId), ['r']);
     assert.equal(snapshot.runs[0].run.finalContent, null);
+    assert.equal(snapshot.runs[0].run.losslessBytes, undefined);
+    assert.equal(snapshot.runs[0].run.losslessBytesEncoding, undefined);
     assert.equal(snapshot.runs[0].events.filter(event => event.kind === 'screenshot').length, 1);
     assert.match(await github.locator('textarea').inputValue(), /Clicking failed/);
     await github.addScriptTag({ content }); assert.equal(await github.evaluate(() => uploads), 1);
