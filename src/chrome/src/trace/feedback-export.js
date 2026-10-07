@@ -12,6 +12,7 @@ const DIAGNOSTIC_RUN_FIELDS = [
   'totalOutputTokens', 'totalCost', 'llmRequestCount', 'llmResponseCount', 'toolCallCount',
   'visionSubCallCount', 'errorCount', 'retryCount', 'totalLlmLatencyMs', 'totalToolLatencyMs',
   'feedbackOnly', 'feedbackHistoryOmitted', 'feedbackEventsOmitted',
+  'feedbackSnapshotIncomplete',
 ];
 
 export function diagnosticFeedbackPayload(payload) {
@@ -36,14 +37,15 @@ export function diagnosticFeedbackPayload(payload) {
 
 export async function prepareFeedbackTrace(store, sessionId, version = '', {
   limit = FEEDBACK_ATTACHMENT_LIMIT,
+  snapshotAt,
   compress = async blob => typeof CompressionStream === 'function'
     ? new Response(blob.stream().pipeThrough(new CompressionStream('gzip'))).blob() : null,
 } = {}) {
   if (!sessionId) return null;
-  const exported = await exportRecordedSession(store, sessionId, version);
+  const exported = await exportRecordedSession(store, sessionId, version, { snapshotAt });
   if (!exported.turnCount) return null;
   let payload = sanitizeTraceExport(JSON.parse(exported.json), { allRuns: true });
-  const omissions = [];
+  const omissions = [...exported.snapshotOmissions];
   if (exported.recordingTruncated) omissions.push('Some content was omitted at recording time.');
   if (payload.runs.some(entry => entry.run.feedbackHistoryOmitted || entry.run.feedbackEventsOmitted)) {
     omissions.push('Automatic diagnostic history is bounded; older runs or events may be absent.');
