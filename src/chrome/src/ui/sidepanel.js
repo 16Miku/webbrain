@@ -1835,10 +1835,12 @@ function setStoreReviewStarPreview(rating) {
 
 async function openStoreReviewPrompt() {
   if (!storeReviewEl || isProcessing) return;
-  // Freeze the session before tabs or conversations can change beneath the prompt.
+  // Capture the conversation and recording cutoff before asynchronous lookup.
   const sourceTabId = currentTabId;
+  const snapshotAt = Date.now();
   storeReviewTraceSource = sourceTabId == null ? Promise.resolve(null)
-    : sendToBackground('export_traces', { tabId: sourceTabId, full: true }).catch(() => null);
+    : sendToBackground('export_traces', { tabId: sourceTabId, full: true })
+      .then(source => source?.sessionId ? { ...source, snapshotAt } : null).catch(() => null);
   storeReviewSelectedRating = null;
   if (storeReviewFeedbackEl) storeReviewFeedbackEl.value = '';
   setStoreReviewStarPreview(null);
@@ -1904,7 +1906,7 @@ async function handleStoreReviewSendFeedback() {
         const [store, { prepareFeedbackTrace }] = await Promise.all([
           import('../trace/recorder.js'), import('../trace/feedback-export.js'),
         ]);
-        return prepareFeedbackTrace(store, source.sessionId, chrome.runtime.getManifest().version || '');
+        return prepareFeedbackTrace(store, source.sessionId, chrome.runtime.getManifest().version || '', { snapshotAt: source.snapshotAt });
       },
       stage: prepared => stageFeedbackTrace({ ...prepared, copy }),
       discard: deleteFeedbackDraft,

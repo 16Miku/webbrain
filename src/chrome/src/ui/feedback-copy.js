@@ -7,7 +7,7 @@ const EN = {
   fullLabel: 'Full recorded trace', diagnosticLabel: 'Diagnostic trace',
   details: 'Conversation {session} · {type} · {runs} runs · {shots} screenshots · {size}',
   preparing: 'Preparing trace locally…',
-  omitted: 'Recording or retention limits omitted some content. See the trace for details.',
+  omitted: 'Some content is unavailable or excluded. See the trace for details.',
   oversized: 'The full export is too large to attach. Only the diagnostic fallback will be uploaded. View trace to download the full export locally.',
   failed: 'The trace attachment could not be confirmed. Check the draft before retrying, or download the trace.',
   uploading: 'Attaching your trace. Please wait before submitting the issue.',
