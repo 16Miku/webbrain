@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Indonesian (id).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('id'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom UI ekstensi',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': 'Mulai',
   'ob.btn.skip': 'Lewati dulu',
   'ob.btn.start': 'Mulai',
-  'ob.cloud.body': 'WebBrain Compass siap dengan alokasi harian gratis. Percakapan Compass yang dipilih dapat disimpan dan digunakan untuk meningkatkan WebBrain selama Bantu Tingkatkan WebBrain aktif secara default. Anda dapat mematikannya di Pengaturan → Umum.',
+  'ob.cloud.body': 'WebBrain Compass siap dengan alokasi mingguan gratis. Percakapan Compass yang dipilih dapat disimpan dan digunakan untuk meningkatkan WebBrain selama Bantu Tingkatkan WebBrain aktif secara default. Anda dapat mematikannya di Pengaturan → Umum.',
   'ob.cloud.change': 'Ubah',
   'ob.cloud.using': 'Menggunakan WebBrain Compass.',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'Data pemulihan tidak dapat disimpan. Tugas aktif dapat berlanjut, tetapi tindakan tidak akan diputar ulang setelah koneksi terputus. Coba lagi secara manual.',
 
   'sp.error_prefix': 'Galat: {msg}',
-  'sp.subscribe.allowance_used': 'Kuota harian gratis WebBrain Compass telah habis.',
+  'sp.subscribe.allowance_used': 'Kuota mingguan gratis WebBrain Compass telah habis.',
   'sp.subscribe.btn': 'Berlangganan',
   'sp.subscribe.upgrade': 'Upgrade ke Plus',
   "sp.subscribe.resume_payment": "Metode pembayaran diperbarui — coba lagi",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>Memulai dengan llama.cpp:</strong><br>Jalankan <code>llama-server -m your-model.gguf --port 8080</code> untuk memulai server lokal.<br>Tidak perlu kunci API — berjalan sepenuhnya di mesin Anda.',
   'st.providers.save': 'Simpan',
-  'st.providers.webbrain_note.body': 'Penggunaan harian gratis WebBrain Compass sudah termasuk. Permintaan melewati api.webbrain.one; secara default kami mencatat metadata untuk kuota dan debugging, bukan teks prompt, konten halaman, tangkapan layar, atau respons model. {privacyLink}. Untuk penggunaan lebih, berlangganan di {subscribeLink}. Kelola penagihan di {accountLink}.',
+  'st.providers.webbrain_note.body': 'Penggunaan mingguan gratis WebBrain Compass sudah termasuk. Permintaan melewati api.webbrain.one; secara default kami mencatat metadata untuk kuota dan debugging, bukan teks prompt, konten halaman, tangkapan layar, atau respons model. {privacyLink}. Untuk penggunaan lebih, berlangganan di {subscribeLink}. Kelola penagihan di {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Kebijakan privasi',
   'st.providers.test': 'Uji koneksi',
   'st.providers.duplicate': 'Duplikat',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "Terhubung! Model: {model}",
   "st.transcription.failed": "Gagal: {error}",
   "st.transcription.fill_required": "Isi URL dasar dan Model terlebih dahulu.",
+  "st.imagegen.heading": "Media generatif",
+  "st.imagegen.desc": "Alat agen generate_image membuat gambar dan media lainnya dari prompt teks melalui penyedia yang dipilih.",
+  "st.imagegen.saved": "Tersimpan!",
+  "st.imagegen.cleared": "Dihapus.",
+  "st.imagegen.testing": "Menguji...",
+  "st.imagegen.connected": "Terhubung! Model: {model}",
+  "st.imagegen.failed": "Gagal: {error}",
+  "st.imagegen.fill_required": "Isi Kunci API dan Model terlebih dahulu.",
+  "st.captcha.desc_html": "Biarkan agen menyelesaikan CAPTCHA secara otomatis melalui API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Mendukung reCAPTCHA v2/v3, hCaptcha, dan Cloudflare Turnstile. Menyimpan kunci API yang valid akan mengaktifkan CapSolver secara otomatis; tanpa kunci, agen berhenti dan meminta Anda menyelesaikan CAPTCHA sendiri. CapSolver mengenakan biaya per penyelesaian (~$0.001–$0.003); Anda menggunakan akun dan kunci API sendiri.",
+  "st.captcha.enabled.label": "Aktifkan CapSolver",
+  "st.captcha.enabled.desc": "Saat agen menemui CAPTCHA, ia akan memanggil CapSolver sekali sebelum kembali bertanya kepada Anda. Memerlukan kunci API di bawah.",
   "st.captcha.api_key.label": "Kunci API CapSolver",
   "st.captcha.save": "Simpan Kunci",
   "st.captcha.check_balance": "Periksa Saldo",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'Tidak ada yang dijalankan. Coba lagi untuk meninjau rencana baru.',
   'sp.plan.awaiting_review': 'Setujui atau batalkan rencana di atas sebelum mengirim pesan lain.',
   'sp.plan.intent_unavailable': "Perencanaan gagal setelah dua percobaan. Proses dilanjutkan dalam mode Act dengan perlindungan normal.",
-  'sp.slash.busy_only_oob': 'Pesan dimasukkan ke antrean saat WebBrain sibuk. Hanya /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose yang dapat langsung berjalan sebagai perintah slash.',
+  'sp.slash.busy_only_oob': 'Pesan dimasukkan ke antrean saat WebBrain sibuk. Hanya /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose yang dapat langsung berjalan sebagai perintah slash.',
   'tool.go_back': 'Kembali',
   'tool.go_forward': 'Maju',
   'st.display.search.placeholder': 'Cari pengaturan Umum',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "Tidak dapat membaca {name}.",
   "sp.attach.needs_prompt": "Tambahkan pertanyaan untuk dikirim bersama lampiran Anda.",
   "sp.attach.no_tab": "Tidak ada tab aktif untuk melampirkan teks yang dipilih.",
+  "sp.steer.button": "Arahkan",
+  "sp.steer.title": "Arahkan tugas yang berjalan (Alt+Enter)",
+  "sp.steer.sent": "Pesan arahan terkirim; diterapkan pada langkah agen berikutnya.",
+  "sp.steer.queued": "Tugas saat ini selesai; pesan diantrekan untuk giliran berikutnya.",
+  "sp.queue.send": "Antrekan pesan",
   "sp.queue.label": "Dalam antrean",
   "sp.queue.label_numbered": "Dalam antrean {index}",
   "sp.queue.edit": "Edit pesan antrean",
   "sp.queue.delete": "Hapus pesan antrean",
   "sp.slash.check_progress": "Tampilkan catatan progres saat ini",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "Rekam layar atau jendela",
   "sp.progress.title_html": "<strong>Catatan progres saat ini</strong>",
   "sp.progress.empty": "Belum ada baris progres yang direkam untuk percakapan ini.",

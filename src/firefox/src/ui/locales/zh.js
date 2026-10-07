@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Simplified Chinese (zh).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('zh'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': '插件界面缩放',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': '开始使用',
   'ob.btn.skip': '暂时跳过',
   'ob.btn.start': '开始',
-  'ob.cloud.body': 'WebBrain Compass 已准备好每日免费配额。选定的 Compass 对话可能会被保留并用于改进 WebBrain，而帮助改进 WebBrain 默认情况下处于开启状态。您可以在设置 → 常规中将其关闭。',
+  'ob.cloud.body': 'WebBrain Compass 已准备好每周免费配额。选定的 Compass 对话可能会被保留并用于改进 WebBrain，而帮助改进 WebBrain 默认情况下处于开启状态。您可以在设置 → 常规中将其关闭。',
   'ob.cloud.change': '更改',
   'ob.cloud.using': '正在使用 WebBrain Compass。',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': '无法保存恢复数据。当前任务可以继续，但连接中断后不会重放任何操作；请手动重试。',
 
   'sp.error_prefix': '错误：{msg}',
-  'sp.subscribe.allowance_used': '今日免费的 WebBrain Compass 额度已用完。',
+  'sp.subscribe.allowance_used': '本周免费的 WebBrain Compass 额度已用完。',
   'sp.subscribe.btn': '订阅',
   'sp.subscribe.upgrade': '升级到 Plus',
   "sp.subscribe.resume_payment": "付款方式已更新 — 重试",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp 快速上手：</strong><br>运行 <code>llama-server -m 你的模型.gguf --port 8080</code> 启动本地服务器。<br>无需 API 密钥 — 完全在你的机器上运行。',
   'st.providers.save': '保存',
-  'st.providers.webbrain_note.body': '免费的每日 WebBrain Compass 用量已包含在内。请求通过 api.webbrain.one 处理；默认情况下，我们仅记录用于配额和调试的元数据，不记录提示文本、页面内容、屏幕截图或模型响应。{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。',
+  'st.providers.webbrain_note.body': '免费的每周 WebBrain Compass 用量已包含在内。请求通过 api.webbrain.one 处理；默认情况下，我们仅记录用于配额和调试的元数据，不记录提示文本、页面内容、屏幕截图或模型响应。{privacyLink}。如需更多用量，请在 {subscribeLink} 订阅。在 {accountLink} 管理账单。',
   'st.providers.webbrain_note.privacy_link': '隐私政策',
   'st.providers.test': '测试连接',
   'st.providers.duplicate': '复制',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "连接成功！模型：{model}",
   "st.transcription.failed": "失败：{error}",
   "st.transcription.fill_required": "请先填写基础 URL 和模型。",
+  "st.imagegen.heading": "生成式媒体",
+  "st.imagegen.desc": "generate_image 智能体工具通过所选提供商，根据文本提示生成图像和其他媒体。",
+  "st.imagegen.saved": "已保存！",
+  "st.imagegen.cleared": "已清除。",
+  "st.imagegen.testing": "测试中...",
+  "st.imagegen.connected": "已连接！模型：{model}",
+  "st.imagegen.failed": "失败：{error}",
+  "st.imagegen.fill_required": "请先填写 API 密钥和模型。",
+  "st.captcha.desc_html": "让代理通过 <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API 自动解决 CAPTCHA。支持 reCAPTCHA v2/v3、hCaptcha 和 Cloudflare Turnstile。保存有效的 API 密钥后会自动启用 CapSolver；没有密钥时，代理会停止并请你自行解决 CAPTCHA。CapSolver 按每次解决计费（约 ~$0.001–$0.003）；使用你自己的账号和 API 密钥。",
+  "st.captcha.enabled.label": "启用 CapSolver",
+  "st.captcha.enabled.desc": "当代理遇到 CAPTCHA 时，会先调用一次 CapSolver，然后再回退到询问你。需要下方的 API 密钥。",
   "st.captcha.api_key.label": "CapSolver API 密钥",
   "st.captcha.save": "保存密钥",
   "st.captcha.check_balance": "查询余额",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': '未执行任何操作。请重试以查看新计划。',
   'sp.plan.awaiting_review': '发送另一条消息前，请先批准或取消上面的计划。',
   'sp.plan.intent_unavailable': "规划在两次尝试后仍失败。系统将保留常规安全措施并继续以 Act 模式运行。",
-  'sp.slash.busy_only_oob': 'WebBrain 忙碌时，消息会排队。只有 /help、/progress、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces 和 /verbose 可以作为斜杠命令立即运行。',
+  'sp.slash.busy_only_oob': 'WebBrain 忙碌时，消息会排队。只有 /help、/progress、/btw、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces 和 /verbose 可以作为斜杠命令立即运行。',
   'tool.go_back': '返回',
   'tool.go_forward': '前进',
   'st.display.search.placeholder': '搜索通用设置',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "无法读取 {name}。",
   "sp.attach.needs_prompt": "请输入要与附件一起发送的问题。",
   "sp.attach.no_tab": "没有可附加所选文本的活动标签页。",
+  "sp.steer.button": "引导",
+  "sp.steer.title": "引导当前任务 (Alt+Enter)",
+  "sp.steer.sent": "引导消息已发送，将在智能体的下一步生效。",
+  "sp.steer.queued": "当前任务已结束，消息已加入下一轮队列。",
+  "sp.queue.send": "将消息加入队列",
   "sp.queue.label": "已排队",
   "sp.queue.label_numbered": "已排队 {index}",
   "sp.queue.edit": "编辑排队消息",
   "sp.queue.delete": "删除排队消息",
   "sp.slash.check_progress": "显示当前进度日志",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "录制屏幕或窗口",
   "sp.progress.title_html": "<strong>当前进度日志</strong>",
   "sp.progress.empty": "此对话尚未记录任何进度行。",

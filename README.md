@@ -146,6 +146,8 @@ required; turning the existing switch off also purges queued diagnostics.
   emergency overflow recovery
 - **Per-tab conversations** — each tab keeps its own history; optional local
   user memory for stated preferences
+- **Optional cross-device recall** — connect MemCode with OAuth for read-only
+  lookup while local memory stays the default ([setup and privacy](docs/memcode-recall.md))
 - **Reading-first side panel** — streaming Ask replies, floating controls that
   keep your question in view as answers grow, copy buttons, a page-inspection
   banner, and a stop button that works mid-run
@@ -292,11 +294,11 @@ open (press `Ctrl+C` to stop it):
 npx -y @webbrain/mcp-server
 ```
 
-Once the server is running, open **WebBrain → Settings → General → Advanced →
-MCP**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+Once the server is running, open **WebBrain → Settings → Bridge**,
+set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
 On Chromium browsers the bridge runs from the extension's off-screen document.
-Firefox hosts it in the background page and is configured under **Settings →
-Cloud Bridge** instead (not yet verified against the MCP server on a real Firefox
+Firefox hosts it in the background page and is configured under the same
+**Settings → Bridge** tab (not yet verified against the MCP server on a real Firefox
 install). A backend that needs to approve each browser before it can send
 commands can use the opt-in token handshake described in
 [Cloud Bridge browser approval](docs/cloud-bridge-browser-approval.md).
@@ -329,7 +331,7 @@ examples, safety boundaries, and troubleshooting guide live at
 
 > The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
 > the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
-> the URL under **Settings → General → Advanced → MCP**.
+> the URL under **Settings → Bridge**.
 
 ## LM Studio plugin
 

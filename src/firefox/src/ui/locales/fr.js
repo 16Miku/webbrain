@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // French (fr).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('fr'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom de l’interface de l’extension',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': 'Commencer',
   'ob.btn.skip': 'Ignorer pour le moment',
   'ob.btn.start': 'Démarrer',
-  'ob.cloud.body': 'WebBrain Compass est prêt avec une allocation quotidienne gratuite. Les conversations Compass sélectionnées peuvent être conservées et utilisées pour améliorer WebBrain tant que Aider à améliorer WebBrain est activé par défaut. Vous pouvez le désactiver dans Paramètres → Général.',
+  'ob.cloud.body': 'WebBrain Compass est prêt avec une allocation hebdomadairene gratuite. Les conversations Compass sélectionnées peuvent être conservées et utilisées pour améliorer WebBrain tant que Aider à améliorer WebBrain est activé par défaut. Vous pouvez le désactiver dans Paramètres → Général.',
   'ob.cloud.change': 'Changer',
   'ob.cloud.using': 'Utilisation de WebBrain Compass.',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'Les données de récupération ne peuvent pas être enregistrées. La tâche en cours peut continuer, mais aucune action ne sera rejouée après une déconnexion. Réessayez manuellement.',
 
   'sp.error_prefix': 'Erreur : {msg}',
-  'sp.subscribe.allowance_used': 'Quota quotidien gratuit de WebBrain Compass épuisé.',
+  'sp.subscribe.allowance_used': 'Quota hebdomadaire gratuit de WebBrain Compass épuisé.',
   'sp.subscribe.btn': 'S’abonner',
   'sp.subscribe.upgrade': 'Passer à Plus',
   "sp.subscribe.resume_payment": "Moyen de paiement mis à jour — réessayer",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>Premiers pas avec llama.cpp :</strong><br>Exécutez <code>llama-server -m votre-modele.gguf --port 8080</code> pour démarrer un serveur local.<br>Pas besoin de clé d\'API — il fonctionne entièrement sur votre machine.',
   'st.providers.save': 'Enregistrer',
-  'st.providers.webbrain_note.body': 'Une utilisation quotidienne gratuite de WebBrain Compass est incluse. Les requêtes passent par api.webbrain.one ; par défaut, nous enregistrons des métadonnées pour le quota et le débogage, pas le texte des invites, le contenu des pages, les captures d\'écran ni les réponses du modèle. {privacyLink}. Pour en faire plus, abonnez-vous sur {subscribeLink}. Gérez la facturation sur {accountLink}.',
+  'st.providers.webbrain_note.body': 'Une utilisation hebdomadaire gratuite de WebBrain Compass est incluse. Les requêtes passent par api.webbrain.one ; par défaut, nous enregistrons des métadonnées pour le quota et le débogage, pas le texte des invites, le contenu des pages, les captures d\'écran ni les réponses du modèle. {privacyLink}. Pour en faire plus, abonnez-vous sur {subscribeLink}. Gérez la facturation sur {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Politique de confidentialité',
   'st.providers.test': 'Tester la connexion',
   'st.providers.duplicate': 'Dupliquer',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "Connecté ! Modèle : {model}",
   "st.transcription.failed": "Échec : {error}",
   "st.transcription.fill_required": "Remplissez d'abord l'URL de base et le modèle.",
+  "st.imagegen.heading": "Médias génératifs",
+  "st.imagegen.desc": "L’outil d’agent generate_image crée des images et d’autres médias à partir de texte avec le fournisseur sélectionné.",
+  "st.imagegen.saved": "Enregistré !",
+  "st.imagegen.cleared": "Effacé.",
+  "st.imagegen.testing": "Test en cours...",
+  "st.imagegen.connected": "Connecté ! Modèle : {model}",
+  "st.imagegen.failed": "Échec : {error}",
+  "st.imagegen.fill_required": "Remplissez d'abord la clé API et le modèle.",
+  "st.captcha.desc_html": "Laissez l'agent résoudre les CAPTCHA automatiquement via l'API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Prend en charge reCAPTCHA v2/v3, hCaptcha et Cloudflare Turnstile. L'enregistrement d'une clé API valide active automatiquement CapSolver ; sans clé, l'agent s'arrête et vous demande de résoudre le CAPTCHA vous-même. CapSolver facture chaque résolution (~$0.001–$0.003) ; vous utilisez votre propre compte et votre propre clé API.",
+  "st.captcha.enabled.label": "Activer CapSolver",
+  "st.captcha.enabled.desc": "Lorsque l'agent rencontre un CAPTCHA, il appellera CapSolver une fois avant de se rabattre sur une demande de votre part. Nécessite une clé d'API ci-dessous.",
   "st.captcha.api_key.label": "Clé d'API CapSolver",
   "st.captcha.save": "Enregistrer la clé",
   "st.captcha.check_balance": "Vérifier le solde",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'Rien n’a été exécuté. Réessayez pour examiner un nouveau plan.',
   'sp.plan.awaiting_review': 'Approuvez ou annulez le plan ci-dessus avant d\'envoyer un autre message.',
   'sp.plan.intent_unavailable': "La planification a échoué après deux tentatives. Poursuite en mode Act avec les protections habituelles.",
-  'sp.slash.busy_only_oob': 'Les messages sont mis en file d\'attente pendant que WebBrain est occupé. Seuls /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces et /verbose peuvent s\'exécuter immédiatement comme commandes slash.',
+  'sp.slash.busy_only_oob': 'Les messages sont mis en file d\'attente pendant que WebBrain est occupé. Seuls /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces et /verbose peuvent s\'exécuter immédiatement comme commandes slash.',
   'tool.go_back': 'Revenir en arrière',
   'tool.go_forward': 'Aller en avant',
   'st.display.search.placeholder': 'Rechercher dans les paramètres généraux',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "Impossible de lire {name}.",
   "sp.attach.needs_prompt": "Ajoutez une question à envoyer avec votre pièce jointe.",
   "sp.attach.no_tab": "Aucun onglet actif auquel joindre la sélection.",
+  "sp.steer.button": "Réorienter",
+  "sp.steer.title": "Réorienter la tâche en cours (Alt+Enter)",
+  "sp.steer.sent": "Consigne envoyée ; elle sera appliquée à la prochaine étape.",
+  "sp.steer.queued": "La tâche en cours est terminée ; le message attend le prochain tour.",
+  "sp.queue.send": "Mettre le message en attente",
   "sp.queue.label": "En file d’attente",
   "sp.queue.label_numbered": "En file d’attente {index}",
   "sp.queue.edit": "Modifier le message en file d’attente",
   "sp.queue.delete": "Supprimer le message en file d’attente",
   "sp.slash.check_progress": "Afficher le journal de progression actuel",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "Enregistrer un écran ou une fenêtre",
   "sp.progress.title_html": "<strong>Journal de progression actuel</strong>",
   "sp.progress.empty": "Aucune ligne de progression n’a encore été enregistrée pour cette conversation.",

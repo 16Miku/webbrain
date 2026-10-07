@@ -47,10 +47,13 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(done.status, 'completed');
     assert.equal(observed.length, 2);
     assert.equal(observed[1].options.trustedContinuation, true);
+    assert.equal(observed[1].options.scheduledResume, true);
     assert.equal(observed[1].options.independentRun, false);
     assert.equal(observed[1].options.parentRunId, 'trace_1');
     assert.equal(observed[1].options.parentSessionId, 'same-conversation');
-    assert.equal(observed[1].prompt, 'Continue the same task');
+    assert.match(observed[1].prompt, /^\[Scheduled resume run_\d+\]/);
+    assert.match(observed[1].prompt, /Continue the same task/);
+    assert.match(observed[1].prompt, /durable continuation/);
     assert.match(done.result, /item\?id=12345678/);
     assert.equal(JSON.stringify(done).includes('private-login-secret'), false);
     assert.equal(JSON.stringify(done.updates).includes('item?id=12345678'), false);
@@ -101,6 +104,29 @@ for (const browser of ['chrome', 'firefox']) {
     const restarted = createCloudRunController({ chromeApi: api, agent, ensureOffscreen: async () => {} });
     assert.equal((await restarted.status({ runId: row.runId })).status, 'failed');
     assert.equal(calls, 4, 'restart never replays a possible consequential action');
+  });
+  test(`${browser}: oversized resume delays are rejected without holding the run`, async () => {
+    const { c } = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      const resume = options.deferResume({ after_seconds: 7 * 24 * 60 * 60, reason: 'Wait a week', resume_instruction: 'Continue later' });
+      assert.equal(resume.success, false);
+      assert.match(resume.error, /5 minutes|partial/);
+      options.onRunFinished('partial');
+      return 'Partial answer';
+    });
+    const run = await c.startRun({ task: 'Read' });
+    const done = await finished(c, run);
+    assert.equal(done.status, 'failed');
+    assert.match(done.error, /did not finish successfully \(partial\)/);
+  });
+  test(`${browser}: explicit successful done wins over recovery trace status`, async () => {
+    const { c } = harness(async (_tab, _task, update, _mode, _attachments, options) => {
+      update('tool_result', { name: 'done', result: { outcome: 'success', summary: 'Recovered answer' } });
+      options.onRunFinished('chrome_protected_page_visual_fallback');
+      return 'Recovered answer';
+    });
+    const run = await c.startRun({ task: 'Read protected page' });
+    const done = await finished(c, run);
+    assert.equal(done.status, 'completed');
   });
   test(`${browser}: real auto-resume helper routes Cloud work to the controller, native scheduling stays unchanged`, async () => {
     const source = fs.readFileSync(new URL(`../src/${browser}/src/agent/agent.js`, import.meta.url), 'utf8');

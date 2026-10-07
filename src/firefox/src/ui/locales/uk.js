@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Ukrainian (uk).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('uk'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб інтерфейсу розширення',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': 'Почати',
   'ob.btn.skip': 'Пропустити зараз',
   'ob.btn.start': 'Почати',
-  'ob.cloud.body': 'WebBrain Compass готовий з безкоштовним денним лімітом. Вибрані розмови Compass можуть бути збережені та використані для покращення WebBrain, поки Допомога в покращенні WebBrain увімкнена за замовчуванням. Ви можете вимкнути це в Налаштування → Загальне.',
+  'ob.cloud.body': 'WebBrain Compass готовий з безкоштовним тижневим лімітом. Вибрані розмови Compass можуть бути збережені та використані для покращення WebBrain, поки Допомога в покращенні WebBrain увімкнена за замовчуванням. Ви можете вимкнути це в Налаштування → Загальне.',
   'ob.cloud.change': 'Змінити',
   'ob.cloud.using': 'Використовується WebBrain Compass.',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'Не вдалося зберегти дані відновлення. Поточне завдання може продовжитися, але після розриву з’єднання дії не повторюватимуться. Спробуйте знову вручну.',
 
   'sp.error_prefix': 'Помилка: {msg}',
-  'sp.subscribe.allowance_used': 'Безкоштовний денний ліміт WebBrain Compass вичерпано.',
+  'sp.subscribe.allowance_used': 'Безкоштовний тижневий ліміт WebBrain Compass вичерпано.',
   'sp.subscribe.btn': 'Оформити підписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
   "sp.subscribe.resume_payment": "Спосіб оплати оновлено — повторити",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>Швидкий старт із llama.cpp:</strong><br>Запустіть <code>llama-server -m your-model.gguf --port 8080</code>, щоб підняти локальний сервер.<br>API-ключ не потрібен — усе працює на вашій машині.',
   'st.providers.save': 'Зберегти',
-  'st.providers.webbrain_note.body': 'Безкоштовне щоденне використання WebBrain Compass включено. Запити проходять через api.webbrain.one; за замовчуванням ми записуємо метадані для квоти та налагодження, а не текст запитів, вміст сторінок, знімки екрана чи відповіді моделі. {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.',
+  'st.providers.webbrain_note.body': 'Безкоштовне щотижневе використання WebBrain Compass включено. Запити проходять через api.webbrain.one; за замовчуванням ми записуємо метадані для квоти та налагодження, а не текст запитів, вміст сторінок, знімки екрана чи відповіді моделі. {privacyLink}. Для більшого обсягу оформіть підписку на {subscribeLink}. Керуйте оплатою на {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Політика конфіденційності',
   'st.providers.test': 'Перевірити з\'єднання',
   'st.providers.duplicate': 'Дублювати',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "Підключено! Модель: {model}",
   "st.transcription.failed": "Збій: {error}",
   "st.transcription.fill_required": "Спочатку заповніть базовий URL і модель.",
+  "st.imagegen.heading": "Генеративні медіа",
+  "st.imagegen.desc": "Інструмент агента generate_image створює зображення та інші медіа за текстовим запитом через вибраного постачальника.",
+  "st.imagegen.saved": "Збережено!",
+  "st.imagegen.cleared": "Очищено.",
+  "st.imagegen.testing": "Перевірка...",
+  "st.imagegen.connected": "Підключено! Модель: {model}",
+  "st.imagegen.failed": "Помилка: {error}",
+  "st.imagegen.fill_required": "Спочатку заповніть ключ API і модель.",
+  "st.captcha.desc_html": "Дозвольте агенту автоматично розв'язувати CAPTCHA через API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Підтримує reCAPTCHA v2/v3, hCaptcha та Cloudflare Turnstile. Збереження дійсного API-ключа автоматично вмикає CapSolver; без ключа агент зупиняється й просить вас розв'язати CAPTCHA самостійно. CapSolver стягує плату за кожне розв'язання (~$0.001–$0.003); ви використовуєте власний акаунт і API-ключ.",
+  "st.captcha.enabled.label": "Увімкнути CapSolver",
+  "st.captcha.enabled.desc": "Коли агент натрапляє на CAPTCHA, він один раз викличе CapSolver, перш ніж повернутися до запиту до вас. Потрібен API-ключ нижче.",
   "st.captcha.api_key.label": "API-ключ CapSolver",
   "st.captcha.save": "Зберегти ключ",
   "st.captcha.check_balance": "Перевірити баланс",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'Нічого не було запущено. Повторіть спробу, щоб переглянути новий план.',
   'sp.plan.awaiting_review': 'Схваліть або скасуйте план вище, перш ніж надсилати інше повідомлення.',
   'sp.plan.intent_unavailable': "Планування не вдалося після двох спроб. Робота продовжиться в режимі Act зі звичайними засобами захисту.",
-  'sp.slash.busy_only_oob': 'Поки WebBrain зайнятий, повідомлення ставляться в чергу. Лише /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces та /verbose можуть запускатися одразу як slash-команди.',
+  'sp.slash.busy_only_oob': 'Поки WebBrain зайнятий, повідомлення ставляться в чергу. Лише /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces та /verbose можуть запускатися одразу як slash-команди.',
   'tool.go_back': 'Назад',
   'tool.go_forward': 'Вперед',
   'st.display.search.placeholder': 'Пошук у загальних налаштуваннях',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "Не вдалося прочитати {name}.",
   "sp.attach.needs_prompt": "Додайте запитання, щоб надіслати його разом із вкладенням.",
   "sp.attach.no_tab": "Немає активної вкладки, до якої можна прикріпити виділений текст.",
+  "sp.steer.button": "Спрямувати",
+  "sp.steer.title": "Скоригувати поточне завдання (Alt+Enter)",
+  "sp.steer.sent": "Вказівку надіслано; її буде враховано на наступному кроці агента.",
+  "sp.steer.queued": "Поточне завдання завершено; повідомлення додано в чергу на наступний хід.",
+  "sp.queue.send": "Додати повідомлення до черги",
   "sp.queue.label": "У черзі",
   "sp.queue.label_numbered": "У черзі {index}",
   "sp.queue.edit": "Редагувати повідомлення в черзі",
   "sp.queue.delete": "Видалити повідомлення з черги",
   "sp.slash.check_progress": "Показати поточний журнал прогресу",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "Записати екран або вікно",
   "sp.progress.title_html": "<strong>Поточний журнал прогресу</strong>",
   "sp.progress.empty": "Для цієї розмови ще не записано рядків прогресу.",

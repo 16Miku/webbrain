@@ -18,6 +18,7 @@ for its available flags.
 | `/schedule --list` | Show scheduled tasks |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page for a condition; stop after the first match unless `--keep` is set, and optionally play a background alert |
 | `/progress` | Show the current progress ledger |
+| `/btw [prompt]` | Open a quick side conversation |
 | `/scratchpad` | Show the current scratchpad |
 | `/scratchpad --append <text>` | Append text to the current scratchpad |
 | `/scratchpad --clear` | Clear the current scratchpad |

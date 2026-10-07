@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Filipino / Tagalog (tl).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('tl'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Pag-zoom ng UI ng extension',
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'Hindi ma-save ang data sa pagbawi. Maaaring magpatuloy ang kasalukuyang gawain, ngunit hindi uulitin ang mga aksyon kapag naputol ang koneksyon. Subukang muli nang manu-mano.',
 
   'sp.error_prefix': 'Error: {msg}',
-  'sp.subscribe.allowance_used': 'Naubos na ang libreng pang-araw-araw na alokasyon ng WebBrain Compass.',
+  'sp.subscribe.allowance_used': 'Naubos na ang libreng lingguhang na alokasyon ng WebBrain Compass.',
   'sp.subscribe.btn': 'Mag-subscribe',
   'sp.subscribe.upgrade': 'Mag-upgrade sa Plus',
   "sp.subscribe.resume_payment": "Na-update ang paraan ng pagbabayad — subukan muli",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>Pagsisimula sa llama.cpp:</strong><br>Patakbuhin ang <code>llama-server -m your-model.gguf --port 8080</code> para magsimula ng lokal na server.<br>Hindi na kailangan ng API key — ganap itong tumatakbo sa iyong makina.',
   'st.providers.save': 'I-save',
-  'st.providers.webbrain_note.body': 'Kasama ang libreng pang-araw-araw na paggamit ng WebBrain Compass. Dumadaan ang mga request sa api.webbrain.one; bilang default ay nagla-log kami ng metadata para sa quota at debugging, hindi ang teksto ng prompt, nilalaman ng pahina, mga screenshot, o mga tugon ng modelo. {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang pagsingil sa {accountLink}.',
+  'st.providers.webbrain_note.body': 'Kasama ang libreng lingguhang na paggamit ng WebBrain Compass. Dumadaan ang mga request sa api.webbrain.one; bilang default ay nagla-log kami ng metadata para sa quota at debugging, hindi ang teksto ng prompt, nilalaman ng pahina, mga screenshot, o mga tugon ng modelo. {privacyLink}. Para sa higit pang paggamit, mag-subscribe sa {subscribeLink}. Pamahalaan ang pagsingil sa {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Patakaran sa privacy',
   'st.providers.test': 'Subukan ang Koneksyon',
   'st.providers.duplicate': 'I-duplicate',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "Konektado! Modelo: {model}",
   "st.transcription.failed": "Nabigo: {error}",
   "st.transcription.fill_required": "Punan muna ang Base URL at Modelo.",
+  "st.imagegen.heading": "Generative media",
+  "st.imagegen.desc": "Gumagawa ang generate_image agent tool ng mga larawan at ibang media mula sa text prompt gamit ang napiling provider.",
+  "st.imagegen.saved": "Na-save!",
+  "st.imagegen.cleared": "Na-clear.",
+  "st.imagegen.testing": "Sinusuri...",
+  "st.imagegen.connected": "Nakakonekta! Model: {model}",
+  "st.imagegen.failed": "Nabigo: {error}",
+  "st.imagegen.fill_required": "Punan muna ang API Key at Model.",
+  "st.captcha.desc_html": "Hayaan ang ahente na awtomatikong lutasin ang mga CAPTCHA sa pamamagitan ng <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API. Sinusuportahan ang reCAPTCHA v2/v3, hCaptcha, at Cloudflare Turnstile. Awtomatikong pinapagana ang CapSolver kapag nag-save ka ng wastong API key; kung walang key, hihinto ang ahente at hihilingin sa iyong lutasin mismo ang CAPTCHA. Naniningil ang CapSolver sa bawat solve (~$0.001–$0.003); ginagamit mo ang sarili mong account at API key.",
+  "st.captcha.enabled.label": "I-enable ang CapSolver",
+  "st.captcha.enabled.desc": "Kapag may naabot na CAPTCHA ang ahente, tatawag ito sa CapSolver nang isang beses bago bumalik sa pagtatanong sa iyo. Kailangan ng API key sa ibaba.",
   "st.captcha.api_key.label": "CapSolver API Key",
   "st.captcha.save": "I-save ang Key",
   "st.captcha.check_balance": "Tingnan ang Balanse",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'Walang pinatakbo. Subukang muli para suriin ang bagong plano.',
   'sp.plan.awaiting_review': 'Aprubahan o kanselahin ang plano sa itaas bago magpadala ng isa pang mensahe.',
   'sp.plan.intent_unavailable': "Nabigo ang pagpaplano matapos ang dalawang pagsubok. Magpapatuloy sa Act mode na may karaniwang mga proteksiyon.",
-  'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',
+  'sp.slash.busy_only_oob': 'Nakapila ang mga mensahe habang abala ang WebBrain. Tanging /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, at /verbose ang maaaring tumakbo agad bilang mga slash command.',
   'tool.go_back': 'Bumabalik',
   'tool.go_forward': 'Sumusulong',
   'st.display.search.placeholder': 'Maghanap sa General na mga setting',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "Hindi mabasa ang {name}.",
   "sp.attach.needs_prompt": "Magdagdag ng tanong na ipapadala kasama ng iyong attachment.",
   "sp.attach.no_tab": "Walang aktibong tab kung saan maidudugtong ang piniling teksto.",
+  "sp.steer.button": "Gabayan",
+  "sp.steer.title": "Gabayan ang kasalukuyang gawain (Alt+Enter)",
+  "sp.steer.sent": "Naipadala ang gabay; ilalapat sa susunod na hakbang ng agent.",
+  "sp.steer.queued": "Tapos na ang kasalukuyang gawain; nakapila ang mensahe para sa susunod na turno.",
+  "sp.queue.send": "Ipila ang mensahe",
   "sp.queue.label": "Naka-queue",
   "sp.queue.label_numbered": "Naka-queue {index}",
   "sp.queue.edit": "I-edit ang naka-queue na mensahe",
   "sp.queue.delete": "I-delete ang naka-queue na mensahe",
   "sp.slash.check_progress": "Ipakita ang kasalukuyang progress ledger",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "Mag-record ng screen o window",
   "sp.progress.title_html": "<strong>Kasalukuyang progress ledger</strong>",
   "sp.progress.empty": "Wala pang progress row na naitala para sa pag-uusap na ito.",

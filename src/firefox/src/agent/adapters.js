@@ -15660,9 +15660,15 @@ const KNOWN_MASTODON_HOSTS = new Set([
   'zzz.frotz.net',
 ]);
 
+// Exact generated instance membership can be used by network allowlists.
+// The broader routing heuristic below is not proof of a Mastodon server.
+export function isKnownMastodonHost(hostname) {
+  return KNOWN_MASTODON_HOSTS.has(String(hostname || '').toLowerCase());
+}
+
 // Keep direct URL matching conservative: bare /@user and /users/user routes are
 // only Mastodon when the host is in the generated known-instance list.
-function isLikelyMastodonHost(hostname) {
+export function isLikelyMastodonHost(hostname) {
   const host = normalizedHostname(hostname);
   return KNOWN_MASTODON_HOSTS.has(host) || host.startsWith('mastodon.');
 }
@@ -16316,6 +16322,8 @@ const ADAPTERS = [
 - The post composer ("Start a post") opens a dialog rendered inside an open shadow root (#interop-outlet). If it is missing from get_accessibility_tree / click({text}) results even though the screenshot shows it open, do NOT coordinate-click inside it — clicks often hit the dialog backdrop and CLOSE it (the next screenshot shows the regular feed again). Reliable path: click({text: "Start a post"}) to open it, then type_text({selector: '[contenteditable]:not([contenteditable="false"])', text: "...", clear: true}) — this focuses the editor directly without a click. Then click the Post button (find it via get_interactive_elements or shadow_dom_query({selector: "button", shadowPath: "div#interop-outlet"}) if a plain text click matches "Post impressions" instead).
 - "Connect" button on profiles often has a "Send without a note" prompt — read it before clicking.
 - Messages are at /messaging — the message composer is a contenteditable with image/file upload icons.
+- For a task referring to a named sender's message or event, inspect that sender's messages in the current conversation first. Scroll the message-history pane upward to earlier messages; do not scroll the thread heading or switch to unrelated conversations. Verify the sender beside each attachment before treating it as the event source.
+- Open a message image with its image-preview control and inspect the preview. If the event's date, time, time zone, or other required details remain missing, call clarify instead of guessing or claiming completion.
 - In Messaging, after filling the composer, the reliable send path is usually Enter. If the composer footer says "Press Enter to Send" or the send-options popover shows "Press Enter to Send", call press_keys({key:"Enter"}) from the composer. Do NOT keep scrolling to find a Send button that is already visible/implicit.
 - The three-dot / send-options control near the composer opens send preferences ("Press Enter to Send" vs "Click Send"); it is not the Send action. If you opened that popover by mistake, choose/keep "Press Enter to Send", close it if needed, then press Enter to send the focused composer.
 - Search has filters (People, Posts, Jobs, Companies) as tabs at the top.`,
@@ -16345,9 +16353,9 @@ const ADAPTERS = [
     notes: `
 - The composer opens from "Compose new post" (also the "New Post" button on wider layouts) and renders as a dialog over the current feed; the URL does not change while it is open.
 - The post body is a contenteditable rich-text editor, not a textarea. Use set_field / type_ax against the composer textbox ref rather than clicking into it by coordinates. Re-read it after filling and verify the complete text, mentions, link card, media, language, and account before publishing.
-- Images attach through a hidden <input type=file> behind "Add media to post" / "Add images". Do NOT click that control to open an OS file dialog — call upload_file with the file input's selector and the downloadId or absolute path, which attaches the file without any dialog.
+- Images attach through a hidden <input type=file> behind "Add media to post" / "Add images". Do NOT click that control to open an OS file dialog — call upload_file with the file input's selector and the downloadId or absolute path, which attaches the file without any dialog. Alt text is a separate per-image control; add it only when requested.
+- For public video downloads, call an enabled \`download_public_media\` skill first with the exact /profile/<handle-or-DID>/post/<id> permalink; on a feed/profile, inspect the visible target and its post link first. FreeSkillz assembles HLS into one MP4 with audio on its server. Use \`download_social_media\` only if the skill is unavailable or actually fails.
 - Bluesky enforces a 300-character graphene limit and shows a live counter; a post over the limit leaves "Post" disabled rather than reporting an error.
-- Alt text is a separate per-image control. Add it only when the user asked for it.
 - "Post" (labelled "Publish post") commits. There is no <form> submit: the composer closes and the new post is inserted into the feed via XHR, so a closed composer alone is not proof.
 - Treat a cleared or closed composer as an intermediate signal only. Require one new bsky.app/profile/<account>/post/<id> link whose post card contains the complete reviewed text.
 - Report publication only after the post is reachable at its own /profile/<handle>/post/<id> URL under the intended handle, with the requested text and any attached image visible there.`,
@@ -17912,6 +17920,7 @@ const ADAPTERS = [
     matches: isMastodonUrl,
     fullPageCapture: { infiniteScroll: isMastodonInfiniteScrollUrl },
     notes: `
+- For public media downloads, call an enabled \`download_public_media\` skill first with the exact status permalink (/@<user>/<id> or /users/<user>/statuses/<id>); on a timeline/profile, identify the visible post and its link first. FreeSkillz supports public Mastodon media across instances without browser cookies. Never send followers-only/direct posts; use \`download_social_media\` only if the skill is unavailable or fails.
 - Mastodon login is per-instance. If a remote profile asks you to sign in / continue before following, don't create an account on that remote server.
 - To hand a remote Mastodon profile/status back to the user's home instance: open the remote profile/status, wait_for_stable, then use the sign-in/interaction popup to enter the home server DOMAIN ONLY (example: mastoturk.org), not a full URL or @handle.
 - After submitting the home domain, expect a redirect to the user's own instance with a remote URL like \`https://mastoturk.org/@user@remote.example\`; wait_for_stable there. For account/profile follow flows, click Follow; for status or authorize_interaction flows, complete the requested action on the home-instance page (reply, boost, favorite, or follow).

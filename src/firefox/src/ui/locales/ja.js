@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Japanese (ja).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('ja'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': '拡張機能 UI のズーム',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': '開始',
   'ob.btn.skip': '今はスキップ',
   'ob.btn.start': '開始',
-  'ob.cloud.body': 'WebBrain Compassは1日あたりの無料割り当てで準備できています。選択したCompass会話は、WebBrainの改善支援がデフォルトでオンになっている間、WebBrainの改善のために保存および使用される可能性があります。設定 → 一般でオフにできます。',
+  'ob.cloud.body': 'WebBrain Compassは1週間あたりの無料割り当てで準備できています。選択したCompass会話は、WebBrainの改善支援がデフォルトでオンになっている間、WebBrainの改善のために保存および使用される可能性があります。設定 → 一般でオフにできます。',
   'ob.cloud.change': '変更',
   'ob.cloud.using': 'WebBrain Compassを使用しています。',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': '復旧データを保存できません。実行中のタスクは続行できますが、接続が切れた後に操作を再実行することはありません。手動で再試行してください。',
 
   'sp.error_prefix': 'エラー: {msg}',
-  'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1日あたりの利用枠を使い切りました。',
+  'sp.subscribe.allowance_used': 'WebBrain Compass の無料の1週間あたりの利用枠を使い切りました。',
   'sp.subscribe.btn': '購読する',
   'sp.subscribe.upgrade': 'Plus にアップグレード',
   "sp.subscribe.resume_payment": "支払い方法を更新しました — 再試行",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp を始める：</strong><br><code>llama-server -m your-model.gguf --port 8080</code> を実行してローカルサーバーを起動します。<br>API キーは不要 — 完全にあなたのマシン上で動きます。',
   'st.providers.save': '保存',
-  'st.providers.webbrain_note.body': '無料の毎日の WebBrain Compass 利用が含まれています。リクエストは api.webbrain.one を経由します。デフォルトでは、割り当てとデバッグのためにメタデータを記録し、プロンプトテキスト、ページの内容、スクリーンショット、モデルの応答は記録しません。{privacyLink}。さらに利用するには {subscribeLink} で登録してください。請求は {accountLink} で管理できます。',
+  'st.providers.webbrain_note.body': '無料の毎週の WebBrain Compass 利用が含まれています。リクエストは api.webbrain.one を経由します。デフォルトでは、割り当てとデバッグのためにメタデータを記録し、プロンプトテキスト、ページの内容、スクリーンショット、モデルの応答は記録しません。{privacyLink}。さらに利用するには {subscribeLink} で登録してください。請求は {accountLink} で管理できます。',
   'st.providers.webbrain_note.privacy_link': 'プライバシーポリシー',
   'st.providers.test': '接続テスト',
   'st.providers.duplicate': '複製',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "接続しました！モデル: {model}",
   "st.transcription.failed": "失敗: {error}",
   "st.transcription.fill_required": "先にベース URL とモデルを入力してください。",
+  "st.imagegen.heading": "生成メディア",
+  "st.imagegen.desc": "エージェントツール generate_image は、選択したプロバイダーでテキストプロンプトから画像などのメディアを生成します。",
+  "st.imagegen.saved": "保存しました！",
+  "st.imagegen.cleared": "クリアしました。",
+  "st.imagegen.testing": "テスト中...",
+  "st.imagegen.connected": "接続しました！モデル: {model}",
+  "st.imagegen.failed": "失敗: {error}",
+  "st.imagegen.fill_required": "先に API キーとモデルを入力してください。",
+  "st.captcha.desc_html": "<a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API を使って、エージェントに CAPTCHA を自動で解かせます。reCAPTCHA v2/v3、hCaptcha、Cloudflare Turnstile に対応しています。有効な API キーを保存すると CapSolver が自動的に有効になります。キーがない場合、エージェントは停止し、CAPTCHA を手動で解くよう求めます。CapSolver は解決ごとに課金します（約 ~$0.001–$0.003）。ご自身のアカウントと API キーを使用します。",
+  "st.captcha.enabled.label": "CapSolver を有効化",
+  "st.captcha.enabled.desc": "エージェントが CAPTCHA に遭遇すると、あなたに尋ねる前にまず CapSolver を 1 回呼び出します。下記の API キーが必要です。",
   "st.captcha.api_key.label": "CapSolver API キー",
   "st.captcha.save": "キーを保存",
   "st.captcha.check_balance": "残高を確認",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': '何も実行されていません。再試行して新しい計画を確認してください。',
   'sp.plan.awaiting_review': '別のメッセージを送信する前に、上の計画を承認またはキャンセルしてください。',
   'sp.plan.intent_unavailable': "2回試行しても計画に失敗しました。通常の安全対策を維持したまま Act モードで続行します。",
-  'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',
+  'sp.slash.busy_only_oob': 'WebBrain がビジーの間、メッセージはキューに入ります。/help、/progress、/btw、/scratchpad、/memory、/schedule --list、/watch、/dangerously-skip-permissions、/screenshot、/export、/export --traces、/verbose だけがスラッシュコマンドとしてすぐに実行できます。',
   'tool.go_back': '戻る',
   'tool.go_forward': '進む',
   'st.display.search.placeholder': '一般設定を検索',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "{name} を読み取れませんでした。",
   "sp.attach.needs_prompt": "添付ファイルと一緒に送る質問を入力してください。",
   "sp.attach.no_tab": "選択したテキストを添付できるアクティブなタブがありません。",
+  "sp.steer.button": "軌道修正",
+  "sp.steer.title": "実行中のタスクを軌道修正 (Alt+Enter)",
+  "sp.steer.sent": "指示を送信しました。次のエージェントのステップで適用されます。",
+  "sp.steer.queued": "現在のタスクは終了しました。メッセージを次のターンの待機列に追加しました。",
+  "sp.queue.send": "メッセージを待機列に追加",
   "sp.queue.label": "キュー済み",
   "sp.queue.label_numbered": "キュー済み {index}",
   "sp.queue.edit": "キュー内のメッセージを編集",
   "sp.queue.delete": "キュー内のメッセージを削除",
   "sp.slash.check_progress": "現在の進行ログを表示",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "画面またはウィンドウを録画",
   "sp.progress.title_html": "<strong>現在の進行ログ</strong>",
   "sp.progress.empty": "この会話にはまだ進行行が記録されていません。",

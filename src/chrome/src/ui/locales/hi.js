@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hindi — translated from the canonical English locale.
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('hi'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'एक्सटेंशन UI ज़ूम',
@@ -122,6 +124,11 @@ export default {
   'sp.attach.read_failed': "{name} नहीं पढ़ सका.",
   'sp.attach.needs_prompt': 'अपने अटैचमेंट के साथ भेजने के लिए एक सवाल लिखें।',
   'sp.attach.no_tab': 'चयनित टेक्स्ट को जोड़ने के लिए कोई सक्रिय टैब नहीं है।',
+  "sp.steer.button": "दिशा दें",
+  "sp.steer.title": "चल रहे कार्य को दिशा दें (Alt+Enter)",
+  "sp.steer.sent": "निर्देश भेज दिया गया है; अगले चरण में लागू होगा।",
+  "sp.steer.queued": "चल रहा कार्य समाप्त हो गया है; संदेश अगले दौर के लिए कतार में है।",
+  "sp.queue.send": "संदेश कतार में डालें",
   'sp.queue.label': "कतारबद्ध",
   'sp.queue.label_numbered': "कतारबद्ध {index}",
   'sp.queue.edit': "पंक्तिबद्ध संदेश संपादित करें",
@@ -168,6 +175,8 @@ export default {
   'sp.slash.schedule': "एक निर्धारित कार्य बनाएँ",
   'sp.slash.list_schedules': "निर्धारित कार्य दिखाएँ",
   'sp.slash.check_progress': "वर्तमान प्रगति खाता दिखाएँ",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   'sp.slash.show_scratchpad': "वर्तमान स्क्रैचपैड दिखाएँ",
   'sp.slash.edit_scratchpad': "मौजूदा स्क्रैचपैड में टेक्स्ट जोड़ें",
   'sp.slash.clear_scratchpad': "वर्तमान स्क्रैचपैड साफ़ करें",
@@ -405,7 +414,7 @@ export default {
   "sp.watch.exists": "यह पेज पहले से इसी शर्त के साथ देखा जा रहा है।",
   "sp.watch.error": "निगरानी नहीं बनाई जा सकी: {error}",
   "sp.slash.unsupported": "इस ब्राउज़र में {usage} समर्थित नहीं है.",
-  'sp.slash.busy_only_oob': "WebBrain व्यस्त होने पर संदेश कतारबद्ध हैं। केवल /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose स्लैश कमांड के रूप में तुरंत चल सकता है।",
+  'sp.slash.busy_only_oob': "WebBrain व्यस्त होने पर संदेश कतारबद्ध हैं। केवल /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose स्लैश कमांड के रूप में तुरंत चल सकता है।",
   'sp.compact.nothing_to_compact': "अभी तक संकलित करने के लिए कुछ भी नहीं है - पर्याप्त पुराना संदर्भ नहीं है।",
   'sp.compact.busy': "जब कोई रन चल रहा हो तो उसे संकुचित नहीं किया जा सकता - इसके समाप्त होने तक प्रतीक्षा करें।",
   'sp.compact.failed': "प्रसंग संकलन विफल: {error}",
@@ -569,7 +578,7 @@ export default {
   'ob.btn.done': "आरंभ करें",
   'ob.btn.skip': "अभी के लिए छोड़ें",
   'ob.btn.start': 'प्रारंभ',
-  'ob.cloud.body': 'WebBrain Compass एक निःशुल्क दैनिक भत्ते के साथ तैयार है। चयनित Compass बातचीत बनाए रखी जा सकती है और WebBrain में सुधार के लिए उपयोग की जा सकती है जबकि Help Improve WebBrain डिफ़ॉल्ट रूप से चालू है। आप इसे Settings → General में बंद कर सकते हैं।',
+  'ob.cloud.body': 'WebBrain Compass एक निःशुल्क साप्ताहिक भत्ते के साथ तैयार है। चयनित Compass बातचीत बनाए रखी जा सकती है और WebBrain में सुधार के लिए उपयोग की जा सकती है जबकि Help Improve WebBrain डिफ़ॉल्ट रूप से चालू है। आप इसे Settings → General में बंद कर सकते हैं।',
   'ob.cloud.change': 'बदलें',
   'ob.cloud.using': 'WebBrain Compass का उपयोग कर रहा है।',
 
@@ -623,17 +632,6 @@ export default {
   'st.display.advanced': "उन्नत",
   ...getApocalypseModeCopy('hi'),
   ...getEmergencyBoxCopy('hi'),
-  'st.display.cloud_bridge.label': 'MCP',
-  'st.display.cloud_bridge.desc': 'पोर्ट 17374 का उपयोग करके एक स्थानीय कंट्रोलर को इस Chromium प्रोफ़ाइल से कनेक्ट करें। एक समय में केवल एक ब्रिज सक्रिय हो सकता है और मानक अनुमति संकेत लागू रहेंगे।',
-  'st.display.cloud_bridge.url_label': 'WebSocket URL',
-  'st.display.cloud_bridge.url_placeholder': 'ws://127.0.0.1:17374/extension',
-  'st.display.cloud_bridge.invalid_url': '127.0.0.1, localhost या ::1 वाला स्थानीय ws:// URL इस्तेमाल करें।',
-  'st.display.cloud_bridge.status_disabled': 'ब्रिज बंद है',
-  'st.display.cloud_bridge.status_connecting': 'कनेक्ट हो रहा है…',
-  'st.display.cloud_bridge.status_connected': 'कनेक्टेड',
-  'st.display.cloud_bridge.status_reconnecting': 'फिर से कनेक्ट हो रहा है (प्रयास {attempt})…',
-  'st.display.cloud_bridge.status_error': 'कनेक्शन त्रुटि: {error}',
-  'st.display.cloud_bridge.status_unreachable': '{url} तक नहीं पहुँचा जा सका। संबंधित स्थानीय ब्रिज सेवा शुरू करें; फिर प्रयास हो रहा है…',
   'st.display.help_improve.label': "WebBrain को बेहतर बनाने में सहायता करें",
   'st.display.help_improve.desc_html': "योग्य WebBrain Compass टेक्स्ट और टूल इंटरैक्शन को बनाए रखने और मूल्यांकन, सुधार, फाइन-ट्यूनिंग और प्रशिक्षण के लिए उपयोग करने की अनुमति दें। डिफ़ॉल्ट रूप से चालू. इसे बंद करने से वर्तमान वार्तालाप स्थायी रूप से बंद हो जाता है; इसे वापस चालू करना अगली नई बातचीत पर लागू होता है। स्क्रीनशॉट और छवि बाइट्स को WebBrain सुधार डेटाबेस में बरकरार नहीं रखा गया है। <u>WebBrain स्थानीय-मॉडल और आपके स्वयं के API अनुरोध केवल उन्हीं प्रदाताओं से एकत्र करता है जहाँ आप “अनुसंधान हेतु क्वेरी साझा करें” चालू करते हैं।</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">गोपनीयता नीति →</a>",
   'st.display.clarify_timeout.label': "टाइमआउट स्पष्ट करें",
@@ -905,6 +903,14 @@ export default {
   'st.transcription.connected': "जुड़ा हुआ! मॉडल: {model}",
   'st.transcription.failed': "विफल: {error}",
   'st.transcription.fill_required': "सबसे पहले बेस यूआरएल और मॉडल भरें।",
+  "st.imagegen.heading": "जनरेटिव मीडिया",
+  "st.imagegen.desc": "generate_image एजेंट टूल चुने हुए प्रदाता से टेक्स्ट प्रॉम्प्ट के आधार पर चित्र और अन्य मीडिया बनाता है।",
+  "st.imagegen.saved": "सहेजा गया!",
+  "st.imagegen.cleared": "साफ़ कर दिया गया।",
+  "st.imagegen.testing": "जाँच जारी...",
+  "st.imagegen.connected": "कनेक्ट हो गया! मॉडल: {model}",
+  "st.imagegen.failed": "विफल: {error}",
+  "st.imagegen.fill_required": "पहले API की और मॉडल भरें।",
 
   'st.imageBudget.heading': "छवि बजट",
   'st.imageBudget.desc': "स्क्रीनशॉट का आकार और हर टर्न में विज़न के लिए एजेंट द्वारा लिए जाने वाले स्क्रीनशॉट की संख्या नियंत्रित करें। कम विवरण और छोटे आयाम छोटे एंडपॉइंट के लिए लागत और विलंबता घटाते हैं; अधिक मान गुणवत्ता बनाए रखते हैं। डिफ़ॉल्ट पिछले व्यवहार से मेल खाते हैं।",

@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Persian — translated from the canonical English locale.
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('fa'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'بزرگ‌نمایی رابط کاربری افزونه',
@@ -122,6 +124,11 @@ export default {
   'sp.attach.read_failed': "نمی توان {name} را خواند.",
   'sp.attach.needs_prompt': 'برای ارسال همراه پیوست، یک پرسش بنویسید.',
   'sp.attach.no_tab': 'هیچ زبانه فعالی برای پیوست کردن متن انتخاب‌شده وجود ندارد.',
+  "sp.steer.button": "هدایت",
+  "sp.steer.title": "هدایت کار جاری (Alt+Enter)",
+  "sp.steer.sent": "پیام هدایت ارسال شد؛ در گام بعدی اعمال می‌شود.",
+  "sp.steer.queued": "کار جاری تمام شده؛ پیام برای نوبت بعد در صف قرار گرفت.",
+  "sp.queue.send": "قرار دادن پیام در صف",
   'sp.queue.label': "در صف",
   'sp.queue.label_numbered': "در صف {index}",
   'sp.queue.edit': "ویرایش پیام در صف",
@@ -168,6 +175,8 @@ export default {
   'sp.slash.schedule': "یک کار برنامه ریزی شده ایجاد کنید",
   'sp.slash.list_schedules': "نمایش وظایف برنامه ریزی شده",
   'sp.slash.check_progress': "نمایش دفتر پیشرفت فعلی",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   'sp.slash.show_scratchpad': "صفحه خراش فعلی را نشان دهید",
   'sp.slash.edit_scratchpad': "متن را به صفحه خراش فعلی اضافه کنید",
   'sp.slash.clear_scratchpad': "صفحه خراش فعلی را پاک کنید",
@@ -403,7 +412,7 @@ export default {
   "sp.watch.exists": "این صفحه هم‌اکنون با همین شرط زیر نظر است.",
   "sp.watch.error": "ایجاد پایش ممکن نبود: {error}",
   "sp.slash.unsupported": "{usage} در این مرورگر پشتیبانی نمی شود.",
-  'sp.slash.busy_only_oob': "در حالی که WebBrain مشغول است، پیام ها در صف قرار می گیرند. فقط /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose می تواند بلافاصله به عنوان دستورات اسلش اجرا شود.",
+  'sp.slash.busy_only_oob': "در حالی که WebBrain مشغول است، پیام ها در صف قرار می گیرند. فقط /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose می تواند بلافاصله به عنوان دستورات اسلش اجرا شود.",
   'sp.compact.nothing_to_compact': "هنوز چیزی برای فشرده سازی وجود ندارد - زمینه قدیمی به اندازه کافی وجود ندارد.",
   'sp.compact.busy': "هنگامی که یک اجرا در حال انجام است فشرده نمی شود - منتظر بمانید تا پایان یابد.",
   'sp.compact.failed': "فشرده سازی زمینه انجام نشد: {error}",
@@ -566,7 +575,7 @@ export default {
   'ob.btn.done': "شروع کنید",
   'ob.btn.skip': "فعلا رد شوید",
   'ob.btn.start': 'شروع',
-  'ob.cloud.body': 'WebBrain Compass با یک بدله روزانه رایگان آماده است. مکالمات Compass انتخابی ممکن است حفظ شوند و برای بهبود WebBrain استفاده شوند در حالی که Help Improve WebBrain به طور پیش فرض روشن است. شما می توانید آن را در Settings → General خاموش کنید.',
+  'ob.cloud.body': 'WebBrain Compass با یک بدله هفتگی رایگان آماده است. مکالمات Compass انتخابی ممکن است حفظ شوند و برای بهبود WebBrain استفاده شوند در حالی که Help Improve WebBrain به طور پیش فرض روشن است. شما می توانید آن را در Settings → General خاموش کنید.',
   'ob.cloud.change': 'تغییر',
   'ob.cloud.using': 'استفاده از WebBrain Compass.',
 
@@ -884,6 +893,14 @@ export default {
   'st.transcription.connected': "متصل است! مدل: {model}",
   'st.transcription.failed': "ناموفق: {error}",
   'st.transcription.fill_required': "ابتدا Base URL و Model را پر کنید.",
+  "st.imagegen.heading": "رسانه‌های مولد",
+  "st.imagegen.desc": "ابزار عامل generate_image با ارائه‌دهنده انتخاب‌شده از درخواست متنی، تصویر و رسانه‌های دیگر تولید می‌کند.",
+  "st.imagegen.saved": "ذخیره شد!",
+  "st.imagegen.cleared": "پاک شد.",
+  "st.imagegen.testing": "در حال آزمایش...",
+  "st.imagegen.connected": "متصل شد! مدل: {model}",
+  "st.imagegen.failed": "خطا: {error}",
+  "st.imagegen.fill_required": "ابتدا کلید API و مدل را پر کنید.",
 
   'st.imageBudget.heading': "بودجه تصویر",
   'st.imageBudget.desc': "اندازه اسکرین‌شات و تعداد تصاویری را که عامل در هر نوبت برای بینایی می‌گیرد کنترل کنید. جزئیات و ابعاد کمتر، هزینه و تأخیر را برای نقاط پایانی کوچک‌تر کاهش می‌دهد؛ مقادیر بیشتر وفاداری را حفظ می‌کند. پیش‌فرض‌ها با رفتار قبلی مطابقت دارند.",

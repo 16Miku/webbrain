@@ -1,4 +1,8 @@
+import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
+import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
+import { createFeedbackHandoff } from './feedback-handoff.js';
+const feedbackHandoff = createFeedbackHandoff(chrome);
 import { ProviderManager } from './providers/manager.js';
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
@@ -40,6 +44,9 @@ import {
   getClaudeOAuthStatus,
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
+import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { testImageGenProvider } from './agent/fal-media.js';
+import { IMAGE_GEN_MODEL_KEY } from './agent/media-config.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
 import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
 import { getTwoCaptchaBalance } from './agent/two-captcha.js';
@@ -101,6 +108,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { createMemcodeRecall, MEMCODE_RECALL_ENABLED_KEY } from './agent/memcode-recall.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   CONFIG_STORAGE_KEYS,
@@ -232,6 +240,7 @@ agent.setConversationScopeChangeListener((tabId, state) => {
   }).catch(() => {});
 });
 const userMemoryStore = createUserMemoryStore(chrome.storage.local);
+const memcodeRecall = createMemcodeRecall({ storage: chrome.storage.local, identity: chrome.identity });
 const savedWorkflowStore = createSavedWorkflowStore(chrome.storage.local);
 const teacherSessionStore = createTeacherSessionStore(chrome.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
@@ -265,6 +274,7 @@ const scheduler = new ScheduledJobManager({
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
+    await imageGenConfigReady;
     await webMcpEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
@@ -593,6 +603,12 @@ async function loadStrictSecretMode() {
   agent.strictSecretMode = stored?.strictSecretMode === true;
 }
 const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
+
+async function loadImageGenConfig() {
+  const stored = await chrome.storage.local.get(IMAGE_GEN_MODEL_KEY).catch(() => ({}));
+  agent.setImageGenConfig(stored?.[IMAGE_GEN_MODEL_KEY]);
+}
+const imageGenConfigReady = loadImageGenConfig();
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
@@ -1229,6 +1245,9 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   // already-open conversations so the next turn sees the update — without
   // wiping the chat history.
   let refreshPrompts = false;
+  if (areaName === 'local' && changes[IMAGE_GEN_MODEL_KEY]) {
+    agent.setImageGenConfig(changes[IMAGE_GEN_MODEL_KEY].newValue);
+  }
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
     const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
     agent.setAlwaysAllowApiMutations(value === undefined || value === true);
@@ -1948,7 +1967,7 @@ function isPersistenceDegradedRunUpdate(update) {
 
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
     || isClarificationRequiredRunUpdate(update)
     || isPersistenceDegradedRunUpdate(update)
     || isPlannerRequestFailureUpdate(update)
@@ -1961,7 +1980,8 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
   if (updates.some(update => update?.type === 'error'
-    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update))) return 'failed';
+    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update)
+    || update?.type === 'quota')) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }
@@ -1985,7 +2005,7 @@ const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this ses
 function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
   if (updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -2274,6 +2294,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     data: {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
+      quota: snapshot.quota || null,
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
       attachmentDeliveryState,
@@ -2812,12 +2833,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   handleMessage(msg, sender)
     .then(sendResponse)
-    .catch(e => sendResponse({ error: e.message, status: e.status || 500 }));
+    .catch(e => sendResponse({ error: e.message, status: e.status || 500, quota: e.quota }));
 
   return true; // async response
 });
 
 async function handleMessage(msg, sender) {
+  if (String(msg.action || '').startsWith('feedback_')) return feedbackHandoff.handle(msg, sender);
+  if (msg.action === 'chat_steer') {
+    // Content scripts must never turn page text into a trusted human correction.
+    if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+      throw new Error('Steering is available from the chat panel only.');
+    }
+    return agent.steerMessage(Number(msg.tabId), msg.text, {
+      requestId: msg.requestId, messageId: msg.messageId,
+    });
+  }
+
+  // Only Settings may start OAuth or change the user's remote-memory choice.
+  // Content scripts share this message bus and must not control the connection.
+  if (String(msg.action || '').startsWith('memcode_recall_')
+    && sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/settings.html')) {
+    return { ok: false, error: 'MemCode connection controls are available in Settings only.' };
+  }
   const lightweightAction = [
     'get_recording_state',
     'persist_tab_chat',
@@ -2838,7 +2876,7 @@ async function handleMessage(msg, sender) {
     // Agent toggles and prompt add-ons hydrate once at SW boot — await those
     // promises so the first chat can't race ahead of hydration, without a
     // storage round-trip on every message.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await webMcpEnabledReady;
@@ -2999,6 +3037,19 @@ async function handleMessage(msg, sender) {
         formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
+    }
+
+    case 'memcode_recall_status':
+      return { ok: true, ...(await memcodeRecall.status()) };
+    case 'memcode_recall_connect':
+      return { ok: true, ...(await memcodeRecall.connect()) };
+    case 'memcode_recall_disconnect':
+      return { ok: true, ...(await memcodeRecall.disconnect()) };
+    case 'memcode_recall_enable': {
+      const status = await memcodeRecall.status();
+      if (!status.connected && msg.enabled) return { ok: false, error: 'Connect MemCode before enabling recall.' };
+      await chrome.storage.local.set({ [MEMCODE_RECALL_ENABLED_KEY]: status.connected && msg.enabled === true });
+      return { ok: true, ...(await memcodeRecall.status()) };
     }
 
     case 'add_user_memory': {
@@ -3205,6 +3256,20 @@ async function handleMessage(msg, sender) {
         ok: true,
         ...(await agent.getConversationState(tabId, msg.mode || 'ask')),
       };
+    }
+
+    case 'fork_standalone_conversation': {
+      const sourceTabId = Number(msg.sourceTabId);
+      const forkTabId = Number(msg.forkTabId || sender.tab?.id);
+      if (!Number.isFinite(sourceTabId) || !Number.isFinite(forkTabId)) {
+        throw new Error('No source or fork tab ID');
+      }
+      const fork = await agent.forkConversation(sourceTabId, forkTabId);
+      if (!fork?.resumed) {
+        const sourceChat = await tabChatHandoff.load(sourceTabId, { waitForHandoff: true });
+        if (sourceChat?.found) await tabChatHandoff.save(forkTabId, sourceChat.html);
+      }
+      return { ok: true, ...fork };
     }
 
     case 'chat_start': {
@@ -3737,6 +3802,7 @@ async function handleMessage(msg, sender) {
         loadResearchEscalation(),
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
+        loadImageGenConfig(),
         loadWebMCPEnabled(),
         loadProfile(),
         syncAgentUserMemoryFromStorage(),
@@ -4078,14 +4144,36 @@ async function handleMessage(msg, sender) {
       return await providerManager.testTranscriptionProvider();
     }
 
+    case 'test_image_gen_provider': {
+      return await testImageGenProvider();
+    }
+
+    case 'list_decision_models': {
+      await strictSecretModeReady;
+      try {
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        const models = await listDecisionModels(resolveDecisionConfig(msg.settings || {}));
+        return { success: true, models };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
     case 'test_system_one': {
       await strictSecretModeReady;
       try {
-        const result = await agent.evaluateSystemOne(null, createSystemOneJudge({ maxRetries: 0 }), {
-          apiKey: msg.apiKey, state: { color: 'blue' },
-          questions: { test: { type: 'noul', instructions: 'Is the color blue?' } },
-        });
-        return { success: true, model: result.model };
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        let config = msg.settings ? resolveDecisionConfig(msg.settings) : undefined;
+        if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
+          try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}
+        }
+        const client = createSystemOneJudge({ maxRetries: 0 });
+        const evaluate = args => agent.evaluateSystemOne(null, client, { ...args, config, apiKey: msg.apiKey });
+        const result = await evaluate({ state: { color: 'blue' }, questions: { test: { type: 'noul', instructions: 'Is the color blue?' } } });
+        if (result.answers.test.noul < .9) throw new Error('Decision connection test was inconclusive.');
+        let visionVerified = false;
+        if (config?.supportsVision) try {
+          if (config.provider === 'openrouter') await new Promise(resolve => setTimeout(resolve, 1100));
+          visionVerified = await probeDecisionVision(config, args => agent.evaluateSystemOne(null, client, args));
+        } catch {}
+        return { success: true, model: result.model, visionTested: config?.supportsVision === true, visionVerified };
       } catch (error) { return { success: false, error: error.message }; }
     }
 

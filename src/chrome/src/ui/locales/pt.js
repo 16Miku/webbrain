@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Portuguese — translated from the canonical English locale.
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('pt'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zoom da interface da extensão',
@@ -122,6 +124,11 @@ export default {
   'sp.attach.read_failed': "Não foi possível ler {name}.",
   'sp.attach.needs_prompt': 'Adicione uma pergunta para enviar com o anexo.',
   'sp.attach.no_tab': 'Nenhuma aba ativa para anexar a seleção.',
+  "sp.steer.button": "Orientar",
+  "sp.steer.title": "Orientar a tarefa atual (Alt+Enter)",
+  "sp.steer.sent": "Orientação enviada; será aplicada no próximo passo do agente.",
+  "sp.steer.queued": "A tarefa atual terminou; a mensagem está na fila para o próximo turno.",
+  "sp.queue.send": "Colocar mensagem na fila",
   'sp.queue.label': "Na fila",
   'sp.queue.label_numbered': "Na fila {index}",
   'sp.queue.edit': "Editar mensagem na fila",
@@ -168,6 +175,8 @@ export default {
   'sp.slash.schedule': "Crie uma tarefa agendada",
   'sp.slash.list_schedules': "Mostrar tarefas agendadas",
   'sp.slash.check_progress': "Mostrar o registro de progresso atual",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   'sp.slash.show_scratchpad': "Mostrar o scratchpad atual",
   'sp.slash.edit_scratchpad': "Anexar texto ao scratchpad atual",
   'sp.slash.clear_scratchpad': "Limpar o scratchpad atual",
@@ -405,7 +414,7 @@ export default {
   "sp.watch.exists": "Esta página já está sendo vigiada com a mesma condição.",
   "sp.watch.error": "Não foi possível criar o monitoramento: {error}",
   "sp.slash.unsupported": "{usage} não é compatível com este navegador.",
-  'sp.slash.busy_only_oob': "As mensagens são enfileiradas enquanto WebBrain está ocupado. Somente /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose pode ser executado imediatamente como comandos de barra.",
+  'sp.slash.busy_only_oob': "As mensagens são enfileiradas enquanto WebBrain está ocupado. Somente /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose pode ser executado imediatamente como comandos de barra.",
   'sp.compact.nothing_to_compact': "Nada para compactar ainda – não há contexto antigo suficiente.",
   'sp.compact.busy': "Não é possível compactar enquanto uma execução está em andamento — espere que ela termine.",
   'sp.compact.failed': "Falha na compactação do contexto: {error}",
@@ -569,7 +578,7 @@ export default {
   'ob.btn.done': "Comece",
   'ob.btn.skip': "Pular por enquanto",
   'ob.btn.start': 'Iniciar',
-  'ob.cloud.body': 'WebBrain Compass está pronto com uma alocação diária gratuita. Conversas selecionadas do Compass podem ser retidas e usadas para melhorar o WebBrain enquanto Ajuda a Melhorar o WebBrain está ativado por padrão. Você pode desativá-lo em Configurações → Geral.',
+  'ob.cloud.body': 'WebBrain Compass está pronto com uma alocação semanal gratuita. Conversas selecionadas do Compass podem ser retidas e usadas para melhorar o WebBrain enquanto Ajuda a Melhorar o WebBrain está ativado por padrão. Você pode desativá-lo em Configurações → Geral.',
   'ob.cloud.change': 'Alterar',
   'ob.cloud.using': 'Usando WebBrain Compass.',
 
@@ -623,17 +632,6 @@ export default {
   'st.display.advanced': "Avançado",
   ...getApocalypseModeCopy('pt'),
   ...getEmergencyBoxCopy('pt'),
-  'st.display.cloud_bridge.label': 'MCP',
-  'st.display.cloud_bridge.desc': 'Conecte um controlador local a este perfil do Chromium usando a porta 17374. Apenas uma ponte pode ficar ativa por vez, e os pedidos padrão de permissão continuam válidos.',
-  'st.display.cloud_bridge.url_label': 'URL do WebSocket',
-  'st.display.cloud_bridge.url_placeholder': 'ws://127.0.0.1:17374/extension',
-  'st.display.cloud_bridge.invalid_url': 'Use uma URL ws:// local com 127.0.0.1, localhost ou ::1.',
-  'st.display.cloud_bridge.status_disabled': 'Ponte desativada',
-  'st.display.cloud_bridge.status_connecting': 'Conectando…',
-  'st.display.cloud_bridge.status_connected': 'Conectado',
-  'st.display.cloud_bridge.status_reconnecting': 'Reconectando (tentativa {attempt})…',
-  'st.display.cloud_bridge.status_error': 'Erro de conexão: {error}',
-  'st.display.cloud_bridge.status_unreachable': 'Não foi possível acessar {url}. Inicie o serviço de ponte local correspondente; tentando novamente…',
   'st.display.help_improve.label': "Ajude a melhorar WebBrain",
   'st.display.help_improve.desc_html': "Permitir que textos qualificados do WebBrain Compass e interações de ferramentas sejam retidos e usados para avaliação, melhoria, ajuste fino e treinamento. Ativado por padrão. Desativar isso permanentemente desativa a conversa atual; ativá-lo novamente se aplica à próxima nova conversa. Capturas de tela e bytes de imagem não são retidos no banco de dados de melhorias WebBrain. <u>A WebBrain só coleta solicitações de modelos locais e de suas próprias APIs dos provedores em que você ativar “Compartilhar consultas para pesquisa”.</u> <a href=\"https://webbrain.one/privacy\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:var(--accent);\">Política de privacidade →</a>",
   'st.display.clarify_timeout.label': "Esclarecer o tempo limite",
@@ -905,6 +903,14 @@ export default {
   'st.transcription.connected': "Conectado! Modelo: {model}",
   'st.transcription.failed': "Falha: {error}",
   'st.transcription.fill_required': "Preencha primeiro o URL base e o modelo.",
+  "st.imagegen.heading": "Mídia generativa",
+  "st.imagegen.desc": "A ferramenta de agente generate_image cria imagens e outras mídias a partir de texto com o provedor selecionado.",
+  "st.imagegen.saved": "Salvo!",
+  "st.imagegen.cleared": "Limpo.",
+  "st.imagegen.testing": "Testando...",
+  "st.imagegen.connected": "Conectado! Modelo: {model}",
+  "st.imagegen.failed": "Falhou: {error}",
+  "st.imagegen.fill_required": "Preencha primeiro a chave de API e o modelo.",
 
   'st.imageBudget.heading': "Orçamento de imagens",
   'st.imageBudget.desc': "Controle o tamanho das capturas de tela e quantas o agente faz para visão por turno. Menos detalhes e dimensões menores reduzem custo e latência em endpoints menores; valores maiores preservam a fidelidade. Os padrões correspondem ao comportamento anterior.",

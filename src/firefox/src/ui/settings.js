@@ -1,9 +1,11 @@
+import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
 /**
  * WebBrain Settings Page — provider configuration + display settings.
  */
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
 import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
@@ -80,7 +82,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '38.0.13';
+const EXT_VERSION = '39.1.3';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -90,6 +92,7 @@ const advancedSettings = document.querySelector('.advanced-settings');
 const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
+const composerDeliveryModeSelect = document.getElementById('select-composer-delivery-mode');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
 const helpImproveToggle = document.getElementById('toggle-help-improve');
@@ -123,6 +126,7 @@ const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
 const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
+const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagnostics');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
@@ -160,6 +164,17 @@ const btnSaveTranscription = document.getElementById('btn-save-transcription');
 const btnTestTranscription = document.getElementById('btn-test-transcription');
 const btnClearTranscription = document.getElementById('btn-clear-transcription');
 const transcriptionTestResult = document.getElementById('test-transcription');
+// Generative Media — provider settings stored as imageGenModel.
+const imageGenProviderInput = document.getElementById('image-gen-provider');
+const imageGenBaseUrlInput = document.getElementById('image-gen-base-url');
+const imageGenWorkflowInput = document.getElementById('image-gen-workflow');
+const imageGenParametersInput = document.getElementById('image-gen-parameters');
+const imageGenApiKeyInput = document.getElementById('image-gen-api-key');
+const imageGenModelInput = document.getElementById('image-gen-model');
+const btnSaveImageGen = document.getElementById('btn-save-image-gen');
+const btnTestImageGen = document.getElementById('btn-test-image-gen');
+const btnClearImageGen = document.getElementById('btn-clear-image-gen');
+const imageGenTestResult = document.getElementById('test-image-gen');
 const profileEnabledToggle = document.getElementById('toggle-profile-enabled');
 const profileTextArea = document.getElementById('profile-text');
 const btnSaveProfile = document.getElementById('btn-save-profile');
@@ -193,6 +208,21 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
+const memcodeRecallToggle = document.getElementById('toggle-memcode-recall');
+const memcodeConnectButton = document.getElementById('btn-memcode-connect');
+const memcodeDisconnectButton = document.getElementById('btn-memcode-disconnect');
+const memcodeRecallResult = document.getElementById('test-memcode-recall');
+const decisionProviderInput = document.getElementById('decision-provider');
+const decisionModelInput = document.getElementById('decision-model');
+const decisionEndpointInput = document.getElementById('decision-endpoint');
+const decisionVisionInput = document.getElementById('decision-vision');
+const decisionDoneToggle = document.getElementById('toggle-decision-done');
+const decisionThresholdInput = document.getElementById('decision-done-threshold');
+let decisionModels = [];
+let decisionVisionSupported = false;
+const decisionKeyDrafts = new Map();
+let previousDecisionProvider = 'openrouter';
+
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -573,11 +603,14 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
+  if (composerDeliveryModeSelect) {
+    composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  }
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
@@ -640,6 +673,7 @@ async function init() {
   if (completionConfettiToggle) completionConfettiToggle.checked = stored.completionConfetti ?? true;
   if (completionFlashTabToggle) completionFlashTabToggle.checked = stored.completionFlashTab ?? true;
   if (tracingToggle) tracingToggle.checked = stored.tracingEnabled === true;
+  if (feedbackDiagnosticsToggle) feedbackDiagnosticsToggle.checked = stored.feedbackDiagnosticsEnabled !== false;
   if (losslessTracingToggle) {
     losslessTracingToggle.checked = stored.losslessTrace === true;
     // Lossless recording only means something when tracing is on; mirror the
@@ -656,12 +690,24 @@ async function init() {
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
+  const decisionConfig = resolveDecisionConfig(stored);
+  decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
+  decisionModelInput.value = decisionConfig.model;
+  decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
+  decisionVisionInput.value = stored.decisionVisionMode || 'auto';
+  decisionVisionSupported = stored.decisionVisionSupported === true;
+  decisionDoneToggle.checked = decisionConfig.doneEnabled;
+  decisionThresholdInput.value = String(decisionConfig.threshold * 100);
+  decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
+  decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
+  decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
+  document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
   if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
   if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
   if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
   if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
   if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
-  if (systemOneApiKeyInput) systemOneApiKeyInput.value = normalizeTypesafeApiKey(stored.typesafeApiKey);
+  if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
   if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
   if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
   updateSystemOneThresholdLabels();
@@ -683,11 +729,16 @@ async function init() {
   updateMultimodalDetectedProvider('vision');
   updateMultimodalDetectedProvider('transcription');
 
+  // Load Generative Media config. Used by the generate_image agent tool.
+  const imageGenStored = await browser.storage.local.get(['imageGenModel']);
+  renderImageGenConfig(imageGenStored.imageGenModel || {});
+
   // Load profile (auto-fill bio + throwaway password)
   const profileStored = await browser.storage.local.get(['profileEnabled', 'profileText']);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!profileStored.profileEnabled;
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
+  await loadMemcodeStatus();
 
   // Each provider has independent key, enable state, and fallback weight.
   await initCaptchaSettings(browser.storage.local, sendToBackground, t);
@@ -1200,6 +1251,11 @@ if (globalThis.browser?.storage?.onChanged) {
 
 // --- Display Settings ---
 
+composerDeliveryModeSelect?.addEventListener('change', async () => {
+  const mode = composerDeliveryModeSelect.value === 'steer' ? 'steer' : 'queue';
+  await browser.storage.local.set({ composerDeliveryMode: mode }).catch(() => {});
+});
+
 downloadDirectoryInput?.addEventListener('input', () => {
   downloadDirectoryInput.setCustomValidity('');
 });
@@ -1392,6 +1448,14 @@ losslessTracingToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
 });
 
+feedbackDiagnosticsToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({ feedbackDiagnosticsEnabled: feedbackDiagnosticsToggle.checked });
+  if (!feedbackDiagnosticsToggle.checked) {
+    const response = await browser.runtime.sendMessage({ target: 'background', action: 'feedback_clear_diagnostics' });
+    if (!response?.ok) console.error('[feedback] Could not clear local diagnostics:', response?.error);
+  }
+});
+
 costSessionLimitInput?.addEventListener('change', async () => {
   const value = normalizeCostAmount(costSessionLimitInput.value);
   costSessionLimitInput.value = value.toFixed(2);
@@ -1450,14 +1514,17 @@ if (btnSaveSystemOne) {
   btnSaveSystemOne.addEventListener('click', async () => {
     const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
     const enabled = systemOneEnabledToggle?.checked === true;
-    if (enabled && !isValidTypesafeApiKey(key)) {
+    if (enabled && decisionProviderInput.value !== 'local' && !isValidTypesafeApiKey(key)) {
       showSystemOneResult('fail', t('st.system_one.need_key'));
       return;
     }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
+    let selection;
+    try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
     await browser.storage.local.set({
-      typesafeApiKey: key,
-      systemOneEnabled: enabled && isValidTypesafeApiKey(key),
+      ...selection,
+      ...(decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
+      systemOneEnabled: enabled && (decisionProviderInput.value === 'local' || isValidTypesafeApiKey(key)),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
@@ -1474,10 +1541,17 @@ if (btnClearSystemOne) {
     if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
     if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
+    decisionKeyDrafts.clear();
+    decisionProviderInput.value = previousDecisionProvider = 'openrouter';
+    decisionModelInput.value = DEFAULT_DECISION_MODEL;
+    decisionDoneToggle.checked = true;
+    decisionVisionSupported = false;
+    document.getElementById('decision-endpoint-field').hidden = true;
     if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
     if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
     if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
     await browser.storage.local.remove([
+      ...DECISION_SETTINGS_KEYS,
       'typesafeApiKey',
       'systemOneEnabled',
       'systemOneWatchEnabled',
@@ -1492,15 +1566,50 @@ if (btnClearSystemOne) {
   });
 }
 
+function decisionSettingsDraft() {
+  const card = decisionModels.find(m => m.id === decisionModelInput.value);
+  return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
+    decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
+    decisionVisionSupported, ...(decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
+    systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : decisionProviderInput.value === 'local' ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
+}
+
+decisionProviderInput?.addEventListener('change', () => {
+  decisionKeyDrafts.set(previousDecisionProvider, systemOneApiKeyInput.value);
+  previousDecisionProvider = decisionProviderInput.value;
+  systemOneApiKeyInput.value = decisionKeyDrafts.get(previousDecisionProvider) || '';
+  decisionModelInput.value = previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
+  decisionModels = []; decisionVisionSupported = false;
+  document.getElementById('decision-models').replaceChildren();
+  document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
+});
+decisionModelInput?.addEventListener('input', () => {
+  decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+});
+document.getElementById('btn-decision-models')?.addEventListener('click', async () => {
+  const button = document.getElementById('btn-decision-models'); button.disabled = true;
+  try {
+    const result = await sendToBackground('list_decision_models', { settings: decisionSettingsDraft() });
+    if (!result.success) throw new Error(result.error || 'Model discovery unavailable');
+    decisionModels = result.models;
+    const list = document.getElementById('decision-models'); list.replaceChildren();
+    for (const model of decisionModels) { const option = document.createElement('option'); option.value = model.id; option.label = model.name; list.append(option); }
+    decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+    showSystemOneResult('ok', t('st.decision.models_loaded', { count: decisionModels.length }));
+  } catch (error) { showSystemOneResult('fail', error.message); } finally { button.disabled = false; }
+});
+
 btnTestSystemOne?.addEventListener('click', async () => {
   const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-  if (!apiKey) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  if (!apiKey && decisionProviderInput.value !== 'local') { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
   btnTestSystemOne.disabled = true;
   showSystemOneResult('', t('st.providers.testing'));
   try {
-    const result = await sendToBackground('test_system_one', { apiKey });
+    const result = await sendToBackground('test_system_one', { apiKey, settings: decisionSettingsDraft() });
+    if (result?.visionTested || result?.visionVerified) decisionVisionSupported = result.visionVerified === true;
     showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
-      ? t('st.providers.connected', { model: result.model })
+      ? t('st.providers.connected', { model: result.model }) + (result.visionTested && !result.visionVerified ? ' ' + t('st.decision.vision_unverified') : '')
       : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
   } catch (error) {
     showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
@@ -1685,6 +1794,99 @@ if (btnClearTranscription) {
 
 transcriptionBaseUrlInput?.addEventListener('input', () => updateMultimodalDetectedProvider('transcription'));
 
+// --- Generative Media ---
+const imageGenDrafts = new Map();
+let imageGenCurrentProvider = 'fal';
+
+function showImageGenResult(className, text, color = '') {
+  if (!imageGenTestResult) return;
+  imageGenTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  imageGenTestResult.textContent = text;
+  imageGenTestResult.style.color = color || '';
+  return imageGenTestResult;
+}
+
+function flashImageGenResult(className, text) {
+  const resultEl = showImageGenResult(className, text);
+  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 2000);
+}
+
+function readImageGenForm() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  if (provider === 'comfyui') return { provider, baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl, workflow: imageGenWorkflowInput.value.trim() };
+  const config = { provider, apiKey: imageGenApiKeyInput.value.trim(), model: imageGenModelInput.value.trim() };
+  if (provider === 'comfyrouter') config.parameters = imageGenParametersInput.value.trim() || '{}';
+  return config;
+}
+
+function updateImageGenProvider() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  const meta = MEDIA_PROVIDERS[provider] || MEDIA_PROVIDERS.fal;
+  const local = provider === 'comfyui';
+  for (const [id, hidden] of [['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-parameters-field', provider !== 'comfyrouter']]) {
+    const field = document.getElementById(id); if (field) field.hidden = hidden;
+  }
+  if (imageGenApiKeyInput) imageGenApiKeyInput.placeholder = meta.keyPlaceholder || '';
+  if (imageGenModelInput) imageGenModelInput.placeholder = meta.model || '';
+  const hint = document.getElementById('image-gen-provider-hint');
+  if (hint) hint.textContent = t(`st.imagegen.hint.${provider}`) + ' ';
+  const docs = document.getElementById('image-gen-docs'); if (docs) docs.href = meta.docs;
+}
+
+function renderImageGenConfig(config) {
+  const provider = Object.hasOwn(MEDIA_PROVIDERS, mediaProvider(config)) ? mediaProvider(config) : 'fal';
+  imageGenCurrentProvider = provider;
+  if (imageGenProviderInput) imageGenProviderInput.value = provider;
+  if (imageGenApiKeyInput) imageGenApiKeyInput.value = config.apiKey || '';
+  if (imageGenModelInput) imageGenModelInput.value = config.model || '';
+  if (imageGenBaseUrlInput) imageGenBaseUrlInput.value = config.baseUrl || MEDIA_PROVIDERS.comfyui.baseUrl;
+  if (imageGenWorkflowInput) imageGenWorkflowInput.value = typeof config.workflow === 'object' ? JSON.stringify(config.workflow, null, 2) : config.workflow || '';
+  if (imageGenParametersInput) imageGenParametersInput.value = typeof config.parameters === 'object' ? JSON.stringify(config.parameters, null, 2) : config.parameters || '';
+  updateImageGenProvider();
+}
+
+imageGenProviderInput?.addEventListener('change', () => {
+  const selected = imageGenProviderInput.value;
+  // Preserve unsaved drafts while switching, and never reuse another provider's key.
+  imageGenProviderInput.value = imageGenCurrentProvider;
+  imageGenDrafts.set(imageGenCurrentProvider, readImageGenForm());
+  renderImageGenConfig(imageGenDrafts.get(selected) || { provider: selected });
+  if (imageGenTestResult) imageGenTestResult.classList.remove('show');
+});
+document.addEventListener('wb-locale-changed', updateImageGenProvider);
+
+async function saveImageGenForm() {
+  const config = readImageGenForm();
+  validateMediaConfig(config);
+  await browser.storage.local.set({ imageGenModel: config });
+  return config;
+}
+
+btnSaveImageGen?.addEventListener('click', async () => {
+  try { await saveImageGenForm(); flashImageGenResult('ok', t('st.imagegen.saved')); }
+  catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+});
+
+btnTestImageGen?.addEventListener('click', async () => {
+  btnTestImageGen.disabled = true;
+  try {
+    const config = await saveImageGenForm();
+    showImageGenResult('', t('st.imagegen.testing'), 'var(--text2)');
+    const res = await sendToBackground('test_image_gen_provider');
+    if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
+    else showImageGenResult('fail', t('st.imagegen.failed', { error: res?.error || 'Unknown error' }));
+  } catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+  finally { btnTestImageGen.disabled = false; }
+});
+
+btnClearImageGen?.addEventListener('click', async () => {
+  const provider = imageGenProviderInput.value;
+  imageGenDrafts.clear();
+  renderImageGenConfig({ provider });
+  await browser.storage.local.remove('imageGenModel');
+  flashImageGenResult('ok', t('st.imagegen.cleared'));
+});
+
 // --- Profile auto-fill ---
 let profileSyncChallenge = null;
 function showProfileSyncResult(ok, text) { if (!profileSyncResult) return; profileSyncResult.className = `test-result show ${ok ? 'ok' : 'fail'}`; profileSyncResult.textContent = text; }
@@ -1717,7 +1919,7 @@ function renderProfileSyncState(state) {
   if (profileSyncStatus) profileSyncStatus.textContent = describeProfileSyncState(state || {});
 }
 async function refreshProfileSyncState() { const state = await sendToBackground('profile_sync_state').catch(e => ({ status: 'error', error: e.message })); renderProfileSyncState(state); return state; }
-async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
+async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; const imageGen = stored.imageGenModel || {}; if (imageGenApiKeyInput) imageGenApiKeyInput.value = imageGen.apiKey || ''; if (imageGenModelInput) imageGenModelInput.value = imageGen.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
 async function requestProfileSyncDataConsent() { const permissions = await browser.permissions.getAll(); if (!Object.hasOwn(permissions, 'data_collection')) return window.confirm(t('st.sync.consent.legacy')); return browser.permissions.request({ data_collection: ['personallyIdentifyingInfo', 'authenticationInfo', 'personalCommunications', 'websiteContent', 'technicalAndInteraction'] }); }
 function profileSyncButtonRestore(button, pendingLabel) {
   if (!button) return () => {};
@@ -1794,6 +1996,47 @@ function flashUserMemoryResult(className, text) {
   userMemoryTestResult.textContent = text;
   setTimeout(() => userMemoryTestResult.classList.remove('show'), 2500);
 }
+
+async function loadMemcodeStatus() {
+  if (!memcodeRecallToggle) return;
+  const result = await sendToBackground('memcode_recall_status').catch(() => null);
+  memcodeRecallToggle.disabled = !result?.connected;
+  memcodeRecallToggle.checked = result?.recallEnabled === true;
+  if (memcodeConnectButton) memcodeConnectButton.disabled = result?.connected === true;
+  if (memcodeDisconnectButton) memcodeDisconnectButton.disabled = result?.connected !== true;
+  if (memcodeRecallResult) {
+    memcodeRecallResult.className = 'test-result show';
+    memcodeRecallResult.textContent = t(result?.connected
+      ? (result.recallEnabled ? 'st.memcode.active' : 'st.memcode.connected')
+      : 'st.memcode.disconnected', { account: result?.accountId || 'unknown' });
+  }
+}
+
+memcodeConnectButton?.addEventListener('click', async () => {
+  memcodeConnectButton.disabled = true;
+  try {
+    const result = await sendToBackground('memcode_recall_connect');
+    if (!result?.ok) throw new Error(result?.error || 'Connection failed');
+    await loadMemcodeStatus();
+  } catch (error) {
+    memcodeConnectButton.disabled = false;
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: error.message });
+  }
+});
+memcodeDisconnectButton?.addEventListener('click', async () => {
+  const result = await sendToBackground('memcode_recall_disconnect');
+  await loadMemcodeStatus();
+  if (result?.revocationFailed && memcodeRecallResult) {
+    memcodeRecallResult.textContent = t('st.memcode.revocation_warning');
+  }
+});
+memcodeRecallToggle?.addEventListener('change', async () => {
+  const result = await sendToBackground('memcode_recall_enable', { enabled: memcodeRecallToggle.checked });
+  if (!result?.ok) {
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: result?.error || 'Setting unavailable' });
+  }
+  await loadMemcodeStatus();
+});
 
 const USER_MEMORY_FAILURE_REASON_KEYS = {
   invalid_or_sensitive: 'st.memory.reason.invalid_or_sensitive',
@@ -2657,7 +2900,7 @@ function renderProviders() {
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-5.6-terra',
           suggestions: [
             'gpt-6-luna-pro',
-            'gpt-6-sol',
+            'gpt-6.1-sol',
             'gpt-6-astra',
             'gpt-5.6-terra',
             'gpt-5.6-sol',
@@ -2718,7 +2961,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-ant-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'claude-opus-5',
-          suggestions: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
+          suggestions: ['claude-fable-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.anthropic.com' },
         ...CACHE_AWARE_COST_ESTIMATE_FIELDS,
       ],

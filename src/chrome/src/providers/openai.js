@@ -388,7 +388,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (status === 402 && providerName === 'webbrain-cloud') {
       let actionUrl = this._webbrainSubscribeUrl();
       let actionLabel = 'Subscribe for more usage';
-      let message = 'Daily free WebBrain Compass allowance used.';
+      let message = 'Weekly free WebBrain Compass allowance used.';
       try {
         const parsed = JSON.parse(body || '{}');
         if (parsed.error?.code === 'webbrain_cloud_payment_failed') {
@@ -425,7 +425,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     error.httpStatus = status;
     if (status === 429) error.retryAfterMs = retryAfterMs(retryAfter);
     try {
-      const providerCode = JSON.parse(body || '{}')?.error?.code;
+      const parsed = JSON.parse(body || '{}');
+      const providerCode = parsed?.error?.code;
+      if (status === 402 && (this.config.providerName || '').toLowerCase() === 'webbrain-cloud') {
+        error.quota = { code: providerCode, usage: parsed.usage || {},
+          subscribe_url: parsed.subscribe_url || this._webbrainSubscribeUrl(),
+          upgrade_url: parsed.upgrade_url, manage_billing_url: parsed.manage_billing_url };
+      }
       if (typeof providerCode === 'string' && providerCode) error.code = providerCode;
     } catch { /* keep the formatted HTTP error without provider metadata */ }
     return error;
@@ -758,6 +764,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     if (/^gpt-5-pro(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)) {
       // GPT-5 Pro only accepts high reasoning effort.
       body.reasoning.effort = 'high';
+    } else if (
+      /^gpt-6\.1-sol(?:$|[-_.:])/.test(normalizedModel)
+      && !['low', 'medium', 'high', 'xhigh', 'max'].includes(body.reasoning.effort)
+    ) {
+      // GPT-6.1 Sol rejects `none` and `minimal`, including the compact
+      // classifier override used by plannerRequestBody.
+      body.reasoning.effort = 'low';
     } else if (
       /^gpt-5\.(?:2|4|5)-pro(?:$|-\d{4}-\d{2}-\d{2}$)/.test(normalizedModel)
       && !['medium', 'high', 'xhigh'].includes(body.reasoning.effort)

@@ -58,6 +58,7 @@ export const CAPABILITY_LABEL = {
  * tool is classified as gated, untrusted-read, or explicitly known-safe.
  */
 export const UNTRUSTED_CONTENT_TOOLS = new Set([
+  'recall_memcode',
   // Discovery can recover a paid answer; solver output and callback failures
   // also contain external data, even when the tool otherwise reads a catalog.
   'get_captcha_capabilities',
@@ -89,6 +90,8 @@ export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'execute_webmcp_tool',
   'fetch_url',
   'research_url',
+  // Generative media providers return untrusted URLs and error text.
+  'generate_image',
   // ChatGPT's answer and cited links are third-party page content.
   'delegate_research',
   'read_pdf',
@@ -394,6 +397,7 @@ export function isNetworkMutation(name, args) {
 // gated — adding a new state-changing tool without listing it would silently
 // bypass the gate, so keep this exhaustive.
 const TOOL_CAPABILITY = {
+  recall_memcode: Capability.NETWORK,
   navigate: Capability.NAVIGATE,
   // This read helper temporarily walks Gmail /pN routes before restoring the
   // exact starting URL, so it needs the same site-scoped navigation grant.
@@ -426,6 +430,8 @@ const TOOL_CAPABILITY = {
   download_social_media: Capability.DOWNLOAD,
   schedule_resume: Capability.SCHEDULE,
   schedule_task: Capability.SCHEDULE,
+  // generate_image submits to the user's configured media provider.
+  generate_image: Capability.NETWORK,
 };
 
 /**
@@ -573,6 +579,7 @@ function resolveHostAgainst(url, base) {
  */
 export function hostForCapability(capability, args, currentUrlOrHost, toolName) {
   args = args || {};
+  if (toolName === 'recall_memcode') return 'memory.memcode.in';
   if (toolName === 'apply_captcha_solution') {
     return normalizeHost(args.frameUrl);
   }
@@ -582,6 +589,7 @@ export function hostForCapability(capability, args, currentUrlOrHost, toolName) 
     return normalizeHost(args._otpMailboxUrl);
   }
   if (toolName === 'delegate_research') return 'chatgpt.com';
+  if (toolName === 'generate_image') return normalizeHost(args._generativeMediaUrl);
   if (toolName === 'execute_webmcp_tool') {
     // A tool can belong to a cross-origin frame. Charge mutations to that
     // frame's resolved URL instead of borrowing the top-level page grant.

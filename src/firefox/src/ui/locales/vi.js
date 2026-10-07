@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Vietnamese — translated from the canonical English locale.
@@ -5,6 +6,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('vi'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Thu phóng giao diện tiện ích',
@@ -122,6 +124,11 @@ export default {
   'sp.attach.read_failed': "Không thể đọc {name}.",
   'sp.attach.needs_prompt': 'Hãy nhập câu hỏi để gửi kèm tệp đính kèm.',
   'sp.attach.no_tab': 'Không có tab đang hoạt động để đính kèm văn bản đã chọn.',
+  "sp.steer.button": "Điều hướng",
+  "sp.steer.title": "Điều hướng tác vụ hiện tại (Alt+Enter)",
+  "sp.steer.sent": "Đã gửi chỉ dẫn; sẽ áp dụng ở bước tiếp theo của tác nhân.",
+  "sp.steer.queued": "Tác vụ hiện tại đã kết thúc; tin nhắn được xếp hàng cho lượt tiếp theo.",
+  "sp.queue.send": "Xếp tin nhắn vào hàng đợi",
   'sp.queue.label': "Đã xếp hàng",
   'sp.queue.label_numbered': "Đã xếp hàng {index}",
   'sp.queue.edit': "Chỉnh sửa tin nhắn xếp hàng đợi",
@@ -168,6 +175,8 @@ export default {
   'sp.slash.schedule': "Tạo một nhiệm vụ theo lịch trình",
   'sp.slash.list_schedules': "Hiển thị các tác vụ đã lên lịch",
   'sp.slash.check_progress': "Hiển thị sổ cái tiến độ hiện tại",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   'sp.slash.show_scratchpad': "Hiển thị bảng ghi nhớ hiện tại",
   'sp.slash.edit_scratchpad': "Nối văn bản vào bảng ghi chú hiện tại",
   'sp.slash.clear_scratchpad': "Xóa bảng ghi nhớ hiện tại",
@@ -403,7 +412,7 @@ export default {
   "sp.watch.exists": "Trang này đã được theo dõi với cùng điều kiện.",
   "sp.watch.error": "Không thể tạo theo dõi: {error}",
   "sp.slash.unsupported": "{usage} không được hỗ trợ trong trình duyệt này.",
-  'sp.slash.busy_only_oob': "Tin nhắn được xếp hàng đợi trong khi WebBrain đang bận. Chỉ /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose mới có thể chạy ngay lập tức dưới dạng lệnh gạch chéo.",
+  'sp.slash.busy_only_oob': "Tin nhắn được xếp hàng đợi trong khi WebBrain đang bận. Chỉ /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose mới có thể chạy ngay lập tức dưới dạng lệnh gạch chéo.",
   'sp.compact.nothing_to_compact': "Chưa có gì để thu gọn - không có đủ bối cảnh cũ hơn.",
   'sp.compact.busy': "Không thể thu gọn trong khi đang chạy — hãy đợi cho đến khi quá trình này kết thúc.",
   'sp.compact.failed': "Nén bối cảnh không thành công: {error}",
@@ -566,7 +575,7 @@ export default {
   'ob.btn.done': "Bắt đầu",
   'ob.btn.skip': "Bỏ qua bây giờ",
   'ob.btn.start': 'Bắt đầu',
-  'ob.cloud.body': 'WebBrain Compass đã sẵn sàng với hạn ngạch hàng ngày miễn phí. Các cuộc trò chuyện Compass được chọn có thể được giữ lại và sử dụng để cải thiện WebBrain trong khi Trợ giúp Cải thiện WebBrain được bật theo mặc định. Bạn có thể tắt nó trong Cài đặt → Chung.',
+  'ob.cloud.body': 'WebBrain Compass đã sẵn sàng với hạn ngạch hằng tuần miễn phí. Các cuộc trò chuyện Compass được chọn có thể được giữ lại và sử dụng để cải thiện WebBrain trong khi Trợ giúp Cải thiện WebBrain được bật theo mặc định. Bạn có thể tắt nó trong Cài đặt → Chung.',
   'ob.cloud.change': 'Thay đổi',
   'ob.cloud.using': 'Đang sử dụng WebBrain Compass.',
 
@@ -884,6 +893,14 @@ export default {
   'st.transcription.connected': "Đã kết nối! Model: {model}",
   'st.transcription.failed': "Không thành công: {error}",
   'st.transcription.fill_required': "Trước tiên hãy điền URL cơ sở và Mô hình.",
+  "st.imagegen.heading": "Media tạo sinh",
+  "st.imagegen.desc": "Công cụ tác nhân generate_image tạo hình ảnh và phương tiện khác từ lời nhắc văn bản qua nhà cung cấp đã chọn.",
+  "st.imagegen.saved": "Đã lưu!",
+  "st.imagegen.cleared": "Đã xóa.",
+  "st.imagegen.testing": "Đang kiểm tra...",
+  "st.imagegen.connected": "Đã kết nối! Mô hình: {model}",
+  "st.imagegen.failed": "Thất bại: {error}",
+  "st.imagegen.fill_required": "Điền Khóa API và Mô hình trước.",
 
   'st.imageBudget.heading': "Ngân sách hình ảnh",
   'st.imageBudget.desc': "Kiểm soát kích thước ảnh chụp màn hình và số ảnh tác nhân chụp cho thị giác trong mỗi lượt. Mức chi tiết và kích thước thấp hơn giúp giảm chi phí và độ trễ cho các endpoint nhỏ; mức cao hơn giữ độ trung thực. Giá trị mặc định khớp với hành vi trước đây.",

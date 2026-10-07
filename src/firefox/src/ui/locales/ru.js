@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Russian (ru).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('ru'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Масштаб интерфейса расширения',
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'Не удалось сохранить данные восстановления. Текущая задача может продолжиться, но после разрыва соединения действия не будут повторены. Повторите попытку вручную.',
 
   'sp.error_prefix': 'Ошибка: {msg}',
-  'sp.subscribe.allowance_used': 'Бесплатный дневной лимит WebBrain Compass исчерпан.',
+  'sp.subscribe.allowance_used': 'Бесплатный недельный лимит WebBrain Compass исчерпан.',
   'sp.subscribe.btn': 'Оформить подписку',
   'sp.subscribe.upgrade': 'Перейти на Plus',
   "sp.subscribe.resume_payment": "Способ оплаты обновлён — повторить",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>Быстрый старт с llama.cpp:</strong><br>Запустите <code>llama-server -m your-model.gguf --port 8080</code>, чтобы поднять локальный сервер.<br>API-ключ не нужен — всё работает на вашей машине.',
   'st.providers.save': 'Сохранить',
-  'st.providers.webbrain_note.body': 'Бесплатное ежедневное использование WebBrain Compass включено. Запросы проходят через api.webbrain.one; по умолчанию мы записываем метаданные для квоты и отладки, а не текст запросов, содержимое страниц, скриншоты или ответы модели. {privacyLink}. Для большего объёма оформите подписку на {subscribeLink}. Управляйте оплатой на {accountLink}.',
+  'st.providers.webbrain_note.body': 'Бесплатное еженедельное использование WebBrain Compass включено. Запросы проходят через api.webbrain.one; по умолчанию мы записываем метаданные для квоты и отладки, а не текст запросов, содержимое страниц, скриншоты или ответы модели. {privacyLink}. Для большего объёма оформите подписку на {subscribeLink}. Управляйте оплатой на {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Политика конфиденциальности',
   'st.providers.test': 'Проверить соединение',
   'st.providers.duplicate': 'Дублировать',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "Подключено! Модель: {model}",
   "st.transcription.failed": "Сбой: {error}",
   "st.transcription.fill_required": "Сначала заполните базовый URL и модель.",
+  "st.imagegen.heading": "Генеративные медиа",
+  "st.imagegen.desc": "Инструмент агента generate_image создаёт изображения и другие медиа по текстовому запросу через выбранного провайдера.",
+  "st.imagegen.saved": "Сохранено!",
+  "st.imagegen.cleared": "Очищено.",
+  "st.imagegen.testing": "Проверка...",
+  "st.imagegen.connected": "Подключено! Модель: {model}",
+  "st.imagegen.failed": "Ошибка: {error}",
+  "st.imagegen.fill_required": "Сначала заполните ключ API и модель.",
+  "st.captcha.desc_html": "Позвольте агенту автоматически решать CAPTCHA через API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Поддерживает reCAPTCHA v2/v3, hCaptcha и Cloudflare Turnstile. Сохранение действительного API-ключа автоматически включает CapSolver; без ключа агент останавливается и просит вас решить CAPTCHA самостоятельно. CapSolver берёт плату за каждое решение (~$0.001–$0.003); используется ваш аккаунт и API-ключ.",
+  "st.captcha.enabled.label": "Включить CapSolver",
+  "st.captcha.enabled.desc": "Когда агент сталкивается с CAPTCHA, он один раз обращается к CapSolver, прежде чем перейти к запросу к вам. Требуется API-ключ ниже.",
   "st.captcha.api_key.label": "API-ключ CapSolver",
   "st.captcha.save": "Сохранить ключ",
   "st.captcha.check_balance": "Проверить баланс",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'Ничего не было запущено. Повторите попытку, чтобы проверить новый план.',
   'sp.plan.awaiting_review': 'Одобрите или отмените план выше, прежде чем отправлять другое сообщение.',
   'sp.plan.intent_unavailable': "Планирование не удалось после двух попыток. Работа продолжится в режиме Act с обычными мерами защиты.",
-  'sp.slash.busy_only_oob': 'Пока WebBrain занят, сообщения ставятся в очередь. Только /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces и /verbose могут запускаться сразу как slash-команды.',
+  'sp.slash.busy_only_oob': 'Пока WebBrain занят, сообщения ставятся в очередь. Только /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces и /verbose могут запускаться сразу как slash-команды.',
   'tool.go_back': 'Назад',
   'tool.go_forward': 'Вперёд',
   'st.display.search.placeholder': 'Поиск в общих настройках',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "Не удалось прочитать {name}.",
   "sp.attach.needs_prompt": "Добавьте вопрос, чтобы отправить его вместе с вложением.",
   "sp.attach.no_tab": "Нет активной вкладки, к которой можно прикрепить выделенный текст.",
+  "sp.steer.button": "Направить",
+  "sp.steer.title": "Скорректировать текущую задачу (Alt+Enter)",
+  "sp.steer.sent": "Указание отправлено; оно будет учтено на следующем шаге агента.",
+  "sp.steer.queued": "Текущая задача завершена; сообщение добавлено в очередь на следующий ход.",
+  "sp.queue.send": "Добавить сообщение в очередь",
   "sp.queue.label": "В очереди",
   "sp.queue.label_numbered": "В очереди {index}",
   "sp.queue.edit": "Редактировать сообщение в очереди",
   "sp.queue.delete": "Удалить сообщение из очереди",
   "sp.slash.check_progress": "Показать текущий журнал прогресса",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "Записать экран или окно",
   "sp.progress.title_html": "<strong>Текущий журнал прогресса</strong>",
   "sp.progress.empty": "Для этого разговора пока нет записанных строк прогресса.",

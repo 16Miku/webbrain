@@ -1,9 +1,11 @@
+import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
 /**
  * WebBrain Settings Page — provider configuration + display settings.
  */
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -88,7 +90,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '38.0.13';
+const EXT_VERSION = '39.1.3';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -98,6 +100,7 @@ const advancedSettings = document.querySelector('.advanced-settings');
 const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
+const composerDeliveryModeSelect = document.getElementById('select-composer-delivery-mode');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
 const pdfViewerToggle = document.getElementById('toggle-pdf-viewer');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
@@ -133,13 +136,10 @@ const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
 const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
+const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagnostics');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
-const cloudBridgeToggle = document.getElementById('toggle-cloud-bridge');
-const cloudBridgeUrlInput = document.getElementById('input-cloud-bridge-url');
-const cloudBridgeStatus = document.getElementById('cloud-bridge-status');
-const cloudBridgeStatusText = document.getElementById('cloud-bridge-status-text');
 const scheduledTasksToggle = document.getElementById('toggle-scheduled-tasks');
 const scheduledConfirmToggle = document.getElementById('toggle-scheduled-confirm');
 const visionBaseUrlInput = document.getElementById('vision-base-url');
@@ -173,6 +173,17 @@ const btnSaveTranscription = document.getElementById('btn-save-transcription');
 const btnTestTranscription = document.getElementById('btn-test-transcription');
 const btnClearTranscription = document.getElementById('btn-clear-transcription');
 const transcriptionTestResult = document.getElementById('test-transcription');
+// Generative Media — provider settings stored as imageGenModel.
+const imageGenProviderInput = document.getElementById('image-gen-provider');
+const imageGenBaseUrlInput = document.getElementById('image-gen-base-url');
+const imageGenWorkflowInput = document.getElementById('image-gen-workflow');
+const imageGenParametersInput = document.getElementById('image-gen-parameters');
+const imageGenApiKeyInput = document.getElementById('image-gen-api-key');
+const imageGenModelInput = document.getElementById('image-gen-model');
+const btnSaveImageGen = document.getElementById('btn-save-image-gen');
+const btnTestImageGen = document.getElementById('btn-test-image-gen');
+const btnClearImageGen = document.getElementById('btn-clear-image-gen');
+const imageGenTestResult = document.getElementById('test-image-gen');
 const btnTestVision = document.getElementById('btn-test-vision');
 const btnClearVision = document.getElementById('btn-clear-vision');
 const visionTestResult = document.getElementById('test-vision');
@@ -209,6 +220,21 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
+const memcodeRecallToggle = document.getElementById('toggle-memcode-recall');
+const memcodeConnectButton = document.getElementById('btn-memcode-connect');
+const memcodeDisconnectButton = document.getElementById('btn-memcode-disconnect');
+const memcodeRecallResult = document.getElementById('test-memcode-recall');
+const decisionProviderInput = document.getElementById('decision-provider');
+const decisionModelInput = document.getElementById('decision-model');
+const decisionEndpointInput = document.getElementById('decision-endpoint');
+const decisionVisionInput = document.getElementById('decision-vision');
+const decisionDoneToggle = document.getElementById('toggle-decision-done');
+const decisionThresholdInput = document.getElementById('decision-done-threshold');
+let decisionModels = [];
+let decisionVisionSupported = false;
+const decisionKeyDrafts = new Map();
+let previousDecisionProvider = 'openrouter';
+
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');
 const systemOneEnabledToggle = document.getElementById('toggle-system-one');
 const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
@@ -466,11 +492,6 @@ const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const PLAN_BEFORE_ACT_MODES = new Set(['try', 'strict', 'off']);
 const PLAN_REVIEW_MODES = new Set(['confidence', 'always', 'never']);
-const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';
-const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';
-const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
-let cloudBridgeStatusPollTimer = null;
-let cloudBridgeStatusRequestPending = false;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 90%+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -507,203 +528,6 @@ function updatePlanReviewConfidenceUI() {
 function normalizeCostAmount(value, fallback = DEFAULT_COST_ALLOWANCE_USD) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-function normalizeCloudBridgeSettingsUrl(value) {
-  const url = new URL(String(value || DEFAULT_CLOUD_BRIDGE_URL));
-  const host = url.hostname.toLowerCase();
-  if (url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
-    throw new Error(t('st.display.cloud_bridge.invalid_url'));
-  }
-  return url.href;
-}
-
-function setCloudBridgeStatus(state, message) {
-  if (!cloudBridgeStatus || !cloudBridgeStatusText) return;
-  cloudBridgeStatus.dataset.state = state;
-  cloudBridgeStatusText.textContent = message;
-}
-
-function renderCloudBridgeStatus(status = {}) {
-  if (!cloudBridgeToggle?.checked || status.enabled === false) {
-    setCloudBridgeStatus('disabled', t('st.display.cloud_bridge.status_disabled'));
-    return;
-  }
-  if (status.connected) {
-    setCloudBridgeStatus('connected', t('st.display.cloud_bridge.status_connected'));
-    return;
-  }
-  if (status.lastError === 'WebSocket error') {
-    setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_unreachable', {
-      url: status.url || cloudBridgeUrlInput?.value || DEFAULT_CLOUD_BRIDGE_URL,
-    }));
-    return;
-  }
-  if (status.lastError) {
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: status.lastError }));
-    return;
-  }
-  if (Number(status.reconnectAttempt) > 0) {
-    setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_reconnecting', {
-      attempt: status.reconnectAttempt,
-    }));
-    return;
-  }
-  setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_connecting'));
-}
-
-function validateCloudBridgeUrl({ report = false } = {}) {
-  if (!cloudBridgeUrlInput) return '';
-  try {
-    const normalized = normalizeCloudBridgeSettingsUrl(cloudBridgeUrlInput.value);
-    cloudBridgeUrlInput.setCustomValidity('');
-    cloudBridgeUrlInput.removeAttribute('aria-invalid');
-    return normalized;
-  } catch (error) {
-    const message = error?.message || t('st.display.cloud_bridge.invalid_url');
-    cloudBridgeUrlInput.setCustomValidity(message);
-    cloudBridgeUrlInput.setAttribute('aria-invalid', 'true');
-    setCloudBridgeStatus('error', message);
-    if (report) cloudBridgeUrlInput.reportValidity();
-    return '';
-  }
-}
-
-function setCloudBridgeControlsBusy(busy) {
-  if (cloudBridgeToggle) cloudBridgeToggle.disabled = busy;
-  if (cloudBridgeUrlInput) cloudBridgeUrlInput.disabled = busy;
-  const setting = document.getElementById('cloud-bridge-setting');
-  if (busy) setting?.setAttribute('aria-busy', 'true');
-  else setting?.removeAttribute('aria-busy');
-}
-
-async function refreshCloudBridgeStatus() {
-  if (!cloudBridgeToggle?.checked || cloudBridgeUrlInput?.getAttribute('aria-invalid') === 'true' || document.hidden || cloudBridgeStatusRequestPending) return;
-  cloudBridgeStatusRequestPending = true;
-  try {
-    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_status'));
-  } catch (error) {
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-  } finally {
-    cloudBridgeStatusRequestPending = false;
-  }
-}
-
-function startCloudBridgeStatusPolling() {
-  if (cloudBridgeStatusPollTimer) return;
-  cloudBridgeStatusPollTimer = setInterval(refreshCloudBridgeStatus, 2000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshCloudBridgeStatus();
-  });
-}
-
-async function saveCloudBridgeUrl() {
-  const normalized = validateCloudBridgeUrl({ report: true });
-  if (!normalized) return;
-  cloudBridgeUrlInput.value = normalized;
-  try {
-    await chrome.storage.local.set({ [CLOUD_BRIDGE_URL_KEY]: normalized });
-    if (!cloudBridgeToggle.checked) {
-      renderCloudBridgeStatus({ enabled: false });
-      return;
-    }
-    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
-  } catch (error) {
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-  }
-}
-
-async function toggleCloudBridge() {
-  if (!cloudBridgeToggle || !cloudBridgeUrlInput) return;
-  if (!cloudBridgeToggle.checked) {
-    setCloudBridgeControlsBusy(true);
-    try {
-      await chrome.storage.local.set({ [CLOUD_BRIDGE_ENABLED_KEY]: false });
-      await sendToBackground('cloud_bridge_stop').catch(() => null);
-      renderCloudBridgeStatus({ enabled: false });
-    } catch (error) {
-      cloudBridgeToggle.checked = true;
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    } finally {
-      setCloudBridgeControlsBusy(false);
-    }
-    return;
-  }
-
-  const normalized = validateCloudBridgeUrl({ report: true });
-  if (!normalized) {
-    cloudBridgeToggle.checked = false;
-    return;
-  }
-  cloudBridgeUrlInput.value = normalized;
-  setCloudBridgeControlsBusy(true);
-  try {
-    await chrome.storage.local.set({
-      [CLOUD_BRIDGE_ENABLED_KEY]: true,
-      [CLOUD_BRIDGE_URL_KEY]: normalized,
-    });
-    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
-  } catch (error) {
-    cloudBridgeToggle.checked = false;
-    await chrome.storage.local.set({ [CLOUD_BRIDGE_ENABLED_KEY]: false }).catch(() => {});
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-  } finally {
-    setCloudBridgeControlsBusy(false);
-  }
-}
-
-async function initCloudBridgeSettings(stored) {
-  if (!cloudBridgeToggle || !cloudBridgeUrlInput) return;
-  cloudBridgeToggle.checked = stored[CLOUD_BRIDGE_ENABLED_KEY] === true;
-  cloudBridgeUrlInput.value = stored[CLOUD_BRIDGE_URL_KEY] || DEFAULT_CLOUD_BRIDGE_URL;
-
-  const normalized = validateCloudBridgeUrl();
-  if (normalized) cloudBridgeUrlInput.value = normalized;
-  if (cloudBridgeToggle.checked && normalized) {
-    try {
-      renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
-    } catch (error) {
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    }
-  } else if (normalized) {
-    renderCloudBridgeStatus({ enabled: false });
-  }
-
-  cloudBridgeToggle.addEventListener('change', () => {
-    toggleCloudBridge().catch((error) => {
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    });
-  });
-  cloudBridgeUrlInput.addEventListener('input', () => {
-    cloudBridgeUrlInput.setCustomValidity('');
-    cloudBridgeUrlInput.removeAttribute('aria-invalid');
-  });
-  cloudBridgeUrlInput.addEventListener('change', () => {
-    saveCloudBridgeUrl().catch((error) => {
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    });
-  });
-  cloudBridgeUrlInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    cloudBridgeUrlInput.blur();
-  });
-  document.addEventListener('wb-locale-changed', () => {
-    if (cloudBridgeToggle.checked) refreshCloudBridgeStatus();
-    else renderCloudBridgeStatus({ enabled: false });
-  });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes[CLOUD_BRIDGE_URL_KEY]?.newValue) {
-      cloudBridgeUrlInput.value = changes[CLOUD_BRIDGE_URL_KEY].newValue;
-    }
-    if (changes[CLOUD_BRIDGE_ENABLED_KEY]) {
-      cloudBridgeToggle.checked = changes[CLOUD_BRIDGE_ENABLED_KEY].newValue === true;
-      if (cloudBridgeToggle.checked) refreshCloudBridgeStatus();
-      else renderCloudBridgeStatus({ enabled: false });
-    }
-  });
-  startCloudBridgeStatusPolling();
 }
 
 function formatUsd(value) {
@@ -801,11 +625,14 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
+  if (composerDeliveryModeSelect) {
+    composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  }
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
   if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled === undefined || stored.pdfViewerEnabled === true;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
@@ -875,6 +702,7 @@ async function init() {
   completionConfettiToggle.checked = stored.completionConfetti ?? true; // on by default
   completionFlashTabToggle.checked = stored.completionFlashTab ?? true; // on by default
   tracingToggle.checked = stored.tracingEnabled === true;
+  if (feedbackDiagnosticsToggle) feedbackDiagnosticsToggle.checked = stored.feedbackDiagnosticsEnabled !== false;
   losslessTracingToggle.checked = stored.losslessTrace === true;
   // Lossless recording only means something when tracing is on; mirror the
   // disabled state so the disclosure reads honestly.
@@ -891,19 +719,32 @@ async function init() {
   if (allowLocalNetworkToggle) {
     allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true; // off by default
   }
-  await initCloudBridgeSettings(stored);
+  // Bridge (MCP + Cloud Bridge + WebMCP) lives in Settings → Bridge.
+  // settings-cloud-bridge.js is the sole owner of webbrainCloudBridge* keys.
   if (scheduledTasksToggle) {
     scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false; // on by default
   }
   if (scheduledConfirmToggle) {
     scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false; // on by default
   }
+  const decisionConfig = resolveDecisionConfig(stored);
+  decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
+  decisionModelInput.value = decisionConfig.model;
+  decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
+  decisionVisionInput.value = stored.decisionVisionMode || 'auto';
+  decisionVisionSupported = stored.decisionVisionSupported === true;
+  decisionDoneToggle.checked = decisionConfig.doneEnabled;
+  decisionThresholdInput.value = String(decisionConfig.threshold * 100);
+  decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
+  decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
+  decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
+  document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
   if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
   if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
   if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
   if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
   if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
-  if (systemOneApiKeyInput) systemOneApiKeyInput.value = normalizeTypesafeApiKey(stored.typesafeApiKey);
+  if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
   if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
   if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
   updateSystemOneThresholdLabels();
@@ -921,11 +762,16 @@ async function init() {
   updateMultimodalDetectedProvider('vision');
   updateMultimodalDetectedProvider('transcription');
 
+  // Load Generative Media config. Used by the generate_image agent tool.
+  const imageGenStored = await chrome.storage.local.get(['imageGenModel']);
+  renderImageGenConfig(imageGenStored.imageGenModel || {});
+
   // Load profile (auto-fill bio + throwaway password)
   const profileStored = await chrome.storage.local.get(['profileEnabled', 'profileText']);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!profileStored.profileEnabled;
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
+  await loadMemcodeStatus();
 
   // Each provider has independent key, enable state, and fallback weight.
   await initCaptchaSettings(chrome.storage.local, sendToBackground, t);
@@ -1438,6 +1284,11 @@ if (globalThis.chrome?.storage?.onChanged) {
 
 // --- Display Settings ---
 
+composerDeliveryModeSelect?.addEventListener('change', async () => {
+  const mode = composerDeliveryModeSelect.value === 'steer' ? 'steer' : 'queue';
+  await chrome.storage.local.set({ composerDeliveryMode: mode }).catch(() => {});
+});
+
 downloadDirectoryInput?.addEventListener('input', () => {
   downloadDirectoryInput.setCustomValidity('');
 });
@@ -1645,6 +1496,14 @@ losslessTracingToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
 });
 
+feedbackDiagnosticsToggle?.addEventListener('change', async () => {
+  await chrome.storage.local.set({ feedbackDiagnosticsEnabled: feedbackDiagnosticsToggle.checked });
+  if (!feedbackDiagnosticsToggle.checked) {
+    const response = await chrome.runtime.sendMessage({ target: 'background', action: 'feedback_clear_diagnostics' });
+    if (!response?.ok) console.error('[feedback] Could not clear local diagnostics:', response?.error);
+  }
+});
+
 costSessionLimitInput?.addEventListener('change', async () => {
   const value = normalizeCostAmount(costSessionLimitInput.value);
   costSessionLimitInput.value = value.toFixed(2);
@@ -1711,14 +1570,17 @@ if (btnSaveSystemOne) {
   btnSaveSystemOne.addEventListener('click', async () => {
     const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
     const enabled = systemOneEnabledToggle?.checked === true;
-    if (enabled && !isValidTypesafeApiKey(key)) {
+    if (enabled && decisionProviderInput.value !== 'local' && !isValidTypesafeApiKey(key)) {
       showSystemOneResult('fail', t('st.system_one.need_key'));
       return;
     }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
+    let selection;
+    try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
     await chrome.storage.local.set({
-      typesafeApiKey: key,
-      systemOneEnabled: enabled && isValidTypesafeApiKey(key),
+      ...selection,
+      ...(decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
+      systemOneEnabled: enabled && (decisionProviderInput.value === 'local' || isValidTypesafeApiKey(key)),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
@@ -1735,10 +1597,17 @@ if (btnClearSystemOne) {
     if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
     if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
+    decisionKeyDrafts.clear();
+    decisionProviderInput.value = previousDecisionProvider = 'openrouter';
+    decisionModelInput.value = DEFAULT_DECISION_MODEL;
+    decisionDoneToggle.checked = true;
+    decisionVisionSupported = false;
+    document.getElementById('decision-endpoint-field').hidden = true;
     if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
     if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
     if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
     await chrome.storage.local.remove([
+      ...DECISION_SETTINGS_KEYS,
       'typesafeApiKey',
       'systemOneEnabled',
       'systemOneWatchEnabled',
@@ -1753,15 +1622,50 @@ if (btnClearSystemOne) {
   });
 }
 
+function decisionSettingsDraft() {
+  const card = decisionModels.find(m => m.id === decisionModelInput.value);
+  return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
+    decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
+    decisionVisionSupported, ...(decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
+    systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : decisionProviderInput.value === 'local' ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
+}
+
+decisionProviderInput?.addEventListener('change', () => {
+  decisionKeyDrafts.set(previousDecisionProvider, systemOneApiKeyInput.value);
+  previousDecisionProvider = decisionProviderInput.value;
+  systemOneApiKeyInput.value = decisionKeyDrafts.get(previousDecisionProvider) || '';
+  decisionModelInput.value = previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
+  decisionModels = []; decisionVisionSupported = false;
+  document.getElementById('decision-models').replaceChildren();
+  document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
+});
+decisionModelInput?.addEventListener('input', () => {
+  decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+});
+document.getElementById('btn-decision-models')?.addEventListener('click', async () => {
+  const button = document.getElementById('btn-decision-models'); button.disabled = true;
+  try {
+    const result = await sendToBackground('list_decision_models', { settings: decisionSettingsDraft() });
+    if (!result.success) throw new Error(result.error || 'Model discovery unavailable');
+    decisionModels = result.models;
+    const list = document.getElementById('decision-models'); list.replaceChildren();
+    for (const model of decisionModels) { const option = document.createElement('option'); option.value = model.id; option.label = model.name; list.append(option); }
+    decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+    showSystemOneResult('ok', t('st.decision.models_loaded', { count: decisionModels.length }));
+  } catch (error) { showSystemOneResult('fail', error.message); } finally { button.disabled = false; }
+});
+
 btnTestSystemOne?.addEventListener('click', async () => {
   const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-  if (!apiKey) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  if (!apiKey && decisionProviderInput.value !== 'local') { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
   btnTestSystemOne.disabled = true;
   showSystemOneResult('', t('st.providers.testing'));
   try {
-    const result = await sendToBackground('test_system_one', { apiKey });
+    const result = await sendToBackground('test_system_one', { apiKey, settings: decisionSettingsDraft() });
+    if (result?.visionTested || result?.visionVerified) decisionVisionSupported = result.visionVerified === true;
     showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
-      ? t('st.providers.connected', { model: result.model })
+      ? t('st.providers.connected', { model: result.model }) + (result.visionTested && !result.visionVerified ? ' ' + t('st.decision.vision_unverified') : '')
       : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
   } catch (error) {
     showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
@@ -2042,6 +1946,99 @@ if (btnClearTranscription) {
 
 transcriptionBaseUrlInput?.addEventListener('input', () => updateMultimodalDetectedProvider('transcription'));
 
+// --- Generative Media ---
+const imageGenDrafts = new Map();
+let imageGenCurrentProvider = 'fal';
+
+function showImageGenResult(className, text, color = '') {
+  if (!imageGenTestResult) return;
+  imageGenTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  imageGenTestResult.textContent = text;
+  imageGenTestResult.style.color = color || '';
+  return imageGenTestResult;
+}
+
+function flashImageGenResult(className, text) {
+  const resultEl = showImageGenResult(className, text);
+  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 2000);
+}
+
+function readImageGenForm() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  if (provider === 'comfyui') return { provider, baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl, workflow: imageGenWorkflowInput.value.trim() };
+  const config = { provider, apiKey: imageGenApiKeyInput.value.trim(), model: imageGenModelInput.value.trim() };
+  if (provider === 'comfyrouter') config.parameters = imageGenParametersInput.value.trim() || '{}';
+  return config;
+}
+
+function updateImageGenProvider() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  const meta = MEDIA_PROVIDERS[provider] || MEDIA_PROVIDERS.fal;
+  const local = provider === 'comfyui';
+  for (const [id, hidden] of [['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-parameters-field', provider !== 'comfyrouter']]) {
+    const field = document.getElementById(id); if (field) field.hidden = hidden;
+  }
+  if (imageGenApiKeyInput) imageGenApiKeyInput.placeholder = meta.keyPlaceholder || '';
+  if (imageGenModelInput) imageGenModelInput.placeholder = meta.model || '';
+  const hint = document.getElementById('image-gen-provider-hint');
+  if (hint) hint.textContent = t(`st.imagegen.hint.${provider}`) + ' ';
+  const docs = document.getElementById('image-gen-docs'); if (docs) docs.href = meta.docs;
+}
+
+function renderImageGenConfig(config) {
+  const provider = Object.hasOwn(MEDIA_PROVIDERS, mediaProvider(config)) ? mediaProvider(config) : 'fal';
+  imageGenCurrentProvider = provider;
+  if (imageGenProviderInput) imageGenProviderInput.value = provider;
+  if (imageGenApiKeyInput) imageGenApiKeyInput.value = config.apiKey || '';
+  if (imageGenModelInput) imageGenModelInput.value = config.model || '';
+  if (imageGenBaseUrlInput) imageGenBaseUrlInput.value = config.baseUrl || MEDIA_PROVIDERS.comfyui.baseUrl;
+  if (imageGenWorkflowInput) imageGenWorkflowInput.value = typeof config.workflow === 'object' ? JSON.stringify(config.workflow, null, 2) : config.workflow || '';
+  if (imageGenParametersInput) imageGenParametersInput.value = typeof config.parameters === 'object' ? JSON.stringify(config.parameters, null, 2) : config.parameters || '';
+  updateImageGenProvider();
+}
+
+imageGenProviderInput?.addEventListener('change', () => {
+  const selected = imageGenProviderInput.value;
+  // Preserve unsaved drafts while switching, and never reuse another provider's key.
+  imageGenProviderInput.value = imageGenCurrentProvider;
+  imageGenDrafts.set(imageGenCurrentProvider, readImageGenForm());
+  renderImageGenConfig(imageGenDrafts.get(selected) || { provider: selected });
+  if (imageGenTestResult) imageGenTestResult.classList.remove('show');
+});
+document.addEventListener('wb-locale-changed', updateImageGenProvider);
+
+async function saveImageGenForm() {
+  const config = readImageGenForm();
+  validateMediaConfig(config);
+  await chrome.storage.local.set({ imageGenModel: config });
+  return config;
+}
+
+btnSaveImageGen?.addEventListener('click', async () => {
+  try { await saveImageGenForm(); flashImageGenResult('ok', t('st.imagegen.saved')); }
+  catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+});
+
+btnTestImageGen?.addEventListener('click', async () => {
+  btnTestImageGen.disabled = true;
+  try {
+    const config = await saveImageGenForm();
+    showImageGenResult('', t('st.imagegen.testing'), 'var(--text2)');
+    const res = await sendToBackground('test_image_gen_provider');
+    if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
+    else showImageGenResult('fail', t('st.imagegen.failed', { error: res?.error || 'Unknown error' }));
+  } catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+  finally { btnTestImageGen.disabled = false; }
+});
+
+btnClearImageGen?.addEventListener('click', async () => {
+  const provider = imageGenProviderInput.value;
+  imageGenDrafts.clear();
+  renderImageGenConfig({ provider });
+  await chrome.storage.local.remove('imageGenModel');
+  flashImageGenResult('ok', t('st.imagegen.cleared'));
+});
+
 // --- Profile auto-fill ---
 let profileSyncChallenge = null;
 function showProfileSyncResult(ok, text) { if (!profileSyncResult) return; profileSyncResult.className = `test-result show ${ok ? 'ok' : 'fail'}`; profileSyncResult.textContent = text; }
@@ -2082,6 +2079,7 @@ async function reloadProfileSyncData() {
     WEBGPU_VISION_ENABLED_KEY,
     WEBGPU_VISION_CONSENT_VERSION_KEY,
     'transcriptionModel',
+    'imageGenModel',
   ]);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled;
   if (profileTextArea) profileTextArea.value = stored.profileText || '';
@@ -2099,6 +2097,7 @@ async function reloadProfileSyncData() {
   if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || '';
   if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || '';
   updateMultimodalDetectedProvider('transcription');
+  renderImageGenConfig(stored.imageGenModel || {});
   await loadUserMemorySettings();
   const res = await sendToBackground('get_providers');
   providersData = res.providers;
@@ -2196,6 +2195,47 @@ function flashUserMemoryResult(className, text) {
   userMemoryTestResult.textContent = text;
   setTimeout(() => userMemoryTestResult.classList.remove('show'), 2500);
 }
+
+async function loadMemcodeStatus() {
+  if (!memcodeRecallToggle) return;
+  const result = await sendToBackground('memcode_recall_status').catch(() => null);
+  memcodeRecallToggle.disabled = !result?.connected;
+  memcodeRecallToggle.checked = result?.recallEnabled === true;
+  if (memcodeConnectButton) memcodeConnectButton.disabled = result?.connected === true;
+  if (memcodeDisconnectButton) memcodeDisconnectButton.disabled = result?.connected !== true;
+  if (memcodeRecallResult) {
+    memcodeRecallResult.className = 'test-result show';
+    memcodeRecallResult.textContent = t(result?.connected
+      ? (result.recallEnabled ? 'st.memcode.active' : 'st.memcode.connected')
+      : 'st.memcode.disconnected', { account: result?.accountId || 'unknown' });
+  }
+}
+
+memcodeConnectButton?.addEventListener('click', async () => {
+  memcodeConnectButton.disabled = true;
+  try {
+    const result = await sendToBackground('memcode_recall_connect');
+    if (!result?.ok) throw new Error(result?.error || 'Connection failed');
+    await loadMemcodeStatus();
+  } catch (error) {
+    memcodeConnectButton.disabled = false;
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: error.message });
+  }
+});
+memcodeDisconnectButton?.addEventListener('click', async () => {
+  const result = await sendToBackground('memcode_recall_disconnect');
+  await loadMemcodeStatus();
+  if (result?.revocationFailed && memcodeRecallResult) {
+    memcodeRecallResult.textContent = t('st.memcode.revocation_warning');
+  }
+});
+memcodeRecallToggle?.addEventListener('change', async () => {
+  const result = await sendToBackground('memcode_recall_enable', { enabled: memcodeRecallToggle.checked });
+  if (!result?.ok) {
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: result?.error || 'Setting unavailable' });
+  }
+  await loadMemcodeStatus();
+});
 
 const USER_MEMORY_FAILURE_REASON_KEYS = {
   invalid_or_sensitive: 'st.memory.reason.invalid_or_sensitive',
@@ -3272,7 +3312,7 @@ function renderProviders() {
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-5.6-terra',
           suggestions: [
             'gpt-6-luna-pro',
-            'gpt-6-sol',
+            'gpt-6.1-sol',
             'gpt-6-astra',
             'gpt-5.6-terra',
             'gpt-5.6-sol',
@@ -3333,7 +3373,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-ant-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'claude-opus-5',
-          suggestions: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
+          suggestions: ['claude-fable-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.anthropic.com' },
         ...CACHE_AWARE_COST_ESTIMATE_FIELDS,
       ],

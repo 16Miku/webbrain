@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Korean (ko).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('ko'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': '확장 프로그램 UI 확대/축소',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': '시작하기',
   'ob.btn.skip': '지금은 건너뛰기',
   'ob.btn.start': '시작',
-  'ob.cloud.body': 'WebBrain Compass는 무료 일일 할당량으로 준비되어 있습니다. 선택된 Compass 대화는 WebBrain 개선 도움말이 기본적으로 켜져 있는 동안 WebBrain 개선을 위해 저장 및 사용될 수 있습니다. 설정 → 일반에서 끌 수 있습니다.',
+  'ob.cloud.body': 'WebBrain Compass는 무료 주간 할당량으로 준비되어 있습니다. 선택된 Compass 대화는 WebBrain 개선 도움말이 기본적으로 켜져 있는 동안 WebBrain 개선을 위해 저장 및 사용될 수 있습니다. 설정 → 일반에서 끌 수 있습니다.',
   'ob.cloud.change': '변경',
   'ob.cloud.using': 'WebBrain Compass를 사용 중입니다.',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': '복구 데이터를 저장할 수 없습니다. 진행 중인 작업은 계속할 수 있지만 연결이 끊긴 뒤 작업을 다시 실행하지 않습니다. 수동으로 다시 시도하세요.',
 
   'sp.error_prefix': '오류: {msg}',
-  'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 일일 사용량을 모두 사용했습니다.',
+  'sp.subscribe.allowance_used': 'WebBrain Compass의 무료 주간 사용량을 모두 사용했습니다.',
   'sp.subscribe.btn': '구독하기',
   'sp.subscribe.upgrade': 'Plus로 업그레이드',
   "sp.subscribe.resume_payment": "결제 수단 업데이트 완료 — 다시 시도",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>llama.cpp 시작하기:</strong><br><code>llama-server -m your-model.gguf --port 8080</code>을 실행해 로컬 서버를 띄우세요.<br>API 키가 필요 없습니다 — 전부 사용자 머신에서 실행됩니다.',
   'st.providers.save': '저장',
-  'st.providers.webbrain_note.body': '무료 일일 WebBrain Compass 사용량이 포함되어 있습니다. 요청은 api.webbrain.one을 통해 처리됩니다. 기본적으로 할당량과 디버깅을 위한 메타데이터만 기록하며, 프롬프트 텍스트, 페이지 콘텐츠, 스크린샷, 모델 응답은 기록하지 않습니다. {privacyLink}. 더 많은 사용량이 필요하면 {subscribeLink}에서 구독하세요. 청구는 {accountLink}에서 관리하세요.',
+  'st.providers.webbrain_note.body': '무료 주간 WebBrain Compass 사용량이 포함되어 있습니다. 요청은 api.webbrain.one을 통해 처리됩니다. 기본적으로 할당량과 디버깅을 위한 메타데이터만 기록하며, 프롬프트 텍스트, 페이지 콘텐츠, 스크린샷, 모델 응답은 기록하지 않습니다. {privacyLink}. 더 많은 사용량이 필요하면 {subscribeLink}에서 구독하세요. 청구는 {accountLink}에서 관리하세요.',
   'st.providers.webbrain_note.privacy_link': '개인정보 처리방침',
   'st.providers.test': '연결 테스트',
   'st.providers.duplicate': '복제',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "연결됨! 모델: {model}",
   "st.transcription.failed": "실패: {error}",
   "st.transcription.fill_required": "먼저 기본 URL과 모델을 입력하세요.",
+  "st.imagegen.heading": "생성 미디어",
+  "st.imagegen.desc": "generate_image 에이전트 도구가 선택한 제공업체를 통해 텍스트 프롬프트로 이미지와 기타 미디어를 생성합니다.",
+  "st.imagegen.saved": "저장되었습니다!",
+  "st.imagegen.cleared": "지워졌습니다.",
+  "st.imagegen.testing": "테스트 중...",
+  "st.imagegen.connected": "연결됨! 모델: {model}",
+  "st.imagegen.failed": "실패: {error}",
+  "st.imagegen.fill_required": "먼저 API 키와 모델을 입력하세요.",
+  "st.captcha.desc_html": "에이전트가 <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> API를 통해 CAPTCHA를 자동으로 풀게 합니다. reCAPTCHA v2/v3, hCaptcha, Cloudflare Turnstile을 지원합니다. 유효한 API 키를 저장하면 CapSolver가 자동으로 활성화됩니다. 키가 없으면 에이전트가 멈추고 CAPTCHA를 직접 풀어 달라고 요청합니다. CapSolver는 풀이당 요금을 부과하며(~$0.001–$0.003), 본인의 계정과 API 키를 사용합니다.",
+  "st.captcha.enabled.label": "CapSolver 사용",
+  "st.captcha.enabled.desc": "에이전트가 CAPTCHA를 만나면 사용자에게 묻기로 폴백하기 전에 CapSolver를 한 번 호출합니다. 아래에 API 키가 필요합니다.",
   "st.captcha.api_key.label": "CapSolver API 키",
   "st.captcha.save": "키 저장",
   "st.captcha.check_balance": "잔액 확인",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': '아무 작업도 실행되지 않았습니다. 다시 시도하여 새 계획을 검토하세요.',
   'sp.plan.awaiting_review': '다른 메시지를 보내기 전에 위의 계획을 승인하거나 취소하세요.',
   'sp.plan.intent_unavailable': "두 번 시도했지만 계획에 실패했습니다. 일반 안전장치를 유지한 채 Act 모드로 계속합니다.",
-  'sp.slash.busy_only_oob': 'WebBrain이 사용 중일 때 메시지는 대기열에 추가됩니다. /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, /verbose만 슬래시 명령으로 즉시 실행할 수 있습니다.',
+  'sp.slash.busy_only_oob': 'WebBrain이 사용 중일 때 메시지는 대기열에 추가됩니다. /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, /verbose만 슬래시 명령으로 즉시 실행할 수 있습니다.',
   'tool.go_back': '뒤로 가기',
   'tool.go_forward': '앞으로 가기',
   'st.display.search.placeholder': '일반 설정 검색',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "{name}을(를) 읽을 수 없습니다.",
   "sp.attach.needs_prompt": "첨부 파일과 함께 보낼 질문을 입력하세요.",
   "sp.attach.no_tab": "선택한 텍스트를 첨부할 활성 탭이 없습니다.",
+  "sp.steer.button": "방향 수정",
+  "sp.steer.title": "진행 중인 작업의 방향 수정 (Alt+Enter)",
+  "sp.steer.sent": "수정 지시를 보냈습니다. 다음 에이전트 단계에 적용됩니다.",
+  "sp.steer.queued": "현재 작업이 끝났습니다. 다음 차례를 위해 메시지를 대기열에 추가했습니다.",
+  "sp.queue.send": "메시지를 대기열에 추가",
   "sp.queue.label": "대기 중",
   "sp.queue.label_numbered": "대기 중 {index}",
   "sp.queue.edit": "대기 중인 메시지 편집",
   "sp.queue.delete": "대기 중인 메시지 삭제",
   "sp.slash.check_progress": "현재 진행 로그 표시",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "화면 또는 창 녹화",
   "sp.progress.title_html": "<strong>현재 진행 로그</strong>",
   "sp.progress.empty": "이 대화에 아직 기록된 진행 행이 없습니다.",

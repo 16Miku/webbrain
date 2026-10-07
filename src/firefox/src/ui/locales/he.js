@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Hebrew (he).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('he'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'הגדלת ממשק התוסף',
@@ -136,6 +138,11 @@ export default {
   "sp.attach.read_failed": "לא ניתן לקרוא את {name}.",
   "sp.attach.needs_prompt": "הוסיפו שאלה שתישלח יחד עם הקובץ המצורף.",
   "sp.attach.no_tab": "אין לשונית פעילה שאליה אפשר לצרף את הבחירה.",
+  "sp.steer.button": "הכוונה",
+  "sp.steer.title": "הכוונת המשימה הנוכחית (Alt+Enter)",
+  "sp.steer.sent": "הודעת ההכוונה נשלחה; היא תיושם בשלב הבא.",
+  "sp.steer.queued": "המשימה הנוכחית הסתיימה; ההודעה נוספה לתור לסבב הבא.",
+  "sp.queue.send": "הוספת הודעה לתור",
   "sp.queue.label": "בתור",
   "sp.queue.label_numbered": "בתור {index}",
   "sp.queue.edit": "ערוך הודעה בתור",
@@ -177,6 +184,8 @@ export default {
   "sp.slash.schedule": "צור משימה מתוזמנת",
   "sp.slash.list_schedules": "הצג משימות מתוזמנות",
   "sp.slash.check_progress": "הצג את יומן ההתקדמות הנוכחי",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.show_scratchpad": "הצג את פנקס הטיוטה הנוכחי",
   "sp.slash.edit_scratchpad": "הוסף טקסט לפנקס הטיוטה הנוכחי",
   "sp.slash.clear_scratchpad": "נקה את פנקס הטיוטה הנוכחי",
@@ -388,7 +397,7 @@ export default {
   "sp.watch.exists": "הדף הזה כבר במעקב עם אותו תנאי.",
   "sp.watch.error": "לא ניתן ליצור מעקב: {error}",
   "sp.slash.unsupported": "{usage} אינו נתמך בדפדפן זה.",
-  "sp.slash.busy_only_oob": "הודעות נכנסות לתור בזמן ש-WebBrain עסוק. רק הפקודות /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces ו-/verbose יכולות לפעול מיד כפקודות לוכסן.",
+  "sp.slash.busy_only_oob": "הודעות נכנסות לתור בזמן ש-WebBrain עסוק. רק הפקודות /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces ו-/verbose יכולות לפעול מיד כפקודות לוכסן.",
   "sp.compact.nothing_to_compact": "עדיין אין מה לדחוס - אין מספיק הקשר ישן יותר.",
   "sp.compact.busy": "לא ניתן לדחוס בזמן שהריצה מתבצעת - המתן עד שהיא תסתיים.",
   "sp.compact.failed": "דחיסה של ההקשר נכשלה: {error}",
@@ -517,7 +526,7 @@ export default {
   "ob.btn.done": "התחל",
   "ob.btn.skip": "דלג לעת עתה",
   'ob.btn.start': 'התחל',
-  'ob.cloud.body': 'WebBrain Compass מוכן עם הקצבה יומית חינםית. שיחות Compass נבחרות עשויות להישמר ולשמש לשיפור WebBrain בזמן ש- Help Improve WebBrain מופעל כברירת מחדל. אתה יכול לכבות את זה בהגדרות ← כללי.',
+  'ob.cloud.body': 'WebBrain Compass מוכן עם הקצבה שבועית חינםית. שיחות Compass נבחרות עשויות להישמר ולשמש לשיפור WebBrain בזמן ש- Help Improve WebBrain מופעל כברירת מחדל. אתה יכול לכבות את זה בהגדרות ← כללי.',
   'ob.cloud.change': 'שינוי',
   'ob.cloud.using': 'שימוש ב-WebBrain Compass.',
   "st.title": "הגדרות WebBrain",
@@ -798,6 +807,14 @@ export default {
   "st.transcription.connected": "מחובר! מודל: {model}",
   "st.transcription.failed": "נכשל: {error}",
   "st.transcription.fill_required": "יש למלא תחילה כתובת URL בסיסית ומודל.",
+  "st.imagegen.heading": "מדיה גנרטיבית",
+  "st.imagegen.desc": "כלי הסוכן generate_image יוצר תמונות ומדיה נוספת מהנחיית טקסט באמצעות הספק שנבחר.",
+  "st.imagegen.saved": "נשמר!",
+  "st.imagegen.cleared": "נמחק.",
+  "st.imagegen.testing": "בודק...",
+  "st.imagegen.connected": "מחובר! דגם: {model}",
+  "st.imagegen.failed": "נכשל: {error}",
+  "st.imagegen.fill_required": "מלא קודם מפתח API ודגם.",
   "st.profile.desc_html": "שמור ביוגרפיה קצרה שבה הסוכן יכול להשתמש למילוי טופסי הרשמה בלי לשאול בכל פעם — השם שלך, כתובת דוא״ל לעבודה, החברה וסיסמה <em>ייעודית</em> להרשמות בעלות סיכון נמוך. כאשר האפשרות מופעלת, הטקסט שלהלן מצורף להנחיית המערכת של הסוכן בכל שיחה.",
   "st.profile.enabled.label": "הפעל מילוי אוטומטי של פרופיל",
   "st.profile.enabled.desc": "הכנס את טקסט הפרופיל להנחיית המערכת של הסוכן. מושבת = הסוכן לעולם לא רואה את הטקסט הזה.",

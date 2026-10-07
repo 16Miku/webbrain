@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Thai (th).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('th'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'ซูม UI ของส่วนขยาย',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': 'เริ่มต้น',
   'ob.btn.skip': 'ข้ามไปก่อน',
   'ob.btn.start': 'เริ่ม',
-  'ob.cloud.body': 'WebBrain Compass พร้อมพร้อมกับการจัดสรรประจำวันฟรี บทสนทนา Compass ที่เลือกอาจถูกเก็บและใช้เพื่อปรับปรุง WebBrain ในขณะที่ช่วยปรับปรุง WebBrain เปิดใช้งานตามค่าเริ่มต้น คุณสามารถปิดได้ในการตั้งค่า → ทั่วไป',
+  'ob.cloud.body': 'WebBrain Compass พร้อมพร้อมกับการจัดสรรรายสัปดาห์ฟรี บทสนทนา Compass ที่เลือกอาจถูกเก็บและใช้เพื่อปรับปรุง WebBrain ในขณะที่ช่วยปรับปรุง WebBrain เปิดใช้งานตามค่าเริ่มต้น คุณสามารถปิดได้ในการตั้งค่า → ทั่วไป',
   'ob.cloud.change': 'เปลี่ยน',
   'ob.cloud.using': 'กำลังใช้ WebBrain Compass',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'ไม่สามารถบันทึกข้อมูลการกู้คืนได้ งานที่กำลังทำยังดำเนินต่อได้ แต่จะไม่ทำซ้ำการกระทำหลังการเชื่อมต่อขาด โปรดลองใหม่ด้วยตนเอง',
 
   'sp.error_prefix': 'ข้อผิดพลาด: {msg}',
-  'sp.subscribe.allowance_used': 'ใช้โควตารายวันฟรีของ WebBrain Compass หมดแล้ว',
+  'sp.subscribe.allowance_used': 'ใช้โควตารายสัปดาห์ฟรีของ WebBrain Compass หมดแล้ว',
   'sp.subscribe.btn': 'สมัครสมาชิก',
   'sp.subscribe.upgrade': 'อัปเกรดเป็น Plus',
   "sp.subscribe.resume_payment": "อัปเดตวิธีชำระเงินแล้ว — ลองอีกครั้ง",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>เริ่มต้นกับ llama.cpp:</strong><br>รัน <code>llama-server -m your-model.gguf --port 8080</code> เพื่อสตาร์ตเซิร์ฟเวอร์ในเครื่อง<br>ไม่ต้องใช้คีย์ API — ทำงานในเครื่องของคุณทั้งหมด',
   'st.providers.save': 'บันทึก',
-  'st.providers.webbrain_note.body': 'รวมการใช้งาน WebBrain Compass รายวันฟรีไว้แล้ว คำขอจะผ่าน api.webbrain.one โดยค่าเริ่มต้นเราจะบันทึกข้อมูลเมตาสำหรับโควตาและการแก้จุดบกพร่อง ไม่ใช่ข้อความพรอมต์ เนื้อหาหน้าเว็บ ภาพหน้าจอ หรือการตอบกลับของโมเดล {privacyLink} หากต้องการใช้งานเพิ่มเติม สมัครสมาชิกที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}',
+  'st.providers.webbrain_note.body': 'รวมการใช้งาน WebBrain Compass รายสัปดาห์ฟรีไว้แล้ว คำขอจะผ่าน api.webbrain.one โดยค่าเริ่มต้นเราจะบันทึกข้อมูลเมตาสำหรับโควตาและการแก้จุดบกพร่อง ไม่ใช่ข้อความพรอมต์ เนื้อหาหน้าเว็บ ภาพหน้าจอ หรือการตอบกลับของโมเดล {privacyLink} หากต้องการใช้งานเพิ่มเติม สมัครสมาชิกที่ {subscribeLink} จัดการการเรียกเก็บเงินที่ {accountLink}',
   'st.providers.webbrain_note.privacy_link': 'นโยบายความเป็นส่วนตัว',
   'st.providers.test': 'ทดสอบการเชื่อมต่อ',
   'st.providers.duplicate': 'ทำสำเนา',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "เชื่อมต่อแล้ว! โมเดล: {model}",
   "st.transcription.failed": "ล้มเหลว: {error}",
   "st.transcription.fill_required": "กรอก URL ฐานและโมเดลก่อน",
+  "st.imagegen.heading": "สื่อเชิงสร้างสรรค์",
+  "st.imagegen.desc": "เครื่องมือเอเจนต์ generate_image สร้างภาพและสื่ออื่นจากพรอมต์ข้อความผ่านผู้ให้บริการที่เลือก",
+  "st.imagegen.saved": "บันทึกแล้ว!",
+  "st.imagegen.cleared": "ล้างแล้ว.",
+  "st.imagegen.testing": "กำลังทดสอบ...",
+  "st.imagegen.connected": "เชื่อมต่อแล้ว! โมเดล: {model}",
+  "st.imagegen.failed": "ล้มเหลว: {error}",
+  "st.imagegen.fill_required": "กรอกคีย์ API และโมเดลก่อน",
+  "st.captcha.desc_html": "ให้เอเจนต์แก้ CAPTCHA โดยอัตโนมัติผ่าน API ของ <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a> รองรับ reCAPTCHA v2/v3, hCaptcha และ Cloudflare Turnstile การบันทึกคีย์ API ที่ถูกต้องจะเปิดใช้ CapSolver โดยอัตโนมัติ หากไม่มีคีย์ เอเจนต์จะหยุดและขอให้คุณแก้ CAPTCHA เอง CapSolver คิดค่าบริการต่อการแก้หนึ่งครั้ง (~$0.001–$0.003) โดยใช้บัญชีและคีย์ API ของคุณเอง",
+  "st.captcha.enabled.label": "เปิดใช้งาน CapSolver",
+  "st.captcha.enabled.desc": "เมื่อเอเจนต์เจอ CAPTCHA มันจะเรียก CapSolver หนึ่งครั้งก่อนถอยไปถามคุณ ต้องมีคีย์ API ด้านล่าง",
   "st.captcha.api_key.label": "คีย์ API ของ CapSolver",
   "st.captcha.save": "บันทึกคีย์",
   "st.captcha.check_balance": "ตรวจสอบยอดคงเหลือ",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'ยังไม่มีการดำเนินการใด ๆ ลองอีกครั้งเพื่อตรวจสอบแผนใหม่',
   'sp.plan.awaiting_review': 'อนุมัติหรือยกเลิกแผนด้านบนก่อนส่งข้อความอื่น',
   'sp.plan.intent_unavailable': "การวางแผนล้มเหลวหลังจากลองสองครั้ง ระบบจะดำเนินต่อในโหมด Act พร้อมมาตรการป้องกันตามปกติ",
-  'sp.slash.busy_only_oob': 'ข้อความจะถูกเข้าคิวขณะที่ WebBrain ไม่ว่าง เฉพาะ /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces และ /verbose เท่านั้นที่เรียกใช้ได้ทันทีในฐานะคำสั่ง slash',
+  'sp.slash.busy_only_oob': 'ข้อความจะถูกเข้าคิวขณะที่ WebBrain ไม่ว่าง เฉพาะ /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces และ /verbose เท่านั้นที่เรียกใช้ได้ทันทีในฐานะคำสั่ง slash',
   'tool.go_back': 'กำลังย้อนกลับ',
   'tool.go_forward': 'กำลังไปข้างหน้า',
   'st.display.search.placeholder': 'ค้นหาการตั้งค่าทั่วไป',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "อ่าน {name} ไม่ได้",
   "sp.attach.needs_prompt": "พิมพ์คำถามเพื่อส่งไปพร้อมกับไฟล์แนบ",
   "sp.attach.no_tab": "ไม่มีแท็บที่ใช้งานอยู่สำหรับแนบข้อความที่เลือก",
+  "sp.steer.button": "ปรับทิศทาง",
+  "sp.steer.title": "ปรับทิศทางงานปัจจุบัน (Alt+Enter)",
+  "sp.steer.sent": "ส่งคำแนะนำแล้ว จะมีผลในขั้นตอนถัดไปของเอเจนต์",
+  "sp.steer.queued": "งานปัจจุบันสิ้นสุดแล้ว ข้อความอยู่ในคิวสำหรับรอบถัดไป",
+  "sp.queue.send": "เพิ่มข้อความเข้าคิว",
   "sp.queue.label": "อยู่ในคิว",
   "sp.queue.label_numbered": "อยู่ในคิว {index}",
   "sp.queue.edit": "แก้ไขข้อความในคิว",
   "sp.queue.delete": "ลบข้อความในคิว",
   "sp.slash.check_progress": "แสดงบันทึกความคืบหน้าปัจจุบัน",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "บันทึกหน้าจอหรือหน้าต่าง",
   "sp.progress.title_html": "<strong>บันทึกความคืบหน้าปัจจุบัน</strong>",
   "sp.progress.empty": "ยังไม่มีรายการความคืบหน้าที่บันทึกไว้สำหรับการสนทนานี้",

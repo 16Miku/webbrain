@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Malay (ms).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('ms'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Zum UI sambungan',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': 'Mula',
   'ob.btn.skip': 'Langkau buat masa ini',
   'ob.btn.start': 'Mula',
-  'ob.cloud.body': 'WebBrain Compass sedia dengan elaun harian percuma. Perbincangan Compass yang dipilih boleh disimpan dan digunakan untuk meningkatkan WebBrain semasa Bantu Tingkatkan WebBrain didayakan secara lalai. Anda boleh mematikannya di Tetapan → Umum.',
+  'ob.cloud.body': 'WebBrain Compass sedia dengan elaun mingguan percuma. Perbincangan Compass yang dipilih boleh disimpan dan digunakan untuk meningkatkan WebBrain semasa Bantu Tingkatkan WebBrain didayakan secara lalai. Anda boleh mematikannya di Tetapan → Umum.',
   'ob.cloud.change': 'Tukar',
   'ob.cloud.using': 'Menggunakan WebBrain Compass.',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'Data pemulihan tidak dapat disimpan. Tugas langsung boleh diteruskan, tetapi tindakan tidak akan dimainkan semula selepas sambungan terputus. Cuba lagi secara manual.',
 
   'sp.error_prefix': 'Ralat: {msg}',
-  'sp.subscribe.allowance_used': 'Peruntukan harian percuma WebBrain Compass telah digunakan.',
+  'sp.subscribe.allowance_used': 'Peruntukan mingguan percuma WebBrain Compass telah digunakan.',
   'sp.subscribe.btn': 'Langgan',
   'sp.subscribe.upgrade': 'Naik taraf kepada Plus',
   "sp.subscribe.resume_payment": "Kaedah pembayaran dikemas kini — cuba lagi",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>Bermula dengan llama.cpp:</strong><br>Jalankan <code>llama-server -m your-model.gguf --port 8080</code> untuk memulakan pelayan tempatan.<br>Tiada kunci API diperlukan — semuanya berjalan pada mesin anda.',
   'st.providers.save': 'Simpan',
-  'st.providers.webbrain_note.body': 'Penggunaan harian percuma WebBrain Compass disertakan. Permintaan melalui api.webbrain.one; secara lalai kami mencatat metadata untuk kuota dan penyahpepijatan, bukan teks gesaan, kandungan halaman, tangkapan skrin atau respons model. {privacyLink}. Untuk penggunaan lebih, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.',
+  'st.providers.webbrain_note.body': 'Penggunaan mingguan percuma WebBrain Compass disertakan. Permintaan melalui api.webbrain.one; secara lalai kami mencatat metadata untuk kuota dan penyahpepijatan, bukan teks gesaan, kandungan halaman, tangkapan skrin atau respons model. {privacyLink}. Untuk penggunaan lebih, langgan di {subscribeLink}. Urus pengebilan di {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Dasar privasi',
   'st.providers.test': 'Uji sambungan',
   'st.providers.duplicate': 'Duplikasi',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "Tersambung! Model: {model}",
   "st.transcription.failed": "Gagal: {error}",
   "st.transcription.fill_required": "Isi URL Asas dan Model terlebih dahulu.",
+  "st.imagegen.heading": "Media generatif",
+  "st.imagegen.desc": "Alat ejen generate_image menghasilkan imej dan media lain daripada gesaan teks melalui penyedia yang dipilih.",
+  "st.imagegen.saved": "Disimpan!",
+  "st.imagegen.cleared": "Dibersihkan.",
+  "st.imagegen.testing": "Menguji...",
+  "st.imagegen.connected": "Berjaya disambung! Model: {model}",
+  "st.imagegen.failed": "Gagal: {error}",
+  "st.imagegen.fill_required": "Isi Kunci API dan Model dahulu.",
+  "st.captcha.desc_html": "Biarkan ejen menyelesaikan CAPTCHA secara automatik melalui API <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. Menyokong reCAPTCHA v2/v3, hCaptcha dan Cloudflare Turnstile. Menyimpan kunci API yang sah akan mengaktifkan CapSolver secara automatik; tanpa kunci, ejen berhenti dan meminta anda menyelesaikan CAPTCHA sendiri. CapSolver mengenakan bayaran bagi setiap penyelesaian (~$0.001–$0.003); anda menggunakan akaun dan kunci API sendiri.",
+  "st.captcha.enabled.label": "Dayakan CapSolver",
+  "st.captcha.enabled.desc": "Apabila ejen menemui CAPTCHA, ia akan memanggil CapSolver sekali sebelum berundur untuk bertanya kepada anda. Memerlukan kunci API di bawah.",
   "st.captcha.api_key.label": "Kunci API CapSolver",
   "st.captcha.save": "Simpan Kunci",
   "st.captcha.check_balance": "Semak Baki",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'Tiada apa-apa dijalankan. Cuba lagi untuk menyemak rancangan baharu.',
   'sp.plan.awaiting_review': 'Luluskan atau batalkan rancangan di atas sebelum menghantar mesej lain.',
   'sp.plan.intent_unavailable': "Perancangan gagal selepas dua percubaan. Proses diteruskan dalam mod Act dengan perlindungan biasa.",
-  'sp.slash.busy_only_oob': 'Mesej dimasukkan ke giliran semasa WebBrain sibuk. Hanya /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose boleh berjalan serta-merta sebagai arahan slash.',
+  'sp.slash.busy_only_oob': 'Mesej dimasukkan ke giliran semasa WebBrain sibuk. Hanya /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, dan /verbose boleh berjalan serta-merta sebagai arahan slash.',
   'tool.go_back': 'Kembali',
   'tool.go_forward': 'Maju',
   'st.display.search.placeholder': 'Cari tetapan Umum',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "Tidak dapat membaca {name}.",
   "sp.attach.needs_prompt": "Tambah soalan untuk dihantar bersama lampiran anda.",
   "sp.attach.no_tab": "Tiada tab aktif untuk melampirkan teks yang dipilih.",
+  "sp.steer.button": "Halakan",
+  "sp.steer.title": "Halakan tugas semasa (Alt+Enter)",
+  "sp.steer.sent": "Mesej arahan dihantar; digunakan pada langkah ejen seterusnya.",
+  "sp.steer.queued": "Tugas semasa selesai; mesej dibariskan untuk giliran seterusnya.",
+  "sp.queue.send": "Bariskan mesej",
   "sp.queue.label": "Dalam baris gilir",
   "sp.queue.label_numbered": "Dalam baris gilir {index}",
   "sp.queue.edit": "Edit mesej dalam baris gilir",
   "sp.queue.delete": "Padam mesej dalam baris gilir",
   "sp.slash.check_progress": "Tunjukkan lejar kemajuan semasa",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "Rakam skrin atau tetingkap",
   "sp.progress.title_html": "<strong>Lejar kemajuan semasa</strong>",
   "sp.progress.empty": "Tiada baris kemajuan direkodkan untuk perbualan ini lagi.",

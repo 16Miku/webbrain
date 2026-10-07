@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // Arabic (ar).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('ar'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'تكبير واجهة الإضافة',
@@ -151,7 +153,7 @@ export default {
   'ob.btn.done': 'ابدأ',
   'ob.btn.skip': 'تخطي الآن',
   'ob.btn.start': 'بدء',
-  'ob.cloud.body': 'WebBrain Compass جاهز مع بدل يومي مجاني. قد يتم الاحتفاظ بمحادثات Compass المحددة واستخدامها لتحسين WebBrain بينما يكون Help Improve WebBrain قيد التشغيل افتراضيًا. يمكنك إيقاف تشغيله في الإعدادات → عام.',
+  'ob.cloud.body': 'WebBrain Compass جاهز مع بدل أسبوعي مجاني. قد يتم الاحتفاظ بمحادثات Compass المحددة واستخدامها لتحسين WebBrain بينما يكون Help Improve WebBrain قيد التشغيل افتراضيًا. يمكنك إيقاف تشغيله في الإعدادات → عام.',
   'ob.cloud.change': 'تغيير',
   'ob.cloud.using': 'استخدام WebBrain Compass.',
 
@@ -225,7 +227,7 @@ export default {
   'sp.persistence.unavailable': 'تعذّر حفظ بيانات الاسترداد. يمكن متابعة المهمة الحالية، لكن لن تُعاد الإجراءات بعد انقطاع الاتصال. أعد المحاولة يدويًا.',
 
   'sp.error_prefix': 'خطأ: {msg}',
-  'sp.subscribe.allowance_used': 'تم استخدام الحصة اليومية المجانية من WebBrain Compass.',
+  'sp.subscribe.allowance_used': 'تم استخدام الحصة الأسبوعية المجانية من WebBrain Compass.',
   'sp.subscribe.btn': 'اشترك',
   'sp.subscribe.upgrade': 'الترقية إلى Plus',
   "sp.subscribe.resume_payment": "تم تحديث طريقة الدفع — أعد المحاولة",
@@ -363,7 +365,7 @@ export default {
 
   'st.providers.info.html': '<strong>بدء التشغيل مع llama.cpp:</strong><br>شغّل <code>llama-server -m your-model.gguf --port 8080</code> لتشغيل خادم محلي.<br>لا حاجة لمفتاح API — يعمل كاملًا على جهازك.',
   'st.providers.save': 'حفظ',
-  'st.providers.webbrain_note.body': 'يتضمّن الاستخدام اليومي المجاني لـ WebBrain Compass. تمر الطلبات عبر api.webbrain.one؛ افتراضيًا نسجّل البيانات الوصفية للحصة وتصحيح الأخطاء، وليس نص المطالبات أو محتوى الصفحة أو لقطات الشاشة أو ردود النموذج. {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.',
+  'st.providers.webbrain_note.body': 'يتضمّن الاستخدام الأسبوعي المجاني لـ WebBrain Compass. تمر الطلبات عبر api.webbrain.one؛ افتراضيًا نسجّل البيانات الوصفية للحصة وتصحيح الأخطاء، وليس نص المطالبات أو محتوى الصفحة أو لقطات الشاشة أو ردود النموذج. {privacyLink}. لمزيد من الاستخدام، اشترك عبر {subscribeLink}. أدِر الفوترة عبر {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'سياسة الخصوصية',
   'st.providers.test': 'اختبار الاتصال',
   'st.providers.duplicate': 'نسخ',
@@ -599,6 +601,17 @@ export default {
   "st.transcription.connected": "تم الاتصال! النموذج: {model}",
   "st.transcription.failed": "فشل: {error}",
   "st.transcription.fill_required": "املأ عنوان API الأساسي والنموذج أولًا.",
+  "st.imagegen.heading": "الوسائط التوليدية",
+  "st.imagegen.desc": "تستخدم أداة الوكيل generate_image المزوّد المحدد لإنشاء الصور والوسائط الأخرى من وصف نصي.",
+  "st.imagegen.saved": "تم الحفظ!",
+  "st.imagegen.cleared": "تم المسح.",
+  "st.imagegen.testing": "جارٍ الاختبار...",
+  "st.imagegen.connected": "تم الاتصال! النموذج: {model}",
+  "st.imagegen.failed": "فشل: {error}",
+  "st.imagegen.fill_required": "املأ مفتاح API والنموذج أولًا.",
+  "st.captcha.desc_html": "دع الوكيل يحلّ اختبارات CAPTCHA تلقائيًا عبر واجهة <a href=\"https://capsolver.com\" target=\"_blank\" style=\"color:var(--accent);\">CapSolver</a>. يدعم reCAPTCHA v2/v3 وhCaptcha وCloudflare Turnstile. يؤدي حفظ مفتاح API صالح إلى تمكين CapSolver تلقائيًا؛ وبدونه، يتوقّف الوكيل ويطلب منك حلّ الاختبار بنفسك. تتقاضى CapSolver رسومًا لكل عملية حلّ (~$0.001–$0.003)؛ تستخدم حسابك ومفتاح API الخاص بك.",
+  "st.captcha.enabled.label": "تفعيل CapSolver",
+  "st.captcha.enabled.desc": "عندما يصادف الوكيل اختبار CAPTCHA فإنه يستدعي CapSolver مرّة واحدة قبل اللجوء إلى سؤالك. يتطلّب مفتاح API أدناه.",
   "st.captcha.api_key.label": "مفتاح CapSolver API",
   "st.captcha.save": "حفظ المفتاح",
   "st.captcha.check_balance": "التحقّق من الرصيد",
@@ -788,7 +801,7 @@ export default {
   'sp.plan.timed_out_hint': 'لم يتم تنفيذ أي شيء. أعد المحاولة لمراجعة خطة جديدة.',
   'sp.plan.awaiting_review': 'وافق على الخطة أعلاه أو ألغها قبل إرسال رسالة أخرى.',
   'sp.plan.intent_unavailable': "فشل التخطيط بعد محاولتين. ستتم المتابعة في وضع Act مع إجراءات الحماية المعتادة.",
-  'sp.slash.busy_only_oob': 'تُضاف الرسائل إلى قائمة الانتظار بينما يكون WebBrain مشغولًا. يمكن فقط لـ /help و /progress و /scratchpad و /memory و /schedule --list و /watch و /dangerously-skip-permissions و /screenshot و /export و /export --traces و /verbose العمل فورًا كأوامر slash.',
+  'sp.slash.busy_only_oob': 'تُضاف الرسائل إلى قائمة الانتظار بينما يكون WebBrain مشغولًا. يمكن فقط لـ /help و /progress و /btw و /scratchpad و /memory و /schedule --list و /watch و /dangerously-skip-permissions و /screenshot و /export و /export --traces و /verbose العمل فورًا كأوامر slash.',
   'tool.go_back': 'العودة للخلف',
   'tool.go_forward': 'التقدم للأمام',
   'st.display.search.placeholder': 'البحث في الإعدادات العامة',
@@ -831,11 +844,18 @@ export default {
   "sp.attach.read_failed": "تعذرت قراءة {name}.",
   "sp.attach.needs_prompt": "أضف سؤالاً لإرساله مع المرفق.",
   "sp.attach.no_tab": "لا توجد علامة تبويب نشطة لإرفاق النص المحدد بها.",
+  "sp.steer.button": "توجيه",
+  "sp.steer.title": "توجيه المهمة الحالية (Alt+Enter)",
+  "sp.steer.sent": "أُرسلت رسالة التوجيه؛ ستُطبّق في الخطوة التالية.",
+  "sp.steer.queued": "انتهت المهمة الحالية؛ أُضيفت الرسالة إلى قائمة الانتظار للدور التالي.",
+  "sp.queue.send": "إضافة الرسالة إلى قائمة الانتظار",
   "sp.queue.label": "في قائمة الانتظار",
   "sp.queue.label_numbered": "في قائمة الانتظار {index}",
   "sp.queue.edit": "تعديل الرسالة في قائمة الانتظار",
   "sp.queue.delete": "حذف الرسالة من قائمة الانتظار",
   "sp.slash.check_progress": "إظهار سجل التقدم الحالي",
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   "sp.slash.record_full_screen": "تسجيل شاشة أو نافذة",
   "sp.progress.title_html": "<strong>سجل التقدم الحالي</strong>",
   "sp.progress.empty": "لا توجد صفوف تقدم مسجلة لهذه المحادثة بعد.",

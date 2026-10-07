@@ -6,12 +6,101 @@
 
 **Settings → Providers** selects the main model for conversation, planning and
 final replies. **Settings → Assistive Models** groups Vision (including screenshot
-limits and redaction), Speech to text, Jev (TypeSafe), and SafeSocial. Configuring an assistive
-model does not replace the active provider. Jev is outside the dynamic provider
-list; its verification, fast-classification and experimental browser switches
-are independent opt-ins. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
-and [data flow](privacy-and-data-flow.md#optional-jev-typesafe-scheduled-task-verification)
+limits and redaction), Speech to text, Generative Media (powering the
+`generate_image` agent tool), Decision models, and SafeSocial. Configuring an assistive
+model does not replace the active provider. Decision models share one provider/model
+selection with separate completion, watch, scheduled-check, classification and browser
+decision switches. See [the settings guide](https://webbrain.one/docs/settings/#multimodal)
+and [data flow](privacy-and-data-flow.md#decision-models-and-completion-verification)
 for setup and disclosure details. Existing `#multimodal` settings links still work.
+
+### Decision models
+
+Select OpenRouter (the default), TypeSafe directly, or a local/custom System One
+endpoint. OpenRouter's model list comes from its decision-model catalog and includes
+all publishers. The new default is `perplexity/pplx-decider-v1-27b`; existing
+TypeSafe keys, enabled features and scheduler thresholds stay on their original
+provider until changed. Provider keys are stored separately.
+
+Local [Kev](https://github.com/jaredpalmer/kev) defaults to
+`http://127.0.0.1:8009`, model `kev-latest`, using `/v1/systemone`. A key is optional
+and loopback requests work offline. Custom remote endpoints require HTTPS.
+Image support follows available model capabilities or the custom override. Test
+Connection checks typed answers and, when enabled, two independent image-only
+facts. A successful HTTP response alone does not establish image support.
+
+Verify completion (`done`) defaults on when outsourcing is configured, with a
+90% acceptance threshold separate from the scheduled-check threshold. Compass
+always uses its managed `/v1/decisions` route regardless of personal decision
+settings. The fallback chain is decision model, active LLM, then existing
+completion checks. These outsourcing toggles control the decision model only;
+with outsourcing disabled or unconfigured, completion still uses a dedicated
+call to the active LLM, subject to its normal cost allowance, followed by the
+existing checks. Strict Secret Mode disables these additional calls.
+
+| Active provider | First completion verifier | Fallback |
+| --- | --- | --- |
+| WebBrain Compass | Managed decision model | Active LLM, then existing checks |
+| Other provider, completion outsourcing enabled | Selected decision model | Active LLM, then existing checks |
+| Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
+
+Each judge prefers a fresh screenshot and tries AX if images
+are unavailable or inconclusive. Confident pending/failed results require
+recovery. Accepted fresh proof can establish generic publication evidence;
+explicit recipient, payment, download, authorization and workflow contracts
+remain required. Future votes and moderation outcomes are not certified.
+Freshness checks re-capture pixels or re-read the bounded AX observation used
+by the judge, with document/run identity checked separately. Text outside that
+observation does not invalidate an AX verdict; changed observed evidence does.
+Action history includes tool names without typed values or other arguments.
+
+Rollout is additive: deploy Cloud `/v1/decisions` before releasing the extension.
+An older Cloud deployment falls through to the active LLM and existing checks.
+
+### Generative Media
+
+Configure **Settings → Assistive Models → Generative Media** for the
+`generate_image` agent tool. Select one provider and save its settings:
+
+| Provider | Required settings | Generation |
+| --- | --- | --- |
+| fal.ai | API key, model ID (for example `fal-ai/flux/schnell`) | fal.ai queue API; existing saved fal.ai settings remain compatible |
+| OpenRouter | API key, image model ID | [Dedicated Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation); inline images appear in chat with a save link |
+| Comfy Router | Comfy API key, `provider/model` ID (for example `bfl/flux-2-pro`) | [Queued requests](https://docs.comfy.org/development/comfy-router/queued-delivery); hosted or inline media |
+| ComfyUI (localhost) | Local server URL (default `http://127.0.0.1:8188`), workflow JSON in API format | Local `/prompt`, `/history/{prompt_id}`, and `/view` endpoints; no API key |
+
+For Comfy Router models with native inputs other than `prompt`, paste their input
+JSON in **Model input JSON** and place `{{prompt}}` in the text field(s). Other
+values, such as duration or resolution, are preserved. Without a placeholder,
+WebBrain supplies the tool prompt as `prompt`. Refer to the model's
+[input schema](https://docs.comfy.org/development/comfy-router/schemas).
+
+For local ComfyUI, start the server, export a working workflow **in API format**,
+and replace its positive prompt text with `{{prompt}}`. Keep the model names,
+connections, and other inputs from the working export. Include a Save Image or
+other media output node. Only loopback URLs (`localhost`, `127.0.0.1`, or `[::1]`)
+are accepted. A connection test checks the server, not workflow execution.
+
+**Test Connection** makes only free, read-only authentication/model/server probes;
+it does not generate media. OpenRouter also checks that the selected model appears
+in the image generation catalog. **Save / Clear** apply to the selected media
+configuration. Unsaved drafts survive provider switches while settings remain open;
+only the saved selection is used by the agent.
+
+The tool is a full-tier Act-mode tool and is unavailable in Ask mode or on the
+compact/mid tool surface. Permission checks use the selected provider's host.
+Cloud keys are sent only to fixed API origins, and authenticated requests reject
+redirects. Generations have a ten-minute client deadline. Stop cancels queued
+fal.ai/Comfy Router jobs when possible; local Stop deletes only this prompt from
+the queue. A local workflow that has already started can continue, and Comfy Router
+can charge for a partner generation already in flight. Inline media is limited to
+20 MB; choose hosted output for larger files. Inline outputs are stored locally
+as media assets, so their previews and save links survive panel reopening without
+putting base64 bytes in the run journal or model context.
+
+The Act system prompt and planner direct the model to call `generate_image` when
+the user asks to generate media. Provider results are treated as untrusted content.
+Inline bytes are shown in chat and excluded from model context.
 
 ### SafeSocial image classifier (experimental)
 
@@ -81,72 +170,87 @@ class BaseLLMProvider {
 
 ## Built-in Providers
 
-| Provider ID | Type | Category | Default Model | Vision |
-|---|---|---|---|---|
-| `webbrain_cloud` | `openai` | cloud | `webbrain-cloud 1.0` | Yes |
-| `llamacpp` | `llamacpp` | local | (loaded model) | Auto metadata / override |
-| `ollama` | `openai` | local | (loaded model) | Auto via `/api/show` / override |
-| `ods` | `openai` | local | (loaded model) | Auto via `/props` / override |
-| `lmstudio` | `openai` | local | (loaded model) | Auto metadata / override |
-| `osaurus` | `openai` | local | (required) | Off / manual toggle |
-| `jan` | `openai` | local | (loaded model) | Yes (default on) |
-| `vllm` | `openai` | local | (loaded model) | Yes (default on) |
-| `sglang` | `openai` | local | (loaded model) | Yes (default on) |
-| `localai` | `openai` | local | (loaded model) | Auto metadata / override |
-| `gpt4all` | `openai` | local | (loaded model) | Yes (default on) |
-| `local_openai_proxy` | `openai` | local | (required) | Off / manual toggle |
-| `unsloth` | `openai` | local | (required) | Off / manual toggle |
-| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 (only preset); experimental custom HF ONNX repos | No |
-| `azure_openai` | `azure_openai` | cloud | (deployment) | Manual toggle |
-| `aws_bedrock` | `aws_bedrock` | cloud | (model id) | No |
-| `openai` | `openai` | cloud | `gpt-5.6-terra` | Model-name regex |
-| `anthropic` | `anthropic` | cloud | `claude-sonnet-4-6` | Model-name regex |
-| `gemini` | `openai` | cloud | `gemini-3.1-flash` | Model-name regex |
-| `cloudflare` | `openai` | router | `@cf/zai-org/glm-5.2` | Model-name regex |
-| `mistral` | `openai` | cloud | `mistral-large-latest` | Model-name regex |
-| `deepseek` | `openai` | cloud | `deepseek-flash` | Model-name regex |
-| `xai` (Grok) | `openai` | cloud | `grok-4.3` | Model-name regex |
-| `nvidia` (NIM) | `openai` | router | `meta/llama-3.1-8b-instruct` | Model-name regex |
-| `groq` | `openai` | router | `llama-3.3-70b-versatile` | Model-name regex |
-| `minimax` | `openai` | cloud | `minimax-m2.7` | Model-name regex |
-| `kimi` | `openai` | cloud | `kimi-k2.5` | Model-name regex |
-| `alibaba` (Qwen) | `openai` | cloud | `qwen-max` | Model-name regex |
-| `together` | `openai` | router | `meta-llama/Llama-3.3-70B-Instruct-Turbo` | Model-name regex |
-| `openrouter` | `openai` | router | `openrouter/free` | Model-name regex |
-| `huggingface` | `openai` | router | `zai-org/GLM-5.2` | Model-name regex |
-| `fireworks` | `openai` | router | `accounts/fireworks/models/llama-v3p3-70b-instruct` | Model-name regex |
-| `z_ai` | `openai` | cloud | `glm-5.2` | Model-name regex |
+| Provider ID          | Type           | Category | Default Model                                                      | Vision                          |
+| -------------------- | -------------- | -------- | ------------------------------------------------------------------ | ------------------------------- |
+| `webbrain_cloud`     | `openai`       | cloud    | `webbrain-cloud 1.0`                                               | Yes                             |
+| `llamacpp`           | `llamacpp`     | local    | (loaded model)                                                     | Auto metadata / override        |
+| `ollama`             | `openai`       | local    | (loaded model)                                                     | Auto via `/api/show` / override |
+| `lmstudio`           | `openai`       | local    | (loaded model)                                                     | Auto metadata / override        |
+| `osaurus`            | `openai`       | local    | (required)                                                         | Off / manual toggle             |
+| `jan`                | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
+| `vllm`               | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
+| `sglang`             | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
+| `localai`            | `openai`       | local    | (loaded model)                                                     | Auto metadata / override        |
+| `gpt4all`            | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
+| `local_openai_proxy` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
+| `unsloth`            | `openai`       | local    | (required)                                                         | Off / manual toggle             |
+| `webgpu` (Chromium)  | `webgpu`       | local    | Compass Tiny v2.1 (only preset); experimental custom HF ONNX repos | No                              |
+| `azure_openai`       | `azure_openai` | cloud    | (deployment)                                                       | Manual toggle                   |
+| `aws_bedrock`        | `aws_bedrock`  | cloud    | (model id)                                                         | No                              |
+| `openai`             | `openai`       | cloud    | `gpt-5.6-terra`                                                    | Model-name regex                |
+| `anthropic`          | `anthropic`    | cloud    | `claude-sonnet-4-6`                                                | Model-name regex                |
+| `gemini`             | `openai`       | cloud    | `gemini-3.1-flash`                                                 | Model-name regex                |
+| `cloudflare`         | `openai`       | router   | `@cf/zai-org/glm-5.2`                                              | Model-name regex                |
+| `mistral`            | `openai`       | cloud    | `mistral-large-latest`                                             | Model-name regex                |
+| `deepseek`           | `openai`       | cloud    | `deepseek-flash`                                                   | Model-name regex                |
+| `xai` (Grok)         | `openai`       | cloud    | `grok-4.3`                                                         | Model-name regex                |
+| `nvidia` (NIM)       | `openai`       | router   | `meta/llama-3.1-8b-instruct`                                       | Model-name regex                |
+| `groq`               | `openai`       | router   | `llama-3.3-70b-versatile`                                          | Model-name regex                |
+| `minimax`            | `openai`       | cloud    | `minimax-m2.7`                                                     | Model-name regex                |
+| `kimi`               | `openai`       | cloud    | `kimi-k2.5`                                                        | Model-name regex                |
+| `alibaba` (Qwen)     | `openai`       | cloud    | `qwen-max`                                                         | Model-name regex                |
+| `together`           | `openai`       | router   | `meta-llama/Llama-3.3-70B-Instruct-Turbo`                          | Model-name regex                |
+| `openrouter`         | `openai`       | router   | `openrouter/free`                                                  | Model-name regex                |
+| `huggingface`        | `openai`       | router   | `zai-org/GLM-5.2`                                                  | Model-name regex                |
+| `fireworks`          | `openai`       | router   | `accounts/fireworks/models/llama-v3p3-70b-instruct`                | Model-name regex                |
+| `z_ai`               | `openai`       | cloud    | `glm-5.2`                                                          | Model-name regex                |
 
 ### Extended provider catalog
 
-WebBrain also ships 79 disabled-by-default provider cards. Most are sourced
+WebBrain also ships 81 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, Settings
-contains **112 built-in providers on Chromium** and **111 on Firefox**; the
+contains **114 built-in providers on Chromium** and **113 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
-| IDs |
-|---|
-| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
-| `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph` |
-| `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit` |
-| `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan` |
+| IDs                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `demonroute`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
+| `freebuff2api`, `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph`                       |
+| `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit`                               |
+| `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan`                                                                                                                       |
 
 Most use the OpenAI-compatible Chat Completions contract and bearer API keys.
 The exceptions are:
 
-| Provider | Authentication / protocol |
-|---|---|
-| Azure AI Foundry | Resource name plus `api-key`; model is the deployed model name |
-| Google Vertex AI | Project, location, and a Google authorization key sent as `x-goog-api-key`; `global` uses `aiplatform.googleapis.com` |
-| Google Vertex AI (Anthropic) | Vertex `rawPredict` / `streamRawPredict` with the same authorization-key fields; `us` and `eu` use their multi-region hosts |
-| Perplexity Agent | OpenAI Responses-compatible `/v1/responses` |
-| Cloudflare | Existing card supports Workers AI plus an optional AI Gateway ID; blank IDs use Cloudflare's `default` gateway for `@cf/` models |
+| Provider                     | Authentication / protocol                                                                                                        |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Azure AI Foundry             | Resource name plus `api-key`; model is the deployed model name                                                                   |
+| Google Vertex AI             | Project, location, and a Google authorization key sent as `x-goog-api-key`; `global` uses `aiplatform.googleapis.com`            |
+| Google Vertex AI (Anthropic) | Vertex `rawPredict` / `streamRawPredict` with the same authorization-key fields; `us` and `eu` use their multi-region hosts      |
+| Perplexity Agent             | OpenAI Responses-compatible `/v1/responses`                                                                                      |
+| Cloudflare                   | Existing card supports Workers AI plus an optional AI Gateway ID; blank IDs use Cloudflare's `default` gateway for `@cf/` models |
 
 Morph and standard Perplexity Sonar are text-only integrations in the agent
 and advertise `supportsTools: false`. New provider cards remain inactive until
 the user saves their credentials and selects the provider.
+
+#### Freebuff2API
+
+[Freebuff2API](https://github.com/Quorinex/Freebuff2API) is a self-hosted,
+OpenAI-compatible proxy. Start the server, then configure the **Freebuff2API
+(Local)** card with its URL (the default is `http://127.0.0.1:8080/v1`) and
+select a model with **Load Models**. Enter a proxy API key only when its
+`API_KEYS` access control is enabled; Freebuff authentication tokens remain on
+the proxy server and are never entered into WebBrain.
+
+#### IO.NET and Synthetic
+
+[IO.NET](https://io.net/docs/guides/intelligence/io-intelligence) and
+[Synthetic](https://synthetic.new/) are built-in OpenAI-compatible cloud
+providers. Add each service's bearer API key in its Settings card, choose a
+model, save, and select the provider.
 
 #### NEAR AI Cloud
 
@@ -166,6 +270,21 @@ the card, keep the default `z-ai/glm-5.3-flash` model, then click **Test
 Connection**. If selecting a model with a smaller context window, such as
 `Qwen/Qwen3.8-27B` (262144 tokens), set **Context window** to its documented
 limit. Interactive Ask streaming, tool calls, and vision work through the
+existing OpenAI-compatible path.
+
+#### DemonRoute
+
+[DemonRoute](https://demonroute.com/) exposes an OpenAI-compatible API at
+`https://api.demonroute.com/v1`. It routes to open-weight and uncensored
+fine-tunes (such as Dolphin and Hermes) behind one key and does not train on
+user content.
+
+In WebBrain, open **Settings -> Providers -> DemonRoute**. Generate an API
+key from [DemonRoute](https://demonroute.com/), paste it into the card, keep
+the default `dphn/Dolphin3.0-Llama3.1-8B` model (131072 tokens), then click
+**Test Connection**. If selecting a model with a smaller context window, such
+as `Gryphe/MythoMax-L2-13b` (4096 tokens), set **Context window** to its
+documented limit. Interactive Ask streaming and tool calls work through the
 existing OpenAI-compatible path.
 
 ### Ask response streaming
@@ -389,26 +508,26 @@ Provider tier and conversation mode are separate knobs:
 
 `provider.promptTier` resolves the active tier. Cloud providers are forced to Full. Local providers default to Mid. OpenRouter/router providers default to Full unless explicitly changed. Existing configs that still set the legacy `useCompactPrompt` boolean map to Compact.
 
-| Tier | Intended model class | Normal tool surface |
-|---|---|---|
-| `compact` | very small/local models | Shortest prompt and a small normal Act tool set. No scheduling, iframe, download-resource, or advanced DOM/UI fallback tools. |
-| `mid` | capable local models | Balanced prompt and common task tools: downloads, scheduling, iframe tools, form verification, and `download_resource_from_page`, while excluding Full-only advanced UI/DOM fallbacks. |
-| `full` | frontier/cloud or large local models | Full normal Act prompt and advanced fallbacks such as hover, drag-drop, frames, and shadow DOM. |
+| Tier      | Intended model class                 | Normal tool surface                                                                                                                                                                    |
+| --------- | ------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `compact` | very small/local models              | Shortest prompt and a small normal Act tool set. No scheduling, iframe, download-resource, or advanced DOM/UI fallback tools.                                                          |
+| `mid`     | capable local models                 | Balanced prompt and common task tools: downloads, scheduling, iframe tools, form verification, and `download_resource_from_page`, while excluding Full-only advanced UI/DOM fallbacks. |
+| `full`    | frontier/cloud or large local models | Full normal Act prompt and advanced fallbacks such as hover, drag-drop, frames, and shadow DOM.                                                                                        |
 
 Ask mode ignores provider tier and stays read-only. Act mode uses the selected tier's normal tools. Dev mode requires Mid or Full, uses the selected Act prompt, appends `SYSTEM_PROMPT_DEV_APPENDIX`, and adds Dev-only source/style tools plus Dev-extended shadow/frame inspection for Mid-tier debugging. Compact Dev is blocked before an LLM request is sent.
 
 ### Vision Detection
 
-| Provider | Mechanism |
-|---|---|
-| OpenAI-compatible | Regex against model name (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
-| DeepSeek | The `deepseek-flash` family (including the retired `deepseek-v4-flash` aliases) is multimodal; `deepseek-v4-pro` and the V3-era ids are text-only |
-| Anthropic | `claude-(3\|sonnet-4\|opus-4)` patterns |
-| Ollama | `POST /api/show` `capabilities`, with legacy projector / `.vision.` metadata fallbacks; Auto / Force on / Off |
-| llama.cpp | `GET /props` → `modalities.vision`, with Auto / Force on / Off |
-| LM Studio | `GET /api/v1/models` → `capabilities.vision`; legacy `/api/v0/models` `type`, with overrides |
-| LocalAI | `GET /v1/models/capabilities` → `input_modalities` / `capabilities`, with overrides |
-| Jan / vLLM / SGLang | Explicit `supportsVision` config toggle (via OpenAI provider) |
+| Provider            | Mechanism                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| OpenAI-compatible   | Regex against model name (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.)                                             |
+| DeepSeek            | The `deepseek-flash` family (including the retired `deepseek-v4-flash` aliases) is multimodal; `deepseek-v4-pro` and the V3-era ids are text-only |
+| Anthropic           | `claude-(3\|sonnet-4\|opus-4)` patterns                                                                                                           |
+| Ollama              | `POST /api/show` `capabilities`, with legacy projector / `.vision.` metadata fallbacks; Auto / Force on / Off                                     |
+| llama.cpp           | `GET /props` → `modalities.vision`, with Auto / Force on / Off                                                                                    |
+| LM Studio           | `GET /api/v1/models` → `capabilities.vision`; legacy `/api/v0/models` `type`, with overrides                                                      |
+| LocalAI             | `GET /v1/models/capabilities` → `input_modalities` / `capabilities`, with overrides                                                               |
+| Jan / vLLM / SGLang | Explicit `supportsVision` config toggle (via OpenAI provider)                                                                                     |
 
 Auto results are keyed by provider, exact selected model, and canonical base
 URL. Concurrent checks share one request, and a late response from an older
@@ -419,12 +538,12 @@ dedicated vision provider continues to use the existing split-provider path.
 
 When the active provider is Anthropic, the agent converts OpenAI-format messages:
 
-| OpenAI format | Anthropic format |
-|---|---|
-| `system` message | `system` field (top-level) |
+| OpenAI format              | Anthropic format                        |
+| -------------------------- | --------------------------------------- |
+| `system` message           | `system` field (top-level)              |
 | `assistant` + `tool_calls` | `assistant` + `tool_use` content blocks |
-| `tool` role | `user` + `tool_result` content blocks |
-| `image_url` (data URL) | `image` source block |
+| `tool` role                | `user` + `tool_result` content blocks   |
+| `image_url` (data URL)     | `image` source block                    |
 
 ### DeepSeek
 
@@ -435,16 +554,16 @@ output, image input). Every other DeepSeek id — including the retired
 `deepseek-v4-pro` — stays on a conservative profile (64K context, 8K output,
 text-only) rather than inheriting capacities it may not have.
 
-| Aspect | Behaviour |
-|---|---|
-| Wire format | Chat Completions by default (`apiFormat: 'auto'`); the Responses API is an opt-in from the Advanced panel |
-| Thinking | Top-level `thinking` object plus `reasoning_effort`; disabling thinking omits `reasoning_effort` entirely. The shared UI ladder maps `minimal`→`low` and `medium`/`xhigh`→`high` |
-| Reasoning replay | `reasoning_content` is replayed across turns because DeepSeek returns 400 when a tool-carrying follow-up drops it |
-| Streaming | `stream_options.include_usage` on every request; the parser ignores DeepSeek's SSE `: keep-alive` comments |
-| Structured output | Chat Completions uses JSON Object mode; the Responses API uses `text.format` JSON Schema for the planner |
-| Images | `deepseek-flash` accepts `image_url` data URLs and public URLs in `user` messages |
-| Cost | Off-peak list price converted at 1 USD = 7.1 CNY (1 input, 0.02 cached input, 4 output; peak 2 / 0.04 / 8). Cache hits arrive as the top-level `prompt_cache_hit_tokens` counter and are priced at the cache-read rate |
-| Anthropic endpoint | `https://api.deepseek.com/anthropic` works with the built-in `anthropic` card by overriding its base URL |
+| Aspect             | Behaviour                                                                                                                                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Wire format        | Chat Completions by default (`apiFormat: 'auto'`); the Responses API is an opt-in from the Advanced panel                                                                                                              |
+| Thinking           | Top-level `thinking` object plus `reasoning_effort`; disabling thinking omits `reasoning_effort` entirely. The shared UI ladder maps `minimal`→`low` and `medium`/`xhigh`→`high`                                       |
+| Reasoning replay   | `reasoning_content` is replayed across turns because DeepSeek returns 400 when a tool-carrying follow-up drops it                                                                                                      |
+| Streaming          | `stream_options.include_usage` on every request; the parser ignores DeepSeek's SSE `: keep-alive` comments                                                                                                             |
+| Structured output  | Chat Completions uses JSON Object mode; the Responses API uses `text.format` JSON Schema for the planner                                                                                                               |
+| Images             | `deepseek-flash` accepts `image_url` data URLs and public URLs in `user` messages                                                                                                                                      |
+| Cost               | Off-peak list price converted at 1 USD = 7.1 CNY (1 input, 0.02 cached input, 4 output; peak 2 / 0.04 / 8). Cache hits arrive as the top-level `prompt_cache_hit_tokens` counter and are priced at the cache-read rate |
+| Anthropic endpoint | `https://api.deepseek.com/anthropic` works with the built-in `anthropic` card by overriding its base URL                                                                                                               |
 
 The contract lives in `providers/deepseek-config.js` (pure helpers and
 constants) and `providers/deepseek.js` (`DeepSeekProvider`). The shared
@@ -462,15 +581,15 @@ Manages provider lifecycle:
 ```js
 const pm = new ProviderManager();
 
-await pm.load();                    // Load from chrome.storage.local
-await pm.save();                    // Persist to chrome.storage.local
-pm.getActive();                     // Get the active provider instance
-await pm.setActive('openai');       // Switch active provider
-await pm.updateProvider('openai', { model: 'gpt-5' }); // Update config
-await pm.duplicateProvider('openai'); // Create openai__duplicate
-await pm.removeDuplicateProvider('openai__duplicate'); // Remove it
-pm.getAll();                        // All provider configs (for Settings UI)
-await pm.testProvider('openai');    // Test connection
+await pm.load(); // Load from chrome.storage.local
+await pm.save(); // Persist to chrome.storage.local
+pm.getActive(); // Get the active provider instance
+await pm.setActive("openai"); // Switch active provider
+await pm.updateProvider("openai", { model: "gpt-5" }); // Update config
+await pm.duplicateProvider("openai"); // Create openai__duplicate
+await pm.removeDuplicateProvider("openai__duplicate"); // Remove it
+pm.getAll(); // All provider configs (for Settings UI)
+await pm.testProvider("openai"); // Test connection
 ```
 
 Each non-WebBrain provider config includes a persisted `configured` flag. An
@@ -524,19 +643,19 @@ Those rates are editable in the provider card so custom model pricing can be adj
 
 The user can configure a separate vision provider for screenshot description. The agent sub-calls this provider to get a text description of the viewport, then feeds only the description (not the raw image) to the main planning provider. This reduces token costs when the main provider is text-only:
 
-| Aspect | Separate vision model + text planner | Single multimodal planner |
-|---|---|---|
-| Processing flow | The vision model describes the screenshot, then the text planner reasons over that description and chooses tools. | One model sees the screenshot, reasons about the task, and chooses tools in the same call. |
-| Access to raw pixels | Only the vision model sees the image; the planner receives text. | The planner retains direct access to the image while deciding what to do. |
-| Visual information loss | The description is a lossy handoff and may omit small text, spatial relationships, colors, icons, or state cues. | No intermediate description is required, so the model can revisit visual details during reasoning. |
-| Planning and tool calls | The vision model is observation-only; the text planner owns all action and tool decisions. | The same model performs visual interpretation and tool planning. |
-| Specialist-model advantage | Perception and planning can use models selected independently for their strongest capability. | One model must be strong at both multimodal perception and browser-tool use. |
-| Visual grounding and coordinates | Text descriptions can weaken the relationship between an element and its exact visual position; accessibility-tree `ref_id` targets remain preferable. | Image and coordinate context stay together, although semantic `ref_id` targets are still safer than coordinate clicks. |
-| Latency | Usually requires two sequential inference calls. | Usually requires one inference call. |
-| Cost | Pays for the vision call plus the planner call, but can keep expensive image tokens away from the planner. | Pays for one multimodal call, whose image-token cost depends on the provider and image detail. |
-| Prompt-injection boundary | The observation model receives no agent tools, creating a stronger separation between screenshot content and actions. | The model that sees screenshot content can also choose tools, so multimodal prompt-injection defenses carry more responsibility. |
-| Failure characteristics | Adds a sidecar timeout or transcription-failure point; a text-only planner may have to continue without visual enrichment. | Removes the handoff failure, but the entire turn depends on one multimodal endpoint and its combined capabilities. |
-| Best fit | Strong text/tool planner paired with a specialist vision model, especially when most actions use DOM or accessibility evidence. | A model that is already strong at both vision and tool use, especially for tasks requiring fine visual detail or tight visual reasoning. |
+| Aspect                           | Separate vision model + text planner                                                                                                                   | Single multimodal planner                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Processing flow                  | The vision model describes the screenshot, then the text planner reasons over that description and chooses tools.                                      | One model sees the screenshot, reasons about the task, and chooses tools in the same call.                                               |
+| Access to raw pixels             | Only the vision model sees the image; the planner receives text.                                                                                       | The planner retains direct access to the image while deciding what to do.                                                                |
+| Visual information loss          | The description is a lossy handoff and may omit small text, spatial relationships, colors, icons, or state cues.                                       | No intermediate description is required, so the model can revisit visual details during reasoning.                                       |
+| Planning and tool calls          | The vision model is observation-only; the text planner owns all action and tool decisions.                                                             | The same model performs visual interpretation and tool planning.                                                                         |
+| Specialist-model advantage       | Perception and planning can use models selected independently for their strongest capability.                                                          | One model must be strong at both multimodal perception and browser-tool use.                                                             |
+| Visual grounding and coordinates | Text descriptions can weaken the relationship between an element and its exact visual position; accessibility-tree `ref_id` targets remain preferable. | Image and coordinate context stay together, although semantic `ref_id` targets are still safer than coordinate clicks.                   |
+| Latency                          | Usually requires two sequential inference calls.                                                                                                       | Usually requires one inference call.                                                                                                     |
+| Cost                             | Pays for the vision call plus the planner call, but can keep expensive image tokens away from the planner.                                             | Pays for one multimodal call, whose image-token cost depends on the provider and image detail.                                           |
+| Prompt-injection boundary        | The observation model receives no agent tools, creating a stronger separation between screenshot content and actions.                                  | The model that sees screenshot content can also choose tools, so multimodal prompt-injection defenses carry more responsibility.         |
+| Failure characteristics          | Adds a sidecar timeout or transcription-failure point; a text-only planner may have to continue without visual enrichment.                             | Removes the handoff failure, but the entire turn depends on one multimodal endpoint and its combined capabilities.                       |
+| Best fit                         | Strong text/tool planner paired with a specialist vision model, especially when most actions use DOM or accessibility evidence.                        | A model that is already strong at both vision and tool use, especially for tasks requiring fine visual detail or tight visual reasoning. |
 
 ```js
 const vision = await providerManager.getVisionProvider();

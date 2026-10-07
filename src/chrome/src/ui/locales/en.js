@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // English — canonical locale. Other locales inherit key names from this file.
@@ -5,6 +6,7 @@ import apocalypseModeCopy from './apocalypse-copy.mjs';
 import emergencyCopy from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('en'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Extension UI zoom',
@@ -122,6 +124,15 @@ export default {
   'sp.attach.read_failed': 'Could not read {name}.',
   'sp.attach.needs_prompt': 'Add a question to send with your attachment.',
   'sp.attach.no_tab': 'No active tab to attach the selection to.',
+  'sp.steer.button': 'Steer',
+  'st.display.composer_delivery.label': 'Messages during a running task',
+  'st.display.composer_delivery.desc': 'Choose what Enter and Send do while a task is running. Queue saves the message for the next turn; Steer sends it to the current task. Alt+Enter always steers.',
+  'st.display.composer_delivery.queue': 'Queue',
+  'st.display.composer_delivery.steer': 'Steer',
+  'sp.steer.title': 'Steer the current task (Alt+Enter)',
+  'sp.steer.sent': 'Steering message sent; applies at the next agent step.',
+  'sp.steer.queued': 'The current task has ended; message queued for the next turn.',
+  'sp.queue.send': 'Queue message',
   'sp.queue.label': 'Queued',
   'sp.queue.label_numbered': 'Queued {index}',
   'sp.queue.edit': 'Edit queued message',
@@ -168,6 +179,8 @@ export default {
   'sp.slash.schedule': 'Create a scheduled task',
   'sp.slash.list_schedules': 'Show scheduled tasks',
   'sp.slash.check_progress': 'Show the current progress ledger',
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   'sp.slash.show_scratchpad': 'Show the current scratchpad',
   'sp.slash.edit_scratchpad': 'Append text to the current scratchpad',
   'sp.slash.clear_scratchpad': 'Clear the current scratchpad',
@@ -321,7 +334,7 @@ export default {
   'sp.retry.attachments_unavailable': 'Attachments from the failed attempt are no longer available; retrying the text only.',
 
   'sp.error_prefix': 'Error: {msg}',
-  'sp.subscribe.allowance_used': 'Daily free WebBrain Compass allowance used.',
+  'sp.subscribe.allowance_used': 'Weekly free WebBrain Compass allowance used.',
   'sp.subscribe.btn': 'Subscribe',
   'sp.subscribe.upgrade': 'Upgrade to Plus',
   'sp.subscribe.resume_payment': 'Payment method updated — retry',
@@ -405,7 +418,7 @@ export default {
   "sp.watch.exists": "This page is already being watched with the same condition.",
   "sp.watch.error": "Could not create watch: {error}",
   "sp.slash.unsupported": "{usage} is not supported in this browser.",
-  'sp.slash.busy_only_oob': 'Messages are queued while WebBrain is busy. Only /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose can run immediately as slash commands.',
+  'sp.slash.busy_only_oob': 'Messages are queued while WebBrain is busy. Only /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces, and /verbose can run immediately as slash commands.',
   'sp.compact.nothing_to_compact': 'Nothing to compact yet — there is not enough older context.',
   'sp.compact.busy': 'Cannot compact while a run is in progress — wait for it to finish.',
   'sp.compact.failed': 'Context compaction failed: {error}',
@@ -569,7 +582,7 @@ export default {
   'ob.btn.done': 'Get Started',
   'ob.btn.skip': 'Skip for now',
   'ob.btn.start': 'Start',
-  'ob.cloud.body': 'WebBrain Compass is ready with a free daily allowance. Selected Compass conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.',
+  'ob.cloud.body': 'WebBrain Compass is ready with a free weekly allowance. Selected Compass conversations may be retained and used to improve WebBrain while Help Improve WebBrain is on by default. You can turn it off in Settings → General.',
   'ob.cloud.change': 'Change',
   'ob.cloud.using': 'Using WebBrain Compass. ',
 
@@ -623,17 +636,6 @@ export default {
   'st.display.advanced': 'Advanced',
   ...apocalypseModeCopy,
   ...emergencyCopy,
-  'st.display.cloud_bridge.label': 'MCP',
-  'st.display.cloud_bridge.desc': 'Connect one local controller to this Chromium profile using port 17374. Only one bridge can be active at a time, and standard permission prompts still apply.',
-  'st.display.cloud_bridge.url_label': 'WebSocket URL',
-  'st.display.cloud_bridge.url_placeholder': 'ws://127.0.0.1:17374/extension',
-  'st.display.cloud_bridge.invalid_url': 'Use a local ws:// URL with 127.0.0.1, localhost, or ::1.',
-  'st.display.cloud_bridge.status_disabled': 'Bridge disabled',
-  'st.display.cloud_bridge.status_connecting': 'Connecting…',
-  'st.display.cloud_bridge.status_connected': 'Connected',
-  'st.display.cloud_bridge.status_reconnecting': 'Reconnecting (attempt {attempt})…',
-  'st.display.cloud_bridge.status_error': 'Connection error: {error}',
-  'st.display.cloud_bridge.status_unreachable': 'Can’t reach {url}. Start the matching local bridge service; retrying…',
   'st.display.help_improve.label': 'Help Improve WebBrain',
   'st.display.help_improve.desc_html': 'Allow eligible WebBrain Compass text and tool interactions to be retained and used for evaluation, improvement, fine-tuning, and training. On by default. Turning this off permanently opts out the current conversation; turning it back on applies to the next new conversation. Screenshots and image bytes are not retained in the WebBrain improvement database. <u>Local-model and bring-your-own API requests are only collected by WebBrain from providers where you turn on “Share queries for research”.</u> <a href="https://webbrain.one/privacy" target="_blank" rel="noopener noreferrer" style="color:var(--accent);">Privacy policy →</a>',
   'st.display.clarify_timeout.label': 'Clarify timeout',
@@ -779,11 +781,11 @@ export default {
   'st.providers.compat.value.max': 'Max',
   'st.providers.compat.value.system': 'System',
   'st.providers.compat.value.developer': 'Developer',
-  'st.providers.webbrain_data_use.body': 'Free daily WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are only collected by WebBrain when you turn on the per-provider “Share queries for research” option.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Free weekly WebBrain Compass usage is included. While Help Improve WebBrain is on by default, selected Compass conversations may be retained and used for evaluation, improvement, fine-tuning, and training. Turn it off in General → Advanced to exclude future Compass interactions from those uses. <u>Local-model and bring-your-own API requests are only collected by WebBrain when you turn on the per-provider “Share queries for research” option.</u> {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.share_research.label': 'Share queries for research',
   'st.providers.share_research.hint': 'Send bounded prompts, responses, tool interactions, and diagnostic trace metadata (steps, tool names, statuses, errors, and timings) from this provider to WebBrain for evaluation and improvement. Images and binary attachments are stripped; text is truncated before sharing.',
   'st.providers.share_research.confirm': 'Share queries and diagnostic traces from this provider with WebBrain for research?\n\nWhen on, your prompts, responses, tool interactions, and bounded diagnostic trace metadata—including failed runs, tool names, statuses, errors, and timings—will be sent to WebBrain with the provider and model name. Screenshots and binary attachments are not uploaded. Other text is sent as-is after truncation, so avoid sharing sensitive personal data. You can turn this off at any time to stop future sharing.',
-  'st.providers.webbrain_note.body': 'Free daily WebBrain Compass usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
+  'st.providers.webbrain_note.body': 'Free weekly WebBrain Compass usage is included. Requests go through api.webbrain.one; by default we log metadata for quota and debugging, not prompt text, page content, screenshots, or model responses. {privacyLink}. For more usage, subscribe at {subscribeLink}. Manage billing at {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Privacy policy',
 
   'st.skills.desc_html': 'Enabled skills are available on demand in Mid and Full tiers; Compact does not load skills. A small catalog sends only each eligible skill\'s ID, name, summary, and optional semantic intents. The planner can select relevant skills from this routing metadata; full instructions and compatible <code>webbrain-tools</code> are exposed only after activation for the current run. Optional <code>webbrain-skill</code> metadata controls the summary, semantic intents, and Ask/Act compatibility.',
@@ -906,6 +908,16 @@ export default {
   'st.transcription.connected': 'Connected! Model: {model}',
   'st.transcription.failed': 'Failed: {error}',
   'st.transcription.fill_required': 'Fill in Base URL and Model first.',
+
+  // Generative Media — Assistive Models section
+  'st.imagegen.heading': "Generative Media",
+  'st.imagegen.desc': "Used by the generate_image agent tool to create images and other media from a text prompt with the selected provider.",
+  'st.imagegen.saved': 'Saved!',
+  'st.imagegen.cleared': 'Cleared.',
+  'st.imagegen.testing': 'Testing...',
+  'st.imagegen.connected': 'Connected! Model: {model}',
+  'st.imagegen.failed': 'Failed: {error}',
+  'st.imagegen.fill_required': 'Fill in API Key and Model first.',
 
   // Image budget (issue #311): tune screenshot quality + how many
   // screenshots the agent may capture/send per turn, and how large each

@@ -1,3 +1,4 @@
+import { getGenerativeMediaCopy } from './generative-media-copy.mjs';
 import bidiCopy from './bidi-copy.mjs';
 import cloudBridgeCopy from './cloud-bridge-copy.mjs';
 // German (de).
@@ -7,6 +8,7 @@ import { getApocalypseModeCopy } from './apocalypse-copy.mjs';
 import { getEmergencyBoxCopy } from './emergency-copy.mjs';
 
 export default {
+  ...getGenerativeMediaCopy('de'),
   ...bidiCopy,
   ...cloudBridgeCopy,
   'sp.ui_scale.label': 'Erweiterungsoberfläche zoomen',
@@ -122,6 +124,11 @@ export default {
   'sp.attach.read_failed': '{name} konnte nicht gelesen werden.',
   'sp.attach.needs_prompt': 'Fügen Sie eine Frage hinzu, die mit dem Anhang gesendet wird.',
   'sp.attach.no_tab': 'Kein aktiver Tab, an den die Auswahl angehängt werden kann.',
+  "sp.steer.button": "Lenken",
+  "sp.steer.title": "Aktuelle Aufgabe lenken (Alt+Enter)",
+  "sp.steer.sent": "Anweisung gesendet; sie gilt ab dem nächsten Agentenschritt.",
+  "sp.steer.queued": "Die aktuelle Aufgabe ist beendet; die Nachricht wartet auf den nächsten Durchgang.",
+  "sp.queue.send": "Nachricht einreihen",
   'sp.queue.label': 'In Warteschlange',
   'sp.queue.label_numbered': 'In Warteschlange {index}',
   'sp.queue.edit': 'Warteschlangen-Nachricht bearbeiten',
@@ -164,6 +171,8 @@ export default {
   'sp.slash.schedule': 'Geplante Aufgabe erstellen',
   'sp.slash.list_schedules': 'Geplante Aufgaben anzeigen',
   'sp.slash.check_progress': 'Aktuelles Fortschrittsprotokoll anzeigen',
+  'sp.slash.btw': 'Open a quick side conversation',
+  'sp.slash.btw_disabled': '/btw is not available in a /btw window',
   'sp.slash.show_scratchpad': 'Aktuellen Notizblock anzeigen',
   'sp.slash.edit_scratchpad': 'Text an den aktuellen Notizblock anhängen',
   'sp.slash.clear_scratchpad': 'Aktuellen Notizblock löschen',
@@ -205,7 +214,7 @@ export default {
   'sp.watch.exists': 'Diese Seite wird bereits mit derselben Bedingung überwacht.',
   'sp.watch.error': 'Überwachung konnte nicht erstellt werden: {error}',
   'sp.slash.unsupported': '{usage} wird in diesem Browser nicht unterstützt.',
-  'sp.slash.busy_only_oob': 'Nachrichten werden in die Warteschlange gestellt, während WebBrain beschäftigt ist. Nur /help, /progress, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces und /verbose können sofort als Slash-Befehle ausgeführt werden.',
+  'sp.slash.busy_only_oob': 'Nachrichten werden in die Warteschlange gestellt, während WebBrain beschäftigt ist. Nur /help, /progress, /btw, /scratchpad, /memory, /schedule --list, /watch, /dangerously-skip-permissions, /screenshot, /export, /export --traces und /verbose können sofort als Slash-Befehle ausgeführt werden.',
   "sp.slash.export_traces_full": "Die vollständig gespeicherte Trace-Sitzung einschließlich Screenshots als JSON exportieren",
   "sp.export_traces.recording_truncated": "Alle gespeicherten Einträge wurden als JSON exportiert. Bei der Aufzeichnung ausgelassene Inhalte können durch den Export nicht wiederhergestellt werden.",
   'sp.slash.export_traces': 'Werkzeugkette (Traces) exportieren',
@@ -331,7 +340,7 @@ export default {
   'sp.retry.busy': 'Warten Sie, bis der aktuelle Durchlauf abgeschlossen ist, bevor Sie es erneut versuchen.',
   'sp.retry.attachments_unavailable': 'Anhänge vom fehlgeschlagenen Versuch sind nicht mehr verfügbar; nur der Text wird erneut versucht.',
   'sp.error_prefix': 'Fehler: {msg}',
-  'sp.subscribe.allowance_used': 'Tägliches kostenloses WebBrain Compass-Kontingent aufgebraucht.',
+  'sp.subscribe.allowance_used': 'Wöchentliches kostenloses WebBrain Compass-Kontingent aufgebraucht.',
   'sp.subscribe.btn': 'Abonnieren',
   'sp.subscribe.upgrade': 'Auf Plus upgraden',
   "sp.subscribe.resume_payment": "Zahlungsmethode aktualisiert — erneut versuchen",
@@ -567,7 +576,7 @@ export default {
   'ob.btn.done': 'Loslegen',
   'ob.btn.skip': 'Vorerst überspringen',
   'ob.btn.start': 'Starten',
-  'ob.cloud.body': 'WebBrain Compass ist mit einem täglichen kostenlosen Kontingent bereit. Ausgewählte Compass-Gespräche können gespeichert und zur Verbesserung von WebBrain verwendet werden, solange „Hilfe, WebBrain zu verbessern" standardmäßig aktiviert ist. Sie können dies in Einstellungen → Allgemein deaktivieren.',
+  'ob.cloud.body': 'WebBrain Compass ist mit einem wöchentlichen kostenlosen Kontingent bereit. Ausgewählte Compass-Gespräche können gespeichert und zur Verbesserung von WebBrain verwendet werden, solange „Hilfe, WebBrain zu verbessern" standardmäßig aktiviert ist. Sie können dies in Einstellungen → Allgemein deaktivieren.',
   'ob.cloud.change': 'Ändern',
   'ob.cloud.using': 'WebBrain Compass verwenden.',
   // --- Settings ---
@@ -724,9 +733,9 @@ export default {
   'st.providers.models_loaded': '{count} Modelle geladen',
   'st.providers.select_loaded_model': 'Geladenes Modell auswählen',
   'st.providers.get_api_key': 'API-Schlüssel abrufen',
-  'st.providers.webbrain_note.body': 'Kostenlose tägliche WebBrain Compass-Nutzung ist enthalten. Anfragen werden über api.webbrain.one weitergeleitet; standardmäßig protokollieren wir Metadaten für Kontingente und Fehlerbehebung, jedoch keine Prompt-Texte, Seiteninhalte, Screenshots oder Modellantworten. {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
+  'st.providers.webbrain_note.body': 'Kostenlose wöchentliche WebBrain Compass-Nutzung ist enthalten. Anfragen werden über api.webbrain.one weitergeleitet; standardmäßig protokollieren wir Metadaten für Kontingente und Fehlerbehebung, jedoch keine Prompt-Texte, Seiteninhalte, Screenshots oder Modellantworten. {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
   'st.providers.webbrain_note.privacy_link': 'Datenschutzrichtlinie',
-  'st.providers.webbrain_data_use.body': 'Kostenlose tägliche WebBrain Compass-Nutzung ist enthalten. Solange „Bei der Verbesserung von WebBrain helfen“ standardmäßig aktiviert ist, können ausgewählte Compass-Unterhaltungen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Deaktivieren Sie die Option unter „Allgemein → Erweitert“, um zukünftige Compass-Interaktionen davon auszuschließen. <u>Anfragen an lokale Modelle und eigene APIs werden von WebBrain nur erfasst, wenn Sie die anbieterspezifische Option „Suchanfragen für Forschung teilen“ aktivieren.</u> {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
+  'st.providers.webbrain_data_use.body': 'Kostenlose wöchentliche WebBrain Compass-Nutzung ist enthalten. Solange „Bei der Verbesserung von WebBrain helfen“ standardmäßig aktiviert ist, können ausgewählte Compass-Unterhaltungen gespeichert und für Auswertung, Verbesserung, Feinabstimmung und Training verwendet werden. Deaktivieren Sie die Option unter „Allgemein → Erweitert“, um zukünftige Compass-Interaktionen davon auszuschließen. <u>Anfragen an lokale Modelle und eigene APIs werden von WebBrain nur erfasst, wenn Sie die anbieterspezifische Option „Suchanfragen für Forschung teilen“ aktivieren.</u> {privacyLink}. Für mehr Nutzung abonnieren Sie unter {subscribeLink}. Verwalten Sie die Abrechnung unter {accountLink}.',
   'st.providers.share_research.label': "Suchanfragen für Forschung teilen",
   'st.providers.share_research.hint': "Sendet Prompts und Antworten dieses Anbieters zur Auswertung und Verbesserung an WebBrain, einschließlich des verwendeten Anbieters und Modells. Bilder und binäre Anhänge werden entfernt und Texte gekürzt; der übrige Text wird unverändert gesendet.",
   'st.providers.share_research.confirm': "Suchanfragen dieses Anbieters für Forschung mit WebBrain teilen?\n\nWenn aktiviert, werden Ihre Prompts, Antworten und Tool-Interaktionen mit diesem Anbieter zusammen mit Anbieter- und Modellname zur Auswertung und Verbesserung an WebBrain gesendet. Texte werden nach dem Entfernen von Bildern und Kürzen langer Inhalte unverändert gesendet – teilen Sie daher keine sensiblen persönlichen Daten. Sie können dies jederzeit deaktivieren, um die weitere Freigabe zu stoppen.",
@@ -826,6 +835,14 @@ export default {
   'st.transcription.connected': 'Verbunden! Modell: {model}',
   'st.transcription.failed': 'Fehlgeschlagen: {error}',
   'st.transcription.fill_required': 'Füllen Sie zuerst die Basis-URL und das Modell aus.',
+  "st.imagegen.heading": "Generative Medien",
+  "st.imagegen.desc": "Das Agentenwerkzeug generate_image erstellt Bilder und andere Medien aus einem Textprompt mit dem ausgewählten Anbieter.",
+  "st.imagegen.saved": "Gespeichert!",
+  "st.imagegen.cleared": "Gelöscht.",
+  "st.imagegen.testing": "Wird getestet...",
+  "st.imagegen.connected": "Verbunden! Modell: {model}",
+  "st.imagegen.failed": "Fehlgeschlagen: {error}",
+  "st.imagegen.fill_required": "Bitte zuerst API-Schlüssel und Modell ausfüllen.",
 
   // --- Image budget settings ---
   'st.imageBudget.heading': 'Bildbudget',

@@ -1,9 +1,15 @@
+import { decisionEnglish, decisionTranslations } from './locales/decision-copy.mjs';
 // Minimal i18n for WebBrain extension pages (sidepanel, settings, traces).
 // Sync reads from localStorage so translations apply before first paint.
 // Works identically in Chrome MV3 and Firefox MV2.
 
 import en from './locales/en.js';
+import { feedbackTranslations } from './feedback-copy.js';
+import { quotaTranslations } from './locales/compass-quota-copy.mjs';
+import { memcodeEnglish } from './locales/memcode-copy.mjs';
 import { captchaEnglish, captchaTranslations } from './locales/captcha-copy.mjs';
+import { composerDeliveryTranslations } from './locales/composer-delivery-copy.mjs';
+import { cloudBridgeTranslations } from './locales/cloud-bridge-copy.mjs';
 import { safeSocialEnglish, safeSocialTranslations } from './locales/safesocial-copy.mjs';
 import es from './locales/es.js';
 import fr from './locales/fr.js';
@@ -32,9 +38,17 @@ import { providerGuideEnglish, providerGuideTranslations } from './locales/provi
 const DICTS = Object.fromEntries(Object.entries({ en, es, fr, tr, zh, ru, uk, ar, ja, ko, id, th, ms, tl, pl, he, hi, pt, vi, bn, fa, nl, de })
   .map(([code, dict]) => [code, {
     ...dict,
+    ...feedbackTranslations[code],
+    ...(composerDeliveryTranslations[code] || {}),
+    ...(cloudBridgeTranslations[code] || {}),
+    ...quotaTranslations[code],
+    'sp.subscribe.allowance_used': quotaTranslations[code]['quota.used'],
+    ...memcodeEnglish,
     ...providerGuideEnglish,
     ...safeSocialEnglish,
     ...captchaEnglish,
+    ...decisionEnglish,
+    ...(decisionTranslations[code] || {}),
     ...(captchaTranslations[code] || {}),
     ...(safeSocialTranslations[code] || {}),
     ...(providerGuideTranslations[code] || {}),
