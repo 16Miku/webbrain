@@ -3,7 +3,7 @@ title: Ling 3.1 Flash vs DeepSeek, HY3, GLM-5.2, and Laguna XS: free inference, 
 slug: ling31-flash-vs-deepseek-hy3-glm52-laguna-xs
 sortOrder: -330
 date: 2026-10-06
-readTime: 7 min read
+readTime: 8 min read
 description: Ling 3.1 Flash completes 100 pinned planner cases with 80.7% tool-family consensus, 32.8% exact consensus, 92 valid calls, and zero reported cost, after extensive Novita rate-limit recovery.
 excerpt: Ling leads tool-family agreement and beats the four text-only references on ideal-tool count, but trails on exact-action consensus. Its free Novita route required 298 rate-limit responses across the benchmark and diagnostic campaign.
 titleTag: Ling 3.1 Flash planner benchmark vs DeepSeek, HY3, GLM, and Laguna XS - WebBrain Blog
@@ -18,6 +18,10 @@ keywords:
   - Tencent HY3
   - GLM-5.2
   - Poolside Laguna XS 2.1
+  - Ling 3.0 Flash VL
+  - Nex-N2.5-Pro
+  - Nex-N2.5-mini
+  - MiniMax M3
   - OpenRouter
   - browser agent benchmark
   - tool calling
@@ -37,7 +41,7 @@ Our comparison focuses on the four text-only routes in the [American and Chinese
 
 ## Reconstructing the matching test
 
-This post uses the **August full-tier checkout `7182c21f`**, rather than the May frozen interface from our [Ling 3.0 Flash VL comparison](/blog/ling30-flash-vl-vs-nex-n25-minimax-m3). The older Ling, Nex, and May-frozen MiniMax percentages belong to a different test and cannot be inserted here.
+The main ranking uses the **August full-tier checkout `7182c21f`**. We also include the models from our [Ling 3.0 Flash VL comparison](/blog/ling30-flash-vl-vs-nex-n25-minimax-m3) in a separate historical table below. That test uses the May frozen interface, so its percentages do not enter the August ranking or fourteen-model consensus pool.
 
 The August runs omitted request bodies. We reconstructed all 100 messages and their tool schemas from the exact pinned payload builder, site adapters, tool definitions, and questions, then saved a replay snapshot. We also archived the ideal-action rubrics from that checkout. Ling's new raw case files preserve both its request and the API response. The historical requests' full byte equality cannot be proven because those bodies were never stored.
 
@@ -111,6 +115,25 @@ Among the references, DeepSeek remains inexpensive at five cents for its saved 1
 
 The result gives Ling a clear reason to be tested further: **good tool-family selection and broad native dispatch at a zero observed token bill**. It also gives a clear deployment question: whether a route with steadier capacity preserves that behavior. This free shared-pool run supplies encouraging planner evidence, but its first-pass availability is too weak to recommend it as the sole synchronous browser-agent endpoint.
 
+## Ling 3.0 Flash VL, Nex, and the earlier MiniMax run
+
+**Updated October 7:** these are the saved results from the earlier Ling/Nex comparison, added here for readers evaluating both generations. They use **100 text-only planner cases, the May 23 frozen prompt, 41 tools, and archived May ideal-action rubrics**. No screenshots were sent, including to Ling 3.0 Flash VL. Their reference-agreement column compares tool names with **one model, Claude Sonnet 4.6**, rather than the fourteen-model pairwise consensus above.
+
+| Model | Run date | Native calls / 100 | Exact ideal / 100 | Ideal tool / 100 | Sonnet tool-name alignment | Median | Reported cost / 100 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ling 3.0 Flash VL | Oct 5 | 90 | **22** | **35** | 72% | **1.73s** | **$0.0098** |
+| Nex-N2.5-Pro | Oct 3 | **95** | 11 | 27 | 67% | 7.23s | $0.1500 |
+| Nex-N2.5-mini | Oct 3 | N/A | N/A | N/A | N/A | N/A | N/A |
+| MiniMax M3, May-frozen run | Jun 21 | 85 | 17 | 32 | **75%** | 3.10s | $1.0562 |
+
+Within this May protocol, Ling 3.0 VL gives more exact ideal actions and ideal tool names than Nex Pro or MiniMax, with the lowest observed median and bill. Nex Pro emits more native calls, while MiniMax aligns more often with Sonnet's tool selection. Ling's bill includes substantial prompt caching and Novita's promotional rates; it is not an uncached price comparison.
+
+Nex mini's route rejected **all 100 requests with HTTP 404 before inference** because it could not accept the structured tools. An authenticated October 5 check reproduced the rejection. Its quality, inference latency, and bill remain **unscored**, rather than counting those routing errors as incorrect model answers.
+
+Native-call counts in this older table are dispatch coverage, not the schema-valid counts in the August table: Ling 3.0 has one saved malformed argument JSON in its 90 native calls. The two MiniMax rows represent different dated runs and different interfaces. Comparing Ling 3.1's 15 exact ideal actions directly with Ling 3.0's 22 would therefore not establish a regression between model generations.
+
+The [May comparison report and raw-run provenance](https://github.com/webbrain-one/webbrain/blob/main/test/llm/analysis/2026-10-05-ling30-flash-vl/comparison.json) reproduce this table. The full protocol discussion remains in the [Ling 3.0, Nex, and MiniMax article](/blog/ling30-flash-vl-vs-nex-n25-minimax-m3).
+
 ## Evidence and reproduction
 
 The [raw Ling cases](https://github.com/webbrain-one/webbrain/tree/main/test/llm/results/2026-10-06-openrouter-ling31-flash-full-7182_chrome_inclusionai_ling-3.1-flash) and [analysis artifacts](https://github.com/webbrain-one/webbrain/tree/main/test/llm/analysis/2026-10-06-ling31-flash) accompany this post. The complete inputs are saved in `test/llm/freeze/full-replay-7182c21f.json`. The preparation script reconstructs them from the pinned Git revision and records SHA-256 hashes for the source files, questions, and rubrics.
@@ -138,4 +161,4 @@ node test/llm/report-ling31-comparison.mjs
 node scripts/build-blog.mjs
 ```
 
-Tags: #Ling31Flash #inclusionAI #DeepSeekV4 #TencentHY3 #GLM52 #Poolside #LagunaXS #MiniMaxM3 #OpenRouter #ToolCalling #BrowserAgent #WebBrain
+Tags: #Ling31Flash #Ling30FlashVL #NexN25 #inclusionAI #DeepSeekV4 #TencentHY3 #GLM52 #Poolside #LagunaXS #MiniMaxM3 #OpenRouter #ToolCalling #BrowserAgent #WebBrain
