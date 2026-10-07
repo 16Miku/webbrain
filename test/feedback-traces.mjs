@@ -14,10 +14,11 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
   const { createConfigExport, parseConfigImport } = await import(`../src/${build}/src/config-transfer.js`);
   const { mayReadFeedbackDraft, isFeedbackDestination } = await import(`../src/${build}/src/feedback-handoff.js`);
   const { sanitizeTraceExport } = await import(`../src/${build}/src/agent/trace-export.js`);
+  const { exportRecordedSession } = await import(`../src/${build}/src/trace/session-export.js`);
   const fixtureStore = (events = []) => ({
-    listRuns: async () => [{ runId: 'r', conversationId: 'chosen', userMessage: 'password=top-secret', lossless: true },
+    listRuns: async () => [{ runId: 'r', conversationId: 'chosen', startedAt: 1, endedAt: 2, status: 'done', userMessage: 'password=top-secret', lossless: true },
       { runId: 'other', conversationId: 'unrelated', userMessage: 'DO NOT SHARE' }],
-    getRunEvents: async () => structuredClone(events),
+    getRunEvents: async () => structuredClone(events.map(event => ({ ts: 1, ...event }))),
     getScreenshot: async () => ({ blob: new Blob(['image bytes'], { type: 'image/png' }) }),
   });
 
@@ -26,8 +27,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     const start = source.indexOf('async function openStoreReviewPrompt()');
     const end = source.indexOf('async function maybePromptStoreReviewAfterSuccess()', start);
     assert.ok(start >= 0 && end > start);
-    let capturedTab, resolveSession;
+    let capturedTab, resolveSession, now = 100;
     const panel = vm.createContext({ currentTabId: 71, storeReviewEl: {}, isProcessing: false,
+      Date: { now: () => now },
       storeReviewFeedbackEl: { value: 'Previous feedback' }, storeReviewState: {}, storeReviewTraceSource: null,
       sendToBackground: (_action, params) => { capturedTab = params.tabId; return new Promise(resolve => { resolveSession = resolve; }); },
       setStoreReviewStarPreview: () => {}, showStoreReviewStep: () => {}, applyDOMTranslations: () => {},
@@ -36,21 +38,99 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     vm.runInContext(source.slice(start, end), panel);
     await vm.runInContext('openStoreReviewPrompt()', panel);
     panel.currentTabId = 99;
+    now = 300;
     resolveSession({ sessionId: 'chosen' });
     const captured = await panel.storeReviewTraceSource;
     assert.equal(capturedTab, 71);
+    assert.equal(captured.snapshotAt, 100, 'capture must precede the asynchronous session lookup');
     const store = fixtureStore([{ seq: 1, kind: 'tool', data: { name: 'click_ax', args: { api_key: 'private-key' },
       result: { success: false, errorCode: 'TARGET_NOT_FOUND', authorization: 'Bearer hidden' } } },
     { seq: 2, kind: 'screenshot', data: {} }]);
     // Old traces may contain content without a lossless marker.
     const list = store.listRuns; store.listRuns = async () => (await list()).map(run => ({ ...run, lossless: undefined }));
-    const trace = await prepareFeedbackTrace(store, captured.sessionId, 'test');
+    const trace = await prepareFeedbackTrace(store, captured.sessionId, 'test', { snapshotAt: captured.snapshotAt });
     assert.equal(trace.traceType, 'full'); assert.equal(trace.runCount, 1); assert.equal(trace.screenshotCount, 1);
     assert.equal(trace.blob, trace.originalBlob);
     const json = await trace.blob.text();
     assert.doesNotMatch(json, /top-secret|private-key|Bearer hidden|DO NOT SHARE/);
     assert.match(json, /TARGET_NOT_FOUND/); assert.match(json, /screenshot_base64/);
     assert.equal(await prepareFeedbackTrace({ ...store, listRuns: async () => [] }, 'chosen'), null);
+  });
+
+  test(`${build}: feedback excludes later turns, events, screenshots and completion fields`, async () => {
+    const runs = [
+      { runId: 'completed', conversationId: 'chosen', startedAt: 1, endedAt: 50, status: 'done', finalContent: 'Earlier answer', lossless: true },
+      { runId: 'active', conversationId: 'chosen', startedAt: 60, endedAt: 200, status: 'done', finalContent: 'LATER COMPLETION', lossless: true,
+        toolCallCount: 99, totalCost: 99 },
+      { runId: 'same-tick', conversationId: 'chosen', startedAt: 100, userMessage: 'LATER SAME TICK' },
+      { runId: 'later', conversationId: 'chosen', startedAt: 150, userMessage: 'LATER TURN' },
+      { runId: 'undated', conversationId: 'chosen', userMessage: 'UNDATED RUN' },
+      { runId: 'other', conversationId: 'unrelated', startedAt: 1, userMessage: 'OTHER CONVERSATION' },
+    ];
+    const events = {
+      completed: [{ seq: 1, ts: 20, kind: 'tool', data: { name: 'click_ax', result: { success: true } } }],
+      active: [
+        { seq: 1, ts: 70, kind: 'tool', data: { name: 'click_ax', result: { success: true } } },
+        { seq: 2, ts: 80, kind: 'llm_response', data: { content: 'Earlier response', usage: { cost: 1 } } },
+        { seq: 3, ts: 90, kind: 'screenshot', data: { caption: 'Earlier screenshot' } },
+        { seq: 4, ts: 100, kind: 'tool', data: { result: { content: 'LATER SAME TICK' } } },
+        { seq: 5, ts: 101, kind: 'screenshot', data: { caption: 'LATER SCREENSHOT' } },
+        { seq: 6, ts: 120, kind: 'llm_response', data: { content: 'LATER RESPONSE', usage: { cost: 98 } } },
+        { seq: 7, kind: 'note', data: { content: 'UNDATED EVENT' } },
+      ],
+    };
+    const readRuns = [], readShots = [];
+    const store = {
+      listRuns: async () => structuredClone(runs),
+      getRunEvents: async runId => { readRuns.push(runId); return structuredClone(events[runId] || []); },
+      getScreenshot: async (runId, seq) => {
+        readShots.push([runId, seq]);
+        return { blob: new Blob([seq === 3 ? 'Earlier pixels' : 'LATER PIXELS'], { type: 'image/png' }) };
+      },
+    };
+    const trace = await prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt: 100 });
+    const text = await trace.blob.text();
+    const payload = JSON.parse(text);
+    assert.equal(payload.session.capturedBefore, 100);
+    assert.deepEqual(payload.runs.map(entry => entry.run.runId), ['completed', 'active']);
+    assert.deepEqual(readRuns, ['completed', 'active']);
+    assert.deepEqual(readShots, [['active', 3]], 'later screenshot bytes must never be read');
+    assert.equal(trace.runCount, 2); assert.equal(trace.screenshotCount, 1);
+    assert.equal(payload.runs[0].run.finalContent, 'Earlier answer');
+    const active = payload.runs[1];
+    assert.deepEqual(active.events.map(event => event.seq), [1, 2, 3]);
+    assert.equal(active.run.status, 'running'); assert.equal(active.run.endedAt, null);
+    assert.equal(active.run.durationMs, null); assert.equal(active.run.finalContent, null);
+    assert.equal(active.run.toolCallCount, 1); assert.equal(active.run.totalCost, 1);
+    assert.equal(active.run.feedbackSnapshotIncomplete, true);
+    assert.ok(trace.omissions.some(note => note.includes('unfinished')));
+    assert.ok(trace.omissions.some(note => note.includes('timestamps')));
+    assert.doesNotMatch(text, /LATER|UNDATED|OTHER CONVERSATION/);
+    assert.equal(await trace.originalBlob.text(), text);
+
+    const largeStore = { ...store, getRunEvents: async runId => (await store.getRunEvents(runId)).map(event =>
+      event.kind === 'tool' && event.ts < 100 ? { ...event, data: { ...event.data, result: { content: 'Earlier content '.repeat(2000) } } } : event) };
+    for (const options of [{}, { compress: async () => null }]) {
+      const oversized = await prepareFeedbackTrace(largeStore, 'chosen', 'test', { snapshotAt: 100, limit: 6000, ...options });
+      const bytes = Buffer.from(await oversized.blob.arrayBuffer());
+      const attached = JSON.parse(oversized.filename.endsWith('.gz') ? gunzipSync(bytes).toString() : bytes.toString());
+      assert.equal(attached.session.capturedBefore, 100);
+      assert.equal(attached.runs[1].run.feedbackSnapshotIncomplete, true);
+      assert.doesNotMatch(JSON.stringify(attached), /LATER|UNDATED|OTHER CONVERSATION/);
+      assert.doesNotMatch(await oversized.originalBlob.text(), /LATER|UNDATED|OTHER CONVERSATION/);
+      assert.equal(oversized.traceType, options.compress ? 'diagnostic' : 'full');
+    }
+
+    // The ordinary full export remains complete, including later turns.
+    const full = JSON.parse((await exportRecordedSession(store, 'chosen', 'test')).json);
+    assert.equal(full.runs.length, 5);
+    assert.equal(full.runs.find(entry => entry.run.runId === 'active').run.finalContent, 'LATER COMPLETION');
+    assert.equal(full.runs.find(entry => entry.run.runId === 'active').events.length, 7);
+    assert.equal(full.session.capturedBefore, undefined);
+    for (const snapshotAt of [null, NaN, '100', -1]) {
+      await assert.rejects(prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt }), /snapshot timestamp/);
+    }
+    assert.equal(await prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt: 0 }), null);
   });
 
   test(`${build}: gzip preserves full exports and oversize fallback is explicitly diagnostic`, async () => {
@@ -70,6 +150,33 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     assert.ok(fallback.omissions.some(note => note.includes('size limit')));
     assert.doesNotMatch(await fallback.blob.text(), /large trace content|top-secret|PRIVATE LEGACY/);
     assert.match(await fallback.blob.text(), /CLICK_FAILED/);
+  });
+
+  test(`${build}: snapshot headers are unchanged by later accounting, omission flags or repairs`, async () => {
+    const run = { runId: 'r', conversationId: 'chosen', startedAt: 1, endedAt: null, status: 'running',
+      lossless: true, losslessBytes: 100, losslessBytesEncoding: 'utf8', feedbackOnly: true,
+      feedbackBytes: 200, feedbackHistoryOmitted: true };
+    const events = [{ seq: 1, ts: 20, kind: 'tool', data: { name: 'click_ax', result: { success: true } } }];
+    const store = { listRuns: async () => [structuredClone(run)],
+      getRunEvents: async () => structuredClone(events), getScreenshot: async () => null };
+    const first = JSON.parse(await (await prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt: 100 })).blob.text());
+    Object.assign(run, { losslessBytes: 987654, feedbackBytes: 123456, feedbackEventsOmitted: true,
+      endedAt: 250, status: 'error', repairedBy: 'LATER REPAIR', repairedAt: 250, repairReason: 'LATER REASON' });
+    events.push({ seq: 2, ts: 250, kind: 'tool', data: { losslessBudgetOmitted: true } });
+    const second = await prepareFeedbackTrace(store, 'chosen', 'test', { snapshotAt: 100 });
+    const payload = JSON.parse(await second.blob.text());
+    assert.deepEqual(payload.runs, first.runs);
+    assert.deepEqual(payload.feedbackOmissions, first.feedbackOmissions);
+    for (const field of ['losslessBytes', 'losslessBytesEncoding', 'feedbackBytes', 'feedbackEventsOmitted', 'repairedBy', 'repairedAt', 'repairReason']) {
+      assert.equal(payload.runs[0].run[field], undefined);
+    }
+    assert.equal(payload.runs[0].run.feedbackHistoryOmitted, true, 'start-time diagnostic policy is immutable');
+    assert.doesNotMatch(await second.originalBlob.text(), /987654|123456|LATER/);
+    const full = JSON.parse((await exportRecordedSession(store, 'chosen', 'test')).json);
+    assert.equal(full.runs[0].run.losslessBytes, 987654);
+    assert.equal(full.runs[0].run.feedbackEventsOmitted, true);
+    assert.equal(full.runs[0].run.repairedAt, 250);
+    assert.equal(run.losslessBytes, 987654, 'snapshot projection must not mutate stored headers');
   });
 
   test(`${build}: exports preserve diagnostic codes without exposing credential code fields`, async () => {
@@ -270,12 +377,28 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       const { stageFeedbackTrace, deleteFeedbackDraft, listFeedbackDrafts, putFeedbackDraft, sweepFeedbackDrafts } = await import('./src/feedback-store.js');
       const { getFeedbackCopy } = await import('./src/ui/feedback-copy.js');
       const { requestFeedbackConsent, submitFeedbackWithTrace } = await import('./src/ui/feedback-consent.js');
+      const trace = await import('./src/trace/recorder.js');
       const copy = getFeedbackCopy('en');
       globalThis.controller = createFeedbackHandoff(chrome);
       globalThis.localViews = 0;
-      globalThis.prepared = await prepareFeedbackTrace({ listRuns: async () => [{ runId: 'r', conversationId: 'frozen-session', lossless: true }],
-        getRunEvents: async () => [{ seq: 1, kind: 'tool', data: { name: 'click_ax', result: { errorCode: 'CLICK_FAILED', password: 'hidden-secret' } } }],
-        getScreenshot: async () => null }, 'frozen-session', 'test');
+      settings.tracingEnabled = true; settings.losslessTrace = true;
+      const originalNow = Date.now;
+      let clock = originalNow() - 10000;
+      const snapshotAt = clock + 1000;
+      Date.now = () => clock;
+      try {
+        const runId = await trace.startRun({ runId: 'r', conversationId: 'frozen-session' });
+        await trace.recordToolCall(runId, 1, { name: 'click_ax', result: { errorCode: 'CLICK_FAILED', password: 'hidden-secret' } });
+        await trace.recordScreenshot(runId, 1, 'data:image/png;base64,aW1hZ2U=', 'Earlier screenshot');
+        clock += 2000;
+        await trace.recordToolCall(runId, 2, { name: 'click_ax', result: { content: 'LATER TOOL RESULT' } });
+        await trace.recordScreenshot(runId, 2, 'data:image/png;base64,TEFURVI=', 'LATER SCREENSHOT');
+        await trace.endRun(runId, { finalContent: 'LATER COMPLETION' });
+        const laterRunId = await trace.startRun({ runId: 'later', conversationId: 'frozen-session', userMessage: 'LATER TURN' });
+        await trace.endRun(laterRunId);
+        await trace.flushPendingWrites();
+      } finally { Date.now = originalNow; }
+      globalThis.prepared = await prepareFeedbackTrace(trace, 'frozen-session', 'test', { snapshotAt });
       globalThis.start = () => submitFeedbackWithTrace({
         rating: 2, comment: 'Clicking failed', copy,
         prepare: async () => prepared,
@@ -332,7 +455,14 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     await github.waitForFunction(() => document.body.textContent.includes('Trace attached.'));
     assert.equal(await github.evaluate(() => uploads), 1);
     assert.equal(await github.evaluate(() => submissions), 0);
-    assert.doesNotMatch(await github.evaluate(() => uploadedText), /hidden-secret/);
+    const attachment = await github.evaluate(() => uploadedText);
+    assert.doesNotMatch(attachment, /hidden-secret|LATER/);
+    const snapshot = JSON.parse(attachment);
+    assert.deepEqual(snapshot.runs.map(entry => entry.run.runId), ['r']);
+    assert.equal(snapshot.runs[0].run.finalContent, null);
+    assert.equal(snapshot.runs[0].run.losslessBytes, undefined);
+    assert.equal(snapshot.runs[0].run.losslessBytesEncoding, undefined);
+    assert.equal(snapshot.runs[0].events.filter(event => event.kind === 'screenshot').length, 1);
     assert.match(await github.locator('textarea').inputValue(), /Clicking failed/);
     await github.addScriptTag({ content }); assert.equal(await github.evaluate(() => uploads), 1);
     assert.equal(await panel.evaluate(async () => (await store.listFeedbackDrafts()).length), 0);
