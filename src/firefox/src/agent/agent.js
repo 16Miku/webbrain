@@ -11,6 +11,7 @@ import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMo
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
+import { retryModelCall } from '../providers/model-retry.js';
 import { aggregateMessageCompletion } from '../message-info.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
@@ -36818,10 +36819,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             messages.push({ role: 'assistant', content: finalResponse });
             break;
           }
-          // Retry once after a short delay for transient errors (rate limits, network).
-          this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
-          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 2000, code: this._traceErrorCodeFor(e) });
-          await new Promise(r => setTimeout(r, 2000));
+          // Retry inference on this step only; preserve already executed tools.
           try {
             const useTools2 = provider.supportsTools && tools.length > 0;
               const chatOpts2 = {
@@ -36830,7 +36828,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 maxTokens: mainMaxTokens,
                 ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
               };
-            result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
+            result = await retryModelCall(e, () => chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' }), {
+              isAborted: () => this._checkAbort(tabId),
+              onRetry: async ({ error, delayMs, attempt }) => {
+                this._logDebug({ type: 'llm_error_retrying', step: steps, error: error.message, delayMs, attempt });
+                if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
+                if (error?.httpStatus === 429) onUpdate('warning', { message: `The model provider is rate-limiting requests. Retrying this step in ${Math.ceil(delayMs / 1000)} seconds (${attempt}/3).` });
+              },
+            });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
             if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result, { retried: true }));
           } catch (e2) {

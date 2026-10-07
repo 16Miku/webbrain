@@ -10,6 +10,7 @@ import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMo
 import { validateToolArguments } from './tool-arguments.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
+import { retryModelCall } from '../providers/model-retry.js';
 import { aggregateMessageCompletion } from '../message-info.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
@@ -11037,7 +11038,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           success: false,
           denied: true,
           noDispatch: true,
-          error: 'execute_webmcp_tool requires a tool_id from list_webmcp_tools.',
+          error: 'execute_webmcp_tool requires an exact opaque tool_id returned by list_webmcp_tools. Browser functions and JavaScript are not WebMCP tool IDs.',
+          hint: 'If the page has no registered WebMCP tools, use ordinary accessibility, DOM, or execute_js tools instead.',
         },
       };
     }
@@ -11062,10 +11064,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           denied: true,
           noDispatch: true,
           staleToolId: true,
-          error: 'This WebMCP tool ID is no longer registered. Call list_webmcp_tools again.',
+          error: 'This WebMCP tool ID is not registered. Call list_webmcp_tools once and use only an exact returned tool_id; never invent an ID.',
+          hint: 'If the catalog is empty, use ordinary accessibility, DOM, or execute_js tools instead.',
         },
       };
     }
+    // Resolving a real registration repairs this failure class; unrelated
+    // failed browser actions keep their own counters.
+    this.failedActionLoops.get(tabId)?.delete('webmcp-tool-registration');
     const preparedArgs = {
       ...args,
       tool_id: toolId,
@@ -12643,12 +12649,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? { args: fnArgs }
         : await this._prepareWebMCPToolCall(tabId, fnName, fnArgs);
       if (webMcpPreparation.error) {
-        messages.push({
-          role: 'tool',
-          tool_call_id: tc.id,
-          content: JSON.stringify(webMcpPreparation.error),
-        });
-        onUpdate('warning', { message: webMcpPreparation.error.error });
+        const result = {
+          ...webMcpPreparation.error,
+          dispatched: false,
+          failureScope: 'webmcp-tool-registration',
+        };
+        const recovery = await recordPreparationFailure(toolIndex, fnName, fnArgs, result, result.error);
+        if (recovery) return recovery;
+        if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
       fnArgs = webMcpPreparation.args;
@@ -34754,7 +34762,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         };
       }
       try {
-        return await cdpClient.listWebMCPTools(tabId, args || {});
+        const catalog = await cdpClient.listWebMCPTools(tabId, args || {});
+        return catalog.total === 0
+          ? { ...catalog, hint: 'This page has no registered WebMCP capabilities. Use ordinary accessibility, DOM, or execute_js tools; do not invent tool IDs.' }
+          : catalog;
       } catch (error) {
         return {
           success: false,
@@ -43897,10 +43908,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             messages.push({ role: 'assistant', content: finalResponse });
             break;
           }
-          // Retry once after a short delay for transient errors (rate limits, network).
-          this._logDebug({ type: 'llm_error_retrying', step: steps, error: e.message });
-          if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 2000, code: this._traceErrorCodeFor(e) });
-          await new Promise(r => setTimeout(r, 2000));
+          // Retry inference on this step only; preserve already executed tools.
           try {
             const useTools2 = provider.supportsTools && tools.length > 0;
             const chatOpts2 = {
@@ -43909,7 +43917,14 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                 maxTokens: mainMaxTokens,
               ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
             };
-            result = await chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' });
+            result = await retryModelCall(e, () => chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' }), {
+              isAborted: () => this._checkAbort(tabId),
+              onRetry: async ({ error, delayMs, attempt }) => {
+                this._logDebug({ type: 'llm_error_retrying', step: steps, error: error.message, delayMs, attempt });
+                if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
+                if (error?.httpStatus === 429) onUpdate('warning', { message: `The model provider is rate-limiting requests. Retrying this step in ${Math.ceil(delayMs / 1000)} seconds (${attempt}/3).` });
+              },
+            });
             this._logDebug({ type: 'llm_response_after_retry', step: steps, content: result.content, toolCalls: result.toolCalls });
             if (runId) trace.recordStepEnd(runId, steps, this._traceStepEndForResult(result, { retried: true }));
           } catch (e2) {
