@@ -1,6 +1,8 @@
 import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
 import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
+import { createFeedbackHandoff } from './feedback-handoff.js';
+const feedbackHandoff = createFeedbackHandoff(chrome);
 import { ProviderManager } from './providers/manager.js';
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
@@ -2837,6 +2839,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 async function handleMessage(msg, sender) {
+  if (String(msg.action || '').startsWith('feedback_')) return feedbackHandoff.handle(msg, sender);
   if (msg.action === 'chat_steer') {
     // Content scripts must never turn page text into a trusted human correction.
     if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
