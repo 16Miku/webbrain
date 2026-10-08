@@ -1,4 +1,10 @@
 export const decisionEnglish = {
+  'st.d1.provider': 'D1 FP32 WebGPU (experimental)',
+  'st.d1.warning': 'Experimental on-device decision model, about 1.9 GB download plus tokenizer. Requires hardware WebGPU and substantial GPU memory. Not a chat model or sole completion authority. CPU/WASM control operators may run. Browser support and model decisions are not universally validated.',
+  'st.d1.consent': 'I accept the experimental local model download from Hugging Face and its memory requirements.',
+  'st.d1.need_consent': 'Accept the experimental model download consent first.',
+  'st.d1.download': 'Download and load', 'st.d1.load': 'Load cached model', 'st.d1.stop': 'Stop download',
+  'st.d1.unload': 'Unload model', 'st.d1.remove': 'Remove cached model',
   'st.system_one.title': 'Decision models',
   'st.system_one.desc_html': 'Outsource selected decisions to OpenRouter, TypeSafe, or a local model.',
   'st.system_one.enabled.label': 'Enable decision outsourcing',
@@ -14,10 +20,16 @@ export const decisionEnglish = {
   'st.decision.done': 'Verify completion (done)', 'st.decision.threshold': 'Completion probability threshold (%)',
   'st.decision.done_desc': 'Use the selected decision model for completion checks. When outsourcing is off or unconfigured, the active LLM still verifies completion before existing checks; its usual cost limits apply.',
   'st.decision.vision_unverified': 'Image support was not verified. Auto mode will use AX.',
-  'st.decision.compass': 'Compass verifies completion through its managed decision model automatically. Test checks image-only facts when image support is enabled; unsupported images use AX.',
+  'st.decision.compass': 'Compass uses its managed decision model by default; explicitly enabled and consented D1 uses local decisions instead. Test checks image-only facts when image support is enabled; unsupported images use AX.',
 };
 export const decisionTranslations = {
   tr: {
+    'st.d1.provider': 'D1 FP32 WebGPU (deneysel)',
+    'st.d1.warning': 'Deneysel yerel karar modeli; tokenizer ile birlikte yaklaşık 1,9 GB indirme. Donanım WebGPU ve yüksek GPU belleği gerekir. Sohbet modeli veya tek başına tamamlanma yetkilisi değildir. CPU/WASM kontrol işlemleri çalışabilir. Her tarayıcı, GPU ve model kararı doğrulanmış değildir.',
+    'st.d1.consent': 'Hugging Face üzerinden deneysel yerel model indirmesini ve bellek gereksinimlerini kabul ediyorum.',
+    'st.d1.need_consent': 'Önce deneysel model indirme onayını kabul edin.',
+    'st.d1.download': 'İndir ve yükle', 'st.d1.load': 'Önbellekten yükle', 'st.d1.stop': 'İndirmeyi durdur',
+    'st.d1.unload': 'Modeli bellekten kaldır', 'st.d1.remove': 'Önbellekteki modeli sil',
     'st.system_one.title': 'Karar modelleri', 'st.system_one.desc_html': 'Seçilen kararları OpenRouter, TypeSafe veya yerel bir modele devredin.',
     'st.system_one.enabled.label': 'Karar devretmeyi etkinleştir', 'st.system_one.api_key.label': 'API anahtarı (yerel modellerde isteğe bağlı)',
     'st.system_one.need_key': 'Seçilen sağlayıcı için bir API anahtarı girin.',
@@ -28,6 +40,6 @@ export const decisionTranslations = {
     'st.decision.done': 'Tamamlanmayı doğrula (done)', 'st.decision.threshold': 'Tamamlanma olasılığı eşiği (%)',
     'st.decision.done_desc': 'Tamamlanma kontrollerinde seçilen karar modelini kullanır. Devretme kapalıysa veya yapılandırılmamışsa, etkin dil modeli mevcut kontrollerden önce tamamlanmayı yine doğrular; normal maliyet sınırları geçerlidir.',
     'st.decision.vision_unverified': 'Görsel desteği doğrulanmadı. Otomatik mod AX kullanacak.',
-    'st.decision.compass': 'Compass tamamlanmayı yönetilen karar modeliyle otomatik doğrular. Görsel desteği açıksa test yalnızca görselde bulunan bilgileri kontrol eder; desteklenmeyen görsellerde AX kullanılır.',
+    'st.decision.compass': 'Compass varsayılan olarak yönetilen karar modelini kullanır; açıkça etkinleştirilip onaylanan D1 yerel kararlar kullanır. Görsel desteği açıksa test yalnızca görselde bulunan bilgileri kontrol eder; desteklenmeyen görsellerde AX kullanılır.',
   },
 };

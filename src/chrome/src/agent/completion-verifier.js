@@ -45,6 +45,8 @@ export async function verifyCompletion({ decision, llm, capture, isCurrent, sign
         if (signal?.aborted) throw signal.reason || new Error('Cancelled');
         if (!await isCurrent(evidence)) { const error = new Error('Completion evidence changed during verification.'); error.code = 'STALE_COMPLETION'; throw error; }
         onAttempt({ engine: engine.name, modality, ...verdict });
+        // Experimental local decisions are evidence, not sole completion authority.
+        if (verdict.outcome === 'succeeded' && engine.requiresIndependentSuccessConfirmation) break;
         if (verdict.outcome !== 'uncertain') return { ...verdict, engine: engine.name, modality, identity: evidence.identity, evidenceKey: evidence.key };
       } catch (error) {
         if (completionStopError(error, signal)) throw error;

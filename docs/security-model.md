@@ -64,6 +64,28 @@ This is a feature (it makes the agent useful with zero setup) but also the most 
 
 ## Credential Handling
 
+### Experimental Local D1 Decisions
+
+D1 is an optional finite-decision provider, not a chat generator or browser
+executor. Explicit Settings consent controls download/load; the control handler
+accepts only the extension's Settings sender. Chrome uses its shared offscreen
+document and a separate Worker; Firefox attempts its background-page Worker only
+when hardware WebGPU and OPFS are available. Software adapters and inadequate
+buffer limits are rejected, but other capable devices are not declared validated.
+Only immutable, checksummed model/config/tokenizer data is downloaded from Hugging
+Face. Packaged JavaScript/WASM is never loaded from that repository. Inline images
+are accepted; page-selected remote image URLs cannot turn D1 into a fetch proxy.
+
+Page text/pixels stay untrusted and existing redaction/wrapping remains in place.
+Disabling outsourcing or Strict Secret Mode discards the Worker and its GPU
+sessions; cached weights remain until explicitly removed. Timeouts discard a
+stalled inference session rather than inventing an answer. CPU/WASM control/shape
+fallback is disclosed, not represented as pure GPU. A positive experimental D1
+judgment alone cannot establish completion: independent LLM or existing checks
+still apply, including deterministic recipient/payment/download/authorization
+and workflow requirements. The active LLM's existing data-flow policy still
+applies to any independent fallback verification.
+
 ### Encrypted Cloud Sync
 
 Cloud Sync is an optional subscriber feature. Supported provider API-key
