@@ -1,5 +1,5 @@
 export const decisionEnglish = {
-  'st.d1.provider': 'D1 FP32 WebGPU (experimental)',
+  'st.d1.provider': 'Local decision model - Experimental',
   'st.d1.warning': 'Experimental on-device decision model, about 1.9 GB download plus tokenizer. Requires hardware WebGPU and substantial GPU memory. Not a chat model or sole completion authority. CPU/WASM control operators may run. Browser support and model decisions are not universally validated.',
   'st.d1.consent': 'I accept the experimental local model download from Hugging Face and its memory requirements.',
   'st.d1.need_consent': 'Accept the experimental model download consent first.',
@@ -24,7 +24,7 @@ export const decisionEnglish = {
 };
 export const decisionTranslations = {
   tr: {
-    'st.d1.provider': 'D1 FP32 WebGPU (deneysel)',
+    'st.d1.provider': 'Yerel karar modeli — Deneysel',
     'st.d1.warning': 'Deneysel yerel karar modeli; tokenizer ile birlikte yaklaşık 1,9 GB indirme. Donanım WebGPU ve yüksek GPU belleği gerekir. Sohbet modeli veya tek başına tamamlanma yetkilisi değildir. CPU/WASM kontrol işlemleri çalışabilir. Her tarayıcı, GPU ve model kararı doğrulanmış değildir.',
     'st.d1.consent': 'Hugging Face üzerinden deneysel yerel model indirmesini ve bellek gereksinimlerini kabul ediyorum.',
     'st.d1.need_consent': 'Önce deneysel model indirme onayını kabul edin.',
