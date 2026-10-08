@@ -1,4 +1,5 @@
 import { D1_MODEL_ID, D1_CONSENT_KEY, D1_CONSENT_VERSION } from './d1-config.js';
+import { dispatchD1Worker, resetD1Worker } from './d1-host.js';
 
 export async function d1Request(command, payload = {}, { timeoutMs = 90_000, signal } = {}) {
   const api = globalThis.browser || globalThis.chrome;
@@ -8,17 +9,8 @@ export async function d1Request(command, payload = {}, { timeoutMs = 90_000, sig
   const abort = () => { void d1Request('reset').catch(() => {}); };
   signal?.addEventListener('abort', abort, { once: true });
   try {
-    let result;
-    if (api.offscreen?.createDocument) {
-      if (['reset', 'dispose', 'stop'].includes(command) && !await api.offscreen.hasDocument()) return { reset: true };
-      const { ensureOffscreen } = await import('../offscreen/ensure.js'); await ensureOffscreen();
-      const response = await api.runtime.sendMessage({ type: 'd1-offscreen', command, payload, timeoutMs });
-      if (!response?.ok) throw new Error(response?.error || 'D1 offscreen host unavailable.'); result = response.result;
-    } else {
-      const { dispatchD1Worker, resetD1Worker } = await import('./d1-host.js');
-      if (command === 'reset') { resetD1Worker(); return { reset: true }; }
-      result = await dispatchD1Worker(command, payload, timeoutMs);
-    }
+    if (command === 'reset') { resetD1Worker(); return { reset: true }; }
+    const result = await dispatchD1Worker(command, payload, timeoutMs);
     if (signal?.aborted) throw signal.reason; return result;
   } finally { signal?.removeEventListener('abort', abort); }
 }

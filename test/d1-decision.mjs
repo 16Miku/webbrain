@@ -10,6 +10,61 @@ for (const build of ['chrome', 'firefox']) {
   const cache = await import(`../src/${build}/src/providers/d1-cache.js`);
   const completion = await import(`../src/${build}/src/agent/completion-verifier.js`);
   const transfer = await import(`../src/${build}/src/config-transfer.js`);
+  const diagnostic = await import(`../src/${build}/src/providers/d1-diagnostic.js`);
+  const judge = await import(`../src/${build}/src/agent/systemone-judge.js`);
+  test(`${build}: fixture diagnostics require Settings, stored selected consent and normal typed evaluation`, async () => {
+    const settings = { decisionProvider: 'webgpu_d1', systemOneEnabled: true, [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
+    const api = { runtime: { id: 'extension-id', getURL: path => 'chrome-extension://extension-id/' + path }, storage: { local: { get: async () => settings } } };
+    const sender = { id: api.runtime.id, url: api.runtime.getURL('src/ui/settings.html') + '#decision' };
+    const fixture = { state: 'Exact original state', images: ['data:image/png;base64,YQ=='], questions: { q: { type: 'noul', instructions: 'Is blue visible?' } } };
+    const client = {};
+    const response = { model: pin.D1_MODEL_ID, provider: 'webgpu_d1', answers: { q: { type: 'noul', noul: .75 } }, usage: { input_tokens: 12, output_tokens: 0 } };
+    let calls = 0;
+    const agent = { evaluateSystemOne: async (tabId, actualClient, args) => { calls++; assert.equal(tabId, null); assert.equal(actualClient, client); assert.equal(args.state, fixture.state); assert.equal(args.images, fixture.images); assert.equal(args.questions, fixture.questions); assert.equal(args.config.provider, 'webgpu_d1'); return response; } };
+    const args = { fixture, sender, api, strictSecretMode: false, agent, client };
+    assert.equal(await diagnostic.evaluateD1LocalFixture(args), response);
+    assert.equal(calls, 1);
+    for (const badSender of [{ ...sender, id: 'other-id' }, { ...sender, url: 'https://example.com/' }, { ...sender, url: api.runtime.getURL('src/ui/popup.html') }]) await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, sender: badSender }), /only from extension Settings/);
+    await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, strictSecretMode: true }), /Strict Secret/);
+    for (const stored of [{ ...settings, decisionProvider: 'compass' }, { ...settings, systemOneEnabled: false }, { ...settings, [pin.D1_CONSENT_KEY]: 0 }]) await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, api: { ...api, storage: { local: { get: async () => stored } } } }), /Select, enable/);
+    assert.equal(calls, 1);
+    await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, api: { ...api, storage: { local: { get: async () => ({ ...settings, decisionVisionMode: 'off' }) } } } }), /Enable local D1 vision/);
+    await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, agent: { evaluateSystemOne: async () => ({ ...response, usage: { input_tokens: 12, output_tokens: 1 } }) } }), /Invalid local D1 fixture response/);
+    await assert.rejects(diagnostic.evaluateD1LocalFixture({ ...args, agent: { evaluateSystemOne: async () => ({ ...response, answers: { q: { type: 'noul', noul: 1.5 } } }) } }), /probability/);
+  });
+  test(`${build}: SW-reachable D1 modules use static imports and diagnostic branch leaves normal connection test intact`, async () => {
+    for (const path of ['providers/d1.js', 'providers/d1-diagnostic.js', 'providers/d1-host.js', 'agent/systemone-judge.js']) {
+      const source = await readFile(new URL(`../src/${build}/src/${path}`, import.meta.url), 'utf8');
+      assert.doesNotMatch(source, /\bimport\s*\(/, path);
+    }
+    const background = await readFile(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8');
+    const branch = background.slice(background.indexOf("case 'test_system_one':"), background.indexOf("case 'test_captcha_provider_balance':"));
+    assert.match(branch, /await strictSecretModeReady/);
+    assert.match(branch, /Object\.hasOwn\(msg, 'localFixture'\)/);
+    assert.match(branch, /return \{ success: true, result \}/);
+    assert.ok(branch.indexOf('evaluateD1LocalFixture') < branch.indexOf('let config = msg.settings'));
+    assert.match(branch, /Decision connection test was inconclusive/);
+  });
+  test(`${build}: actual typed Judge dispatches a local text/image fixture without HTTP or dynamic imports`, async () => {
+    const saved = { chrome: globalThis.chrome, browser: globalThis.browser, Worker: globalThis.Worker };
+    const questions = { q: { type: 'noul', instructions: 'Is blue visible?' } };
+    const state = 'Original source state', images = ['data:image/png;base64,YQ=='];
+    const result = { model: pin.D1_MODEL_ID, provider: 'webgpu_d1', answers: { q: { type: 'noul', noul: .75 } }, usage: { input_tokens: 12, output_tokens: 0 } };
+    let sends = 0, usages = 0;
+    const receive = message => { sends++; assert.equal(message.command || message.type, 'evaluate'); assert.equal(message.payload.state, state); assert.deepEqual(message.payload.images, images); assert.deepEqual(message.payload.questions, questions); return result; };
+    const api = { storage: { local: { get: async () => ({ [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION }) } }, runtime: { getURL: path => 'chrome-extension://test/' + path, sendMessage: async message => ({ ok: true, result: receive(message) }) } };
+    if (build === 'chrome') api.offscreen = { createDocument: async () => { throw new Error('Existing host must be reused'); }, hasDocument: async () => true };
+    globalThis.chrome = api; globalThis.browser = build === 'firefox' ? api : undefined;
+    globalThis.Worker = class { postMessage(message) { const response = receive(message); queueMicrotask(() => this.onmessage({ data: { id: message.id, ok: true, result: response } })); } terminate() {} };
+    try {
+      const selected = config.resolveDecisionConfig({ decisionProvider: 'webgpu_d1', systemOneEnabled: true, [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION });
+      const response = await judge.createSystemOneJudge({ fetchImpl: () => { throw new Error('No cloud request'); }, maxRetries: 0 }).evaluate({ state, images, questions, config: selected, onUsage: metadata => { usages++; assert.equal(Object.hasOwn(metadata, 'answers'), false); } });
+      assert.deepEqual(response.answers, result.answers); assert.equal(response.usage.output_tokens, 0); assert.equal(sends, 1); assert.equal(usages, 1);
+    } finally {
+      const host = await import(`../src/${build}/src/providers/d1-host.js`); host.resetD1Worker();
+      globalThis.chrome = saved.chrome; globalThis.browser = saved.browser; globalThis.Worker = saved.Worker;
+    }
+  });
   test(`${build}: D1 is opt-in, endpoint/key-free, zero-cost and overrides Compass only with explicit local consent`, async () => {
     const stored = { decisionProvider: 'webgpu_d1', systemOneEnabled: true };
     assert.equal(config.resolveDecisionConfig(stored).enabled, false);
@@ -86,6 +141,6 @@ for (const build of ['chrome', 'firefox']) {
   });
 }
 
-test('new decision runtime modules are byte-identical across Chrome and Firefox', async () => {
-  for (const name of ['d1-config.js', 'd1-runtime.js', 'd1-preprocess.js', 'd1-cache.js', 'd1-worker.js', 'd1-host.js', 'd1.js']) assert.deepEqual(await readFile(new URL(`../src/chrome/src/providers/${name}`, import.meta.url)), await readFile(new URL(`../src/firefox/src/providers/${name}`, import.meta.url)), name);
+test('new shared decision runtime modules are byte-identical across Chrome and Firefox', async () => {
+  for (const name of ['d1-config.js', 'd1-runtime.js', 'd1-preprocess.js', 'd1-cache.js', 'd1-worker.js', 'd1-host.js', 'd1-diagnostic.js']) assert.deepEqual(await readFile(new URL(`../src/chrome/src/providers/${name}`, import.meta.url)), await readFile(new URL(`../src/firefox/src/providers/${name}`, import.meta.url)), name);
 });

@@ -1,5 +1,6 @@
 import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
 import { d1Request } from './providers/d1.js';
+import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
 import { D1_CONSENT_KEY, D1_CONSENT_VERSION } from './providers/d1-config.js';
 
 browser.storage.onChanged.addListener((changes, area) => {
@@ -3630,6 +3631,10 @@ async function handleMessage(msg, sender) {
       await strictSecretModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        if (Object.hasOwn(msg, 'localFixture')) {
+          const result = await evaluateD1LocalFixture({ fixture: msg.localFixture, sender, api: browser, strictSecretMode: agent.strictSecretMode, agent, client: createSystemOneJudge({ maxRetries: 0 }) });
+          return { success: true, result };
+        }
         let config = msg.settings ? resolveDecisionConfig(msg.settings) : undefined;
         if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
           try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}

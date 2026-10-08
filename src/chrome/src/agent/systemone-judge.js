@@ -4,6 +4,8 @@
 // answer-shape checks so scheduler callers only need one small evaluate()
 // interface. It never performs an action or turns a non-success into success.
 
+import { evaluateD1 } from '../providers/d1.js';
+
 export const SYSTEM_ONE_API_URL = 'https://api.typesafe.ai/v1/systemone';
 export const SYSTEM_ONE_MODEL = 'jev-1.13.0';
 export const SYSTEM_ONE_API_KEY = 'typesafeApiKey';
@@ -282,7 +284,6 @@ export function createSystemOneJudge({
       try {
         if (config?.provider === 'webgpu_d1') {
           if (beforeRequest) await abortable(beforeRequest(), request.signal);
-          const { evaluateD1 } = await import('../providers/d1.js');
           const result = await abortable(evaluateD1({ state, images, questions, config, signal: request.signal }), request.signal);
           validateSystemOneAnswers(result.answers, questions);
           if (result.model !== model || !Number.isInteger(result.usage?.input_tokens) || result.usage.input_tokens < 0 || result.usage?.output_tokens !== 0) throw systemOneError('JEV_INVALID_USAGE', 'Invalid local D1 usage/model.');
