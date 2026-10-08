@@ -1,9 +1,9 @@
-export const D1_MODEL_ID = 'webbrain-one/d1-browser-decision-fp32-experimental';
+export const D1_MODEL_ID = 'webbrain-one/d1-browser-decision-fp32';
 export const D1_CONSENT_VERSION = 1;
 export const D1_CONSENT_KEY = 'd1WebgpuConsentVersion';
 export const D1_CACHE_NAME = 'webbrain-d1-fp32-v1';
 // Immutable release package; downloaded data is verified before local loading.
-export const D1_RELEASE = Object.freeze({ revision: '978ffd4c9b120adf0a3af6eac388b3f483947d00', manifestSha256: 'ae49844ad9443552b475158fd077cc82d688d50b05bfda273d1ab885bad43bb9' });
+export const D1_RELEASE = Object.freeze({ revision: '2ec2db177524a8cdb8720b8574b61598d6495d14', manifestSha256: 'd8725b233df6c9a8c88308a6458bf465ef7de78e26cd59a9ae0dee6c4689a00e' });
 export const D1_REQUIRED_FILES = Object.freeze(['config.json', 'tokenizer.json', 'tokenizer_config.json', 'tiling-ratios.json', 'onnx/decision.onnx', 'onnx/decision.data', 'onnx/vision.onnx', 'onnx/vision.data', 'onnx/projector.onnx', 'onnx/projector.data']);
 
 export function d1BaseURL() {

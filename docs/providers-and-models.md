@@ -35,7 +35,9 @@ generate tokens. It supports named choice, noul (P(yes)) and ordinal score
 questions over bounded text/JSON state and inline screenshots. Selecting it
 does not download anything. Explicit consent and **Download and load** fetch
 about 1.9 GB of pinned FP32 model data and tokenizer/configuration files from
-Hugging Face into OPFS. Executable JS/WASM is packaged in the extension, not
+the [Hugging Face model repository](https://huggingface.co/webbrain-one/d1-browser-decision-fp32)
+into OPFS. The repository name is not a production-readiness claim; this provider
+remains experimental. Executable JS/WASM is packaged in the extension, not
 downloaded from the model repository. **Load cached model** verifies the files
 again; inference cannot trigger a model download.
 
