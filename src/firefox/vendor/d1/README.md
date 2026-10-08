@@ -4,7 +4,10 @@ Only the experimental finite-decision d1 provider uses this directory. Existing
 chat Transformers 4.2.0 / patched ONNX Runtime 1.27 remain unchanged.
 
 - onnxruntime-web 1.31.0-dev.20260914-8d85527a0, commit
-  8d85527a010e294a26b274749f74294b2a32cec5: three runtime files copied byte-exact.
+  8d85527a010e294a26b274749f74294b2a32cec5: five runtime files copied byte-exact.
+  The WebGPU bundle uses the native `webgpuInit` ABI and its matching asyncify
+  factory/WASM pair. The original JSEP files are retained for provenance, but
+  are inactive: their `jsepInit` ABI does not match this WebGPU bundle.
 - @huggingface/transformers 4.3.1: tokenizer API. Exactly two bare module imports
   are relinked to ./ort.webgpu.bundle.min.mjs; all remaining bytes are unchanged.
   This reproduces the previously verified browser import map, including Tensor.

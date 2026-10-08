@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 for (const build of ['chrome', 'firefox']) {
   const config = await import(`../src/${build}/src/agent/decision-config.js`);
@@ -12,6 +13,48 @@ for (const build of ['chrome', 'firefox']) {
   const transfer = await import(`../src/${build}/src/config-transfer.js`);
   const diagnostic = await import(`../src/${build}/src/providers/d1-diagnostic.js`);
   const judge = await import(`../src/${build}/src/agent/systemone-judge.js`);
+  test(`${build}: isolated ORT loader uses its native asyncify ABI with checksum-exact assets`, async () => {
+    const worker = await readFile(new URL(`../src/${build}/src/providers/d1-worker.js`, import.meta.url), 'utf8');
+    const bundle = await readFile(new URL(`../src/${build}/vendor/d1/ort.webgpu.bundle.min.mjs`, import.meta.url), 'utf8');
+    const factory = await readFile(new URL(`../src/${build}/vendor/d1/ort-wasm-simd-threaded.asyncify.mjs`, import.meta.url), 'utf8');
+    const oldFactory = await readFile(new URL(`../src/${build}/vendor/d1/ort-wasm-simd-threaded.jsep.mjs`, import.meta.url), 'utf8');
+    const manifest = JSON.parse(await readFile(new URL(`../src/${build}/vendor/d1/vendor-manifest.json`, import.meta.url), 'utf8'));
+    assert.match(bundle, /webgpuInit/); assert.match(bundle, /ort-wasm-simd-threaded\.asyncify\.mjs/);
+    assert.match(factory, /webgpuInit/); assert.doesNotMatch(factory, /jsepInit/);
+    assert.match(oldFactory, /jsepInit/); assert.doesNotMatch(oldFactory, /webgpuInit/);
+    assert.match(worker, /mjs: new URL\('\.\.\/\.\.\/vendor\/d1\/ort-wasm-simd-threaded\.asyncify\.mjs'/);
+    assert.match(worker, /wasm: new URL\('\.\.\/\.\.\/vendor\/d1\/ort-wasm-simd-threaded\.asyncify\.wasm'/);
+    assert.doesNotMatch(worker, /ort-wasm-simd-threaded\.jsep/);
+    assert.equal(manifest.loader_abi.required_factory_api, 'webgpuInit');
+    for (const entry of manifest.files) {
+      const bytes = await readFile(new URL(`../src/${build}/vendor/d1/${entry.file}`, import.meta.url));
+      assert.equal(bytes.length, entry.copied_bytes); assert.equal(createHash('sha256').update(bytes).digest('hex'), entry.copied_sha256);
+      if (entry.byte_exact) assert.equal(entry.source.sha256, entry.copied_sha256);
+    }
+  });
+  test(`${build}: worker preserves a load error rather than claiming a cached model is ready`, async () => {
+    const oldNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const oldSelf = Object.getOwnPropertyDescriptor(globalThis, 'self');
+    const messages = [];
+    let cacheReads = 0;
+    const directory = { getFileHandle: async () => ({ getFile: async () => ({ text: async () => JSON.stringify({ revision: pin.D1_RELEASE.revision, manifestSha256: pin.D1_RELEASE.manifestSha256 }) }) }) };
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { storage: { getDirectory: async () => { cacheReads++; return { getDirectoryHandle: async () => directory }; } } } });
+    Object.defineProperty(globalThis, 'self', { configurable: true, value: { postMessage: message => messages.push(message) } });
+    try {
+      await import(`../src/${build}/src/providers/d1-worker.js?cpu-error-status`);
+      self.onmessage({ data: { id: 1, type: 'download', payload: { consentVersion: pin.D1_CONSENT_VERSION } } });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      assert.ok(messages.some(message => message.state?.status === 'error'));
+      self.onmessage({ data: { id: 2, type: 'status' } });
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const result = messages.find(message => message.id === 2).result;
+      assert.equal(result.status, 'error'); assert.equal(result.ready, false); assert.equal(result.loaded, false);
+      assert.match(result.error, /Hardware WebGPU/); assert.equal(cacheReads, 0);
+    } finally {
+      if (oldNavigator) Object.defineProperty(globalThis, 'navigator', oldNavigator); else delete globalThis.navigator;
+      if (oldSelf) Object.defineProperty(globalThis, 'self', oldSelf); else delete globalThis.self;
+    }
+  });
   test(`${build}: fixture diagnostics require Settings, stored selected consent and normal typed evaluation`, async () => {
     const settings = { decisionProvider: 'webgpu_d1', systemOneEnabled: true, [pin.D1_CONSENT_KEY]: pin.D1_CONSENT_VERSION };
     const api = { runtime: { id: 'extension-id', getURL: path => 'chrome-extension://extension-id/' + path }, storage: { local: { get: async () => settings } } };

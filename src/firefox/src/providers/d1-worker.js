@@ -20,7 +20,7 @@ async function prepare(signal) {
   const { PreTrainedTokenizer } = await import('../../vendor/d1/transformers.web.js');
   const ort = await import('../../vendor/d1/ort.webgpu.bundle.min.mjs');
   ort.env.wasm.numThreads = 1; ort.env.wasm.proxy = false; ort.env.logLevel = 'warning';
-  ort.env.wasm.wasmPaths = { mjs: new URL('../../vendor/d1/ort-wasm-simd-threaded.jsep.mjs', import.meta.url).href, wasm: new URL('../../vendor/d1/ort-wasm-simd-threaded.jsep.wasm', import.meta.url).href };
+  ort.env.wasm.wasmPaths = { mjs: new URL('../../vendor/d1/ort-wasm-simd-threaded.asyncify.mjs', import.meta.url).href, wasm: new URL('../../vendor/d1/ort-wasm-simd-threaded.asyncify.wasm', import.meta.url).href };
   const loadingDevice = await adapter.requestDevice({ requiredFeatures: ['shader-f16'].filter(feature => adapter.features.has(feature)), requiredLimits: { maxBufferSize: adapter.limits.maxBufferSize, maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxComputeWorkgroupsPerDimension: adapter.limits.maxComputeWorkgroupsPerDimension } });
   device = loadingDevice; ort.env.webgpu.device = loadingDevice;
   loadingDevice.addEventListener('uncapturederror', event => { errors.push(String(event.error.message)); publish({ error: String(event.error.message) }); });
@@ -40,11 +40,11 @@ async function prepare(signal) {
     runtime = createD1Runtime({ ort, tokenizer, config, ratios, sessions, device: loadingDevice, model: D1_MODEL_ID });
     publish({ status: 'ready', loaded: true, progress: 100, adapter: info, runtime: ort.env.versions, error: '', cpu_fallback_policy: 'CPU/WASM control/shape fallback allowed; not a pure GPU claim.' });
     return { ready: true, ...state };
-  } catch (error) { for (const session of Object.values(sessions)) await session.release().catch(() => {}); loadingDevice.destroy(); if (device === loadingDevice) device = null; throw error; }
+  } catch (error) { for (const session of Object.values(sessions)) await session.release().catch(() => {}); loadingDevice.destroy(); if (device === loadingDevice) device = null; publish({ status: signal?.aborted ? 'stopped' : 'error', loaded: false, error: String(error.message || error) }); throw error; }
 }
 
 async function status() {
-  if (transfer || runtime) return { ...state, ready: !!runtime };
+  if (transfer || runtime || ['error', 'stopped'].includes(state.status)) return { ...state, ready: !!runtime };
   try {
     const directory = await openD1Cache();
     const marker = JSON.parse(await (await (await directory.getFileHandle('ready.json')).getFile()).text());

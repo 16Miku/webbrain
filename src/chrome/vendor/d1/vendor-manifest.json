@@ -5,6 +5,14 @@
     "@huggingface/transformers": "4.3.1"
   },
   "onnxruntime_commit": "8d85527a010e294a26b274749f74294b2a32cec5",
+  "loader_abi": {
+    "active_backend": "native WebGPU asyncify",
+    "factory": "ort-wasm-simd-threaded.asyncify.mjs",
+    "wasm": "ort-wasm-simd-threaded.asyncify.wasm",
+    "required_factory_api": "webgpuInit",
+    "retained_inactive_files": ["ort-wasm-simd-threaded.jsep.mjs", "ort-wasm-simd-threaded.jsep.wasm"],
+    "reason": "The installed WebGPU bundle uses webgpuInit and defaults to asyncify; the JSEP factory exports jsepInit instead."
+  },
   "files": [
     {
       "file": "ort.webgpu.bundle.min.mjs",
@@ -37,6 +45,28 @@
       },
       "copied_bytes": 28352885,
       "copied_sha256": "62ff86b2f2fa3a79eb87a7e4720e8ea9051942bf975f314181bf7dcef2feac06",
+      "byte_exact": true
+    },
+    {
+      "file": "ort-wasm-simd-threaded.asyncify.mjs",
+      "source": {
+        "path": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs",
+        "bytes": 53057,
+        "sha256": "0966b6105cd936744498aa60df7a22cbd47af3374dbc64a9ab561c08a71e3611"
+      },
+      "copied_bytes": 53057,
+      "copied_sha256": "0966b6105cd936744498aa60df7a22cbd47af3374dbc64a9ab561c08a71e3611",
+      "byte_exact": true
+    },
+    {
+      "file": "ort-wasm-simd-threaded.asyncify.wasm",
+      "source": {
+        "path": "node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm",
+        "bytes": 26861777,
+        "sha256": "49871f5a4409519797e127440868a6d1923339d9185907f301a5b2a1d90af082"
+      },
+      "copied_bytes": 26861777,
+      "copied_sha256": "49871f5a4409519797e127440868a6d1923339d9185907f301a5b2a1d90af082",
       "byte_exact": true
     },
     {
