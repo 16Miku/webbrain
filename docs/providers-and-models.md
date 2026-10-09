@@ -247,16 +247,16 @@ class BaseLLMProvider {
 
 ### Extended provider catalog
 
-WebBrain also ships 81 disabled-by-default provider cards. Most are sourced
+WebBrain also ships 80 disabled-by-default provider cards. Most are sourced
 from the OpenCode provider catalog snapshot at commit
 `62e4641235d7847dadc60da37cca8a023dd54fc1`; provider-specific additions use
 their official API documentation. Together with the original cards, Settings
-contains **114 built-in providers on Chromium** and **113 on Firefox**; the
+contains **113 built-in providers on Chromium** and **112 on Firefox**; the
 difference is the Chromium-only in-browser WebGPU runtime.
 
 | IDs                                                                                                                                                                                                                                                                                                                        |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `demonroute`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
+| `302ai`, `abacus`, `aihubmix`, `alibaba-coding-plan`, `alibaba-coding-plan-cn`, `azure-cognitive-services`, `bailing`, `baseten`, `berget`, `cerebras`, `chutes`, `clarifai`, `cloudferro-sherlock`, `cohere`, `cortecs`, `deepinfra`, `digitalocean`, `dinference`, `drun`, `evroc`, `fastrouter`, `friendli` |
 | `freebuff2api`, `google-vertex`, `google-vertex-anthropic`, `helicone`, `iflowcn`, `inception`, `inference`, `io-net`, `jiekou`, `kilo`, `kimi-for-coding`, `kuae-cloud-coding-plan`, `llama`, `lucidquery`, `meganova`, `minimax-cn-coding-plan`, `minimax-coding-plan`, `moark`, `modelscope`, `morph`                       |
 | `nano-gpt`, `nearai`, `nebius`, `nova`, `novita-ai`, `ollama-cloud`, `opencode`, `opencode-go`, `orcarouter`, `ovhcloud`, `perplexity`, `perplexity-agent`, `poe`, `pollinations`, `privatemode-ai`, `qihang-ai`, `qiniu-ai`, `requesty`, `scaleway`, `siliconflow`, `siliconflow-cn`, `stackit`                               |
 | `stepfun`, `submodel`, `synthetic`, `tencent-coding-plan`, `upstage`, `v0`, `venice`, `vercel`, `vivgrid`, `vultr`, `wandb`, `xiaomi`, `zai-coding-plan`, `zenmux`, `zhipuai`, `zhipuai-coding-plan`                                                                                                                       |
@@ -310,21 +310,6 @@ the card, keep the default `z-ai/glm-5.3-flash` model, then click **Test
 Connection**. If selecting a model with a smaller context window, such as
 `Qwen/Qwen3.8-27B` (262144 tokens), set **Context window** to its documented
 limit. Interactive Ask streaming, tool calls, and vision work through the
-existing OpenAI-compatible path.
-
-#### DemonRoute
-
-[DemonRoute](https://demonroute.com/) exposes an OpenAI-compatible API at
-`https://api.demonroute.com/v1`. It routes to open-weight and uncensored
-fine-tunes (such as Dolphin and Hermes) behind one key and does not train on
-user content.
-
-In WebBrain, open **Settings -> Providers -> DemonRoute**. Generate an API
-key from [DemonRoute](https://demonroute.com/), paste it into the card, keep
-the default `dphn/Dolphin3.0-Llama3.1-8B` model (131072 tokens), then click
-**Test Connection**. If selecting a model with a smaller context window, such
-as `Gryphe/MythoMax-L2-13b` (4096 tokens), set **Context window** to its
-documented limit. Interactive Ask streaming and tool calls work through the
 existing OpenAI-compatible path.
 
 ### Ask response streaming
