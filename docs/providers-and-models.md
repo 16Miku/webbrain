@@ -29,10 +29,49 @@ Image support follows available model capabilities or the custom override. Test
 Connection checks typed answers and, when enabled, two independent image-only
 facts. A successful HTTP response alone does not establish image support.
 
+**D1 FP32 WebGPU (experimental)** is a separate, optional on-device decision
+provider. It does not replace the conversational/planning model and does not
+generate tokens. It supports named choice, noul (P(yes)) and ordinal score
+questions over bounded text/JSON state and inline screenshots. Selecting it
+does not download anything. Explicit consent and **Download and load** fetch
+about 1.9 GB of pinned FP32 model data and tokenizer/configuration files from
+the [Hugging Face model repository](https://huggingface.co/webbrain-one/d1-browser-decision-fp32)
+into OPFS. The repository name is not a production-readiness claim; this provider
+remains experimental. Executable JS/WASM is packaged in the extension, not
+downloaded from the model repository. **Load cached model** verifies the files
+again; inference cannot trigger a model download.
+
+This experimental path needs hardware WebGPU, OPFS and substantial GPU/host
+memory. Software adapters are rejected. Chrome uses the shared MV3 offscreen
+document with a dedicated decision Worker; Firefox uses its background-page
+Worker when the corresponding browser capabilities are available. Mirrored
+code is not evidence that every browser/GPU is supported. CPU/WASM control and
+shape operators are permitted and explicitly disclosed; it is not a pure-GPU
+claim. Unload or disabling outsourcing releases the Worker/GPU resources and
+retains the cache; **Remove cached model** requires the model to be unloaded.
+Page state and screenshots remain untrusted evidence, never instructions.
+No inference input goes to Hugging Face. Existing optional provider/research
+sharing settings and existing privacy boundaries are not bypassed.
+
+The adapter retains Python-style JSON spacing and fractional exponent
+formatting. JavaScript cannot distinguish an integer `1` from a Python float
+`1.0` after JSON parsing, and cannot preserve integers outside its exact Number
+range. For byte-exact externally prepared state text, pass the original state
+as a string. Question instructions are strings; score levels can be structured
+JSON and are serialized into the original string legend.
+
+D1 completion outsourcing defaults off on selection. Even when explicitly
+enabled, a positive D1 result cannot be the sole completion authority: it
+continues to the independent active-LLM verifier or the existing completion
+checks. Deterministic recipient, payment, authorization, download and workflow
+requirements remain unchanged. Unavailable, malformed or timed-out D1 requests
+use the existing fallback chain; no synthetic answer is substituted.
+
 Verify completion (`done`) defaults on when outsourcing is configured, with a
 90% acceptance threshold separate from the scheduled-check threshold. Compass
-always uses its managed `/v1/decisions` route regardless of personal decision
-settings. The fallback chain is decision model, active LLM, then existing
+uses its managed `/v1/decisions` route by default. An explicitly enabled and
+consented experimental D1 selection overrides only that decision route, not
+the main Compass provider. The fallback chain is decision model, active LLM, then existing
 completion checks. These outsourcing toggles control the decision model only;
 with outsourcing disabled or unconfigured, completion still uses a dedicated
 call to the active LLM, subject to its normal cost allowance, followed by the
@@ -40,7 +79,8 @@ existing checks. Strict Secret Mode disables these additional calls.
 
 | Active provider | First completion verifier | Fallback |
 | --- | --- | --- |
-| WebBrain Compass | Managed decision model | Active LLM, then existing checks |
+| WebBrain Compass (default) | Managed decision model | Active LLM, then existing checks |
+| Explicitly enabled and consented D1, including with Compass | Experimental local D1; no sole success authority | Active LLM, then existing checks |
 | Other provider, completion outsourcing enabled | Selected decision model | Active LLM, then existing checks |
 | Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
 

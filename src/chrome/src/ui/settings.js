@@ -1,4 +1,6 @@
 import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { D1_MODEL_ID } from '../providers/d1-config.js';
+import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings Page — provider configuration + display settings.
  */
@@ -231,6 +233,7 @@ const decisionVisionInput = document.getElementById('decision-vision');
 const decisionDoneToggle = document.getElementById('toggle-decision-done');
 const decisionThresholdInput = document.getElementById('decision-done-threshold');
 let decisionModels = [];
+const refreshD1Settings = initD1Settings(sendToBackground);
 let decisionVisionSupported = false;
 const decisionKeyDrafts = new Map();
 let previousDecisionProvider = 'openrouter';
@@ -735,6 +738,7 @@ async function init() {
   decisionVisionSupported = stored.decisionVisionSupported === true;
   decisionDoneToggle.checked = decisionConfig.doneEnabled;
   decisionThresholdInput.value = String(decisionConfig.threshold * 100);
+  await refreshD1Settings();
   decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
   decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
   decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
@@ -1570,17 +1574,21 @@ if (btnSaveSystemOne) {
   btnSaveSystemOne.addEventListener('click', async () => {
     const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
     const enabled = systemOneEnabledToggle?.checked === true;
-    if (enabled && decisionProviderInput.value !== 'local' && !isValidTypesafeApiKey(key)) {
+    if (enabled && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
       showSystemOneResult('fail', t('st.system_one.need_key'));
       return;
+    }
+    if (decisionProviderInput.value === 'webgpu_d1' && enabled) {
+      const consentResult = await sendToBackground('d1_control', { command: 'consent', consent: document.getElementById('d1-consent').checked, consentVersion: 1 });
+      if (!consentResult.success) { showSystemOneResult('fail', consentResult.error); return; }
     }
     if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
     let selection;
     try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
     await chrome.storage.local.set({
       ...selection,
-      ...(decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
-      systemOneEnabled: enabled && (decisionProviderInput.value === 'local' || isValidTypesafeApiKey(key)),
+      ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
+      systemOneEnabled: enabled && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
       systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
       systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
       systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
@@ -1588,6 +1596,7 @@ if (btnSaveSystemOne) {
       systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
       systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
     });
+    if (!enabled || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
     showSystemOneResult('ok', t('st.providers.saved'));
   });
 }
@@ -1618,6 +1627,8 @@ if (btnClearSystemOne) {
     if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = '70';
     if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = '70';
     updateSystemOneThresholdLabels();
+    await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    await refreshD1Settings();
     showSystemOneResult('ok', t('st.captcha.cleared'));
   });
 }
@@ -1626,16 +1637,16 @@ function decisionSettingsDraft() {
   const card = decisionModels.find(m => m.id === decisionModelInput.value);
   return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
     decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
-    decisionVisionSupported, ...(decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
+    decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
     systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
-    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : decisionProviderInput.value === 'local' ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : ['local', 'webgpu_d1'].includes(decisionProviderInput.value) ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
 }
 
 decisionProviderInput?.addEventListener('change', () => {
   decisionKeyDrafts.set(previousDecisionProvider, systemOneApiKeyInput.value);
   previousDecisionProvider = decisionProviderInput.value;
   systemOneApiKeyInput.value = decisionKeyDrafts.get(previousDecisionProvider) || '';
-  decisionModelInput.value = previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
+  decisionModelInput.value = previousDecisionProvider === 'webgpu_d1' ? D1_MODEL_ID : previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
   decisionModels = []; decisionVisionSupported = false;
   document.getElementById('decision-models').replaceChildren();
   document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
@@ -1658,7 +1669,7 @@ document.getElementById('btn-decision-models')?.addEventListener('click', async 
 
 btnTestSystemOne?.addEventListener('click', async () => {
   const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
-  if (!apiKey && decisionProviderInput.value !== 'local') { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  if (!apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
   btnTestSystemOne.disabled = true;
   showSystemOneResult('', t('st.providers.testing'));
   try {

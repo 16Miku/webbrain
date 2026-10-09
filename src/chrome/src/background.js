@@ -1,4 +1,11 @@
 import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
+import { d1Request } from './providers/d1.js';
+import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
+import { D1_CONSENT_KEY, D1_CONSENT_VERSION } from './providers/d1-config.js';
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
+});
 import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
 import { createFeedbackHandoff } from './feedback-handoff.js';
@@ -4148,6 +4155,21 @@ async function handleMessage(msg, sender) {
       return await testImageGenProvider();
     }
 
+    case 'd1_control': {
+      const api = globalThis.browser || globalThis.chrome;
+      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'D1 model controls are available only from extension Settings.' };
+      try {
+        await strictSecretModeReady;
+        if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
+        if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
+        if (['download', 'load', 'consent'].includes(msg.command)) {
+          if (msg.consent !== true || msg.consentVersion !== D1_CONSENT_VERSION) throw new Error('Explicit D1 experimental-model consent is required.');
+          await api.storage.local.set({ [D1_CONSENT_KEY]: D1_CONSENT_VERSION });
+        }
+        return { success: true, result: msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION }) };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
     case 'list_decision_models': {
       await strictSecretModeReady;
       try {
@@ -4160,6 +4182,10 @@ async function handleMessage(msg, sender) {
       await strictSecretModeReady;
       try {
         if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        if (Object.hasOwn(msg, 'localFixture')) {
+          const result = await evaluateD1LocalFixture({ fixture: msg.localFixture, sender, api: chrome, strictSecretMode: agent.strictSecretMode, agent, client: createSystemOneJudge({ maxRetries: 0 }) });
+          return { success: true, result };
+        }
         let config = msg.settings ? resolveDecisionConfig(msg.settings) : undefined;
         if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
           try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}

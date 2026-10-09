@@ -126,6 +126,7 @@ async function evaluateBrowserCompletion(agent, tabId, { pageState = {}, pageUrl
   const online = globalThis.navigator?.onLine !== false;
   const decision = config.enabled && config.doneEnabled && (config.local || online) ? {
     name: config.provider, supportsVision: config.supportsVision,
+    requiresIndependentSuccessConfirmation: config.requiresIndependentSuccessConfirmation === true,
     evaluate: async evidence => {
       const headers = compass ? { 'X-WebBrain-Device-Id': compass.deviceGuid || '', 'X-WebBrain-Client': 'extension', 'X-WebBrain-Help-Improve': compass.helpImproveWebBrain === false ? '0' : '1' } : {};
       const result = await agent.evaluateSystemOne(tabId, createSystemOneJudge({ maxRetries: 0 }), {

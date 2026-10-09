@@ -1,13 +1,25 @@
+import { D1_MODEL_ID, D1_CONSENT_KEY, D1_CONSENT_VERSION } from '../providers/d1-config.js';
 export const DEFAULT_DECISION_MODEL = 'perplexity/pplx-decider-v1-27b';
 export const DECISION_SETTINGS_KEYS = [
   'systemOneEnabled', 'typesafeApiKey', 'decisionProvider', 'decisionModel',
   'decisionApiKey', 'decisionLocalApiKey', 'decisionBaseUrl', 'decisionVisionMode', 'decisionVisionSupported',
   'decisionInputRate', 'decisionOutputRate', 'systemOneDoneEnabled', 'systemOneDoneThreshold',
+  D1_CONSENT_KEY,
 ];
 
 // Resolve legacy settings without rewriting credentials or opted-in features.
 export function resolveDecisionConfig(stored = {}, compass = null) {
-  const provider = compass ? 'compass' : (stored.decisionProvider || (stored.typesafeApiKey ? 'typesafe' : 'openrouter'));
+  const explicitD1 = stored.decisionProvider === 'webgpu_d1' && stored.systemOneEnabled === true && stored[D1_CONSENT_KEY] === D1_CONSENT_VERSION;
+  const provider = explicitD1 ? 'webgpu_d1' : compass ? 'compass' : (stored.decisionProvider || (stored.typesafeApiKey ? 'typesafe' : 'openrouter'));
+  if (provider === 'webgpu_d1') return {
+    provider, model: D1_MODEL_ID, apiKey: '', baseUrl: '', url: '', local: true,
+    enabled: stored.systemOneEnabled === true && stored[D1_CONSENT_KEY] === D1_CONSENT_VERSION,
+    doneEnabled: stored.systemOneDoneEnabled === true,
+    threshold: Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9,
+    supportsVision: stored.decisionVisionMode !== 'off', experimental: true,
+    requiresIndependentSuccessConfirmation: true,
+    config: { category: 'local', providerName: provider, inputCostPerMillionUsd: 0, outputCostPerMillionUsd: 0 },
+  };
   if (!['compass', 'openrouter', 'typesafe', 'local'].includes(provider)) throw new Error('Unknown decision provider.');
   const defaults = { compass: DEFAULT_DECISION_MODEL, openrouter: DEFAULT_DECISION_MODEL, typesafe: 'jev-1.13.0', local: 'kev-latest' };
   const model = compass ? DEFAULT_DECISION_MODEL : String(stored.decisionModel || defaults[provider]).trim();
@@ -37,6 +49,7 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
 }
 
 export async function listDecisionModels(config, fetchImpl = globalThis.fetch, signal) {
+  if (config.provider === 'webgpu_d1') return [{ id: D1_MODEL_ID, name: 'D1 FP32 (experimental, on-device)', supportsVision: true, inputRate: 0, outputRate: 0 }];
   return withCompletionTimeout(requestSignal => discoverDecisionModels(config, fetchImpl, requestSignal), signal, 5000);
 }
 

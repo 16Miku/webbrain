@@ -4,6 +4,8 @@
 // answer-shape checks so scheduler callers only need one small evaluate()
 // interface. It never performs an action or turns a non-success into success.
 
+import { evaluateD1 } from '../providers/d1.js';
+
 export const SYSTEM_ONE_API_URL = 'https://api.typesafe.ai/v1/systemone';
 export const SYSTEM_ONE_MODEL = 'jev-1.13.0';
 export const SYSTEM_ONE_API_KEY = 'typesafeApiKey';
@@ -270,9 +272,9 @@ export function createSystemOneJudge({
 } = {}) {
   if (typeof fetchImpl !== 'function') throw new Error('TypeSafe System One fetch is unavailable.');
   return {
-    async evaluate({ apiKey, state, questions, signal, beforeRequest, onUsage, config, headers = {}, metadata = {} } = {}) {
+    async evaluate({ apiKey, state, images, questions, signal, beforeRequest, onUsage, config, headers = {}, metadata = {} } = {}) {
       const key = normalizeTypesafeApiKey(config?.apiKey ?? apiKey);
-      if (!key && config?.provider !== 'local' && config?.provider !== 'compass') throw new Error('Decision API key is not configured.');
+      if (!key && !['local', 'compass', 'webgpu_d1'].includes(config?.provider)) throw new Error('Decision API key is not configured.');
       const model = config?.model || SYSTEM_ONE_MODEL;
       validateState(state, config?.supportsVision === true);
       validateQuestions(questions);
@@ -280,6 +282,15 @@ export function createSystemOneJudge({
       const request = requestSignal(signal, Math.max(1, Math.min(5000, Number(timeoutMs) || 5000)));
       const retries = Math.max(0, Math.min(2, Math.floor(Number(maxRetries) || 0)));
       try {
+        if (config?.provider === 'webgpu_d1') {
+          if (beforeRequest) await abortable(beforeRequest(), request.signal);
+          const result = await abortable(evaluateD1({ state, images, questions, config, signal: request.signal }), request.signal);
+          validateSystemOneAnswers(result.answers, questions);
+          if (result.model !== model || !Number.isInteger(result.usage?.input_tokens) || result.usage.input_tokens < 0 || result.usage?.output_tokens !== 0) throw systemOneError('JEV_INVALID_USAGE', 'Invalid local D1 usage/model.');
+          const metadata = { model: result.model, provider: result.provider, usage: result.usage, latencyMs: Math.max(0, now() - started), estimatedCostUsd: 0 };
+          if (onUsage) await abortable(onUsage(metadata), request.signal);
+          return { ...result, ...metadata };
+        }
         for (let attempt = 0; ; attempt += 1) {
           throwIfAborted(request.signal);
           if (beforeRequest) await abortable(beforeRequest(), request.signal);
