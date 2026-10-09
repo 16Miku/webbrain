@@ -68659,6 +68659,8 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-5-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-fable-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-4-5' }), 200000);
     assert.equal(infer({ category: 'cloud', providerName: 'gemini', model: 'gemini-3.1-flash' }), 1000000);
@@ -75324,7 +75326,7 @@ test('Anthropic and AWS Bedrock forward a required named tool choice', async () 
   }
 });
 
-test('Claude Opus 5.5 normalizes mandatory-thinking and tool-choice restrictions', async () => {
+test('Claude 5.5 generation normalizes mandatory-thinking and tool-choice restrictions', async () => {
   const tool = {
     type: 'function',
     function: {
@@ -75337,35 +75339,37 @@ test('Claude Opus 5.5 normalizes mandatory-thinking and tool-choice restrictions
   const originalFetch = globalThis.fetch;
   try {
     for (const Provider of [AnthropicProviderCh, AnthropicProviderFx]) {
-      const provider = new Provider({
-        baseUrl: 'https://api.anthropic.com',
-        model: 'claude-opus-5-5',
-        apiKey: 'test-key',
-      });
-      const prepared = provider._prepareRequestBody({
-        thinking: { type: 'disabled' },
-        tool_choice: { type: 'tool', name: 'done' },
-      });
-      assert.equal(prepared.thinking, undefined, `${Provider.name}: Opus 5.5 must not disable thinking`);
-      assert.deepEqual(prepared.output_config, { effort: 'low' }, `${Provider.name}: disabled thinking must become low effort`);
-      assert.deepEqual(prepared.tool_choice, { type: 'auto' }, `${Provider.name}: Opus 5.5 must not force named tools`);
+      for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+        const provider = new Provider({
+          baseUrl: 'https://api.anthropic.com',
+          model,
+          apiKey: 'test-key',
+        });
+        const prepared = provider._prepareRequestBody({
+          thinking: { type: 'disabled' },
+          tool_choice: { type: 'tool', name: 'done' },
+        });
+        assert.equal(prepared.thinking, undefined, `${Provider.name} ${model}: 5.5 must not disable thinking`);
+        assert.deepEqual(prepared.output_config, { effort: 'low' }, `${Provider.name} ${model}: disabled thinking must become low effort`);
+        assert.deepEqual(prepared.tool_choice, { type: 'auto' }, `${Provider.name} ${model}: 5.5 must not force named tools`);
 
-      let requestBody = null;
-      globalThis.fetch = async (_url, init) => {
-        requestBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          content: [{ type: 'tool_use', id: 'done_1', name: 'done', input: {} }],
-          usage: { input_tokens: 1, output_tokens: 1 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      };
-      await provider.chat([{ role: 'user', content: 'Finish.' }], {
-        tools: [tool],
-        toolChoice: forced,
-        extraBody: { thinking: { type: 'disabled' } },
-      });
-      assert.equal(requestBody.thinking, undefined, `${Provider.name}: classifier disable must not reach Opus 5.5`);
-      assert.deepEqual(requestBody.output_config, { effort: 'low' }, `${Provider.name}: classifier must set low effort`);
-      assert.deepEqual(requestBody.tool_choice, { type: 'auto' }, `${Provider.name}: forced tool request must become auto`);
+        let requestBody = null;
+        globalThis.fetch = async (_url, init) => {
+          requestBody = JSON.parse(init.body);
+          return new Response(JSON.stringify({
+            content: [{ type: 'tool_use', id: 'done_1', name: 'done', input: {} }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        };
+        await provider.chat([{ role: 'user', content: 'Finish.' }], {
+          tools: [tool],
+          toolChoice: forced,
+          extraBody: { thinking: { type: 'disabled' } },
+        });
+        assert.equal(requestBody.thinking, undefined, `${Provider.name} ${model}: classifier disable must not reach 5.5`);
+        assert.deepEqual(requestBody.output_config, { effort: 'low' }, `${Provider.name} ${model}: classifier must set low effort`);
+        assert.deepEqual(requestBody.tool_choice, { type: 'auto' }, `${Provider.name} ${model}: forced tool request must become auto`);
+      }
     }
   } finally {
     globalThis.fetch = originalFetch;
@@ -120207,6 +120211,8 @@ for (const [label, Provider, VertexProvider, AgentClass] of [
     for (const model of [
       'claude-opus-5',
       'claude-opus-5.5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
       'claude-opus-4-8@20260801',
       'claude-sonnet-5@20260801',
       'claude-mythos-preview',

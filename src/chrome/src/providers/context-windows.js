@@ -285,7 +285,7 @@ export function inferContextWindow(config = {}) {
   if (/^gpt-5(?:[.\-]|$)/.test(model) || model.includes('/gpt-5')) return 400000;
 
   // Anthropic Claude
-  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) return M1;
+  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|haiku-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) return M1;
   if (model.includes('claude-')) return 200000;
 
   // Google Gemini
@@ -360,7 +360,7 @@ export function inferMaxOutputTokens(config = {}) {
   if (model.includes('gpt-4o')) return 16384;
 
   // Anthropic Claude (direct, Bedrock, Vertex, and router slugs)
-  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) {
+  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|haiku-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) {
     return 128000;
   }
   if (/claude-haiku-4-5/.test(model)) return 64000;

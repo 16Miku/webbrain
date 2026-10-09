@@ -44,10 +44,10 @@ export class AnthropicProvider extends BaseLLMProvider {
 
   _prepareRequestBody(body, options = {}, _stream = false) {
     const prepared = this._mergeConfiguredRequestBody(body, options);
-    const opus55 = /^claude-opus-5-5(?:$|[-_.@])/.test(String(this.model || '').toLowerCase());
+    const gen55 = /^claude-(?:opus|sonnet|haiku)-5-5(?:$|[-_.@])/.test(String(this.model || '').toLowerCase());
     let thinkingType = prepared.thinking?.type;
-    if (opus55 && ['disabled', 'enabled'].includes(thinkingType)) {
-      // Opus 5.5 has mandatory adaptive thinking; effort controls its budget.
+    if (gen55 && ['disabled', 'enabled'].includes(thinkingType)) {
+      // The 5.5 generation has mandatory adaptive thinking; effort controls its budget.
       delete prepared.thinking;
       prepared.output_config = { ...prepared.output_config, effort: 'low' };
       thinkingType = undefined;
@@ -59,8 +59,8 @@ export class AnthropicProvider extends BaseLLMProvider {
     }
 
     const forcedToolChoice = ['any', 'tool'].includes(prepared.tool_choice?.type);
-    if (opus55 && forcedToolChoice) {
-      // Opus 5.5 accepts only auto or none tool choice.
+    if (gen55 && forcedToolChoice) {
+      // The 5.5 generation accepts only auto or none tool choice.
       prepared.tool_choice = { type: 'auto' };
     } else if (thinkingType === 'enabled' && forcedToolChoice) {
       // Manual extended thinking rejects forced tool choice. Preserve the
@@ -69,7 +69,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     }
 
     if (!this._supportsTemperatureParameter()) {
-      // Current Opus/Sonnet/Fable/Mythos models reject every non-default
+      // Current Opus/Sonnet/Haiku/Fable/Mythos models reject every non-default
       // sampling override, even when thinking is omitted or disabled.
       delete prepared.temperature;
       delete prepared.top_p;
@@ -113,7 +113,7 @@ export class AnthropicProvider extends BaseLLMProvider {
 
   _convertToolChoice(toolChoice) {
     if (!toolChoice || toolChoice === 'auto') return undefined;
-    if (/^claude-opus-5-5(?:$|[-_.@])/.test(String(this.model || '').toLowerCase())) {
+    if (/^claude-(?:opus|sonnet|haiku)-5-5(?:$|[-_.@])/.test(String(this.model || '').toLowerCase())) {
       return { type: 'auto' };
     }
     if (toolChoice === 'required') return { type: 'any' };
@@ -680,7 +680,7 @@ export class AnthropicProvider extends BaseLLMProvider {
   _supportsTemperatureParameter() {
     const model = String(this.model || '').toLowerCase();
     if (/^claude-opus-4-(?:[7-9]|[1-9]\d)(?:$|[-_.@])/.test(model)) return false;
-    if (/^claude-(?:opus|sonnet|fable|mythos)-5(?:$|[-_.@])/.test(model)) return false;
+    if (/^claude-(?:opus|sonnet|haiku|fable|mythos)-5(?:$|[-_.@])/.test(model)) return false;
     if (/^claude-mythos-preview(?:$|[-_.@])/.test(model)) return false;
     return true;
   }
