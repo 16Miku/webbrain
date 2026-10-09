@@ -4,6 +4,63 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [39.1.4] - 2026-10-09
+
+### Changed
+- Complete release locale coverage and requested local provider label
+- Remove retired CAPTCHA locale keys required by release checks
+- Match local WebGPU bundle to its native runtime factory
+- Pin renamed d1 browser decision package
+- Use service-worker-safe imports and guarded local decision diagnostics
+- Add opt-in pinned FP32 local decision provider
+- feat(providers): support custom titles and unlimited duplicates
+- Exclude mutable accounting metadata from feedback snapshots
+- Freeze feedback traces when the rating prompt opens
+- Publish Ling 3.0 Flash VL budget vision benchmark and raw results
+- Attach feedback traces to GitHub drafts with explicit consent
+- Bound rejected WebMCP registration retries and explain DOM recovery
+- Add Ling and Nex historical planner panel and prepare matched vision replay
+- fix(agent): propagate completion cost stops to scheduled jobs
+- Add Ling 3.1 Flash planner benchmark and blog comparison
+- fix(agent): isolate completion evidence to the active run
+- fix(agent): scope completion freshness to shared evidence
+- fix(agent): fingerprint complete UTF-16 document text
+- fix(agent): verify moving visual evidence with fresh AX
+- fix(agent): preserve completion fallback and evidence freshness
+- feat(agent): verify completion with decision models and fresh evidence
+- Recover rate-limited browser inference without replaying tools
+- Consume final-step steering before terminating a run
+- Reset superseded skills before steering reauthorization
+- Hide unconfigured media generation tools and guidance
+- Skip superseded planner recommendations and allow form-free image previews
+- Preserve recovery task hashes and recognize localized LinkedIn previews
+- Preserve steering through emergency trims and initial responses
+- version up
+- build(deps): bump @modelcontextprotocol/sdk in /mcp-server
+- Fix media service-worker imports and support OpenRouter videos
+- Fix steering reauthorization and LinkedIn message inspection
+- version up
+- Add OpenRouter and Comfy media providers
+- Add Turkish README translation for WebBrain
+- version up
+- fix: accept successful fal.ai generation as completion evidence
+- fix: honor GPT-6.1 and Opus 5.5 contracts
+- feat: add GPT-6.1 Sol and Claude Opus 5.5
+- Unify bridge controls in Bridge tab with preset pills, queue shortcut, and full localization
+- Translate composer delivery setting in all locales
+- Simplify steering controls and add default delivery setting
+- chore: release v39.0.0
+- build(deps): bump multidict
+- build(deps): bump multidict
+- build(deps): bump proxy-addr
+- build(deps): bump proxy-addr from 2.0.7 to 2.0.8 in /mcp-server
+- Add optional steering to active chat runs
+- Benchmark Ling 3.0 Flash VL against Nex-N2.5 and MiniMax M3
+- fix: harden fal.ai media generation
+- chore: uncomment the .gitignore
+- fix: match source-inspection regexes in chrome background.js
+- feat: add fal.ai generative media tool to the assistant
+
 ## [39.0.0] - 2026-10-06
 
 ### Added
