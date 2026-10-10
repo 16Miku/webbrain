@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 for (const build of ['chrome', 'firefox']) {
   const source = await readFile(new URL(`../src/${build}/src/content/captcha-callback-bridge.js`, import.meta.url), 'utf8');
   const { injectCaptchaTokenInPage } = await import(`../src/${build}/src/agent/captcha-frame-runtime.js`);
+  const { injectToken, ensureCaptchaCallbackBridge } = await import(`../src/${build}/src/agent/captcha-solver.js`);
   function fixture(family = 'hcaptcha') {
     const name = family === 'hcaptcha' ? 'h-captcha-response' : family === 'turnstile' ? 'cf-turnstile-response' : 'g-recaptcha-response';
     const hosts = [], fields = [];
@@ -16,7 +17,7 @@ for (const build of ['chrome', 'firefox']) {
         : selector.includes('[data-sitekey]') ? hosts
           : selector.includes('textarea[name=') ? fields.filter(field => selector.includes(`name="${field.name}"`)) : [],
     };
-    const context = vm.createContext({ document, URL, URLSearchParams, performance: { timeOrigin: 1000 }, location: { href: 'https://fixture.test/join' }, Event: class {}, answers: [] });
+    const context = vm.createContext({ document, URL, URLSearchParams, performance: { timeOrigin: 1000 }, location: { href: 'https://fixture.test/join' }, Event: class { constructor(type) { this.type = type; } }, answers: [] });
     context.window = context;
     const evaluate = code => vm.runInContext(code, context);
     evaluate(source);
@@ -119,11 +120,100 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(f.inject().calledCallback, false);
     assert.equal(f.context.answers.length, 1);
   });
-  test(`${build}: bridge manifest runs before site scripts in every matching frame`, async () => {
+  for (const mode of ['field', 'removed', 'late-callback', 'navigated']) {
+    test(`${build}: settle retry preserves ${mode} application without replaying field events`, async () => {
+      const f = fixture();
+      f.render('one', 'undefined');
+      let events = 0, attempts = 0;
+      f.fields[0].dispatchEvent = event => {
+        events++;
+        if (event.type === 'change' && mode === 'removed') f.fields.shift();
+      };
+      const input = { fieldName: f.name, token: 'paid-token', callbackHint: 'lateComplete',
+        target: { frameId: 0, frameUrl: f.context.location.href, websiteKey: 'site-key',
+          type: 'hcaptcha', responseFieldId: 'answer-one', documentTimeOrigin: 1000 } };
+      const beforeAttempt = () => {
+        attempts++;
+        if (attempts === 2 && mode === 'navigated') throw new Error('frame navigated');
+        if (attempts === 2 && mode === 'late-callback') f.evaluate('lateComplete = token => answers.push(token)');
+      };
+      const api = {
+        scripting: { executeScript: async options => {
+          if (options.files) return [];
+          beforeAttempt();
+          return [{ frameId: 0, result: options.func(options.args[0], { document: f.context.document, window: f.context }) }];
+        } },
+        tabs: { executeScript: async (_, options) => {
+          beforeAttempt();
+          return [f.evaluate(options.code)];
+        } },
+      };
+      const namespace = build === 'firefox' ? 'browser' : 'chrome';
+      const previous = globalThis[namespace];
+      globalThis[namespace] = api;
+      try {
+        const result = await injectToken(1, input);
+        assert.equal(result.success, true, JSON.stringify(result));
+        assert.equal(result.fieldUpdated, true);
+        assert.equal(result.fieldsTouched, 1);
+        assert.equal(result.bridgeSettleRetried, true);
+        assert.equal(result.calledCallback, mode === 'late-callback');
+        assert.equal(events, 2, 'one input/change pair, even when callback discovery retries');
+        assert.equal(attempts, 2);
+        assert.deepEqual(JSON.parse(JSON.stringify(f.context.answers)), mode === 'late-callback' ? ['paid-token'] : []);
+      } finally {
+        if (previous === undefined) delete globalThis[namespace]; else globalThis[namespace] = previous;
+      }
+    });
+  }
+  if (build === 'firefox') for (const fallback of [false, true]) {
+    test(`firefox: descendant installation validates the full frame path (fallback=${fallback})`, async () => {
+      const f = fixture();
+      f.context.location.href = 'about:srcdoc';
+      f.context.name = 'inner';
+      f.evaluate('delete window.__webbrainCaptchaCallbacks');
+      let loads = 0;
+      f.context.document.createElement = () => ({ remove() {} });
+      f.context.document.head = { appendChild(script) { loads++; f.evaluate(source); script.onload(); } };
+      const outerWindow = { location: { href: 'about:blank' }, name: 'outer' };
+      const outerDocument = { querySelectorAll: () => [{ contentWindow: f.context, contentDocument: f.context.document }] };
+      const rootDocument = { querySelectorAll: () => [{ contentWindow: outerWindow, contentDocument: outerDocument }] };
+      const root = vm.createContext({ document: rootDocument, setTimeout, clearTimeout });
+      root.window = root;
+      root.__webbrainCaptchaCallbacks = { callbacks() {} };
+      const target = { frameId: 0, frameUrl: 'about:srcdoc', documentTimeOrigin: 1000,
+        framePath: [{ index: 0, frameUrl: 'about:blank', frameName: 'outer' },
+          { index: 0, frameUrl: 'about:srcdoc', frameName: 'inner' }] };
+      const api = { runtime: { getURL: file => `moz-extension://fixture/${file}` },
+        ...(fallback ? {} : { scripting: { executeScript: async options => [{ result: await vm.runInContext(
+          `(${options.func.toString()})(...${JSON.stringify(options.args)})`, root) }] } }),
+        tabs: { executeScript: async (_, options) => [await vm.runInContext(options.code, root)] } };
+      assert.equal(await ensureCaptchaCallbackBridge(1, target, api), true);
+      assert.equal(loads, 1, 'load into the descendant even when the ancestor already has a bridge');
+      assert.equal(typeof f.context.__webbrainCaptchaCallbacks.callbacks, 'function');
+      for (const stale of [
+        { ...target, framePath: [{ ...target.framePath[0], index: 1 }] },
+        { ...target, framePath: [{ ...target.framePath[0], frameName: 'changed' }] },
+        { ...target, frameUrl: 'about:blank' },
+        { ...target, documentTimeOrigin: 2000 },
+      ]) assert.equal(await ensureCaptchaCallbackBridge(1, stale, api), false);
+      assert.equal(loads, 1, 'stale paths and documents must not install another bridge');
+    });
+  }
+  test(`${build}: bridge captures page-load widgets and is ensured in the selected document`, async () => {
     const manifest = JSON.parse(await readFile(new URL(`../src/${build}/manifest.json`, import.meta.url), 'utf8'));
-    const entry = manifest.content_scripts.find(entry => entry.js?.includes('src/content/captcha-callback-bridge.js'));
-    assert.equal(entry.world, 'MAIN'); assert.equal(entry.run_at, 'document_start');
-    assert.equal(entry.all_frames, true); assert.equal(entry.match_about_blank, true);
+    const entries = (manifest.content_scripts || []).filter(entry => entry.js?.includes('src/content/captcha-callback-bridge.js'));
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].world, 'MAIN'); assert.equal(entries[0].run_at, 'document_start');
+    assert.equal(entries[0].all_frames, true); assert.equal(entries[0].match_about_blank, true);
+    const solver = await readFile(new URL(`../src/${build}/src/agent/captcha-solver.js`, import.meta.url), 'utf8');
+    assert.match(solver, /export async function ensureCaptchaCallbackBridge\(tabId/);
+    assert.match(solver, /await ensureCaptchaCallbackBridge\(tabId, target\)/);
+    assert.match(solver, /captcha-callback-bridge\.js/);
+    assert.match(solver, /CAPTCHA_BRIDGE_SETTLE_RETRY_MS/);
+    assert.match(solver, /bridgeSettleRetried/);
+    const agent = await readFile(new URL(`../src/${build}/src/agent/agent.js`, import.meta.url), 'utf8');
+    assert.match(agent, /await ensureCaptchaCallbackBridge\(tabId, detected\)/);
   });
 }
 test('callback bridge is identical in Chrome and Firefox', async () => {

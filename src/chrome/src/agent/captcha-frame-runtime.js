@@ -1276,6 +1276,12 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
       frameUrl,
     };
   }
+  const callbackOnly = payload?.callbackOnly === true;
+  if (callbackOnly && resolvedFields.some(field => field.primary
+      && (!field.element || field.element.value !== token))) {
+    return { success: false, fieldUpdated: false, staleTarget: true,
+      error: 'The applied CAPTCHA response field changed before callback discovery.', frameUrl };
+  }
   const skippedFields = resolvedFields.filter(field => !field.primary && field.error);
   const injectableFields = resolvedFields.filter(field => !field.error);
 
@@ -1389,10 +1395,11 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
   };
   if (!callbacks.length) collectGoogleCallbacks();
 
-  for (const field of injectableFields) {
+  const appliedFields = callbackOnly ? [] : injectableFields;
+  for (const field of appliedFields) {
     setOn(field.name, field.element);
   }
-  const fieldsTouched = injectableFields.length;
+  const fieldsTouched = appliedFields.length;
 
   let calledCallback = false;
   let callbackSource = null;
@@ -1409,8 +1416,8 @@ export function injectCaptchaTokenInPage(payload, scope = null) {
 
   return {
     success: true,
-    fieldUpdated: true,
-    fieldsUpdated: injectableFields.map(field => field.name),
+    fieldUpdated: fieldsTouched > 0,
+    fieldsUpdated: appliedFields.map(field => field.name),
     fieldsTouched,
     compatibilityFieldSkipped: skippedFields.length > 0,
     compatibilityFieldError: skippedFields[0]?.error || null,
