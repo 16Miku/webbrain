@@ -4,6 +4,16 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [39.2.1] - 2026-10-10
+
+### Changed
+- chore: bump version to 39.2.0
+- fix(captcha): preserve callback completion and retries
+- feat(providers): add Claude Sonnet 5.5 and Haiku 5.5 support to Anthropic provider
+- docs(faq): localize subscription-unrecognized, emergency-box and offline-licensing in all locales
+- docs(faq): add paid-but-asks-again subscription entry, promote workflow-editor to locale sources
+- removed demonroute
+
 ## [39.2.0] - 2026-10-10
 
 ### Fixed
