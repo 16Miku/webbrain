@@ -119,11 +119,10 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(f.inject().calledCallback, false);
     assert.equal(f.context.answers.length, 1);
   });
-  test(`${build}: bridge manifest runs before site scripts in every matching frame`, async () => {
+  test(`${build}: bridge is not injected into every page by default`, async () => {
     const manifest = JSON.parse(await readFile(new URL(`../src/${build}/manifest.json`, import.meta.url), 'utf8'));
     const entry = manifest.content_scripts.find(entry => entry.js?.includes('src/content/captcha-callback-bridge.js'));
-    assert.equal(entry.world, 'MAIN'); assert.equal(entry.run_at, 'document_start');
-    assert.equal(entry.all_frames, true); assert.equal(entry.match_about_blank, true);
+    assert.equal(entry, undefined);
   });
 }
 test('callback bridge is identical in Chrome and Firefox', async () => {
