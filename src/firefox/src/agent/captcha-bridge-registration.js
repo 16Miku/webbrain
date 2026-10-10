@@ -11,7 +11,8 @@ export function createCaptchaBridgeRegistration(api) {
       if (enabled && !firefoxRegistration) {
         firefoxRegistration = await api.contentScripts.register({
           matches: [...MATCHES],
-          js: [{ file: SCRIPT_FILE }],
+          // Firefox resolves relative file URLs from the calling background page.
+          js: [{ file: `/${SCRIPT_FILE}` }],
           runAt: 'document_start',
           world: 'MAIN',
           allFrames: true,

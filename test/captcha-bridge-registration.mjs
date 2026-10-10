@@ -53,7 +53,7 @@ for (const build of ['chrome', 'firefox']) {
     await registration.sync(true);
     assert.deepEqual(script, {
       matches: ['<all_urls>'],
-      js: [{ file: 'src/content/captcha-callback-bridge.js' }],
+      js: [{ file: '/src/content/captcha-callback-bridge.js' }],
       runAt: 'document_start',
       world: 'MAIN',
       allFrames: true,
