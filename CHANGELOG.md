@@ -4,6 +4,13 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [39.2.0] - 2026-10-10
+
+### Fixed
+- Preserve CAPTCHA completion callbacks for widgets rendered during page load in Chrome and Firefox.
+- Prevent callback retries from replaying response-field events or replacing a successful field application.
+- Install the Firefox callback bridge in the detected inherited-origin descendant frame.
+
 ## [39.1.4] - 2026-10-09
 
 ### Changed
