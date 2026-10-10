@@ -4,6 +4,14 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [39.2.2] - 2026-10-10
+
+### Changed
+- test(feedback): wait safely for asynchronous submission result
+- fix(captcha): resolve Firefox bridge script from extension root
+- fix(captcha): persist bridge registration across restarts
+- fix(captcha): scope callback bridge to enabled providers
+
 ## [39.2.1] - 2026-10-10
 
 ### Changed
