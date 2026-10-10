@@ -55,6 +55,7 @@ import { isCapsolverEnabled } from './agent/capsolver-config.js';
 import { testImageGenProvider } from './agent/fal-media.js';
 import { IMAGE_GEN_MODEL_KEY } from './agent/media-config.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { createCaptchaBridgeRegistration } from './agent/captcha-bridge-registration.js';
 import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
 import { getTwoCaptchaBalance } from './agent/two-captcha.js';
 import { createSystemOneJudge } from './agent/systemone-judge.js';
@@ -1107,13 +1108,15 @@ const customSkillsReady = loadCustomSkills();
 
 // Local browsers require a valid key and explicit consent. Managed Cloud
 // browsers use the broker flag and never use a CapSolver key from storage.
+const captchaBridgeRegistration = createCaptchaBridgeRegistration(chrome);
 async function loadCaptchaSolver() {
   const stored = await chrome.storage.local.get(CAPTCHA_SETTINGS_KEYS);
   const providers = getCaptchaProviders(stored);
   agent.captchaProviderIds = providers.map(provider => provider.id);
   agent.captchaSolverEnabled = providers.length > 0;
+  await captchaBridgeRegistration.sync(agent.captchaSolverEnabled);
 }
-loadCaptchaSolver();
+loadCaptchaSolver().catch(error => console.warn('[WebBrain] CAPTCHA settings could not be loaded', error));
 
 function normalizePlanBeforeActMode(stored = {}) {
   if (stored.planBeforeActMode === 'try' || stored.planBeforeActMode === 'strict' || stored.planBeforeActMode === 'off') {

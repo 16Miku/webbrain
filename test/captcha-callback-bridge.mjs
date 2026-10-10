@@ -200,12 +200,10 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(loads, 1, 'stale paths and documents must not install another bridge');
     });
   }
-  test(`${build}: bridge captures page-load widgets and is ensured in the selected document`, async () => {
+  test(`${build}: bridge is scoped to provider settings and ensured in the selected document`, async () => {
     const manifest = JSON.parse(await readFile(new URL(`../src/${build}/manifest.json`, import.meta.url), 'utf8'));
     const entries = (manifest.content_scripts || []).filter(entry => entry.js?.includes('src/content/captcha-callback-bridge.js'));
-    assert.equal(entries.length, 1);
-    assert.equal(entries[0].world, 'MAIN'); assert.equal(entries[0].run_at, 'document_start');
-    assert.equal(entries[0].all_frames, true); assert.equal(entries[0].match_about_blank, true);
+    assert.equal(entries.length, 0, 'the bridge must be registered dynamically only while a provider is enabled');
     const solver = await readFile(new URL(`../src/${build}/src/agent/captcha-solver.js`, import.meta.url), 'utf8');
     assert.match(solver, /export async function ensureCaptchaCallbackBridge\(tabId/);
     assert.match(solver, /await ensureCaptchaCallbackBridge\(tabId, target\)/);

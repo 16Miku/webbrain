@@ -48,14 +48,6 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["src/content/captcha-callback-bridge.js"],
-      "run_at": "document_start",
-      "world": "MAIN",
-      "all_frames": true,
-      "match_about_blank": true
-    },
-    {
-      "matches": ["<all_urls>"],
       "js": ["src/content/file-picker-guard-page.js"],
       "run_at": "document_start",
       "world": "MAIN"
