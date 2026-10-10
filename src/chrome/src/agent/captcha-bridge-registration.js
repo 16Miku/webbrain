@@ -42,7 +42,7 @@ export function createCaptchaBridgeRegistration(api) {
         world: 'MAIN',
         allFrames: true,
         matchOriginAsFallback: true,
-        persistAcrossSessions: false,
+        persistAcrossSessions: true,
       }]);
     } else if (!enabled && registered) {
       await scripting.unregisterContentScripts({ ids: [SCRIPT_ID] });

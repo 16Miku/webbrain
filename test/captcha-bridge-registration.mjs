@@ -27,8 +27,10 @@ for (const build of ['chrome', 'firefox']) {
         world: 'MAIN',
         allFrames: true,
         matchOriginAsFallback: true,
-        persistAcrossSessions: false,
+        persistAcrossSessions: true,
       });
+      await createCaptchaBridgeRegistration(api).sync(true);
+      assert.equal(registered.length, 1, 'a persisted registration should be reused after a background restart');
       await registration.sync(true);
       assert.equal(registered.length, 1);
       await registration.sync(false);
