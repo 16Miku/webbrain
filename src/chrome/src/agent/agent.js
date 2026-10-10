@@ -92,7 +92,7 @@ import { advanceHuggingFaceSignupRecovery, normalizeHuggingFaceSignupRecovery, h
 import { hcaptchaParamError } from './captcha-hcaptcha-providers.js';
 import { AWS_WAF_COOKIE_PATHS, awsWafTaskRoute, describeAwsWafObservation, getCaptchaCapabilities, prepareNativeCaptchaTasks, solveNativeCaptchaTasks } from './captcha-native-providers.js';
 import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentStatus, requiresCaptchaUserAgent } from './captcha-solution-application.js';
-import { solveCaptchaWithProviders, detectCaptcha, injectToken, readCaptchaFrameUserAgent, captchaParamError, captchaAutomaticDispatchError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
+import { solveCaptchaWithProviders, detectCaptcha, injectToken, ensureCaptchaCallbackBridge, readCaptchaFrameUserAgent, captchaParamError, captchaAutomaticDispatchError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
 import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility, observeAwsWafChallengeInPage } from './captcha-frame-runtime.js';
@@ -37182,6 +37182,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           }
         }
 
+        if (wantInject && detected) {
+          // Ensure the bridge exists in the selected document, including an
+          // inherited-origin descendant reached through an injectable ancestor.
+          try { await ensureCaptchaCallbackBridge(tabId, detected); } catch (_) {}
+        }
         dispatched = true;
         const result = await solveCaptchaWithProviders(providers, params);
         if (automaticAnswer) {

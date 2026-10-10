@@ -34,19 +34,27 @@ const server = createServer((req, res) => {
   }
   if (url.pathname === '/page.js') {
     res.setHeader('Content-Type', 'application/javascript');
-    res.end(`(() => {
+    // Page-load renders retain closure callbacks before any solver dispatch.
+    res.end(`window.renderWidget = () => {
       let accepted = 0;
+      const mode = new URL(location.href).searchParams.get('mode');
+      const fieldMode = mode?.startsWith('field');
       const complete = token => {
-        if (token !== 'fixture-token' || api.getResponse(widget) !== token) throw new Error('app state was not updated');
+        if (token !== 'fixture-token' || (!fieldMode && api.getResponse(window.renderedWidget) !== token)) throw new Error('app state was not updated');
         document.querySelector('#next').disabled=false;
         document.querySelector('#challenge').hidden=true;
         document.querySelector('#result').textContent='accepted:'+ (++accepted);
+        if (mode === 'field-remove') { document.querySelector('#challenge').remove(); document.querySelector('#other').remove(); }
       };
       const asyncMode = new URL(location.href).searchParams.get('mode')==='async';
-      const widget=api.render('widget', {sitekey:${JSON.stringify(sitekey)}, ...(asyncMode?{}:{callback:complete})});
+      const widget=api.render('widget', {sitekey:${JSON.stringify(sitekey)}, ...(asyncMode || fieldMode?{}:{callback:complete})});
+      window.renderedWidget = widget;
+      if(fieldMode)document.querySelector('#answer-'+widget).addEventListener('change',event=>complete(event.target.value));
       api.render('other', {sitekey:${JSON.stringify(sitekey)},callback:()=>{throw new Error('wrong widget');}});
       if(asyncMode)api.execute(widget,{async:true}).then(({response})=>complete(response));
-    })();`);
+    };
+    window.renderWidgetDelayed = ms => setTimeout(() => window.renderWidget(), ms);
+    if(new URL(location.href).searchParams.get('render')!=='late')window.renderWidget();`);
     return;
   }
   res.setHeader('Content-Type', 'text/html');
@@ -55,10 +63,10 @@ const server = createServer((req, res) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
-const scenarios = [['hcaptcha','callback'],['hcaptcha','async'],['turnstile','callback'],['recaptcha_v2','callback']];
+const scenarios = [['hcaptcha','callback'],['hcaptcha','async'],['turnstile','callback'],['recaptcha_v2','callback'],['hcaptcha','field'],['turnstile','field-remove']];
 const payload = type => ({fieldName:type==='hcaptcha'?'h-captcha-response':type==='turnstile'?'cf-turnstile-response':'g-recaptcha-response',token:'fixture-token',
   target:{frameId:0,websiteKey:sitekey,type,responseFieldId:'answer-widget-1'}});
-const probe = `JSON.stringify({early:bridgeAtFirstScript,enabled:!document.querySelector('#next').disabled,result:document.querySelector('#result').textContent,hidden:document.querySelector('#challenge').hidden})`;
+const probe = `JSON.stringify({early:bridgeAtFirstScript,bridge:!!window.__webbrainCaptchaCallbacks,enabled:!document.querySelector('#next').disabled,result:document.querySelector('#result').textContent,hidden:document.querySelector('#challenge')?.hidden ?? true})`;
 async function verifyGate(tabId, input, api) {
   const { Agent } = await import(api.runtime.getURL('src/agent/agent.js'));
   const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
@@ -72,11 +80,12 @@ async function verifyGate(tabId, input, api) {
   return observation.gate;
 }
 const assertProgress = (build, type, mode, result, state) => {
-  assert.equal(result.calledCallback, true, `${build} ${type} ${mode}: ${JSON.stringify(result)}`);
-  assert.equal(result.callbackCandidates, 1);
+  assert.equal(result.success, true, `${build} ${type} ${mode}: ${JSON.stringify(result)}`);
+  assert.equal(result.calledCallback, !mode.startsWith('field'), JSON.stringify(result));
+  assert.equal(result.callbackCandidates, mode.startsWith('field') ? 0 : 1);
   assert.equal(result.callbackBridgeAvailable, true);
-  assert.deepEqual(state, {early:true,enabled:true,result:'accepted:1',hidden:true});
-  console.log(`PASS ${build}: ${type} ${mode}, document-start capture, exact widget callback, page continuation and gate clearance`);
+  assert.deepEqual(state, {early:true,bridge:true,enabled:true,result:'accepted:1',hidden:true});
+  console.log(`PASS ${build}: ${type} ${mode}, page-load capture, single completion${mode === 'field-remove' ? ' after widget removal' : ' and gate clearance'}`);
 };
 try {
   const profile = await mkdtemp(join(tmpdir(),'webbrain-captcha-chrome-'));
@@ -103,6 +112,7 @@ try {
     for (const [type, mode] of scenarios) {
       await page.goto(`${origin}/fixture?type=${type}&mode=${mode}`);
       const input = payload(type);input.target.frameUrl=page.url();
+      assert.equal(await page.evaluate('!!window.__webbrainCaptchaCallbacks'), true, 'bridge must capture widgets before the solve');
       const outcome = await control.evaluate(async ({input}) => {
         const tabs = await chrome.tabs.query({});const tab=tabs.find(tab=>tab.url===input.target.frameUrl);
         const {injectToken}=await import(chrome.runtime.getURL('src/agent/captcha-solver.js'));
@@ -115,8 +125,32 @@ try {
           {pageUrl:input.target.frameUrl,pageContent:'button Continue'}, {});
         return {injection,gate};
       },{input});
-      assert.equal(outcome.gate?.status, 'cleared', JSON.stringify(outcome));
+      if (mode !== 'field-remove') assert.equal(outcome.gate?.status, 'cleared', JSON.stringify(outcome));
       assertProgress('chrome',type,mode,outcome.injection,JSON.parse(await page.evaluate(probe)));
+    }
+    {
+      // Remediation proof: the widget renders 1200ms after injection starts,
+      // so only the settle retry can capture its closure.
+      const type = 'hcaptcha', mode = 'callback';
+      await page.goto(`${origin}/fixture?type=${type}&mode=${mode}&render=late`);
+      const input = payload(type);input.target.frameUrl=page.url();
+      await page.evaluate('window.renderWidgetDelayed(1200)');
+      const outcome = await control.evaluate(async ({input}) => {
+        const tabs = await chrome.tabs.query({});const tab=tabs.find(tab=>tab.url===input.target.frameUrl);
+        const {injectToken}=await import(chrome.runtime.getURL('src/agent/captcha-solver.js'));
+        const injection = await injectToken(tab.id,input);
+        const { Agent } = await import(chrome.runtime.getURL('src/agent/agent.js'));
+        const agent = new Agent({ getActive: () => ({ promptTier: 'full' }) });
+        agent._captchaGateStates.set(tab.id, { pageUrl: input.target.frameUrl, status: 'verification_pending',
+          publicGate: { status: 'verification_pending', solveAttempted: true }, captchaCandidateIdentity: { ...input.target } });
+        const { gate } = await agent._observeCaptchaChallenge(tab.id, 'get_accessibility_tree',
+          {pageUrl:input.target.frameUrl,pageContent:'button Continue'}, {});
+        return {injection,gate};
+      },{input});
+      if (mode !== 'field-remove') assert.equal(outcome.gate?.status, 'cleared', JSON.stringify(outcome));
+      assert.equal(outcome.injection.calledCallback, true, JSON.stringify(outcome.injection));
+      assert.equal(outcome.injection.bridgeSettleRetried, true, 'late render must be captured by the settle retry');
+      assertProgress('chrome',type,mode+'+late-render',outcome.injection,JSON.parse(await page.evaluate(probe)));
     }
     await control.evaluate(async () => {
       await chrome.storage.local.set({ twoCaptchaEnabled: false });
@@ -178,6 +212,7 @@ try {
         const url=`${origin}/fixture?type=${type}&mode=${mode}`;
         await session.send('browsingContext.navigate',{context:page,url,wait:'complete'});
         const input=payload(type);input.target.frameUrl=url;
+        assert.equal(await evaluate(page,'!!window.__webbrainCaptchaCallbacks'), true, 'bridge must capture widgets before the solve');
         const outcome=JSON.parse(await evaluate(control.context,`(async()=>{
           const tabs=await browser.tabs.query({});const tab=tabs.find(tab=>tab.url===${JSON.stringify(url)});
           const {injectToken}=await import(browser.runtime.getURL('src/agent/captcha-solver.js'));
@@ -186,8 +221,88 @@ try {
           const gate=await (${verifyGate.toString()})(tab.id,input,browser);
           return JSON.stringify({injection,gate});
         })()`));
-        assert.equal(outcome.gate?.status, 'cleared', JSON.stringify(outcome));
+        if (mode !== 'field-remove') assert.equal(outcome.gate?.status, 'cleared', JSON.stringify(outcome));
         assertProgress('firefox',type,mode,outcome.injection,JSON.parse(await evaluate(page,probe)));
+      }
+      {
+        // Remediation proof: the widget renders 1200ms after injection starts,
+        // so only the settle retry can capture its closure.
+        const type = 'hcaptcha', mode = 'callback';
+        const url=`${origin}/fixture?type=${type}&mode=${mode}&render=late`;
+        await session.send('browsingContext.navigate',{context:page,url,wait:'complete'});
+        const input=payload(type);input.target.frameUrl=url;
+        await evaluate(page,'window.renderWidgetDelayed(1200)');
+        const outcome=JSON.parse(await evaluate(control.context,`(async()=>{
+          const tabs=await browser.tabs.query({});const tab=tabs.find(tab=>tab.url===${JSON.stringify(url)});
+          const {injectToken}=await import(browser.runtime.getURL('src/agent/captcha-solver.js'));
+          const input=${JSON.stringify(input)};
+          const injection=await injectToken(tab.id,input);
+          const gate=await (${verifyGate.toString()})(tab.id,input,browser);
+          return JSON.stringify({injection,gate});
+        })()`));
+        if (mode !== 'field-remove') assert.equal(outcome.gate?.status, 'cleared', JSON.stringify(outcome));
+        assert.equal(outcome.injection.calledCallback, true, JSON.stringify(outcome.injection));
+        assert.equal(outcome.injection.bridgeSettleRetried, true, 'late render must be captured by the settle retry');
+        assertProgress('firefox',type,mode+'+late-render',outcome.injection,JSON.parse(await evaluate(page,probe)));
+      }
+      {
+        const url = `${origin}/fixture?type=hcaptcha&mode=callback&render=late`;
+        await session.send('browsingContext.navigate',{context:page,url,wait:'complete'});
+        await evaluate(page, `(async () => {
+          const outer = document.createElement('iframe'); outer.name = 'outer';
+          outer.srcdoc = '<iframe name="inner" srcdoc="&lt;div id=widget data-sitekey=${sitekey}&gt;&lt;/div&gt;"></iframe>';
+          const loaded = new Promise(resolve => outer.onload = resolve);
+          document.body.append(outer); await loaded;
+          const inner = outer.contentDocument.querySelector('iframe');
+          const child = window.descendant = inner.contentWindow;
+          child.resetFixture = () => {
+            // Simulate a document that never had the bridge, including its SDK
+            // property watchers, so reinstalling cannot reuse old registrations.
+            delete child.__webbrainCaptchaCallbacks;
+            delete child.hcaptcha; delete child.turnstile; delete child.grecaptcha;
+            child.document.getElementById('widget').replaceChildren();
+            child.accepted = null;
+            child.hcaptcha = {
+              render(id, params) {
+                const field = child.document.createElement('textarea');
+                field.name = 'h-captcha-response'; field.id = 'descendant-answer';
+                child.document.getElementById(id).append(field); return 'descendant-widget';
+              }, getResponse: () => ''
+            };
+          };
+          child.resetFixture();
+          child.renderFixture = () => child.hcaptcha.render('widget', {
+            sitekey: '${sitekey}', callback: token => { child.accepted = token; }
+          });
+        })()`);
+        const input = {fieldName:'h-captcha-response',token:'fixture-token',target:{
+          frameId:0,frameUrl:'about:srcdoc',websiteKey:sitekey,type:'hcaptcha',
+          responseFieldId:'descendant-answer',framePath:[
+            {index:0,frameUrl:'about:srcdoc',frameName:'outer'},
+            {index:0,frameUrl:'about:srcdoc',frameName:'inner'}
+          ]}};
+        for (const fallback of [false, true]) {
+          // Exercise MAIN scripting and the MV2 fallback in the actual descendant.
+          if (fallback) await evaluate(page, 'descendant.resetFixture()');
+          const installed = await evaluate(control.context, `(async () => {
+            const tab = (await browser.tabs.query({})).find(tab => tab.url === ${JSON.stringify(url)});
+            const {ensureCaptchaCallbackBridge} = await import(browser.runtime.getURL('src/agent/captcha-solver.js'));
+            const api = ${fallback ? '{runtime:browser.runtime,tabs:browser.tabs}' : 'browser'};
+            return ensureCaptchaCallbackBridge(tab.id, ${JSON.stringify(input.target)}, api);
+          })()`);
+          assert.equal(installed, true, `descendant bridge installation (fallback=${fallback})`);
+          assert.equal(await evaluate(page, '!!descendant.__webbrainCaptchaCallbacks'), true);
+          await evaluate(page, 'descendant.renderFixture()');
+          const result = JSON.parse(await evaluate(control.context, `(async () => {
+            const tab = (await browser.tabs.query({})).find(tab => tab.url === ${JSON.stringify(url)});
+            const {injectToken} = await import(browser.runtime.getURL('src/agent/captcha-solver.js'));
+            return JSON.stringify(await injectToken(tab.id, ${JSON.stringify(input)}));
+          })()`));
+          assert.equal(result.success, true, JSON.stringify(result));
+          assert.equal(result.calledCallback, true, JSON.stringify(result));
+          assert.equal(await evaluate(page, 'descendant.accepted'), 'fixture-token');
+        }
+        console.log('PASS firefox: inherited-origin descendant bridge, MAIN and MV2 fallback, selected closure completion');
       }
       await evaluate(control.context, `(async()=>{await browser.storage.local.set({twoCaptchaEnabled:false});return true;})()`);
       let bridgeRemoved=false;
