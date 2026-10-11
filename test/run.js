@@ -23606,23 +23606,29 @@ test('patch release updates the changelog and validates rebuilt archives before 
   assert.match(workflow, /rm -f dist\/\*\.zip/);
   assert.doesNotMatch(workflow, /rm -rf dist\/\*/);
   assert.match(workflow, /files:\s*\|\s*dist\/\*\.zip/);
+  assert.match(workflow, /npm run test:shard:\$\{\{ matrix\.shard \}\}/);
 
+  // The sharded test matrix fans out first; the release job keeps the
+  // original step order and ships only after every shard passes.
+  const releaseJob = workflow.slice(workflow.indexOf('  release:'));
+  assert.ok(releaseJob.length > 0, 'main.yml should define a release job');
   const orderedSteps = [
     'Build patch release notes',
     'Bump patch version',
     'Update changelog',
     'Commit release metadata',
     'Rebuild distribution zips',
-    'Test',
     'Push release commits',
     'Create GitHub Release',
   ];
   let previousIndex = -1;
   for (const stepName of orderedSteps) {
-    const stepIndex = workflow.indexOf(`- name: ${stepName}`);
-    assert.ok(stepIndex > previousIndex, `${stepName} must follow ${orderedSteps[orderedSteps.indexOf(stepName) - 1] || 'workflow setup'}`);
+    const stepIndex = releaseJob.indexOf(`- name: ${stepName}`);
+    assert.ok(stepIndex > previousIndex, `${stepName} must follow ${orderedSteps[orderedSteps.indexOf(stepName) - 1] || 'release setup'}`);
     previousIndex = stepIndex;
   }
+  assert.match(workflow, /needs: test/);
+  assert.match(workflow, /git pull --rebase/);
 });
 
 test('repository changelog retains complete, non-empty release history', () => {
