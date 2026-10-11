@@ -34,7 +34,7 @@ try {
     });
     for (const args of [{ text: 'Post', textMatch: 'exact' }, { index: indexed }, { selector: '#post', matchIndex: 0 }]) {
       const observation = await read(args);
-      assert.equal(observation.elementFacts.found, true);
+      assert.equal(observation.elementFacts.found, true, name+JSON.stringify(args));
       assert.equal(observation.elementFacts.label, 'Post');
       assert.equal(observation.elementFacts.draftText, 'Exact observed developer comment.', 'Deep form-less sibling composer is captured');
       assert.ok(!observation.elementFacts.draftText.includes('Unrelated search'));
@@ -60,6 +60,16 @@ try {
     assert.equal(await page.evaluate(()=>!!__wb_resolve_click_target_for_submit_probe({text:'Save'})),false,'Exact option rescue cannot authorize the earlier prefix button');
     assert.equal(await page.evaluate(()=>document.querySelector('#select-fixture select').value),'Other','Memory observation never changes a selected option');
     await page.locator('#select-fixture').evaluate(node=>node.remove());
+    for (const [attribute, hint] of [['id','api_key'],['placeholder','PIN'],['placeholder','CVV'],['id','passphrase']]) {
+      await page.evaluate(({attribute,hint})=>{const box=document.createElement('section');box.id='credential-fixture';box.innerHTML='<div><div><div><div><div><button id="credential-post">Post credential draft</button></div></div></div></div></div>';const input=document.createElement('input');input.setAttribute(attribute,hint);input.value='credential-fixture-value';box.prepend(input);document.body.append(box);},{attribute,hint});
+      const observation=await read({selector:'#credential-post'});
+      assert.equal(observation.elementFacts.draftText,'','Credential metadata cannot become the nested publication draft');
+      assert.ok(!JSON.stringify(observation).includes('credential-fixture-value'));
+      await page.locator('#credential-fixture').evaluate(node=>node.remove());
+    }
+    await page.evaluate(()=>{const box=document.createElement('section');box.id='credential-fixture';box.innerHTML='<label for="scoped-credential">PIN</label><input id="scoped-credential"><div><div><div><div><div><button id="credential-post">Post credential draft</button></div></div></div></div></div>';box.querySelector('input').value='credential-fixture-value';document.body.append(box);});
+    assert.equal((await read({selector:'#credential-post'})).elementFacts.draftText,'','Associated labels also identify credential drafts');
+    await page.locator('#credential-fixture').evaluate(node=>node.remove());
 
     const target = { kind: 'url', url: origin + '/item/7' }, calls = [];
     const session = new BotMemorySession({ version: 1, policyVersion: 1, botId: 'fixture', runId: 'fixture-run', callbackUrl: origin + '/api/internal/bot-memory/fixture-run', callbackToken: 'fixture-only-capability-'.repeat(3), policy: { schemaVersion: 1, actions: [{ key: 'post', effect: 'write' }] }, context: {} }, {
