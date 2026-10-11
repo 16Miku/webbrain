@@ -1792,11 +1792,16 @@ export class Agent extends LoopDetector {
     if (semanticCommit && !canRecordSemanticCommitDispatch(result)) return null;
     const before = this._normalizeUrl(beforeUrl || '');
     const after = this._normalizeUrl(afterUrl || beforeUrl || '');
-    const explicitlyNotDispatched = result?.dispatched === false || result?.noDispatch === true;
+    // Positive input or transport uncertainty takes precedence over a stale
+    // no-dispatch flag. Only a proved pre-dispatch veto can release a retry.
+    const explicitlyNotDispatched = (result?.dispatched === false || result?.noDispatch === true)
+      && result?.dispatched !== true && result?.missingToolResponse !== true
+      && result?.outcomeUnknown !== true && result?.nativeInputAcknowledged !== true;
     const dispatchMayHaveOccurred = !!(
       result
       && (
         result.dispatched === true
+        || result.nativeInputAcknowledged === true
         || result.missingToolResponse === true
         || result.outcomeUnknown === true
         || (result.success !== false && !result.error)
@@ -1808,6 +1813,33 @@ export class Agent extends LoopDetector {
       executionContext,
       detectedSubmit,
     );
+    const social = this._planExecutionGuards.get(tabId)?.socialPublication;
+    const socialAttempt = workflowBinding?.socialPublication;
+    if (explicitlyNotDispatched && social && socialAttempt?.contractKey === social.key) {
+      // A later veto cannot replace an earlier delivery receipt. Preparation
+      // failures are not publication failures and must not lock this action or
+      // authorize a fallback to a different destination.
+      if (social.outcomes[socialAttempt.actionId]) return null;
+      if (result?.formValidationFailed !== true) {
+        if (social.dispatch?.key === socialAttempt.key && social.dispatch.actionId === socialAttempt.actionId) {
+          const retry = social.retryBypass;
+          if (social.dispatch.auditBypassed && retry?.key === socialAttempt.key
+              && retry.contractKey === social.key && retry.actionId === socialAttempt.actionId) {
+            // A consumed grant from an earlier interrupted attempt is still
+            // uncertain. Only this call's private consumption receipt owns it.
+            if (retry.consumed && executionContext.socialPublicationAuditRetryConsumed !== retry) return null;
+            retry.consumed = false;
+            delete social.retryBypassUsed?.[retry.key];
+          }
+          // Re-observe and revalidate the exact draft before another dispatch.
+          social.dispatch = null;
+        }
+        return null;
+      }
+    }
+    // A rejected preparation on another form or route cannot erase a real
+    // earlier submission. Its exact receipt still owns delivery verification.
+    if (explicitlyNotDispatched && this._completionSubmitStates.get(tabId)?.dispatched === true) return null;
     if (workflowBinding?.verificationKind === 'published_resource'
         && Array.isArray(detectedSubmit?.publicationResourceUrls)) {
       workflowBinding.preDispatchPublishedResourceIdentities = this._workflowPublishedResourceIdentities(
@@ -1874,7 +1906,6 @@ export class Agent extends LoopDetector {
         ? currentPublication : null,
       workflowBinding,
     };
-    const social = this._planExecutionGuards.get(tabId)?.socialPublication;
     if (social && workflowBinding?.socialPublication?.contractKey === social.key) {
       social.outcomes[workflowBinding.socialPublication.actionId] = {
         status: explicitlyNotDispatched || result?.formValidationFailed === true ? 'failed' : 'pending', cause: 'publish_failed',
@@ -13276,7 +13307,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const calculationDispatchBlock = this._pureCalculationToolBlock(tabId, fnName, fnArgs, calculationRequestScope);
             if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock && !calculationDispatchBlock) {
               if (detectedSubmitAction?.isSubmit === true && detectedSubmitAction.publicationControl === true) {
-                this._consumeSocialPublicationAuditRetry(tabId);
+                messageRecipientExecutionContext.socialPublicationAuditRetryConsumed = this._consumeSocialPublicationAuditRetry(tabId);
               }
               if (fnName === 'calculate') this._rememberPureCalculationAttempt(tabId, fnArgs, calculationRequestScope);
               callState.invoked = true;
@@ -18945,9 +18976,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _consumeSocialPublicationAuditRetry(tabId) {
     const social = this._planExecutionGuards.get(tabId)?.socialPublication;
     if (!social?.dispatch?.auditBypassed || !social.retryBypass
-        || social.retryBypass.key !== social.dispatch.key || social.retryBypass.consumed) return;
+        || social.retryBypass.key !== social.dispatch.key || social.retryBypass.consumed) return null;
     social.retryBypass.consumed = true;
     (social.retryBypassUsed ||= {})[social.retryBypass.key] = true;
+    return social.retryBypass;
   }
 
   _continuedSocialPublicationState(social, retryTaskKey = null) {

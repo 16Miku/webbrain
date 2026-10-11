@@ -1046,6 +1046,143 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(agent._missingSocialPublishTargets(guard),['twitter']);
   });
 
+  const nativePreparationVeto = () => ({ success: false, method: 'cdp-native-button', initialTrustedNativeButton: true,
+    trusted: false, verified: false, nativeInputAcknowledged: false, observationInterrupted: false,
+    dispatched: false, noDispatch: true, outcomeUnknown: false, retryable: false,
+    error: 'The owned native button changed during preparation. Re-observe before acting.' });
+
+  async function preSubmitFixture(platform = 'twitter') {
+    const f = setup(`Post Hello on ${platform === 'twitter' ? 'X' : 'Bluesky'}`, rawContract([rawAction('p1', platform)]));
+    f.pageUrl = platform === 'twitter' ? 'https://x.com/compose/post' : 'https://bsky.app/';
+    f.agent._currentUrl = async () => f.pageUrl;
+    f.detected.publicationSnapshot = snapshot('Hello', platform === 'twitter' ? 'twitter:alice' : 'bluesky:alice.bsky.social');
+    f.detected.publicationAccountIdentity = f.detected.publicationSnapshot.account;
+    f.detected.frameDocumentIdentity = f.pageUrl + '|owned-native-document';
+    f.agent._beginCompletionInvariant(f.tabId);
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', { ref_id: 'ref_2001' }, f.detected, f.provider), null);
+    const binding = f.agent._workflowSubmitBindingForAttempt(f.tabId, f.pageUrl, {}, f.detected);
+    assert.equal(binding.socialPublication.actionId, 'p1');
+    f.record = (result, detected = f.detected, name = 'click_ax', args = { ref_id: 'ref_2001' }) => {
+      f.agent._recordCompletionToolResult(f.tabId, name, args, result);
+      return f.agent._recordCompletionSubmitAttempt(f.tabId, detected, name, args, f.pageUrl, f.pageUrl, result,
+        'owned-native-document', 'owned-native-document');
+    };
+    return f;
+  }
+
+  test(`${browser}: a proven native preparation veto releases publication eligibility and requires a fresh audit`, async () => {
+    for (const platform of ['twitter', 'bluesky']) {
+      const f = await preSubmitFixture(platform), previousKey = f.guard.socialPublication.dispatch.key;
+      assert.equal(f.record(nativePreparationVeto()), null);
+      assert.deepEqual(f.guard.socialPublication.outcomes, {}, 'No publication was attempted, so fallback branches cannot acquire a failure receipt.');
+      assert.equal(f.guard.socialPublication.dispatch, null, 'Preparation authorization cannot silently survive the veto.');
+      assert.deepEqual(api.publicationProgress(f.guard.socialPublication.contract, f.guard.socialPublication.outcomes).eligible, ['p1']);
+      assert.notEqual(f.agent._completionSubmitStates.get(f.tabId)?.dispatched, true);
+      assert.equal(f.guard.verifiedSubmissionEvidence, false);
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_authorization').length, 1);
+      f.agent._recordCompletionToolResult(f.tabId, 'get_accessibility_tree', {}, { success: true, url: f.pageUrl, pageContent: 'Fresh owned composer with exact Hello draft.' });
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', { ref_id: 'ref_2002' }, f.detected, f.provider), null);
+      assert.equal(f.guard.socialPublication.dispatch.key, previousKey, 'Even the same unchanged draft needs a new audit after the veto.');
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_contract').length, 1);
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_authorization').length, 2);
+      f.record({ success: true, dispatched: true }, f.detected, 'click_ax', { ref_id: 'ref_2002' });
+      assert.equal(f.guard.socialPublication.outcomes.p1.status, 'pending');
+      assert.equal((await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider)).noDispatch, true);
+    }
+  });
+
+  test(`${browser}: authentic confirmation may recompile after a zero-dispatch veto without inventing delivery`, async () => {
+    for (const source of ['option', 'user']) for (const platform of ['twitter', 'bluesky']) {
+      const f = await preSubmitFixture(platform), previous = f.guard.socialPublication;
+      f.record(nativePreparationVeto());
+      const answer = await clarify(f, 'Keep the exact Hello draft and publish it from this current account?', 'Yes, keep Hello and publish from this account', source);
+      assert.equal(answer.authorized, true);
+      const revised = await f.agent._ensureSocialPublicationContract(f.tabId, f.provider);
+      assert.notEqual(revised, previous); assert.deepEqual(revised.outcomes, {});
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_contract').length, 2);
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', { ref_id: 'ref_2002' }, f.detected, f.provider), null);
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_authorization').length, 2);
+      assert.notEqual(f.agent._completionSubmitStates.get(f.tabId)?.dispatched, true);
+      assert.equal(f.guard.workflowTerminalEvidence, null);
+    }
+  });
+
+  test(`${browser}: dispatched, ambiguous and conflicting native outcomes never become retryable zero-dispatch`, async () => {
+    for (const result of [
+      { success: true, dispatched: true },
+      { success: false, outcomeUnknown: true, missingToolResponse: true, error: 'Native response was lost.' },
+      { ...nativePreparationVeto(), dispatched: true },
+      { ...nativePreparationVeto(), outcomeUnknown: true },
+      { ...nativePreparationVeto(), missingToolResponse: true },
+      { ...nativePreparationVeto(), nativeInputAcknowledged: true },
+    ]) {
+      const f = await preSubmitFixture();
+      f.record(result); const previous = f.guard.socialPublication;
+      assert.equal(previous.outcomes.p1.status, 'pending', JSON.stringify(result));
+      assert.deepEqual(api.publicationProgress(previous.contract, previous.outcomes).eligible, []);
+      await clarify(f, 'Should I retry the uncertain publication?', 'Yes', 'option');
+      assert.equal(await f.agent._ensureSocialPublicationContract(f.tabId, f.provider), previous);
+      assert.equal((await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider)).noDispatch, true);
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_contract').length, 1);
+      assert.equal(f.calls.filter(call => call.meta.generationName === 'social_publication_authorization').length, 1);
+    }
+  });
+
+  test(`${browser}: later zero-dispatch preparation preserves the previous pending publication receipt`, async () => {
+    for (const { detected, pageUrl } of [
+      { detected: { isSubmit: true, publicationControl: false } },
+      { detected: { isSubmit: false, resolvedNonSubmitTarget: true } },
+      { detected: null },
+      { detected: { isSubmit: true, publicationControl: false }, pageUrl: 'https://ordinary.example/settings' },
+    ]) {
+      const f = await preSubmitFixture();
+      const submit = f.record({ success: false, dispatched: true, outcomeUnknown: true, error: 'Owned native click outcome is unknown.' });
+      const frozen = structuredClone(submit), outcomes = structuredClone(f.guard.socialPublication.outcomes);
+      if (pageUrl) f.pageUrl = pageUrl;
+      f.record(nativePreparationVeto(), detected);
+      assert.equal(f.agent._completionSubmitStates.get(f.tabId), submit, 'A failed preparation cannot replace an older potentially dispatched submit.');
+      assert.deepEqual(submit, frozen); assert.deepEqual(f.guard.socialPublication.outcomes, outcomes);
+      f.pageUrl = 'https://x.com/compose/post';
+      assert.equal((await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider)).noDispatch, true);
+    }
+  });
+
+  test(`${browser}: zero dispatch restores only the matching consumed audit Retry, never an uncertain prior attempt`, async () => {
+    for (const mode of ['zero-dispatch', 'uncertain', 'prior-consumed', 'forged-receipt']) {
+      const f = await failedAuditFixture(), grant = f.failure.failureRecovery;
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, grant), true);
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+      f.agent._beginCompletionInvariant(f.tabId);
+      const consumed = f.agent._consumeSocialPublicationAuditRetry(f.tabId);
+      assert.equal(consumed, f.guard.socialPublication.retryBypass);
+      assert.equal(f.guard.socialPublication.retryBypass.consumed, true);
+      const record = (result, receipt) => f.agent._recordCompletionSubmitAttempt(f.tabId, f.detected, 'click_ax', {},
+        'https://x.com/compose/post', 'https://x.com/compose/post', result, '', '',
+        { ...(receipt ? { socialPublicationAuditRetryConsumed: receipt } : {}) });
+      if (mode === 'uncertain') record({ success: false, dispatched: true, outcomeUnknown: true, error: 'Native acknowledgement lost.' }, consumed);
+      const previousSubmit = f.agent._completionSubmitStates.get(f.tabId);
+      const dispatch = f.guard.socialPublication.dispatch;
+      assert.equal(record(nativePreparationVeto(), mode === 'zero-dispatch' ? consumed : mode === 'forged-receipt' ? { ...consumed } : null), null);
+      if (mode !== 'zero-dispatch') {
+        assert.equal(f.agent._completionSubmitStates.get(f.tabId), previousSubmit);
+        assert.equal(f.guard.socialPublication.dispatch, dispatch, 'A grant consumed by another attempt cannot be restored from a later veto.');
+        assert.equal(f.guard.socialPublication.retryBypass.consumed, true);
+        assert.equal(f.guard.socialPublication.retryBypassUsed[grant.publicationKey], true);
+        if (mode === 'uncertain') assert.equal(f.guard.socialPublication.outcomes.p1.status, 'pending');
+        else assert.deepEqual(f.guard.socialPublication.outcomes, {});
+        assert.equal((await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider)).noDispatch, true);
+      } else {
+        assert.equal(f.guard.socialPublication.dispatch, null);
+        assert.equal(f.guard.socialPublication.retryBypass.consumed, false);
+        assert.notEqual(f.guard.socialPublication.retryBypassUsed[grant.publicationKey], true);
+        f.agent._recordCompletionToolResult(f.tabId, 'get_accessibility_tree', {}, { success: true, url: 'https://x.com/compose/post', pageContent: 'Fresh unchanged owned composer.' });
+        assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+        assert.equal(f.guard.socialPublication.dispatch.auditBypassed, true);
+        assert.equal(f.auditCalls, 2, 'The same explicit audit-bypass grant survives only proven zero dispatch.');
+      }
+    }
+  });
+
   test(`${browser}: the selected provider can compile and audit repeated cross-platform payloads`, async () => {
     const raw=rawContract([rawAction('p1','twitter'),rawAction('p2','bluesky')],{kind:'all',items:['p1','p2']});
     raw.actions.forEach((action,index)=>{action.posts[0].body.source.startOccurrence=index+1;});
