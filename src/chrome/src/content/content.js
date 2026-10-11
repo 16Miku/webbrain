@@ -1223,8 +1223,10 @@
         if (Number.parseFloat(style.opacity || '1') <= 0) {
           return { visible: false, reason: 'target or an ancestor is fully transparent' };
         }
-        if (style.pointerEvents === 'none') {
-          return { visible: false, reason: 'target or an ancestor does not receive pointer events' };
+        // A child can override an ancestor's pointer-events:none. Its own
+        // computed value and the physical hit test determine clickability.
+        if (node === el && style.pointerEvents === 'none') {
+          return { visible: false, reason: 'target does not receive pointer events' };
         }
       }
     } catch {

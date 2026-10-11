@@ -29,6 +29,7 @@ const cases = [
   { name: 'set_field', tool: 'set_field' },
   { name: 'type_ax', tool: 'type_ax' },
   { name: 'focus_expansion', tool: 'set_field', focusExpansion: true },
+  { name: 'native_preparation_retry', tool: 'set_field', nativePreparationVeto: true },
   { name: 'owner_changed', tool: 'set_field', change: 'owner' },
   { name: 'account_changed', tool: 'type_ax', change: 'account' },
   { name: 'audience_changed', tool: 'set_field', change: 'audience' },
@@ -72,7 +73,7 @@ const intent = { request_kind: 'execute', scope_relation: 'new', requires_state_
   summary: 'Publish exactly one owned local QA post from the current ownedqa account and verify its confirmation.',
   steps: [{ id: '1', action: 'Read the home composer, write the exact draft once, re-observe Post, publish once and verify the owned confirmation.' }],
   memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] };
-let current, context;
+let current, context, worker;
 const blockedRemote = [], submissions = [], summaries = [], auxiliaryRequests = [];
 const server = http.createServer(async (request, response) => {
   try {
@@ -145,10 +146,33 @@ const server = http.createServer(async (request, response) => {
         assert.ok(current.beforePost.post, JSON.stringify(observed));
         current.postReobserved = last?.name === 'get_accessibility_tree';
         await current.page.evaluate(() => qaChurnFeed());
+        if (current.nativePreparationVeto) await current.page.evaluate(() => qaArmPreparationOverlay());
         current.inferenceChanges++;
         await new Promise(resolve => setTimeout(resolve, 240));
         call = { name: 'click_ax', args: { ref_id: current.beforePost.post } };
-      } else if (step === (current.focusExpansion ? 6 : 4) && !current.change && current.writeResult?.success === true)
+      } else if (step === 4 && current.nativePreparationVeto) {
+        current.preparationVeto = tools.findLast(tool => tool.name === 'click_ax')?.result;
+        current.afterVeto = await current.page.evaluate(() => ({ state: qaSnapshot(), overlay: !!document.getElementById('qa-native-preparation-overlay') }));
+        current.vetoLedger = await worker.evaluate(tabId => {
+          const guard = inlineFixtureAgent._planExecutionGuards.get(tabId);
+          return { outcomes: guard?.socialPublication?.outcomes, dispatch: guard?.socialPublication?.dispatch,
+            submitted: inlineFixtureAgent._completionSubmitStates.get(tabId)?.dispatched === true };
+        }, current.tabId);
+        assert.equal(current.preparationVeto?.noDispatch, true, JSON.stringify(current.preparationVeto));
+        assert.equal(current.preparationVeto?.dispatched, false);
+        assert.equal(current.afterVeto.overlay, true, 'A real hover-triggered occluder must reach native preparation.');
+        assert.deepEqual(current.afterVeto.state.saved, []);
+        assert.deepEqual(current.vetoLedger.outcomes, {}); assert.equal(current.vetoLedger.dispatch, null);
+        await current.page.evaluate(() => qaClearPreparationOverlay());
+        call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
+      } else if (step === 5 && current.nativePreparationVeto) {
+        const fresh = references(observed?.result);
+        assert.equal(last?.name, 'get_accessibility_tree'); assert.ok(fresh.post);
+        current.postRetryReobserved = true;
+        call = { name: 'click_ax', args: { ref_id: fresh.post } };
+      } else if (step === 6 && current.nativePreparationVeto)
+        call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
+      else if (step === (current.focusExpansion ? 6 : 4) && !current.change && current.writeResult?.success === true)
         call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
       else call = { name: 'done', args: { outcome: current.change || current.writeResult?.success !== true ? 'partial' : 'success',
         summary: current.change ? 'The changed composer was left intact and unsubmitted.' : 'The owned local inline composer regression is finished.' } };
@@ -233,6 +257,15 @@ function App(){
         React.createElement('button',{type:'button','aria-label':'Like feed item '+feedRevision+'-'+index},'Like'))))));
 }
 ReactDOM.flushSync(()=>root.render(React.createElement(App)));
+window.qaPreparationOverlays=0;
+window.qaArmPreparationOverlay=()=>document.querySelector('#post').addEventListener('pointerenter',event=>{
+  if(!event.isTrusted)return;
+  const rect=event.currentTarget.getBoundingClientRect(),overlay=document.createElement('button');
+  overlay.id='qa-native-preparation-overlay';overlay.type='button';overlay.textContent='Owned temporary preparation overlay';
+  overlay.style='position:fixed;z-index:100000;left:'+(rect.left-1)+'px;top:'+(rect.top-1)+'px;width:'+(rect.width+2)+'px;height:'+(rect.height+2)+'px';
+  document.body.append(overlay);window.qaPreparationOverlays++;
+},{once:true});
+window.qaClearPreparationOverlay=()=>document.getElementById('qa-native-preparation-overlay')?.remove();
 for(const type of ['beforeinput','input','paste'])document.querySelector('#app').addEventListener(type,event=>{
   if(event.target.closest('[data-testid="tweetTextarea_0"]'))qaEvents.push({type,trusted:event.isTrusted,inputType:event.inputType,
     data:type==='paste'?event.clipboardData?.getData('text/plain'):event.data});
@@ -277,7 +310,7 @@ try {
     }
     return route.continue();
   });
-  const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
+  worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
   await worker.evaluate(() => {
     const fetchOriginal = fetch.bind(globalThis);
     globalThis.inlineFixtureProbe = { commands: [], transports: [], feedback: [], blocked: [] };
@@ -337,7 +370,7 @@ try {
     assert.equal(initial.headings, 0); assert.equal(initial.formsOrDialogs, 0);
     const tabId = await harness.evaluate(async url => (await chrome.tabs.query({})).findLast(tab => tab.url === url)?.id, fixtureUrl);
     assert.ok(tabId);
-    current = { ...specification, page, marker: `Owned inline regression case ${specification.name}.`, requests: [], calls: [],
+    current = { ...specification, page, tabId, marker: `Owned inline regression case ${specification.name}.`, requests: [], calls: [],
       steps: 0, judges: 0, inferenceChanges: 0 };
     const probeStart = await worker.evaluate(() => ({ commands: inlineFixtureProbe.commands.length,
       transports: inlineFixtureProbe.transports.length, feedback: inlineFixtureProbe.feedback.length }));
@@ -409,11 +442,18 @@ Re-observe the Post button after writing, click it once, then verify the owned l
       assert.ok(current.afterWrite.events.some(event => ['beforeinput', 'input'].includes(event.type) && event.trusted));
       assert.ok(current.afterWrite.events.every(event => event.trusted), 'This single-line draft uses browser-trusted input.');
       assert.equal(current.postReobserved, true, 'Post must receive an independent current AX read after typing.');
-      assert.equal(clicks.length, 1);
-      assert.equal(clicks[0].result.dispatched, true, JSON.stringify(clicks));
-      if (clicks[0].result.success !== true) {
-        assert.equal(clicks[0].result.outcomeUnknown, true, JSON.stringify(clicks));
-        assert.equal(clicks[0].result.retryable, false, 'An acknowledged Post must never be retried after observation is interrupted.');
+      assert.equal(clicks.length, specification.nativePreparationVeto ? 2 : 1);
+      if (specification.nativePreparationVeto) {
+        assert.equal(current.postRetryReobserved, true);
+        assert.equal(current.preparationVeto.initialTrustedNativeButton, true, JSON.stringify(current.preparationVeto));
+        assert.equal(current.preparationVeto.method, 'cdp-native-button');
+        assert.equal(current.vetoLedger.submitted, false); assert.equal(current.afterVeto.state.model, body);
+        assert.equal(current.audits, 2, 'The native veto must clear provisional authorization and force a fresh audit.');
+      }
+      assert.equal(clicks.at(-1).result.dispatched, true, JSON.stringify(clicks));
+      if (clicks.at(-1).result.success !== true) {
+        assert.equal(clicks.at(-1).result.outcomeUnknown, true, JSON.stringify(clicks));
+        assert.equal(clicks.at(-1).result.retryable, false, 'An acknowledged Post must never be retried after observation is interrupted.');
       }
       const confirmation = tools.findLast(tool => tool.name === 'get_accessibility_tree')?.result?.pageContent || '';
       assert.match(confirmation, /Owned local QA post recorded:/, 'A fresh installed-extension read must observe the owned save confirmation.');
