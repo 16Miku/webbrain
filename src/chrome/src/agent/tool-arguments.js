@@ -1,3 +1,8 @@
+// Native refs have a fixed, linear grammar. Do not run arbitrary regexes
+// supplied by external schemas while validating a browser tool call.
+export const AX_REF_ID_PATTERN = '^(?:ref_[0-9]+)?$';
+const AX_REF_ID_REGEX = new RegExp(AX_REF_ID_PATTERN);
+
 function isPlainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
@@ -185,6 +190,14 @@ export function validateToolArguments(toolName, args, parameters) {
       .filter(([key, schema]) => failures.includes(`$.${key}`) && Array.isArray(schema.enum))
       .map(([key, schema]) => `${key} must be one of ${JSON.stringify(schema.enum)}.`).join(' ');
     return validationFailure(toolName, failures, `Invalid or undeclared argument(s): ${[...new Set(failures)].join(', ')}. ${enumGuidance}`.trim());
+  }
+  if (toolName === 'get_accessibility_tree') {
+    const refs = [['$.ref_id', normalizedArgs.ref_id],
+      ['$.continuationArgs.ref_id', normalizedArgs.continuationArgs?.ref_id]];
+    const invalid = refs.filter(([, value]) => typeof value === 'string'
+      && AX_REF_ID_REGEX.exec(value)?.[0] !== value).map(([path]) => path);
+    if (invalid.length) return validationFailure(toolName, invalid,
+      'Use an exact observed native ref_id (ref_ followed by digits), or omit ref_id for a root read. Do not append JSON punctuation or invent an anchor.');
   }
   if (toolName === 'click') {
     const clickFailure = validateClickTarget(normalizedArgs);

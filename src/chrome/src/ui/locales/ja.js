@@ -61,7 +61,7 @@ export default {
   // Context compaction + cloud cost + prompt-tier strings
   'sp.context_compacted': "コンテキストを自動的に圧縮しました",
   'sp.context_compacted_detail': "以前のメッセージ {summarized} 件を要約 · {remaining} 件を保持",
-  'ob.tokens.context_hint': "エージェントを安定して実行するには、少なくとも 16k トークンのコンテキストウィンドウを持つモデルを選んでください。8k はコンパクトモードを有効にすれば動作する場合があります。4k はツールセットには小さすぎます。WebBrain はウィンドウの上限に近づくと会話を自動的に圧縮します。",
+  'ob.tokens.context_hint': "モード、ツール、ページ、履歴、応答が収まるコンテキストウィンドウを選んでください。Mid と Full には 16k トークンを超える容量が必要な場合があります。自動圧縮は古い履歴を短縮します。",
   'st.display.cost_session_limit.label': "クラウド費用のセッション上限",
   'st.display.cost_session_limit.desc': "このセッションが報告値または推定値の費用上限に達すると、次の有料モデル呼び出しの前にクラウドおよび OpenRouter の実行を停止します。デフォルトは 10 ドル。",
   'st.display.cost_total_limit.label': "クラウド費用の合計上限",
@@ -359,7 +359,7 @@ export default {
   'st.display.lossless_tracing.label': 'リクエストの完全な詳細を記録（デバッグ層）',
   'st.display.lossless_tracing.desc_html': '各LLMリクエストの完全なプロンプト・メッセージ・ツールスキーマを、内容を含まない要約の代わりに保存し、各ツール結果を最大200KB保持します。深いデバッグとリクエスト再構築が可能になります。会話内容をローカルに書き込み、ディスク消費が大幅に増えるため、既定ではオフです。トレース記録の有効化が必要です。',
   'st.display.allow_local_network.label': 'エージェントにローカルネットワークへのアクセスを許可',
-  'st.display.allow_local_network.desc': 'エージェントの fetch_url ツールがループバック（127.0.0.1、localhost）やプライベート/RFC1918 アドレス（10.x、192.168.x、172.16–31.x）に届くようになります。ローカル開発サーバー、社内ツール、セルフホスト API に便利です。デフォルトはオフ — オフのときは prompt 注入されたページがエージェントにローカルネットワークの探索をさせることはできません。クラウドメタデータアドレス（169.254.169.254）と *.internal/*.local ホスト名はオンでもブロックされたままです。',
+  'st.display.allow_local_network.desc': 'エージェントの fetch_url ツールがループバック（127.0.0.1、localhost）やプライベート/RFC1918 アドレス（10.x、192.168.x、172.16–31.x）に届くようになります。ローカル開発サーバー、社内ツール、セルフホスト API に便利です。デフォルトはオフです。オフの場合、プライベート IP やループバック IP を直接記述した URL と localhost のホスト名をブロックします。DNS の名前解決は確認しないため、別のホスト名からローカルアドレスに接続できる場合があります。クラウドメタデータの IP リテラル（169.254.169.254）と、指定のメタデータ名または *.internal/*.local はオンでもブロックされます。',
   'st.display.notify_sound.label': '完了サウンド',
   'st.display.notify_sound.desc': 'エージェントがタスクを完了したときにサイドパネルで短いチャイムを鳴らします。実行をキャンセルした場合は鳴りません。',
   'st.display.completion_confetti.label': '完了時の紙吹雪',
@@ -808,7 +808,7 @@ export default {
   'sp.plan.approve': '承認して実行',
   'sp.plan.cancel': 'キャンセル',
   'sp.plan.edit_hint': 'オプション: 承認前に計画を編集',
-  'sp.plan.approved': '計画承認済み — 実行中…',
+  'sp.plan.approved': '計画承認済み',
   'sp.plan.cancelled': '計画がキャンセルされました。',
   'sp.plan.expired': 'この計画はレビュー待ちではなくなりました — 実行はキャンセルされました。',
   'sp.plan.timed_out': '承認の待機時間が終了しました',
@@ -1216,4 +1216,5 @@ export default {
   'st.providers.webgpu_download.resume': 'Resume',
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
+  'sp.monitor.navigation': "タスク実行中にページが変わりました（{before} → {after}）。タスクを続行します。",
 };

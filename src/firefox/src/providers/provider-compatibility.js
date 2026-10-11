@@ -456,10 +456,15 @@ export function effectiveCompatibilityPreset(config = {}) {
 export function mapProviderMessages(messages, config = {}) {
   if (!Array.isArray(messages)) return [];
   const { systemPromptRole } = normalizeProviderCompatibility(config);
-  if (systemPromptRole !== 'developer') return messages;
   return messages.map((message) => {
-    if (!message || message.role !== 'system') return message;
-    return { ...message, role: 'developer' };
+    if (!message || typeof message !== 'object') return message;
+    // This reserved application namespace carries local authority, steering,
+    // and resume receipts. Provider API fields never use this namespace.
+    const entries = Object.entries(message);
+    const projected = entries.some(([key]) => key.startsWith('webbrain'))
+      ? Object.fromEntries(entries.filter(([key]) => !key.startsWith('webbrain'))) : message;
+    return systemPromptRole === 'developer' && projected.role === 'system'
+      ? { ...projected, role: 'developer' } : projected;
   });
 }
 

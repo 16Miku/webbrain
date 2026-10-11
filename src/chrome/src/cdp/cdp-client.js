@@ -1,3 +1,6 @@
+import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
+import '../content/file-upload-policy.js';
+const { validateUploadFile, observedFileViewerResource, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__wbFileUploadPolicy;
 /**
  * CDP Client for Chrome DevTools Protocol
  * Provides access to shadow DOM, cross-origin iframes, pixel-perfect screenshots,
@@ -5,6 +8,34 @@
  */
 
 import { combineImages } from './image-utils.js';
+import { beforePageAgentDispatch, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from '../agent/page-feedback.js';
+
+const SELECTOR_SCROLL_DISPATCH_SOURCE = `
+  const beforeSelectorScroll = (element, guard) => {
+    if (!guard) return true;
+    const doc = element.ownerDocument;
+    if (!element.isConnected || doc.documentElement?.getAttribute('data-webbrain-page-revision') !== guard.documentToken + ':' + guard.revision) return false;
+    return element.dispatchEvent(new doc.defaultView.CustomEvent('webbrain-agent-scroll-dispatch', {
+      bubbles: true, composed: true, cancelable: true, detail: JSON.stringify(guard),
+    }));
+  };
+`;
+
+const PAGE_AGENT_DOM_ACTION_SOURCE = `
+  const beforePageAgentDomAction = (guard, phase, target = window) => {
+    if (!guard) return true;
+    const event = new CustomEvent('webbrain-agent-dom-dispatch', {
+      detail: JSON.stringify({ ...guard, dispatchPhase: phase }), bubbles: true, composed: true, cancelable: true,
+    });
+    return target.dispatchEvent(event);
+  };
+`;
+
+function throwIfPageFeedbackPending(result) {
+  if (!result?.pageFeedbackPending) return;
+  const error = new Error(pageFeedbackPendingResult().error);
+  error.code = 'page_feedback_pending'; throw error;
+}
 
 function readProseMirrorText(el) {
   if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
@@ -19,6 +50,200 @@ function readProseMirrorText(el) {
   const children = Array.from(el.childNodes);
   if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
   return children.map(read).join('\n');
+}
+
+function readEmptyCaretText(el) {
+  // A sole BR can be either a browser caret or an authored literal LF.
+  // Generic DOM shape cannot establish which; keep its rendered value.
+  // DraftJS/ProseMirror markers and exact native-clear receipts prove their
+  // own empty state independently. Only a genuinely empty DOM is generic.
+  return el?.isContentEditable && el.childNodes?.length === 0
+    && el.innerText === '' && el.textContent === '' ? '' : null;
+}
+
+// This private object exists only around one native SelectAll/Delete operation.
+// A caret BR without this exact event/node history remains an authored LF.
+function nativeTextClearReceipt(el) {
+  if (!el?.isConnected || !el.isContentEditable) return null;
+  const doc = el.ownerDocument, view = doc.defaultView, root = el.getRootNode(), url = doc.URL;
+  const parent = node => node.parentNode || (node.nodeType === 11 ? node.host : null);
+  const ancestors = []; for (let node = parent(el); node; node = parent(node)) ancestors.push(node);
+  // The original roots expose their activeElement even for a closed shadow tree.
+  // Pin every host up to the document rather than rediscovering through .shadowRoot.
+  const activeBindings = [];
+  for (let scope = root, target = el; scope; target = scope.host, scope = target?.getRootNode()) {
+    activeBindings.push([scope, target]);
+    if (scope === doc) break;
+  }
+  const selection = () => root.getSelection?.() || view.getSelection();
+  const range = () => { const value = selection(); return value?.rangeCount === 1 ? value.getRangeAt(0) : null; };
+  const sameRange = (a, b) => !!a && !!b && a.startContainer === b.startContainer && a.startOffset === b.startOffset
+    && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+  const within = value => !!value && el.contains(value.startContainer) && el.contains(value.endContainer);
+  const originalRange = range()?.cloneRange();
+  let invalid = false, closed = false, selected = 0, deleted = 0, released = 0, before = 0, inputs = 0, caret = null, settledRange = null;
+  const current = () => {
+    let node = parent(el);
+    for (const ancestor of ancestors) { if (node !== ancestor) return false; node = parent(node); }
+    return !closed && !invalid && el.isConnected && doc.defaultView === view && view.document === doc
+      && doc.URL === url && el.getRootNode() === root
+      && activeBindings.every(([scope, target]) => scope.activeElement === target) && (!selected || within(range()));
+  };
+  if (!current()) return null;
+  // The transport refreshes these private markers before its own input commands.
+  // All other editor/identity mutations remain part of the receipt's fence.
+  const relevant = record => !(record.type === 'attributes'
+      && ['data-webbrain-native-target', 'data-webbrain-page-revision'].includes(record.attributeName))
+    && (record.target === el || el.contains(record.target)
+    || (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes]
+      .some(node => node === el || node.contains?.(el) || ancestors.some(ancestor => node === ancestor || node.contains?.(ancestor))))
+    || (record.type === 'attributes' && ancestors.includes(record.target)
+      && /^(?:id|role|aria-label|contenteditable|disabled|readonly|inert|hidden|data-)/.test(record.attributeName || '')));
+  const observer = new view.MutationObserver(records => { if (records.some(relevant)) invalid = true; });
+  observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  for (const [scope] of activeBindings) if (scope !== doc) {
+    observer.observe(scope, { subtree: true, childList: true, characterData: true, attributes: true });
+  }
+  const drain = () => { if (observer.takeRecords().some(relevant)) invalid = true; };
+  const drainNativeDelete = () => {
+    if (observer.takeRecords().some(record => relevant(record)
+      && !(['childList', 'characterData'].includes(record.type) && (record.target === el || el.contains(record.target))))) invalid = true;
+  };
+  let retargetedInput = null;
+  const handlers = {
+    keydown(event) {
+      if (!event.isTrusted || event.target !== el || !current()) { invalid = true; return; }
+      if (event.code === 'KeyA' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+          && selected === 0 && deleted === 0) { selected++; return; }
+      if (event.code === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+          && selected === 1 && deleted === 0) { deleted++; return; }
+      invalid = true;
+    },
+    keyup(event) {
+      if (!event.isTrusted || event.target !== el) { invalid = true; return; }
+      if (event.code === 'KeyA' && selected === 1 && deleted === 0) return;
+      if (event.code === 'Delete' && deleted === 1 && released === 0) { released++; return; }
+      invalid = true;
+    },
+    beforeinput(event) {
+      drain();
+      if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+          || selected !== 1 || deleted !== 1 || before !== 0 || !current()) { invalid = true; return; }
+      before++;
+    },
+    input(event) {
+      if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+          || before !== 1 || inputs !== 0 || (root !== doc && retargetedInput !== event) || !current()) { invalid = true; return; }
+      // Discard exactly the browser's native deletion records. Later framework
+      // changes, including a change followed by restoration, invalidate proof.
+      drainNativeDelete(); inputs++;
+      caret = el.isContentEditable && el.childNodes.length === 1 && el.firstChild?.nodeName === 'BR'
+        && el.firstChild.attributes.length === 0 && el.textContent === '' ? el.firstChild : null;
+      settledRange = range()?.cloneRange();
+    },
+    selectionchange() {
+      if (inputs) { if (!sameRange(range(), settledRange)) invalid = true; }
+      else if (!selected && !sameRange(range(), originalRange)) invalid = true;
+      else if (!within(range())) invalid = true;
+    },
+    focusin(event) { if (event.target !== el) invalid = true; },
+    focusout() { invalid = true; },
+    blur() { invalid = true; },
+    pointerdown() { invalid = true; }, wheel() { invalid = true; },
+    paste() { invalid = true; }, drop() { invalid = true; },
+  };
+  const listeners = [];
+  const listen = (scope, name, handler) => { scope.addEventListener(name, handler, true); listeners.push([scope, name, handler]); };
+  for (const [name, handler] of Object.entries(handlers)) {
+    // Native events are retargeted to the host at document listeners. Count the
+    // exact keyboard/input sequence once, in the original editable's own root.
+    listen(root, name, handler);
+    if (root !== doc) listen(doc, name, event => {
+      if (name === 'selectionchange' || ['focusout', 'blur', 'pointerdown', 'wheel', 'paste', 'drop'].includes(name)) handler(event);
+      else if (!event.isTrusted || !event.composed || event.target !== activeBindings.at(-1)[1]) invalid = true;
+      else if (name === 'input' && event.inputType === 'deleteContentForward'
+          && before === 1 && inputs === 0 && current()) {
+        // Drain the browser deletion before this capture listener's microtask
+        // checkpoint delivers it as an unrelated mutation. The own-root
+        // listener still must validate this exact event and exact editable.
+        retargetedInput = event;
+        drainNativeDelete();
+      }
+    });
+  }
+  const dispose = () => {
+    if (closed) return; closed = true;
+    observer.disconnect();
+    for (const [scope, name, handler] of listeners) scope.removeEventListener(name, handler, true);
+    view.clearTimeout(timer);
+  };
+  const timer = view.setTimeout(dispose, 5000);
+  return {
+    current() { drain(); return current(); },
+    verify() {
+      drain();
+      return current() && selected === 1 && deleted === 1 && released === 1 && before === 1 && inputs === 1
+        && sameRange(range(), settledRange) && !!caret && el.childNodes.length === 1 && el.firstChild === caret
+        && caret.attributes.length === 0 && el.textContent === '' && el.innerText === '\n';
+    },
+    dispose,
+  };
+}
+
+function isDraftJsEditor(el) {
+  return !!el?.isContentEditable && (el.classList?.contains('public-DraftEditor-content')
+    || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true'));
+}
+
+function readDraftJsText(el) {
+  if (!el?.isContentEditable || !el.childNodes) return null;
+  const roots = Array.from(el.childNodes);
+  if (roots.length !== 1 || roots[0].nodeType !== 1 || roots[0].tagName !== 'DIV'
+      || roots[0].getAttribute('data-contents') !== 'true') return null;
+  let visited = 0;
+  const supported = node => {
+    if (++visited > 4096 || node.shadowRoot || node.hidden || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
+        || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return false;
+    const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+    return !!style && (style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility)
+      && style.opacity !== '0' && style.contentVisibility !== 'hidden');
+  };
+  if (!supported(el) || !supported(roots[0])) return null;
+  const blocks = Array.from(roots[0].childNodes);
+  if (!blocks.length) return null;
+  const texts = [];
+  for (const block of blocks) {
+    if (block.nodeType !== 1 || block.tagName !== 'DIV' || block.getAttribute('data-block') !== 'true'
+        || !block.getAttribute('data-offset-key') || !supported(block)) return null;
+    const children = Array.from(block.childNodes);
+    const body = children[0];
+    if (children.length !== 1 || body?.nodeType !== 1 || body.tagName !== 'DIV'
+        || !body.classList.contains('public-DraftStyleDefault-block')
+        || !body.getAttribute('data-offset-key') || !supported(body)) return null;
+    const leaves = [];
+    const read = (node, depth = 0) => {
+      if (depth > 32 || node.nodeType !== 1 || !supported(node)) return false;
+      if (node.tagName === 'BR') {
+        if (node.getAttribute('data-text') !== 'true' || node.childNodes.length) return false;
+        leaves.push(null); return true;
+      }
+      if (node.tagName !== 'SPAN') return false;
+      const descendants = Array.from(node.childNodes);
+      if (node.getAttribute('data-text') === 'true') {
+        if (!descendants.every(child => child.nodeType === 3)) return false;
+        leaves.push(descendants.map(child => child.nodeValue || '').join('')); return true;
+      }
+      return descendants.length > 0 && descendants.every(child => read(child, depth + 1));
+    };
+    if (!body.childNodes.length || !Array.from(body.childNodes).every(node => read(node))) return null;
+    // DraftJS's sole data-text BR in an empty block is a caret placeholder.
+    // Real document breaks are separators between blocks (or text in leaves).
+    // Mixed BR/text and embeds are unsupported; keep their rendered fallback.
+    const placeholders = leaves.filter(value => value === null).length;
+    if (placeholders && (placeholders !== 1 || leaves.some(value => value !== null && value !== ''))) return null;
+    texts.push(leaves.filter(value => value !== null).join(''));
+  }
+  return texts.join('\n');
 }
 
 const FULL_PAGE_SCROLL_SETTLE_MS = 100;
@@ -120,6 +345,12 @@ export class CDPClient {
     this._onDebuggerDetach = (source, reason) => {
       const tabId = source?.tabId;
       if (tabId == null) return;
+      const pendingAttach = this.attachPromises.get(tabId);
+      if (pendingAttach) {
+        pendingAttach.cancelled = true;
+        pendingAttach.detached = true;
+        this.attachGenerations.set(tabId, (this.attachGenerations.get(tabId) || 0) + 1);
+      }
       this.stopDialogHandling(tabId);
       this.pendingDialogs.delete(tabId);
       this._dropWebMCPSession(tabId, `Debugger detached: ${reason || 'unknown reason'}`);
@@ -139,6 +370,7 @@ export class CDPClient {
     try {
       chrome.debugger.onDetach.addListener(this._onDebuggerDetach);
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       chrome.debugger.onEvent.removeListener(this._onDebuggerEvent);
       throw error;
     }
@@ -199,15 +431,44 @@ export class CDPClient {
 
     const attachPromise = new Promise((resolve, reject) => {
       chrome.debugger.attach({ tabId }, '1.3', async () => {
+        let recovered = false;
         if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
+          const attachError = new Error(chrome.runtime.lastError.message);
+          if (attachError.message !== `Another debugger is already attached to the tab with id: ${tabId}.`) {
+            reject(attachError); return;
+          }
+          const current = () => !attachPromise.cancelled && this.attachGenerations.get(tabId) === generation;
+          if (!current()) { reject(new Error('Debugger attachment was cancelled')); return; }
+          // Chrome retains this extension's debugger connection across worker
+          // restarts. sendCommand is authorized only for this extension's own
+          // client, so a successful literal read proves ownership without
+          // disconnecting a different debugger or trusting getTargets.attached.
+          try {
+            await new Promise((resolveProbe, rejectProbe) => {
+              const timer = setTimeout(() => rejectProbe(attachError), 1500);
+              try {
+                chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate',
+                  { expression: 'void 0', returnByValue: true, timeout: 1000 }, result => {
+                    const error = chrome.runtime.lastError;
+                    clearTimeout(timer);
+                    if (error || result?.exceptionDetails || result?.result?.type !== 'undefined') rejectProbe(attachError);
+                    else resolveProbe();
+                  });
+              } catch (error) { clearTimeout(timer); rejectProbe(error); }
+            });
+            recovered = true;
+          } catch {
+            reject(current() ? attachError : new Error('Debugger attachment was cancelled'));
+            return;
+          }
         }
 
         const isCurrentGeneration = this.attachGenerations.get(tabId) === generation;
 
         if (attachPromise.cancelled || !isCurrentGeneration) {
-          if (!this.sessions.has(tabId)) {
+          const pendingAttach = this.attachPromises.get(tabId);
+          if (!recovered && !attachPromise.detached && !this.sessions.has(tabId)
+              && (!pendingAttach || pendingAttach === attachPromise)) {
             try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
           }
           reject(new Error('Debugger attachment was cancelled'));
@@ -335,6 +596,7 @@ export class CDPClient {
       // must release the run even when Chrome never answers this command.
       await Promise.race([this.sendCommand(tabId, 'Page.enable'), interrupted]);
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       markPendingAttachCancelled();
       if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
       throw error;
@@ -404,6 +666,30 @@ export class CDPClient {
       throw new Error(`Not attached to tab ${tabId}`);
     }
 
+    if (['Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText'].includes(method)) {
+      const release = ['mouseReleased', 'keyUp'].includes(params.type);
+      let target = {};
+      try { target = await this._pageAgentInputTarget(tabId, method, params, sessionId); }
+      catch (error) { if (!release) throw error; } // Always allow held input to be released after navigation.
+      await beforePageAgentDispatch(globalThis.chrome, tabId, {
+        kind: method === 'Input.dispatchMouseEvent' ? (params.type === 'mouseWheel' ? 'scroll' : 'click') : 'input',
+        nativeWheel: params.type === 'mouseWheel',
+        navigationCandidate: params.type === 'mousePressed',
+        ...(Number.isFinite(params.x) ? { x: params.x, y: params.y } : {}),
+        release,
+        ...(method === 'Input.insertText' ? { eventTypes: ['beforeinput', 'input', 'change'] } : {}),
+        ...(method === 'Input.dispatchMouseEvent' ? { eventTypes: params.type === 'mouseMoved'
+          ? ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove']
+          : params.type === 'mousePressed' ? ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointerdown', 'mousedown', 'click', 'input', 'change']
+            : params.type === 'mouseWheel' ? ['wheel'] : ['pointerup', 'mouseup', 'click', 'input', 'change'] } : {}),
+        ...target,
+        // Derive preparation from the actual command, never caller metadata.
+        // Held-button movement is consequential drag/recovery input.
+        pointerPreparationOnly: method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved'
+          && params.button === 'none' && params.buttons === 0,
+      });
+    }
+
     return new Promise((resolve, reject) => {
       chrome.debugger.sendCommand(
         { tabId, ...(sessionId ? { sessionId } : {}) },
@@ -423,6 +709,92 @@ export class CDPClient {
         },
       );
     });
+  }
+
+  async _pageAgentObjectTarget(tabId, objectId, sessionId = '') {
+    const nativeTarget = globalThis.crypto.randomUUID();
+    const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+      objectId, returnByValue: true,
+      functionDeclaration: `function (marker) {
+        const fence = this.ownerDocument?.documentElement?.getAttribute('data-webbrain-page-revision');
+        if (!fence || !this.isConnected) return null;
+        this.setAttribute('data-webbrain-native-target', marker);
+        const split = fence.lastIndexOf(':');
+        return { nativeTarget: marker, documentToken: fence.slice(0, split), documentRevision: Number(fence.slice(split + 1)) };
+      }`,
+      arguments: [{ value: nativeTarget }],
+    }, sessionId);
+    return result?.result?.value || {};
+  }
+
+  async _pageAgentInputTarget(tabId, method, params, sessionId = '') {
+    if (!hasPageAgentDispatchOwner(tabId)) return {};
+    const keyboard = method !== 'Input.dispatchMouseEvent';
+    let x = params.x, y = params.y, currentSession = sessionId;
+    let contextId;
+    const temporarySessions = [];
+    try {
+      // A process-isolated iframe is returned as its owner node. Descend into
+      // that target rather than registering the parent document's expectation.
+      for (let depth = 0; depth < 16; depth++) {
+        let objectId, node;
+        if (keyboard) {
+          // Use the target tab's focused document even when another tab is active.
+          const focused = await this.sendCommand(tabId, 'Runtime.evaluate', {
+            expression: '(() => { let el = document.activeElement; while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement; return el; })()',
+            ...(contextId ? { contextId } : {}),
+          }, currentSession);
+          objectId = focused?.result?.objectId;
+          if (!objectId) return {};
+          ({ node } = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }, currentSession));
+        } else {
+          const hit = await this.sendCommand(tabId, 'DOM.getNodeForLocation', { x: Math.round(x), y: Math.round(y) }, currentSession);
+          ({ node } = await this.sendCommand(tabId, 'DOM.describeNode', { backendNodeId: hit.backendNodeId }, currentSession));
+          const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { backendNodeId: hit.backendNodeId }, currentSession);
+          objectId = resolved.object.objectId;
+        }
+        if (node?.frameId && /^(IFRAME|FRAME)$/.test(node.nodeName)) {
+          let size;
+          let quads;
+          try {
+            if (!keyboard) {
+              ({ quads } = await this.sendCommand(tabId, 'DOM.getContentQuads', { objectId }, currentSession));
+              size = (await this.sendCommand(tabId, 'Runtime.callFunctionOn', { objectId,
+                functionDeclaration: 'function () { return { width: this.clientWidth, height: this.clientHeight }; }', returnByValue: true }, currentSession))?.result?.value;
+            }
+          } finally { this.releaseObject(tabId, objectId, currentSession); }
+          if (!keyboard) {
+            const q = quads?.[0];
+            if (!q || !size?.width || !size?.height) throw new Error('Cannot resolve native input frame');
+            const ax = q[2] - q[0], ay = q[3] - q[1], bx = q[6] - q[0], by = q[7] - q[1];
+            const determinant = ax * by - ay * bx, dx = x - q[0], dy = y - q[1];
+            if (!determinant) throw new Error('Cannot resolve native input frame');
+            x = (dx * by - dy * bx) / determinant * size.width;
+            y = (ax * dy - ay * dx) / determinant * size.height;
+          } else {
+            try {
+              ({ executionContextId: contextId } = await this.sendCommand(tabId, 'Page.createIsolatedWorld', { frameId: node.frameId, worldName: 'webbrain-input-attribution' }, currentSession));
+              continue;
+            } catch { /* A process-isolated document requires its child session. */ }
+          }
+          const existing = [...(this.runtimeContexts.get(tabId)?.values() || [])].find(context => context.frameId === node.frameId && context.sessionId);
+          if (existing) currentSession = existing.sessionId;
+          else {
+            const attached = await this.sendCommand(tabId, 'Target.attachToTarget', { targetId: node.frameId, flatten: true });
+            currentSession = attached.sessionId; temporarySessions.push(currentSession);
+          }
+          contextId = undefined;
+          continue;
+        }
+        try { return await this._pageAgentObjectTarget(tabId, objectId, currentSession); }
+        finally { this.releaseObject(tabId, objectId, currentSession); }
+      }
+      throw new Error('Native input frame nesting exceeds the monitor limit');
+    } finally {
+      for (const id of temporarySessions.reverse()) {
+        try { await this.sendCommand(tabId, 'Target.detachFromTarget', { sessionId: id }); } catch {}
+      }
+    }
   }
 
   /**
@@ -1224,6 +1596,7 @@ export class CDPClient {
         }
         return state;
       } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
         this._removeWebMCPHandlers(tabId, state);
         if (!state.closed && this.webMcpSessions.get(tabId) === state) {
           this.webMcpSessions.delete(tabId);
@@ -1475,6 +1848,7 @@ export class CDPClient {
         error: 'The WebMCP session closed before the tool could be dispatched.',
       };
     }
+    if (typeof options.beforeDispatch === 'function') await options.beforeDispatch();
     let invocation;
     try {
       invocation = await this.sendCommand(tabId, 'WebMCP.invokeTool', {
@@ -1483,6 +1857,7 @@ export class CDPClient {
         input: safeInput,
       }, tool.sessionId);
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       return {
         success: false,
         dispatched: true,
@@ -1994,7 +2369,7 @@ export class CDPClient {
       });
       return this._formatEventListeners(result?.listeners, relation, eventTypes);
     } finally {
-      try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+      this.releaseObject(tabId, objectId);
     }
   }
 
@@ -2011,7 +2386,7 @@ export class CDPClient {
       });
       return this._formatEventListeners(result?.listeners, relation, eventTypes);
     } finally {
-      try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+      this.releaseObject(tabId, objectId);
     }
   }
 
@@ -2076,18 +2451,26 @@ export class CDPClient {
       }
       return { objectIds, objectGroup };
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       await this.releaseObjectGroup(tabId, objectGroup);
       throw error;
     }
   }
 
+  // Runtime cleanup is best effort: a stalled renderer or lost acknowledgement
+  // must not delay a known observation/action result or replace its error.
+  releaseObject(tabId, objectId, sessionId = '') {
+    if (!objectId) return;
+    try { void this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }, sessionId).catch(() => {}); } catch {}
+  }
+
   /**
-   * Release Runtime objects returned by querySelectorPierce.
+   * Schedule release of Runtime objects returned by querySelectorPierce.
    */
   async releaseObjectGroup(tabId, objectGroup) {
     if (!objectGroup) return;
     try {
-      await this.sendCommand(tabId, 'Runtime.releaseObjectGroup', { objectGroup });
+      void this.sendCommand(tabId, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
     } catch {}
   }
 
@@ -2125,6 +2508,38 @@ export class CDPClient {
     }
     const result = await this.sendCommand(tabId, 'Runtime.evaluate', params);
     return result;
+  }
+
+  /** Evaluate a function on the page global, passing data as protocol arguments. */
+  async evaluateFunction(tabId, functionDeclaration, args = [], options = {}) {
+    await this.sendCommand(tabId, 'Runtime.enable');
+    const global = await this.sendCommand(tabId, 'Runtime.evaluate', {
+      expression: 'globalThis',
+      returnByValue: false,
+      userGesture: true,
+    });
+    const objectId = global?.result?.objectId;
+    if (!objectId) return global;
+    const requestedTimeout = Number(options?.timeoutMs);
+    const params = {
+      functionDeclaration,
+      objectId,
+      arguments: args.map(value => ({ value })),
+      returnByValue: true,
+      awaitPromise: true,
+      userGesture: true,
+      allowUnsafeEvalBlockedByCSP: true,
+    };
+    if (Number.isFinite(requestedTimeout) && requestedTimeout > 0) {
+      params.timeout = Math.max(1, Math.min(30000, Math.round(requestedTimeout)));
+    }
+    try {
+      return await this.sendCommand(tabId, 'Runtime.callFunctionOn', params);
+    } finally {
+      // Object cleanup cannot delay or replace a known page result. In
+      // particular, keep a proven no-dispatch result even if cleanup stalls.
+      this.releaseObject(tabId, objectId);
+    }
   }
 
   /**
@@ -2178,6 +2593,32 @@ export class CDPClient {
    *   captureBounds:{x:number,y:number,width:number,height:number}
    * }>} Capture bounds are CSS pixels in top-page coordinates.
    */
+  async _scrollForFullPageCapture(tabId, x, y, captureState) {
+    const guard = await beforePageAgentDispatch(globalThis.chrome, tabId, {
+      kind: 'scroll', scrollIntoView: true, fenceOnly: true,
+      ...(captureState.operationId ? { operationId: captureState.operationId } : {}),
+    });
+    if (guard?.operationId) captureState.operationId = guard.operationId;
+    if (guard?.runToken) captureState.runToken = guard.runToken;
+    const result = await this.evaluateFunction(tabId, `function (pageGuard, x, y) {
+      ${SELECTOR_SCROLL_DISPATCH_SOURCE}
+      if (!beforeSelectorScroll(document.documentElement, pageGuard)) return { scrolled: false, pageFeedbackPending: true };
+      window.scrollTo(x, y);
+      return { scrolled: true };
+    }`, [guard || null, x, y]);
+    const value = result?.result?.value;
+    throwIfPageFeedbackPending(value);
+    if (value?.scrolled !== true) throw new Error('Could not scroll the page for full-page capture');
+  }
+
+  async _finishFullPageCaptureScroll(tabId, captureState) {
+    if (!captureState.runToken || !captureState.operationId || !hasPageAgentDispatchOwner(tabId)) return;
+    try {
+      await globalThis.chrome?.tabs?.sendMessage(tabId, { target: 'content', action: 'page_monitor_finish',
+        params: { runToken: captureState.runToken, operationId: captureState.operationId } }, { frameId: 0 });
+    } catch { /* The page may have navigated or the run may have ended. */ }
+  }
+
   async captureFullPageScreenshot(tabId, options = {}) {
     await this.sendCommand(tabId, 'Page.enable');
     const metrics = await this.sendCommand(tabId, 'Page.getLayoutMetrics');
@@ -2206,6 +2647,7 @@ export class CDPClient {
     let contentGrowths = 0;
     let captureBoundsFrozen = false;
     let infiniteScrollWarningAdded = false;
+    const captureState = {};
     const addInfiniteScrollWarning = () => {
       if (infiniteScrollWarningAdded) return;
       infiniteScrollWarningAdded = true;
@@ -2252,7 +2694,7 @@ export class CDPClient {
       ) {
         const bottomY = contentY + Math.max(0, contentHeight - tileHeight);
         const targetY = Math.min(contentY + discoveryOffsetY, bottomY);
-        await this.evaluate(tabId, `window.scrollTo(${contentX}, ${targetY})`);
+        await this._scrollForFullPageCapture(tabId, contentX, targetY, captureState);
         await new Promise(resolve => setTimeout(resolve, FULL_PAGE_SCROLL_SETTLE_MS));
         const grew = updateContentBounds(await this.sendCommand(tabId, 'Page.getLayoutMetrics'));
         const updatedBottomY = contentY + Math.max(0, contentHeight - tileHeight);
@@ -2278,7 +2720,7 @@ export class CDPClient {
           }
           const clipX = contentX + x;
           const clipY = contentY + y;
-          await this.evaluate(tabId, `window.scrollTo(${clipX}, ${clipY})`);
+          await this._scrollForFullPageCapture(tabId, clipX, clipY, captureState);
           await new Promise(resolve => setTimeout(resolve, FULL_PAGE_SCROLL_SETTLE_MS));
           // The page can still grow during the capture pass. Expand the loop
           // bounds before sizing this tile so a newly moved footer is included,
@@ -2335,7 +2777,12 @@ export class CDPClient {
         },
       };
     } finally {
-      await this.evaluate(tabId, `window.scrollTo(${originalScrollX}, ${originalScrollY})`).catch(() => {});
+      try {
+        if (!captureState.runToken || hasPageAgentDispatchOwner(tabId)) {
+          await this._scrollForFullPageCapture(tabId, originalScrollX, originalScrollY, captureState);
+        }
+      } catch { /* Preserve the user's new position if the page changed during capture. */ }
+      await this._finishFullPageCaptureScroll(tabId, captureState);
     }
   }
 
@@ -2393,7 +2840,42 @@ export class CDPClient {
   /**
    * Set file input files (for upload).
    */
-  async setFileInputFiles(tabId, objectId, filePaths) {
+  async setFileInputFiles(tabId, objectId, filePaths, options = {}) {
+    const checkAbort = () => { if (options.abortSignal?.aborted) throw options.abortSignal.reason || new Error('File attachment stopped.'); };
+    checkAbort();
+    const input = await this.callFunctionOn(tabId, `function() { return { fileInput: this instanceof HTMLInputElement && this.type === 'file', accept: this.getAttribute('accept') || '' }; }`, objectId);
+    const metadata = input?.result?.value;
+    if (!metadata?.fileInput) return { success: false, dispatched: false, noDispatch: true, error: 'Target is not a current file input.' };
+    const preparedFiles = [];
+    for (const filePath of filePaths) {
+      if (!metadata.accept.trim() || metadata.accept.trim() === '*' || metadata.accept.trim() === '*/*') continue;
+      const bytes = await this.probeLocalFile(tabId, filePath, { includeData: true, maxBytes: 8192, readPrefixBytes: 8192 });
+      const typeCheck = bytes?.readable === true ? validateUploadFile(metadata.accept, bytes) : { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, reasonCode: 'file_type_unverified', error: 'The actual saved file bytes could not be read before attachment.' };
+      checkAbort();
+      if (!typeCheck.success) {
+        if (typeCheck.actualMime === 'text/html' && options.sourceUrl) {
+          const viewer = await this.probeLocalFile(tabId, filePath, { includeData: true, maxBytes: 262144, readPrefixBytes: 262144 });
+          checkAbort();
+          const sameSavedFile = viewer?.readable === true && viewer.filename === bytes.filename && viewer.size === bytes.size && viewer.lastModified === bytes.lastModified && String(viewer.base64 || '').startsWith(String(bytes.base64 || '').slice(0, Math.floor(8192 / 3) * 4));
+          const sourceResolution = sameSavedFile ? observedFileViewerResource(viewer.base64, options.sourceUrl) : null;
+          if (sourceResolution) return { ...typeCheck, sourceResolution };
+        }
+        return typeCheck;
+      }
+      preparedFiles.push({ filePath, bytes });
+    }
+    checkAbort();
+    for (const { filePath, bytes } of preparedFiles) {
+      const currentBytes = await this.probeLocalFile(tabId, filePath, { includeData: true, maxBytes: 8192, readPrefixBytes: 8192 });
+      checkAbort();
+      if (currentBytes?.readable !== true || currentBytes.filename !== bytes.filename || currentBytes.size !== bytes.size || currentBytes.lastModified !== bytes.lastModified || currentBytes.base64 !== bytes.base64) return { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, reasonCode: 'file_identity_changed', error: 'The saved file changed after its content was inspected. Re-read the intended file before attaching it.' };
+    }
+    const current = await this.callFunctionOn(tabId, `function() { return { connected: this.isConnected, fileInput: this instanceof HTMLInputElement && this.type === 'file', disabled: this.disabled, accept: this.getAttribute('accept') || '' }; }`, objectId);
+    if (!current?.result?.value?.connected || !current.result.value.fileInput || current.result.value.disabled || current.result.value.accept !== metadata.accept) return { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, error: 'The file input or accepted types changed before attachment. Re-observe the intended input.' };
+    const target = hasPageAgentDispatchOwner(tabId) ? await this._pageAgentObjectTarget(tabId, objectId) : {};
+    await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'input', eventTypes: ['input', 'change'], ...target });
+    checkAbort();
+    options.beforeDispatch?.();
     await this.sendCommand(tabId, 'DOM.setFileInputFiles', {
       objectId,
       files: filePaths,
@@ -2419,9 +2901,21 @@ export class CDPClient {
     throwIfAborted();
     await this.sendCommand(tabId, 'Runtime.enable');
     throwIfAborted();
+    const input = await this.callFunctionOn(tabId, `function() { return { connected: this.isConnected, fileInput: this instanceof HTMLInputElement && this.type === 'file', accept: this.getAttribute('accept') || '' }; }`, objectId);
+    throwIfAborted();
+    const accept = input?.result?.value?.accept;
+    if (!input?.result?.value?.connected || !input.result.value.fileInput) return { success: false, dispatched: false, noDispatch: true, error: 'Target is not a current file input.' };
+    const checked = validateUploadFile(accept, { base64, filename, mimeType });
+    if (!checked.success) return checked;
+    const target = hasPageAgentDispatchOwner(tabId) ? await this._pageAgentObjectTarget(tabId, objectId) : {};
+    const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, {
+      kind: 'input', eventTypes: ['input', 'change'], fenceOnly: true, prepareMonitor: true, ...target,
+    });
+    throwIfAborted();
     if (typeof options?.beforeDispatch === 'function') options.beforeDispatch();
     const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
-      functionDeclaration: `function (base64, filename, mimeType, actionDeadlineAt) {
+      functionDeclaration: `function (base64, filename, mimeType, actionDeadlineAt, expectedAccept, pageGuard) {
+        ${PAGE_AGENT_DOM_ACTION_SOURCE}
         const deadlineExpired = () => Number(actionDeadlineAt) > 0 && Date.now() >= Number(actionDeadlineAt);
         if (deadlineExpired()) {
           return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
@@ -2429,6 +2923,10 @@ export class CDPClient {
         if (!(this instanceof HTMLInputElement) || this.type !== 'file') {
           return { success: false, dispatched: false, error: 'Target is not an <input type=file>.' };
         }
+        if (!this.isConnected || (this.getAttribute('accept') || '') !== expectedAccept) return { success: false, dispatched: false, noDispatch: true, error: 'The file input or accepted types changed before attachment.' };
+        ${FILE_UPLOAD_POLICY_SOURCE}
+        const typeCheck = validateUploadFile(this.getAttribute('accept'), { base64, filename, mimeType });
+        if (!typeCheck.success) return typeCheck;
         let dispatched = false;
         try {
           const binary = atob(base64);
@@ -2440,12 +2938,24 @@ export class CDPClient {
           if (deadlineExpired()) {
             return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
           }
+          if (!beforePageAgentDomAction(pageGuard, 'input', this)) {
+            return { success: false, dispatched: false, noDispatch: true, pageFeedbackPending: true,
+              error: 'The page changed before the in-memory upload could dispatch.' };
+          }
+          if (deadlineExpired()) {
+            return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+          }
           this.files = transfer.files;
           dispatched = true;
           this.dispatchEvent(new Event('input', { bubbles: true }));
+          if (deadlineExpired()) {
+            return { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
+              deadlineExpired: true, error: 'Upload action deadline expired during input dispatch' };
+          }
           this.dispatchEvent(new Event('change', { bubbles: true }));
           return { success: true, dispatched: true, name: file.name, size: file.size, type: file.type };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, dispatched, error: error?.message || String(error) };
         }
       }`,
@@ -2455,6 +2965,8 @@ export class CDPClient {
         { value: String(filename || 'attachment') },
         { value: String(mimeType || 'application/octet-stream') },
         { value: deadlineAt },
+        { value: accept },
+        { value: pageGuard || null },
       ],
       returnByValue: true,
     });
@@ -2784,6 +3296,7 @@ export class CDPClient {
             await f.slice(0, 1).arrayBuffer();
             readable = true;
           } catch (e) {
+            if (e?.code === 'page_feedback_pending') throw e;
             readable = false;
           }
           out.push({ name: f.name, size: f.size, type: f.type, readable });
@@ -2808,9 +3321,12 @@ export class CDPClient {
    * If DOM.setFileInputFiles dispatches input/change, the event path is the
    * detached element only; delegated page handlers on document, forms, or drop
    * zones cannot treat the probe as a real user upload. Returns
-   * {exists, readable, size}, or null if the probe could not run.
+   * {exists, readable, size}, or null if the probe could not run. includeData
+   * retains the complete-payload attachment cap unless readPrefixBytes is
+   * explicitly supplied; that bounded mode reports total size and the exact
+   * byte-window length/truncation without loading the rest of the file.
    */
-  async probeLocalFile(tabId, filePath) {
+  async probeLocalFile(tabId, filePath, options = {}) {
     let objectId = null;
     try {
       await this.sendCommand(tabId, 'DOM.enable');
@@ -2830,8 +3346,13 @@ export class CDPClient {
           contextId = isolated?.executionContextId || null;
         }
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         contextId = null;
       }
+
+      // A protected conversation's file bytes must come from a detached
+      // native input in an isolated realm. Do not fall back to page globals.
+      if (options.includeData === true && !contextId) return null;
 
       const created = await this.sendCommand(tabId, 'Runtime.evaluate', {
         expression: `(() => {
@@ -2846,24 +3367,45 @@ export class CDPClient {
       if (!objectId) return null;
       await this.sendCommand(tabId, 'DOM.setFileInputFiles', { objectId, files: [filePath] });
       const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
-        functionDeclaration: `async function () {
+        functionDeclaration: `async function (includeData, maxBytes, prefixBytes) {
           const f = this.files && this.files[0];
           if (!f) return { exists: false, readable: null, size: 0 };
           let readable = null;
-          try { await f.slice(0, 1).arrayBuffer(); readable = true; }
+          try { await (f.size === 0 ? f : f.slice(0, 1)).arrayBuffer(); readable = true; }
           catch (e) { readable = false; }
-          return { exists: true, readable, size: f.size };
+          if (!includeData || !readable) return { exists: true, readable, size: f.size };
+          if (!prefixBytes && f.size > maxBytes) return { exists: true, readable: false, size: f.size,
+            error: 'Recipient-bound attachment exceeds the 25MB limit.' };
+          try {
+            const bytes = new Uint8Array(await (prefixBytes ? f.slice(0, prefixBytes) : f).arrayBuffer());
+            if (bytes.length > maxBytes) return { exists: true, readable: false, size: bytes.length,
+              error: 'Recipient-bound attachment exceeds the 25MB limit.' };
+            let binary = '';
+            for (let i = 0; i < bytes.length; i += 0x8000) {
+              binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            }
+            return { exists: true, readable: true, size: prefixBytes ? f.size : bytes.length,
+              base64: btoa(binary), filename: f.name, mimeType: f.type, lastModified: f.lastModified,
+              ...(prefixBytes ? { dataBytesRead: bytes.length, dataTruncated: bytes.length < f.size } : {}) };
+          } catch { return { exists: true, readable: false, size: f.size }; }
         }`,
         objectId,
+        arguments: [
+          { value: options.includeData === true },
+          { value: Math.min(25 * 1024 * 1024, Math.max(0, Number(options.maxBytes) || 25 * 1024 * 1024)) },
+          { value: Math.min(25 * 1024 * 1024, Math.max(0, Number(options.maxBytes) || 25 * 1024 * 1024),
+            Math.max(0, Math.floor(Number(options.readPrefixBytes) || 0))) },
+        ],
         returnByValue: true,
         awaitPromise: true,
       });
       return res?.result?.value ?? null;
     } catch (e) {
+      if (e?.code === 'page_feedback_pending') throw e;
       return null;
     } finally {
       if (objectId) {
-        try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch (e) {}
+        this.releaseObject(tabId, objectId);
       }
     }
   }
@@ -2920,6 +3462,7 @@ export class CDPClient {
    * Handle file download via CDP.
    */
   async downloadFile(tabId, url, filename) {
+    filename = await filenameInConfiguredDownloadDirectory(chrome, filename);
     return new Promise(async (resolve, reject) => {
       const downloadId = await new Promise((res) => {
         chrome.downloads.download({ url, filename, saveAs: true }, (id) => {
@@ -3100,6 +3643,7 @@ export class CDPClient {
           try {
             if (!el.matches(selector)) return false;
           } catch (e) {
+            if (e?.code === 'page_feedback_pending') throw e;
             return false;
           }
           if (!iconHref) return true;
@@ -3114,6 +3658,7 @@ export class CDPClient {
             try {
               return el.matches(selector);
             } catch (e) {
+              if (e?.code === 'page_feedback_pending') throw e;
               return false;
             }
           });
@@ -3124,6 +3669,7 @@ export class CDPClient {
             try {
               return el.matches(selector);
             } catch (e) {
+              if (e?.code === 'page_feedback_pending') throw e;
               return false;
             }
           });
@@ -3135,6 +3681,7 @@ export class CDPClient {
             try {
               if (!matchesSiteRule(el, rule)) continue;
             } catch (e) {
+              if (e?.code === 'page_feedback_pending') throw e;
               continue;
             }
             const explicit = String(el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\\s+/g, ' ').trim();
@@ -3832,7 +4379,7 @@ export class CDPClient {
     } finally {
       if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
       if (releaseObject && objectId) {
-        try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        this.releaseObject(tabId, objectId);
       }
     }
   }
@@ -3844,12 +4391,19 @@ export class CDPClient {
     await this.sendCommand(tabId, 'Runtime.enable');
     deadline.throwIfExpired();
 
+    const scrollGuard = scrollRequested ? await beforePageAgentDispatch(globalThis.chrome, tabId, {
+      kind: 'scroll', selector, scrollIntoView: true, fenceOnly: true,
+    }) : null;
+    deadline.throwIfExpired();
+
     const selectorJSON = JSON.stringify(selector);
     const requireUnique = options?.requireUnique === true;
 
     // ---- Strategy 1: JS walker (open shadow roots) ----
     const jsExpr = `
       (() => {
+        ${SELECTOR_SCROLL_DISPATCH_SOURCE}
+        const pageGuard = ${JSON.stringify(scrollGuard || null)};
         const sel = ${selectorJSON};
         const requireUnique = ${requireUnique};
         const scrollRequested = ${scrollRequested};
@@ -3865,6 +4419,7 @@ export class CDPClient {
               matches.push(...hits);
             }
           } catch (e) {
+            if (e?.code === 'page_feedback_pending') throw e;
             return { __error: 'Invalid selector: ' + e.message };
           }
           const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -3900,6 +4455,7 @@ export class CDPClient {
         if (deadlineExpired()) return { found: false, deadlineExpired: true };
         if (scrollRequested && found.tagName !== 'SELECT') {
           if (deadlineExpired()) return { found: false, deadlineExpired: true };
+          if (!beforeSelectorScroll(found, pageGuard)) return { found: false, pageFeedbackPending: true };
           try { found.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
         }
         const r = found.getBoundingClientRect();
@@ -3933,6 +4489,7 @@ export class CDPClient {
     const jsRes = await this.evaluate(tabId, jsExpr);
     deadline.throwIfExpired();
     const jsInfo = jsRes?.result?.value;
+    throwIfPageFeedbackPending(jsInfo);
     if (jsInfo?.deadlineExpired) deadline.throwIfExpired(true);
     if (jsInfo?.error) return jsInfo;
     if (jsInfo?.found) {
@@ -4054,7 +4611,7 @@ export class CDPClient {
       // deadline when a frozen renderer resumes, so deadline-bound callers use
       // a guarded Runtime function on the exact closed-shadow node instead.
       if (scrollRequested) {
-        if (deadline.deadlineAt > 0) {
+        if (deadline.deadlineAt > 0 || hasPageAgentDispatchOwner(tabId)) {
           let scrollObjectId = null;
           try {
             deadline.throwIfExpired();
@@ -4062,12 +4619,19 @@ export class CDPClient {
             deadline.throwIfExpired();
             scrollObjectId = resolved?.object?.objectId || null;
             if (scrollObjectId) {
+              const target = hasPageAgentDispatchOwner(tabId) ? await this._pageAgentObjectTarget(tabId, scrollObjectId) : {};
+              const guard = await beforePageAgentDispatch(globalThis.chrome, tabId, {
+                kind: 'scroll', scrollIntoView: true, fenceOnly: true, ...target,
+              });
+              deadline.throwIfExpired();
               const scrolled = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
                 objectId: scrollObjectId,
                 returnByValue: true,
-                functionDeclaration: `function (actionDeadlineAt) {
+                functionDeclaration: `function (actionDeadlineAt, pageGuard) {
+                  ${SELECTOR_SCROLL_DISPATCH_SOURCE}
                   const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
                   if (deadlineExpired()) return { scrolled: false, deadlineExpired: true };
+                  if (!beforeSelectorScroll(this, pageGuard)) return { scrolled: false, pageFeedbackPending: true };
                   try {
                     this.scrollIntoView({ block: 'center', inline: 'center' });
                   } catch {
@@ -4075,14 +4639,15 @@ export class CDPClient {
                   }
                   return { scrolled: true };
                 }`,
-                arguments: [{ value: deadline.deadlineAt }],
+                arguments: [{ value: deadline.deadlineAt }, { value: guard || null }],
               });
               deadline.throwIfExpired();
+              throwIfPageFeedbackPending(scrolled?.result?.value);
               if (scrolled?.result?.value?.deadlineExpired) deadline.throwIfExpired(true);
             }
           } finally {
             if (scrollObjectId) {
-              try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId: scrollObjectId }); } catch {}
+              this.releaseObject(tabId, scrollObjectId);
             }
           }
         } else {
@@ -4091,6 +4656,7 @@ export class CDPClient {
             await this.sendCommand(tabId, 'DOM.scrollIntoViewIfNeeded', { nodeId: foundNodeId });
             deadline.throwIfExpired();
           } catch (error) {
+            if (error?.code === 'page_feedback_pending') throw error;
             deadline.throwIfExpired();
             // Not all targets support this command.
           }
@@ -4126,6 +4692,7 @@ export class CDPClient {
         viaCDP: true,
       };
     } catch (e) {
+      if (e?.code === 'page_feedback_pending') throw e;
       if (
         e === options?.deadlineError
         || e === options?.abortSignal?.reason
@@ -4253,6 +4820,17 @@ export class CDPClient {
           deadlineExpired: true,
           error: error || 'Click action deadline expired before click dispatch',
         };
+    const pageFeedbackClickResult = (priorDispatchAttempted, focusDispatched = false) => {
+      if (!priorDispatchAttempted && !focusDispatched) return pageFeedbackPendingResult();
+      return {
+        success: false,
+        dispatched: true,
+        outcomeUnknown: true,
+        retryable: false,
+        pageFeedbackPending: true,
+        error: 'The page changed during click preparation. A prior click or focus may have taken effect; inspect the page before retrying.',
+      };
+    };
     if (info.inViewport && info.hitOk) {
       try {
         await this.armFileInputClickGuard(tabId);
@@ -4281,6 +4859,7 @@ export class CDPClient {
         try {
           throwIfAborted();
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           await cancelPressedPointer();
           throw error;
         }
@@ -4307,6 +4886,7 @@ export class CDPClient {
           rect,
         };
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) throwIfAborted();
         // fall through to fallback
       }
@@ -4341,20 +4921,41 @@ export class CDPClient {
           const priorDispatchAttempted = dispatchAttempted;
           const validation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
           if (validation.success !== true) return validation;
+          const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'click', selector, x: info.x, y: info.y });
           dispatchAttempted = true;
           const clicked = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
             objectId,
-            functionDeclaration: `function(actionDeadlineAt) {
-              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+            functionDeclaration: `function(actionDeadlineAt, pageGuard) {
+              ${PAGE_AGENT_DOM_ACTION_SOURCE}
+              let dispatched = false;
+              const deadlineFailure = () => ({ success: false, dispatched, noDispatch: !dispatched,
+                outcomeUnknown: dispatched, retryable: !dispatched, deadlineExpired: true,
+                error: 'Click action deadline expired' });
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
+              if (!this || !this.isConnected) return false;
+              if (!beforePageAgentDomAction(pageGuard, 'focus'))
+                return { pageFeedbackPending: true, noDispatch: true, dispatched: false };
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
+              dispatched = true;
               try { this.focus(); } catch {}
-              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
+              if (!this.isConnected || !beforePageAgentDomAction(pageGuard, 'click'))
+                return { pageFeedbackPending: true, noDispatch: false, dispatched: true };
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
               this.click();
               return true;
             }`,
-            arguments: [{ value: deadlineAt }],
+            arguments: [{ value: deadlineAt }, { value: pageGuard || null }],
             returnByValue: true,
             awaitPromise: false,
           });
+          if (clicked?.result?.value?.pageFeedbackPending === true) {
+            await this.consumeFileInputClickGuard(tabId);
+            return pageFeedbackClickResult(priorDispatchAttempted, clicked.result.value.dispatched === true);
+          }
+          if (clicked?.result?.value?.deadlineExpired === true) {
+            return pageDeadlineResult(priorDispatchAttempted || clicked.result.value.dispatched === true, clicked.result.value.error);
+          }
           if (clicked?.result?.value === false) {
             return pageDeadlineResult(priorDispatchAttempted, 'Click action deadline expired before click dispatch');
           }
@@ -4380,31 +4981,32 @@ export class CDPClient {
           };
         }
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) throwIfAborted();
         // fall through
       } finally {
         if (objectId) {
-          try { void this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }).catch(() => {}); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
 
     // Step 3: JS fallback for open shadow roots.
-    const selectorJSON = JSON.stringify(selector);
     throwIfAborted();
     await this.armFileInputClickGuard(tabId);
     throwIfAborted();
     const fallbackValidation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
     if (fallbackValidation.success !== true) return fallbackValidation;
     const priorDispatchAttempted = dispatchAttempted;
+    const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'click', selector, x: info.x, y: info.y });
     dispatchAttempted = true;
-    const fb = await this.evaluate(tabId, `
-      (() => {
-        const actionDeadlineAt = ${deadlineAt};
+    const fb = await this.evaluateFunction(tabId, `function (sel, actionDeadlineAt, pageGuard) {
+        ${PAGE_AGENT_DOM_ACTION_SOURCE}
         const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
-        const deadlineFailure = () => ({ success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'Click action deadline expired' });
+        let dispatched = false;
+        const deadlineFailure = () => ({ success: false, dispatched, noDispatch: !dispatched,
+          outcomeUnknown: dispatched, retryable: !dispatched, deadlineExpired: true, error: 'Click action deadline expired' });
         if (deadlineExpired()) return deadlineFailure();
-        const sel = ${selectorJSON};
         const queryDeep = (root) => {
           try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
           const w = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
@@ -4422,12 +5024,22 @@ export class CDPClient {
             ? type === 'submit' || (!type && !!(el.form || el.closest?.('form')))
             : false;
         if (deadlineExpired()) return deadlineFailure();
+        if (!beforePageAgentDomAction(pageGuard, 'focus'))
+          return { success: false, pageFeedbackPending: true, noDispatch: true, dispatched: false };
+        if (deadlineExpired()) return deadlineFailure();
+        dispatched = true;
         try { el.focus(); } catch (e) {}
+        if (deadlineExpired()) return deadlineFailure();
+        if (!el.isConnected)
+          return { success: false, dispatched: true, outcomeUnknown: true, retryable: false, error: 'Click target changed during focus.' };
+        if (!beforePageAgentDomAction(pageGuard, 'click'))
+          return { success: false, pageFeedbackPending: true, noDispatch: false, dispatched: true };
         if (deadlineExpired()) return deadlineFailure();
         el.click();
         const r = el.getBoundingClientRect();
         return {
           success: true,
+          dispatched: true,
           method: 'js-click',
           tag,
           type,
@@ -4435,9 +5047,13 @@ export class CDPClient {
           text: (el.innerText || '').slice(0, 80),
           rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
         };
-      })()
-    `);
+      }`, [selector, deadlineAt, pageGuard || null], { timeoutMs: deadlineAt > 0 ? Math.max(1, Math.min(15000, deadlineAt - Date.now())) : 15000 });
     const fallbackResult = fb?.result?.value || { success: false, error: 'Click failed' };
+    if (fallbackResult.pageFeedbackPending === true) {
+      await this.consumeFileInputClickGuard(tabId);
+      return pageFeedbackClickResult(priorDispatchAttempted, fallbackResult.dispatched === true);
+    }
+    if (fallbackResult.outcomeUnknown === true && fallbackResult.dispatched === true) return fallbackResult;
     if (fallbackResult.deadlineExpired === true && fallbackResult.dispatched !== true) {
       return pageDeadlineResult(priorDispatchAttempted, fallbackResult.error);
     }
@@ -4461,8 +5077,12 @@ export class CDPClient {
       if (!el || el.nodeType !== 1 || !el.isConnected) return null;
       const tag = String(el.tagName || '').toUpperCase();
       if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
-      const semantic = (${readProseMirrorText.toString()})(el);
-      const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const draftJs = (${isDraftJsEditor.toString()})(el);
+      const semantic = draftJs ? (${readDraftJsText.toString()})(el)
+        : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
+      if (draftJs && semantic === null) return null;
+      const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
       return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
     }`;
     if (Number.isInteger(nodeId) && nodeId > 0) {
@@ -4482,7 +5102,7 @@ export class CDPClient {
         return null;
       } finally {
         if (objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -4512,8 +5132,12 @@ export class CDPClient {
         if (!el || !el.isConnected) return null;
         const tag = String(el.tagName || '').toUpperCase();
         if (!(el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag))) return null;
-        const semantic = (${readProseMirrorText.toString()})(el);
-        const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const draftJs = (${isDraftJsEditor.toString()})(el);
+        const semantic = draftJs ? (${readDraftJsText.toString()})(el)
+        : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
+        if (draftJs && semantic === null) return null;
+        const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
         return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
       })()
     `).catch(() => null);
@@ -4531,6 +5155,52 @@ export class CDPClient {
     }
     // CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
     return /mac/i.test(platform) ? 4 : 2;
+  }
+
+  async captureTextClearReceipt(tabId, { selector = '', nodeId = null, focused = false } = {}) {
+    let targetObjectId = null, receiptObjectId = null;
+    try {
+      if (Number.isInteger(nodeId) && nodeId > 0) {
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
+        targetObjectId = resolved?.object?.objectId;
+        if (targetObjectId) receiptObjectId = (await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId: targetObjectId, returnByValue: false,
+          functionDeclaration: `function () { return (${nativeTextClearReceipt.toString()})(this); }`,
+        }))?.result?.objectId;
+      } else {
+        receiptObjectId = (await this.sendCommand(tabId, 'Runtime.evaluate', {
+          returnByValue: false,
+          expression: `(() => {
+            const find = root => {
+              const matches = root.querySelectorAll(${JSON.stringify(selector || ':not(*)')});
+              if (matches.length > 1) return null;
+              if (matches.length === 1) return matches[0];
+              for (const node of root.querySelectorAll('*')) if (node.shadowRoot) { const found = find(node.shadowRoot); if (found) return found; }
+              return null;
+            };
+            let active = document.activeElement; while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            return (${nativeTextClearReceipt.toString()})(${focused === true} ? active : find(document));
+          })()`,
+        }))?.result?.objectId;
+      }
+      if (!receiptObjectId) return null;
+      const invoke = async name => {
+        try {
+          const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', { objectId: receiptObjectId,
+            returnByValue: true, functionDeclaration: 'function (name) { return this[name](); }', arguments: [{ value: name }] });
+          return result?.result?.value === true;
+        } catch { return false; }
+      };
+      return {
+        current: () => invoke('current'), verify: () => invoke('verify'),
+        dispose: async () => { await invoke('dispose'); await this.releaseObject(tabId, receiptObjectId); },
+      };
+    } catch {
+      if (receiptObjectId) await this.releaseObject(tabId, receiptObjectId);
+      return null;
+    } finally {
+      if (targetObjectId) await this.releaseObject(tabId, targetObjectId);
+    }
   }
 
   /**
@@ -4556,9 +5226,13 @@ export class CDPClient {
       const tag = String(el.tagName || '').toUpperCase();
       const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
       if (!typeable) return { found: true, verified: false };
-      const semantic = (${readProseMirrorText.toString()})(el);
+      const draftJs = (${isDraftJsEditor.toString()})(el);
+      const semantic = draftJs ? (${readDraftJsText.toString()})(el)
+        : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
+      if (draftJs && semantic === null) return { found: true, verified: false };
       if (semantic !== null) expected = expected.replace(/\\r\\n?/g, '\\n');
-      const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
       const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
       const exactInsertion = () => {
         if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
@@ -4575,7 +5249,8 @@ export class CDPClient {
       return {
         found: true,
         verified: shouldClear
-          ? value === expected
+          ? value === expected && !(expected === '' && semantic === null && el.isContentEditable
+            && (el.innerText !== '' || el.querySelector('br')))
           : !!beforeSignature && exactInsertion(),
       };
     }`;
@@ -4602,7 +5277,7 @@ export class CDPClient {
         return null;
       } finally {
         if (objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -4638,9 +5313,13 @@ export class CDPClient {
         const tag = String(el.tagName || '').toUpperCase();
         const typeable = el.isContentEditable || ['INPUT', 'TEXTAREA'].includes(tag);
         if (!typeable) return { found: true, verified: false };
-        const semantic = (${readProseMirrorText.toString()})(el);
+        const draftJs = (${isDraftJsEditor.toString()})(el);
+        const semantic = draftJs ? (${readDraftJsText.toString()})(el)
+        : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
+        if (draftJs && semantic === null) return { found: true, verified: false };
         if (semantic !== null) expected = expected.replace(/\\r\\n?/g, '\\n');
-        const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
         const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
         const exactInsertion = () => {
           if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
@@ -4657,7 +5336,8 @@ export class CDPClient {
         return {
           found: true,
           verified: shouldClear
-            ? value === expected
+            ? value === expected && !(expected === '' && semantic === null && el.isContentEditable
+              && (el.innerText !== '' || el.querySelector('br')))
             : !!beforeSignature && exactInsertion(),
         };
       })()
@@ -4782,6 +5462,7 @@ export class CDPClient {
           ...(commands.length ? { commands } : {}),
         });
       } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
         if (actionExpired()) {
           // A delayed debugger response can mean keyDown reached the page even
           // though the action deadline already expired. Release defensively so
@@ -4801,6 +5482,7 @@ export class CDPClient {
           ...keyParams,
         });
       } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
         if (actionExpired()) {
           await releaseKey();
           throwIfAborted();
@@ -4890,7 +5572,7 @@ export class CDPClient {
         });
         if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
         if (releaseObject && objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -5063,7 +5745,7 @@ export class CDPClient {
           }
         } finally {
           if (objectId) {
-            try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+            this.releaseObject(tabId, objectId);
           }
         }
       } else {
@@ -5137,6 +5819,7 @@ export class CDPClient {
         throwIfAborted();
         focused = true;
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) {
           if (pointerPressed) await cancelPressedPointer();
           throwIfAborted();
@@ -5169,12 +5852,13 @@ export class CDPClient {
           focused = focusResult?.result?.value === true;
         }
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         if (e?.code === 'content_action_timeout' || actionExpired()) throw e;
         // try next
       }
       finally {
         if (focusObjectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId: focusObjectId }); } catch {}
+          this.releaseObject(tabId, focusObjectId);
         }
       }
     }
@@ -5206,101 +5890,108 @@ export class CDPClient {
       focused = focusResult?.result?.value === true;
     }
 
-    // Clear existing content if requested. Use Select All + Delete via key events
-    // so the page observes proper input events.
-    if (clear) {
-      try {
-        // Select all
-        const selectAllModifiers = await this.selectAllModifier(tabId);
+    const clearReceipt = clear ? await this.captureTextClearReceipt(tabId, { selector, nodeId: info.nodeId }) : null;
+    try {
+      // Clear existing content if requested. Use Select All + Delete via key events
+      // so the page observes proper input events.
+      if (clear) {
+        try {
+          // Select all
+          const selectAllModifiers = await this.selectAllModifier(tabId);
+          throwIfAborted();
+          dispatched = true;
+          await dispatchKeyPress({
+            key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
+          });
+          // Delete selection
+          await dispatchKeyPress({
+            key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+          });
+        } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
+          if (actionExpired()) throwIfAborted();
+          return {
+            success: false,
+            dispatched,
+            ...(dispatched ? {} : { noDispatch: true }),
+            verified: false,
+            mutationMayHaveOccurred: dispatched,
+            error: `Could not safely clear the text field: ${e?.message || String(e)}`,
+          };
+        }
+        const cleared = await this.verifyTextEntry(tabId, {
+          selector,
+          nodeId: info.nodeId,
+          text: '',
+          clear: true,
+        });
         throwIfAborted();
-        dispatched = true;
-        await dispatchKeyPress({
-          key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
-        });
-        // Delete selection
-        await dispatchKeyPress({
-          key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-        });
-      } catch (e) {
-        if (actionExpired()) throwIfAborted();
-        return {
-          success: false,
-          dispatched,
-          ...(dispatched ? {} : { noDispatch: true }),
-          verified: false,
-          mutationMayHaveOccurred: dispatched,
-          error: `Could not safely clear the text field: ${e?.message || String(e)}`,
-        };
+        if ((clearReceipt && await clearReceipt.current() !== true)
+            || (cleared !== true && (String(text ?? '') === '' || await clearReceipt?.verify() !== true))) {
+          return {
+            success: false,
+            dispatched: true,
+            verified: false,
+            mutationMayHaveOccurred: true,
+            error: 'The existing field value could not be proven empty, so no replacement text was inserted.',
+          };
+        }
       }
-      const cleared = await this.verifyTextEntry(tabId, {
-        selector,
-        nodeId: info.nodeId,
-        text: '',
-        clear: true,
-      });
-      throwIfAborted();
-      if (cleared !== true) {
+
+      // Type via Input.insertText — atomic, fires beforeinput/input correctly.
+      try {
+        dispatched = true;
+        markDispatch();
+        await this.sendCommand(tabId, 'Input.insertText', { text });
+        throwIfAborted();
+      } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
+        if (actionExpired()) throwIfAborted();
         return {
           success: false,
           dispatched: true,
           verified: false,
           mutationMayHaveOccurred: true,
-          error: 'The existing field value could not be proven empty, so no replacement text was inserted.',
+          error: `Text insertion outcome became uncertain: ${e?.message || String(e)}`,
         };
       }
-    }
 
-    // Type via Input.insertText — atomic, fires beforeinput/input correctly.
-    try {
-      dispatched = true;
-      markDispatch();
-      await this.sendCommand(tabId, 'Input.insertText', { text });
-      throwIfAborted();
-    } catch (e) {
-      if (actionExpired()) throwIfAborted();
+      const verified = await this.verifyTextEntry(tabId, {
+        selector,
+        nodeId: info.nodeId,
+        text,
+        clear,
+        beforeSignature,
+      });
+      if (verified !== true) {
+        return {
+          success: false,
+          dispatched: true,
+          verified: false,
+          mutationMayHaveOccurred: true,
+          error: 'Text was inserted, but the complete settled field value could not be verified exactly.',
+        };
+      }
       return {
-        success: false,
-        dispatched: true,
-        verified: false,
-        mutationMayHaveOccurred: true,
-        error: `Text insertion outcome became uncertain: ${e?.message || String(e)}`,
+        success: true,
+        verified: true,
+        method: 'cdp-insert-text',
+        tag: info.tag,
+        rect: {
+          x: Math.round(info.x - (info.width || 1) / 2),
+          y: Math.round(info.y - (info.height || 1) / 2),
+          w: Math.round(info.width || 1),
+          h: Math.round(info.height || 1),
+        },
       };
-    }
-
-    const verified = await this.verifyTextEntry(tabId, {
-      selector,
-      nodeId: info.nodeId,
-      text,
-      clear,
-      beforeSignature,
-    });
-    if (verified !== true) {
-      return {
-        success: false,
-        dispatched: true,
-        verified: false,
-        mutationMayHaveOccurred: true,
-        error: 'Text was inserted, but the complete settled field value could not be verified exactly.',
-      };
-    }
-    return {
-      success: true,
-      verified: true,
-      method: 'cdp-insert-text',
-      tag: info.tag,
-      rect: {
-        x: Math.round(info.x - (info.width || 1) / 2),
-        y: Math.round(info.y - (info.height || 1) / 2),
-        w: Math.round(info.width || 1),
-        h: Math.round(info.height || 1),
-      },
-    };
+    } finally { await clearReceipt?.dispose(); }
   }
 
   /**
    * Scroll page.
    */
   async scrollPage(tabId, direction, amount = 500) {
+    await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'scroll' });
     const scrollCode = {
       down: `window.scrollBy(0, ${amount})`,
       up: `window.scrollBy(0, -${amount})`,

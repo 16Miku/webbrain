@@ -1,15 +1,24 @@
-import { verifyBrowserCompletion } from './completion-runtime.js';
+import '../content/file-upload-policy.js';
+const { validateUploadFile, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__wbFileUploadPolicy;
+import { captureCalculationCompletion, captureCalculationEvidence, completionReportingContext, refreshCalculationEvidence, verifyBrowserCompletion } from './completion-runtime.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
-import { completionStopError } from './completion-verifier.js';
+import { completionStopError, completionTextSignalsSuccess, withCompletionTimeout } from './completion-verifier.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
+import { completionFrameSnapshot } from './completion-frame.js';
+import { captureSemanticNavigationDocument, semanticCommitNavigationRequest, recordSemanticCommitNavigation, semanticCommitIsCurrent, canRecordSemanticCommitDispatch } from './semantic-commit-navigation.js';
+import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from './page-feedback.js';
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
+import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
+import { calculateExpression, calculationResultInText } from './calculator.js';
+import { isLiteralCalculationTask, literalCalculationSummaryFormatMatches } from './page-feedback-policy.js';
+import { chatRecoveryDisplayText, terminalRecoveryFinalText } from './chat-recovery-text.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
 import { retryModelCall } from '../providers/model-retry.js';
@@ -19,11 +28,13 @@ import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
 import { STANDARD_TOOL_RESULT_CHARS, createReadCompletenessState, isCommunicationThreadContext, normalizeReadScope, readCompletenessBlock, readCompletenessLimitation, readCompletenessMadeProgress, readWindowLimits, recordReadCompleteness, requirePlannerReadCompleteness, requiresCompleteThreadRead } from './read-completeness.js';
 import { LoopDetector } from './loop-detector.js';
+import { recordCollectionReadProgress } from './collection-read-progress.js';
 import { parseToolCallsFromText } from './tool-call-parser.js';
 import { IMAGE_BUDGET, estimateImageTokens, fitImageDimensions } from './image-budget.js';
 import { BROWSER_MUTATION_TOOLS, STATE_CHANGE_TOOLS as SHARED_STATE_CHANGE_TOOLS } from './mutation-tools.js';
 import { guardRecentSubmitClick } from './submit-click-guard.js';
 import { secureRandomBase36Token } from './random-token.js';
+import { projectTableSnapshot, structuredTableAnswerBlock } from './structured-table-export.js';
 import { RESEARCH_ESCALATION_ENGINE, RESEARCH_ESCALATION_SYSTEM_NOTE, RESEARCH_ESCALATION_URL, isAllowedResearchEscalationUrl, normalizeResearchEscalationEngine, normalizeResearchRequest, probeChatGptPage, submitChatGptPrompt } from './research-escalation.js';
 import {
   DISPATCH_BINDING_TOOLS,
@@ -55,8 +66,8 @@ import {
   workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
-import { answerNamesAllObservedRecipients, answerNamesIdentity, messageTargetMatchesObservedIdentities, normalizeMessageTarget, normalizeRecipientAnswer, normalizeRecipientIdentity, resolveClarifiedRecipients } from './message-recipient-guard.js';
-import { advanceChatSession, createChatSession, decideChatSend, markChatSendPending, normalizeChatSession, normalizeChatSnapshot, serializeChatSession } from './chat-workflow.js';
+import { answerNamesAllObservedRecipients, answerNamesIdentity, messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientAnswer, normalizeRecipientIdentity, resolveClarifiedRecipients } from './message-recipient-guard.js';
+import { advanceChatSession, chatRunEndedNotice, createOwnedNativeChatReadRepair, createChatSession, decideChatSend, markChatSendPending, normalizeChatSession, normalizeChatSnapshot, normalizeNativeOpaqueBaseline, serializeChatSession } from './chat-workflow.js';
 import {
   fetchUrl,
   executeHttpSkillTool,
@@ -105,6 +116,10 @@ import {
 import { Capability, CAPABILITY_LABEL, SubmitRisk, capabilitiesFor, classifySearchNavigation, classifySubmitRisk, requiredHosts, frameHostMatches, isNetworkMutation, normalizeHost, registrableHost, PermissionManager, submitActionKey, UNTRUSTED_CONTENT_TOOLS } from './permission-gate.js';
 import {
   buildPlannerMessages,
+  buildPlannerAlignmentMessages,
+  buildPlannerAlignmentRepairMessages,
+  parsePlannerAlignmentFromContent,
+  PLANNER_ALIGNMENT_RESPONSE_JSON_SCHEMA,
   buildPlannerIntentMessages,
   buildReadScopeMessages,
   PLANNER_RESPONSE_JSON_SCHEMA,
@@ -414,6 +429,7 @@ const normalizeAttachmentNegationArticles = value => String(value || '').replace
 
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
+const RUN_STARTUP_TIMEOUT_MS = 15_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
 const ASK_MODE_HANDOFF_TIMEOUT_MS = 5_000;
 const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
@@ -750,6 +766,24 @@ function plannerRequestFailureKind(detail) {
 /**
  * The WebBrain Agent — orchestrates multi-step LLM + tool-use loops.
  */
+function unavailableHtmlFormVerification(scope, matchingFrameCount = 1) {
+  return {
+    code: 'html_form_verification_unavailable',
+    recoverable: true,
+    inspectedScope: { kind: scope, matchingFrameCount, formCount: 0 },
+    recovery: {
+      kind: 'observe_page_state',
+      tools: ['get_accessibility_tree', 'read_page', 'inspect_viewport'],
+      instruction: (scope === 'iframe'
+        ? 'urlFilter inspects child frames only; omit urlFilter when verifying an HTML form in the main document. '
+        : 'This read found no HTML form in the requested main-document scope. ')
+        + 'A missing HTML form does not prove the task is blocked or Save/Publish is unavailable. Re-read the main page accessibility tree or viewport, compare the requested field/file/image with the observed staged state, and locate the intended Save/Publish control. Use the normal guarded action only when the user requested submission, then verify the persisted result. This read does not verify any field, attachment, iframe edit, or submission and does not authorize an action.',
+    },
+  };
+}
+
+const OWNED_NATIVE_CHAT_READ_REPAIR = Symbol('owned-native-chat-read-repair');
+
 export class Agent extends LoopDetector {
   constructor(providerManager) {
     super();
@@ -767,6 +801,7 @@ export class Agent extends LoopDetector {
     this.progressPageScopes = new Map(); // tabId -> normalized page identity for scoped progress task keys
     this.progressSessions = new Map(); // tabId -> active language-neutral progress intent/session
     this.progressExpectedItems = new Map(); // tabId -> planner-declared count/field contract
+    this._ownedNativeChatReadRepairs = new Map();
     this.chatSessions = new Map(); // tabId -> in-memory support-chat workflow state
     this._progressSessionCounter = 0;
     this.conversationIds = new Map(); // tabId -> stable conversationId (regenerated on clearConversation)
@@ -915,6 +950,7 @@ export class Agent extends LoopDetector {
     // useful result before exhausting the run.
     this.deliveryObservationStreaks = new Map();
     this.deliveryActionableDiscoveryResets = new Set();
+    this.deliveryCollectionReads = new Map(); // tabId -> task-bound finite source coverage
     // Local screenshot redaction (issue #312). When true, screenshots sent
     // to a Vision endpoint are pixelated over DOM-detected PII regions
     // (form fields + email/phone text) BEFORE leaving the extension. Off by
@@ -939,8 +975,8 @@ export class Agent extends LoopDetector {
     this.bulkApiMutationHints = new Map();
     this.failedBulkApiReplayShapes = new Map(); // "tabId|runId" -> Set("METHOD|requestShape")
     this.mastodonStates = new Map(); // tabId -> latest trusted Mastodon page/handoff observation
-    // Cache for `_isPdfTab` HEAD probes — see Chrome agent.js for
-    // design notes. Same (tabId,url) → isPdf shape.
+    // Main-frame MIME already observed by the browser; inaccessible native
+    // PDF viewers can use this URL/document-bound proof without re-fetching.
     this._isPdfTabCache = new Map();
     this._doneBlockCount = new Map();
     this._completionSubmitStates = new Map(); // tabId -> trusted submit transition metadata
@@ -1035,6 +1071,7 @@ export class Agent extends LoopDetector {
     if (!state) return;
     if (runToken && state.runToken !== runToken) return;
     this.completionInvariants.delete(tabId);
+    this._nativeChatPreparedDrafts?.delete(tabId);
   }
 
   async _beginReadCompleteness(tabId, userMessage, runOptions = {}) {
@@ -1059,9 +1096,78 @@ export class Agent extends LoopDetector {
     this.readCompletenessStates.delete(tabId);
   }
 
+
+  _exactTableOwner(tabId, signal = this._runAbortSignal(tabId)) {
+    const runToken = this.readCompletenessStates.get(tabId)?.runToken;
+    if (!runToken || !this._activeTaskBinding(this.conversations.get(tabId) || []).text) return null;
+    const ownership = this._scheduleCreationContext(tabId, signal);
+    return { runToken, current: () => this.readCompletenessStates.get(tabId)?.runToken === runToken
+      && !ownership.check() };
+  }
+
+  _acceptExactTableSnapshot(tabId, args, snapshot, owner, verificationRecord = null) {
+    if (!owner?.current()) return { success: false, error: 'The table read belongs to a superseded or stopped task. Read again in the current task.' };
+    const projected = projectTableSnapshot(snapshot, args, this.strictSecretMode);
+    if (!projected.success) return projected;
+    const state = this.readCompletenessStates.get(tabId);
+    state.tablePageObserved = true;
+    if (verificationRecord) {
+      if (state.exactTableExports?.get(verificationRecord.dataRef) !== verificationRecord
+          || !verificationRecord.owner.current()
+          || verificationRecord.runToken !== owner.runToken
+          || snapshot.documentToken !== verificationRecord.documentToken
+          || snapshot.pageUrl !== verificationRecord.pageUrl
+          || snapshot.tableIndex !== verificationRecord.tableIndex
+          || snapshot.caption !== verificationRecord.caption
+          || projected.summary !== verificationRecord.summary) {
+        state.exactTableExports?.delete(verificationRecord.dataRef);
+        return { success: false, error: 'The source table or its document changed. Extract a fresh exact snapshot before completing.' };
+      }
+      return { success: true, verifiedExactTable: true };
+    }
+    const dataRef = `table_${secureRandomBase36Token(24)}`;
+    const record = Object.freeze({ dataRef, runToken: owner.runToken, owner,
+      args: structuredClone(args), payload: projected.payload, summary: projected.summary,
+      documentToken: snapshot.documentToken, pageUrl: snapshot.pageUrl,
+      tableIndex: snapshot.tableIndex, caption: snapshot.caption });
+    state.exactTableExports ||= new Map();
+    while (state.exactTableExports.size >= 8) state.exactTableExports.delete(state.exactTableExports.keys().next().value);
+    state.exactTableExports.set(dataRef, record);
+    const preview = projected.payload.rows.slice(0, 2);
+    return { success: true, complete: true, rowCount: projected.payload.rowCount, data_ref: dataRef,
+      columnCount: args.columns.length, ...(JSON.stringify(preview).length <= 2000 ? { preview } : {}),
+      instruction: 'The complete JSON is retained by the app. Call done with data_ref and a short summary to deliver every literal row without rewriting, sampling, or truncating values.' };
+  }
+
+  async _resolveExactTableDone(tabId, args, onUpdate = null) {
+    if (typeof args?.data_ref !== 'string' || !args.data_ref) {
+      const error = structuredTableAnswerBlock(this.readCompletenessStates.get(tabId), args?.summary);
+      return error ? { success: false, blockedDone: true, exactTableUnverified: true, error } : null;
+    }
+    const state = this.readCompletenessStates.get(tabId);
+    const record = state?.exactTableExports?.get(args.data_ref);
+    const owner = this._exactTableOwner(tabId);
+    if (!record || !record.owner.current() || !owner?.current() || record.runToken !== owner.runToken) {
+      return { success: false, blockedDone: true, exactTableUnverified: true,
+        error: 'Unknown, expired, or superseded table data_ref. Extract the table in this current task first.' };
+    }
+    onUpdate?.('tool_call', { name: 'extract_data', args: record.args, verification: true });
+    const verified = await this.executeTool(tabId, 'extract_data', record.args, onUpdate,
+      { _exactTableVerificationRecord: record });
+    onUpdate?.('tool_result', { name: 'extract_data', result: verified, verification: true });
+    if (!owner.current() || verified?.verifiedExactTable !== true) {
+      return { success: false, blockedDone: true, exactTableUnverified: true,
+        error: verified?.error || 'Table freshness could not be verified in the owning task. Extract again.' };
+    }
+    args.summary = record.summary;
+    return null;
+  }
+
   _recordReadCompleteness(tabId, toolName, args, result) {
     const state = this.readCompletenessStates.get(tabId);
     if (!state) return null;
+    if (!result?.error && (['get_accessibility_tree', 'read_page'].includes(toolName) && result?.tableCount > 0
+        || toolName === 'extract_data' && args?.type === 'tables' && Array.isArray(result) && result.length > 0)) state.tablePageObserved = true;
     const next = recordReadCompleteness(state, toolName, args, result);
     this.readCompletenessStates.set(tabId, next);
     if (next?.complete === true) {
@@ -1405,18 +1511,17 @@ export class Agent extends LoopDetector {
     );
   }
 
-  _completionTextSignalsSuccess(value, { allowBare = false } = {}) {
-    const text = String(value || '').slice(0, 4000);
-    if (!text) return false;
-    const positive = /\b(?:success(?:ful|fully)?|saved|submitted|created|sent|published|completed|updated|added|approved|resolved|received|confirmed|thank you)\b/i;
-    const barePositive = /\b(?:complete|done)\b/i;
-    const negative = /\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|couldn't|did not|didn't|was not|wasn't|were not|weren't|invalid|denied|rejected|unsuccessful)\b/i;
-    return (positive.test(text) || (allowBare && barePositive.test(text))) && !negative.test(text);
+  _completionTextSignalsSuccess(value, options = {}) {
+    return completionTextSignalsSuccess(value, options);
   }
 
-  _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null } = {}) {
+  _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null, messageRecipientContext = null } = {}) {
     const state = this.completionInvariants.get(tabId);
     if (!state) return null;
+    const terminalGuard = this._planExecutionGuards.get(tabId);
+    const verifiedResumedDone = name === 'done' && result?.done === true && result.outcome === 'success'
+      && !!result.verification && !result.verification.completionWarning
+      && this._nativeChatResumedExecutionEvidence(terminalGuard);
     const social = this._planExecutionGuards.get(tabId)?.socialPublication;
     if (name === 'navigate' && result?.navigationFailed === true && result?.success === false
         && result?.outcomeUnknown !== true && social?.contract?.status === 'ready') {
@@ -1438,8 +1543,36 @@ export class Agent extends LoopDetector {
     if (workflowReleaseAssetObservation && result && typeof result === 'object') {
       result.workflowReleaseAssetObservation = workflowReleaseAssetObservation;
     }
-    const next = recordCompletionToolResult(state, name, completionArgs, result);
+    const structuredChatBinding = name === 'chat_send' ? messageRecipientContext?.chatCompletionBindingSink?.binding : null;
+    const nativeBaseline = messageRecipientContext?.messageRecipientNativeChatBaseline;
+    const chatDeliveryBinding = messageRecipientContext?.messageRecipientGuardRequired === true
+      && !!messageRecipientContext?.messageRecipientDispatchBinding?.token
+      && nativeBaseline?.complete === true
+      && this._workflowMessageBody(messageRecipientContext.messageRecipientBody)
+      ? { ...nativeBaseline, body: this._workflowMessageBody(messageRecipientContext.messageRecipientBody),
+          replyAnchor: messageRecipientContext.genericChatPending?.replyAnchor || '',
+          ...(messageRecipientContext.genericChatPending?.nativeOpaqueBaseline
+            ? { nativeOpaqueBaseline: messageRecipientContext.genericChatPending.nativeOpaqueBaseline } : {}) }
+      : (structuredChatBinding && structuredChatBinding.threadKey === String(args.thread_key || args.threadKey || '')
+        && structuredChatBinding.body === this._workflowMessageBody(args.text) ? structuredChatBinding : null);
+    const nativeChatReadRepair = name === 'click_ax' && result?.success === true && !result.outcomeUnknown
+      && result.noDispatch !== true && ((result._nativeWhatsappReadRepair === true
+        && !!messageRecipientContext?.nativeWhatsappReadRepairOwner
+        && messageRecipientContext.nativeWhatsappReadRepairOwner === this._nativeChatOwnerScope(tabId))
+        || (result._nativeTelegramReadRepair === true
+          && this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext)));
+    const next = recordCompletionToolResult(state, name, completionArgs, result, { chatDeliveryBinding, nativeChatReadRepair });
     this.completionInvariants.set(tabId, next);
+    this._rememberPageFeedbackCalculation(tabId, name, args, result, next);
+    if (verifiedResumedDone && this._planExecutionGuards.get(tabId) === terminalGuard
+        && next.sequence === state.sequence + 1 && !next.hadAction && !next.lastAction && !next.verificationDebt) {
+      // Recording the verified terminal result is bookkeeping, not a new page
+      // observation. Every subsequent tool still invalidates this exact sequence.
+      terminalGuard.nativeChatDeliveryEvidence = { ...terminalGuard.nativeChatDeliveryEvidence,
+        observationSequence: next.sequence };
+    }
+    this._rememberNativeChatCompletionReceipt(tabId, name, result, state, next, messageRecipientContext);
+    this._rememberNativeChatExecutionEvidence(tabId, name, args, result, next, messageRecipientContext);
     const socialUploadEvidence = this._rememberSocialPublishUploadEvidence(
       tabId,
       name,
@@ -1498,12 +1631,49 @@ export class Agent extends LoopDetector {
     this._rememberWorkflowEmptyCollectionSignal(tabId, name, result);
     this._refreshWorkflowWindowEvidence(tabId, name, result);
     this._invalidateWorkflowFormInventoryAfterStructuralAction(tabId, name, result, args, detectedSubmit);
-    const submitState = this._completionSubmitStates.get(tabId);
+    let submitState = this._completionSubmitStates.get(tabId);
+    if (submitState?.semanticCommit && Number(next.lastAction?.sequence) > Number(state.lastAction?.sequence || 0)) {
+      submitState = recordSemanticCommitNavigation(submitState, state, next,
+        messageRecipientContext?.semanticCommitNavigation, this._completionSemanticContext(tabId));
+      this._completionSubmitStates.set(tabId, submitState);
+      // A new action always needs a fresh independent verdict, including a
+      // read navigation that preserves the original commit's provenance.
+      if (terminalGuard?.semanticSubmissionVerified) {
+        terminalGuard.verifiedSubmissionEvidence = false;
+        terminalGuard.semanticSubmissionVerified = false;
+      }
+    }
+    if (submitState?.mastodonPublication && Number(next.lastAction?.sequence) > submitState.actionSequence
+        && Number(next.lastAction?.sequence) > Number(state.lastAction?.sequence || 0)
+        && !Agent.NAV_TOOLS.has(name)
+        && !(['click', 'click_ax'].includes(name) && detectedSubmit?.resolvedNavigationTarget === true)
+        && !(name === 'press_keys' && /^(?:esc|escape)$/i.test(String(args?.key || args?.keys || '').trim()))) {
+      submitState = { ...submitState, mastodonPublication: null };
+      this._completionSubmitStates.set(tabId, submitState);
+    }
+    if (submitState?.mastodonPublication && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId)) {
+      const navigation = mastodonPublicationNavigation(submitState.mastodonPublication, name, args, result, {
+        taskKey: this._progressTaskKeyHash(tabId), runToken: next.runToken,
+        sourceSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)), actionSequence: next.lastAction?.sequence,
+      });
+      if (navigation) {
+        submitState = { ...submitState, mastodonPublication: { ...submitState.mastodonPublication, verificationNavigation: navigation } };
+        this._completionSubmitStates.set(tabId, submitState);
+      }
+    }
     if (
       submitState
       && COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(name)
       && Number(next.lastObservation?.sequence || 0) > Number(submitState.actionSequence || 0)
     ) {
+      const iframeBinding = this._completionIframeBinding(tabId);
+      const observedFrame = name === 'iframe_read' && result?.success === true && iframeBinding
+        ? result.frames?.find(frame => frame?.frameId === iframeBinding.frameId && frame.ok === true)
+        : null;
+      if (observedFrame?.documentIdentity && observedFrame.documentIdentity.startsWith(`${observedFrame.url}|`)) {
+        submitState = { ...submitState, iframeSubmission: { ...iframeBinding,
+          currentUrl: observedFrame.url, currentDocument: observedFrame.documentIdentity, observedAfterSubmit: true } };
+      }
       const observedAxScope = this._lastAxScopes.get(tabId);
       const observedUrl = COMPLETION_DOCUMENT_URL_TOOLS.has(name)
         ? [
@@ -1516,6 +1686,13 @@ export class Agent extends LoopDetector {
           ].find(value => typeof value === 'string' && value.trim()) || ''
         : '';
       const observedDocument = String(observedAxScope?.documentToken || '');
+      if (name === 'get_accessibility_tree' && observedDocument && submitState.mastodonPublication?.verificationNavigation
+          && observedUrl === submitState.mastodonPublication.verificationNavigation.url
+          && Number(next.lastObservation?.sequence) > submitState.mastodonPublication.verificationNavigation.actionSequence) {
+        submitState = { ...submitState, mastodonPublication: { ...submitState.mastodonPublication, verificationNavigation: {
+          ...submitState.mastodonPublication.verificationNavigation, documentToken: observedDocument,
+        } } };
+      }
       const completionSignalObserved = [
         result?.pageTitle,
         result?.title,
@@ -1607,6 +1784,10 @@ export class Agent extends LoopDetector {
         || !!detectedSubmit?.isSubmit
         || this._formValidationActionLooksSubmit(name, args, result, detectedSubmit);
     if (!isSubmit) return null;
+    // A native confirmation commit has no HTML form transition. It can only
+    // be certified by the independent, current completion verdict below.
+    const semanticCommit = detectedSubmit?.semanticCommit === true;
+    if (semanticCommit && !canRecordSemanticCommitDispatch(result)) return null;
     const before = this._normalizeUrl(beforeUrl || '');
     const after = this._normalizeUrl(afterUrl || beforeUrl || '');
     const explicitlyNotDispatched = result?.dispatched === false || result?.noDispatch === true;
@@ -1644,13 +1825,38 @@ export class Agent extends LoopDetector {
       const publishedResourceIdentity = this._workflowPublishedResourceIdentity(workflowBinding, afterUrl);
       if (publishedResourceIdentity) workflowBinding.publishedResourceIdentity = publishedResourceIdentity;
     }
+    const publication = detectedSubmit?.mastodonPublication;
+    const publicationGuard = this._planExecutionGuards.get(tabId);
+    const currentPublication = publication && publicationGuard?.taskKey === publication.taskKey
+      && this._progressTaskKeyHash(tabId) === publication.taskKey
+      && this.completionInvariants.get(tabId)?.runToken === publication.runToken
+      && this._sha256TextSync(this._progressTaskAnchorText(tabId)) === publication.sourceSha256
+      && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId) ? publication : null;
     const state = {
       originatingUrl: beforeUrl || '',
       currentUrl: afterUrl || beforeUrl || '',
       originatingDocument: beforeDocument || null,
       currentDocument: afterDocument || beforeDocument || null,
+      iframeSubmission: name === 'iframe_click' && !explicitlyNotDispatched && dispatchMayHaveOccurred
+        && Number.isInteger(detectedSubmit?.frameId) && detectedSubmit.frameId > 0
+        && detectedSubmit.frameId === result?.frameId && detectedSubmit.frameDocumentIdentity
+        ? { frameId: detectedSubmit.frameId, currentUrl: detectedSubmit.frameUrl || detectedSubmit.url,
+            currentDocument: detectedSubmit.frameDocumentIdentity,
+            baselineMessages: detectedSubmit.frameStatusMessages || [], observedAfterSubmit: false,
+            taskKey: this._progressTaskKeyHash(tabId), runToken: this.completionInvariants.get(tabId)?.runToken }
+        : null,
+      // The exact dispatched HTML form is safe to reread on this document.
+      // A frame's form cannot scope completion evidence for the parent page.
+      formRef: /^ref_\d+$/.test(String(detectedSubmit?.formRef || ''))
+        && this._normalizeUrl(detectedSubmit?.url || '') === before
+        ? detectedSubmit.formRef : '',
       actionSequence: Number(this.completionInvariants.get(tabId)?.lastAction?.sequence || 0),
       submitLike: true,
+      semanticCommit: semanticCommit ? {
+        taskKey: this._progressTaskKeyHash(tabId), runToken: this.completionInvariants.get(tabId)?.runToken,
+        sourceSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)),
+        documentToken: beforeDocument,
+      } : null,
       dispatched: !explicitlyNotDispatched && dispatchMayHaveOccurred,
       documentChanged: !!(
         result?.pageUrlChanged
@@ -1662,6 +1868,8 @@ export class Agent extends LoopDetector {
       formValidationFailed: !!result?.formValidationFailed,
       completionSignalObserved: false,
       observedAfterSubmit: false,
+      mastodonPublication: !explicitlyNotDispatched && dispatchMayHaveOccurred && !result?.formValidationFailed
+        ? currentPublication : null,
       workflowBinding,
     };
     const social = this._planExecutionGuards.get(tabId)?.socialPublication;
@@ -1672,6 +1880,149 @@ export class Agent extends LoopDetector {
     }
     this._completionSubmitStates.set(tabId, state);
     return state;
+  }
+
+  _completionSemanticContext(tabId, pageUrl = this._lastAxScopes.get(tabId)?.pageUrl || '') {
+    const run = this.completionInvariants.get(tabId), scope = this._lastAxScopes.get(tabId);
+    return { taskKey: this._progressTaskKeyHash(tabId), runToken: run?.runToken,
+      sourceSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)),
+      lastActionSequence: run?.lastAction?.sequence, lastObservationSequence: run?.lastObservation?.sequence || 0,
+      verificationDebt: run?.verificationDebt, documentToken: scope?.documentToken, pageUrl,
+      cancelled: this._checkAbort(tabId) || this._hasPendingSteering(tabId) };
+  }
+
+  async _captureCompletionSemanticNavigation(tabId, name, args, result, executionContext) {
+    const submit = this._completionSubmitStates.get(tabId), run = this.completionInvariants.get(tabId);
+    if (name !== 'navigate' || !submit?.semanticCommit) return null;
+    const request = semanticCommitNavigationRequest(submit, name, args, result, this._completionSemanticContext(tabId));
+    if (!request) return null;
+    try {
+      // The action adapter starts this native probe at onCommitted, before
+      // document_idle installs content.js. Keep the receipt private and pin
+      // both the original commit and a fresh read of that same document.
+      const native = executionContext?._completionNavigationReceipt;
+      if (!native?.committed || !native.scopePromise) return null;
+      const scope = await withCompletionTimeout(async () => {
+        const captured = await native.scopePromise;
+        if (!captured) return null;
+        const current = await captureSemanticNavigationDocument(browser, tabId,
+          native.committed, this._runAbortSignal(tabId));
+        return current?.documentToken === captured.documentToken
+          && current.documentIdentity === captured.documentIdentity ? current : null;
+      }, this._runAbortSignal(tabId), 2000);
+      if (this._completionSubmitStates.get(tabId) !== submit || this.completionInvariants.get(tabId) !== run
+          || !semanticCommitNavigationRequest(submit, name, args, result, this._completionSemanticContext(tabId))
+          || !scope?.documentToken || this._normalizeUrl(scope.pageUrl) !== this._normalizeUrl(request.url)
+          || !scope.documentIdentity?.startsWith(request.url + '|')) return null;
+      return { ...request, documentToken: scope.documentToken, documentIdentity: scope.documentIdentity };
+    } catch { return null; }
+  }
+
+  _completionSemanticCommitCurrent(tabId, submit, pageUrl) {
+    return semanticCommitIsCurrent(submit, this._completionSemanticContext(tabId, pageUrl));
+  }
+
+  _completionIframeBinding(tabId) {
+    const submit = this._completionSubmitStates.get(tabId);
+    const binding = submit?.iframeSubmission;
+    const run = this.completionInvariants.get(tabId);
+    return binding && submit.dispatched && binding.taskKey === this._progressTaskKeyHash(tabId)
+      && binding.runToken === run?.runToken && submit.actionSequence === run.lastAction?.sequence
+      && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId) ? binding : null;
+  }
+
+  async _completionIframeSnapshot(tabId) {
+    const binding = this._completionIframeBinding(tabId);
+    if (!binding?.observedAfterSubmit) return null;
+    try {
+      const snapshot = await this._readCompletionFrame(tabId, binding.frameId);
+      if (this._completionIframeBinding(tabId) !== binding || snapshot?.identity !== binding.currentDocument
+          || snapshot?.url !== binding.currentUrl) return null;
+      return { ...snapshot, frameId: binding.frameId, taskKey: binding.taskKey, runToken: binding.runToken,
+        actionSequence: this._completionSubmitStates.get(tabId).actionSequence,
+        observedAfterSubmit: true, newSuccessSignal: !snapshot.validationFailed && snapshot.messages.some(text =>
+          !binding.baselineMessages.includes(text) && this._completionTextSignalsSuccess(text)) };
+    } catch { return null; }
+  }
+
+  async _readCompletionFrame(tabId, frameId) {
+    const results = await browser.tabs.executeScript(tabId, { frameId, code: `(${completionFrameSnapshot.toString()})()` });
+    return results?.[0] || null;
+  }
+
+  async _captureNativeMastodonPublication(tabId, target = {}) {
+    try {
+      const rows = await globalThis.browser?.tabs?.executeScript(tabId, { frameId: 0,
+        code: `(${captureNativeMastodonPublication.toString()})(${JSON.stringify(target)})` });
+      return rows?.[0] || null;
+    } catch { return null; }
+  }
+
+  async _captureMastodonPublicationAttempt(tabId, name, args, detectedSubmit, provider) {
+    if (!['click', 'click_ax'].includes(name) || detectedSubmit?.isSubmit !== true
+        || getActiveAdapter(detectedSubmit.url || '')?.name !== 'mastodon') return;
+    const guard = this._planExecutionGuards.get(tabId), run = this.completionInvariants.get(tabId);
+    if (!guard?.enabled || guard.siteWorkflow?.job || guard.taskDrifted || !guard.taskKey
+        || guard.requiresSubmission !== true || guard.requiresStateChange !== true
+        || !run?.runToken || !provider?.chat) return;
+    const task = this._progressTaskAnchorText(tabId), sourceSha256 = this._sha256TextSync(task);
+    const providerKey = this._sha256TextSync(JSON.stringify([provider.model, provider.config]));
+    const current = () => this._planExecutionGuards.get(tabId) === guard
+      && this.completionInvariants.get(tabId)?.runToken === run.runToken
+      && guard.taskKey === this._progressTaskKeyHash(tabId) && !guard.taskDrifted
+      && this._sha256TextSync(this._progressTaskAnchorText(tabId)) === sourceSha256
+      && this._activeProvider(tabId) === provider
+      && this._sha256TextSync(JSON.stringify([provider.model, provider.config])) === providerKey
+      && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId);
+    if (!current() || task.length > 120000) return;
+    // This ephemeral cache never stores provider objects or task credentials
+    // in a durable publication receipt. A revised guard gets a fresh compiler.
+    this._mastodonPublicationIntents ??= new WeakMap();
+    let cached = this._mastodonPublicationIntents.get(guard);
+    if (!cached || cached.guard !== guard || cached.provider !== provider || cached.providerKey !== providerKey || cached.sourceSha256 !== sourceSha256) {
+      cached = { guard, provider, providerKey, sourceSha256, intent: null };
+      this._mastodonPublicationIntents.set(guard, cached);
+      try {
+        const response = await withCompletionTimeout(signal => this._chatWithCostAllowance(provider, mastodonPublicationIntentMessages(task), {
+          temperature: 0, maxTokens: Math.min(1024, this._providerMaxOutputTokens(provider)), signal,
+        }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'mastodon_publication_intent' }), this._runAbortSignal(tabId), 10000);
+        if (!current() || this._mastodonPublicationIntents.get(guard) !== cached) return;
+        cached.intent = normalizeMastodonPublicationIntent(Agent._extractFirstJsonObject(response?.content || ''), task, detectedSubmit.url);
+      } catch (error) {
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        return;
+      }
+    }
+    if (!cached.intent || !current()) return;
+    const snapshot = await this._captureNativeMastodonPublication(tabId, args);
+    if (!current() || snapshot?.url !== detectedSubmit.url) return;
+    detectedSubmit.mastodonPublication = mastodonPublicationBinding(cached.intent, snapshot, {
+      taskKey: guard.taskKey, runToken: run.runToken, sourceSha256,
+      bodySha256: this._sha256TextSync(cached.intent.body),
+    });
+  }
+
+  async _freshMastodonPublicationEvidence(tabId, pageUrl) {
+    const guard = this._planExecutionGuards.get(tabId), run = this.completionInvariants.get(tabId);
+    const submit = this._completionSubmitStates.get(tabId), binding = submit?.mastodonPublication;
+    if (!guard?.enabled || guard.siteWorkflow?.job || guard.taskDrifted || !binding || !submit.dispatched
+        || submit.formValidationFailed || !run || getActiveAdapter(pageUrl)?.name !== 'mastodon') return null;
+    const sourceSha256 = this._sha256TextSync(this._progressTaskAnchorText(tabId));
+    const provider = this._activeProvider(tabId), providerKey = this._sha256TextSync(JSON.stringify([provider?.model, provider?.config]));
+    const current = () => this._planExecutionGuards.get(tabId) === guard
+      && this.completionInvariants.get(tabId) === run && this._completionSubmitStates.get(tabId) === submit
+      && guard.taskKey === this._progressTaskKeyHash(tabId) && !guard.taskDrifted
+      && this._sha256TextSync(this._progressTaskAnchorText(tabId)) === sourceSha256
+      && this._activeProvider(tabId) === provider
+      && this._sha256TextSync(JSON.stringify([provider?.model, provider?.config])) === providerKey
+      && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId);
+    if (!current()) return null;
+    const snapshot = await this._captureNativeMastodonPublication(tabId);
+    if (!current()) return null;
+    return mastodonPublicationReceipt(binding, snapshot, { taskKey: guard.taskKey, runToken: run.runToken,
+      sourceSha256, actionSequence: submit.actionSequence, verificationDebt: run.verificationDebt,
+      observedAfterSubmit: submit.observedAfterSubmit && Number(run.lastObservation?.sequence) > submit.actionSequence,
+      pageUrl, currentUrl: submit.currentUrl }, text => this._sha256TextSync(text));
   }
 
   _completionDoneBlock(tabId, name, args, batchStartState = null) {
@@ -1702,6 +2053,105 @@ export class Agent extends LoopDetector {
     return null;
   }
 
+  _chatCompletionReceiptMatchesGoal(tabId, receipt) {
+    const guard = this._planExecutionGuards.get(tabId);
+    return !!(receipt && guard?.enabled && !guard.siteWorkflow?.job && !guard.taskDrifted
+      && guard.requiresSubmission === true && guard.requiresStateChange === true
+      && receipt.taskKey === guard.taskKey && receipt.taskKey === this._progressTaskKeyHash(tabId)
+      && receipt.taskSha256 === this._sha256TextSync(this._progressTaskAnchorText(tabId))
+      && receipt.resumeTaskId === this._resumeTaskId(tabId)
+      && messageTargetMatchesObservedIdentities(normalizeMessageTarget(guard.messaging),
+        [{ identity: receipt.threadKey.slice(4), role: 'to' }]));
+  }
+
+  _rememberNativeChatCompletionReceipt(tabId, name, result, before, after, context = null) {
+    const chat = this.chatSessions.get(tabId);
+    if (!chat) return;
+    // A new dispatched page action must not inherit an older verified send.
+    // Persisting a future wait changes no native conversation evidence.
+    if (name !== 'schedule_resume' && Number(after.lastAction?.sequence) > Number(before.lastAction?.sequence || 0)
+        && chat.completionReceipt) {
+      this.chatSessions.set(tabId, { ...chat, completionReceipt: null });
+      this._persist(tabId);
+    }
+    let observation = name === 'chat_observe' ? result : null;
+    const delivered = context?.chatCompletionBindingSink?.deliveryObservation;
+    if (name === 'chat_send' && result?.success === true && result.deliveryVerified === true && delivered) {
+      observation = { ...delivered, chatDeliveryVerification: { schema: 'webbrain-chat-completion/1',
+        actionSequence: after.lastAction?.sequence, threadKey: delivered.threadKey, messageId: delivered.messageId,
+        ...(delivered.nativeMountedTailVerified === true ? { nativeMountedTailVerified: true } : {}) } };
+    }
+    if (!observation || after.verificationDebt || !after.lastAction?.chatDeliveryBinding) return;
+    const proof = this._nativeChatTerminalEvidence(tabId, observation, observation.url);
+    if (!proof || proof.priorVerifiedGoal) return;
+    const session = this.chatSessions.get(tabId), resumeTaskId = this._resumeTaskId(tabId, { create: true });
+    if (!session || session.threadKey !== proof.threadKey || session.pendingOutbound || session.userInput?.required || !resumeTaskId) return;
+    const receipt = { schema: 'webbrain-chat-delivery-receipt/1', taskKey: proof.taskKey,
+      taskSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)), resumeTaskId,
+      threadKey: proof.threadKey, url: proof.url, bodySha256: proof.bodySha256, messageId: proof.messageId,
+      originRunToken: after.runToken, originActionSequence: after.lastAction.sequence, verifiedAt: proof.observedAt,
+      ...(after.lastAction.chatDeliveryBinding.nativeOpaqueBaseline ? { nativeOpaqueBaseline: {
+        ...after.lastAction.chatDeliveryBinding.nativeOpaqueBaseline,
+        originRunToken: after.runToken, originActionSequence: after.lastAction.sequence,
+      } } : {}) };
+    this.chatSessions.set(tabId, normalizeChatSession({ ...session, completionReceipt: receipt }));
+    this._persist(tabId);
+  }
+
+  async _freshNativeChatTerminalEvidence(tabId, pageUrl) {
+    const state = this.completionInvariants.get(tabId), guard = this._planExecutionGuards.get(tabId);
+    const provider = this._activeProvider(tabId), taskId = this._resumeTaskId(tabId);
+    const raw = await this._readChatObservation(tabId);
+    if (this.completionInvariants.get(tabId) !== state || this._planExecutionGuards.get(tabId) !== guard
+        || this._activeProvider(tabId) !== provider || this._resumeTaskId(tabId) !== taskId
+        || this._checkAbort(tabId) || this._hasUnvalidatedSteering(tabId)) return null;
+    if (raw?.success !== true) return null;
+    // Completion may inspect current native evidence, but it must never consume
+    // a new question before the model has received its explicit observation.
+    const advanced = advanceChatSession(this.chatSessions.get(tabId) || createChatSession(), raw);
+    if (advanced.newMessages.some(message => message.direction === 'incoming')) return null;
+    const observation = this._chatCompletionObservationResult(tabId, raw, advanced);
+    return this._nativeChatTerminalEvidence(tabId, observation, pageUrl);
+  }
+
+  _nativeChatTerminalEvidence(tabId, observation, pageUrl) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const state = this.completionInvariants.get(tabId);
+    const binding = state?.lastAction?.chatDeliveryBinding;
+    if (!guard?.enabled || guard.siteWorkflow?.job || guard.requiresSubmission !== true
+        || guard.requiresStateChange !== true || !guard.taskKey || guard.taskDrifted
+        || guard.taskKey !== this._progressTaskKeyHash(tabId) || !state?.runToken
+        || state.verificationDebt || !observation?.url
+        || String(pageUrl || '') !== observation.url
+        || this._checkAbort(tabId) || this._hasUnvalidatedSteering(tabId)) return null;
+    if (!binding) {
+      const receipt = normalizeChatSession(this.chatSessions.get(tabId)).completionReceipt;
+      const proof = observation.chatGoalDeliveryVerification;
+      if (state.hadAction || state.lastAction || state.iframeFormVerificationDebt
+          || !this._chatCompletionReceiptMatchesGoal(tabId, receipt)
+          || observation.success !== true || observation.error || observation.outcomeUnknown
+          || observation.composer?.available !== true || observation.composer.empty !== true
+          || observation.chatWorkflow?.pendingOutbound !== false || observation.chatWorkflow.userInput?.required
+          || observation.threadKey !== receipt.threadKey || observation.chatWorkflow.threadKey !== receipt.threadKey
+          || receipt.url !== observation.url || proof?.schema !== 'webbrain-chat-goal-completion/1'
+          || proof.messageId !== receipt.messageId || proof.bodySha256 !== receipt.bodySha256
+          || proof.threadKey !== receipt.threadKey) return null;
+      return { schema: 'webbrain-native-chat-terminal/1', taskKey: receipt.taskKey, runToken: state.runToken,
+        threadKey: receipt.threadKey, bodySha256: receipt.bodySha256, messageId: receipt.messageId,
+        actionSequence: 0, observationSequence: state.sequence, observedAt: observation.observedAt, url: observation.url,
+        priorVerifiedGoal: true, resumeTaskId: receipt.resumeTaskId, originRunToken: receipt.originRunToken,
+        originActionSequence: receipt.originActionSequence };
+    }
+    if (!messageTargetMatchesObservedIdentities(normalizeMessageTarget(guard.messaging),
+      [{ identity: binding.threadKey.slice(4), role: 'to' }])) return null;
+    const checked = recordCompletionToolResult(state, 'chat_observe', {}, observation);
+    if (checked.verificationDebt || checked.lastObservation?.sequence !== state.sequence + 1) return null;
+    return { schema: 'webbrain-native-chat-terminal/1', taskKey: guard.taskKey, runToken: state.runToken,
+      threadKey: binding.threadKey, bodySha256: this._sha256TextSync(binding.body),
+      messageId: observation.chatDeliveryVerification.messageId, actionSequence: state.lastAction.sequence,
+      observedAt: observation.observedAt, url: observation.url };
+  }
+
   _completionSubmissionEvidence(tabId, pageState, pageUrl = '') {
     if (!pageState) return { verifiedFinalSubmit: false, liveSignals: [], relevantForms: 0 };
     const relevantForms = Number(pageState.relevantFormCount || 0);
@@ -1709,6 +2159,43 @@ export class Agent extends LoopDetector {
       ? pageState.successMessages.filter(text => this._completionTextSignalsSuccess(text, { allowBare: true }))
       : [];
     const submit = this._completionSubmitStates.get(tabId);
+    const nativeChat = pageState.nativeChatDeliveryEvidence;
+    const guard = this._planExecutionGuards.get(tabId);
+    const completion = this.completionInvariants.get(tabId);
+    const iframe = pageState.iframeSubmissionEvidence;
+    const iframeBinding = this._completionIframeBinding(tabId);
+    const iframeSubmissionVerified = !!(iframe && iframeBinding && iframe.newSuccessSignal === true
+      && iframe.observedAfterSubmit && iframe.frameId === iframeBinding.frameId
+      && iframe.identity === iframeBinding.currentDocument && iframe.url === iframeBinding.currentUrl
+      && iframe.taskKey === iframeBinding.taskKey && iframe.runToken === completion?.runToken
+      && iframe.actionSequence === completion.lastAction?.sequence && !completion.verificationDebt
+      && !completion.iframeFormVerificationDebt && !submit.formValidationFailed
+      && this._normalizeUrl(pageUrl || pageState.url || '') === this._normalizeUrl(submit.currentUrl));
+    const nativeMastodon = pageState.mastodonPublicationEvidence;
+    const nativeMastodonVerified = !!(nativeMastodon && nativeMastodon === guard?.mastodonPublicationEvidence
+      && submit?.mastodonPublication && submit.dispatched && !submit.formValidationFailed
+      && nativeMastodon.taskKey === guard.taskKey && nativeMastodon.taskKey === this._progressTaskKeyHash(tabId)
+      && nativeMastodon.runToken === completion?.runToken && !completion.verificationDebt
+      && nativeMastodon.actionSequence === submit.actionSequence && submit.observedAfterSubmit
+      && nativeMastodon.sourceSha256 === this._sha256TextSync(this._progressTaskAnchorText(tabId))
+      && nativeMastodon.bodySha256 === submit.mastodonPublication.bodySha256
+      && nativeMastodon.account === submit.mastodonPublication.account && nativeMastodon.url === String(pageUrl || ''));
+    const storedChatReceipt = normalizeChatSession(this.chatSessions.get(tabId)).completionReceipt;
+    const resumedChatVerified = !!(nativeChat?.priorVerifiedGoal && !completion?.hadAction && !completion?.lastAction
+      && !completion?.iframeFormVerificationDebt && this._chatCompletionReceiptMatchesGoal(tabId, storedChatReceipt)
+      && nativeChat.actionSequence === 0 && nativeChat.observationSequence === completion.sequence
+      && nativeChat.resumeTaskId === storedChatReceipt.resumeTaskId
+      && nativeChat.originRunToken === storedChatReceipt.originRunToken
+      && nativeChat.originActionSequence === storedChatReceipt.originActionSequence
+      && nativeChat.messageId === storedChatReceipt.messageId && nativeChat.bodySha256 === storedChatReceipt.bodySha256);
+    const currentChatVerified = !!(nativeChat && nativeChat.actionSequence === completion?.lastAction?.sequence
+      && nativeChat.threadKey === completion.lastAction?.chatDeliveryBinding?.threadKey
+      && nativeChat.bodySha256 === this._sha256TextSync(completion.lastAction.chatDeliveryBinding.body));
+    const nativeChatVerified = !!(nativeChat && nativeChat === guard?.nativeChatDeliveryEvidence
+      && nativeChat.taskKey === guard.taskKey && nativeChat.taskKey === this._progressTaskKeyHash(tabId)
+      && nativeChat.runToken === completion?.runToken && !completion.verificationDebt
+      && nativeChat.url === String(pageUrl || '')
+      && (currentChatVerified || resumedChatVerified));
     // The document reported at completion must be the one the last post-submit
     // read saw. Loosening this to same-origin was tried and withdrawn twice:
     // without a payload check there is nothing here that distinguishes the
@@ -1725,6 +2212,8 @@ export class Agent extends LoopDetector {
     const observedSuccessSignal = !!submit?.completionSignalObserved || liveSignals.length > 0;
     const verifiedSubmit = !!(
       submit?.dispatched
+      && !submit.iframeSubmission
+      && !submit.semanticCommit
       && submit.observedAfterSubmit
       && !submit.formValidationFailed
       && currentDocumentMatchesSubmit
@@ -1735,7 +2224,9 @@ export class Agent extends LoopDetector {
       liveSignals,
       relevantForms,
       observedSuccessSignal,
-      verifiedFinalSubmit: verifiedSubmit && (relevantForms === 0 || observedSuccessSignal),
+      verifiedFinalSubmit: nativeChatVerified || nativeMastodonVerified || iframeSubmissionVerified || (verifiedSubmit && (relevantForms === 0 || observedSuccessSignal)),
+      ...(nativeMastodonVerified ? { mastodonPublicationEvidence: nativeMastodon } : {}),
+      ...(nativeChatVerified ? { nativeChatDeliveryEvidence: nativeChat } : {}),
     };
   }
 
@@ -2019,6 +2510,7 @@ export class Agent extends LoopDetector {
   async _workflowPreSubmitDispatchBlock(tabId, name, args = {}, detectedSubmit = null, provider = this._activeProvider(tabId)) {
     const socialBlock = await this._socialPublicationPreSubmitBlock(tabId, name, args, detectedSubmit, provider);
     if (socialBlock) return socialBlock;
+    await this._captureMastodonPublicationAttempt(tabId, name, args, detectedSubmit, provider);
     const guard = this._planExecutionGuards.get(tabId);
     if (guard?.siteWorkflow?.adapterName !== 'github'
         || guard.siteWorkflow?.job?.id !== 'edit-file-and-commit') return null;
@@ -5735,7 +6227,7 @@ export class Agent extends LoopDetector {
     });
   }
 
-  async _claimRunEntry(tabId, defaultKind, runOptions = {}) {
+  async _claimRunEntry(tabId, defaultKind, runOptions = {}, onUpdate = null) {
     if (this._runningTabs.has(tabId)) {
       throw new Error('An agent run is already in progress for this tab.');
     }
@@ -5758,14 +6250,28 @@ export class Agent extends LoopDetector {
     if (externalSignal?.aborted || runOptions?.isDetachedStartCancelled?.()) onAbort();
     else externalSignal?.addEventListener?.('abort', onAbort, { once: true });
     try {
-      await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
+      // The tab is already owned and visible as running. Accept corrections
+      // before any browser/storage callback can delay startup.
+      if (typeof onUpdate === 'function') this._beginSteeringRun(tabId, onUpdate, runOptions);
+      await this._withContentActionDeadline(async signal => {
+        await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
+        this._throwIfAborted(signal);
+        if (!this._isStandaloneChatRun(runOptions)) {
+          await this._beginPageFeedbackRun(tabId, this._runEntryKind(defaultKind, runOptions), signal);
+        }
+        this._throwIfAborted(signal);
+        const feedbackRun = this._pageFeedbackRuns?.get(tabId);
+        if (feedbackRun && typeof onUpdate === 'function') feedbackRun.onUpdate = onUpdate;
+      }, 'Browser startup', RUN_STARTUP_TIMEOUT_MS, controller.signal);
     } catch (error) {
-      this._releaseRunEntry(tabId);
+      try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
       throw error;
     }
   }
 
   _releaseRunEntry(tabId) {
+    this._ownedNativeChatReadRepairs.delete(tabId);
+    this._finishPageFeedbackRun(tabId);
     firefoxBidi.stopRun(tabId);
     this._runAbortStates.get(tabId)?.dispose();
     this._runAbortStates.delete(tabId);
@@ -5782,6 +6288,8 @@ export class Agent extends LoopDetector {
   }
 
   _beginSteeringRun(tabId, onUpdate, runOptions = {}) {
+    const feedbackRun = this._pageFeedbackRuns?.get(tabId);
+    if (feedbackRun) feedbackRun.onUpdate = onUpdate;
     if (runOptions.cloudRun || runOptions.scheduledRun) return;
     this._steeringRuns.set(tabId, {
       requestId: String(runOptions.detachedRequestId || ''),
@@ -5811,6 +6319,9 @@ export class Agent extends LoopDetector {
       // A reviewed plan belongs to the task before this correction. Wake the
       // planner so it can review the new revision without approving stale work.
       this._cancelPendingPlans(tabId, 'superseded by steering');
+      // A queued human correction replaces the question's old task too.
+      // Wake its waiter without inventing an answer or granting permission.
+      this._cancelClarifications(tabId, 'superseded by steering');
       // A cached fast-path action was prepared before this correction.
       const session = this._jevSessions?.get(tabId);
       if (session) { session.disabled = true; session.queue = []; }
@@ -5830,6 +6341,9 @@ export class Agent extends LoopDetector {
   _applyPendingSteering(tabId, messages, onUpdate) {
     const run = this._steeringRuns.get(tabId);
     if (!run?.messages.length || this._checkAbort(tabId)) return false;
+    // Read preparation belongs to the superseded task. Retire only that
+    // private repair, preserving pending sends and their dispatch receipts.
+    this._ownedNativeChatReadRepairs.delete(tabId);
     // Only consume at model/tool boundaries, after all tool results are present.
     // Human corrections stay ordinary user messages; no page context is added.
     for (const item of run.messages.splice(0)) {
@@ -5929,6 +6443,7 @@ export class Agent extends LoopDetector {
       if (!gate.proceed) return { changed: true, gate, enriched };
       this._completionSubmitStates.delete(tabId);
       const guard = this._startPlanExecutionGuard(tabId, mode, gate, revisionOptions);
+      this._resetCompletionForSteeringRevision(tabId);
       guard.steeringPriorSubmission = priorSubmission;
       if (priorSubmission || attemptedPublication) guard.evidenceTaskKey = guard.taskKey;
       guard.socialPublicationSteering = previous?.socialPublicationSteering || null;
@@ -5959,6 +6474,21 @@ export class Agent extends LoopDetector {
       return { changed: true, gate, enriched };
     }
     return { changed: true, gate: { proceed: false, reason: 'cancelled', message: '[Stopped by user]' } };
+  }
+
+  _resetCompletionForSteeringRevision(tabId) {
+    const state = this.completionInvariants.get(tabId);
+    // Completed observations belong to the superseded objective. Keep the
+    // run/sequence identity for teardown and receipts, and keep every unresolved
+    // physical-action or iframe obligation until its result is reconciled.
+    if (state && !state.verificationDebt && !state.iframeFormVerificationDebt && !state.lastAction?.uncertain) {
+      const historyToolCallIdsBeforeRun = new Set((this.conversations.get(tabId) || [])
+        .flatMap(message => [message.tool_call_id, ...(message.tool_calls || []).map(call => call.id)]).filter(Boolean));
+      this.completionInvariants.set(tabId, { ...createCompletionInvariantState(state.runToken),
+        sequence: state.sequence, historyToolCallIdsBeforeRun });
+    }
+    this._completionVerdicts?.delete(tabId);
+    this._doneBlockCount.delete(tabId);
   }
 
   _steeringPriorSubmissionBlock(tabId, name, args, detectedSubmit) {
@@ -6027,12 +6557,93 @@ export class Agent extends LoopDetector {
     return { gate, revalidated };
   }
 
+
+  _clarificationUiAuthority(tabId) {
+    if (!this.isRunning(tabId) || this._checkAbort(tabId) || this._hasPendingSteering(tabId)) return null;
+    const messages = this.conversations.get(tabId) || [];
+    const binding = this._activeTaskBinding(messages);
+    const task = messages[binding.index];
+    const provider = this._activeProvider(tabId);
+    const runId = this.currentRunId.get(tabId);
+    if (!task || !binding.text || !provider || !runId) return null;
+    try {
+      return { task, taskSha: this._sha256TextSync(binding.text), provider,
+        providerSha: this._sha256TextSync(JSON.stringify([provider.model, provider.config])),
+        runId, abortState: this._runAbortStates.get(tabId),
+        generation: this._systemOneGenerations?.get(tabId) || 0,
+        steering: this._steeringRuns.get(tabId) || null,
+        revision: this._steeringRuns.get(tabId)?.revision || 0 };
+    } catch { return null; }
+  }
+
+  _capturePendingClarificationForUi(tabId, requestId, data, event = {}) {
+    const clarifyId = String(data?.clarifyId || '');
+    const entry = this._pendingClarifications.get(tabId)?.get(clarifyId);
+    const authority = this._clarificationUiAuthority(tabId);
+    if (!entry || entry.settled || !authority || !requestId
+        || (authority.steering?.requestId && authority.steering.requestId !== String(requestId))
+        || (event.runId && event.runId !== authority.runId)) return false;
+    // Only display fields cross the public boundary. The live entry retains
+    // resolvers, timers and the private task/provider authority.
+    const record = (source, keys, limit = 600) => Object.fromEntries(keys.flatMap(key => {
+      const value = source?.[key];
+      return ['string', 'number', 'boolean'].includes(typeof value)
+        ? [[key, typeof value === 'string' ? value.slice(0, limit) : value]] : [];
+    }));
+    const display = record(data, ['promptKind', 'clarifyId', 'question', 'reason',
+      'requireExplicitAnswer', 'pendingReconciliation', 'scheduledJobId',
+      'scheduledTabId', 'forceNewScheduledCard'], 6000);
+    display.options = Array.isArray(data.options) ? data.options.slice(0, 5).map(value => String(value).slice(0, 600)) : [];
+    if (data.permission) {
+      display.permission = record(data.permission, ['capability', 'host', 'grouped']);
+      if (Array.isArray(data.permission.groupedCapabilities)) display.permission.groupedCapabilities =
+        data.permission.groupedCapabilities.slice(0, 8).map(value => String(value).slice(0, 40));
+    }
+    if (data.submitConfirmation) {
+      display.submitConfirmation = record(data.submitConfirmation, ['host', 'tool', 'reason', 'summary'], 1200);
+      display.submitConfirmation.changedFields = Array.isArray(data.submitConfirmation.changedFields)
+        ? data.submitConfirmation.changedFields.slice(0, 8).map(value => record(value, ['label', 'value'], 120)) : [];
+    }
+    if (data.researchEscalation) display.researchEscalation = record(data.researchEscalation, ['engine', 'request'], 6000);
+    if (data.workflowHealing) {
+      const target = value => record(value, ['role', 'name', 'label', 'ariaLabel', 'placeholder',
+        'fieldName', 'id', 'href', 'type'], 180);
+      display.workflowHealing = record(data.workflowHealing, ['workflowId', 'workflowName', 'stepId', 'stepNumber', 'tool']);
+      display.workflowHealing.previousTarget = target(data.workflowHealing.previousTarget);
+      display.workflowHealing.candidates = Array.isArray(data.workflowHealing.candidates)
+        ? data.workflowHealing.candidates.slice(0, 5).map(value => ({ id: String(value.id || '').slice(0, 40), target: target(value.target) })) : [];
+    }
+    if (Number.isFinite(Number(data.timeoutSec))) display.timeoutSec = Math.max(0, Number(data.timeoutSec));
+    if (Number(data.deadlineTs) > 0) display.deadlineTs = Number(data.deadlineTs);
+    entry.uiCurrentClarification = { authority, requestId: String(requestId), display, eventSeq: Number(event.seq) || 0 };
+    return true;
+  }
+
+  _pendingCurrentClarificationForUi(tabId) {
+    const current = this._clarificationUiAuthority(tabId);
+    if (!current) return null;
+    for (const [clarifyId, entry] of this._pendingClarifications.get(tabId) || []) {
+      const saved = entry.uiCurrentClarification, previous = saved?.authority;
+      if (entry.settled || !previous || !['task', 'taskSha', 'provider', 'providerSha',
+          'runId', 'abortState', 'generation', 'steering', 'revision'].every(key => previous[key] === current[key])) continue;
+      const data = structuredClone(saved.display);
+      if (entry.timeoutSec > 0 && entry.deadlineTs > 0) {
+        data.timeoutSec = entry.timeoutSec;
+        data.deadlineTs = entry.deadlineTs;
+      }
+      return { tabId, requestId: saved.requestId, runId: current.runId,
+        steeringRevision: current.revision, clarifyId, eventSeq: saved.eventSeq, data };
+    }
+    return null;
+  }
+
   activeRunState(tabId) {
     const persistenceState = this.persistenceDegradedTabs.get(tabId) || null;
     const state = {
       running: this._runningTabs.has(tabId),
       runId: this.currentRunId.get(tabId) || null,
       pendingPlan: null,
+      pendingCurrentClarification: this._pendingCurrentClarificationForUi(tabId),
       persistenceDegraded: !!persistenceState,
       persistenceDegradedReason: persistenceState?.reason || null,
       researchEscalationSourceTabId: this.researchEscalationSourceTab(tabId),
@@ -6345,6 +6956,10 @@ export class Agent extends LoopDetector {
       sessionSnapshotBytes: serialized.bytes,
       conversationId,
       chatWorkflow: chatWorkflow ? serializeChatSession(chatWorkflow) : null,
+      // A bounded receipt records the task/thread/body digest and latest send
+      // proved by done. Hydration never turns this receipt into authorization.
+      nativeChatDeliveryEvidence: this._planExecutionGuards.get(tabId)?.nativeChatDeliveryEvidence
+        ? { ...this._planExecutionGuards.get(tabId).nativeChatDeliveryEvidence } : null,
       workflowDraft: this._latestWorkflowDrafts.get(tabId) || null,
       submittedRunRequestId: this.submittedRunRequestIds.get(tabId) || null,
       progressLedger: this.progressLedgers.get(tabId) || [],
@@ -6693,6 +7308,68 @@ export class Agent extends LoopDetector {
     messages.splice(idx, 1);
     if (typeof this._persist === 'function') this._persist(tabId);
     return { success: true, existed: true, note: 'scratchpad cleared' };
+  }
+
+  _scheduledCompletionBinding(tabId) {
+    const run = this.completionInvariants.get(tabId);
+    const policy = this.scheduledRunPolicies.get(tabId);
+    const provider = this._activeProvider(tabId);
+    const context = this.systemOneContext(tabId);
+    const taskKey = this._progressTaskKeyHash(tabId);
+    if (!run?.runToken || !policy?.resumeTaskId || !provider || !taskKey) return null;
+    return {
+      runToken: run.runToken, taskKey, sourceId: policy.resumeTaskId,
+      previousActionSequence: Number(run.lastAction?.sequence || 0),
+      isCurrent: () => this.completionInvariants.get(tabId)?.runToken === run.runToken
+        && this.scheduledRunPolicies.get(tabId) === policy
+        && this._activeProvider(tabId) === provider && context.isCurrent()
+        && this._progressTaskKeyHash(tabId) === taskKey
+        && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
+        && !this._hasUnvalidatedSteering(tabId),
+    };
+  }
+
+  async _settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions = {}) {
+    if (typeof runOptions.afterVerifiedCompletion !== 'function' || batchResult.status
+        || typeof batchResult.rawSummary !== 'string') return false;
+    const assistantIndex = messages.findLastIndex(message => message.role === 'assistant' && message.tool_calls?.length);
+    const calls = messages[assistantIndex]?.tool_calls || [];
+    const doneIds = new Set(calls.filter(call => call.function?.name === 'done').map(call => call.id));
+    const message = messages.slice(assistantIndex + 1).findLast(message => message.role === 'tool' && doneIds.has(message.tool_call_id));
+    let result;
+    try { result = JSON.parse(this._unwrapUntrusted(message?.content || '')); } catch { return false; }
+    if (result?.done !== true || result.outcome !== 'success' || result.success === false
+        || result.blockedDone || result.verification?.completionWarning
+        || result.verification?.decision?.outcome !== 'succeeded') return false;
+    const binding = this._scheduledCompletionBinding(tabId);
+    const run = this.completionInvariants.get(tabId);
+    const action = run?.lastAction;
+    const verdict = this._completionVerdicts?.get(tabId);
+    if (!binding || !action?.name || !action.sequence || run.verificationDebt
+        || run.iframeFormVerificationDebt || Number(run.lastObservation?.sequence || 0) <= action.sequence
+        || verdict?.outcome !== 'succeeded' || !verdict.scope || !verdict.identity || !verdict.evidenceKey) return false;
+    const isCurrent = () => binding.isCurrent()
+      && this.completionInvariants.get(tabId)?.lastAction?.sequence === action.sequence
+      && this.completionInvariants.get(tabId)?.lastAction?.name === action.name
+      && !this.completionInvariants.get(tabId)?.verificationDebt
+      && !this.completionInvariants.get(tabId)?.iframeFormVerificationDebt;
+    const refresh = async () => {
+      if (!isCurrent()) return false;
+      const fresh = await verifyBrowserCompletion(this, tabId, {
+        pageState: result.verification.pageState || {},
+        pageUrl: result.verification.pageUrl || '', summary: result.summary,
+        refreshOnly: true,
+      });
+      return fresh.outcome === 'succeeded' && isCurrent();
+    };
+    try {
+      const saved = await this._persistNow(tabId);
+      if (!(saved === true || saved?.ok === true) || !isCurrent() || !await refresh()) return false;
+      return await runOptions.afterVerifiedCompletion({
+        runToken: binding.runToken, taskKey: binding.taskKey, sourceId: binding.sourceId,
+        actionSequence: action.sequence, actionName: action.name, isCurrent, refresh,
+      }) === true;
+    } catch { return false; }
   }
 
   setScheduledRunPolicy(tabId, policy) {
@@ -7049,7 +7726,37 @@ export class Agent extends LoopDetector {
 
   async _completionDocumentStamp(tabId, documentOnly = false) {
     const result = await browser.tabs.executeScript(tabId, { code: documentOnly ? COMPLETION_DOCUMENT_IDENTITY_SCRIPT : COMPLETION_DOCUMENT_STAMP_SCRIPT });
-    return result?.[0] || '';
+    const identity = result?.[0] || '';
+    if (!identity || !this._completionIframeBinding(tabId)) return identity;
+    const frame = await this._completionIframeSnapshot(tabId);
+    return frame ? JSON.stringify([identity, frame.frameId, frame.identity]) : '';
+  }
+
+  async _completionLiveStatusMessages(tabId) {
+    const result = await browser.tabs.executeScript(tabId, { code: `(() => {
+      const messages = [];
+      const dialogs = Array.from(document.querySelectorAll('[role=dialog],[role=alertdialog],[aria-modal="true"],dialog[open]'));
+      const liveRegions = Array.from(document.querySelectorAll('[role=status],[role=alert],[aria-live]'));
+      for (const element of [...new Set([...dialogs, ...liveRegions])].slice(0, 64)) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) continue;
+        let hidden = false;
+        for (let current = element; current; current = current.parentElement) {
+          const style = getComputedStyle(current);
+          if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse'
+              || parseFloat(style.opacity) === 0 || current.hidden || current.getAttribute('aria-hidden') === 'true') {
+            hidden = true; break;
+          }
+        }
+        if (hidden) continue;
+        const body = String(element.innerText || '').trim();
+        const text = (dialogs.includes(element) ? '[Open dialog] ' + (body || '(unlabelled)') : body).slice(0, 160);
+        if (text && !messages.includes(text)) messages.push(text);
+        if (messages.length >= 6) break;
+      }
+      return messages;
+    })()` });
+    return Array.isArray(result?.[0]) ? result[0] : null;
   }
 
   async _captureCompletionJudgeImage(tabId) {
@@ -7131,7 +7838,18 @@ export class Agent extends LoopDetector {
     return { content: '', toolCalls: [{ id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.args) } }], jev: true };
   }
 
-  _jevModelMessages(tabId, messages) {
+  _completionEvidenceMessages(tabId, messages, runOptions = {}) {
+    if (!this._isActionMode(this._effectiveRunMode(tabId))
+        || isSelectionSourceGrounding(runOptions?.sourceGrounding)
+        || this._isStandaloneChatRun(runOptions)) return messages;
+    const context = completionReportingContext(this, tabId);
+    if (!context) return messages;
+    return [...messages.filter(message => !(message.webbrainAppOwned === true && message.webbrainAppOwnedKind === 'completion_reporting')),
+      this._appOwnedUserMessage(context, 'completion_reporting')];
+  }
+
+  _jevModelMessages(tabId, messages, runOptions = {}) {
+    messages = this._completionEvidenceMessages(tabId, messages, runOptions);
     if (!this._jevSessions?.get(tabId)?.completionCandidate) return messages;
     // Model-only guidance: never add an invented user turn to the conversation.
     const instruction = '[Runtime completion candidate: inspect the latest evidence and use the normal completion checks. If the task is complete, give the user a final response; otherwise continue or report the missing evidence. Jev is not proof of success.]';
@@ -7148,7 +7866,7 @@ export class Agent extends LoopDetector {
   }
 
   async _maybeJevFastTurn(tabId, task, messages, mode, allowed, provider, costState, runOptions = {}, recovery = null) {
-    if (this._steeringRuns.get(tabId)?.acceptedIds.size) return null;
+    if (this._steeringRuns.get(tabId)?.acceptedIds.size || this._pageFeedbackRuns?.get(tabId)?.revision) return null;
     const context = this.systemOneContext(tabId);
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
     let session;
@@ -7696,6 +8414,13 @@ export class Agent extends LoopDetector {
     return { method, requestShape, failed };
   }
 
+  // Source coverage survives navigation and page-level loop resets. Only a
+  // run boundary may forget it and register the same source ranges again.
+  _clearRunLoopState(tabId) {
+    super._clearRunLoopState(tabId);
+    this.deliveryCollectionReads.delete(tabId);
+  }
+
   /**
    * Extends the detector's own page-scoped cleanup with the Agent-owned state
    * that is equally invalidated by a page replacement: the delivery-checkpoint
@@ -7894,6 +8619,9 @@ export class Agent extends LoopDetector {
       pageUrl: String(pageUrl || ''),
     };
     if (!next.documentToken && !next.pageUrl) return;
+    // Document-scoped refs must expire, while independently observed
+    // unchanged-page retries survive fresh documents and one-use URL values.
+    this._rememberSemanticRetryScope(tabId, next.pageUrl);
     const previous = this._lastAxScopes.get(tabId);
     const documentChanged = !!(
       previous?.documentToken
@@ -8427,9 +9155,37 @@ export class Agent extends LoopDetector {
     return String(provider?.config?.providerName || '').trim().toLowerCase() === 'webbrain-cloud';
   }
 
+  _deliveryCollectionTask(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const expected = this.progressExpectedItems.get(tabId);
+    if (!guard?.enabled || guard.requiresStateChange !== false || guard.requiresSubmission === true
+        || !Number.isInteger(expected?.count) || expected.count < 2 || expected.count > 1000) return null;
+    const session = this._currentProgressSession(tabId, { readOnly: true });
+    const collectionActions = new Set(['process_item', 'collect_profile', 'collect_email', 'visit', 'open']);
+    if (!isProgressIntentActive(session)
+        || !session.allowedActions.every(action => collectionActions.has(action))) return null;
+    const taskKey = this._progressTaskKeyHash(tabId);
+    if (!taskKey || guard.taskDrifted === true || (guard.taskKey && guard.taskKey !== taskKey)) return null;
+    return { expected, taskKey };
+  }
+
+  _deliveryCheckpointCollectionReadProgress(tabId, name, args, result) {
+    if (name !== 'fetch_url' || !this._isSuccessfulExecutionEvidence(result)) return false;
+    const task = this._deliveryCollectionTask(tabId);
+    if (!task) return false;
+    let coverage = this.deliveryCollectionReads.get(tabId);
+    if (!coverage || coverage.taskKey !== task.taskKey) {
+      coverage = { taskKey: task.taskKey, sources: new Map() };
+      this.deliveryCollectionReads.set(tabId, coverage);
+    }
+    return recordCollectionReadProgress(coverage, args, result).madeProgress;
+  }
+
   _checkDeliveryObservationStreak(tabId, name, args = {}, result = null, options = {}) {
     const observation = this.constructor.DELIVERY_OBSERVATION_TOOLS.has(name)
       && !isNetworkMutation(name, args);
+    const collectionReadProgress = observation
+      && this._deliveryCheckpointCollectionReadProgress(tabId, name, args, result);
     if (observation
       && options.discoveredActionableTargets === true
       && !this.deliveryActionableDiscoveryResets.has(tabId)) {
@@ -8438,6 +9194,12 @@ export class Agent extends LoopDetector {
       // repeatedly erase the delivery guard; meaningful consequential progress
       // below rearms the one-shot reset.
       this.deliveryActionableDiscoveryResets.add(tabId);
+      this.deliveryObservationStreaks.delete(tabId);
+      return { kind: 'none' };
+    }
+    if (collectionReadProgress) {
+      // Reading new ranges of a finite collection's source is task progress,
+      // even before complete item records can be entered in the ledger.
       this.deliveryObservationStreaks.delete(tabId);
       return { kind: 'none' };
     }
@@ -8474,14 +9236,18 @@ export class Agent extends LoopDetector {
       return {
         kind: 'deliver',
         count,
-        warning: `[DELIVERY REQUIRED: You have made ${count} consecutive read, scroll, or wait observations without verified consequential progress. Browser observation tools are now stopping. On the recovery turn, call done exactly once with outcome partial or failed and put the complete useful result, evidence, and blockers already known in its summary. Do not request another observation or claim unverified success.]`,
+        warning: `[DELIVERY REQUIRED: You have made ${count} consecutive read, scroll, or wait observations without verified task progress. Browser observation tools are now stopping. On the recovery turn, call done exactly once with outcome partial or failed and put the complete useful result, evidence, and blockers already known in its summary. Do not request another observation or claim unverified success.]`,
       };
     }
 
+    const collection = this._deliveryCollectionTask(tabId);
+    const guidance = collection
+      ? `The task requires all ${collection.expected.count} items. Continue through new source ranges or item records needed to complete that scope, and record complete items with progress_update. Do not reread covered ranges or stop just because the requested collection is large. If no new evidence can be obtained or a blocker prevents completion, deliver the useful partial result.`
+      : 'Do not keep observing merely to make the answer exhaustive. If the current evidence satisfies the request, call done now. For list or research tasks, deliver useful partial results rather than risk shipping nothing. Continue only when you can name a specific missing fact or control and the next tool will obtain it.';
     return {
       kind: 'nudge',
       count,
-      warning: `[DELIVERY CHECKPOINT: You have made ${count} consecutive read, scroll, or wait observations without verified consequential progress. Do not keep observing merely to make the answer exhaustive. If the current evidence satisfies the request, call done now. For list or research tasks, deliver useful partial results rather than risk shipping nothing. Continue only when you can name a specific missing fact or control and the next tool will obtain it.]`,
+      warning: `[DELIVERY CHECKPOINT: You have made ${count} consecutive read, scroll, or wait observations without verified task progress. ${guidance}]`,
     };
   }
 
@@ -8705,6 +9471,27 @@ export class Agent extends LoopDetector {
   }
 
   _repairToolCallArgs(name, args = {}, options = {}) {
+    if (name === 'read_page' && args && typeof args === 'object' && !Array.isArray(args)) {
+      let next = args;
+      let repaired = false;
+      if (Number.isInteger(args.limit) && args.limit > 6000) {
+        next = { ...args, limit: 6000 };
+        repaired = true;
+      }
+      if (args.continuationArgs && typeof args.continuationArgs === 'object' && !Array.isArray(args.continuationArgs)) {
+        if (Number.isInteger(args.continuationArgs.limit) && args.continuationArgs.limit > 6000) {
+          next = { ...(repaired ? next : args), continuationArgs: { ...args.continuationArgs, limit: 6000 } };
+          repaired = true;
+        }
+      }
+      return {
+        args: repaired ? next : args,
+        repaired,
+        note: repaired
+          ? '[TOOL ARGUMENT REPAIR: Bounded read_page limit to its advertised maximum of 6000 characters. The requested offset and extraction options are preserved; continue with the exact returned continuationArgs when hasMore is true.]'
+          : '',
+      };
+    }
     if (!['get_accessibility_tree', 'wait_for_stable'].includes(name) || !args || typeof args !== 'object' || Array.isArray(args)) {
       return { args, repaired: false, note: '' };
     }
@@ -8855,6 +9642,13 @@ export class Agent extends LoopDetector {
         properties: {
           ...builtIn.properties,
           maxChars: { ...builtIn.properties?.maxChars, maximum: treePageChars },
+          continuationArgs: {
+            ...builtIn.properties?.continuationArgs,
+            properties: {
+              ...builtIn.properties?.continuationArgs?.properties,
+              maxChars: { ...builtIn.properties?.continuationArgs?.properties?.maxChars, maximum: treePageChars },
+            },
+          },
         },
       };
     }
@@ -9411,7 +10205,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * triggered the bulk pattern and navigated the page never silently drops the
    * "previous page is GONE" warning.
    */
-  _injectNavNotices(messages, navNotices, onUpdate) {
+  _injectNavNotices(messages, navNotices, onUpdate, tabId) {
+    if ([...(this._pageFeedbackRuns?.get(tabId)?.events.values() || [])].some(event => event.kind === 'navigation' && event.frameId === 0)) return;
     if (!navNotices || navNotices.length === 0) return;
     const last = navNotices[navNotices.length - 1];
     const noticeText =
@@ -11049,7 +11844,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error: `Skipped ${skippedName}: ${triggeringTool} requires a fresh model turn before any dependent browser action.`,
       }),
     );
-    this._injectNavNotices(messages, options.navNotices || [], onUpdate);
+    this._injectNavNotices(messages, options.navNotices || [], onUpdate, tabId);
     onUpdate('warning', {
       message: `Paused ${skippedCount} stale tool call(s) after ${triggeringTool}; continuing from the observed result.`,
     });
@@ -11160,7 +11955,75 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _pureCalculationToolPolicy(tabId, expectedScope = null) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const scope = this._pageFeedbackCalculationResponseScope?.(tabId);
+    const capturedScope = expectedScope || guard?.pureCalculationToolScope || null;
+    if (capturedScope && (!scope || capturedScope.owner !== scope.owner
+        || capturedScope.runToken !== scope.runToken || capturedScope.expression !== scope.expression)) {
+      return { scope: capturedScope, stale: true, names: [] };
+    }
+    // Keep this guard's original authority when a later await loses it.
+    // A genuinely revalidated task receives a new guard, not a wider old one.
+    if (scope && guard && !guard.pureCalculationToolScope) guard.pureCalculationToolScope = { ...scope };
+    const attempt = guard?.pureCalculationAttempt;
+    const attempted = scope && attempt?.owner === scope.owner && attempt.runToken === scope.runToken
+      && attempt.expression === scope.expression && attempt.taskKey === guard.taskKey;
+    return scope ? { scope, stale: false,
+      attempted: !!attempted, names: this._pageFeedbackCalculationComplete(tabId) ? ['done'] : ['calculate', 'done'],
+      ...(!attempted && !this._pageFeedbackCalculationComplete(tabId)
+        ? { toolChoice: { type: 'function', function: { name: 'calculate' } } } : {}) } : null;
+  }
+
+  _rememberPureCalculationAttempt(tabId, args, expectedScope = null) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const policy = this._pureCalculationToolPolicy(tabId, expectedScope);
+    if (!guard || !policy || policy.stale
+        || !isLiteralCalculationTask(this._pageFeedbackLiteralCalculationTask(tabId), args?.expression, guard)) return;
+    guard.pureCalculationAttempt = { owner: policy.scope.owner, runToken: policy.scope.runToken,
+      expression: policy.scope.expression, taskKey: guard.taskKey };
+  }
+
+  _pureCalculationSummaryContainsResult(summary, result, fraction) {
+    return calculationResultInText(summary, result, fraction);
+  }
+
+  _pureCalculationToolBlock(tabId, name, args, expectedScope) {
+    const policy = this._pureCalculationToolPolicy(tabId, expectedScope);
+    if (!policy) return null;
+    const matchesInput = name !== 'calculate' || isLiteralCalculationTask(
+      this._pageFeedbackLiteralCalculationTask(tabId), args?.expression, this._planExecutionGuards.get(tabId));
+    const completed = !policy.stale && policy.names.length === 1 && policy.names[0] === 'done';
+    const missingResult = completed && name === 'done' && args?.outcome === 'success' && !this._pureCalculationSummaryContainsResult(args.summary,
+        this._planExecutionGuards.get(tabId)?.pureCalculationReceipt?.result,
+        this._planExecutionGuards.get(tabId)?.pureCalculationReceipt?.fraction);
+    const missingFormat = completed && name === 'done' && args?.outcome === 'success'
+      && policy.scope.outputRequirements && !literalCalculationSummaryFormatMatches(args.summary, policy.scope.outputRequirements,
+        this._planExecutionGuards.get(tabId)?.pureCalculationReceipt?.result,
+        this._planExecutionGuards.get(tabId)?.pureCalculationReceipt?.fraction);
+    const prematureCompletion = !policy.stale && name === 'done' && !completed && !policy.attempted;
+    if (!policy.stale && policy.names.includes(name) && matchesInput && !missingResult && !missingFormat && !prematureCompletion) return null;
+    return { success: false, skipped: true, denied: true, dispatched: false, noDispatch: true,
+      ...(prematureCompletion ? { blockedDone: true } : {}),
+      outcomeUnknown: false, errorCode: 'pure_calculation_tool_denied',
+      error: policy.stale
+        ? 'The arithmetic task authority changed. No tool was dispatched; reconsider the current genuine task.'
+        : prematureCompletion
+          ? 'The current arithmetic task has no actual calculator attempt. Call calculate with its exact expression, then report the actual tool outcome with done; previous conversation answers are not current execution evidence.'
+        : missingResult
+          ? 'The success summary omits or changes the verified arithmetic result. Include the actual exact returned value in the user-facing summary and call done again with an explicit outcome. Do not recalculate or interact with the browser.'
+        : missingFormat
+          ? 'The success summary does not satisfy the genuine task\'s requested literal output format. Preserve the actual returned result, correct only the requested answer format, and call done again. Do not recalculate or interact with the browser.'
+        : completed
+          ? 'The exact arithmetic calculation is already verified. Call done with the actual result and an explicit outcome; do not repeat the calculation or interact with the browser.'
+          : 'This genuine task only authorizes its literal calculation. Call calculate with that exact expression, then done with the result and an explicit outcome. No browser action or different calculation was dispatched.' };
+  }
+
   async _executeToolBatchInner(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText, allowedToolNames, step, runOptions, toolSchemas, cancellationState) {
+    // Capture the request's private authority, not a later same-wording task.
+    // Recommended/fast batches also pass this shared boundary.
+    const calculationRequestScope = this._pageFeedbackRuns?.get(tabId)?.modelState?.calculationResponseScope
+      || this._pageFeedbackCalculationResponseScope?.(tabId) || null;
     let didStateChange = false;
     let autoScreenshotToolName = '';
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
@@ -11171,6 +12034,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     const navNotices = [];
     const failedApiMutationLoopKeysThisBatch = new Set();
+    const skipSteeredPermissionWait = toolIndex => {
+      this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+        success: false, skipped: true, dispatched: false, noDispatch: true,
+        error: 'Skipped because the user steered the current task while authorization was pending. Reconsider the corrected task.',
+      }));
+      return { action: 'continue' };
+    };
     // When this returns true, the caller must `navNotices.length = 0; break;`
     // (not return): the helper already injected the queued synthetic results
     // and nav notices, and breaking lets the shared post-batch path flush
@@ -11245,12 +12115,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         onUpdate('warning', { message: 'Stopped by user.' });
         return { action: 'abort', value };
       }
-      if (this._hasPendingSteering(tabId)) {
+      if (!runOptions[OWNED_NATIVE_CHAT_READ_REPAIR]
+          && this._hasCurrentOwnedNativeChatReadRepair(tabId)) {
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+          success: false, skipped: true, dispatched: false, noDispatch: true, outcomeUnknown: false,
+          error: 'Skipped while the app completes its exact issued native conversation read repair.',
+        }));
+        const repair = await this._runOwnedNativeChatReadRepair(tabId, messages, onUpdate,
+          provider, allowedToolNames, step, runOptions, toolSchemas);
+        messages.push(this._appOwnedUserMessage(
+          '[OWNED CHAT READ RECOVERY RESULT: ' + JSON.stringify({
+            success: repair?.success === true, reason: repair?.reason,
+            outcomeUnknown: repair?.outcomeUnknown === true, sendCalls: 0,
+            note: 'Continue only the genuine current task. No message was sent, no pending send was cleared, and no future work was scheduled.',
+          }) + ']', 'native_chat_read_repair'));
+        this._persist(tabId);
+        return { action: 'continue' };
+      }
+
+      if (!this._hasPendingSteering(tabId)) {
+        const calculationArgs = this._parseToolCallArgs(tc).args;
+        const calculationBlock = this._pureCalculationToolBlock(tabId, tc.function?.name || '', calculationArgs, calculationRequestScope);
+        if (calculationBlock) {
+          const recovery = await recordPreparationFailure(toolIndex, tc.function?.name || '', calculationArgs || {}, calculationBlock);
+          if (recovery) return recovery;
+          continue;
+        }
+      }
+      if (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate)) {
         this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
           success: false, skipped: true, dispatched: false, noDispatch: true,
-          error: 'Skipped because the user steered the current task. Reconsider the remaining actions using the latest user message.',
+          pageFeedbackPending: this._hasPendingPageFeedback(tabId),
+          error: 'Skipped because the user steered the current task or the browser changed. Reconsider remaining actions using the latest feedback.',
         }));
-        return { action: 'continue' };
+        return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
       }
 
       const jevPending = this._jevPendingCalls?.get(tc.id);
@@ -11640,7 +12538,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (workflowPreSubmitBlock.workflowRearmed || workflowPreSubmitBlock.conditionalMutationBlocked) {
           this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
             () => ({ success: false, skipped: true, error: 'skipped: conditional workflow transition requires a fresh tool batch' }));
-          this._injectNavNotices(messages, navNotices, onUpdate);
+          this._injectNavNotices(messages, navNotices, onUpdate, tabId);
           this._persist(tabId);
           return { action: 'continue' };
         }
@@ -11726,6 +12624,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               onUpdate,
               { actionUrl: submitRisk.action },
             );
+            if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
             if (choice === null) {
               const value = '[Stopped by user before executing requested tool calls.]';
               this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -11742,6 +12641,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           } else {
             choice = await this._promptSubmitConfirmation(tabId, submitConfirmation, onUpdate);
           }
+          if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
           if (choice === null) {
             const value = '[Stopped by user before executing requested tool calls.]';
             this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -11805,6 +12705,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               onUpdate,
               { actionUrl: groupedRisk.action },
             );
+            if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
             if (choice === null) {
               const value = '[Stopped by user before executing requested tool calls.]';
               this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -11874,6 +12775,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 onUpdate,
                 { candidateOnly: true, actionUrl: navigationRisk.action },
               );
+              if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
               if (choice === null) {
                 const value = '[Stopped by user before executing requested tool calls.]';
                 this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -11928,7 +12830,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             const choice = verdict.needsPrompt
               ? await this._promptPermission(tabId, capability, host, onUpdate)
               : 'deny'; // a standing "deny" grant for this (capability, host)
-            if (choice === null) { aborted = true; break; }
+            if (choice === null || this._hasPendingSteering(tabId)) { aborted = true; break; }
             if (choice === 'deny') {
               if (verdict.needsPrompt) await this.permissions.record(host, capability, 'deny', 'once', tabId);
               blocked = { capability, host };
@@ -11938,11 +12840,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               gateDisabled = true;
               break;
             }
+            if (this._hasPendingSteering(tabId)) { aborted = true; break; }
             await this.permissions.record(host, capability, 'allow', choice, tabId); // 'once' | 'always'
           }
           if (gateDisabled || aborted || blocked) break;
         }
         if (aborted) {
+          if (this._hasPendingSteering(tabId) && !this._checkAbort(tabId)) return skipSteeredPermissionWait(toolIndex);
           const value = '[Stopped by user before executing requested tool calls.]';
           this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
             success: false,
@@ -12138,7 +13042,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // not add another URL read or perturb navigation detection. Keep it as
       // close to dispatch as possible: permission and confirmation can happen
       // first, but a mismatched conversation never reaches executeTool().
-      const messageRecipientExecutionContext = {};
+      const messageRecipientExecutionContext = { chatCompletionBindingSink: {},
+        ...(fnName === 'navigate' && this._completionSubmitStates.get(tabId)?.semanticCommit
+          ? { _completionNavigationReceipt: {} } : {}) };
       let messageRecipientBlock = null;
       try {
         messageRecipientBlock = await this._withContentActionDeadline(
@@ -12228,9 +13134,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._throwIfAborted(abortSignal);
           // Permission, checkpoint and preflight waits can receive a correction.
           // Recheck after all preparation, before marking or invoking dispatch.
-          if (this._hasPendingSteering(tabId)) return { steered: true };
-          if (!pipelineToolbarPreflight.block && !socialDispatchBlock) callState.invoked = true;
-          const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || await this.executeTool(
+            if (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate)) return { steered: true };
+          const genericChatBlock = pipelineToolbarPreflight.block || socialDispatchBlock ? null
+            : await this._prepareGenericChatDispatch(tabId, fnName, fnArgs, messageRecipientExecutionContext, abortSignal);
+          this._throwIfAborted(abortSignal);
+          if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock
+              && (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate))) return { steered: true };
+            const calculationDispatchBlock = this._pureCalculationToolBlock(tabId, fnName, fnArgs, calculationRequestScope);
+            if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock && !calculationDispatchBlock) {
+              if (fnName === 'calculate') this._rememberPureCalculationAttempt(tabId, fnArgs, calculationRequestScope);
+              callState.invoked = true;
+            }
+            const pipelineRawToolResult = pipelineToolbarPreflight.block || socialDispatchBlock || genericChatBlock || calculationDispatchBlock || await this.executeTool(
             tabId,
             fnName,
             fnArgs,
@@ -12311,7 +13226,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             rawToolResult: pipelineRawToolResult,
             toolResult: pipelineToolResult,
           };
-          } finally { linked.dispose(); }
+          } finally {
+            await this._settleGenericChatDispatch(tabId, messageRecipientExecutionContext,
+              callState.result, actionDispatchState.started, callState.invoked === true);
+            linked.dispose();
+          }
       };
       const needsSharedActionPipelineDeadline = this._needsSharedActionPipelineDeadline(
         tabId,
@@ -12354,10 +13273,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (steeringBeforeDispatch) {
         this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
           success: false, skipped: true, dispatched: false, noDispatch: true,
-          error: 'Skipped because the user steered the current task. Reconsider the remaining actions using the latest user message.',
+          pageFeedbackPending: this._hasPendingPageFeedback(tabId),
+          error: 'Skipped because the user steered the current task or the browser changed. Reconsider remaining actions using the latest feedback.',
         }));
-        return { action: 'continue' };
+        return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
       }
+      if (toolResult?.success !== false && toolResult?.noDispatch !== true && toolResult?.dispatched !== false) this._resetPageFeedbackProgress(tabId);
       if (jevPending) {
         this._jevPendingCalls.delete(tc.id);
         if (fnName !== 'get_accessibility_tree') jevPending.session.dispatched(toolResult);
@@ -12367,6 +13288,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const session = this._jevSessions?.get(tabId);
         if (session) { session.snapshot = null; session.queue = []; session.completionCandidate = false; }
       }
+      messageRecipientExecutionContext.semanticCommitNavigation = await this._captureCompletionSemanticNavigation(tabId, fnName, fnArgs, toolResult, messageRecipientExecutionContext);
       if (fnName !== 'done') {
         this._markPlanExecutionToolCall(tabId, fnName, toolResult, {
           consequential: executionMutationEvidence,
@@ -12379,7 +13301,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         fnName,
         fnArgs,
         toolResult,
-        { detectedSubmit: detectedSubmitAction },
+        { detectedSubmit: detectedSubmitAction, messageRecipientContext: messageRecipientExecutionContext },
       );
       const readCompletenessBeforeTool = this.readCompletenessStates.get(tabId) || null;
       const readCompletenessAfterTool = this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
@@ -12565,6 +13487,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
 
+      if (this._accountPageFeedbackNoDispatch(tabId, fnName, toolResult)) {
+        messages.push({ role: 'tool', tool_call_id: tc.id, content: this._wrapUntrusted(fnName, this._limitToolResult(toolResult)) });
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step, () => ({
+          success: false, skipped: true, dispatched: false, noDispatch: true, pageFeedbackPending: true,
+          error: 'Skipped remaining actions until the changed browser target is reconsidered.',
+        }));
+        return this._pageFeedbackRecoveryResult(tabId, messages, onUpdate) || { action: 'continue' };
+      }
+
       if (toolResult?.blockedDone) {
         const completionNeedsRead = toolResult.completionDecision || toolResult.completionPageBlock;
         if (completionNeedsRead) { const state = this.completionInvariants.get(tabId); if (state) this.completionInvariants.set(tabId, { ...state, verificationDebt: true }); }
@@ -12654,7 +13585,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._persist(tabId);
           return { action: 'return', value: planOnlyDecision.failure, status: 'plan_only_output' };
         }
-        const rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
+        let rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
         if (!scheduledResume && this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
           const blockedResult = {
             success: false,
@@ -12679,10 +13610,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { action: 'continue' };
         }
         if (!scheduledResume) await cancelPendingResumes();
+        if (!scheduledResume && runOptions?.scheduledRun !== true && this.chatSessions.has(tabId)
+            && ['partial', 'failed'].includes(toolResult.outcome)) {
+          toolResult.runEnded = true;
+          toolResult.autoResumeScheduled = false;
+          if (!fnArgs.data_ref) {
+            const notice = chatRunEndedNotice(this.responseLanguagePolicies.get(tabId)?.framing_locale || runOptions?.locale);
+            toolResult.summary = (toolResult.summary || partialAssistantText || '') + '\n\n' + notice;
+          }
+        }
         onUpdate('tool_result', { name: fnName, result: toolResult });
         this._doneBlockCount.delete(tabId);
-        const repairedDoneSummary = repairAssistantDisplayText(rawDoneSummary);
-        const finalResponse = this._appendProgressLedgerToFinal(tabId, repairedDoneSummary);
+        rawDoneSummary = toolResult.summary || rawDoneSummary;
+        const repairedDoneSummary = fnArgs.data_ref ? rawDoneSummary : repairAssistantDisplayText(rawDoneSummary);
+        const finalResponse = fnArgs.data_ref ? repairedDoneSummary
+          : this._appendProgressLedgerToFinal(tabId, repairedDoneSummary);
         if (repairedDoneSummary !== rawDoneSummary) {
           // Streaming providers may already have rendered the malformed summary
           // before the done call. Replace it so the visible bubble matches the
@@ -12901,7 +13843,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             error: 'skipped: an earlier tool returned no response; verify the current state before retrying',
           }),
         );
-        this._injectNavNotices(messages, navNotices, onUpdate);
+        this._injectNavNotices(messages, navNotices, onUpdate, tabId);
         onUpdate('warning', {
           message: `Tool response was lost; paused ${skippedCount} remaining tool call(s) for state verification.`,
         });
@@ -13027,7 +13969,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // A click can both trigger the bulk pattern AND navigate the page; this
         // early return skips the post-loop flush, so emit any nav notices here
         // or the model would replay against stale URLs from the prior page.
-        this._injectNavNotices(messages, navNotices, onUpdate);
+        this._injectNavNotices(messages, navNotices, onUpdate, tabId);
         this._persist(tabId);
         return { action: 'continue' };
       }
@@ -13037,7 +13979,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    this._injectNavNotices(messages, navNotices, onUpdate);
+    this._injectNavNotices(messages, navNotices, onUpdate, tabId);
 
     // Auto-screenshot after state change. Capture if either the main
     // provider supports images, or a dedicated vision model is configured
@@ -13591,6 +14533,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._throwIfAborted(deadlineAbortSignal);
     };
     throwIfAborted();
+    const nativeTelegramReadRepairRequired = !!messageRecipientContext.nativeTelegramReadRepairOwner;
+    const nativeTelegramPreparationFailure = () => ({ success: false, dispatched: false, noDispatch: true,
+      outcomeUnknown: false, messageRecipientGuard: true, reasonCode: 'native_telegram_preparation_changed',
+      error: 'The native Telegram read-only identity preparation changed. Re-observe the current conversation before clicking.' });
+    if (nativeTelegramReadRepairRequired
+        && !this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext)) {
+      return nativeTelegramPreparationFailure();
+    }
     let contentArgs = axScope?.documentToken
       ? {
           ...args,
@@ -13602,6 +14552,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       contentArgs = { ...contentArgs, dispatchBinding };
     }
     if (messageRecipientContext.jevBinding) contentArgs = { ...contentArgs, _jevBinding: messageRecipientContext.jevBinding };
+    contentArgs = { ...contentArgs, _nativeChatOwner: this._nativeChatOwnerScope?.(tabId) || '',
+      _nativeChatPendingRestore: this._nativeChatPendingRestore?.(tabId) || null,
+      _nativeTelegramReadRepairRequired: nativeTelegramReadRepairRequired,
+      nativeTelegramReadRepairBinding: nativeTelegramReadRepairRequired
+        ? messageRecipientContext.nativeTelegramReadRepairBinding : null,
+      _nativeChatDraftBinding: messageRecipientContext.nativeChatDraftBinding || null,
+      _nativeChatDraftPreparation:messageRecipientContext.nativeChatDraftPreparation === true };
     if (messageRecipientContext.messageRecipientGuardRequired === true) {
       contentArgs = {
         ...contentArgs,
@@ -13618,6 +14575,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .sort((a, b) => a - b)[0] || 0;
     const send = () => {
       throwIfAborted();
+      if (nativeTelegramReadRepairRequired
+          && !this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext)) {
+        return Promise.resolve(nativeTelegramPreparationFailure());
+      }
       if (timing) timing.preflightMs = Math.max(0, Date.now() - timing.startedAtEpoch);
       dispatchState.started = true;
       return firefoxBidi.sendContent(tabId, {
@@ -14266,33 +15227,59 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   /**
    * Decide whether `pageUrl` is a PDF tab the content-script path
-   * cannot reach. URL-pattern fast path + credentialed HEAD probe
-   * fallback for Content-Type-only PDFs (e.g. `/download?id=42`
-   * returning `application/pdf`). Result cached per (tabId, pageUrl).
-   * See Chrome agent.js for the full design notes.
+   * cannot reach. Explicit PDF URLs and our MIME handler use a fast
+   * path; extensionless PDFs use the top-level document's browser-owned
+   * MIME. Never re-fetch a page: even HEAD can consume one-use links or
+   * rotate server-side acceptance/session tokens. Inaccessible native
+   * viewers use already-observed main-frame MIME after a current URL and
+   * document identity check.
    */
   async _isPdfTab(tabId, pageUrl) {
     if (!pageUrl) return false;
     const pdfUrl = pdfUrlFromTabUrl(pageUrl);
     if (isPdfUrl(pdfUrl) || isPdfHandlerTabUrl(pageUrl)) return true;
 
+    if (!/^https?:/i.test(pdfUrl)) return false;
+    try {
+      const [documentInfo] = await browser.tabs.executeScript(tabId, {
+        frameId: 0,
+        code: '({ url: location.href, contentType: document.contentType })',
+      });
+      if (documentInfo?.url !== pageUrl) return false;
+      const contentType = String(documentInfo.contentType || '').split(';', 1)[0].trim().toLowerCase();
+      if (contentType) return contentType === 'application/pdf';
+    } catch { /* Native viewers may forbid injection; use observed MIME below. */ }
     const cached = this._isPdfTabCache.get(tabId);
-    if (cached && cached.url === pageUrl) return cached.isPdf;
+    if (!cached?.isPdf) return false;
+    try {
+      const currentUrl = new URL(pageUrl); currentUrl.hash = '';
+      if (cached.url !== currentUrl.href) return false;
+      const frame = await browser.webNavigation.getFrame({ tabId, frameId: 0 });
+      const frameUrl = new URL(frame?.url); frameUrl.hash = '';
+      return this._isPdfTabCache.get(tabId) === cached
+        && frameUrl.href === cached.url
+        && (!cached.documentId || frame?.documentId === cached.documentId);
+    } catch { return false; }
+  }
 
-    let isPdf = false;
-    if (/^https?:/i.test(pdfUrl)) {
-      try {
-        const res = await fetch(pdfUrl, {
-          method: 'HEAD',
-          credentials: 'include',
-        });
-        const ct = (res.headers.get('content-type') || '').toLowerCase();
-        if (ct.includes('application/pdf')) isPdf = true;
-      } catch { /* fall through with isPdf = false */ }
-    }
-
-    this._isPdfTabCache.set(tabId, { url: pageUrl, isPdf });
-    return isPdf;
+  noteDocumentMime(details) {
+    if (details?.type !== 'main_frame' || details.frameId !== 0
+        || !Number.isInteger(details.tabId) || details.tabId < 0
+        || !Number.isFinite(details.timeStamp)) return false;
+    let url;
+    try {
+      url = new URL(details.url);
+      if (!['http:', 'https:'].includes(url.protocol)) return false;
+      url.hash = '';
+    } catch { return false; }
+    const previous = this._isPdfTabCache.get(details.tabId);
+    if (previous && previous.timeStamp > details.timeStamp) return false;
+    const headers = Array.isArray(details.responseHeaders) ? details.responseHeaders : [];
+    const contentType = String(headers.find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value || '')
+      .split(';', 1)[0].trim().toLowerCase();
+    this._isPdfTabCache.set(details.tabId, { url: url.href, isPdf: contentType === 'application/pdf',
+      documentId: typeof details.documentId === 'string' ? details.documentId : '', timeStamp: details.timeStamp });
+    return !!contentType;
   }
 
   async _addToWebBrainGroup(sourceTab, tabId) {
@@ -15226,20 +16213,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
     const standaloneChat = runOptions?.standaloneChat === true;
+    const userAuthoredMetadata = runOptions?.scheduledResume === true
+      ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) };
     if (standaloneChat) {
       return { role: 'user', content: userMessage };
     }
     // Dynamic trusted state belongs in the per-turn user context, not the
     // cache-stable system prompt. The same enriched message is passed to the
-    // planner gate and the main agent loop, so neither has to guess the clock.
+    // planner gate and the main agent loop, so neither guesses clock/model identity.
+    let textProvider = null;
+    try { textProvider = this._activeProvider(tabId); } catch { /* Optional identity metadata. */ }
     let contextLine = `${buildTrustedRuntimeContext({
       runtimeMode: this._effectiveRunMode(tabId),
+      textProvider,
     })}\n\n`;
     const selectionRestorationPending = this.selectionGroundingRestorationPendingTabs.has(tabId)
       && !selectionScoped;
     const enrichedUserMessage = content => ({
       role: 'user',
       content,
+      // Persist the genuine request separately from generated browser context.
+      // Page titles/OCR and user quotations must never be mistaken for each other.
+      ...userAuthoredMetadata,
       ...(selectionRestorationPending ? { webbrainSelectionScopeRestored: true } : {}),
     });
     if (selectionRestorationPending) {
@@ -15340,6 +16335,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   abort(tabId) {
     for (const id of this._researchEscalationTabIds(tabId)) {
+      this._ownedNativeChatReadRepairs.delete(id);
       this.abortFlags.set(id, true);
       const controller = this._runAbortStates.get(id)?.controller;
       if (controller && !controller.signal.aborted) {
@@ -17598,7 +18594,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Retain only recent, whole user turns; never trim away a correction or
       // skip an oversized turn to revive an older publication instruction.
       const requests = messages.filter(m => m.role === 'user'
-        && !this._isScheduledResumeTurn(m.content) && !this._isAgentInjectedUserMessage(m))
+        && !this._isScheduledResumeTurn(m) && !this._isAgentInjectedUserMessage(m))
         .map(m => this._plannerUserAuthoredText(m)).filter(Boolean);
       priorRequests = requests.slice(0, -1).slice(-4).map((text, i) => [`prior_request${i}`, text]);
     }
@@ -17916,6 +18912,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const live = resolveAdapterWorkflowJob(pageUrl, 'publish-post');
     if (!SOCIAL_PLATFORMS.includes(live?.adapterName)) return null;
     if (detected?.resolvedEditableTarget || detected?.resolvedNavigationTarget || detected?.resolvedNonSubmitTarget) return null;
+    // A positively resolved ordinary UI button is not a publication obligation.
+    // Only the current no-submission plan and its validated empty contract can
+    // make that distinction; missing intent and opaque targets stay protected.
+    const socialIntent = guard.socialPublication;
+    if (detected?.isSubmit === false && detected.resolvedOrdinaryActivationTarget === true
+        && ['click', 'click_ax', 'iframe_click'].includes(name)
+        && guard.requiresSubmission === false && guard.siteWorkflow?.job?.template !== 'publish'
+        && this._planExecutionGuards.get(tabId) === guard
+        && guard.taskKey === this._progressTaskKeyHash(tabId)
+        && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
+        && socialIntent?.needsRecompile !== true && !socialIntent?.error
+        && socialIntent?.contract?.status === 'none'
+        && Array.isArray(socialIntent.contract.actions) && socialIntent.contract.actions.length === 0) return null;
     // An observed ordinary form still goes through the generic submission
     // guards. Absent evidence is not a negative: opaque callbacks, failed
     // probes, and unresolved controls cannot claim this exemption.
@@ -18406,7 +19415,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._isPinnedAgentStateMessage(m)) continue;
       if (this._isLocalConversationStatusMessage(m)) continue;
       const rawText = userMessageToText(m);
-      const taskText = m.role === 'user' ? this._stripInjectedTaskContext(rawText) : rawText;
+      const taskText = m.role === 'user' ? this._plannerUserAuthoredText(m) : rawText;
       const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
       if (!text) continue;
       lines.push(`${m.role === 'user' ? 'User' : 'Assistant'}: ${text}`);
@@ -18422,6 +19431,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _plannerUserAuthoredText(message) {
+    if (message?.role === 'user' && typeof message.webbrainUserAuthoredText === 'string') {
+      return message.webbrainUserAuthoredText.trim();
+    }
     const content = message?.content ?? message;
     if (!Array.isArray(content)) {
       return this._stripInjectedTaskContext(userMessageToText(message));
@@ -18446,7 +19458,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (let i = messages.length - 1; i >= 1; i--) {
       const message = messages[i];
       if (message?.role !== 'user') continue;
-      if (this._isScheduledResumeTurn(message.content)) continue;
+      if (this._isScheduledResumeTurn(message)) continue;
       if (this._isAgentInjectedUserMessage(message)) continue;
       if (this._plannerUserAuthoredText(message)) return i;
     }
@@ -18558,7 +19570,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (let i = messages.length - 1; i >= 1; i--) {
       const message = messages[i];
       if (message?.role !== 'user') continue;
-      if (this._isScheduledResumeTurn(message.content)) continue;
+      if (this._isScheduledResumeTurn(message)) continue;
       if (this._isAgentInjectedUserMessage(message)) continue;
       const text = this._plannerUserAuthoredText(message);
       if (!text) continue;
@@ -18701,7 +19713,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _plannerFollowUpText(message) {
-    const text = this._stripInjectedTaskContext(userMessageToText(message));
+    const text = this._plannerUserAuthoredText(message);
     return text.replace(/\s+/g, ' ').trim();
   }
 
@@ -18885,6 +19897,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // building the digest) can never drop the just-typed message from the
     // transcript.
     const sourceBoundRun = isSelectionSourceGrounding(runOptions?.sourceGrounding);
+    this._retireApprovedPlansForNewTask(tabId, messages, enriched, runOptions);
     const runReadScopeClassifier = !runIntent
       && !sourceBoundRun
       && this._readCompletenessNeedsScopeClassification(tabId);
@@ -18931,7 +19944,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const approvedScratchpadText = this._formatRecommendedActionFastPathScratchpad(fastPathPlan);
       const scratchResult = this._scratchpadWrite(tabId, {
         text: approvedScratchpadText,
-      });
+      }, approvedScratchpadText);
       if (!scratchResult?.success) {
         onUpdate('warning', { message: scratchResult?.error || 'Could not pin recommended action plan to scratchpad.' });
       } else {
@@ -18954,7 +19967,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
-    const followUpContext = this._buildPlannerFollowUpContext(priorMessages);
+    const followUpContext = { ...this._buildPlannerFollowUpContext(priorMessages),
+      authenticTaskText: this._activeTaskBinding(messages).text };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -19031,7 +20045,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const scratchResult = this._scratchpadWrite(tabId, {
         text: scratchText, replace: runOptions.steeringRevision != null,
-      });
+      }, gate.approvedScratchpadText);
       if (!scratchResult?.success) {
         onUpdate('warning', { message: scratchResult?.error || 'Could not pin plan to scratchpad.' });
       } else {
@@ -19065,6 +20079,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? gate.requiresStateChange
         : null,
       requiresSubmission: typeof gate.requiresSubmission === 'boolean' ? gate.requiresSubmission : null,
+      readScope: gate.readScope || null,
+      deliverables: gate.deliverables || [],
       siteWorkflowUrl: gate.siteWorkflowUrl || '',
       messaging: normalizeMessageTarget(gate.messaging),
       draftRecipients: normalizeMessageTarget(gate.draftRecipients),
@@ -19089,7 +20105,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     if (!portable) {
       const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
-      const schema = kind === 'read_scope'
+      const schema = kind === 'alignment'
+        ? PLANNER_ALIGNMENT_RESPONSE_JSON_SCHEMA
+        : kind === 'read_scope'
         ? READ_SCOPE_RESPONSE_JSON_SCHEMA
         : (kind === 'ask_mode_handoff'
           ? ASK_MODE_HANDOFF_RESPONSE_JSON_SCHEMA
@@ -19175,17 +20193,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _plannerRepairMessages(plannerMessages) {
-    return [
-      ...plannerMessages,
-      {
-        role: 'user',
-        content:
-          '/no_think\n' +
-          'The previous planner attempt did not return a parseable final JSON object. ' +
-          'Re-read the task above and output exactly one JSON object matching the schema. ' +
-          'No prose, no markdown, no tool calls, and no reasoning text.',
-      },
-    ];
+    const repair =
+      '/no_think\n' +
+      'Planner output repair: the previous attempt did not return a parseable final JSON object. ' +
+      'Classify the original authoritative User task; this formatting instruction is not a new user request. ' +
+      'Output exactly one JSON object matching the schema. ' +
+      'No prose, no markdown, no tool calls, and no reasoning text.';
+    return this._plannerProtocolRepairMessages(plannerMessages, repair);
+  }
+
+  _plannerProtocolRepairMessages(plannerMessages, repair) {
+    // Keep repair protocol in the system instructions. A new last user turn
+    // can otherwise be classified as a request merely to return JSON.
+    const [system, ...rest] = plannerMessages;
+    return system?.role === 'system'
+      ? [{ ...system, content: system.content + '\n\n' + repair }, ...rest]
+      : [{ role: 'system', content: repair }, ...plannerMessages];
   }
 
   _plannerIntentConsistencyIssue(plan, followUpContext = {}) {
@@ -19248,21 +20271,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const clarificationGuidance = issueKind === 'clarification_submit_intent_dropped'
       ? ' The trusted unresolved-clarification block records that the user had authorized an eventual submission for the task being clarified. Decide semantically whether the current User task directly answers or continues that clarification. If it does and does not revoke submission, keep execute and set requires_submission=true. If it changes, cancels, or explicitly limits the task to filling without submission, keep the appropriate non-submit intent.'
       : '';
-    return [
-      ...plannerMessages,
-      {
-        role: 'user',
-        content:
+    return this._plannerProtocolRepairMessages(plannerMessages,
           '/no_think\n' +
           `The previous JSON was parseable but its intent needs one consistency check (${issueKind}). ` +
           'Re-read only the authoritative User task above and output one corrected JSON object. ' +
           'Keep plan_only only when the user asked merely for a plan, outline, strategy, or discussion without authorizing execution. ' +
-          'Use execute when producing the requested answer needs a fresh page, browser, network, memory, or scheduling tool; read-only execution still has requires_state_change false. ' +
+          'Use execute when producing the requested answer needs a computation, fresh page, browser, network, memory, or scheduling tool; page-independent computation and read-only execution still have requires_state_change false. ' +
           'Use respond only when existing conversation or working-note context is sufficient and list no tools. ' +
           clarificationGuidance +
-          'Do not infer permission for a mutation that the current user task did not authorize. No prose, markdown, tool calls, or reasoning text.',
-      },
-    ];
+          'Do not infer permission for a mutation that the current user task did not authorize. No prose, markdown, tool calls, or reasoning text.');
   }
 
   _plannerIntentUnresolvedConsistencyIssue(plan, recheckedIssueKind = null, followUpContext = {}) {
@@ -19442,6 +20459,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _plannerCompletionGateFields(plan) {
     return {
       requiresDownload: plan?.completion_requirements?.download === true,
+      readScope: normalizeReadScope(plan?.read_scope),
+      deliverables: Array.isArray(plan?.deliverables) && plan.deliverables.length <= 8
+        && plan.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
+        ? [...plan.deliverables]
+        : [],
     };
   }
 
@@ -20185,8 +21207,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
         return { proceed: false, steeringSuperseded: true };
       }
-      await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'planner');
-      if (this._shouldRecheckReadOnlyFollowUpIntent(plan, historyDigest, followUpContext)) {
+      const routeNonExecutionPlan = candidate => {
+        if (candidate.request_kind === 'respond') {
+          return {
+            proceed: true,
+            requestKind: 'respond',
+            responseOnly: true,
+            responseLanguagePolicy: candidate.response_language,
+            requiresStateChange: false,
+          };
+        }
+        if (candidate.request_kind !== 'execute') {
+          return {
+            proceed: false,
+            message: this._plannerTerminalMessage(candidate),
+            reason: candidate.request_kind,
+            requestKind: candidate.request_kind,
+            plannerClarification: candidate.request_kind === 'clarify',
+            responseLanguagePolicy: candidate.response_language,
+            requiresStateChange: false,
+            requiresSubmission: candidate.request_kind === 'clarify' && candidate.requires_submission === true,
+          };
+        }
+        return null;
+      };
+      const recheckReadOnlyFollowUpIntent = async candidate => {
+        if (!this._shouldRecheckReadOnlyFollowUpIntent(candidate, historyDigest, followUpContext)) return null;
         const intentGate = await this._runPlannerIntentGate(
           tabId,
           enriched,
@@ -20204,27 +21250,108 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (intentGate?.proceed === false) return intentGate;
         if (intentGate?.proceed && intentGate.responseOnly === true) return intentGate;
+        return null;
+      };
+      await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'planner');
+      const initialIntentGate = await recheckReadOnlyFollowUpIntent(plan);
+      if (initialIntentGate) return initialIntentGate;
+      const initialNonExecutionGate = routeNonExecutionPlan(plan);
+      if (initialNonExecutionGate) return initialNonExecutionGate;
+
+      // History helps legitimate follow-ups, but a high confidence score cannot
+      // authorize a plan for an earlier task. Check the exact current candidate
+      // before pinning recipients, execution guards, or review approval.
+      let alignmentReplanned = false;
+      if (historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts) {
+        let aligned = false;
+        try {
+          for (let alignmentAttempt = 1; alignmentAttempt <= 2; alignmentAttempt += 1) {
+            if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+            if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+              return { proceed: false, steeringSuperseded: true };
+            }
+            const taskBinding = `plan_alignment_${secureRandomBase36Token(24)}`;
+            const alignmentMessages = buildPlannerAlignmentMessages(followUpContext.authenticTaskText || this._plannerUserAuthoredText(enriched), plan, {
+              taskBinding, historyDigest,
+              priorUserTask: followUpContext.priorUserTask,
+              scratchpadFacts: followUpContext.scratchpadFacts,
+              independentTask: runOptions?.independentRun === true,
+            });
+            await this._tracePlannerAttemptRequest(
+              runId, plannerStep, provider, alignmentMessages, 'planner_alignment', alignmentAttempt, runtimeMode,
+            );
+            const alignmentStartedAt = Date.now();
+            plannerRequestInFlight = true;
+            const alignmentResult = await this._chatWithCostAllowance(
+              provider, alignmentMessages,
+              { ...this._plannerChatOptions(provider, false, false, 'alignment'), temperature: 0,
+                maxTokens: Math.min(this._providerMaxOutputTokens(provider), 256) },
+              costState, { tabId, generationName: 'planner_alignment' },
+            );
+            plannerRequestInFlight = false;
+            await this._tracePlannerAttemptResponse(
+              runId, plannerStep, provider, alignmentResult, 'planner_alignment', alignmentAttempt, alignmentStartedAt,
+            );
+            if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+            if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+              return { proceed: false, steeringSuperseded: true };
+            }
+            const verdict = parsePlannerAlignmentFromContent(alignmentResult.content, taskBinding);
+            if (verdict?.aligned === true) { aligned = true; break; }
+            if (alignmentAttempt === 2) break;
+            const alignmentRepairMessages = buildPlannerAlignmentRepairMessages(plannerMessages);
+            onUpdate('thinking', { step: plannerStep, note: 'Planning… rechecking the current task' });
+            await this._tracePlannerAttemptRequest(
+              runId, plannerStep, provider, alignmentRepairMessages, 'planner_alignment_repair', 1, runtimeMode,
+            );
+            const alignmentRepairStartedAt = Date.now();
+            plannerRequestInFlight = true;
+            const repaired = await this._chatWithCostAllowance(
+              provider, alignmentRepairMessages, this._plannerChatOptions(provider, true),
+              costState, { tabId, generationName: 'planner' },
+            );
+            plannerRequestInFlight = false;
+            await this._tracePlannerAttemptResponse(
+              runId, plannerStep, provider, repaired, 'planner_alignment_repair', 1, alignmentRepairStartedAt,
+            );
+            if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+            if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+              return { proceed: false, steeringSuperseded: true };
+            }
+            plan = parsePlanFromContent(repaired.content, plannerParseOptions);
+            if (!plan
+                || this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) break;
+            alignmentReplanned = true;
+            // A validated correction can remove execution entirely. Preserve
+            // its normal terminal route without pinning or approving a plan.
+            const correctedNonExecutionGate = routeNonExecutionPlan(plan);
+            if (correctedNonExecutionGate) return correctedNonExecutionGate;
+          }
+        } catch (alignmentError) {
+          plannerRequestInFlight = false;
+          if (this._isCostAllowanceError(alignmentError)) throw alignmentError;
+          if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+          await this._tracePlannerAttemptFailure(runId, 'planner_alignment', 1, alignmentError);
+        }
+        if (!aligned) {
+          if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+            return { proceed: false, steeringSuperseded: true };
+          }
+          const message = 'The proposed plan failed alignment with your current task. No actions were started; please retry the task.';
+          onUpdate('warning', { message });
+          return { proceed: false, message, reason: 'task_alignment_unverified', requestKind: 'failed' };
+        }
       }
-      if (plan.request_kind === 'respond') {
-        return {
-          proceed: true,
-          requestKind: 'respond',
-          responseOnly: true,
-          responseLanguagePolicy: plan.response_language,
-          requiresStateChange: false,
-        };
+      if (alignmentReplanned) {
+        // The repaired candidate owns completion guards and follow-up intent;
+        // checks on the rejected candidate cannot stand in for these.
+        await this._tracePlannerCompletionRequirementCorrection(runId, plan, 'planner');
+        const repairedIntentGate = await recheckReadOnlyFollowUpIntent(plan);
+        if (repairedIntentGate) return repairedIntentGate;
       }
-      if (plan.request_kind !== 'execute') {
-        return {
-          proceed: false,
-          message: this._plannerTerminalMessage(plan),
-          reason: plan.request_kind,
-          requestKind: plan.request_kind,
-          plannerClarification: plan.request_kind === 'clarify',
-          responseLanguagePolicy: plan.response_language,
-          requiresStateChange: false,
-          requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
-        };
+      if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+      if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+        return { proceed: false, steeringSuperseded: true };
       }
 
       const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
@@ -20394,6 +21521,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(approvedPlanEdited ? { responseLanguageApprovedPlanOverride: true } : {}),
         requiresStateChange: approvedRequiresStateChange,
         requiresSubmission: approvedRequiresSubmission,
+        readScope: approvedReadScope,
+        deliverables: this._plannerCompletionGateFields(plan).deliverables,
         siteWorkflowUrl: tabUrl,
         messaging: approvedPlanEdited ? null : plan.messaging,
         draftRecipients: approvedPlanEdited ? null : plan.draft_recipients,
@@ -20666,7 +21795,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       'Do not claim that any browser action, save, submission, or send occurred unless the recorded tool results explicitly verify it.',
       formatResponseLanguagePolicyInstruction(responseLanguagePolicy, fallbackLocale),
       recovery
-        ? 'The browser tool loop has stopped. Recover the most useful user-facing partial deliverable from facts already present. If the requested deliverable was drafted text, provide the complete reconstructed text now. State uncertainty briefly instead of inventing missing facts.'
+        ? [
+          'The browser tool loop has ended and cannot resume within this turn. Return only one JSON object with exactly one key: {"final_text":"user-facing partial result"}. The value must be a nonempty string of at most 65536 characters. Emit no prose or Markdown outside the JSON object.',
+          'The final_text value must contain only the useful user-facing partial deliverable, never internal deliberation, self-instructions, a continuation offer, or a promise that tools will resume. Preserve requested draft text and literal code inside the string.',
+          'Use the latest same-task recorded tool evidence. Older observations may be stale. Distinguish prepared local artifacts from verified page actions; do not infer the current page, crop, save, submission, or send state from a prior observation or an earlier plan. If evidence is missing or conflicts, state uncertainty briefly instead of reconstructing an operational next step.',
+        ].join('\n')
         : 'Use the existing conversation and working-note facts to answer without reading or changing the current page.',
     ].join('\n');
   }
@@ -20708,7 +21841,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       },
       ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
-    const prunedMessages = this._pruneOldImages(contextMessages, provider);
+    const prunedMessages = this._pruneOldImages(this._completionEvidenceMessages(tabId, contextMessages, runOptions), provider);
     // Voluntary research sharing needs the exact model-facing request (with
     // the context-only system prompt). Callers pass a holder when the result
     // may be shared; recovery phases omit it and are never shared.
@@ -20772,7 +21905,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (returnResult) return result;
     if (result?.toolCalls?.length) return '';
     if (shareCapture) shareCapture.response = String(result?.content ?? '');
-    return repairAssistantDisplayText(String(result?.content || '').trim());
+    const displayContent = phase === 'terminal_recovery'
+      ? terminalRecoveryFinalText(result?.content)
+      : String(result?.content || '').trim();
+    return repairAssistantDisplayText(displayContent);
   }
 
   _consumeContextOnlyAbort(tabId, messages, onUpdate) {
@@ -20855,16 +21991,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runOptions?.cloudRun !== true) {
       onUpdate('thinking', { step, note: 'Recovering a useful partial result…' });
       try {
-        recovered = await this._generateContextOnlyResponse(
+        recovered = chatRecoveryDisplayText(await this._generateContextOnlyResponse(
           tabId, messages, provider, costState, runId,
           { phase: 'terminal_recovery', step, runOptions, currentUserMessage, priorMessageSet },
-        );
+        ));
       } catch (error) {
         this._logDebug({ type: 'terminal_recovery_error', step, error: formatErrorMessage(error) });
       }
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (stopped) return stopped;
+    // Recovery is an awaited model generation too. A correction received
+    // during it supersedes this result before UI, history, or persistence.
+    if (this._hasPendingSteering(tabId)) return { content: '', status: 'steering_superseded' };
     const finalResponse = recovered
       ? [
         'I could not complete the browser action because it became stuck repeating an interaction. The recovered result below is chat-only; do not assume it was saved, submitted, or sent.',
@@ -20981,7 +22120,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (verdict.allowed) return 'once';
     if (!verdict.needsPrompt) return 'deny';
     const choice = await this._promptGroupedSearchPermission(tabId, host, onUpdate);
-    if (choice === null) return null;
+    if (choice === null || this._hasPendingSteering(tabId) || this._checkAbort(tabId)) return null;
     if (candidateOnly) {
       this.permissions.recordIntentCandidate(
         host,
@@ -21615,16 +22754,104 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   };
 
-  async _messageRecipientContentProbe(tabId, params) {
+  _nativeChatTaskAuthority(tabId, { create = false } = {}) {
+    const provider = this._activeProvider?.(tabId);
+    if (!provider || this._checkAbort?.(tabId) || this._hasUnvalidatedSteering?.(tabId)) return null;
+    const taskKey = this._progressTaskKeyHash(tabId), task = this._progressTaskAnchorText(tabId);
+    const resumeTaskId = this._resumeTaskId(tabId, { create });
+    if (!taskKey || !task || !resumeTaskId) return null;
     try {
-      return await browser.tabs.sendMessage(tabId, {
+      // Configuration enters a private digest only, never a tool view/export.
+      return { taskKey, taskSha256: this._sha256TextSync(task), resumeTaskId,
+        providerSha256: this._sha256TextSync(JSON.stringify([provider.constructor?.name, provider.model, provider.config])) };
+    } catch { return null; }
+  }
+
+  _nativeChatPendingRestore(tabId) {
+    const session = normalizeChatSession(this.chatSessions.get(tabId));
+    const pending = session.pendingOutbound, receipt = session.completionReceipt;
+    const baseline = pending?.nativeOpaqueBaseline || receipt?.nativeOpaqueBaseline;
+    const authority = this._nativeChatTaskAuthority(tabId);
+    if (!baseline || !authority || !['taskKey','taskSha256','resumeTaskId','providerSha256']
+        .every(key => baseline[key] === authority[key])
+        || (pending ? baseline.body !== this._workflowMessageBody(pending.text)
+          : this._sha256TextSync(baseline.body) !== receipt.bodySha256)) return null;
+    return baseline;
+  }
+
+  _captureNativeWhatsappPending(tabId, decision, observation, guardedBaseline = null) {
+    if (!/^dom:whatsapp:phone:[a-f0-9]{32}$/.test(decision.threadKey || '')) return true;
+    const source = observation.nativeChatMessageBaseline, authority = this._nativeChatTaskAuthority(tabId, { create: true });
+    const state = this.completionInvariants.get(tabId);
+    if (!source?.complete || !authority || !state?.runToken || source.threadKey !== decision.threadKey
+        || (guardedBaseline && (source.documentEpoch !== guardedBaseline.documentEpoch
+          || source.messageIds.length !== guardedBaseline.messageIds?.length
+          || !source.messageIds.every((id, index) => id === guardedBaseline.messageIds[index])))) return false;
+    const baseline = normalizeNativeOpaqueBaseline({ ...source, ...authority, body: decision.text,
+      originRunToken: state.runToken, originActionSequence: Number(state.sequence || 0) + 1 }, decision.threadKey);
+    if (!baseline) return false;
+    decision.nativeOpaqueBaseline = baseline;
+    return true;
+  }
+
+  _nativeChatOwnerScope(tabId) {
+    const run = this.completionInvariants?.get?.(tabId);
+    if (!run?.runToken) return '';
+    const provider = this._activeProvider?.(tabId);
+    if (!provider || !['object','function'].includes(typeof provider)
+        || this._checkAbort?.(tabId) || this._hasUnvalidatedSteering?.(tabId)) return '';
+    this._nativeChatProviderOwners ??= new WeakMap();
+    if (!this._nativeChatProviderOwners.has(provider)) this._nativeChatProviderOwners.set(provider, crypto.randomUUID());
+    const authority = this._nativeChatTaskAuthority(tabId, { create: true });
+    if (!authority) return '';
+    return JSON.stringify([run.runToken, this._progressTaskKeyHash(tabId),
+      this._systemOneGenerations?.get(tabId) || 0, this._nativeChatProviderOwners.get(provider),
+      String(provider.model || provider.config?.model || ''), authority.taskSha256, authority.resumeTaskId, authority.providerSha256]);
+  }
+
+  _nativeTelegramReadPreparationCurrent(tabId, args, context) {
+    return !!context?.nativeTelegramReadRepairOwner
+      && context.nativeTelegramReadRepairOwner === this._nativeChatOwnerScope(tabId)
+      && typeof args?.ref_id === 'string' && args.ref_id === context.nativeTelegramReadRepairRef
+      && typeof context.nativeTelegramReadRepairBinding?.token === 'string'
+      && context.nativeTelegramReadRepairBinding.token.length > 0
+      && context.nativeTelegramReadRepairBinding.token.length <= 256;
+  }
+
+  async _messageRecipientContentProbe(tabId, params) {
+    const nativeOwner = this._nativeChatOwnerScope(tabId);
+    params = { ...params, _nativeChatOwner: nativeOwner, _nativeChatPendingRestore: this._nativeChatPendingRestore(tabId) };
+    try {
+      const result = await browser.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'probe_message_recipient_guard',
         params,
-      });
+      }, params?.tool === 'upload_file' ? { frameId: 0 } : undefined);
+      if (result?.nativeTelegramRepair === true && (!nativeOwner || nativeOwner !== this._nativeChatOwnerScope(tabId))) {
+        return { success: false, messageSend: null, conclusive: false, reasonCode: 'native_telegram_preparation_changed',
+          error: 'The task or browser owner changed while checking the native Telegram read-only preparation.' };
+      }
+      return result;
     } catch (error) {
       return { success: false, messageSend: null, conclusive: false, error: error?.message || String(error) };
     }
+  }
+
+  _nativeChatPreparedDraft(tabId, observation = null, requireObserved = false) {
+    const record = this._nativeChatPreparedDrafts?.get(tabId);
+    if (!record) return null;
+    if (Date.now() > record.expiresAt || !record.owner || record.owner !== this._nativeChatOwnerScope(tabId)
+        || this.chatSessions.get(tabId)?.pendingOutbound?.key !== record.messageKey
+        || this.chatSessions.get(tabId)?.pendingOutbound?.text !== record.body
+        || this.chatSessions.get(tabId)?.pendingOutbound?.threadKey !== record.threadKey) {
+      this._nativeChatPreparedDrafts.delete(tabId); return null;
+    }
+    if (requireObserved && !record.observed) return null;
+    if (observation && (observation._nativeChatDraftCurrent !== true
+        || observation.composer?.available !== true || observation.composer?.empty !== false
+        || observation.composer.ref !== record.composerRef
+        || JSON.stringify(observation.nativeChatMessageBaseline) !== record.baseline)) return null;
+    return record;
   }
 
   async _chatObservationParams(tabId) {
@@ -21633,6 +22860,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let policy = null;
     try { policy = getMessageRecipientGuardPolicy(pageUrl); } catch {}
     return {
+      _nativeChatOwner: this._nativeChatOwnerScope(tabId),
+      _nativeChatDraftBinding: this._nativeChatPreparedDraft(tabId)?.binding || null,
+      _nativeChatPendingRestore: this._nativeChatPendingRestore(tabId),
       ...(policy?.adapterName ? { adapterName: policy.adapterName } : {}),
       supportsRecipientSets: policy?.supportsRecipientSets === true,
     };
@@ -21673,6 +22903,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       state: advanced.session.state,
       threadKey: advanced.snapshot.threadKey,
       nextAction: advanced.nextAction,
+      ...(advanced.initialOutgoingHistoryCount ? { initialOutgoingHistoryCount: advanced.initialOutgoingHistoryCount } : {}),
+      deliveryGuidance: 'Conversation state, outgoing history and duplicate prevention do not prove delivery for the current task. Follow the current requested body and goal. A one-message request still needs its own verified delivery; an ongoing goal may wait only after its currently required work is addressed. Keep uncertain sends blocked and resolve them by observation, never by retrying.',
       events,
       newMessages,
       ...(deltaTruncated ? { deltaTruncated: true } : {}),
@@ -21687,6 +22919,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _chatObservationResult(observation, advanced) {
     const source = observation && typeof observation === 'object' ? observation : {};
+    const repair = source.nativeChatReadRepair;
+    const nativeChatReadRepair = repair?.phase === 'read_latest' && repair.direction === 'bottom'
+      && /^ref_[A-Za-z0-9_:-]{1,100}$/.test(repair.ref_id || '')
+      ? { phase: 'read_latest', ref_id: repair.ref_id, direction: 'bottom',
+          message: 'This conversation is showing older messages. Read this exact message pane with get_accessibility_tree({ref_id}), scroll({ref_id,direction:"bottom"}), then call chat_observe before sending. Do not repeat Send or Enter against this historical viewport.' }
+      : null;
+    const telegramRepair = source.nativeTelegramRepair;
+    const nativeTelegramRepair = ['open_profile_or_settings', 'open_profile', 'open_menu', 'open_self_settings'].includes(telegramRepair?.phase)
+      ? { phase: telegramRepair.phase,
+          ...(/^ref_[A-Za-z0-9_:-]{1,100}$/.test(telegramRepair.ref_id || '') ? { ref_id: telegramRepair.ref_id } : {}) }
+      : null;
     return {
       success: source.success === true,
       ...(source.schema ? { schema: source.schema } : {}),
@@ -21695,6 +22938,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...(source.conversationId ? { conversationId: source.conversationId } : {}),
       ...(source.conversationIdentity ? { conversationIdentity: source.conversationIdentity } : {}),
       threadKey: advanced.snapshot.threadKey,
+      ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+      ...(nativeTelegramRepair ? { nativeTelegramRepair } : {}),
       composer: {
         available: source.composer?.available === true,
         ...(source.composer?.ref ? { ref: source.composer.ref } : {}),
@@ -21707,19 +22952,167 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _readChatObservation(tabId) {
     try {
-      return await browser.tabs.sendMessage(tabId, {
+      const params = await this._chatObservationParams(tabId);
+      const result = await browser.tabs.sendMessage(tabId, {
         target: 'content',
         action: 'observe_chat',
-        params: await this._chatObservationParams(tabId),
+        params,
       });
+      if ((/^https:\/\/web\.whatsapp\.com(?:\/|$)/i.test(result?.url || '')
+            || /^dom:whatsapp:/.test(result?.threadKey || ''))
+          && params._nativeChatOwner !== this._nativeChatOwnerScope(tabId)) {
+        return { success: false, reason: 'native_chat_owner_changed',
+          error: 'The native conversation observation belongs to an earlier task or provider. Read the current conversation again; do not resend an uncertain message.' };
+      }
+      return result;
     } catch (error) {
       return { success: false, error: error?.message || String(error) };
     }
   }
 
-  async _observeChatWorkflow(tabId, args = {}) {
-    const observation = await this._readChatObservation(tabId);
-    if (observation?.success !== true) return observation;
+  async _confirmPendingChatReconciliation(tabId, prior, observedThreadKey, onUpdate) {
+    const provider = this._activeProvider(tabId), pending = prior.pendingOutbound;
+    const conversationId = this.conversationIds.get(tabId), taskKey = this._progressTaskKeyHash(tabId);
+    const taskText = this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId);
+    const runToken = this.completionInvariants.get(tabId)?.runToken;
+    if (typeof onUpdate !== 'function' || !provider || !pending || !conversationId || !taskKey || !runToken) return null;
+    const authority = this._nativeChatTaskAuthority(tabId, { create: true });
+    if (!authority) return null;
+    const context = this.systemOneContext(tabId), model = String(provider.model || provider.config?.model || '');
+    const fingerprint = JSON.stringify(pending), threadKey = prior.threadKey;
+    const isCurrent = () => this.chatSessions.get(tabId) === prior && prior.pendingOutbound === pending
+      && JSON.stringify(pending) === fingerprint && prior.threadKey === threadKey
+      && this.conversationIds.get(tabId) === conversationId && this._progressTaskKeyHash(tabId) === taskKey
+      && (this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId)) === taskText
+      && this._resumeTaskId(tabId) === authority.resumeTaskId
+      && this._nativeChatTaskAuthority(tabId)?.providerSha256 === authority.providerSha256
+      && this.completionInvariants.get(tabId)?.runToken === runToken
+      && this._activeProvider(tabId) === provider && String(provider.model || provider.config?.model || '') === model
+      && context.isCurrent() && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
+      && !this._hasUnvalidatedSteering(tabId);
+    if (!isCurrent()) return null;
+    const clarifyId = `chat_reconcile_${crypto.randomUUID()}`;
+    const approve = 'I verified this message was not delivered; clear this pending send';
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    let entry;
+    const response = new Promise(resolve => {
+      entry = { resolve, ts: Date.now(), settled: false, timer: null, onUpdate };
+      tabPending.set(clarifyId, entry);
+    });
+    try {
+      try {
+        onUpdate('clarify', { promptKind: 'clarify', pendingReconciliation: true, clarifyId, requireExplicitAnswer: true, timeoutSec: 0,
+          question: `An earlier outgoing message has an unknown delivery result. Its conversation is ${pending.threadKey}.\n\n${pending.text}\n\nHave you independently checked that this exact message was not delivered?`,
+          options: ['Keep the pending send blocked', approve],
+          reason: 'Clearing this record can permit a duplicate. This choice only reconciles the exact pending send; it does not authorize a new message.' });
+      } catch { this._settleClarification(entry, { cancelled: true }); }
+      const answer = await response;
+      if (answer?.cancelled || !isCurrent()) return null;
+      const observation = await this._readChatObservation(tabId);
+      if (!isCurrent() || observation?.success !== true
+          || normalizeChatSnapshot(observation).threadKey !== observedThreadKey) return null;
+      return { approved: ['user', 'manual'].includes(answer?.source) && answer.answer === approve,
+        observation, isCurrent };
+    } finally {
+      tabPending.delete(clarifyId);
+      if (tabPending.size === 0 && this._pendingClarifications.get(tabId) === tabPending) this._pendingClarifications.delete(tabId);
+    }
+  }
+
+  _captureOwnedNativeChatReadAuthority(tabId) {
+    const owner = this._nativeChatOwnerScope(tabId);
+    const signal = this._runAbortSignal(tabId);
+    const run = this._pageFeedbackRuns?.get(tabId);
+    const frame = run?.frames?.get(0);
+    const url = run?.modelState?.url || run?.latestPage?.url || run?.url || '';
+    const threadKey = normalizeChatSession(this.chatSessions.get(tabId)).threadKey;
+    if (!owner || !signal || signal.aborted || !run || !frame?.token || !url) return null;
+    return {
+      owner, signal, documentToken: frame.token, url, threadKey,
+      isCurrent: scope => !signal.aborted && this._runAbortSignal(tabId) === signal
+        && owner === this._nativeChatOwnerScope(tabId)
+        && !this._hasPendingSteering(tabId) && !this._hasUnvalidatedSteering(tabId)
+        && this._pageFeedbackRuns?.get(tabId) === run && run.frames.get(0) === frame
+        && frame.token === scope?.documentToken
+        && (run.modelState?.url || run.latestPage?.url || run.url) === scope?.url
+        && (!threadKey || normalizeChatSession(this.chatSessions.get(tabId)).threadKey === threadKey)
+        && (!scope?.threadKey || normalizeChatSession(this.chatSessions.get(tabId)).threadKey === scope.threadKey),
+    };
+  }
+
+  _rememberOwnedNativeChatReadRepair(tabId, observation, captured) {
+    if (!captured) return;
+    const threadKey = observation?.success === true
+      ? normalizeChatSnapshot(observation).threadKey : captured.threadKey;
+    const scope = { ...captured, threadKey };
+    if (!scope.isCurrent(scope)) return;
+    let entry = this._ownedNativeChatReadRepairs.get(tabId);
+    if (!entry || entry.owner !== scope.owner) {
+      entry = { owner: scope.owner, controller: createOwnedNativeChatReadRepair(), pending: null };
+      this._ownedNativeChatReadRepairs.set(tabId, entry);
+    }
+    const record = entry.controller.issue(observation, scope);
+    if (record) entry.pending = record;
+    else if (observation?.success === true
+        && !observation.nativeChatReadRepair && !observation.nativeTelegramRepair) entry.pending = null;
+  }
+
+  _hasCurrentOwnedNativeChatReadRepair(tabId) {
+    const entry = this._ownedNativeChatReadRepairs.get(tabId);
+    if (!entry?.pending) return false;
+    if (entry.controller.isCurrent(entry.pending)) return true;
+    // A stale record cannot preempt the new task or fabricate a failed tool
+    // result. Keep the same-task controller's consumed-control history.
+    entry.pending = null;
+    return false;
+  }
+
+  async _runOwnedNativeChatReadRepair(tabId, messages, onUpdate, provider,
+      allowedToolNames, step, runOptions, toolSchemas) {
+    if (!this._hasCurrentOwnedNativeChatReadRepair(tabId)) return null;
+    const entry = this._ownedNativeChatReadRepairs.get(tabId), record = entry?.pending;
+    if (!record) return null;
+    entry.pending = null; // The controller consumes the exact private record once.
+    return entry.controller.run(record, async (name, args) => {
+      if (!allowedToolNames.has(name)) return { success: false, noDispatch: true, dispatched: false, outcomeUnknown: false,
+        error: 'The current run does not permit this owned read repair.' };
+      // Fresh normal action capture does not erase queued feedback or bypass
+      // recipient, target, navigation, human-input, task or submission guards.
+      const authority = this._captureOwnedNativeChatReadAuthority(tabId);
+      await this._capturePageFeedbackModelState(tabId, messages);
+      if (!authority || !authority.isCurrent(record.scope)
+          || normalizeChatSession(this.chatSessions.get(tabId)).threadKey !== authority.threadKey
+          || this._nativeChatOwnerScope(tabId) !== record.scope.owner
+          || this._checkAbort(tabId) || this._hasPendingSteering(tabId)) {
+        return { success: false, noDispatch: true, dispatched: false, outcomeUnknown: false,
+          error: 'The owned read repair was superseded before dispatch.' };
+      }
+      const call = { id: 'owned_chat_read_' + crypto.randomUUID(), type: 'function',
+        function: { name, arguments: JSON.stringify(args) } };
+      messages.push({ role: 'assistant', content: null, tool_calls: [call] });
+      let result;
+      await this._executeToolBatch(tabId, [call], messages, (type, data) => {
+        if (type === 'tool_result' && data?.name === name) result = data.result;
+        onUpdate(type, data);
+      }, provider, null, allowedToolNames, step,
+      { ...runOptions, [OWNED_NATIVE_CHAT_READ_REPAIR]: true }, toolSchemas);
+      if (result === undefined) throw new Error('No ordinary recorded repair result was available.');
+      return result;
+    });
+  }
+
+  async _observeChatWorkflow(tabId, args = {}, onUpdate = null) {
+    const ownedReadAuthority = this._captureOwnedNativeChatReadAuthority(tabId);
+    let observation = await this._readChatObservation(tabId);
+    if (ownedReadAuthority && !ownedReadAuthority.isCurrent(ownedReadAuthority)) return {
+      success: false, noDispatch: true, reason: 'native_chat_owner_changed',
+      error: 'The conversation read belongs to an earlier task or document. Observe again; do not resend.',
+    };
+    if (observation?.success !== true) {
+      this._rememberOwnedNativeChatReadRepair(tabId, observation, ownedReadAuthority);
+      return observation;
+    }
     // chat_observe reports the normalized threadKey, so a key the model passes
     // back must be compared against that same form — not against the raw
     // content-script value, which normalization can still change.
@@ -21728,6 +23121,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const rebindThreadKey = String(args.rebind_thread_key || args.rebindThreadKey || '').trim();
     const reconcilePending = args.reconcile_pending_outbound === true;
     const pendingOutboundKey = String(args.pending_outbound_key || '').trim();
+    const pristineUnboundThread = !prior.threadKey && prior.state === 'waiting_for_transfer'
+      && !prior.pendingOutbound && !prior.completionReceipt && !prior.seenMessageIds?.length && !prior.sentMessageKeys?.length
+      && !prior.telegramIncomingHighWater && !prior.telegramOutgoingHighWater && !prior.telegramLatestIncomingRevision
+      && !prior.userInput && !prior.pausedState && !prior.stopReason
+      && Object.values(prior.resolutionEvidence || {}).every(value => value == null);
+    const preparedDraft = this._nativeChatPreparedDraft(tabId);
+    const knownPreEnterDraft = preparedDraft && prior.pendingOutbound?.text === preparedDraft.body
+      && prior.pendingOutbound?.threadKey === preparedDraft.threadKey
+      && observedThreadKey === preparedDraft.threadKey && observation.composer?.ref === preparedDraft.composerRef
+      && observation.composer?.empty === false
+      && (observation._nativeChatDraftCurrent === true || observation._nativeChatDraftRetained === true);
     if (reconcilePending) {
       if (!prior.pendingOutbound) {
         return {
@@ -21745,17 +23149,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           error: 'Pending outbound reconciliation requires the exact pending_outbound_key from chatWorkflow.',
         };
       }
-      // Clearing an uncertain send is an explicit user-authorized decision;
-      // elapsed time alone is never evidence that dispatch failed.
+      // A fresh private draft witness proves this explicit Enter was never sent.
+      // Keep its pending record; observation/viewport repair authorizes no send.
+      if (!knownPreEnterDraft) {
+      const confirmation = await this._confirmPendingChatReconciliation(tabId, prior, observedThreadKey, onUpdate);
+      if (confirmation?.isCurrent()) {
+        observation = confirmation.observation;
+        // An actual delivery arriving during the dialog takes the ordinary
+        // observation path, retaining its reply-anchor provenance and dedupe.
+        const delivered = advanceChatSession(prior, observation);
+        if (!delivered.session.pendingOutbound) {
+          this._rememberRecoveredWhatsappDelivery(tabId, prior, observation, delivered);
+          this.chatSessions.set(tabId, delivered.session);
+          this._persist(tabId);
+          return this._chatCompletionObservationResult(tabId, observation, delivered);
+        }
+      }
+      if (confirmation?.approved !== true || !confirmation.isCurrent()) return {
+        success: false, noDispatch: true, reason: 'pending_reconciliation_requires_confirmation',
+        error: 'The uncertain send remains pending. Only the exact app-owned confirmation answered by the user can clear it; model flags, earlier prose, automatic answers and timeouts cannot authorize this. Ordinary chat_observe can still verify real delivery.',
+      };
+      // The settled UI answer is one-use and bound to this exact live record.
       prior = { ...prior, pendingOutbound: null };
+      }
     }
-    if (rebindThreadKey) {
+    // A model may echo this optional key during ordinary observation. When
+    // both bindings name the same peer, or this is a pristine initial binding,
+    // this is a read, never a reset:
+    // retain pending sends, consumed identities, dedup and user-input stops.
+    const unchangedThreadEcho = rebindThreadKey && (rebindThreadKey === prior.threadKey || pristineUnboundThread)
+      && rebindThreadKey === observedThreadKey && prior.stopReason !== 'thread_changed';
+    if (rebindThreadKey && !unchangedThreadEcho) {
       if (prior.stopReason !== 'thread_changed' || prior.pendingOutbound) {
         return {
           success: false,
           noDispatch: true,
           reason: 'thread_rebind_not_allowed',
-          error: 'Chat thread rebind requires a prior thread_changed pause with no pending outbound send.',
+          error: 'Chat thread rebind requires a prior thread_changed pause with no pending outbound send. For ordinary reading, call chat_observe with rebind_thread_key:"", reconcile_pending_outbound:false and pending_outbound_key:"". Do not use an accessibility-tree revision or ref as a thread key.',
         };
       }
       if (!observedThreadKey || rebindThreadKey !== observedThreadKey) {
@@ -21768,15 +23198,188 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       prior = createChatSession({ threadKey: observedThreadKey });
     }
+    const draft = this._nativeChatPreparedDraft(tabId, observation);
+    if (draft) draft.observed = true;
     const advanced = advanceChatSession(prior, observation);
+    this._rememberRecoveredWhatsappDelivery(tabId, prior, observation, advanced);
     this.chatSessions.set(tabId, advanced.session);
     this._persist(tabId);
-    return this._chatObservationResult(observation, advanced);
+    const result = this._chatCompletionObservationResult(tabId, observation, advanced);
+    if (draft && this._nativeChatPreparedDraft(tabId, observation, true) === draft) {
+      result.ownedDraftRecovery = { available:true,
+        message:'The previous chat_send wrote this exact owned draft but its explicit submit was blocked before Enter. After this fresh observation, a new chat_send with the same thread, composer and body may submit it once through the current guards. Do not clear or rewrite it.' };
+    }
+    if (knownPreEnterDraft && !result.ownedDraftRecovery) {
+      result.ownedDraftRecovery = { available:false, submissionDispatched:false, requiresLatestObservation:true,
+        message:'The exact owned draft remains pending, and its explicit Enter was not dispatched. Restore the latest native message viewport using the read-only repair, then call chat_observe. A fresh current draft and complete baseline are required before a new guarded chat_send; do not clear, rewrite or automatically submit it.' };
+    }
+    this._rememberOwnedNativeChatReadRepair(tabId, result, ownedReadAuthority);
+    return result;
   }
 
+  _rememberRecoveredWhatsappDelivery(tabId, prior, observation, advanced) {
+    const pending = prior?.pendingOutbound, baseline = pending?.nativeOpaqueBaseline;
+    const state = this.completionInvariants.get(tabId), guard = this._planExecutionGuards.get(tabId);
+    const authority = this._nativeChatTaskAuthority(tabId);
+    if (!baseline || !authority || state?.hadAction || state?.lastAction || state?.verificationDebt
+        || !guard?.enabled || guard.taskDrifted || guard.taskKey !== baseline.taskKey
+        || observation.conversationId !== baseline.threadKey.slice(4)
+        || !advanced.pendingDeliveryVerified || advanced.session.pendingOutbound || advanced.session.userInput?.required
+        || !['taskKey','taskSha256','resumeTaskId','providerSha256'].every(key => baseline[key] === authority[key])
+        || !this._nativeWhatsappDeliveryProof(observation, { ...baseline, complete: true })) return;
+    const resolved = this._resolveNativeWhatsappNamedMessagingTarget(guard.messaging, {
+      success: true, conclusive: true, strongRecipientCandidates: [{ identity: observation.conversationId, role: 'to',
+        aliases: [observation.conversationId, observation.conversationIdentity] }],
+    });
+    if (!resolved || resolved.recipients[0].identity !== baseline.threadKey.slice(4)) return;
+    guard.messaging = resolved;
+    const receipt = { schema: 'webbrain-chat-delivery-receipt/1', taskKey: baseline.taskKey,
+      taskSha256: baseline.taskSha256, resumeTaskId: baseline.resumeTaskId, threadKey: baseline.threadKey,
+      url: baseline.url, bodySha256: this._sha256TextSync(baseline.body), messageId: observation.nativeChatDeliveryProof.messageId,
+      originRunToken: baseline.originRunToken, originActionSequence: baseline.originActionSequence,
+      verifiedAt: observation.observedAt, nativeOpaqueBaseline: baseline };
+    advanced.session = normalizeChatSession({ ...advanced.session, completionReceipt: receipt });
+  }
+
+  _nativeWhatsappDeliveryProof(observation, binding) {
+    const proof = observation?.nativeChatDeliveryProof;
+    if (!/^dom:whatsapp:phone:[a-f0-9]{32}$/.test(binding?.threadKey || '')
+        || binding.complete !== true || proof?.schema !== 'webbrain-native-mounted-delivery/1'
+        || proof.threadKey !== binding.threadKey || observation.threadKey !== binding.threadKey
+        || !/^[a-f\d-]{36}$/.test(binding.documentEpoch || '') || proof.documentEpoch !== binding.documentEpoch
+        || proof.timeOrigin !== binding.timeOrigin || proof.url !== binding.url || observation.url !== binding.url
+        || this._workflowMessageBody(proof.body) !== binding.body
+        || !Array.isArray(binding.messageIds) || !binding.messageIds.length || binding.messageIds.length > 200
+        || !Array.isArray(proof.baselineMessageIds) || proof.baselineMessageIds.length !== binding.messageIds.length
+        || new Set(proof.baselineMessageIds).size !== binding.messageIds.length
+        || !binding.messageIds.every((id, index) => proof.baselineMessageIds[index] === id)
+        || typeof proof.messageId !== 'string' || binding.messageIds.includes(proof.messageId)
+        || !proof.messageId.startsWith(binding.threadKey.slice(4) + ':')
+        || !/^[A-Za-z0-9_-]{1,32}$/.test(proof.messageId.slice(binding.threadKey.length - 3))
+        || !observation.messages?.some(message => message.id === proof.messageId && message.direction === 'outgoing'
+          && this._workflowMessageBody(message.authoredText ?? message.text) === binding.body)) return null;
+    return proof;
+  }
+
+  _chatCompletionObservationResult(tabId, observation, advanced) {
+    const result = this._chatObservationResult(observation, advanced);
+    const latestAction = this.completionInvariants.get(tabId)?.lastAction;
+    const binding = latestAction?.chatDeliveryBinding;
+    if (binding && binding.threadKey === advanced.snapshot.threadKey
+        && advanced.session.threadKey === advanced.snapshot.threadKey
+        && !advanced.session.pendingOutbound && !advanced.session.userInput?.required
+        && observation.composer?.available === true && observation.composer?.empty === true) {
+      const priorIds = new Set(binding.messageIds);
+      const whatsappProof = this._nativeWhatsappDeliveryProof(observation, binding);
+      const telegram = /^dom:telegram:[ak]:-?\d+:0$/.test(binding.threadKey);
+      const previousMaximum = telegram ? binding.messageIds.reduce((max, id) => {
+        const value = BigInt(id.slice(id.lastIndexOf(':') + 1)); return value > max ? value : max;
+      }, 0n) : 0n;
+      const outgoing = advanced.snapshot.messages.find(message => message.direction === 'outgoing'
+        && this._workflowMessageBody(message.authoredText ?? message.text) === binding.body
+        && !priorIds.has(message.id) && message.id.startsWith(binding.threadKey.slice(4) + ':')
+        && (whatsappProof ? message.id === whatsappProof.messageId : telegram
+          && /^\d{1,24}$/.test(message.id.slice(message.id.lastIndexOf(':') + 1))
+          && BigInt(message.id.slice(message.id.lastIndexOf(':') + 1)) > previousMaximum));
+      if (outgoing) result.chatDeliveryVerification = { schema: 'webbrain-chat-completion/1',
+        actionSequence: latestAction.sequence, threadKey: binding.threadKey, messageId: outgoing.id,
+        ...(whatsappProof ? { nativeMountedTailVerified: true } : {}) };
+    }
+    const receipt = advanced.session.completionReceipt, completion = this.completionInvariants.get(tabId);
+    if (!completion?.hadAction && !completion?.lastAction && !completion?.verificationDebt
+        && this._chatCompletionReceiptMatchesGoal(tabId, receipt)
+        && receipt.threadKey === advanced.snapshot.threadKey && receipt.url === observation.url
+        && (!/^dom:whatsapp:phone:/.test(receipt.threadKey)
+          || this._nativeWhatsappDeliveryProof(observation, { ...receipt.nativeOpaqueBaseline, complete: true })?.messageId === receipt.messageId)
+        && !advanced.session.pendingOutbound && !advanced.session.userInput?.required
+        && observation.composer?.available === true && observation.composer.empty === true
+        && advanced.snapshot.messages.some(message => message.id === receipt.messageId && message.direction === 'outgoing'
+          && this._sha256TextSync(this._workflowMessageBody(message.authoredText ?? message.text)) === receipt.bodySha256)) {
+      result.chatGoalDeliveryVerification = { schema: 'webbrain-chat-goal-completion/1',
+        threadKey: receipt.threadKey, messageId: receipt.messageId, bodySha256: receipt.bodySha256 };
+    }
+    return result;
+  }
+
+  async _prepareGenericChatDispatch(tabId, name, args, context, abortSignal = null) {
+    if (!context?.messageRecipientGuardRequired || name === 'upload_file'
+        || !['click', 'click_ax', 'press_keys', 'set_field'].includes(name)
+        || (!context.messageRecipientNativeChatBaseline && !this.chatSessions.has(tabId))) return null;
+    const blocked = (reason, error) => ({ success: false, noDispatch: true, dispatched: false,
+      chatWorkflowGuard: true, reason, error });
+    const before = await this._readChatObservation(tabId);
+    this._throwIfAborted(abortSignal);
+    if (before?.success !== true) return blocked('chat_observation_unavailable',
+      'The active chat could not be observed before sending. Re-read the conversation before retrying.');
+    const previous = this.chatSessions.get(tabId);
+    const observed = advanceChatSession(previous || createChatSession(), before);
+    if (context.messageRecipientNativeChatBaseline
+        && observed.snapshot.threadKey !== context.messageRecipientNativeChatBaseline.threadKey) {
+      return blocked('thread_unverified', 'The observed chat changed after recipient verification. Nothing was sent.');
+    }
+    if (previous && observed.newMessages.some(message => message.direction === 'incoming')
+        && !observed.session.pendingOutbound && !observed.session.userInput?.required) {
+      return blocked('chat_observe_required',
+        'A new incoming message appeared before this send. Call chat_observe and consider that delta before replying.');
+    }
+    // The recipient probe has already bound this exact draft/body to its one-use
+    // dispatch token. It is the intended outbound, not an unrelated user draft.
+    const decision = decideChatSend(observed.session, {
+      ...before, composer: { ...before.composer, empty: true },
+    }, context.messageRecipientBody);
+    if (!decision.ok) return { ...decision, ...blocked(decision.reason, decision.error) };
+    if (!this._captureNativeWhatsappPending(tabId, decision, before, context.messageRecipientNativeChatBaseline)) {
+      return blocked('native_chat_baseline_unavailable', 'The current native WhatsApp message baseline could not be saved safely. Nothing was sent.');
+    }
+    decision.dispatchId = crypto.randomUUID();
+    const pending = markChatSendPending(observed.session, decision);
+    context.genericChatPending = { key: decision.messageKey, threadKey: decision.threadKey,
+      dispatchId: decision.dispatchId, replyAnchor: decision.replyAnchor,
+      ...(decision.nativeOpaqueBaseline ? { nativeOpaqueBaseline: decision.nativeOpaqueBaseline } : {}) };
+    this.chatSessions.set(tabId, pending);
+    let durable = false;
+    try {
+      const saved = await this._persistNow(tabId);
+      durable = saved === true || saved?.ok === true;
+    } catch {}
+    if (!durable) {
+      await this._settleGenericChatDispatch(tabId, context, { noDispatch: true, dispatched: false }, false, false);
+      return blocked('chat_state_not_durable',
+        'The pending chat message could not be saved safely. Nothing was sent; retry after storage is available.');
+    }
+    this._throwIfAborted(abortSignal);
+    return null;
+  }
+
+  async _settleGenericChatDispatch(tabId, context, result, dispatched = false, invoked = false) {
+    const binding = context?.genericChatPending;
+    if (!binding) return;
+    const current = this.chatSessions.get(tabId);
+    if (current?.threadKey !== binding.threadKey || current.pendingOutbound?.key !== binding.key
+        || current.pendingOutbound.dispatchId !== binding.dispatchId) return;
+    const noDispatch = result?.dispatched === false || (result?.noDispatch === true && result.dispatched !== true)
+      || (!invoked && !dispatched);
+    let next = current;
+    if (noDispatch && !dispatched) next = { ...current, pendingOutbound: null };
+    else if (result?.submissionDispatched !== false
+        && (dispatched || result?.dispatched === true || result?.success === true)) {
+      next = { ...current, pendingOutbound: { ...current.pendingOutbound, dispatchedAt: new Date().toISOString() } };
+    }
+    if (next === current) return;
+    this.chatSessions.set(tabId, next);
+    // The pre-dispatch pending record was already durable. A lost post-dispatch
+    // update must keep that uncertainty; a known no-dispatch clears it.
+    try { await this._persistNow(tabId); } catch {}
+  }
+
+
   async _sendChatWorkflow(tabId, args = {}, onUpdate = null, executionContext = null) {
+    const originalSendOwner = this._nativeChatOwnerScope(tabId);
     const before = await this._readChatObservation(tabId);
     if (before?.success !== true) return before;
+    if (originalSendOwner && originalSendOwner !== this._nativeChatOwnerScope(tabId)) return {
+      success:false,noDispatch:true,dispatched:false,reason:'native_chat_owner_changed',
+      error:'The task changed while observing the conversation. Observe again before sending.' };
     const prior = this.chatSessions.get(tabId) || createChatSession();
     const observed = advanceChatSession(prior, before);
     const workflow = () => this._chatWorkflowView(observed);
@@ -21820,10 +23423,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         chatWorkflow: workflow(),
       };
     }
-    const decision = decideChatSend(observed.session, before, args.text);
+    const draft = this._nativeChatPreparedDraft(tabId, before, true);
+    const recoverDraft = draft && draft.body === args.text;
+    const decision = decideChatSend(recoverDraft ? { ...observed.session, pendingOutbound:null } : observed.session,
+      recoverDraft ? { ...before, composer:{ ...before.composer, empty:true } } : before, args.text);
+    if (recoverDraft && (decision.messageKey !== draft.messageKey || decision.replyAnchor !== draft.replyAnchor)) {
+      return { success:false, noDispatch:true, dispatched:false, reason:'native_chat_draft_changed',
+        error:'The owned draft no longer belongs to the current incoming message. Observe and reconcile the draft before sending.', chatWorkflow:workflow() };
+    }
     if (!decision.ok) {
       return {
         ...decision,
+        ...(decision.reason === 'composer_not_empty' ? {
+          error: decision.error + ' chat_send fills and submits the composer itself; do not prefill it. After recovering an earlier composer write, independently read the page with get_accessibility_tree or read_page before sending.',
+        } : {}),
         success: false,
         noDispatch: true,
         dispatched: false,
@@ -21840,6 +23453,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const sendContext = executionContext && typeof executionContext === 'object'
       ? { ...executionContext }
       : {};
+    sendContext.nativeChatDraftPreparation = true;
+    if (recoverDraft) sendContext.nativeChatDraftBinding = draft.binding;
     let recipientBlock = null;
     try {
       recipientBlock = await this._messageRecipientGuardBlock(
@@ -21866,6 +23481,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
+    if (/^dom:telegram:[ak]:-?\d+:0$/.test(observed.snapshot.threadKey)) {
+      const guardedSnapshot = normalizeChatSnapshot({ ...before,
+        nativeChatMessageBaseline: sendContext.messageRecipientNativeChatBaseline });
+      if (observed.snapshot.nativeMessageBaselineComplete !== true
+          || guardedSnapshot.nativeMessageBaselineComplete !== true
+          || JSON.stringify(before.nativeChatMessageBaseline.messageIds)
+            !== JSON.stringify(sendContext.messageRecipientNativeChatBaseline.messageIds)) {
+        return { success: false, noDispatch: true, dispatched: false,
+          reason: 'native_chat_baseline_changed_before_dispatch',
+          error: 'The conversation changed since the last observation. Call chat_observe to read the current messages before sending. Nothing was sent.',
+          chatWorkflow: workflow() };
+      }
+    }
+
+    if ((originalSendOwner && originalSendOwner !== this._nativeChatOwnerScope(tabId))
+        || (recoverDraft && this._nativeChatPreparedDraft(tabId, before, true) !== draft)) {
+      return { success:false, noDispatch:true, dispatched:false, reason:'native_chat_draft_changed',
+        error:'The owned draft or task changed while preparing submission. Observe again before deciding whether to send.', chatWorkflow:workflow() };
+    }
+    if (!this._captureNativeWhatsappPending(tabId, decision, before, sendContext.messageRecipientNativeChatBaseline)) {
+      return { success: false, noDispatch: true, dispatched: false, reason: 'native_chat_baseline_unavailable',
+        error: 'The current native WhatsApp message baseline could not be saved safely. Nothing was sent.', chatWorkflow: workflow() };
+    }
     const pending = markChatSendPending(observed.session, decision);
     this.chatSessions.set(tabId, pending);
     const pendingPersisted = await this._persistNow(tabId);
@@ -21883,17 +23521,54 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         chatWorkflow: workflow(),
       };
     }
+    if (originalSendOwner && originalSendOwner !== this._nativeChatOwnerScope(tabId)) {
+      if (this.chatSessions.get(tabId) === pending) this.chatSessions.set(tabId, observed.session);
+      return {success:false,noDispatch:true,dispatched:false,reason:'native_chat_owner_changed',
+        error:'The task changed before draft submission. Observe the current conversation before deciding whether to send.',chatWorkflow:workflow()};
+    }
+    const draftOwner = originalSendOwner;
     let dispatch;
+    if (executionContext?.chatCompletionBindingSink && sendContext.messageRecipientNativeChatBaseline?.complete === true) {
+      executionContext.chatCompletionBindingSink.binding = {
+        ...sendContext.messageRecipientNativeChatBaseline, body: decision.text, replyAnchor: decision.replyAnchor,
+        ...(decision.nativeOpaqueBaseline ? { nativeOpaqueBaseline: decision.nativeOpaqueBaseline } : {}),
+      };
+    }
+    // The nested field action owns its text-write enrichment. Sharing the
+    // outer finalization cache would replace chat_send's delivery/workflow
+    // result with the inner set_field result, and erase its verification proof.
+    const nestedDispatchState = { started: false };
+    sendContext._contentActionDispatchState = nestedDispatchState;
     try {
       dispatch = await this.executeTool(tabId, 'set_field', dispatchArgs, onUpdate, sendContext);
     } catch (error) {
-      dispatch = {
-        success: false,
-        noDispatch: true,
-        dispatched: false,
-        error: error?.message || String(error),
-      };
+      dispatch = this._contentActionCommunicationFailure('set_field', error, nestedDispatchState.started);
+    } finally {
+      if (executionContext?._contentActionDispatchState
+          && (nestedDispatchState.started || dispatch?.dispatched === true || dispatch?.success === true)) {
+        executionContext._contentActionDispatchState.started = true;
+      }
     }
+    const preparedDraftBinding = dispatch?._nativeChatDraftBinding;
+    if (dispatch && typeof dispatch === 'object') { dispatch = { ...dispatch }; delete dispatch._nativeChatDraftBinding; }
+    if (preparedDraftBinding?.token && dispatch?.submissionBlockedBeforeDispatch === true
+        && dispatch.submissionDispatched === false && dispatch.verified === true
+        && draftOwner && draftOwner === this._nativeChatOwnerScope(tabId)) {
+      this._nativeChatPreparedDrafts ??= new Map();
+      this._nativeChatPreparedDrafts.set(tabId, { binding:preparedDraftBinding, owner:draftOwner, expiresAt:Date.now()+60000,
+        baseline:JSON.stringify(before.nativeChatMessageBaseline), composerRef,
+        body:decision.text, threadKey:decision.threadKey, messageKey:decision.messageKey, replyAnchor:decision.replyAnchor, observed:false });
+      return { ...this._chatObservationResult(before, { ...observed, session:pending }),
+        success:false, sent:false, dispatched:dispatch.dispatched === true,
+        composer:{ available:false, ref:composerRef, empty:false, requiresFreshObservation:true },
+        draftMutationDispatched:!recoverDraft, submissionDispatched:false, submissionOutcomeUnknown:false,
+        ...(dispatch.submissionBlockReason === 'page_feedback_pending' ? { submissionBlockReason:'page_feedback_pending' } : {}),
+        outcomeUnknown:true, deliveryVerified:false, verificationRequired:true,
+        reason:'native_chat_submit_blocked_before_dispatch',
+        error:'The exact owned draft was verified, but explicit Enter was not dispatched. Call chat_observe with reconcile_pending_outbound:false first; restore the latest viewport if requested. Only a fresh owned draft observation and a new guarded chat_send may submit the same draft. No automatic retry occurred; typing may have page-side effects.',
+        messageKey:decision.messageKey, dispatch };
+    }
+    if (recoverDraft) this._nativeChatPreparedDrafts?.delete(tabId);
     // A dispatch that proves it never reached the page is not an uncertain
     // send: keeping the pending record would strand the workflow behind an
     // explicit user reconciliation for a message that was never typed.
@@ -21902,7 +23577,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       dispatchedSession = { ...pending, pendingOutbound: null };
       this.chatSessions.set(tabId, dispatchedSession);
       this._persist(tabId);
-    } else if (dispatch?.noDispatch !== true
+      return {
+        ...this._chatObservationResult(before, { ...observed, session: dispatchedSession }),
+        ...dispatch,
+        success: false,
+        sent: false,
+        noDispatch: true,
+        dispatched: false,
+        // Inner recovery uncertainty belongs to an earlier editor write.
+        // This attempted chat send positively dispatched nothing; retain
+        // the original uncertainty and recovery details under dispatch.
+        outcomeUnknown: false,
+        mutationMayHaveOccurred: false,
+        deliveryVerified: false,
+        verificationRequired: false,
+        chatWorkflow: this._chatWorkflowView({ ...observed, session: dispatchedSession }),
+        messageKey: decision.messageKey,
+        error: dispatch.error || 'No chat send was dispatched. Resolve the composer action blocker before attempting another send.',
+        dispatch,
+      };
+    } else if (dispatch?.noDispatch !== true && dispatch?.submissionDispatched !== false
         && (dispatch?.dispatched === true || dispatch?.success === true)
         && dispatchedSession.pendingOutbound) {
       dispatchedSession = {
@@ -21944,8 +23638,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }),
         success: false,
         sent: false,
-        dispatched: dispatch?.dispatched === true,
-        outcomeUnknown: dispatch?.dispatched !== false && dispatch?.noDispatch !== true,
+        dispatched: dispatch?.submissionDispatched === true || dispatch?.dispatched === true || dispatch?.success === true,
+        // Reusing an owned draft can submit without another draft mutation.
+        outcomeUnknown: dispatch?.submissionDispatched === true || dispatch?.submissionOutcomeUnknown === true
+          || dispatch?.outcomeUnknown === true || (dispatch?.dispatched !== false && dispatch?.noDispatch !== true),
         verificationRequired: true,
         messageKey: decision.messageKey,
         error: 'Chat send was not independently verified after dispatch. Observe the conversation before retrying.',
@@ -21962,20 +23658,122 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && !previouslySeenIds.has(message.id)
     )) || verifiedState.pendingDeliveryVerified === true;
     const deliveryVerified = outgoingVerified && verifiedState.session.pendingOutbound === null;
+    const deliveredMessage = deliveryVerified && verifiedState.snapshot.messages.find(message => message.direction === 'outgoing'
+      && this._workflowMessageBody(message.authoredText ?? message.text) === decision.text && !previouslySeenIds.has(message.id));
+    if (deliveredMessage && executionContext?.chatCompletionBindingSink) {
+      executionContext.chatCompletionBindingSink.deliveryObservation = {
+        ...this._chatObservationResult(after, verifiedState), messageId: deliveredMessage.id,
+        ...(this._nativeWhatsappDeliveryProof(after, executionContext.chatCompletionBindingSink.binding)
+          ? { nativeMountedTailVerified: true } : {}),
+      };
+    }
     return {
       ...this._chatObservationResult(after, verifiedState),
       success: deliveryVerified,
       sent: deliveryVerified,
-      dispatched: dispatch?.dispatched === true || dispatch?.success === true,
+      dispatched: dispatch?.submissionDispatched === true || dispatch?.dispatched === true || dispatch?.success === true,
       deliveryVerified,
       verificationRequired: !deliveryVerified,
       ...(deliveryVerified ? {} : {
-        outcomeUnknown: dispatch?.dispatched !== false && dispatch?.noDispatch !== true,
+        outcomeUnknown: dispatch?.submissionDispatched === true || dispatch?.submissionOutcomeUnknown === true
+          || dispatch?.outcomeUnknown === true || (dispatch?.dispatched !== false && dispatch?.noDispatch !== true),
         error: 'The composer action completed without a new matching outgoing bubble. Do not retry until chat_observe confirms the result.',
       }),
       messageKey: decision.messageKey,
       dispatch,
     };
+  }
+
+  _recipientBoundUploadAuthorizationKey(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    return JSON.stringify([normalizeMessageTarget(guard?.messaging), guard?.requiresSubmission === true,
+      guard?.requiresStateChange === true, guard?.messageRecipientApprovedAll === true,
+      guard?.approvedRecipients || [], guard?.messagingConversationScope || '']);
+  }
+
+  async _recipientBoundUploadContext(tabId, args, executionContext = {}) {
+    let pageUrl = '';
+    try { pageUrl = await this._currentUrl(tabId); } catch {}
+    const protectedPage = getMessageRecipientGuardPolicy(pageUrl)?.verifyActiveRecipient === true;
+    if (!protectedPage && executionContext.messageRecipientGuardRequired !== true) return { protected: false };
+    const context = { ...executionContext };
+    const sourceKey = messageRecipientUploadSourceKey(args);
+    if (context.messageRecipientUploadAuthorizationKey
+        && context.messageRecipientUploadAuthorizationKey !== this._recipientBoundUploadAuthorizationKey(tabId)) {
+      return { protected: true, block: { success: false, dispatched: false, noDispatch: true,
+        messageRecipientGuard: true, reasonCode: 'recipient_upload_authorization_changed',
+        error: 'Attachment blocked because its task recipient authorization changed.' } };
+    }
+    if (context.messageRecipientGuardRequired === true
+        && context.messageRecipientUploadSourceKey !== sourceKey) {
+      return { protected: true, block: { success: false, dispatched: false, noDispatch: true,
+        messageRecipientGuard: true, reasonCode: 'recipient_upload_source_changed',
+        error: 'Attachment blocked because its verified file source changed before dispatch.' } };
+    }
+    if (!context.messageRecipientDispatchBinding?.token) {
+      const block = await this._messageRecipientGuardBlock(tabId, 'upload_file', args, pageUrl, context);
+      if (block) return { protected: true, block };
+    }
+    if (!context.messageRecipientDispatchBinding?.token || !sourceKey) {
+      return { protected: true, block: { success: false, dispatched: false, noDispatch: true,
+        messageRecipientGuard: true, reasonCode: 'recipient_dispatch_binding_unavailable',
+        error: 'Attachment blocked because its recipient, file input and source could not be bound.' } };
+    }
+    return { protected: true, context, sourceKey, authorizationKey: this._recipientBoundUploadAuthorizationKey(tabId) };
+  }
+
+  async _dispatchRecipientBoundUpload(tabId, args, payload, bound) {
+    const context = bound.context || {};
+    const signal = context._contentActionAbortSignal;
+    this._throwIfAborted(signal);
+    const dispatchState = context._contentActionDispatchState || { started: false };
+    if (this._hasPendingSteering(tabId)
+        || bound.authorizationKey !== this._recipientBoundUploadAuthorizationKey(tabId)) {
+      return { success: false, dispatched: false, noDispatch: true, messageRecipientGuard: true,
+        reasonCode: 'recipient_upload_authorization_changed',
+        error: 'Attachment blocked because the user task or recipient authorization changed before dispatch.' };
+    }
+    const deadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt) || 0;
+    let pageFeedbackGuard;
+    try {
+      pageFeedbackGuard = await beforePageAgentDispatch(browser, tabId, {
+        kind: 'input', selector: args.selector, eventTypes: ['input', 'change'], fenceOnly: true, prepareMonitor: true,
+      });
+    } catch (error) {
+      this._throwIfAborted(signal);
+      if (error?.code === 'page_feedback_pending') return pageFeedbackPendingResult();
+      throw error;
+    }
+    this._throwIfAborted(signal);
+    if (this._hasPendingSteering(tabId)
+        || bound.authorizationKey !== this._recipientBoundUploadAuthorizationKey(tabId)) {
+      return { success: false, dispatched: false, noDispatch: true, messageRecipientGuard: true,
+        reasonCode: 'recipient_upload_authorization_changed',
+        error: 'Attachment blocked because the user task or recipient authorization changed during preparation.' };
+    }
+    if (hasPageAgentDispatchOwner(tabId) && !pageFeedbackGuard?.operationId) {
+      return { success: false, dispatched: false, noDispatch: true, pageFeedbackPending: true,
+        error: 'The page monitor could not validate the exact attachment target before dispatch.' };
+    }
+    dispatchState.started = true;
+    try {
+      // No retry here: a lost response can follow an attachment's autosend.
+      const result = await browser.tabs.sendMessage(tabId, {
+        target: 'content', action: 'attach_message_recipient_bound_upload', actionDeadlineAt: deadlineAt,
+        params: { selector: args.selector, base64: payload.base64, filename: payload.filename,
+          mimeType: payload.mimeType, uploadSourceKey: bound.sourceKey,
+          messageRecipientDispatchBinding: context.messageRecipientDispatchBinding, pageFeedbackGuard },
+      }, { frameId: 0 });
+      if (result?.dispatched === false || result?.noDispatch === true) dispatchState.started = false;
+      this._throwIfAborted(signal);
+      return result || { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
+        error: 'The recipient-bound attachment returned no result. Inspect the conversation before retrying.' };
+    } catch (error) {
+      this._throwIfAborted(signal);
+      return { success: false, dispatched: dispatchState.started, noDispatch: !dispatchState.started,
+        outcomeUnknown: dispatchState.started, retryable: !dispatchState.started,
+        error: `Recipient-bound attachment communication failed: ${error?.message || String(error)}. Inspect the conversation before retrying.` };
+    }
   }
 
   async _consumeMessageRecipientDispatchBinding(tabId, binding, params = {}) {
@@ -22067,16 +23865,53 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return matches ? { target_kind: 'named', recipients: [{ identity, role: 'to' }] } : null;
   }
 
+  _resolveNativeTelegramNamedMessagingTarget(target, probe) {
+    const named = normalizeMessageTarget(target);
+    if (named?.target_kind !== 'named' || named.recipients.length !== 1
+        || named.recipients[0].role !== 'to'
+        || probe?.success !== true || probe?.conclusive !== true) return null;
+    const candidates = this._messageRecipientCandidates(probe);
+    if (candidates.length !== 1 || candidates[0].role !== 'to') return null;
+    const candidate = candidates[0];
+    const identity = normalizeRecipientIdentity(candidate.identity);
+    if (!/^telegram:[ak]:-?\d+:0$/.test(identity)) return null;
+    const expected = normalizeRecipientIdentity(named.recipients[0].identity);
+    const matches = expected.startsWith('telegram:') ? expected === identity
+      : [identity, ...(Array.isArray(candidate.aliases) ? candidate.aliases : [])]
+          .some(alias => normalizeRecipientIdentity(alias) === expected);
+    return matches ? { target_kind: 'named', recipients: [{ identity, role: 'to' }] } : null;
+  }
+
+  _resolveNativeWhatsappNamedMessagingTarget(target, probe) {
+    const named = normalizeMessageTarget(target);
+    if (named?.target_kind !== 'named' || named.recipients.length !== 1
+        || named.recipients[0].role !== 'to' || probe?.success !== true || probe?.conclusive !== true) return null;
+    const candidates = this._messageRecipientCandidates(probe);
+    if (candidates.length !== 1 || candidates[0].role !== 'to') return null;
+    const candidate = candidates[0], identity = normalizeRecipientIdentity(candidate.identity);
+    if (!/^whatsapp:phone:[a-f0-9]{32}$/.test(identity)) return null;
+    const expected = normalizeRecipientIdentity(named.recipients[0].identity);
+    const matches = expected.startsWith('whatsapp:') ? expected === identity
+      : [identity, ...(Array.isArray(candidate.aliases) ? candidate.aliases : [])]
+        .some(alias => normalizeRecipientIdentity(alias) === expected);
+    return matches ? { target_kind: 'named', recipients: [{ identity, role: 'to' }] } : null;
+  }
+
   async _pinActiveConversationMessagingTarget(tabId, messaging, pageUrl = '') {
     const target = normalizeMessageTarget(messaging);
     if (!target) return { ok: true, target };
 
     let policy = null;
+    let nativeTelegramPage = false;
+    let nativeWhatsappPage = false;
     try {
-      policy = getMessageRecipientGuardPolicy(pageUrl || await this._currentUrl(tabId));
+      const resolvedUrl = pageUrl || await this._currentUrl(tabId);
+      policy = getMessageRecipientGuardPolicy(resolvedUrl);
+      nativeTelegramPage = getActiveAdapter(resolvedUrl)?.name === 'telegram';
+      nativeWhatsappPage = new URL(resolvedUrl).hostname === 'web.whatsapp.com';
     } catch {}
     if (!policy?.verifyActiveRecipient) return { ok: true, target };
-    if (target.target_kind === 'named' && policy.adapterName !== 'twitter') return { ok: true, target };
+    if (target.target_kind === 'named' && policy.adapterName !== 'twitter' && !nativeTelegramPage) return { ok: true, target };
 
     const probe = await this._messageRecipientContentProbe(tabId, {
       tool: 'observe_active_conversation',
@@ -22087,7 +23922,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (target.target_kind === 'named') {
       // If the intended conversation is not open yet, retain the requested
       // name; dispatch will resolve it once the agent reaches that header.
-      return { ok: true, target: this._resolveTwitterNamedMessagingTarget(target, probe) || target };
+      return { ok: true, target: this._resolveTwitterNamedMessagingTarget(target, probe)
+        || (nativeTelegramPage && this._resolveNativeTelegramNamedMessagingTarget(target, probe)) || target };
     }
     const recipients = this._messageRecipientCandidates(probe);
     const identityCountAccepted = policy.supportsRecipientSets === true
@@ -22108,6 +23944,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         deferredActiveConversation: true,
       };
     }
+    if (nativeWhatsappPage && probe?.success === true && probe?.nativeWhatsappRepairAvailable === true) {
+      return { ok: true, target, deferredActiveConversation: true, nativeWhatsappRepair: true };
+    }
     return {
       ok: false,
       target: null,
@@ -22117,8 +23956,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _messageRecipientGuardBlock(tabId, toolName, args = {}, pageUrl = '', executionContext = null) {
     const name = String(toolName || '');
-    const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys']);
-    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool', 'upload_file']);
+    const ordinaryGuardedTools = new Set(['click', 'click_ax', 'set_field', 'press_keys', 'upload_file']);
+    const unbindableDispatchTools = new Set(['iframe_click', 'execute_js', 'execute_webmcp_tool']);
     if (!ordinaryGuardedTools.has(name) && !unbindableDispatchTools.has(name)) return null;
     if (name === 'press_keys' && String(args?.key || '') !== 'Enter') return null;
     if (name === 'set_field' && args?.submit !== true) return null;
@@ -22145,7 +23984,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
-    if (unbindableDispatchTools.has(name)) {
+    const uploadSourceKey = name === 'upload_file' ? messageRecipientUploadSourceKey(args) : '';
+    // Compact discovery is read-only; the resolved target is checked again in
+    // the upload handler before any file bytes can reach the page.
+    if (name === 'upload_file' && !String(args.selector || '').trim()
+        && (args.targetId != null || this._resolvePromptTier() === 'compact')) return null;
+    if (unbindableDispatchTools.has(name)
+        || (name === 'upload_file' && (!String(args.selector || '').trim() || !uploadSourceKey))) {
       return {
         success: false,
         blocked: true,
@@ -22154,7 +23999,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         messageRecipientGuard: true,
         unsafeMessageDispatchPath: true,
         reasonCode: 'recipient_unverifiable_dispatch_path',
-        error: `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
+        error: name === 'upload_file'
+          ? (!uploadSourceKey
+            ? 'Attachment blocked: use exactly one attachmentId, downloadId, or absolute filePath. Remove fallback sources and retry with the same authorized recipient.'
+            : 'Attachment blocked: choose an exact, unique file-input selector in the active authorized conversation. Re-read the file-input inventory before retrying.')
+          : `Message action blocked: ${name} cannot bind its effects to the verified active recipient. Use click, click_ax, set_field({submit:true}), or a single Enter press on the visible composer instead.`,
       };
     }
 
@@ -22166,9 +24015,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       adapterName: policy.adapterName,
       bindDispatch: true,
       supportsRecipientSets: policy.supportsRecipientSets === true,
+      ...(name === 'upload_file' ? { uploadSourceKey } : {}),
       ...(target?.target_kind === 'named' ? { expectedRecipients: target.recipients } : {}),
     });
     if (probe?.success === true && probe?.conclusive === true && probe.messageSend === false) {
+      if (probe.nativeTelegramRepair === true) {
+        const owner = this._nativeChatOwnerScope(tabId);
+        if (name !== 'click_ax' || !executionContext || !owner || typeof args.ref_id !== 'string'
+            || typeof probe.nativeTelegramReadRepairBinding?.token !== 'string'
+            || !probe.nativeTelegramReadRepairBinding.token || probe.nativeTelegramReadRepairBinding.token.length > 256) {
+          return { success: false, blocked: true, noDispatch: true, dispatched: false,
+            messageRecipientGuard: true, reasonCode: 'native_telegram_preparation_unbound',
+            error: 'The native Telegram read-only preparation needs one exact current control and its app-owned binding.' };
+        }
+        executionContext.nativeTelegramReadRepairOwner = owner;
+        executionContext.nativeTelegramReadRepairRef = args.ref_id;
+        executionContext.nativeTelegramReadRepairBinding = { token: probe.nativeTelegramReadRepairBinding.token };
+      }
+      if (name === 'click_ax' && probe.nativeWhatsappRepair === true) {
+        executionContext.nativeWhatsappReadRepairOwner = this._nativeChatOwnerScope(tabId);
+      }
       const linkedInPublicPost = policy.adapterName === 'linkedin' && probe.publicPost === true;
       const publishWorkflowAuthorized = guard?.siteWorkflow?.adapterName === 'linkedin'
         && guard?.siteWorkflow?.job?.id === 'publish-post';
@@ -22216,11 +24082,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
 
+    // A named Telegram alias can become verifiable only after native profile
+    // preparation. Resolve that same authorized name before comparing peers.
+    const nativeTelegramTarget = this._resolveNativeTelegramNamedMessagingTarget(target, probe);
+    if (nativeTelegramTarget) {
+      target = nativeTelegramTarget;
+      if (guard) guard.messaging = target;
+    }
+
+    const nativeWhatsappTarget = this._resolveNativeWhatsappNamedMessagingTarget(target, probe);
+    if (nativeWhatsappTarget) {
+      target = nativeWhatsappTarget;
+      if (guard) guard.messaging = target;
+    } else if (target?.target_kind === 'active_conversation' && inAuthorizedConversation
+        && probe?.success === true && probe?.conclusive === true && probe?.messageSend === true
+        && /^dom:whatsapp:phone:[a-f0-9]{32}$/.test(probe.nativeChatMessageBaseline?.threadKey || '')) {
+      const nativeRecipients = this._messageRecipientCandidates(probe);
+      if (nativeRecipients.length === 1 && /^whatsapp:phone:[a-f0-9]{32}$/.test(nativeRecipients[0].identity || '')) {
+        target = { target_kind: 'named', recipients: [{ identity: nativeRecipients[0].identity, role: 'to' }] };
+        if (guard) guard.messaging = target;
+      }
+    }
+
     const resolvedTwitterTarget = policy.adapterName === 'twitter'
       && guard?.requiresSubmission === true && guard?.requiresStateChange === true
       ? this._resolveTwitterNamedMessagingTarget(target, probe) : null;
     if (resolvedTwitterTarget) target = resolvedTwitterTarget;
-    const messageBodyBaselineCount = Number(probe?.messageBodyBaselineCount);
+    const messageBodyBaselineCount = probe?.messageBodyBaselineCount;
     const targetMatchesObserved = messageTargetMatchesObservedIdentities(
       target,
       this._messageRecipientCandidates(probe),
@@ -22232,31 +24120,63 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const approvedByUser = guard?.messageRecipientApprovedAll === true
       || (observedIdentities.length > 0
         && observedIdentities.every(identity => approvedRecipients.includes(identity)));
+    const technicalBlock = (reasonCode, error) => {
+      if (guard) {
+        guard.pendingRecipientAuthorization = false;
+        guard.observedRecipientCandidates = null;
+        guard.messageRecipientTechnicalBlock = reasonCode;
+      }
+      return { success: false, blocked: true, noDispatch: true, dispatched: false,
+        messageRecipientGuard: true, retryable: false, recipientAuthorizationRequired: false,
+        reasonCode, error };
+    };
+    const conclusiveSend = probe?.success === true && probe?.conclusive === true && probe?.messageSend === true;
+    if (conclusiveSend && observedIdentities.length === 0) {
+      return technicalBlock('recipient_identity_unavailable',
+        'Message send blocked because WebBrain cannot establish the active recipient identity from this page. Re-read the active conversation header or open the intended chat. If identity remains unavailable, report this technical blocker; additional recipient approval cannot resolve missing page evidence.');
+    }
+    if (conclusiveSend && observedIdentities.length > 0 && guard) delete guard.messageRecipientTechnicalBlock;
+    // An already authorized recipient can still lack draft or delivery
+    // evidence. Asking to authorize that recipient again cannot repair it.
+    if (conclusiveSend && (targetMatchesObserved || approvedByUser)) {
+      if (name !== 'upload_file' && !this._workflowMessageBody(probe?.messageBody)) {
+        return technicalBlock('message_body_unverified',
+          'Message send blocked because WebBrain could not verify the draft body for the authorized recipient. Re-read the current composer and verify the intended draft. If the body remains unavailable, report this technical blocker instead of asking for recipient approval again.');
+      }
+      if (!Number.isInteger(messageBodyBaselineCount) || messageBodyBaselineCount < 0) {
+        return technicalBlock('message_body_baseline_unavailable',
+          'Message send blocked because WebBrain could not establish the existing-message baseline needed to verify a new send. Re-read the active conversation before attempting delivery. If the baseline remains unavailable, report this technical blocker instead of asking for recipient approval again.');
+      }
+    }
     const verified = probe?.success === true
       && probe.messageSend === true
-      && !!this._workflowMessageBody(probe?.messageBody)
+      && (name === 'upload_file'
+        ? probe.messageAttachment === true && guard?.requiresSubmission === true
+          && guard?.requiresStateChange === true && !!uploadSourceKey
+        : !!this._workflowMessageBody(probe?.messageBody))
       && Number.isInteger(messageBodyBaselineCount)
       && messageBodyBaselineCount >= 0
       && (targetMatchesObserved || approvedByUser);
     if (verified) {
       const binding = probe?.messageRecipientDispatchBinding;
       if (!binding?.token) {
-        return {
-          success: false,
-          blocked: true,
-          noDispatch: true,
-          dispatched: false,
-          messageRecipientGuard: true,
-          reasonCode: 'recipient_dispatch_binding_unavailable',
-          error: 'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once.',
-        };
+        return technicalBlock('recipient_dispatch_binding_unavailable',
+          'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once. If binding remains unavailable, report this technical blocker instead of asking for recipient approval again.');
       }
       if (resolvedTwitterTarget) guard.messaging = resolvedTwitterTarget;
       if (executionContext && typeof executionContext === 'object') {
         executionContext.messageRecipientGuardRequired = true;
         executionContext.messageRecipientDispatchBinding = binding;
+        if (name === 'upload_file') {
+      args = { ...(args || {}) };
+          executionContext.messageRecipientUploadSourceKey = uploadSourceKey;
+          executionContext.messageRecipientUploadAuthorizationKey = this._recipientBoundUploadAuthorizationKey(tabId);
+        }
         executionContext.messageRecipientBody = this._workflowMessageBody(probe.messageBody);
         executionContext.messageRecipientBodyBaselineCount = messageBodyBaselineCount;
+        if (probe.nativeChatMessageBaseline?.complete === true) {
+          executionContext.messageRecipientNativeChatBaseline = probe.nativeChatMessageBaseline;
+        }
         if (policy.adapterName === 'twitter' && Array.isArray(probe.existingMessageIds)) {
           executionContext.messageRecipientExistingMessageIds = [...probe.existingMessageIds];
           if (probe.twitterEmptyConversationBaseline === true) {
@@ -22499,7 +24419,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           func: Agent._submitActionProbe,
           args: [name, args || {}],
         });
-        rawResults = Array.isArray(rawResults) ? rawResults.map(item => item?.result) : [];
+        rawResults = Array.isArray(rawResults) ? rawResults.map(item => item?.result
+          ? { ...item.result, frameId: item.frameId } : null) : [];
       } else if (globalThis.browser?.tabs?.executeScript) {
         let probeSource = Agent._submitActionProbe.toString();
         if (!/^\s*(?:async\s+)?function\b/.test(probeSource)) {
@@ -22521,12 +24442,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             : '\\u2029'
         ));
         const code = `(() => { const __wbSubmitProbe = (${probeSource}); return __wbSubmitProbe(${serializedSafeName}, ${serializedArgs}); })()`;
-        rawResults = await browser.tabs.executeScript(tabId, { code, allFrames });
+        if (name === 'iframe_click' && browser.webNavigation?.getAllFrames) {
+          const frames = await browser.webNavigation.getAllFrames({ tabId }) || [];
+          rawResults = (await Promise.all(frames.filter(frame => frame.frameId !== 0
+            && (!args.urlFilter || frameHostMatches(frame.url, args.urlFilter) && frame.url.includes(args.urlFilter)))
+            .map(async frame => {
+              const results = await browser.tabs.executeScript(tabId, { code, frameId: frame.frameId });
+              return results?.[0] ? { ...results[0], frameId: frame.frameId } : null;
+            })));
+        } else rawResults = await browser.tabs.executeScript(tabId, { code, allFrames });
       }
       const detected = (Array.isArray(rawResults) ? rawResults : [])
         .find(item => item && item.isSubmit === true);
       if (detected) {
         const host = normalizeHost(detected.host || detected.url || args?.urlFilter || currentUrl) || 'this site';
+        const frameBaseline = name === 'iframe_click' && Number.isInteger(detected.frameId) && detected.frameId > 0
+          ? await this._readCompletionFrame(tabId, detected.frameId).catch(() => null) : null;
+        const sameFrameDocument = frameBaseline?.identity === detected.frameDocumentIdentity;
         return {
           isSubmit: true,
           host,
@@ -22534,6 +24466,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tool: name,
           reason: String(detected.reason || 'likely form submission').slice(0, 200),
           validationSubmitEvidence: detected.validationSubmitEvidence === 'strong' ? 'strong' : 'heuristic',
+          ...(name === 'iframe_click' ? { frameId: detected.frameId,
+            frameUrl: String(detected.url || '').slice(0, 8192),
+            frameDocumentIdentity: sameFrameDocument ? frameBaseline.identity : '',
+            frameStatusMessages: sameFrameDocument ? frameBaseline.messages : [] } : {}),
+          formRef: /^ref_\d+$/.test(String(detected.formRef || '')) ? detected.formRef : '',
           summary: String(detected.summary || '').slice(0, 1200),
           fields: Array.isArray(detected.fields) ? detected.fields.slice(0, 12) : [],
           hiddenFields: Array.isArray(detected.hiddenFields) ? detected.hiddenFields.slice(0, 20) : [],
@@ -22542,6 +24479,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: String(detected.action || '').slice(0, 300),
           actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
+          semanticCommit: detected.semanticCommit === true,
           ...(Array.isArray(detected.publicationResourceUrls) ? { publicationResourceUrls: detected.publicationResourceUrls.slice(0, 200) } : {}),
           publicationResourceUrlsComplete: detected.publicationResourceUrlsComplete === true,
           ...(typeof detected.publicationControl === 'boolean' ? { publicationControl: detected.publicationControl } : {}),
@@ -22577,6 +24515,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const nonSubmit = rawResults.find(item => item?.resolvedNonSubmitTarget === true);
       if (nonSubmit) return { isSubmit: false, resolvedNonSubmitTarget: true };
+      const ordinaryActivations = rawResults.filter(item => item?.isSubmit === false
+        && item.resolvedOrdinaryActivationTarget === true);
+      if (ordinaryActivations.length === 1 && ['click', 'click_ax', 'iframe_click'].includes(name)) {
+        return { isSubmit: false, resolvedOrdinaryActivationTarget: true };
+      }
       // Explicit negative: the probe resolved the click target to an editable
       // field, proving activation only focuses it. Propagated (not dropped
       // like inconclusive results) so gates can pass proven non-submits while
@@ -22801,6 +24744,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : `Composer on ${action} (no enclosing HTML form).`;
       return {
         summary: `${origin} ${changedText}`,
+        formRef: String(form.tagName || '').toUpperCase() === 'FORM' && typeof window.__wb_ax_ref === 'function'
+          ? String(window.__wb_ax_ref(form) || '') : '',
         fields: fields.slice(0, 12),
         hiddenFields,
         changedFields,
@@ -22935,10 +24880,79 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
       return children.map(read).join('\n');
     }
+    function readEmptyCaretText(el) {
+      // A sole BR can be either a browser caret or an authored literal LF.
+      // Generic DOM shape cannot establish which; keep its rendered value.
+      // DraftJS/ProseMirror markers and exact native-clear receipts prove their
+      // own empty state independently. Only a genuinely empty DOM is generic.
+      return el?.isContentEditable && el.childNodes?.length === 0
+        && el.innerText === '' && el.textContent === '' ? '' : null;
+    }
+
+    function isDraftJsEditor(el) {
+      return !!el?.isContentEditable && (el.classList?.contains('public-DraftEditor-content')
+        || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true'));
+    }
+
+    function readDraftJsText(el) {
+      if (!el?.isContentEditable || !el.childNodes) return null;
+      const roots = Array.from(el.childNodes);
+      if (roots.length !== 1 || roots[0].nodeType !== 1 || roots[0].tagName !== 'DIV'
+          || roots[0].getAttribute('data-contents') !== 'true') return null;
+      let visited = 0;
+      const supported = node => {
+        if (++visited > 4096 || node.shadowRoot || node.hidden || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
+            || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return false;
+        const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+        return !!style && (style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility)
+          && style.opacity !== '0' && style.contentVisibility !== 'hidden');
+      };
+      if (!supported(el) || !supported(roots[0])) return null;
+      const blocks = Array.from(roots[0].childNodes);
+      if (!blocks.length) return null;
+      const texts = [];
+      for (const block of blocks) {
+        if (block.nodeType !== 1 || block.tagName !== 'DIV' || block.getAttribute('data-block') !== 'true'
+            || !block.getAttribute('data-offset-key') || !supported(block)) return null;
+        const children = Array.from(block.childNodes);
+        const body = children[0];
+        if (children.length !== 1 || body?.nodeType !== 1 || body.tagName !== 'DIV'
+            || !body.classList.contains('public-DraftStyleDefault-block')
+            || !body.getAttribute('data-offset-key') || !supported(body)) return null;
+        const leaves = [];
+        const read = (node, depth = 0) => {
+          if (depth > 32 || node.nodeType !== 1 || !supported(node)) return false;
+          if (node.tagName === 'BR') {
+            if (node.getAttribute('data-text') !== 'true' || node.childNodes.length) return false;
+            leaves.push(null); return true;
+          }
+          if (node.tagName !== 'SPAN') return false;
+          const descendants = Array.from(node.childNodes);
+          if (node.getAttribute('data-text') === 'true') {
+            if (!descendants.every(child => child.nodeType === 3)) return false;
+            leaves.push(descendants.map(child => child.nodeValue || '').join('')); return true;
+          }
+          return descendants.length > 0 && descendants.every(child => read(child, depth + 1));
+        };
+        if (!body.childNodes.length || !Array.from(body.childNodes).every(node => read(node))) return null;
+        // DraftJS's sole data-text BR in an empty block is a caret placeholder.
+        // Real document breaks are separators between blocks (or text in leaves).
+        // Mixed BR/text and embeds are unsupported; keep their rendered fallback.
+        const placeholders = leaves.filter(value => value === null).length;
+        if (placeholders && (placeholders !== 1 || leaves.some(value => value !== null && value !== ''))) return null;
+        texts.push(leaves.filter(value => value !== null).join(''));
+      }
+      return texts.join('\n');
+    }
+
     const publicationEditorText = editor => {
-      const semantic = readProseMirrorText(editor);
+      const draftJs = isDraftJsEditor(editor);
+      const semantic = draftJs ? readDraftJsText(editor) : (readProseMirrorText(editor) ?? readEmptyCaretText(editor));
       if (semantic !== null) return semantic;
       if (typeof editor.value === 'string') return editor.value;
+      if (draftJs) return null;
+      // An unmarked sole break has no proven placeholder provenance.
+      if (editor.isContentEditable && editor.textContent === '' && editor.innerText === '\n') return '\n';
       const read = node => {
         if (node.nodeType === 3) return node.nodeValue || '';
         if (node.nodeType !== 1) return '';
@@ -23048,7 +25062,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const target = contextUrls.length === 1 ? contextUrls[0] : inlineThreadTarget;
           return { bodyText, attachments,
             context: { kind: reply ? 'reply' : contextUrls.length ? 'quote' : 'post', target },
-            complete: bodyText.length <= 25000 && mediaNodes.length <= 20 && contextUrls.length <= 1 && (!reply || !!target) };
+            complete: typeof bodyText === 'string' && bodyText.length <= 25000 && mediaNodes.length <= 20 && contextUrls.length <= 1 && (!reply || !!target) };
         });
         return { complete: posts.every(p => p.complete) && !sharedMedia && allMedia.every(node => ownedMedia.has(node)), account: account.identity, posts };
       } catch { return { complete: false }; }
@@ -23107,6 +25121,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         url,
         reason,
         validationSubmitEvidence,
+        frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
+        semanticCommit: nativeConfirmationCommit(control),
         publicationResourceUrls: publicationBaseline.urls,
         publicationResourceUrlsComplete: publicationBaseline.complete,
         ...(typeof publicationControl === 'boolean' ? { publicationControl } : {}),
@@ -23228,6 +25244,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Missing roots and arbitrary callbacks retain unknown classification.
       return String(root?.tagName || '').toUpperCase() === 'FORM' ? false : undefined;
     };
+    // Mastodon's localized primary confirmation button commits the action;
+    // its separate link-button cancels. This is structural evidence of a
+    // commit control, not proof that deletion (or another action) succeeded.
+    const nativeConfirmationCommit = candidate => {
+      // Native commit evidence must exclude visually absent controls and
+      // modal copies even when they retain layout boxes. Keep this stricter
+      // ancestry check local to the native confirmation proof.
+      const isRenderedNative = element => {
+        if (!element || element.nodeType !== 1 || !isVisible(element)) return false;
+        try {
+          let ancestor = element;
+          for (let depth = 0; ancestor && depth < 128; depth += 1) {
+            if (ancestor.hasAttribute('hidden') || ancestor.hasAttribute('inert')
+                || String(ancestor.getAttribute('aria-hidden') || '').toLowerCase() === 'true') return false;
+            const style = getComputedStyle(ancestor);
+            if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse'
+                || Number.parseFloat(style.opacity) <= 0 || style.contentVisibility === 'hidden'
+                || style.getPropertyValue('content-visibility') === 'hidden') return false;
+            ancestor = ancestor.parentElement;
+          }
+          return !ancestor;
+        } catch { return false; }
+      };
+      candidate = candidate?.closest?.('button') || candidate;
+      const modal = candidate?.closest?.('.modal-root__modal.safety-action-modal');
+      if (!modal || !isRenderedNative(candidate) || !isRenderedNative(modal)
+          || candidate.disabled || candidate.getAttribute('aria-disabled') === 'true') return false;
+      if (!doc.querySelector('form.compose-form textarea.autosuggest-textarea__textarea')
+          || !doc.querySelector('.navigation-bar a.account__display-name[href],.navigation-panel a.account__display-name[href]')) return false;
+      const modals = [...doc.querySelectorAll('.modal-root__modal.safety-action-modal')].filter(isRenderedNative);
+      const primary = [...modal.querySelectorAll('.safety-action-modal__actions > button.button')].filter(isRenderedNative);
+      return modals.length === 1 && primary.length === 1 && primary[0] === candidate;
+    };
     const submitControlEvidence = (el) => {
       const target = labelControlFor(el) || el;
       if (!target || target.nodeType !== 1) return { isSubmit: false, strong: false };
@@ -23237,6 +25286,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const role = String(candidate.getAttribute?.('role') || '').toLowerCase();
       const hasActivationHandler = candidate.hasAttribute?.('onclick') || candidate.hasAttribute?.('data-action');
       const form = candidate.form || candidate.closest?.('form');
+      if (!form && nativeConfirmationCommit(candidate)) return { isSubmit: true, strong: true };
       if (!form) return socialPublishControlEvidence(candidate);
       const inlineHandler = String(candidate.getAttribute?.('onclick') || '');
       const dataAction = String(candidate.getAttribute?.('data-action') || '');
@@ -23512,6 +25562,40 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           reason: 'click target resolves to a navigation link',
           resolvedNavigationTarget: true,
         };
+      }
+      if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)) {
+        const control = target.closest?.('button,input,[role="button"]');
+        const tag = String(control?.tagName || '').toLowerCase();
+        const type = String(control?.getAttribute?.('type') || '').toLowerCase();
+        const ordinaryButton = ((tag === 'button' || tag === 'input') && type === 'button')
+          || (!['button', 'input'].includes(tag) && control?.getAttribute?.('role') === 'button' && !type);
+        const labels = [control?.textContent, control?.getAttribute?.('aria-label'), control?.getAttribute?.('title')];
+        const commitName = value => /(?:^|[^\p{L}])(?:post|publish|reply|submit|send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || ''));
+        const marker = String(control?.getAttribute?.('data-testid') || '');
+        const markerWords = marker.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/u);
+        const commitMarker = /^(?:tweetButton(?:Inline)?|composerPublish(?:Btn|Button)|dmComposerSendButton|send(?:Message)?(?:Button|Btn)|send-message)$/i.test(marker)
+          || markerWords.some(word => /^send$/i.test(word));
+        let uniqueTarget = true;
+        if (args.text) {
+          const needle = compact(args.text).toLowerCase();
+          const choices = interactiveElements().map(el => ({el,
+            text: compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase()}));
+          const exact = choices.filter(item => item.text === needle);
+          const prefix = choices.filter(item => item.text.startsWith(needle));
+          const matches = args.textMatch === 'exact' ? exact : args.textMatch === 'prefix' ? prefix
+            : args.textMatch === 'contains' ? choices.filter(item => item.text.includes(needle))
+            : exact.length ? exact : prefix.length ? prefix : choices.filter(item => item.text.includes(needle));
+          const controls = new Set(matches.map(item => item.el.closest('button,input,[role="button"]')));
+          uniqueTarget = controls.size === 1 && controls.has(control);
+        }
+        if (uniqueTarget && ordinaryButton && labels.some(value => String(value || '').trim())
+            && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
+            && !control.form && !control.closest('form,[hidden],[inert],[aria-hidden="true"]')
+            && !control.matches('[form],[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
+            && !control.querySelector('[onclick],[data-action],button,input,[role="button"],a[href]')
+            && !commitMarker && !labels.some(commitName) && !socialPublishControlEvidence(control).isSubmit) {
+          return { isSubmit: false, host, url, resolvedOrdinaryActivationTarget: true };
+        }
       }
     } catch {}
     return null;
@@ -24651,6 +26735,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
     this.progressExpectedItems.delete(tabId);
+    this._ownedNativeChatReadRepairs.delete(tabId);
     this.chatSessions.delete(tabId);
     this.selectionGroundingScopes.delete(tabId);
     this.selectionGroundingRestorationPendingTabs.delete(tabId);
@@ -25639,6 +27724,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
     this.progressExpectedItems.delete(tabId);
+    this._ownedNativeChatReadRepairs.delete(tabId);
     this.chatSessions.delete(tabId);
     this.selectionGroundingScopes.delete(tabId);
     this.selectionGroundingRestorationPendingTabs.delete(tabId);
@@ -25802,7 +27888,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Handle the scratchpad_write tool. Creates the pinned scratchpad message
    * the first time it's called, and updates it in place thereafter.
    */
-  _scratchpadWrite(tabId, args) {
+  // Only app call sites supply this provenance. Model scratchpad_write arguments
+  // cannot create plan ownership, and legacy marker-looking notes stay notes.
+  _scratchpadApprovedPlanRanges(message) {
+    const body = this._extractScratchpadBody(message?.content);
+    const records = message?.webbrainAppOwnedApprovedPlans;
+    if (!Array.isArray(records) || records.length > 32) return [];
+    const ranges = records.filter(record => record && Number.isInteger(record.start)
+      && Number.isInteger(record.end) && record.start >= 0 && record.end > record.start
+      && record.end <= body.length && typeof record.text === 'string'
+      && record.text.length <= 8000 && body.slice(record.start, record.end) === record.text)
+      .map(record => ({ start: record.start, end: record.end, text: record.text }))
+      .sort((a, b) => a.start - b.start);
+    return ranges.some((record, index) => index > 0 && record.start < ranges[index - 1].end)
+      ? [] : ranges;
+  }
+
+  _retireApprovedPlansForNewTask(tabId, messages, enriched, runOptions = {}) {
+    if (runOptions.steeringRevision != null || runOptions.trustedContinuation === true
+        || this._isStandaloneChatRun(runOptions) || this._isScheduledResumeTurn(enriched)
+        || isSelectionSourceGrounding(runOptions.sourceGrounding)) return false;
+    const previous = this._activeTaskBinding(messages);
+    const incoming = this._activeTaskBinding([...messages, enriched]);
+    // Clarification answers, Continue and acknowledgments keep the old binding.
+    if (!previous.text || incoming.taskIndex !== messages.length) return false;
+    const index = this._findScratchpadIndex(messages);
+    if (index < 0) return false;
+    const message = messages[index];
+    const body = this._extractScratchpadBody(message.content);
+    const ranges = this._scratchpadApprovedPlanRanges(message);
+    if (!ranges.length) return false;
+    let next = body;
+    for (const record of ranges.sort((a, b) => b.start - a.start)) {
+      next = next.slice(0, record.start) + next.slice(record.end);
+    }
+    const replacement = { ...message, ...this._buildScratchpadMessage(next) };
+    delete replacement.webbrainAppOwnedApprovedPlans;
+    messages[index] = replacement;
+    return true;
+  }
+
+  _scratchpadWrite(tabId, args, appOwnedApprovedPlan = '') {
     const text = (args && typeof args.text === 'string') ? args.text : '';
     if (!text.trim() && !args?.replace) {
       return { success: false, error: 'scratchpad_write: `text` is required (non-empty). Pass replace:true with an empty string to clear the pad.' };
@@ -25825,6 +27951,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     const msg = this._buildScratchpadMessage(nextBody);
+    const body = this._extractScratchpadBody(msg.content);
+    const ownedPlans = !replace && body.startsWith(currentBody)
+      ? this._scratchpadApprovedPlanRanges(messages[idx]) : [];
+    const approvedPlan = typeof appOwnedApprovedPlan === 'string' ? appOwnedApprovedPlan.trim() : '';
+    if (approvedPlan && approvedPlan.length <= MAX_BODY && body.endsWith(approvedPlan)) {
+      const start = body.length - approvedPlan.length;
+      if (!ownedPlans.some(record => start < record.end)) {
+        ownedPlans.push({ start, end: body.length, text: approvedPlan });
+      }
+    }
+    if (ownedPlans.length) msg.webbrainAppOwnedApprovedPlans = ownedPlans.slice(-32);
     if (idx >= 0) {
       messages[idx] = msg;
     } else {
@@ -26834,7 +28971,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _originalTaskText(tabId) {
     const messages = this.conversations.get(tabId) || [];
     const idx = this._findOriginalTaskIndex(messages);
-    return idx >= 0 ? this._messageText(messages[idx]?.content) : '';
+    return idx >= 0 ? this._plannerUserAuthoredText(messages[idx]) : '';
   }
 
   /**
@@ -26930,6 +29067,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || c.startsWith('[PLAN EXECUTION BLOCK')
       || c.startsWith('[RUNTIME MODE CORRECTION')
       || c.startsWith('[NAVIGATION OCCURRED')
+      || c.startsWith('[BROWSER STATE UPDATE')
       || c.startsWith('[Auto-screenshot')
       || c.startsWith('[Completion verification screenshot omitted')
       || c.startsWith('[UNTRUSTED CAPTURE')
@@ -26947,26 +29085,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _isAgentInjectedUserMessage(message) {
     return message?.webbrainAppOwned === true
-      || this._isAgentInjectedUserContent(message?.content);
+      || (typeof message?.webbrainUserAuthoredText !== 'string'
+        && this._isAgentInjectedUserContent(message?.content));
   }
 
   _isScheduledResumeTurn(content) {
-    const c = this._messageText(content).trimStart();
+    if (content?.role === 'user' && typeof content.webbrainUserAuthoredText === 'string') return false;
+    const c = this._messageText(content?.content ?? content).trimStart();
     const stripped = this._stripInjectedTaskContext(c).trimStart();
     return c.startsWith('[Scheduled resume') || stripped.startsWith('[Scheduled resume');
   }
 
   _stripInjectedTaskContext(text) {
     let out = String(text || '');
+    const stripBracketContext = value => {
+      if (!/^\[(?:Selection scope status|Current page context|Recording status:|USER OVERRIDE|UNTRUSTED SCREENSHOT)/i.test(value)) return value;
+      // Persisted prefixes can contain bracketed examples such as [BULK ...].
+      // Consume the complete outer note rather than promoting its tail to task authority.
+      let depth = 0;
+      for (let index = 0; index < value.length; index++) {
+        if (value[index] === '[') depth++;
+        else if (value[index] === ']' && --depth === 0) return value.slice(index + 1).trimStart();
+      }
+      return value;
+    };
     let prev = null;
     while (out && out !== prev) {
       prev = out;
-      out = stripTrustedRuntimeContext(out)
-        .replace(/^\[Selection scope status[^\]]*]\s*/i, '')
-        .replace(/^\[Current page context[^\]]*]\s*/i, '')
-        .replace(/^\[Recording status:[^\]]*]\s*/i, '')
-        .replace(/^\[USER OVERRIDE[^\]]*]\s*/i, '')
-        .replace(/^\[UNTRUSTED SCREENSHOT[^\]]*]\s*/i, '')
+      out = stripBracketContext(stripTrustedRuntimeContext(out))
         .replace(/^\[Initial viewport description[^\]]*]\s*(?:<untrusted_page_content\b[^>]*>[\s\S]*?<\/untrusted_page_content\b[^>]*>\s*)?/i, '')
         .replace(/^\[Site guidance for[^\]]*]\n[\s\S]*?\n{2,}/i, '');
     }
@@ -26978,9 +29124,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (let i = messages.length - 1; i >= 1; i--) {
       const m = messages[i];
       if (m.role !== 'user') continue;
-      if (this._isScheduledResumeTurn(m.content)) continue;
+      if (this._isScheduledResumeTurn(m)) continue;
       if (this._isAgentInjectedUserMessage(m)) continue;
-      const text = this._stripInjectedTaskContext(this._messageText(m.content));
+      const text = this._plannerUserAuthoredText(m);
       if (!text) continue;
       return text;
     }
@@ -27678,7 +29824,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const expectedItems = this._normalizeExpectedItems(opts.expectedItems);
     if (expectedItems) this.progressExpectedItems.set(tabId, expectedItems);
     else if (opts.expectedItems !== undefined) this.progressExpectedItems.delete(tabId);
-    const taskText = this._progressTaskTextKey(opts.taskText || this._latestTaskText(tabId));
+    const latestTaskText = this._latestTaskText(tabId);
+    const taskText = this._progressTaskTextKey(opts.taskText
+      || (this._currentTaskIsProgressContinuation(tabId)
+        ? this._progressTaskAnchorText(tabId) || latestTaskText
+        : latestTaskText));
     if (!taskText) return null;
     const pageScope = String(opts.pageScope || this._currentProgressPageScope(tabId) || '').trim();
     const progressLedgerPolicy = expectedItems
@@ -27858,6 +30008,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _isProgressContinuationText(text) {
     if (!text) return false;
+    // continueProcessing uses this exact command for the existing task.
+    if (text === 'please continue from where you left off.') return true;
     if (/^(?:please\s+)?(?:continue|keep\s+going|go\s+on|proceed|resume|carry\s+on|next|do\s+the\s+rest|finish\s+(?:the\s+)?(?:rest|remaining)|keep\s+working)(?:\s+(?:please|with\s+(?:it|this|that|them|those|the\s+(?:task|list|queue|rest|remaining))))?[.!?]*$/.test(text)) {
       return true;
     }
@@ -28146,7 +30298,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._continuationExecutionEvidence.get(tabId)
       : null;
     this._continuationExecutionEvidence.delete(tabId);
-    const carryMatches = enabled
+    const carryScopeMatches = enabled
       && carried?.requestKind === 'execute'
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
@@ -28159,8 +30311,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && JSON.stringify(carried.siteWorkflow || null) === JSON.stringify(siteWorkflow || null)
       && JSON.stringify(carried.conditionalSiteWorkflow || null) === JSON.stringify(gateOutcome.conditionalSiteWorkflow || null)
       && carried.taskKey === taskKey
-      && carried.evidenceTaskKey === taskKey
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
+    const carryMatches = carryScopeMatches && carried.evidenceTaskKey === taskKey;
+    // Human recipient grants are task authorization, not execution evidence.
+    // They can survive Continue even when the last step only approved a send.
+    const carryRecipientAuthorization = carryScopeMatches && requiresSubmission === true
+      && requiresStateChange === true && !!messaging;
     const approvedPlanAnchor = gateApprovedPlanAnchor
       || (carryMatches ? carried.approvedPlanAnchor || '' : '');
     const approvedPlanText = String(gateOutcome?.approvedScratchpadText || '')
@@ -28170,9 +30326,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       requestKind,
       requiresStateChange,
       requiresSubmission,
+      readScope: normalizeReadScope(gateOutcome?.readScope),
+      deliverables: Array.isArray(gateOutcome?.deliverables) && gateOutcome.deliverables.length <= 8
+        && gateOutcome.deliverables.every(value => typeof value === 'string' && value.length <= 1000)
+        ? [...gateOutcome.deliverables]
+        : [],
       siteWorkflowUrl: String(gateOutcome?.siteWorkflowUrl || ''),
       messaging,
       messagingConversationScope,
+      approvedRecipients: carryRecipientAuthorization && Array.isArray(carried.approvedRecipients)
+        ? [...carried.approvedRecipients] : [],
+      messageRecipientApprovedAll: carryRecipientAuthorization && carried.messageRecipientApprovedAll === true,
       draftRecipients,
       requiresDownload,
       allowsPlannerShapedResult: gateOutcome?.allowsPlannerShapedResult === true,
@@ -28420,6 +30584,65 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return true;
   }
 
+  _rememberNativeChatExecutionEvidence(tabId, name, args, result, completion, context) {
+    const binding = completion.lastAction?.chatDeliveryBinding;
+    if (name === 'set_field' && args?.submit === true && binding && result?.success === true && result.outcomeUnknown) {
+      result.chatSendVerification = { nextAction: 'chat_observe', threadKey: binding.threadKey,
+        note: 'The composer may already have submitted and emptied. Observe the native chat to verify delivery before any further Send click; do not resend this reply.' };
+    }
+    let observation = name === 'chat_observe' ? result : null;
+    const delivered = context?.chatCompletionBindingSink?.deliveryObservation;
+    if (name === 'chat_send' && result?.success === true && result.deliveryVerified === true && delivered) {
+      observation = { ...delivered, chatDeliveryVerification: { schema: 'webbrain-chat-completion/1',
+        actionSequence: completion.lastAction?.sequence, threadKey: delivered.threadKey, messageId: delivered.messageId,
+        ...(delivered.nativeMountedTailVerified === true ? { nativeMountedTailVerified: true } : {}) } };
+    }
+    if (!observation || !binding) return;
+    const proof = this._nativeChatTerminalEvidence(tabId, observation, observation.url);
+    if (!proof || proof.priorVerifiedGoal) return;
+    const guard = this._planExecutionGuards.get(tabId);
+    const key = proof.runToken + ':' + proof.actionSequence;
+    const counted = guard.successfulConsequentialActionKeys instanceof Set ? guard.successfulConsequentialActionKeys : new Set();
+    if (!counted.has(key)) {
+      guard.successfulConsequentialToolCalls = Number(guard.successfulConsequentialToolCalls || 0) + 1;
+      counted.add(key);
+    }
+    guard.successfulConsequentialActionKeys = new Set([...counted].slice(-200));
+    guard.evidenceTaskKey = guard.taskKey;
+    const progress = this._recordNativeChatReplyProgress(tabId, proof, binding);
+    if (progress && result && typeof result === 'object') result.chatDeliveryProgress = progress;
+  }
+
+  _recordNativeChatReplyProgress(tabId, proof, binding) {
+    const guard = this._planExecutionGuards.get(tabId), target = normalizeMessageTarget(guard?.messaging);
+    const session = this._currentProgressSession(tabId), expected = this.progressExpectedItems.get(tabId);
+    // Only app-seeded, field-free ordered reply placeholders in one approved
+    // native conversation can consume these receipts. Explicit inventory,
+    // required fields, another peer and unrelated bulk rows keep their gates.
+    if (guard?.siteWorkflow?.job || target?.target_kind !== 'named' || target.recipients.length !== 1
+        || target.recipients[0].role !== 'to' || !isProgressIntentActive(session)
+        || session.targets?.length || session.allowedActions?.length !== 1 || session.allowedActions[0] !== 'process_item'
+        || !expected?.ordered || expected.required_fields?.length
+        || !/^(?:(?:chat|conversation|dialogue)\s+)?(?:reply|replies|response|responses|turn|turns)$/i.test(expected.item_type || '')
+        || !binding.replyAnchor || binding.replyAnchor === 'chat_start') return null;
+    const rows = this._currentTaskLedgerRows(tabId);
+    const fields = new Set(['expectedOrdinal', 'chatThreadKey', 'chatMessageId', 'chatBodySha256', 'chatReplyAnchor', 'chatActionSequence', 'chatRunToken']);
+    if (rows.length !== expected.count || rows.some((row, index) => row.id !== 'expected:' + (index + 1)
+        || Number(row.fields?.expectedOrdinal) !== index + 1 || row.action !== 'process_item'
+        || !['classifier', 'auto'].includes(row.source) || !['pending', 'processed'].includes(row.status)
+        || Object.keys(row.fields || {}).some(field => !fields.has(field))
+        || (row.status === 'processed' && (!row.fields.chatMessageId || row.fields.chatThreadKey !== proof.threadKey)))) return null;
+    if (rows.some(row => row.fields?.chatMessageId === proof.messageId || row.fields?.chatReplyAnchor === binding.replyAnchor)) return null;
+    const row = rows.find(row => row.status === 'pending');
+    if (!row) return null;
+    const update = this._progressUpdate(tabId, { items: [{ id: row.id, label: row.label, action: row.action, status: 'processed',
+      fields: { ...row.fields, chatThreadKey: proof.threadKey, chatMessageId: proof.messageId, chatBodySha256: proof.bodySha256,
+        chatReplyAnchor: binding.replyAnchor, chatActionSequence: proof.actionSequence, chatRunToken: proof.runToken } }] },
+      { source: 'auto', sessionId: session.sessionId, pageScope: session.pageScope });
+    return update?.success ? { id: row.id, messageId: proof.messageId, counts: update.counts } : null;
+  }
+
+
   _markPlanExecutionToolCall(tabId, name, result, { consequential = false, download = false } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (state?.enabled && state.taskKey && this._progressTaskKeyHash(tabId) !== state.taskKey) {
@@ -28533,7 +30756,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || requiredScheduleSucceeded
         || (requestedAppStateTool && this.constructor.EXECUTION_APP_STATE_WRITE_TOOLS.has(name))) {
       state.successfulConsequentialToolCalls += 1;
+      if (consequential) {
+        const completion = this.completionInvariants.get(tabId);
+        const key = completion?.runToken + ':' + (Number(completion?.sequence || 0) + 1);
+        const counted = state.successfulConsequentialActionKeys instanceof Set ? state.successfulConsequentialActionKeys : new Set();
+        counted.add(key);
+        state.successfulConsequentialActionKeys = new Set([...counted].slice(-200));
+      }
     }
+  }
+
+  _nativeChatResumedExecutionEvidence(state) {
+    const proof = state?.nativeChatDeliveryEvidence;
+    if (!proof?.priorVerifiedGoal || state.verifiedSubmissionEvidence !== true) return false;
+    for (const [tabId, guard] of this._planExecutionGuards) {
+      if (guard === state) return this._completionSubmissionEvidence(tabId,
+        { nativeChatDeliveryEvidence: proof }, proof.url).verifiedFinalSubmit === true;
+    }
+    return false;
   }
 
   _executionEvidenceSatisfied(state) {
@@ -28547,7 +30787,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const emptyInventoryNoOp = this._workflowEmptyInventoryNoOp(state);
     const taskEvidenceSatisfied = state.requiresStateChange === false || emptyInventoryNoOp
       ? state.successfulTaskToolCalls > 0
-      : state.successfulConsequentialToolCalls > 0;
+      : state.successfulConsequentialToolCalls > 0 || this._nativeChatResumedExecutionEvidence(state);
     const schedulingEvidenceSatisfied = !state.requiredSchedulingTool
       || state.successfulRequiredSchedulingToolCalls > 0;
     const downloadEvidenceSatisfied = !state.requiresDownload
@@ -28574,8 +30814,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _storeContinuationExecutionEvidence(tabId) {
     const guard = this._planExecutionGuards.get(tabId);
+    const hasRecipientAuthorization = guard?.requiresSubmission === true && guard?.requiresStateChange === true
+      && !!normalizeMessageTarget(guard.messaging)
+      && (guard.messageRecipientApprovedAll === true || (guard.approvedRecipients || []).length > 0);
     if (guard?.enabled && !guard.taskDrifted && (
-      guard.successfulTaskToolCalls > 0
+      hasRecipientAuthorization
+      || guard.successfulTaskToolCalls > 0
       || guard.successfulConsequentialToolCalls > 0
       || guard.pendingDownloadIds.length > 0
       || guard.verifiedSubmissionEvidence === true
@@ -28599,6 +30843,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         requiresSubmission: guard.requiresSubmission,
         messaging: guard.messaging,
         messagingConversationScope: guard.messagingConversationScope,
+        approvedRecipients: hasRecipientAuthorization && Array.isArray(guard.approvedRecipients)
+          ? [...guard.approvedRecipients] : [],
+        messageRecipientApprovedAll: hasRecipientAuthorization && guard.messageRecipientApprovedAll === true,
         draftRecipients: guard.draftRecipients,
         requiresDownload: guard.requiresDownload,
         allowsAppStateToolEvidence: guard.allowsAppStateToolEvidence,
@@ -29279,6 +31526,42 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return task.webbrainResumeTaskId || '';
   }
 
+  _scheduleCreationContext(tabId, signal = this._runAbortSignal(tabId), dispatchState = null) {
+    // Only the execution pipeline supplies this private context, never tool args.
+    const run = this._runAbortStates.get(tabId) || null;
+    const steering = this._steeringRuns.get(tabId) || null;
+    const revision = steering?.revision || 0;
+    const guard = this._planExecutionGuards.get(tabId) || null;
+    const conversationId = this.conversationIds.get(tabId) || null;
+    const binding = this._activeTaskBinding(this.conversations.get(tabId) || []);
+    const task = (this.conversations.get(tabId) || [])[binding.taskIndex] || null;
+    return { markDispatched: () => { if (dispatchState) dispatchState.started = true; }, check: () => {
+      const current = this._activeTaskBinding(this.conversations.get(tabId) || []);
+      const cancelled = signal?.aborted === true || this._checkAbort(tabId);
+      const changed = (this._runAbortStates.get(tabId) || null) !== run
+        || (run && !this.isRunning(tabId))
+        || (this._steeringRuns.get(tabId) || null) !== steering
+        || (steering?.revision || 0) !== revision
+        || this._hasUnvalidatedSteering(tabId)
+        || (this._planExecutionGuards.get(tabId) || null) !== guard
+        || (this.conversationIds.get(tabId) || null) !== conversationId
+        || ((this.conversations.get(tabId) || [])[current.taskIndex] || null) !== task
+        || current.text !== binding.text;
+      if (!cancelled && !changed) return null;
+      return { success: false, cancelled, scheduled: false, dispatched: false,
+        noDispatch: true, outcomeUnknown: false, retryable: false,
+        reason: cancelled ? 'scheduled_creation_cancelled' : 'scheduled_creation_owner_changed',
+        error: cancelled ? 'Scheduling cancelled before a new job was created.'
+          : 'Scheduling blocked because the owning run or task changed.' };
+    } };
+  }
+
+  _scheduleCreationResult(result) {
+    return result?.success === false && result.dispatched == null
+      && result.outcomeUnknown !== true
+      ? { ...result, dispatched: false, noDispatch: true } : result;
+  }
+
   async _scheduleAutoProgressResume(tabId, onUpdate = () => {}) {
     const cloudResume = this.cloudRunContexts.get(tabId)?.deferResume;
     if (!this.scheduler && !cloudResume) return null;
@@ -29286,7 +31569,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!this._isActionMode(mode)) return null;
     if (!this._shouldBlockDoneForProgress(tabId)) return null;
 
+    const creation = this._scheduleCreationContext(tabId);
+    if (creation.check()) return null;
     const { tabUrl, tabTitle } = await this._getTabUrlTitle(tabId);
+    if (creation.check()) return null;
     let result;
     try {
       const args = {
@@ -29302,7 +31588,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         args,
         currentUrl: tabUrl,
         currentTitle: tabTitle,
-      });
+      }, creation);
     } catch (e) {
       onUpdate('warning', { message: `Could not schedule automatic resume: ${e?.message || e}` });
       return null;
@@ -29453,8 +31739,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (let i = 1; i < messages.length; i++) {
       const m = messages[i];
       if (m.role !== 'user') continue;
-      const c = typeof m.content === 'string' ? m.content : '';
-      if (this._isAgentInjectedUserContent(c)) continue;
+      if (this._isAgentInjectedUserMessage(m)) continue;
       return i;
     }
     return -1;
@@ -29464,9 +31749,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     for (let i = messages.length - 1; i >= 1; i--) {
       const m = messages[i];
       if (m.role !== 'user') continue;
-      if (this._isScheduledResumeTurn(m.content)) return i;
+      if (this._isScheduledResumeTurn(m)) return i;
       if (this._isAgentInjectedUserMessage(m)) continue;
-      if (this._stripInjectedTaskContext(this._messageText(m.content))) return -1;
+      if (this._plannerUserAuthoredText(m)) return -1;
     }
     return -1;
   }
@@ -29530,8 +31815,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return trimmed;
   }
 
-  async _manageContext(tabId, messages, onUpdate = null, costState = null, { force = false } = {}) {
-    const totalChars = this._estimateContextChars(messages);
+  async _manageContext(tabId, messages, onUpdate = null, costState = null, { force = false, tools = null } = {}) {
+    const budgetMessages = this._completionEvidenceMessages(tabId, messages);
+    const totalChars = this._estimateContextChars(budgetMessages);
+    const reportingChars = Math.max(0, totalChars - this._estimateContextChars(messages));
 
     const tokenBudget = this._contextTokenBudget();
     const charBudget = this._contextCharBudget(tokenBudget);
@@ -29544,8 +31831,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // estimated GROWTH in conversation bytes since that reading. The fixed
     // overhead rides along in `lastReported`, the delta captures the new
     // messages, and base64/image bytes cancel out of the delta. Fall back to
-    // the raw estimate (streaming path / first turn) when there's no reading.
+    // text plus the exact next-request tool schemas when no reading exists.
+    // Callers pass their already assembled surface so enabled skills/WebMCP
+    // and tool-free turns are counted without rebuilding or changing tools.
     const estTokens = Math.ceil(totalChars / 4);
+    let toolSchemaTokens = 0;
+    if (Array.isArray(tools) && tools.length) {
+      try { toolSchemaTokens = Math.ceil(JSON.stringify(tools).length / 4); } catch {}
+    }
     const lastReported = this._lastInputTokens.get(tabId) || 0;
     const lastEstChars = this._lastEstCharsAtReport.get(tabId);
     let usedTokens;
@@ -29553,13 +31846,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const deltaTokens = Math.max(0, Math.ceil((totalChars - lastEstChars) / 4));
       usedTokens = Math.max(lastReported + deltaTokens, estTokens);
     } else {
-      usedTokens = Math.max(lastReported, estTokens);
+      usedTokens = Math.max(lastReported, estTokens + toolSchemaTokens);
     }
     const fixedPromptOverheadTokens = lastReported > 0 && lastEstChars != null
       ? Math.max(0, lastReported - Math.ceil(lastEstChars / 4))
-      : 0;
+      : toolSchemaTokens;
 
-    const tooManyMessages = messages.length > messageBudget;
+    const tooManyMessages = budgetMessages.length > messageBudget;
     const tooManyChars = totalChars > charBudget;
     const tooManyTokens = usedTokens > tokenBudget;
 
@@ -29633,14 +31926,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const oldMessages = oldMessagesRaw.filter(m => (
       !activeTaskPinnedSet.has(m)
       && m !== scheduledResumeMsg
-      && !this._isScheduledResumeTurn(m.content)
+      && !this._isScheduledResumeTurn(m)
       && !this._isPinnedAgentStateMessage(m)
       && !this._isLocalConversationStatusMessage(m)
     ));
     const recentMessages = recentMessagesRaw.filter(m => (
       !activeTaskPinnedSet.has(m)
       && m !== scheduledResumeMsg
-      && !this._isScheduledResumeTurn(m.content)
+      && !this._isScheduledResumeTurn(m)
       && !this._isPinnedAgentStateMessage(m)
       && !this._isLocalConversationStatusMessage(m)
     ));
@@ -29656,6 +31949,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     while (recentMessages.length && recentMessages[0].role === 'tool') {
       oldMessages.push(recentMessages.shift());
     }
+    // A completed tool group is the model's next observation, not old history.
+    // In particular, chat_observe has already consumed its incoming delta in
+    // the durable kernel. Summarizing that unseen result would lose the reply.
+    let freshToolGroupStart = -1;
+    for (let index = recentMessages.length - 1; index >= 0; index--) {
+      const message = recentMessages[index];
+      if (message.role !== 'assistant' || !message.tool_calls?.length) continue;
+      const resultIds = new Set(recentMessages.slice(index + 1)
+        .filter(result => result.role === 'tool').map(result => result.tool_call_id));
+      if (message.tool_calls.every(call => call?.id && resultIds.has(call.id))) freshToolGroupStart = index;
+      break;
+    }
+    const freshToolGroup = new Set(freshToolGroupStart >= 0 ? recentMessages.slice(freshToolGroupStart) : []);
+    let usingHardWindowHeadroom = false;
+    const contextProvider = this._activeProvider(tabId);
+    const hardWindow = Number(contextProvider?.contextWindow) || 128000;
+    const reservedOutputTokens = this._providerMaxOutputTokens(contextProvider);
+    const hardPromptBudget = Math.max(0, hardWindow - reservedOutputTokens);
     let retainedRecentOverBudget = false;
     if (tooManyTokens) {
       // Small-window runs can exceed the token budget before they have more
@@ -29668,7 +31979,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // older genuine user turns no longer need to block budget recovery.
         // Preserve the live tail after a newly pinned task pivot, just as the
         // old implementation protected the latest user turn and its results.
-        return recentMessages.length > 0 && !protectedPostActiveRecent.has(recentMessages[0]);
+        return recentMessages.length > 0 && !protectedPostActiveRecent.has(recentMessages[0])
+          && !freshToolGroup.has(recentMessages[0]);
       };
       const moveOldestRecentToSummary = () => {
         if (!canMoveOldestRecentToSummary()) return false;
@@ -29679,10 +31991,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return true;
       };
       while (oldMessages.length < 4 && moveOldestRecentToSummary()) {}
-      const pinnedChars = this._estimateContextChars([systemMsg, originalTask, ...activeTaskPinnedMessages, scheduledResumeMsg, scratchpadMsg, memoryMsg, progressMsg].filter(Boolean));
+      const pinnedChars = reportingChars + this._estimateContextChars([systemMsg, originalTask, ...activeTaskPinnedMessages, scheduledResumeMsg, scratchpadMsg, memoryMsg, progressMsg].filter(Boolean));
       const compactOverheadChars = 3000; // summary wrapper + ack + manual summary fallback
       const fixedPromptOverheadChars = fixedPromptOverheadTokens * 4;
-      const maxRecentChars = Math.max(0, (tokenBudget * 4) - fixedPromptOverheadChars - pinnedChars - compactOverheadChars);
+      const fixedPromptTokens = Math.ceil(pinnedChars / 4) + fixedPromptOverheadTokens;
+      if (toolSchemaTokens > 0 && fixedPromptTokens > hardPromptBudget) {
+        // History cannot shrink a fixed prompt/schema/authority requirement.
+        // Report the configuration limit without deleting genuine task data
+        // or rejecting a provider request on a character proxy alone.
+        return { compacted: false, reason: 'fixed_prompt_above_context_budget', remaining: messages.length,
+          tokens: usedTokens || null, budget: tokenBudget, hardPromptBudget, reservedOutputTokens, fixedPromptTokens };
+      }
+      let maxRecentChars = Math.max(0, (tokenBudget * 4) - fixedPromptOverheadChars - pinnedChars - compactOverheadChars);
+      const liveGroupChars = this._estimateContextChars([...freshToolGroup]);
+      const hardRecentChars = Math.max(0, (hardPromptBudget * 4) - fixedPromptOverheadChars - pinnedChars - compactOverheadChars);
+      if (freshToolGroup.size && liveGroupChars > maxRecentChars && liveGroupChars <= hardRecentChars) {
+        // Fixed schemas plus the live result can exceed the proactive soft
+        // threshold while fitting the real window with output reserved. Keep
+        // the result; compact earlier groups against that actual headroom.
+        maxRecentChars = hardRecentChars;
+        usingHardWindowHeadroom = true;
+      }
       while (oldMessages.length >= 4 && canMoveOldestRecentToSummary() && this._estimateContextChars(recentMessages) > maxRecentChars) {
         moveOldestRecentToSummary();
       }
@@ -29691,6 +32020,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const minSummarizableMessages = tooManyTokens && oldMessages.some(m => m?.role === 'user') ? 1 : 4;
     if (oldMessages.length < minSummarizableMessages || retainedRecentOverBudget) {
+      if (usingHardWindowHeadroom && !retainedRecentOverBudget) {
+        return { compacted: false, reason: 'live_tool_group_above_soft_budget', remaining: messages.length,
+          tokens: usedTokens || null, budget: tokenBudget, hardPromptBudget, reservedOutputTokens };
+      }
+      if (retainedRecentOverBudget && [...freshToolGroup].some(message =>
+        message.role === 'assistant' && message.tool_calls?.some(call => ['chat_observe', 'chat_send'].includes(call.function?.name)))) {
+        return { compacted: false, reason: 'over_budget_live_chat_observation', remaining: messages.length,
+          tokens: usedTokens || null, budget: tokenBudget, hardPromptBudget, reservedOutputTokens };
+      }
       // Not enough history to summarize. But if the TOKEN budget is what
       // tripped us (e.g. a single huge page/tool result early in a run on a
       // small local model), returning unchanged would re-send the same
@@ -29739,7 +32077,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let summaryText = 'Previous conversation summary:\n';
     for (const msg of oldMessages) {
       if (msg.role === 'user') {
-        const taskText = this._stripInjectedTaskContext(this._messageText(msg.content));
+        const taskText = this._plannerUserAuthoredText(msg);
         summaryText += `- User asked: ${this._truncate(taskText, 120)}\n`;
       } else if (msg.role === 'assistant' && msg.content && !msg.tool_calls) {
         summaryText += `- Assistant answered: ${this._truncate(msg.content, 150)}\n`;
@@ -29833,6 +32171,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       remaining: messages.length,
       tokens: usedTokens || null,
       budget: tokenBudget,
+      ...(usingHardWindowHeadroom ? { reason: 'live_tool_group_above_soft_budget', hardPromptBudget, reservedOutputTokens } : {}),
     };
   }
 
@@ -30369,7 +32708,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!message || (message.role !== 'user' && message.role !== 'assistant')) return null;
     if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) return null;
     if (message.role === 'user'
-      && (this._isAgentInjectedUserMessage(message) || this._isScheduledResumeTurn(message.content))) return null;
+      && (this._isAgentInjectedUserMessage(message) || this._isScheduledResumeTurn(message))) return null;
 
     const rawContent = message.role === 'user'
       ? this._plannerUserAuthoredText(message)
@@ -30786,7 +33125,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const progressIdx = this._findProgressLedgerIndex(messages);
     const progressMsg = progressIdx >= 0 ? messages[progressIdx] : null;
     const keepLast = 6; // keep only 6 most recent messages
-    const recent = messages.slice(-keepLast).filter(m => !pinnedTaskSet.has(m) && m !== scheduledResumeMsg && !this._isScheduledResumeTurn(m.content) && !this._isPinnedAgentStateMessage(m));
+    const recent = messages.slice(-keepLast).filter(m => !pinnedTaskSet.has(m) && m !== scheduledResumeMsg && !this._isScheduledResumeTurn(m) && !this._isPinnedAgentStateMessage(m));
 
     // Drop any leading `tool` messages whose requesting assistant turn fell
     // outside the kept window. Both OpenAI-compatible and Anthropic APIs reject
@@ -31041,7 +33380,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (args.left != null && Number.isFinite(Number(args.left))) update.left = Math.round(Number(args.left));
     if (args.top != null && Number.isFinite(Number(args.top))) update.top = Math.round(Number(args.top));
 
+    let resizeMarker = null;
+    let expectedViewport = null;
     try {
+      resizeMarker = await this._beginPageAgentResize(tabId);
       const win = await browser.windows.get(tab.windowId);
       if (win?.state && win.state !== 'normal') {
         await browser.windows.update(tab.windowId, { state: 'normal' });
@@ -31050,6 +33392,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await browser.windows.update(tab.windowId, update);
       await new Promise(r => setTimeout(r, 250));
       const info = await this._getWindowInfo(tabId);
+      expectedViewport = info?.viewport || null;
       return {
         ...info,
         resized: true,
@@ -31058,6 +33401,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     } catch (e) {
       return { success: false, error: `resize_window failed: ${e.message}` };
+    } finally {
+      await this._finishPageAgentResize(tabId, resizeMarker, expectedViewport);
     }
   }
 
@@ -31179,6 +33524,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? runOptions?.parentSessionId || null
       : null;
     await this._claimRunEntry(tabId, 'workflow', runOptions);
+    const feedbackRun = this._pageFeedbackRuns?.get(tabId);
+    if (feedbackRun) feedbackRun.onUpdate = onUpdate;
     let completionRunToken = '';
     let startUrl = '';
     let traceRunId = null;
@@ -31236,6 +33583,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let finalContent = '';
     let matchedSteps = 0;
     const verifiedHealings = [];
+    const pageFeedbackRetries = new Map();
 
     const finishStopped = (reason, stepIndex = 0) => {
       const summary = `Saved workflow "${workflow.name}" stopped safely at step ${stepIndex + 1}: ${reason}.`;
@@ -31263,7 +33611,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           stepIndex: 0,
           matchedSteps,
           healings: verifiedHealings,
-          prompt: workflowFallbackPrompt(workflow, 0, reason),
+          prompt: await this._workflowFeedbackFallbackPrompt(tabId, workflowFallbackPrompt(workflow, 0, reason), onUpdate),
         };
       }
       const protectedMessagingStep = savedWorkflowProtectedMessagingStepIndex(workflow, startUrl);
@@ -31280,6 +33628,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       for (let index = 0; index < workflow.steps.length; index++) {
+        await this._applyPendingPageFeedback(tabId, [], onUpdate, { workflow: true });
         if (this._checkAbort(tabId)) return finishStopped('stopped by the user', index);
         const step = workflow.steps[index];
         const stepUrl = await this._currentUrl(tabId);
@@ -31310,7 +33659,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             stepIndex: index,
             matchedSteps,
             healings: verifiedHealings,
-            prompt: workflowFallbackPrompt(workflow, index, reason),
+            prompt: await this._workflowFeedbackFallbackPrompt(tabId, workflowFallbackPrompt(workflow, index, reason), onUpdate),
           };
         }
         let executionArgs;
@@ -31387,7 +33736,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               stepIndex: index,
               matchedSteps,
               healings: verifiedHealings,
-              prompt: workflowFallbackPrompt(workflow, index, reason),
+              prompt: await this._workflowFeedbackFallbackPrompt(tabId, workflowFallbackPrompt(workflow, index, reason), onUpdate),
             };
           }
           if (['click_ax', 'set_checked', 'type_ax', 'set_field', 'scroll'].includes(step.tool)) {
@@ -31431,6 +33780,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           runOptions,
         );
         const afterUrl = await this._currentUrl(tabId);
+        if (rawResult?.pageFeedbackPending && rawResult?.noDispatch === true) {
+          const retries = (pageFeedbackRetries.get(index) || 0) + 1;
+          pageFeedbackRetries.set(index, retries);
+          if (retries > 3) {
+            const reason = 'page kept changing before workflow dispatch';
+            traceStatus = 'workflow_fallback';
+            finalContent = 'Continuing with the agent after repeated page changes.';
+            return { status: 'fallback', reason, stepIndex: index, matchedSteps, healings: verifiedHealings,
+              prompt: await this._workflowFeedbackFallbackPrompt(tabId, workflowFallbackPrompt(workflow, index, reason), onUpdate) };
+          }
+          await this._applyPendingPageFeedback(tabId, [], onUpdate, { workflow: true });
+          index--; // Re-resolve this unexecuted step against the new page.
+          continue;
+        }
         const validation = validateWorkflowStepResult(step.expected, rawResult, { beforeUrl, afterUrl, tool: step.tool });
         trace.recordNote(traceRunId, index + 1, 'workflow_replay_step', {
           workflowId: workflow.id,
@@ -31454,7 +33817,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             stepIndex: index,
             matchedSteps,
             healings: verifiedHealings,
-            prompt: workflowFallbackPrompt(workflow, index, validation.reason),
+            prompt: await this._workflowFeedbackFallbackPrompt(tabId, workflowFallbackPrompt(workflow, index, validation.reason), onUpdate),
           };
         }
         if (pendingHealing) {
@@ -31571,6 +33934,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // run before mutation debt is recorded, or finalize a late reply twice.
     const state = dispatchState || {};
     if (!state.toolResultFinalization) {
+      const tableState = this.readCompletenessStates.get(tabId);
+      if (tableState && tableState.runToken === state.tableReadRunToken && !result?.error
+          && (['get_accessibility_tree', 'read_page'].includes(name) && result?.tableCount > 0
+            || name === 'extract_data' && args?.type === 'tables' && Array.isArray(result) && result.length > 0)) {
+        tableState.tablePageObserved = true;
+      }
+      // Attachment receipt semantics remain local; a consumed input can render
+      // a staged preview instead of a filename and still require a page commit.
+      if (name === 'upload_file' && result?.success === true
+        && result?.verified === false && result?.remoteStateVerified === false
+        && result?.outcomeUnknown !== true && result?.cancelled !== true
+        && result?.noDispatch !== true && result?.dispatched !== false
+        && ['input_attached', 'page_consumed'].includes(result.attachmentState)) {
+        result = { ...result, note: result.attachmentState === 'page_consumed'
+          ? "The page consumed the local attachment and may clear its file input or display a preview/crop instead of a filename. This does not prove a remote upload or form submission. Inspect the staged preview/crop or status, then inspect and use the current task-authorized Save/Submit/Commit controls when required. Do not re-open the chooser or re-upload solely because the filename is absent or not rendered. Retry only if the file is genuinely missing or the user explicitly requests a new file."
+          : "The file input retains the local attachment. This does not prove a remote upload or form submission. Inspect the filename or staged preview/status, then inspect and use the current task-authorized Save/Submit/Commit controls when required. Do not re-open the chooser or re-upload solely because the filename is absent or not rendered. Retry only if the file is genuinely missing or the user explicitly requests a new file." };
+      }
       state.rawToolResult = result;
       const controller = new AbortController();
       const signal = state.toolResultAbortSignal || this._runAbortSignal(tabId);
@@ -31601,7 +33981,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Every text-write route marks dispatch before content messaging or CDP input.
     dispatchState.tracksTextMutationDispatch = ['set_field', 'type_ax', 'type_text'].includes(name);
     dispatchState.toolResultAbortSignal = linked.signal;
-    executionContext = { ...executionContext, _contentActionAbortSignal: linked.signal, _contentActionDispatchState: dispatchState };
+    if (['get_accessibility_tree', 'read_page', 'extract_data'].includes(name)) {
+      dispatchState.tableReadRunToken = this.readCompletenessStates.get(tabId)?.runToken;
+    }
+    executionContext = { ...executionContext, _contentActionAbortSignal: linked.signal, _contentActionDispatchState: dispatchState,
+      _exactTableOwner: name === 'extract_data' && Array.isArray(args?.columns) ? this._exactTableOwner(tabId, linked.signal) : null };
     try {
       this._throwIfAborted(linked.signal);
       if (executionContext?.jevBinding) {
@@ -31628,6 +34012,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _executeToolImpl(tabId, name, args, onUpdate = null, executionContext = null) {
+    if (['execute_js', 'inject_css', 'remove_injected_css'].includes(name)) {
+      await beforePageAgentDispatch(browser, tabId, { kind: 'dom' });
+    }
     const dispatchContext = executionContext && typeof executionContext === 'object'
       ? executionContext
       : {};
@@ -31636,6 +34023,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const throwIfContentPipelineAborted = () => this._throwIfAborted(contentPipelineAbortSignal);
     const markContentPipelineDispatched = () => { contentPipelineDispatchState.started = true; };
     args = this._normalizeContinuationToolArgs(name, args);
+    if (name === 'calculate') {
+      this._rememberPureCalculationAttempt(tabId, args);
+      return calculateExpression(args?.expression);
+    }
     const coordinates = this._prepareClickCoordinates(tabId, name, args);
     if (coordinates.block) return coordinates.block;
     args = coordinates.args;
@@ -31675,7 +34066,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return structured;
     }
-    if (name === 'chat_observe') return this._observeChatWorkflow(tabId, args);
+    if (name === 'chat_observe') return this._observeChatWorkflow(tabId, args, onUpdate);
     if (name === 'recall_memcode') {
       this.memcodeRecall ||= createMemcodeRecall({ storage: browser.storage.local, identity: browser.identity });
       return this.memcodeRecall.recall(args?.query);
@@ -31733,6 +34124,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await this._resizeWindow(tabId, args || {});
     }
     if (name === 'schedule_resume') {
+      const creation = this._scheduleCreationContext(tabId, contentPipelineAbortSignal, contentPipelineDispatchState);
+      let blocked = creation.check();
+      if (blocked) return blocked;
       const cloudResume = this.cloudRunContexts.get(tabId)?.deferResume;
       if (cloudResume) return cloudResume(this._resumeArgsWithProgressGuard(tabId, args || {}));
       if (!this.scheduler) {
@@ -31746,6 +34140,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const resumeTaskId = this._resumeTaskId(tabId, { create: true });
       if (this.chatSessions.has(tabId)) {
         const chatStatePersisted = await this._persistNow(tabId);
+        blocked = creation.check();
+        if (blocked) return blocked;
         if (chatStatePersisted !== true && chatStatePersisted?.ok !== true) {
           return {
             success: false,
@@ -31758,6 +34154,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       let tab = null;
       try { tab = await browser.tabs.get(tabId); } catch {}
+      blocked = creation.check();
+      if (blocked) return blocked;
       const result = await this.scheduler.createResumeJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
@@ -31766,12 +34164,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         args: this._resumeArgsWithProgressGuard(tabId, args || {}),
         currentUrl: tab?.url || '',
         currentTitle: tab?.title || '',
-      });
-      return result?.success === false
-        ? { ...result, dispatched: false, noDispatch: true }
-        : result;
+      }, creation);
+      return this._scheduleCreationResult(result);
     }
     if (name === 'schedule_task') {
+      const creation = this._scheduleCreationContext(tabId, contentPipelineAbortSignal, contentPipelineDispatchState);
+      let blocked = creation.check();
+      if (blocked) return blocked;
       if (!this.scheduler) {
         return {
           success: false,
@@ -31782,6 +34181,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       let tab = null;
       try { tab = await browser.tabs.get(tabId); } catch {}
+      blocked = creation.check();
+      if (blocked) return blocked;
       const result = await this.scheduler.createTaskJob({
         tabId,
         conversationId: this.conversationIds.get(tabId) || null,
@@ -31789,10 +34190,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         source: 'agent',
         currentUrl: tab?.url || '',
         currentTitle: tab?.title || '',
-      });
-      return result?.success === false
-        ? { ...result, dispatched: false, noDispatch: true }
-        : result;
+      }, creation);
+      return this._scheduleCreationResult(result);
     }
 
     if (name === 'delegate_research') {
@@ -31832,6 +34231,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : (args?.purpose === 'recipient_change'
           ? 'recipient_change'
           : (args?.purpose === 'message_recipient' ? 'message_recipient' : null));
+      const explicitRecipientQuestion = purpose === 'message_recipient' || purpose === 'recipient_change';
+      const recipientBindingRequired = explicitRecipientQuestion
+        || (!!clarificationGuard?.pendingRecipientAuthorization
+          && this._isRecipientClarification({ question, options, reason, purpose },
+            typeof clarificationGuard.pendingRecipientAuthorization === 'string'
+              ? clarificationGuard.pendingRecipientAuthorization : 'message_recipient',
+            clarificationGuard.observedRecipientCandidates || []));
+      const technicalRecipientReasons = new Set(['recipient_identity_unavailable', 'message_body_unverified',
+        'message_body_baseline_unavailable', 'recipient_dispatch_binding_unavailable']);
+      const technicalRecipientReason = technicalRecipientReasons.has(clarificationGuard?.messageRecipientTechnicalBlock)
+        ? clarificationGuard.messageRecipientTechnicalBlock : '';
+      if (technicalRecipientReason && (explicitRecipientQuestion
+          || this._isRecipientClarification({ question, options, reason, purpose }, 'recipient_change', [])
+          || this._isRecipientClarification({ question, options, reason, purpose }, 'message_recipient', []))) {
+        return { success: false, blocked: true, noDispatch: true, dispatched: false, retryable: false,
+          messageRecipientGuard: true, reasonCode: technicalRecipientReason,
+          recipientBinding: { required: true, bound: false, reasonCode: technicalRecipientReason },
+          error: 'Recipient confirmation cannot repair the unresolved technical message guard. No clarification was shown. Re-read the active recipient and composer evidence; if it remains unavailable, report the blocker instead of requesting the same approval again.' };
+      }
       const isResearchEscalation = purpose === 'research_escalation';
       const requireExplicitAnswer = isResearchEscalation || args?.require_explicit_answer === true;
       const researchRequest = isResearchEscalation ? normalizeResearchRequest(args?.research_request) : '';
@@ -31934,7 +34352,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (response && response.cancelled) {
         this._bindClarifiedMessageRecipient(tabId, '', 'cancelled', { question, options, reason, purpose });
-        return { success: false, cancelled: true, reason: response.reason || 'clarify cancelled' };
+        return { success: false, cancelled: true, reason: response.reason || 'clarify cancelled',
+          ...(recipientBindingRequired ? { recipientBinding: { required: true, bound: false,
+            reasonCode: 'recipient_clarification_cancelled' } } : {}) };
       }
       const answer = String(response?.answer || '').trim();
       const source = response?.source || 'user';
@@ -31947,7 +34367,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // nothing, matching how research escalation treats those sources below.
       // Every clarification outcome (human answer, timeout, auto) must consume
       // the staged recipient consent so a later unrelated clarify does not inherit it.
-      this._bindClarifiedMessageRecipient(tabId, answer, source, { question, options, reason, purpose, safeFirst: entrySafeFirst });
+      const recipientBound = this._bindClarifiedMessageRecipient(tabId, answer, source,
+        { question, options, reason, purpose, safeFirst: entrySafeFirst });
+      const recipientBinding = recipientBindingRequired ? { required: true, bound: recipientBound,
+        ...(!recipientBound ? { reasonCode: technicalRecipientReasons.has(clarificationGuard?.messageRecipientTechnicalBlock)
+          ? clarificationGuard.messageRecipientTechnicalBlock : 'recipient_authorization_not_bound' } : {}) } : null;
       this._recordSocialPublicationClarification(tabId, clarificationGuard, question, answer, source);
       const explicitResearchApproval = isResearchEscalation
         && source !== 'timeout'
@@ -31977,6 +34401,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         source,
         authorized,
         requiresExplicitConfirmation: !authorized,
+        ...(recipientBinding ? { recipientBinding } : {}),
         ...(isResearchEscalation ? {
           researchEscalationApproved: explicitResearchApproval,
           authorization_token: authorizationToken,
@@ -32316,6 +34741,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         navigationCommitListener = (details = {}) => {
           if (details.tabId !== tabId || details.frameId !== 0) return;
           navigationCommitObserved = true;
+          const receipt = dispatchContext._completionNavigationReceipt;
+          if (receipt && !receipt.scopePromise) {
+            receipt.committed = { url: details.url || '', documentId: details.documentId,
+              timeStamp: details.timeStamp };
+            receipt.scopePromise = captureSemanticNavigationDocument(browser, tabId,
+              receipt.committed, this._runAbortSignal(tabId));
+          }
           finishNavigationTerminal({ type: 'committed', url: details.url || '' });
         };
         try {
@@ -32368,14 +34800,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       try {
         if (firefoxBidi.runs.has(tabId)) await firefoxBidi.perform(tabId, 'navigate', { url: rawUrl });
-        else await browser.tabs.update(tabId, { url: rawUrl });
+        else {
+          await beforePageAgentDispatch(browser, tabId, { kind: 'navigate', url: rawUrl });
+          await browser.tabs.update(tabId, { url: rawUrl });
+        }
       } catch (e) {
         removeNavigationListener();
+        if (e?.code === 'page_feedback_pending') throw e;
         return {
           success: false,
           dispatched: false,
           noDispatch: true,
           ...(firefoxBidi.runs.has(tabId) ? { dispatched: true, noDispatch: false, outcomeUnknown: true, retryable: false } : {}),
+          ...(e?.code === 'page_feedback_pending' ? { pageFeedbackPending: true, skipped: true } : {}),
           error: `navigate: browser rejected the navigation: ${e?.message || String(e)}`,
         };
       }
@@ -32575,11 +35012,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               return { before };
             })()
           `;
+          await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, { kind: 'navigate', history: true });
           historyDispatchArmed = true;
           dispatched = true;
           const results = await browser.tabs.executeScript(tabId, { code });
           probe = (results && results[0]) || null;
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, dispatched, error: `${name}: cannot navigate history on this page (${e.message}).` };
         }
         if (!probe) {
@@ -32816,7 +35255,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     if (name === 'done') {
+      const tableBlock = await this._resolveExactTableDone(tabId, args, onUpdate);
+      if (tableBlock) return tableBlock;
       const outcome = normalizeDoneOutcome(args?.outcome);
+      const calculationEvidence = outcome === 'success' ? captureCalculationEvidence(this, tabId) : null;
+      const calculationProof = calculationEvidence ? captureCalculationCompletion(this, tabId, args.summary, calculationEvidence) : null;
       // In action modes, require a verification screenshot + page info before completing.
       const mode = this._effectiveRunMode(tabId);
       if (this._isActionMode(mode)) {
@@ -32883,8 +35326,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   .map(e => (e.innerText || '').trim().slice(0, 120))
                   .filter(Boolean);
                 const successMessages = toasts.filter(text =>
-                  /success|saved|submitted|created|sent|published|complete|done|updated|added|approved|resolved/i.test(text)
-                  && !/\\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|couldn't|did not|didn't|was not|wasn't|were not|weren't|invalid|denied|rejected|unsuccessful)\\b/i.test(text)
+                  (${completionTextSignalsSuccess.toString()})(text, { allowBare: true })
                 ).slice(0, 5);
                 const publicationResourceIdentity = value => {
                   try {
@@ -33152,11 +35594,62 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               dataUrl = await this._redactScreenshotDataUrl(tabId, dataUrl, { coordinateSpace: 'viewport' });
             }
 
-            const completionDecision = outcome === 'success' ? await verifyBrowserCompletion(this, tabId, { pageState, pageUrl: pageState.url || '', summary: args.summary }) : null;
+            if (outcome === 'success' && (this.completionInvariants.get(tabId)?.lastAction?.chatDeliveryBinding
+                || this.chatSessions.get(tabId)?.completionReceipt)) {
+              const nativeChatEvidence = await this._freshNativeChatTerminalEvidence(tabId, pageState.url || '');
+              if (nativeChatEvidence) {
+                this._planExecutionGuards.get(tabId).nativeChatDeliveryEvidence = nativeChatEvidence;
+                pageState.nativeChatDeliveryEvidence = nativeChatEvidence;
+                const savedNativeReceipt = await this._persistNow(tabId);
+                if (savedNativeReceipt !== true && savedNativeReceipt?.ok !== true) {
+                  return { success: false, blockedDone: true, error: 'The verified chat delivery receipt could not be saved. Retry completion after storage is available; do not send the message again.' };
+                }
+              }
+            }
+            if (outcome === 'success' && pageState) {
+            const nativePublication = await this._freshMastodonPublicationEvidence(tabId, pageState.url || '');
+            if (nativePublication) {
+              this._planExecutionGuards.get(tabId).mastodonPublicationEvidence = nativePublication;
+              pageState.mastodonPublicationEvidence = nativePublication;
+            }
+          }
+          const completionDecision = outcome === 'success' ? await verifyBrowserCompletion(this, tabId, { pageState, pageUrl: pageState.url || '', summary: args.summary, calculationProof, calculationEvidence }) : null;
           if (completionDecision && ['pending', 'failed'].includes(completionDecision.outcome)) return { success: false, blockedDone: true, completionDecision: { outcome: completionDecision.outcome, engine: completionDecision.engine }, error: 'Completion verification reports ' + completionDecision.outcome + '. Inspect the result before any further submission; continue recovery or report partial/failed.' };
+          if (pageState?.nativeChatDeliveryEvidence) {
+            delete pageState.nativeChatDeliveryEvidence;
+            this._planExecutionGuards.get(tabId).nativeChatDeliveryEvidence = null;
+            const freshNativeChat = await this._freshNativeChatTerminalEvidence(tabId, pageState.url || '');
+            if (freshNativeChat) {
+              this._planExecutionGuards.get(tabId).nativeChatDeliveryEvidence = freshNativeChat;
+              pageState.nativeChatDeliveryEvidence = freshNativeChat;
+            }
+          }
+          if (outcome === 'success' && pageState) pageState.iframeSubmissionEvidence = await this._completionIframeSnapshot(tabId);
+          if (outcome === 'success' && this._completionSubmitStates.get(tabId)?.iframeSubmission
+              && (!pageState?.iframeSubmissionEvidence || (completionDecision?.outcome === 'succeeded'
+                && completionDecision.submittedFrameStamp !== pageState.iframeSubmissionEvidence.stamp))) {
+            return { success: false, blockedDone: true, completionDecision: { outcome: 'pending', engine: 'freshness' },
+              error: 'The submitted iframe changed or could not be refreshed at completion. Read its current result again; do not repeat the submission.' };
+          }
+          // Refresh exact native evidence after the independent model wait;
+          // a removed or edited post outside a scoped form invalidates it.
+          if (pageState?.mastodonPublicationEvidence) {
+            delete pageState.mastodonPublicationEvidence;
+            const nativePublication = await this._freshMastodonPublicationEvidence(tabId, pageState.url || '');
+            if (nativePublication) {
+              this._planExecutionGuards.get(tabId).mastodonPublicationEvidence = nativePublication;
+              pageState.mastodonPublicationEvidence = nativePublication;
+            }
+          }
           const genericGuard = this._planExecutionGuards.get(tabId);
           const dispatchedSubmit = this._completionSubmitStates.get(tabId);
-          if (completionDecision?.outcome === 'succeeded' && genericGuard?.enabled && !genericGuard.siteWorkflow?.job && dispatchedSubmit?.dispatched && dispatchedSubmit.observedAfterSubmit && this._normalizeUrl(dispatchedSubmit.currentUrl) === this._normalizeUrl(pageState.url || '') && !dispatchedSubmit.formValidationFailed) { genericGuard.verifiedSubmissionEvidence = true; genericGuard.semanticSubmissionVerified = true; }
+          if (completionDecision?.outcome === 'succeeded' && genericGuard?.enabled && !genericGuard.siteWorkflow?.job
+              && dispatchedSubmit?.dispatched && dispatchedSubmit.observedAfterSubmit && !dispatchedSubmit.formValidationFailed
+              && this._normalizeUrl(dispatchedSubmit.currentUrl) === this._normalizeUrl(pageState.url || '')
+              && (!dispatchedSubmit.semanticCommit || this._completionSemanticCommitCurrent(tabId, dispatchedSubmit, pageState.url || ''))) {
+            genericGuard.verifiedSubmissionEvidence = true;
+            genericGuard.semanticSubmissionVerified = true;
+          }
           const submissionEvidence = this._completionSubmissionEvidence(
               tabId, pageState, pageState.url || '',
             );
@@ -33230,7 +35723,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               screenshotCaptured: !!dataUrl,
             });
             if (completionDecision) verification.decision = { outcome: completionDecision.outcome, engine: completionDecision.engine, modality: completionDecision.modality, model: completionDecision.model };
-          if (completionDecision?.outcome === 'succeeded' && /upvotes|won.t get deleted|won.t be deleted|will not be removed/i.test(this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || '')) args.summary += '\n\nPublication was verified. Future upvotes and moderation outcomes remain unverified.';
+          if (!args.data_ref && completionDecision?.outcome === 'succeeded' && /upvotes|won.t get deleted|won.t be deleted|will not be removed/i.test(this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || '')) args.summary += '\n\nPublication was verified. Future upvotes and moderation outcomes remain unverified.';
 
             // If completionWarning fires, DO NOT terminate. Return a failed
             // tool result so the agent loop continues and the model must
@@ -33258,6 +35751,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await trace.recordScreenshot(runId, null, dataUrl, 'done verification');
             }
 
+            if (calculationEvidence && !await refreshCalculationEvidence(this, tabId, calculationEvidence)) {
+              return { success: false, blockedDone: true, completionDecision: { outcome: 'pending', engine: 'freshness' },
+                error: 'The verified calculation authority changed before completion. Reconsider the current genuine task; no new action was performed.' };
+            }
+
             return {
               done: true,
               summary: args.summary,
@@ -33270,13 +35768,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // Screenshot failed — still allow done but note it
         }
       }
+      if (calculationEvidence && !await refreshCalculationEvidence(this, tabId, calculationEvidence)) {
+        return { success: false, blockedDone: true, completionDecision: { outcome: 'pending', engine: 'freshness' },
+          error: 'The verified calculation authority changed before completion. Reconsider the current genuine task; no new action was performed.' };
+      }
       return { done: true, summary: args.summary, outcome };
     }
 
-    // Network & download tools (background context). fetchUrl/readDownloadedFile
-    // attach the user's cookies only for fetches that share the registrable
-    // domain (eTLD+1) of the active tab — see network-tools.js for cookie &
-    // redirect policy.
+    // Background fetchUrl follows network-tools.js cookie/redirect policy.
+    // Firefox saved-file reads use only immutable recorded data-URL payloads;
+    // uncaptured HTTP downloads are unsupported and are never fetched again.
+    // Current task ownership is checked before returning captured content.
     const skillTool = this._activeSkillToolForName(tabId, name);
     if (skillTool) {
       if (isTrustedChromeWebStoreSkillTool(skillTool)) {
@@ -33312,16 +35814,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await listDownloads(args);
     }
     if (name === 'read_downloaded_file') {
-      return await readDownloadedFile(args.downloadId, { tabId });
+      const readOwner = this._pageFeedbackOwnerScope?.(tabId) || '';
+      return await readDownloadedFile(args.downloadId, { tabId,
+        signal: executionContext?._contentActionAbortSignal,
+        checkStillActive: () => {
+          throwIfContentPipelineAborted();
+          if (this._hasPendingSteering?.(tabId) || (readOwner && this._pageFeedbackOwnerScope?.(tabId) !== readOwner)) {
+            throw new Error('The current task changed during the downloaded-file read.');
+          }
+        },
+      });
     }
     if (name === 'download_resource_from_page') {
-      return await downloadResourceFromPage(tabId, args);
+      return await downloadResourceFromPage(tabId, args, { signal: executionContext?._contentActionAbortSignal });
     }
     if (name === 'download_files') {
       if (args.url && (!Array.isArray(args.urls) || args.urls.length === 0)) {
         args.urls = [args.url];
       }
-      return await downloadFiles(args);
+      return await downloadFiles(args, { signal: executionContext?._contentActionAbortSignal });
     }
     if (name === 'upload_file') {
       const bidiUploadOwner = firefoxBidi.runs.get(tabId);
@@ -33393,6 +35904,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!args.selector) {
           return { success: false, error: 'selector parameter is required for upload_file' };
         }
+
+        const recipientUpload = await this._recipientBoundUploadContext(tabId, args, dispatchContext);
+        throwIfContentPipelineAborted();
+        if (recipientUpload.block) return recipientUpload.block;
 
         let base64, filename, mimeType;
         if (args.attachmentId != null) {
@@ -33554,6 +36069,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, error: 'No file data available to attach' };
         }
 
+        if (recipientUpload.protected) {
+          return await this._dispatchRecipientBoundUpload(tabId, args, { base64, filename, mimeType }, recipientUpload);
+        }
+
         if (bidiUploadOwner) {
           if (firefoxBidi.runs.get(tabId) !== bidiUploadOwner || bidiUploadOwner.signal?.aborted) return { success: false, dispatched: false, noDispatch: true, error: 'Upload task stopped before attachment.' };
           return await firefoxBidi.sendContent(tabId, {
@@ -33601,7 +36120,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return { success: true, dispatched: false };
           })();
         `;
-        const buildInjectCode = actionDeadlineAt => `
+        const buildInjectCode = (actionDeadlineAt, pageFeedbackGuard) => `
           (function() {
             const actionDeadlineAt = ${Number(actionDeadlineAt) || 0};
             const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
@@ -33641,6 +36160,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (!(el instanceof HTMLInputElement) || el.type !== 'file') {
               return { success: false, dispatched: false, error: 'Selector does not match an <input type="file"> element: ' + selector };
             }
+            ${FILE_UPLOAD_POLICY_SOURCE}
+            const typeCheck = validateUploadFile(el.getAttribute('accept'), { base64: ${JSON.stringify(base64)}, filename: ${JSON.stringify(filename)}, mimeType: ${JSON.stringify(mimeType)} });
+            if (!typeCheck.success) return typeCheck;
+            const pageFeedbackGuard = ${JSON.stringify(pageFeedbackGuard || null)};
+            const pageMonitor = window.__wbPageMonitor;
+            if (pageFeedbackGuard?.operationId) {
+              if (typeof pageMonitor?.activatePreparedDispatch !== 'function'
+                  || typeof pageMonitor?.withPreparedDispatch !== 'function') {
+                return { success: false, dispatched: false, noDispatch: true, pageFeedbackPending: true,
+                  error: 'The page monitor is unavailable at the upload dispatch boundary. Re-observe the page before acting.' };
+              }
+              try {
+                pageMonitor.activatePreparedDispatch({ operationId: pageFeedbackGuard.operationId, kind: 'input', element: el });
+              } catch (e) {
+                if (e?.code === 'page_feedback_pending') {
+                  return { success: false, dispatched: false, noDispatch: true, pageFeedbackPending: true,
+                    error: e.message || 'The browser changed during upload preparation. Re-observe the page before acting.' };
+                }
+                throw e;
+              }
+            }
             const compactIdentity = value => String(value || '').replace(/\\s+/g, ' ').trim().slice(0, 160);
             let targetLabel = '';
             try {
@@ -33673,10 +36213,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (deadlineExpired()) {
                 return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
               }
-              el.files = dt.files;
-              dispatched = true;
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
+              const attach = () => {
+                if (deadlineExpired()) {
+                  return { success: false, dispatched: false, noDispatch: true, deadlineExpired: true,
+                    error: 'Upload action deadline expired before dispatch' };
+                }
+                dispatched = true;
+                el.files = dt.files;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                if (deadlineExpired()) {
+                  return { success: false, dispatched: true, outcomeUnknown: true, retryable: false, deadlineExpired: true,
+                    error: 'Upload action deadline expired during input dispatch' };
+                }
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return null;
+              };
+              const dispatchResult = pageFeedbackGuard?.operationId
+                ? pageMonitor.withPreparedDispatch(pageFeedbackGuard.operationId, attach)
+                : attach();
+              if (dispatchResult) return dispatchResult;
               const attachmentState = el.files && el.files.length
                 ? 'input_attached'
                 : 'page_consumed';
@@ -33735,10 +36290,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // change events, so a lost response must be treated as an unknown
           // upload outcome rather than retried blindly.
           this._throwIfAborted(abortSignal);
+          const pageFeedbackGuard = await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, {
+            kind: 'input', selector: args.selector, fenceOnly: true,
+          });
+          this._throwIfAborted(abortSignal);
+          if (hasPageAgentDispatchOwner(tabId) && !pageFeedbackGuard?.operationId) {
+            return {
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              pageFeedbackPending: true,
+              error: 'The page monitor could not validate the upload target at dispatch. Re-observe the page before acting.',
+            };
+          }
           markContentPipelineDispatched();
           let results;
           try {
-            results = await browser.tabs.executeScript(tabId, { code: buildInjectCode(actionDeadlineAt) });
+            results = await browser.tabs.executeScript(tabId, { code: buildInjectCode(actionDeadlineAt, pageFeedbackGuard) });
           } catch (e) {
             this._throwIfAborted(abortSignal);
             return {
@@ -33750,6 +36318,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             };
           }
           const res = results && results[0];
+          if (res?.noDispatch === true && res?.dispatched === false
+              && ['file_type_mismatch', 'file_type_unverified'].includes(res.reasonCode)) {
+            contentPipelineDispatchState.started = false;
+            return { ...res, outcomeUnknown: false };
+          }
           if (res?.deadlineExpired) {
             // The page-side absolute guard proves FileList assignment never
             // happened. Clear the optimistic dispatch marker before the
@@ -33763,6 +36336,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               retryable: true,
               deadlineExpired: true,
               error: res.error || 'Upload action deadline expired before dispatch',
+            };
+          }
+          if (res?.pageFeedbackPending && res?.noDispatch === true) {
+            contentPipelineDispatchState.started = false;
+            return {
+              ...res,
+              success: false,
+              dispatched: false,
+              noDispatch: true,
+              outcomeUnknown: false,
+              retryable: true,
             };
           }
           this._throwIfAborted(abortSignal);
@@ -34437,6 +37021,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           limit: typeof toolArgs.limit === 'number' && toolArgs.limit > 0
             ? toolArgs.limit
             : (bulkSocialDownload ? Number.MAX_SAFE_INTEGER : 1),
+          ...(executionContext?._expectedMediaBinding ? { expectedMediaBinding: executionContext._expectedMediaBinding } : {}),
         };
         const code = `
           (async () => {
@@ -34444,7 +37029,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               return { success: false, error: 'SocialMediaDownloader did not load on this page (likely a page CSP block).' };
             }
             try {
-              const runResult = await window.SocialMediaDownloader.run(${JSON.stringify(opts)});
+              const runOpts = ${JSON.stringify(opts)};
+              const runResult = await window.SocialMediaDownloader.run(runOpts);
+              if (runResult?.noDispatch === true || runResult?.errorCode === 'media_binding_changed') return runResult;
               // v4: run() now returns { urls, stats }. Tolerate older
               // injections still returning just the URL array.
               const urls = Array.isArray(runResult)
@@ -34478,7 +37065,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               let mseSavedFiles = null;
               let mseSaveError = null;
               let mseSaveCode = null;
-              if (mseBytes > 0 && ${JSON.stringify(opts.target)} !== 'image' && completedRequestedFromStats === 0) {
+              if (!runOpts.expectedMediaBinding && mseBytes > 0 && ${JSON.stringify(opts.target)} !== 'image' && completedRequestedFromStats === 0) {
                 try {
                   mseSavedFiles = await window.SocialMediaDownloader.saveMse({
                     prefix: (window.location && window.location.hostname || 'mse').replace(/^www\\./, ''),
@@ -34559,6 +37146,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
 
       try {
+        // A bound call must never switch resources through MSE or vision fallback.
+        if (executionContext?._expectedMediaBinding) return await runDomDownloader();
         const strategy = ['auto', 'dom', 'vision'].includes(toolArgs.strategy) ? toolArgs.strategy : 'auto';
         const bulkSocialDownload = !!toolArgs.scroll || toolArgs.mode === 'all';
         const activeProvider = this.providerManager.getActive();
@@ -34874,6 +37463,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             frames: publicFrames,
             ...(matchingFrames.length === 0 ? { error: 'No iframe matched urlFilter' } : {}),
             ...(matchingFrames.length > 0 && verifiedFrames.length === 0 ? { error: 'No form found in matching iframe(s)' } : {}),
+            ...(verifiedFrames.length === 0 ? unavailableHtmlFormVerification('iframe', matchingFrames.length) : {}),
           };
         }
 
@@ -34977,6 +37567,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
         result.success = !!result.found;
         result.scope = 'top';
+        if (result.found === false && result.error === 'No form found on page') {
+          Object.assign(result, unavailableHtmlFormVerification('top'));
+        }
         if (this._formValidationBlocks.has(tabId)) {
           const currentStates = await this._captureFormValidationState(tabId);
           this._applyVerifyFormRecovery(tabId, result, currentStates);
@@ -35127,6 +37720,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 title: document.title || '',
                 selector: ${JSON.stringify(selector)},
                 matchCount: all.length,
+                documentIdentity: [location.href, performance.timeOrigin].join('|'),
                 offset: ${offset},
                 truncated: ${offset} + matches.length < all.length,
                 ...(${offset} + matches.length < all.length
@@ -35271,6 +37865,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           };
         }
         const selected = candidates[0];
+        const dispatchGuard = await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, {
+          kind: 'click', selector, frameId: selected.frameId, fenceOnly: true, prepareMonitor: true,
+        });
+        throwIfContentPipelineAborted();
         const clickCode = `
           (() => {
             let targetDispatched = false;
@@ -35280,12 +37878,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               el.scrollIntoView({ block: 'center', inline: 'center' });
               const rect = el.getBoundingClientRect();
               const opts = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width/2, clientY: rect.top + rect.height/2, button: 0 };
-              targetDispatched = true;
-              try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (e) {}
-              el.dispatchEvent(new MouseEvent('mousedown', opts));
-              try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (e) {}
-              el.dispatchEvent(new MouseEvent('mouseup', opts));
-              el.click();
+              const monitorGuard = ${JSON.stringify(dispatchGuard || null)};
+              if (monitorGuard?.operationId) {
+                if (typeof window.__wbPageMonitor?.activatePreparedDispatch !== 'function') {
+                  return { ok: false, url: location.href, reason: 'page-monitor-unavailable' };
+                }
+                window.__wbPageMonitor.activatePreparedDispatch({
+                  operationId: monitorGuard.operationId, kind: 'click', element: el, navigationCandidate: true,
+                });
+              }
+              const dispatch = () => {
+                targetDispatched = true;
+                try { el.dispatchEvent(new PointerEvent('pointerdown', opts)); } catch (e) {}
+                el.dispatchEvent(new MouseEvent('mousedown', opts));
+                try { el.dispatchEvent(new PointerEvent('pointerup', opts)); } catch (e) {}
+                el.dispatchEvent(new MouseEvent('mouseup', opts));
+                el.click();
+              };
+              if (monitorGuard?.operationId && window.__wbPageMonitor?.withPreparedDispatch)
+                window.__wbPageMonitor.withPreparedDispatch(monitorGuard.operationId, dispatch);
+              else dispatch();
               return { ok: true, url: location.href, tag: el.tagName, text: (el.innerText || el.value || '').slice(0, 80), dispatched: true };
             } catch (e) { return { ok: false, url: location.href, dispatched: targetDispatched, error: e.message }; }
           })()
@@ -35371,7 +37983,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             abortSignal: contentPipelineAbortSignal,
             deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.deadlineAt) || 0,
             deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(contentPipelineAbortSignal)?.error || null,
-            beforeDispatch: () => {
+            beforeDispatch: async frameId => {
+              await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, {
+                kind: 'input', selector, frameId, fenceOnly: true,
+              });
               dispatched = true;
               markContentPipelineDispatched();
             },
@@ -35383,6 +37998,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return legacyResult;
         }
         throwIfContentPipelineAborted();
+        await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, {
+          kind: 'input', selector, frameId: targetFrameId, fenceOnly: true,
+        });
         dispatched = true;
         markContentPipelineDispatched();
         try {
@@ -35519,7 +38137,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         args,
         this._lastAxScopes.get(tabId),
         dispatchBinding,
-        { messageRecipientGuardRequired, messageRecipientDispatchBinding, jevBinding: dispatchContext.jevBinding },
+        { messageRecipientGuardRequired, messageRecipientDispatchBinding, jevBinding: dispatchContext.jevBinding,
+          nativeTelegramReadRepairOwner: dispatchContext.nativeTelegramReadRepairOwner,
+          nativeTelegramReadRepairRef: dispatchContext.nativeTelegramReadRepairRef,
+          nativeTelegramReadRepairBinding: dispatchContext.nativeTelegramReadRepairBinding,
+          nativeWhatsappReadRepairOwner: dispatchContext.nativeWhatsappReadRepairOwner },
         contentPipelineAbortSignal,
         contentPipelineDispatchState,
         dispatchContext.traceStep,
@@ -35624,8 +38246,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throw error;
       }
     }
+    contentArgs = { ...contentArgs, _nativeChatOwner:this._nativeChatOwnerScope(tabId),
+      _nativeChatDraftBinding:dispatchContext.nativeChatDraftBinding || null,
+      _nativeChatDraftPreparation:dispatchContext.nativeChatDraftPreparation === true };
     if (dispatchContext.jevBinding) contentArgs = { ...contentArgs, _jevBinding: dispatchContext.jevBinding };
-    const sendContentAction = stageAbortSignal => {
+    const sendContentAction = async stageAbortSignal => {
+      if (Agent.STATE_CHANGE_TOOLS.has(name)) {
+        await beforePageAgentDispatch(globalThis.browser || globalThis.chrome, tabId, {
+          kind: /type|field|key/.test(name) ? 'input' : name === 'scroll' ? 'scroll' : /click|checked|hover|drag/.test(name) ? 'click' : 'dom',
+          frameId: messageOptions?.frameId || 0, selector: contentArgs?.selector, ref_id: contentArgs?.ref_id,
+          navigationCandidate: ['click', 'click_ax', 'set_checked'].includes(name),
+          fenceOnly: true,
+        });
+      }
       throwIfContentPipelineAborted();
       this._throwIfAborted(stageAbortSignal);
       if (Agent.STATE_CHANGE_TOOLS.has(name)) markContentPipelineDispatched();
@@ -35714,7 +38347,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ));
       }
       this._clearUploadSelectorRecoveryAfterInspection(tabId, name, response);
-      return this._withCoordinateReconciliation(response, coordinateDiagnostic);
+      if (name === 'extract_data' && Array.isArray(args?.columns)) {
+        response = this._acceptExactTableSnapshot(tabId, args, response,
+          executionContext?._exactTableOwner, executionContext?._exactTableVerificationRecord);
+      }
+    return this._withCoordinateReconciliation(response, coordinateDiagnostic);
     } catch (e) {
       if (e?.code === 'content_action_timeout') {
         return this._withCoordinateReconciliation(
@@ -35807,6 +38444,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _injectCoreContentScripts(tabId) {
+    await browser.tabs.executeScript(tabId, { file: 'src/content/page-monitor-shadow-loader.js' });
+    await browser.tabs.executeScript(tabId, { file: 'src/content/page-monitor.js' });
     await browser.tabs.executeScript(tabId, {
       file: 'src/content/file-picker-guard-loader.js',
     });
@@ -35816,6 +38455,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // shared DOM for the bridge to pick up if the load completes slightly
     // later.
     await new Promise(resolve => setTimeout(resolve, 50));
+    await browser.tabs.executeScript(tabId, { file: 'src/content/file-upload-policy.js' });
     await browser.tabs.executeScript(tabId, {
       file: 'src/content/rich-text-toolbar-heuristic.js',
     });
@@ -35921,9 +38561,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * @returns {Promise<string>} final text response
    */
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
-    await this._claimRunEntry(tabId, 'interactive', runOptions);
+    let runClaimed = false;
+    let messageProcessingStarted = false;
     try {
-    this._beginSteeringRun(tabId, onUpdate, runOptions);
+    await this._claimRunEntry(tabId, 'interactive', runOptions, onUpdate);
+    runClaimed = true;
     let continuationEligible = false;
     const emitUpdate = onUpdate;
     onUpdate = (type, data) => {
@@ -35963,6 +38605,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     try {
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) await firefoxBidi.startRun(tabId, this._runAbortSignal(tabId));
+      messageProcessingStarted = true;
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
@@ -35997,13 +38640,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
     }
     } catch (error) {
+      if (!runClaimed && error?.name !== 'AbortError') throw error;
       if (!this._checkAbort(tabId) && error?.name !== 'AbortError') throw error;
       const stopped = '[Stopped by user]';
+      if (!messageProcessingStarted && attachments?.length) {
+        onUpdate('attachment_rejected', { error: stopped });
+      }
       onUpdate('text', { content: stopped, replace: true });
       onUpdate('run_status', { status: 'cancelled', message: stopped });
       return stopped;
     } finally {
-      try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
+      if (runClaimed) {
+        try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
+      }
     }
   }
 
@@ -36267,12 +38916,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
       if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
-        return this._jevModelMessages(tabId, rawMessages);
+        return this._jevModelMessages(tabId, rawMessages, runOptions);
       }
       const appendedMessages = rawMessages.filter((message, index) =>
         index > 0 && !sourceBoundMessagesAtTrim.has(message)
       );
-      return this._jevModelMessages(tabId, [...sourceBoundTrimmedMessages, ...appendedMessages]);
+      return this._jevModelMessages(tabId, [...sourceBoundTrimmedMessages, ...appendedMessages], runOptions);
     };
     const emergencyTrimMessagesForRun = () => {
       if (!selectionOnly && !standaloneChatRun) {
@@ -36733,6 +39382,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowCompletionFailureTurn = false;
         forceCompletionDoneAfterVerification = false;
         forceCompletionDoneTurn = false;
+        completionPlainFinalRecoveryAttempted = 0;
       }
       if (steeringOutcome?.terminal) {
         if (steeringOutcome.capture) {
@@ -36776,6 +39426,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
+      if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
         verification: forceCompletionVerificationTurn,
         done: forceCompletionDoneTurn,
@@ -36789,7 +39441,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const invalidArgumentToolChoice = !invalidArgumentRecoveryUsed && !completionRecoveryPolicy
         ? this._invalidArgumentRecoveryToolChoice(provider, messages, tools) : null;
-      const completionToolChoice = completionRecoveryPolicy?.toolChoice || invalidArgumentToolChoice;
+      const completionToolChoice = completionRecoveryPolicy?.toolChoice
+        || (provider.supportsTools ? calculationToolPolicy?.toolChoice : null)
+        || invalidArgumentToolChoice || null;
       if (invalidArgumentToolChoice) invalidArgumentRecoveryUsed = true;
       allowedToolNames = new Set(tools.map(t => t.function.name));
       toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
@@ -36798,15 +39452,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // just between user turns. Uses the previous step's reported token count,
       // so it fires "when it's due" during long autonomous loops.
       if (!selectionOnly && !standaloneChatRun) {
-        await this._manageContext(tabId, messages, onUpdate, costState);
+        await this._manageContext(tabId, messages, onUpdate, costState, { tools: provider.supportsTools ? tools : [] });
       }
 
       steps++;
       lastTraceStep = steps;
+      await this._applyPendingPageFeedback(tabId, messages, onUpdate);
       if (this._hasPendingSteering(tabId)) { steps--; continue; }
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
 
+      await this._capturePageFeedbackModelState(tabId, messages);
       let result = await this._maybeJevFastTurn(tabId, userMessage, messages, mode, allowedToolNames, provider, costState, runOptions, completionRecoveryPolicy);
       try {
         if (!result) {
@@ -36843,7 +39499,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           this._lastInputTokens.set(tabId, result.usage.prompt_tokens);
           // Snapshot the conversation size at this reading so the next
           // _manageContext can add only the growth since (see its delta logic).
-          this._lastEstCharsAtReport.set(tabId, this._estimateContextChars(messages));
+          this._lastEstCharsAtReport.set(tabId, this._estimateContextChars(this._completionEvidenceMessages(tabId, messages, runOptions)));
         }
         if (runId) {
           const writeResponseTrace = () => trace.recordLLMResponse(runId, steps, {
@@ -36983,7 +39639,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         break;
       }
 
-      if (this._applyPendingSteering(tabId, messages, onUpdate)) {
+      const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
+        : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
+      if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
+        responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0,
+      }))
+          || this._applyPendingSteering(tabId, messages, onUpdate)) {
+        const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
+        if (recovery) {
+          finalResponse = recovery.value; _traceStatus = recovery.status;
+          messages.push({ role: 'assistant', content: finalResponse }); break;
+        }
         onUpdate('text', { content: '', replace: true });
         continue;
       }
@@ -37040,11 +39706,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tabId, result.toolCalls, messages, onUpdate, provider, assistantToolContent, allowedToolNames, steps, runOptions, toolSchemas
         );
         if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
-            && this._applyPendingSteering(tabId, messages, onUpdate)) {
+            && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: batchResult.action === 'return' ? [result.toolCalls.at(-1)] : null }))
+              || this._applyPendingSteering(tabId, messages, onUpdate))) {
           onUpdate('text', { content: '', replace: true });
           continue;
         }
         if (batchResult.action === 'return') {
+          if (typeof runOptions.afterVerifiedCompletion === 'function') {
+            await this._settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions);
+            this._throwIfAborted(this._runAbortSignal(tabId));
+            const superseded = !batchResult.status
+              && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: [result.toolCalls.at(-1)] }))
+                || this._applyPendingSteering(tabId, messages, onUpdate));
+            this._throwIfAborted(this._runAbortSignal(tabId));
+            if (superseded) {
+              onUpdate('text', { content: '', replace: true });
+              continue;
+            }
+          }
           finalResponse = batchResult.value;
           if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
             shareRawResponse = batchResult.rawSummary;
@@ -37069,6 +39748,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             tabId, messages, onUpdate, provider, costState, runId, steps,
             batchResult.value, runOptions, enriched, sourceBoundPriorMessages,
           );
+          if (recovery.status === 'steering_superseded') {
+            onUpdate('text', { content: '', replace: true });
+            continue;
+          }
           finalResponse = recovery.content;
           _traceStatus = recovery.status;
           return finalResponse;
@@ -37226,10 +39909,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await this._persistNow(tabId);
         return finalResponse;
       }
+      if (this._hasCurrentOwnedNativeChatReadRepair(tabId)) {
+        messages.push(this._withResponseItems({ role: 'assistant', content: result.content },
+          result.responseItems, result.reasoningContent, provider));
+        onUpdate('text', { content: '', replace: true });
+        const repaired = await this._runOwnedNativeChatReadRepair(tabId, messages, onUpdate,
+          provider, allowedToolNames, steps, runOptions, toolSchemas);
+        messages.push(this._appOwnedUserMessage(
+          'The app completed its issued conversation read recovery attempt. Result: ' + JSON.stringify({
+            success: repaired?.success === true, reason: repaired?.reason, sendCalls: 0,
+          }) + '. Continue the current task using its fresh observation. No future work was scheduled.',
+          'native_chat_read_repair'));
+        await this._persistNow(tabId);
+        continue;
+      }
       const progressFinalBlock = this._plainFinalProgressBlock(tabId);
       const completionFinalBlock = this._completionPlainFinalBlock(tabId);
       const readFinalBlock = this._readCompletenessBlock(tabId);
-      const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
+      const exactTableFinalBlock = structuredTableAnswerBlock(this.readCompletenessStates.get(tabId), result.content);
+      const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock, exactTableFinalBlock].filter(Boolean);
       if (plainFinalBlocks.length) {
         if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2) {
           finalResponse = this._completionPlainFinalPartial(tabId, result.content, {
@@ -37430,9 +40128,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Process a message with streaming output.
    */
   async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
-    await this._claimRunEntry(tabId, 'interactive', runOptions);
+    let runClaimed = false;
     try {
-    this._beginSteeringRun(tabId, onUpdate, runOptions);
+    await this._claimRunEntry(tabId, 'interactive', runOptions, onUpdate);
+    runClaimed = true;
     let continuationEligible = false;
     const emitUpdate = onUpdate;
     onUpdate = (type, data) => {
@@ -37506,13 +40205,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
     }
     } catch (error) {
+      if (!runClaimed && error?.name !== 'AbortError') throw error;
       if (!this._checkAbort(tabId) && error?.name !== 'AbortError') throw error;
       const stopped = '[Stopped by user]';
       onUpdate('text', { content: stopped, replace: true });
       onUpdate('run_status', { status: 'cancelled', message: stopped });
       return stopped;
     } finally {
-      try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
+      if (runClaimed) {
+        try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
+      }
     }
   }
 
@@ -37564,12 +40266,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
       if (!sourceBoundTrimmedMessages || !(sourceBoundMessagesAtTrim instanceof Set)) {
-        return this._jevModelMessages(tabId, rawMessages);
+        return this._jevModelMessages(tabId, rawMessages, runOptions);
       }
       const appendedMessages = rawMessages.filter((message, index) =>
         index > 0 && !sourceBoundMessagesAtTrim.has(message)
       );
-      return this._jevModelMessages(tabId, [...sourceBoundTrimmedMessages, ...appendedMessages]);
+      return this._jevModelMessages(tabId, [...sourceBoundTrimmedMessages, ...appendedMessages], runOptions);
     };
     const emergencyTrimMessagesForRun = () => {
       if (!selectionOnly && !standaloneChatRun) {
@@ -37795,6 +40497,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowCompletionFailureTurn = false;
         forceCompletionDoneAfterVerification = false;
         forceCompletionDoneTurn = false;
+        completionPlainFinalRecoveryAttempted = 0;
       }
       if (steeringOutcome?.terminal) {
         if (steeringOutcome.capture) {
@@ -37836,6 +40539,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
+      if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
         verification: forceCompletionVerificationTurn,
         done: forceCompletionDoneTurn,
@@ -37849,7 +40554,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const invalidArgumentToolChoice = !invalidArgumentRecoveryUsed && !completionRecoveryPolicy
         ? this._invalidArgumentRecoveryToolChoice(provider, messages, tools) : null;
-      const completionToolChoice = completionRecoveryPolicy?.toolChoice || invalidArgumentToolChoice;
+      const completionToolChoice = completionRecoveryPolicy?.toolChoice
+        || (provider.supportsTools ? calculationToolPolicy?.toolChoice : null)
+        || invalidArgumentToolChoice || null;
       if (invalidArgumentToolChoice) invalidArgumentRecoveryUsed = true;
       allowedToolNames = new Set(tools.map(t => t.function.name));
       toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
@@ -37858,11 +40565,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // streaming path doesn't get a per-call token count, so this leans on
       // the chars/4 estimate inside _manageContext.
       if (!selectionOnly && !standaloneChatRun) {
-        await this._manageContext(tabId, messages, onUpdate, costState);
+        await this._manageContext(tabId, messages, onUpdate, costState, { tools: provider.supportsTools ? tools : [] });
       }
 
       steps++;
       lastTraceStep = steps;
+      await this._applyPendingPageFeedback(tabId, messages, onUpdate);
       if (this._hasPendingSteering(tabId)) { steps--; continue; }
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
@@ -37884,6 +40592,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let finishReason = '';
         let rejectedToolResponse = null;
 
+        await this._capturePageFeedbackModelState(tabId, pendingVisionFallbackMessages || messages);
         const fastResult = await this._maybeJevFastTurn(tabId, userMessage, messages, mode, allowedToolNames, provider, costState, runOptions, completionRecoveryPolicy);
         const streamOpts = this._cloudGenerationOptions(provider, {
           signal: this._runAbortSignal(tabId),
@@ -38011,7 +40720,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
-        if (this._applyPendingSteering(tabId, messages, onUpdate)) {
+        const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
+          : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
+        if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
+          responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0,
+        }))
+            || this._applyPendingSteering(tabId, messages, onUpdate)) {
+          const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
+          if (recovery) {
+            messages.push({ role: 'assistant', content: recovery.value });
+            return finish(recovery.value, recovery.status);
+          }
           onUpdate('text', { content: '', replace: true });
           continue;
         }
@@ -38054,12 +40773,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const batchResult = await this._executeToolBatch(
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
-          if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
-              && this._applyPendingSteering(tabId, messages, onUpdate)) {
+        if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
+            && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: batchResult.action === 'return' ? [toolCalls.at(-1)] : null }))
+              || this._applyPendingSteering(tabId, messages, onUpdate))) {
             onUpdate('text', { content: '', replace: true });
             continue;
           }
           if (batchResult.action === 'return') {
+            if (typeof runOptions.afterVerifiedCompletion === 'function') {
+              await this._settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions);
+              this._throwIfAborted(this._runAbortSignal(tabId));
+              const superseded = !batchResult.status
+                && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: [toolCalls.at(-1)] }))
+                  || this._applyPendingSteering(tabId, messages, onUpdate));
+              this._throwIfAborted(this._runAbortSignal(tabId));
+              if (superseded) {
+                onUpdate('text', { content: '', replace: true });
+                continue;
+              }
+            }
             if (typeof batchResult.rawSummary === 'string' && batchResult.rawSummary.trim()) {
               shareRawResponse = batchResult.rawSummary;
             }
@@ -38080,6 +40812,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               tabId, messages, onUpdate, provider, costState, runId, steps,
               batchResult.value, runOptions, enriched, sourceBoundPriorMessages,
             );
+            if (recovery.status === 'steering_superseded') {
+              onUpdate('text', { content: '', replace: true });
+              continue;
+            }
             return finish(recovery.content, recovery.status);
           }
           if (batchResult.action === 'abort') {
@@ -38207,10 +40943,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         // Preserve the progress ledger's purpose-built continuation before
         // treating other plain terminal text as unverified.
+        if (this._hasCurrentOwnedNativeChatReadRepair(tabId)) {
+          messages.push(this._withResponseItems({ role: 'assistant', content: fullText },
+            responseItems, reasoningContent, provider));
+          onUpdate('text', { content: '', replace: true });
+          const repaired = await this._runOwnedNativeChatReadRepair(tabId, messages, onUpdate,
+            provider, allowedToolNames, steps, runOptions, toolSchemas);
+          messages.push(this._appOwnedUserMessage(
+            'The app completed its issued conversation read recovery attempt. Result: ' + JSON.stringify({
+              success: repaired?.success === true, reason: repaired?.reason, sendCalls: 0,
+            }) + '. Continue the current task using its fresh observation. No future work was scheduled.',
+            'native_chat_read_repair'));
+          await this._persistNow(tabId);
+          continue;
+        }
         const progressFinalBlock = this._plainFinalProgressBlock(tabId);
         const completionFinalBlock = this._completionPlainFinalBlock(tabId);
         const readFinalBlock = this._readCompletenessBlock(tabId);
-        const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock].filter(Boolean);
+        const exactTableFinalBlock = structuredTableAnswerBlock(this.readCompletenessStates.get(tabId), fullText);
+        const plainFinalBlocks = [progressFinalBlock, completionFinalBlock, readFinalBlock, exactTableFinalBlock].filter(Boolean);
         if (plainFinalBlocks.length) {
           if (completionFinalBlock && completionPlainFinalRecoveryAttempted >= 2) {
             const partial = this._completionPlainFinalPartial(tabId, fullText, {
@@ -38434,3 +41185,5 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 }
+
+installPageFeedback(Agent);

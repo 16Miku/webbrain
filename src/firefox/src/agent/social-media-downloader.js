@@ -166,6 +166,26 @@
 
 window.SocialMediaDownloader = (() => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // Re-injection must retain node identities for the same document. These
+  // private identities bind a prepared single-media download without binding
+  // unrelated labels/counters, and a replacement document gets a new token.
+  const mediaBindingState = () => {
+    let state = window.__smd_media_binding_state;
+    if (!state || state.document !== document || !(state.nodes instanceof WeakMap)) {
+      state = { document, token: crypto.randomUUID(), nodes: new WeakMap(), nextNode: 0 };
+      window.__smd_media_binding_state = state;
+    }
+    return state;
+  };
+  const mediaNodeIdentity = node => {
+    if (!node) return '';
+    const state = mediaBindingState();
+    if (!state.nodes.has(node)) state.nodes.set(node, `media_${++state.nextNode}`);
+    return state.nodes.get(node);
+  };
+  const collectionBindingSources = new WeakMap();
+  const collectionFocusScopes = new WeakMap();
+  const collectionFocusAmbiguity = new WeakMap();
 
   // ---------- known media hosts ----------
   const MEDIA_HOSTS = [
@@ -592,6 +612,61 @@ window.SocialMediaDownloader = (() => {
     return [...urls];
   };
 
+  const paintCarrierVisible = (carrier, backingImage) => {
+    if (!isVisibleElement(carrier)) return false;
+    for (let node = carrier; node; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (node.inert || node.hasAttribute('inert') || style.display === 'none'
+          || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0
+          || style.contentVisibility === 'hidden') return false;
+    }
+    if (typeof document.elementFromPoint !== 'function') return false;
+    const rect = carrier.getBoundingClientRect(), vp = viewportSize();
+    const left = Math.max(0, rect.left), top = Math.max(0, rect.top);
+    const right = Math.min(vp.w, rect.right), bottom = Math.min(vp.h, rect.bottom);
+    if (right <= left || bottom <= top) return false;
+    const dx = Math.min(2, (right - left) / 4), dy = Math.min(2, (bottom - top) / 4);
+    const points = [[(left + right) / 2, (top + bottom) / 2], [left + dx, top + dy],
+      [right - dx, top + dy], [left + dx, bottom - dy], [right - dx, bottom - dy]];
+    return points.some(([x, y]) => {
+      const hit = document.elementFromPoint(x, y);
+      if (hit === carrier || hit === backingImage) return true;
+      // React Native's paint layer can disable pointer events. Accept only its
+      // immediate shared wrapper with no unrelated rendered child surface.
+      const wrapper = carrier.parentElement;
+      return hit === wrapper && window.getComputedStyle(carrier).pointerEvents === 'none'
+        && wrapper.contains(backingImage)
+        && [...wrapper.children].every(child => child === carrier || child === backingImage);
+    });
+  };
+
+  const matchingPaintCarrier = el => {
+    // React Native Web paints an Image as a background and leaves its backing
+    // IMG transparent. Accept only the same asset, in the same rendered box,
+    // on the immediate parent or a direct sibling. An arbitrary hidden IMG
+    // cannot nominate an unrelated ancestor's background as visible media.
+    if (el?.tagName !== 'IMG' || !el.parentElement || !window.getComputedStyle) return null;
+    const style = window.getComputedStyle(el);
+    if (Number(style.opacity) !== 0 || style.display === 'none' || style.visibility === 'hidden') return null;
+    const imageRect = el.getBoundingClientRect();
+    if (imageRect.width < 24 || imageRect.height < 24) return null;
+    const assets = directMediaUrls(el);
+    const carriers = [el.parentElement, ...el.parentElement.children].filter(node => node !== el);
+    const matches = [];
+    for (const carrier of carriers) {
+      if (!paintCarrierVisible(carrier, el)) continue;
+      const background = window.getComputedStyle(carrier).backgroundImage.trim();
+      const match = /^url\((?:"([^"\\]*)"|'([^'\\]*)'|([^"'()\\]*))\)$/.exec(background);
+      if (!match) continue;
+      const url = absoluteUrl(match[1] ?? match[2] ?? match[3]);
+      if (!isMediaUrl(url) || !assets.includes(url)) continue;
+      const rect = carrier.getBoundingClientRect();
+      if (['left', 'top', 'width', 'height'].some(key => Math.abs(rect[key] - imageRect[key]) > 1)) continue;
+      matches.push({ element: carrier, url });
+    }
+    return matches.length === 1 ? matches[0] : null;
+  };
+
   const mediaElementsIn = root => {
     if (!root) return [];
     const out = [];
@@ -602,8 +677,7 @@ window.SocialMediaDownloader = (() => {
     return out;
   };
 
-  const mediaElementScore = el => {
-    const box = mediaBoxElement(el);
+  const mediaElementScore = (el, box = mediaBoxElement(el)) => {
     if (!box || !box.getBoundingClientRect) return -Infinity;
     const rect = box.getBoundingClientRect();
     const area = visibleArea(rect);
@@ -620,24 +694,31 @@ window.SocialMediaDownloader = (() => {
     return score;
   };
 
-  const bestFocusedMedia = (roots, excluded) => {
+  const bestFocusedMedia = (roots, excluded, { target = 'auto', allowPaintCarrier = false } = {}) => {
     const candidates = [];
     for (const root of roots || []) {
       if (!root || isExcluded(root, excluded) || !isVisibleElement(root)) continue;
       for (const el of mediaElementsIn(root)) {
-        const box = mediaBoxElement(el);
+        if (target === 'image' && el.tagName !== 'IMG' && !(el.tagName === 'SOURCE' && el.closest('picture'))) continue;
+        if (target === 'video' && el.tagName !== 'VIDEO' && !(el.tagName === 'SOURCE' && el.closest('video'))) continue;
+        const paint = allowPaintCarrier ? matchingPaintCarrier(el) : null;
+        const box = paint?.element || mediaBoxElement(el);
         if (!box || isExcluded(box, excluded) || !isVisibleElement(box)) continue;
         const rect = box.getBoundingClientRect();
         const intrinsicW = el.naturalWidth || el.videoWidth || el.width || rect.width || 0;
         const intrinsicH = el.naturalHeight || el.videoHeight || el.height || rect.height || 0;
         if (intrinsicW < 120 || intrinsicH < 120) continue;
-        const urls = directMediaUrls(el);
+        const rawUrls = directMediaUrls(el);
+        const urls = filterUrlsForTarget(paint ? [paint.url] : rawUrls, target);
         if (!urls.length) continue;
-        candidates.push({ el, urls, score: mediaElementScore(el) });
+        candidates.push({ el, root, box, paint, urls, rawUrls, score: mediaElementScore(el, box) });
       }
     }
     candidates.sort((a, b) => b.score - a.score);
-    return candidates[0] || null;
+    const best = candidates[0];
+    if (!best) return null;
+    const rival = candidates.find(candidate => candidate.box !== best.box);
+    return { ...best, ambiguous: !!rival && Math.abs(best.score - rival.score) < 1 };
   };
 
   const queryVisibleRoots = selector => {
@@ -651,19 +732,19 @@ window.SocialMediaDownloader = (() => {
     return roots;
   };
 
-  const collectFocusedMedia = (profile, excluded) => {
+  const collectFocusedMedia = (profile, excluded, options) => {
     const dialogRoots = queryVisibleRoots(
       'dialog[open], [aria-modal="true"], [role="dialog"], ' +
       '[data-pagelet*="MediaViewer" i], [data-testid*="lightbox" i]'
     );
-    let best = bestFocusedMedia(dialogRoots, excluded);
-    if (best) return best.urls;
+    let best = bestFocusedMedia(dialogRoots, excluded, options);
+    if (best) return { ...best, scope: 'dialog' };
 
-    best = bestFocusedMedia(queryVisibleRoots(profile.focusSel), excluded);
-    if (best) return best.urls;
+    best = bestFocusedMedia(queryVisibleRoots(profile.focusSel), excluded, options);
+    if (best) return { ...best, scope: 'main' };
 
-    best = bestFocusedMedia([document.body || document.documentElement], excluded);
-    return best ? best.urls : [];
+    best = bestFocusedMedia([document.body || document.documentElement], excluded, options);
+    return best ? { ...best, scope: 'document' } : null;
   };
 
   // Extract candidate media URLs from a given root (default: document)
@@ -725,25 +806,29 @@ window.SocialMediaDownloader = (() => {
   // ---------- URL upgrades (per site) ----------
   const preferHighQuality = urls => [...new Set(urls.map(url => {
     let u = clean(url);
-    // X/Twitter: name=orig
-    if (u.includes("pbs.twimg.com/media/")) {
-      try { const p = new URL(u); p.searchParams.set("name", "orig"); u = p.href; }
-      catch {}
+    let parsed;
+    try { parsed = new URL(u); } catch { return u; }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return u;
+    const host = parsed.hostname;
+    // Upgrade only the actual CDN's path/query, never a host-looking substring
+    // in another URL component. Other media URLs keep their original bytes.
+    if (host === "pbs.twimg.com" && parsed.pathname.startsWith("/media/")) {
+      parsed.searchParams.set("name", "orig");
+      u = parsed.href;
     }
-    // Pinterest: /<size>/ → /originals/. Size folder may carry a
-    // letter suffix (Pinterest added "_RS" / "_AC" etc. for "responsive
-    // sizes" / aspect-cropped variants), so allow an optional _[A-Za-z]+.
-    if (u.includes("pinimg.com/")) {
-      u = u.replace(/pinimg\.com\/(?:\d+x(?:\d+)?(?:_[A-Za-z]+)?|originals)\//i,
-                    "pinimg.com/originals/");
+    // Pinterest size folders can include responsive/aspect-cropped suffixes.
+    if (host === "pinimg.com" || host.endsWith(".pinimg.com")) {
+      const upgradedPath = parsed.pathname.replace(
+        /^\/(?:\d+x(?:\d+)?(?:_[A-Za-z]+)?|originals)\//i, "/originals/");
+      if (upgradedPath !== parsed.pathname) {
+        parsed.pathname = upgradedPath;
+        u = parsed.href;
+      }
     }
-    // Reddit preview: strip sizing params, keep signature
-    if (/preview\.redd\.it|external-preview\.redd\.it/.test(u)) {
-      try {
-        const p = new URL(u);
-        ["width", "height", "blur", "format"].forEach(k => p.searchParams.delete(k));
-        u = p.href;
-      } catch {}
+    // Reddit preview: strip sizing params, keep the actual signature and hash.
+    if (host === "preview.redd.it" || host === "external-preview.redd.it") {
+      ["width", "height", "blur", "format"].forEach(key => parsed.searchParams.delete(key));
+      u = parsed.href;
     }
     return u;
   }))];
@@ -1487,13 +1572,15 @@ window.SocialMediaDownloader = (() => {
 
   // ---------- Main extraction entry point ----------
   // mode: 'auto' | 'main' | 'all'
-  const collect = (mode = 'auto') => {
+  const collect = (mode = 'auto', focusOptions = undefined) => {
     const profile = activeProfile();
     const excluded = buildExclusionSet(profile);
+    const bindingSources = [];
 
-    const focusedUrls = mode === 'auto'
-      ? collectFocusedMedia(profile, excluded)
-      : [];
+    const focusedMedia = mode === 'auto'
+      ? collectFocusedMedia(profile, excluded, focusOptions)
+      : null;
+    const focusedUrls = focusedMedia?.urls || [];
     let useMain;
     if (mode === 'main') useMain = true;
     else if (mode === 'all') useMain = false;
@@ -1514,6 +1601,8 @@ window.SocialMediaDownloader = (() => {
     if (focusedUrls.length) {
       urls = focusedUrls;
       sourceMode = 'focused';
+      bindingSources.push({ root: focusedMedia.root, node: focusedMedia.el, urls: focusedUrls,
+        rawUrls: focusedMedia.rawUrls, paint: focusedMedia.paint, box: focusedMedia.box });
     } else if (useGallery) {
       const galleryUrls = [];
       const galleryEls = document.querySelectorAll(profile.gallerySel);
@@ -1545,7 +1634,10 @@ window.SocialMediaDownloader = (() => {
         meta[property="og:video:secure_url"]
       `).forEach(m => {
         const c = absoluteUrl(m.getAttribute("content"));
-        if (isMediaUrl(c)) ogUrls.push(c);
+        if (isMediaUrl(c)) {
+          ogUrls.push(c);
+          bindingSources.push({ root: m.parentElement || document.documentElement, node: m, urls: [c] });
+        }
       });
 
       // 2) Anything inside the main-content container
@@ -1556,6 +1648,9 @@ window.SocialMediaDownloader = (() => {
         const root = el.closest('img, video, picture, source')
           ? el.parentElement || el
           : el;
+        for (const node of mediaElementsIn(root)) {
+          if (!isExcluded(node, excluded)) bindingSources.push({ root, node, urls: directMediaUrls(node) });
+        }
         extractFromRoot(root, excluded).forEach(u => mainUrls.push(u));
         // Also extract from el itself (covers img/video matched directly)
         if (el.tagName === 'IMG' || el.tagName === 'VIDEO' || el.tagName === 'SOURCE') {
@@ -1604,10 +1699,96 @@ window.SocialMediaDownloader = (() => {
     }
     if (sourceMode === 'focused') finalUrls = focusedDownloadUrls(finalUrls);
     else if (sourceMode === 'main') finalUrls = videoFirstUrls(finalUrls);
-    return { urls: finalUrls, profile,
-             mode: sourceMode,
-             dashGroups: groups };
+    const result = { urls: finalUrls, profile,
+                     mode: sourceMode,
+                     dashGroups: groups };
+    collectionBindingSources.set(result, bindingSources);
+    collectionFocusScopes.set(result, focusedMedia?.scope || null);
+    collectionFocusAmbiguity.set(result, focusedMedia?.ambiguous === true);
+    return result;
   };
+
+  const collectBoundMedia = (mode, target) => {
+    const focused = collect('auto', { target, allowPaintCarrier: true });
+    // Main-mode selectors may include a timeline behind an open photo modal.
+    // A bound single-media call uses the same focused selection as its capture;
+    // unbound main/bulk calls keep their existing collection behavior.
+    if (focused.mode === 'focused' && ['dialog', 'main'].includes(collectionFocusScopes.get(focused))) return focused;
+    return collect(mode);
+  };
+
+  const mediaBindingDetails = ({ mode = 'main', target = 'auto', all = false, limit = 1 } = {}) => {
+    const unavailable = (reason, candidateCount = 0, sourceCount = 0, paintCarrierCount = 0) => ({
+      binding: null, diagnostics: { status: 'unavailable', reason, candidateCount, sourceCount, paintCarrierCount },
+    });
+    if (all || !['main', 'auto'].includes(mode) || Number(limit) !== 1) return unavailable('unsupported_scope');
+    if (target === 'media') target = 'auto';
+    if (!['auto', 'image', 'video'].includes(target)) return unavailable('unsupported_target');
+    const collection = collectBoundMedia(mode, target);
+    const candidates = filterUrlsForTarget(collection.urls, target);
+    if (collectionFocusAmbiguity.get(collection)) return unavailable('ambiguous_media', candidates.length);
+    const selected = candidates.slice(0, 1);
+    if (selected.length !== 1) return unavailable('no_matching_media', candidates.length);
+    if (!['main', 'focused'].includes(collection.mode)) return unavailable('unsupported_scope', candidates.length);
+    const sources = (collectionBindingSources.get(collection) || []).filter(source =>
+      preferHighQuality(source.urls).some(url => selected.includes(url)));
+    // Do not retain downloads inferred from a URL without a live, identifiable
+    // media source, or a page's arbitrary main-container fallback.
+    if (!sources.length || sources.some(source => !source.node || !source.root)) return unavailable('source_unbound', candidates.length, sources.length);
+    const sourceVisible = source => isVisibleElement(source.box || mediaBoxElement(source.node));
+    if (!sources.some(source => ['IMG', 'VIDEO', 'SOURCE'].includes(source.node.tagName)
+        && sourceVisible(source))) return unavailable('no_visible_media', candidates.length, sources.length);
+    const state = mediaBindingState();
+    const focusScope = collectionFocusScopes.get(collection);
+    const binding = {
+      schema: 1, documentToken: state.token, pageUrl: location.href,
+      site: collection.profile.name, sourceMode: collection.mode,
+      focused: collection.mode === 'focused' && ['dialog', 'main'].includes(focusScope),
+      focusScope: focusScope || null,
+      request: { mode, target, limit: 1 },
+      candidates: selected.map(url => ({ url, type: isVideoDownloadUrl(url) ? 'video' : 'image' })),
+      // Include raw candidates too: currentSrc can keep the previous asset
+      // while the browser is loading a newly assigned src/srcset.
+      sources: sources.map(source => ({ root: mediaNodeIdentity(source.root), node: mediaNodeIdentity(source.node),
+        container: mediaNodeIdentity(mediaBoxElement(source.node)?.parentElement),
+        assets: source.rawUrls || source.urls,
+        paintCarrier: source.paint ? { node: mediaNodeIdentity(source.paint.element), url: source.paint.url } : null,
+        visible: ['IMG', 'VIDEO', 'SOURCE'].includes(source.node.tagName) ? sourceVisible(source) : null })),
+    };
+    return { binding, diagnostics: { status: 'bound', reason: 'bound', candidateCount: candidates.length,
+      sourceCount: sources.length, paintCarrierCount: sources.filter(source => source.paint).length } };
+  };
+  const getMediaBinding = options => mediaBindingDetails(options).binding;
+  const getMediaBindingDiagnostics = options => {
+    try { return mediaBindingDetails(options).diagnostics; }
+    catch { return { status: 'unavailable', reason: 'capture_error', candidateCount: 0, sourceCount: 0, paintCarrierCount: 0 }; }
+  };
+
+  const sameBindingValue = (left, right) => {
+    if (Object.is(left, right)) return true;
+    if (!left || !right || typeof left !== 'object' || typeof right !== 'object') return false;
+    const leftArray = Array.isArray(left), rightArray = Array.isArray(right);
+    if (leftArray !== rightArray || (leftArray && left.length !== right.length)) return false;
+    if (!leftArray && (Object.prototype.toString.call(left) !== '[object Object]'
+        || Object.prototype.toString.call(right) !== '[object Object]')) return false;
+    const leftKeys = Object.keys(left), rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length && leftKeys.every(key => Object.prototype.hasOwnProperty.call(right, key)
+      && sameBindingValue(left[key], right[key]));
+  };
+
+  const mediaBindingMatches = (expected, options) => {
+    if (!expected || expected.schema !== 1) return false;
+    const current = getMediaBinding(options);
+    // Extension transports can reorder object keys recursively. Arrays, key
+    // sets, primitive types and every value still bind the exact same resource.
+    return current !== null && sameBindingValue(current, expected);
+  };
+  const changedMediaBinding = () => ({
+    success: false, noDispatch: true, dispatched: false, pageFeedbackPending: true,
+    errorCode: 'media_binding_changed',
+    error: 'The intended media or browser document changed before download. Re-observe the target before trying again.',
+    urls: [], stats: { triggered: 0, completed: 0, completedVideo: 0, openedInTab: 0, failed: 0, failures: [] },
+  });
 
   const list = (mode = 'auto') => {
     const { urls, profile, mode: m, dashGroups } = collect(mode);
@@ -1672,19 +1853,30 @@ window.SocialMediaDownloader = (() => {
   //                    and popup-blocking kills the SECOND such call onwards.
   //   'failed'       — HLS stitch or some other hard error; nothing was
   //                    triggered. Includes a `reason` string for the caller.
-  const download = async (url, filename) => {
+  const download = async (url, filename, bindingGuard = null) => {
+    const assertBinding = () => {
+      if (bindingGuard && !bindingGuard()) {
+        const error = new Error(changedMediaBinding().error);
+        error.code = 'media_binding_changed';
+        throw error;
+      }
+    };
+    assertBinding();
     url = clean(url);
     if (/\.m3u8(\?|#|$)/i.test(url)) {
       try {
         const blob = await stitchHls(url);
+        assertBinding();
         triggerBlobDownload(blob, filename.replace(/\.[^.]+$/, '') + '.ts');
         return { status: 'completed', filename };
       } catch (e) {
+        if (e?.code === 'media_binding_changed') throw e;
         console.warn('HLS stitch failed:', e);
         return { status: 'failed', filename, reason: `HLS stitch: ${e && e.message || e}` };
       }
     }
     if (url.startsWith('blob:')) {
+      assertBinding();
       console.warn('Blob URL — opening in new tab:', url);
       window.open(url, '_blank');
       return { status: 'opened-in-tab', filename, reason: 'blob URL — cannot be fetched programmatically' };
@@ -1703,10 +1895,16 @@ window.SocialMediaDownloader = (() => {
       try {
         const res = await fetch(url, init);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        triggerBlobDownload(await res.blob(), filename);
+        const blob = await res.blob();
+        assertBinding();
+        triggerBlobDownload(blob, filename);
         return { status: 'completed', filename };
-      } catch (e) { lastErr = e; }
+      } catch (e) {
+        if (e?.code === 'media_binding_changed') throw e;
+        lastErr = e;
+      }
     }
+    assertBinding();
     console.warn('All fetches failed (CDN sends no CORS headers). Opening in new tab — right-click → Save image as:', url);
     const a = document.createElement('a');
     a.href = url; a.target = '_blank'; a.rel = 'noopener';
@@ -1725,12 +1923,18 @@ window.SocialMediaDownloader = (() => {
     maxScrolls = 40, scrollDelay = 1000, settleDelay = 1500,
     limit = Infinity,
     prefix = location.hostname.replace(/^www\./, ''),
-    delayBetweenDownloads = 500
+    delayBetweenDownloads = 500,
+    expectedMediaBinding = null
   } = {}) => {
+    const bindingOptions = { mode, target, all, limit };
+    const bindingGuard = expectedMediaBinding
+      ? () => mediaBindingMatches(expectedMediaBinding, bindingOptions)
+      : null;
+    if (bindingGuard && !bindingGuard()) return changedMediaBinding();
     const urls = all
       ? await scrollAndCollect({ maxScrolls, scrollDelay, settleDelay,
                                   mode: mode === 'auto' ? 'all' : mode })
-      : list(mode);
+      : (bindingGuard ? collectBoundMedia(mode, target).urls : list(mode));
     const eligibleUrls = filterUrlsForTarget(urls, target);
     const selected = eligibleUrls.slice(0, limit);
     console.log(`[SMD] downloading ${selected.length} of ${eligibleUrls.length} target-matching URLs`);
@@ -1753,8 +1957,9 @@ window.SocialMediaDownloader = (() => {
       const filename = `${filenameSafe(prefix)}_${isVideo ? 'video' : 'photo'}_${String(i).padStart(3, '0')}${ext}`;
       let r;
       try {
-        r = await download(url, filename);
+        r = await download(url, filename, bindingGuard);
       } catch (e) {
+        if (e?.code === 'media_binding_changed') return changedMediaBinding();
         r = { status: 'failed', filename, reason: (e && e.message) || String(e) };
       }
       if (r.status === 'completed') {
@@ -1783,7 +1988,7 @@ window.SocialMediaDownloader = (() => {
   };
 
   return {
-    run, single, list, scrollAndCollect,
+    run, single, list, scrollAndCollect, getMediaBinding, getMediaBindingDiagnostics,
     // MSE recorder (v4). Arm BEFORE the player loads:
     //   SocialMediaDownloader.armMseRecorder()
     //   <reload the page>
@@ -1814,6 +2019,8 @@ window.SocialMediaDownloader = (() => {
 // when SMD is registered as a content_script at document_start: patches
 // are installed before the page's player ever calls addSourceBuffer,
 // so the init segment is captured and saveMse() produces playable bytes.
+// Keep the matcher local: classic scripts can be injected repeatedly in one realm.
+{
 const _SMD_MSE_AUTOARM_HOSTS =
   /(?:^|\.)(?:facebook|fb|instagram|x|twitter|linkedin|reddit|youtube)\.com$|(?:^|\.)youtu\.be$/i;
 try {
@@ -1821,6 +2028,7 @@ try {
     SocialMediaDownloader.armMseRecorder();
   }
 } catch (_) { /* never block on auto-arm */ }
+}
 
 // Log once per realm. Re-injection on the same page (which happens every
 // time the chrome extension calls the download_social_media tool) used

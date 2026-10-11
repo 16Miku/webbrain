@@ -279,3 +279,5 @@ test('chrome: terminal SSE closes the offscreen proxy port before remote EOF', a
 });
 
 test.after(() => { globalThis.fetch = nativeFetch; });
+
+import './download-initial-url-policy.mjs';

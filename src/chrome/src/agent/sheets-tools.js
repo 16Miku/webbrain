@@ -50,14 +50,26 @@
  * Returned strings are the keys used to pick a backend below — keep them
  * in sync with BACKENDS at the bottom of this file.
  */
-export function detectSheetSite(url) {
-  if (typeof url !== 'string' || !url) return null;
-  if (/^https?:\/\/docs\.google\.com\/spreadsheets\//.test(url)) return 'google-sheets';
-  // Excel Online — both office.com and onedrive.live.com variants.
-  if (/^https?:\/\/(www\.)?office\.com\/launch\/excel\//.test(url)) return 'excel-online';
-  if (/^https?:\/\/.*\.officeapps\.live\.com\/x\//.test(url)) return 'excel-online';
-  if (/^https?:\/\/onedrive\.live\.com\/edit\.aspx/.test(url)) return 'excel-online';
-  if (/^https?:\/\/.*\.sharepoint\.com\/.+\.xlsx/.test(url)) return 'excel-online';
+export function detectSheetSite(value) {
+  if (typeof value !== 'string' || !value || value.length > 4096 || value.trim() !== value
+    || /[\u0000-\u001f\u007f\\]/.test(value)) return null;
+  let url; try { url = new URL(value); } catch { return null; }
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.port) return null;
+  const scheme = value.indexOf('://');
+  if (scheme < 0) return null;
+  const authority = value.slice(scheme + 3).split(/[/?#]/, 1)[0];
+  // Observed supported services use ordinary host authorities, not userinfo, explicit ports or escaped hostnames.
+  if (authority.toLowerCase() !== url.hostname || url.hostname.endsWith('.')) return null;
+  const host = url.hostname, pathname = url.pathname;
+  if (host === 'docs.google.com' && pathname.startsWith('/spreadsheets/')) return 'google-sheets';
+  if ((host === 'office.com' || host === 'www.office.com') && pathname.startsWith('/launch/excel/')) return 'excel-online';
+  if (host.endsWith('.officeapps.live.com') && pathname.startsWith('/x/')) return 'excel-online';
+  if (host === 'onedrive.live.com' && pathname === '/edit.aspx') return 'excel-online';
+  if (host.endsWith('.sharepoint.com')) {
+    const last = pathname.slice(pathname.lastIndexOf('/') + 1);
+    let name; try { name = decodeURIComponent(last); } catch { return null; }
+    if (!/[\\/\u0000-\u001f\u007f]/.test(name) && /^.+\.xlsx$/i.test(name)) return 'excel-online';
+  }
   return null;
 }
 

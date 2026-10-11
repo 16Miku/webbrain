@@ -133,13 +133,15 @@ if (!process.argv.includes('--dom')) for (const build of ['chrome', 'firefox']) 
     const h = panelHarness(build);
     let abortRequested = true;
     let thinking = 0;
+    let recoveryReads = 0;
     const activity = [];
-    const assistant = { dataset: {}, querySelector: () => null };
+    const assistant = { dataset: {}, isConnected: true, querySelector: () => null, querySelectorAll: () => [] };
     Object.assign(h.context, {
       isConversationClearInProgress: () => false,
       clearedConversationRunRequestIds: new Set(),
       cancelledRunRecoveryRequestIds: new Set(['request-a']),
       localRunRequestIds: new Map(), adoptedRunRecoveryRequestIds: new Set(),
+      submittedClarificationIds: new Set(),
       isTabAbortRequested: () => abortRequested,
       setTabAbortRequested: (_tab, value) => { abortRequested = value; },
       setTabProcessing: () => {}, hideRecommendedActions: () => {},
@@ -151,15 +153,19 @@ if (!process.argv.includes('--dom')) for (const build of ['chrome', 'firefox']) 
       reconcilePersistedStagedScreenshots: async () => {},
       invalidatePlanReviewCards: () => {},
       sendRunWithReconnect: async () => { throw new Error('Cancelled run must not be re-adopted'); },
+      sendToBackground: async () => { recoveryReads++; throw new Error('Pending Stop must not request clarification recovery or acknowledge it'); },
     });
     h.context.messagesEl.querySelector = () => assistant;
-    for (const name of ['applyActiveRunState', 'adoptRestoredRunState']) {
+    for (const name of ['clarificationSubmissionKey', 'invalidateUnresolvedClarifyCards',
+      'restorePendingCurrentClarification', 'applyActiveRunState', 'adoptRestoredRunState']) {
       vm.runInContext(extract(read(build, 'ui/sidepanel.js'), name), h.context);
     }
-    const state = { running: true, runUi: { requestId: 'request-a', status: 'running', seq: 0, ackedSeq: 0 } };
+    const state = { running: true, pendingCurrentClarification: null,
+      runUi: { requestId: 'request-a', status: 'running', seq: 0, ackedSeq: 0 } };
     await h.context.applyActiveRunState(1, state);
     assert.equal(abortRequested, true, 'restoring same request cannot consume pending Stop');
     assert.equal(thinking, 0);
+    assert.equal(recoveryReads, 0, 'pending Stop prevents live-question recovery and replay acknowledgement');
     assert.deepEqual(activity, ['sp.activity.stopping']);
     await h.context.adoptRestoredRunState(1, state);
     assert.equal(h.context.adoptedRunRecoveryRequestIds.size, 0, 'cancelled recovery never starts again');
@@ -197,13 +203,22 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
     const page = await browser.newPage();
     for (const build of ['chrome', 'firefox']) {
       const source = read(build, 'content/content.js');
-      const functions = [
+      const ownInputScope = source.match(/^  let _messageRecipientOwnedInputScope = null;$/m)?.[0];
+      assert.ok(ownInputScope, 'Use the real private production owned-input scope');
+      const caretReceipts = source.match(/^  const _nativeChatEmptyCaretReceipts = new WeakMap\(\);$/m)?.[0];
+      assert.ok(caretReceipts, 'Use the real private production native-chat caret state');
+      const settleDelay = source.match(/^  const SET_FIELD_VERIFY_DELAY_MS = \d+;$/m)?.[0];
+      assert.ok(settleDelay, 'Use the production page-handler render delay');
+      const functions = [ownInputScope, caretReceipts, settleDelay].join('\n') + '\n' + [
+        'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText',
+        '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
+        '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue',
         '_insertContentEditableText', '_typeTextInner',
         ...(build === 'firefox' ? ['_isTypeableElement', '_isDisabledEditable', '_isTextTypeableInput'] : []),
       ].map(name => extract(source, name, '  ')).join('\n');
-      const setup = async (html, behavior = '') => {
+      const setup = async (html, behavior = '', paragraphEditor = false) => {
         await page.goto('about:blank');
-        await page.setContent(`<main><div id="editor" contenteditable="true">${html}</div><input id="other"><div id="other-editor" contenteditable="true">Untouched</div></main>`);
+        await page.setContent(`<main><div id="editor" contenteditable="true"${paragraphEditor ? ' class="ProseMirror"' : ''}>${html}</div><input id="other"><div id="other-editor" contenteditable="true">Untouched</div></main>`);
         await page.evaluate(({ functions, behavior }) => {
           window.typeIntoEditor = Function(`
             const _richTextToolbarExactInsertion = (before, after, inserted) => after === before + inserted;
@@ -238,7 +253,7 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
               selection.removeAllRanges();
               selection.addRange(range);
             }, 0);
-            if (behavior === 'revert-insertion' && event.inputType === 'insertText') editor.textContent = 'Reverted';
+            if (behavior === 'revert-insertion') editor.textContent = 'Reverted';
           });
         }, { functions, behavior });
       };
@@ -267,7 +282,8 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       assert.equal(await page.evaluate(() => window.events.some(event => event.type === 'input')), false);
       checked++;
 
-      await setup('<p>Original <strong>format</strong></p>');
+      // These deletion-phase checks exercise a model-backed paragraph editor.
+      await setup('<p>Original <strong>format</strong></p>', '', true);
       const replacement = await type({ text: 'New\ntext', clear: true });
       assert.equal(replacement.success, true, `${engineName}/${build}: ${JSON.stringify(replacement)}`);
       assert.equal(replacement.verified, true);
@@ -289,7 +305,7 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       assert.equal(await page.locator('#editor img, #editor [contenteditable="false"]').count(), 0);
       checked++;
 
-      await setup('Original', 'restore-deletion');
+      await setup('<p>Original</p>', 'restore-deletion', true);
       const restored = await type({ text: 'Never inserted', clear: true });
       assert.equal(restored.success, false);
       assert.equal(restored.mutationMayHaveOccurred, true);
@@ -297,7 +313,7 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       assert.equal(await page.evaluate(() => window.events.some(event => event.inputType === 'insertText')), false);
       checked++;
 
-      await setup('Original', 'retarget-after-delete');
+      await setup('<p>Original</p>', 'retarget-after-delete', true);
       const movedAfterDelete = await type({ text: 'Never inserted', clear: true });
       assert.equal(movedAfterDelete.success, false);
       assert.equal(movedAfterDelete.mutationMayHaveOccurred, true, 'clear happened before the target selection changed');

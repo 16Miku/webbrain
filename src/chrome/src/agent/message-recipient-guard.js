@@ -5,6 +5,25 @@
 export const MESSAGE_TARGET_KINDS = new Set(['named', 'active_conversation']);
 export const MESSAGE_RECIPIENT_ROLES = new Set(['to', 'cc', 'bcc']);
 
+// Protected attachments bind one explicit source as well as the conversation.
+// Do not authorize the ordinary upload handler's path/id fallback here: a
+// failed lookup must not silently attach a different file to a private chat.
+export function messageRecipientUploadSourceKey(args = {}) {
+  const attachment = typeof args.attachmentId === 'string' ? args.attachmentId.trim() : '';
+  const path = typeof args.filePath === 'string' ? args.filePath.trim() : '';
+  const hasDownload = args.downloadId != null && args.downloadId !== '';
+  if (Number(!!attachment) + Number(!!path) + Number(hasDownload) !== 1) return '';
+  if (attachment) return `attachment:${attachment}`;
+  if (hasDownload) {
+    const id = Number(args.downloadId);
+    return Number.isSafeInteger(id) && id >= 0 ? `download:${id}` : '';
+  }
+  const absolutePath = path.startsWith('/')
+    || /^[a-z]:[\\/]/i.test(path)
+    || /^\\\\[^\\]+\\[^\\]+(?:\\|$)/.test(path);
+  return absolutePath && !/[\u0000-\u001f\u007f]/.test(path) ? `path:${path}` : '';
+}
+
 function compact(value, max = 200) {
   return String(value ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
@@ -246,11 +265,61 @@ export function messageTargetMatchesObservedIdentities(target, candidates) {
  * or localized role indicator ("收件人", "主送") attached to the recipient identity
  * is required in the user's answer.
  */
+function coordinatedListShape(text, leadingSeparator, trailingSeparator) {
+  if (!text || text.length > 8192 || /[\n\r|/]/.test(text)) return false;
+  const lower = text.toLowerCase(), parts = []; let start = 0;
+  for (let at = 0; at < text.length; at++) {
+    let size = 0;
+    if (',;，；和'.includes(text[at])) size = 1;
+    else if (at > 0 && /\s/.test(text[at - 1])) {
+      for (const word of ['and', 'or', '以及', '与', '及']) {
+        if (lower.startsWith(word, at) && (!/^[a-z]+$/.test(word)
+          || !/[a-z0-9_]/i.test(text[at + word.length] || ''))) { size = word.length; break; }
+      }
+    }
+    if (size) { parts.push(text.slice(start, at)); at += size - 1; start = at + 1; }
+  }
+  parts.push(text.slice(start));
+  if (parts.length < 2) return false;
+  if (leadingSeparator) { if (parts[0].trim()) return false; parts.shift(); }
+  if (trailingSeparator) { if (parts.at(-1).trim()) return false; parts.pop(); }
+  return parts.length > 0 && parts.every(part => part.trim().length > 0);
+}
+
+function groupedRoleSuffix(text, suffixPattern) {
+  if (!text || text.length > 8192) return null;
+  const roleStarts = /\b(?:as|in|into|to|from|cc|bcc|carbon|blind)\b|[:：(\[【]|[作设收主抄密暗]/gi;
+  let match, attempts = 0;
+  while ((match = roleStarts.exec(text)) !== null) {
+    if (++attempts > 64) return null;
+    const rolePart = text.slice(match.index).match(suffixPattern);
+    if (rolePart && coordinatedListShape(text.slice(0, match.index), true, false)) {
+      return { 0: text.slice(0, match.index + rolePart[0].length), 1: rolePart[0], index: 0 };
+    }
+  }
+  return null;
+}
+
+function groupedRolePrefix(text) {
+  if (!text || text.length > 8192) return null;
+  const leaders = /\b(?:to|cc|bcc)\s*[:：]|(?:作为|设为)?(?:收件人|主送|抄送|密送|暗送)\s*[:：]?/gi;
+  let match, attempts = 0;
+  while ((match = leaders.exec(text)) !== null) {
+    if (++attempts > 64) return null;
+    if (coordinatedListShape(text.slice(match.index + match[0].length), false, true)) {
+      return { 0: text.slice(match.index), 1: match[0], index: match.index };
+    }
+  }
+  return null;
+}
+
 export function clarificationAuthorizesRecipientRole(clarifyContext, answer, candidateIdentity, targetRole) {
   const role = String(targetRole || '').trim().toLowerCase();
   if (!MESSAGE_RECIPIENT_ROLES.has(role)) return false;
 
-  const answerText = String(answer ?? '').trim();
+  const rawAnswer = String(answer ?? '');
+  if (!rawAnswer || rawAnswer.length > 8192) return false;
+  const answerText = rawAnswer.trim();
   if (!answerText) return false;
 
   const candidate = typeof candidateIdentity === 'object' && candidateIdentity !== null
@@ -260,8 +329,10 @@ export function clarificationAuthorizesRecipientRole(clarifyContext, answer, can
   const normId = normalizeRecipientIdentity(rawId);
   const candidateAliases = [
     normId,
-    ...(Array.isArray(candidate.aliases) ? candidate.aliases.map(normalizeRecipientIdentity) : []),
+    ...(Array.isArray(candidate.aliases) ? candidate.aliases.slice(0, 16).map(normalizeRecipientIdentity) : []),
   ].filter(Boolean);
+
+  const candidateSpanCache = new Map();
 
   function snippetHasExplicitRole(snippet, roleToCheck) {
     if (!snippet) return false;
@@ -372,7 +443,12 @@ export function clarificationAuthorizesRecipientRole(clarifyContext, answer, can
   function testRole(roleToCheck) {
     let hasSpans = false;
     for (const alias of candidateAliases) {
-      const spans = findCandidateAnswerSpans(answerText, alias);
+      let spans = candidateSpanCache.get(alias);
+      if (!spans) {
+        spans = findCandidateAnswerSpans(answerText, alias);
+        if (spans.length > 64) return false;
+        candidateSpanCache.set(alias, spans);
+      }
       if (spans.length > 0) {
         hasSpans = true;
         for (const span of spans) {
@@ -413,7 +489,7 @@ export function clarificationAuthorizesRecipientRole(clarifyContext, answer, can
 
           // Grouped role suffix: e.g. Put Alice and Bob in BCC / 把Alice和Bob设为密送
           const fullSuffix = answerText.slice(span.end);
-          const coordMatch = fullSuffix.match(/^(?:\s*(?:[,;，；和]|(?:\s+(?:\b(?:and|or)\b|以及|与|及)\s*))\s*[^,;，；\n\r|/]+?)+?(\s*(?:(?:as|in|into|to)\s+(?:the\s+)?(?:to|cc|bcc|blind\s+carbon\s+copy|carbon\s+copy)(?:\s+(?:field|role|recipient))?\b|[(\[【]\s*(?:to|cc|bcc)\s*[)\]】]|\s*[:：]\s*(?:to|cc|bcc)\b|(?:作为|设为)?(?:收件人|主送|抄送|密送|暗送)))/i);
+          const coordMatch = groupedRoleSuffix(fullSuffix, suffixPatterns[roleToCheck]);
           if (coordMatch) {
             const intervening = fullSuffix.slice(0, coordMatch.index + coordMatch[0].length - coordMatch[1].length);
             const rolePart = coordMatch[1];
@@ -425,7 +501,7 @@ export function clarificationAuthorizesRecipientRole(clarifyContext, answer, can
           }
 
           // Grouped role prefix: e.g. To: Alice and Bob
-          const prefixCoordMatch = fullPrefix.match(/(?:(\b(?:to|cc|bcc)\s*[:：]|(?:作为|设为)?(?:收件人|主送|抄送|密送|暗送)\s*[:：]?)\s*[^,;，；\n\r|/]+(?:\s*(?:[,;，；和]|(?:\s+(?:\b(?:and|or)\b|以及|与|及)\s*))\s*[^,;，；\n\r|/]+)*\s*(?:[,;，；和]|(?:\s+(?:\b(?:and|or)\b|以及|与|及)\s*))\s*)$/i);
+          const prefixCoordMatch = groupedRolePrefix(fullPrefix);
           if (prefixCoordMatch) {
             const roleLeader = prefixCoordMatch[1];
             const intervening = prefixCoordMatch[0].slice(roleLeader.length);

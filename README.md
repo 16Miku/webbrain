@@ -98,9 +98,13 @@ port and `sk-unsloth-` API key configured by the user; see the
 [Unsloth Studio setup](docs/providers-and-models.md#unsloth-studio).
 **Osaurus (Local)** connects to the Mac's Osaurus server with model discovery,
 streaming, and tool calls; see the [Osaurus setup](docs/providers-and-models.md#osaurus).
-Load a model with **at least a 16k-token context window** — 8k works only
-with the Compact tier, and 4k is too small for the system prompt plus tool
-schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
+Size the loaded context window for the selected tier's system prompt and tool
+schemas, the page/history, and the requested output. **16k is a configuration
+fallback, not a guaranteed minimum; Compact is not guaranteed to fit 8k.**
+Mid and Full can exceed 16k before history accumulates, and compaction cannot
+shrink fixed instructions or schemas. The sizing estimate is not the model's
+exact tokenizer; see the [context guidance](docs/providers-and-models.md#local-providers).
+WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
 Studio, and auto-compacts the conversation as it fills up. For Ollama,
 llama.cpp, LM Studio, and LocalAI, it also reads native server metadata before
 adding screenshots; Settings provides Auto, Force on, and Off overrides. When

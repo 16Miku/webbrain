@@ -13,10 +13,11 @@ try {
   for(const build of ['chrome','firefox']){
     const {Agent}=await import(`../src/${build}/src/agent/agent.js`);
     const invariant=await import(`../src/${build}/src/agent/completion-invariant.js`);
+    const {completionTextSignalsSuccess}=await import(`../src/${build}/src/agent/completion-verifier.js`);
     const source=fs.readFileSync(`src/${build}/src/agent/agent.js`,'utf8');
     const marker=source.indexOf('const publicationRecordRoot = ${publicationResourceRecordRoot.toString()};');
     const raw=source.slice(source.lastIndexOf('`',marker)+1,source.indexOf('`',marker+1));
-    const completionProbe=vm.runInNewContext('`'+raw+'`',invariant);
+    const completionProbe=vm.runInNewContext('`'+raw+'`',{...invariant,completionTextSignalsSuccess});
     const readPublished=()=>page.evaluate(code=>Function('return ('+code+')')(),completionProbe);
 
     // Compare preflight with the real content-script click handler, plus the
@@ -29,7 +30,7 @@ try {
       window.chrome = {runtime:{sendMessage:()=>{},onMessage:{addListener:fn=>window.clickListeners.push(fn)}}};
       window.browser = window.chrome;
     });
-    await clickPage.addScriptTag({content:fs.readFileSync(`src/${build}/src/content/content.js`,'utf8')});
+    for(const name of ['accessibility-tree.js','content.js'])await clickPage.addScriptTag({content:fs.readFileSync(`src/${build}/src/content/${name}`,'utf8')});
     const strategies = build === 'chrome' ? ['content', 'cdp'] : ['content'];
     for (const strategy of strategies) {
       for (const textMatch of [undefined, 'exact', 'prefix', 'contains']) {
@@ -46,7 +47,29 @@ try {
             if (!window.clickListeners.length) return reject(new Error('Content click handler was not installed'));
             for (const listener of window.clickListeners) listener({target:'content',action:'click',params:args},{},resolve);
           }), args);
-          assert.equal(result.success, true);
+          assert.equal(result.success, false, JSON.stringify(result));
+          assert.equal(result.dispatched, false);
+          assert.match(result.error, /Ambiguous text match/);
+          assert.equal(await clickPage.evaluate(() => window.submitCount), 0);
+          const buttons=result.candidates.filter(candidate=>candidate.tag==='button');
+          assert.equal(buttons.length,1,'The returned choices identify one native submit button.');
+          // Recover using an actual freshly minted AX ref for the returned
+          // native button; competing ARIA names never select it implicitly.
+          const ref=await clickPage.evaluate(candidate=>new Promise(resolve=>{
+            for(const listener of window.clickListeners)listener({target:'content',action:'get_accessibility_tree',params:{filter:'all'}},{},()=>{
+              const target=document.elementFromPoint(candidate.cx,candidate.cy)?.closest('button');
+              resolve(target?window.__wb_ax_ref(target):null);
+            });
+          }),buttons[0]);
+          assert.match(ref,/^ref_\d+$/);
+          const retryArgs={ref_id:ref};
+          const retryProbe=await clickPage.evaluate(({source,args})=>Function('return ('+source+')')()('click_ax',args),{source:Agent._submitActionProbe.toString(),args:retryArgs});
+          assert.equal(retryProbe?.isSubmit,true);
+          assert.notEqual(retryProbe?.resolvedOrdinaryActivationTarget,true);
+          const retry=await clickPage.evaluate(args=>new Promise(resolve=>{
+            for(const listener of window.clickListeners)listener({target:'content',action:'click_ax',params:args},{},resolve);
+          }),retryArgs);
+          assert.equal(retry.success,true,JSON.stringify(retry));
         } else {
           const start = source.indexOf('const result = await cdpClient.evaluate(tabId, `', source.indexOf('// Text-based click with auto-fallback matching.'));
           assert(start >= 0);

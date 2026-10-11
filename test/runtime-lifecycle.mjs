@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { conformFixtureCompletionCall } from './quality/completion-provider-contract.mjs';
 
 function deferred() {
   let resolve;
@@ -68,6 +70,7 @@ function harness(mod, options = {}) {
 
 for (const browser of ['chrome', 'firefox']) {
   const mod = await import(`../src/${browser}/src/agent/scheduler.js`);
+  const { runUiUpdatesForCurrentTask } = await import(`../src/${browser}/src/run-ui-journal.js`);
 
   for (const operation of ['cancelJob', 'pauseJob', 'deleteJob']) {
     test(`${browser}: ${operation} during provider startup prevents agent dispatch`, async () => {
@@ -340,10 +343,10 @@ for (const browser of ['chrome', 'firefox']) {
     const start = source.indexOf('function isClarificationRequiredRunUpdate(');
     const end = source.indexOf('\nfunction finishRunUiSnapshot', start);
     assert.ok(start >= 0 && end > start);
-    const { terminalRunUiStatus, runUpdatesSucceeded } = new Function(`
+    const { terminalRunUiStatus, runUpdatesSucceeded } = new Function('runUiUpdatesForCurrentTask', `
       ${source.slice(start, end)}
       return { terminalRunUiStatus, runUpdatesSucceeded };
-    `)();
+    `)(runUiUpdatesForCurrentTask);
     const updates = [{ type: 'run_status', data: { status: 'persistence_degraded' } }];
     assert.equal(terminalRunUiStatus('Checkpoint unavailable', updates), 'failed');
     assert.equal(runUpdatesSucceeded(updates), false);
@@ -368,3 +371,167 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(h.jobs()[0].status, 'completed');
   });
 }
+
+
+// Exercise the real background entry function before any run is reserved.
+const chatInputVM = await import('node:vm');
+function chatInputFunction(source, name) {
+  source = source.replace(/\r\n/g, '\n');
+  const start = source.search(new RegExp('^(?:async )?function ' + name + '\\(', 'm'));
+  if (start < 0) return '';
+  const end = source.indexOf('\n}', start);
+  assert.ok(end > start, name + ': complete function');
+  return source.slice(start, end + 2);
+}
+async function chatInputFixture(browser) {
+  const source = await readFile(new URL('../src/' + browser + '/src/background.js', import.meta.url), 'utf8');
+  const effects = { providers:0, detached:0, run:0, claim:0 };
+  const reached = new Error('owned_fixture_run_entry');
+  const context = {
+    providerManager:{ providers:new Map(), load:async () => { effects.providers++; } },
+    EMERGENCY_DOWNLOAD_ACTION:'owned_emergency',
+    standaloneRunProviderId:async () => null,
+    launchDetachedRun:(action, msg) => { effects.detached++; return { ok:true, accepted:true, action, text:msg.text, attachments:msg.attachments, workflowId:msg.workflowId }; },
+    contextMenuStorage:{ reserve:async (_tab,_prompt,_claim,launch) => { effects.claim++; return { ...launch(), reserved:true }; } },
+    assertRunCanStart:() => { effects.run++; throw reached; },
+    assertNoActiveTabRun:() => { effects.run++; throw reached; },
+  };
+  for (const key of ['planBeforeActReady','planReviewReady','customSkillsReady','userMemoryReady','imageGenConfigReady',
+    'alwaysAllowApiMutationsReady','strictSecretModeReady','webMcpEnabledReady','screenshotRedactionReady','imageBudgetReady','researchEscalationReady']) context[key] = Promise.resolve();
+  const functions = ['assertChatRequestInput', 'handleMessage'].map(name => chatInputFunction(source,name)).join('\n');
+  chatInputVM.runInNewContext(functions + '\nglobalThis.request = handleMessage;', context);
+  return { effects, reached, request:msg => context.request({ tabId:73, ...msg }, {}) };
+}
+for (const browser of ['chrome','firefox']) {
+  for (const [label, payload] of [
+    ['wrong message field', { message:'Read the owned page; send nothing.' }],
+    ['missing text', {}], ['null text', { text:null }], ['empty text', { text:'' }],
+    ['whitespace text', { text:' \t\r\n ' }], ['object text', { text:{ task:'Read only.' } }],
+    ['numeric text', { text:0 }], ['attachment metadata without data', { attachments:[{ kind:'text',name:'owned.txt' }] }],
+    ['blank workflow', { workflowId:' \t ' }],
+    ['wrong text type despite attachment', { text:[], attachments:[{kind:'text',textContent:'owned data'}] }],
+  ]) {
+    test(browser + ': malformed new chat rejects ' + label + ' before startup', async () => {
+      for (const action of ['chat_start','chat','chat_stream']) {
+        const f = await chatInputFixture(browser);
+        await assert.rejects(f.request({ action, ...payload }), error => error.code === 'invalid_chat_input' && error.status === 400);
+        assert.deepEqual(f.effects, { providers:0, detached:0, run:0, claim:0 });
+      }
+    });
+  }
+  test(browser + ': invalid claimed chat does not consume its context-menu claim', async () => {
+    const f = await chatInputFixture(browser);
+    await assert.rejects(f.request({action:'chat_start',contextMenuClaim:{promptId:'owned-prompt',claimantId:'owned-claim'}}), error => error.code === 'invalid_chat_input');
+    assert.deepEqual(f.effects,{providers:0,detached:0,run:0,claim:0});
+  });
+  test(browser + ': real new task reaches detached/direct/streamed routes without rewriting text', async () => {
+    const text = ' Read the owned page; send nothing. ';
+    const f = await chatInputFixture(browser);
+    const accepted = await f.request({action:'chat_start',text});
+    assert.equal(accepted.accepted,true); assert.equal(accepted.text,text);
+    for (const action of ['chat','chat_stream']) await assert.rejects(f.request({action,text}), error => error === f.reached);
+    assert.equal(f.effects.detached,1); assert.equal(f.effects.run,2);
+  });
+  test(browser + ': attachment-only requests retain supported current payloads', async () => {
+    for (const attachment of [{kind:'text',name:'owned.txt',textContent:''},
+      {kind:'image',name:'owned.png',dataUrl:'data:image/png;base64,AA=='},
+      {kind:'document',name:'owned.pdf',dataUrl:'data:application/pdf;base64,AA=='}]) {
+      const f = await chatInputFixture(browser);
+      const attachments = [attachment];
+      const accepted = await f.request({action:'chat_start',text:'',attachments});
+      assert.equal(accepted.accepted,true); assert.equal(accepted.attachments,attachments);
+      await assert.rejects(f.request({action:'chat',attachments}), error => error === f.reached);
+      await assert.rejects(f.request({action:'chat_stream',attachments}), error => error.code === 'invalid_chat_input');
+    }
+  });
+  test(browser + ': saved workflow-only start is preserved but not invented for streaming', async () => {
+    const f = await chatInputFixture(browser);
+    const accepted = await f.request({action:'chat_start',workflowId:'owned-saved-workflow'});
+    assert.equal(accepted.accepted,true); assert.equal(accepted.workflowId,'owned-saved-workflow');
+    await assert.rejects(f.request({action:'chat',workflowId:'owned-saved-workflow'}), error => error === f.reached);
+    await assert.rejects(f.request({action:'chat_stream',workflowId:'owned-saved-workflow'}), error => error.code === 'invalid_chat_input');
+  });
+  test(browser + ': explicit continuation without a new text task is unchanged', async () => {
+    const f = await chatInputFixture(browser);
+    const result = await f.request({action:'continue_start'});
+    assert.equal(result.accepted,true); assert.equal(result.action,'continue');
+    assert.equal(f.effects.detached,1);
+  });
+  test(browser + ': valid claimed task reaches exactly one reservation', async () => {
+    const f = await chatInputFixture(browser);
+    const accepted = await f.request({action:'chat_start',text:'Read the owned page.',contextMenuClaim:{promptId:'owned-prompt',claimantId:'owned-claim'}});
+    assert.equal(accepted.reserved,true); assert.equal(f.effects.claim,1); assert.equal(f.effects.detached,1);
+  });
+}
+
+// Exercise the actual installed fixture's provider branch without launching its
+// browser/server. Native ACK permits a receipt read, never an input retry.
+async function literalReceiptFixture() {
+  const source = await readFile(new URL('./quality/literal-frame-mv3.mjs', import.meta.url), 'utf8');
+  const policyStart = source.indexOf('function acknowledgedNativeReceiptDecision(');
+  const policy = policyStart < 0 ? '' : source.slice(policyStart, source.indexOf('const providerRecoveryChecks', policyStart));
+  const chooserStart = source.indexOf('      const tools = toolsFrom(input.messages)');
+  const chooser = source.slice(chooserStart, source.indexOf('      assert.ok(current.calls.length', chooserStart));
+  assert.ok(chooserStart >= 0 && chooser.includes('let step'), 'Use the genuine fixture provider branch');
+  const digest = text => createHash('sha256').update(text).digest('hex');
+  const choose = chatInputVM.runInNewContext(`${policy}\n(function(current, history) {
+    const input = { messages: history }, kind = 'rich', toolsFrom = messages => messages;
+    ${chooser}\nreturn step;
+  })`, { digest });
+  const body = 'Exact saved document 🧠', ref = 'ref_123';
+  const entry = () => ({ body, url: 'https://literal.fixture.invalid/rich', calls: [{ name: 'click_ax', args: { ref_id: ref } }] });
+  const acknowledgement = { success: false, method: 'cdp-native-button', initialTrustedNativeButton: true, ref_id: ref,
+    nativeInputAcknowledged: true, observationInterrupted: true, dispatched: true, outcomeUnknown: true,
+    retryable: false, trusted: false, verified: false };
+  const receipt = `Owned QA receipt: saved exactly once. SHA256 ${digest(body)}; characters ${body.length}`;
+  return { choose, entry, acknowledgement, receipt };
+}
+
+test('literal Save fixture reads the real receipt after native ACK uncertainty and never repeats Save', async () => {
+  const f = await literalReceiptFixture(), entry = f.entry();
+  const read = f.choose(entry, [{ name: 'click_ax', result: f.acknowledgement }]);
+  assert.equal(read.name, 'read_page');
+  assert.equal(entry.receiptReconciliation.receiptVerified, false);
+  const done = f.choose(entry, [{ name: 'read_page', result: { text: f.receipt, hasMore: false } }]);
+  assert.equal(done.name, 'done'); assert.equal(done.args.outcome, 'success');
+  assert.equal(entry.receiptReconciliation.receiptVerified, true);
+  assert.equal(entry.receiptReconciliation.inputReplayAllowed, false);
+  assert.equal(entry.calls.length, 1);
+});
+
+test('literal Save fixture cannot promote lost ACK or mismatched receipt to success', async () => {
+  const f = await literalReceiptFixture();
+  const failed = f.choose(f.entry(), [{ name: 'click_ax', result: { ...f.acknowledgement, nativeInputAcknowledged: false } }]);
+  assert.equal(failed.name, 'done'); assert.equal(failed.args.outcome, 'failed');
+  for (const result of [{ text: 'No receipt yet', hasMore: false },
+    { text: f.receipt.replace(/SHA256 [a-f0-9]+/, 'SHA256 ' + '0'.repeat(64)), hasMore: false },
+    { text: f.receipt, url: 'https://foreign.fixture.invalid/', hasMore: false },
+    { success: false, error: 'Read failed' }]) {
+    const entry = f.entry();
+    f.choose(entry, [{ name: 'click_ax', result: f.acknowledgement }]);
+    const refused = f.choose(entry, [{ name: 'read_page', result }]);
+    assert.equal(refused.args.outcome, 'failed'); assert.equal(entry.calls.length, 1);
+  }
+});
+
+test('native Delete fixture providers honor read-only recovery instead of emitting unavailable done(success)', async () => {
+  for (const name of ['mastodon-deletion-mv3.mjs', 'mastodon-deletion-navigation-mv3.mjs']) {
+    const source = await readFile(new URL('./quality/' + name, import.meta.url), 'utf8');
+    const start = source.indexOf('    const step = actionCalls++');
+    const body = source.slice(start, source.indexOf('    completion =', start));
+    assert.ok(start >= 0 && body.includes('const call'), 'Exercise the actual native deletion provider branch');
+    const choose = chatInputVM.runInNewContext(`(function(){${body}\nreturn typeof emitted === 'undefined' ? call : emitted;})`, {
+      actionCalls: 9, judgeOutcome: 'succeeded', interruption: '', resource: 'https://owned.fixture.invalid/@qa/200',
+      input: { tools: [{ type: 'function', function: { name: 'done', parameters: { properties: { outcome: { enum: ['partial', 'failed'] } } } } },
+        { type: 'function', function: { name: 'get_accessibility_tree', parameters: {} } }] },
+      conformFixtureCompletionCall, completionRecovery: { reads: 0 },
+    });
+    const read = choose();
+    assert.equal(read.name, 'get_accessibility_tree', name + ' must read current state rather than violate the advertised schema');
+  }
+  const recovery = { reads: 0 }, input = { tools: [{ name: 'get_accessibility_tree' }] };
+  const success = { name: 'done', args: { outcome: 'success', summary: 'Requested exact result verified' } };
+  conformFixtureCompletionCall(input, success, recovery); conformFixtureCompletionCall(input, success, recovery);
+  assert.throws(() => conformFixtureCompletionCall(input, success, recovery), /exhausted read-only recovery/);
+  assert.equal(success.args.outcome, 'success', 'Unavailable success is never silently changed to partial');
+});

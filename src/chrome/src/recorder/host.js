@@ -1,3 +1,4 @@
+import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
 /**
  * Service-worker-side recorder orchestration.
  *
@@ -526,9 +527,10 @@ export async function stopTabRecording(opts = {}) {
   let savedDownload = null;
   let saveError = null;
   try {
+    const downloadFilename = await filenameInConfiguredDownloadDirectory(chrome, filename);
     downloadId = await chrome.downloads.download({
       url: res.dataUrl,
-      filename,
+      filename: downloadFilename,
       saveAs: false,
     });
     savedDownload = await resolveSavedDownload(chrome, downloadId, {
@@ -629,9 +631,10 @@ async function runTranscription({ dataUrl, mimeType, baseFilename }) {
   let downloadId = null;
   let savedDownload = null;
   try {
+    const downloadFilename = await filenameInConfiguredDownloadDirectory(chrome, txtFilename);
     downloadId = await chrome.downloads.download({
       url: txtDataUrl,
-      filename: txtFilename,
+      filename: downloadFilename,
       saveAs: false,
     });
     savedDownload = await resolveSavedDownload(chrome, downloadId, {

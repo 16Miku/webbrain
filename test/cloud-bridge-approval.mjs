@@ -25,7 +25,7 @@ function harness({ WebSocketImpl, sendMessage = async () => ({ runId: 'r1', stat
     emit(type, value = {}) {
       if (type === 'open') this.readyState = 1;
       if (type === 'close') this.readyState = 3;
-      this.listeners.get(type)?.(value);
+      return this.listeners.get(type)?.(value);
     }
     receive(obj) { return this.emit('message', { data: JSON.stringify(obj) }); }
   }
@@ -212,7 +212,7 @@ function fxHarness({ WebSocketImpl, dispatch } = {}) {
     addEventListener(type, cb) { this.listeners.set(type, cb); }
     send(v) { this.sent.push(JSON.parse(v)); }
     close() { this.readyState = 3; this.listeners.get('close')?.({}); }
-    emit(type, value = {}) { if (type === 'open') this.readyState = 1; this.listeners.get(type)?.(value); }
+    emit(type, value = {}) { if (type === 'open') this.readyState = 1; return this.listeners.get(type)?.(value); }
     receive(obj) { return this.emit('message', { data: JSON.stringify(obj) }); }
   }
   const bridge = createCloudBridge({
@@ -221,6 +221,29 @@ function fxHarness({ WebSocketImpl, dispatch } = {}) {
     dispatch: dispatch || (async (m) => { calls.push(m); return { runId: 'r1', status: 'running' }; }),
   });
   return { bridge, sockets, calls };
+}
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: malformed JSON envelopes get a reply and cannot break the approved bridge`, async () => {
+    const h = build === 'chrome' ? harness() : fxHarness();
+    if (build === 'chrome') h.start();
+    else h.bridge.start({ url: 'ws://127.0.0.1:17374/extension', ...IDENTITY });
+    const socket = h.sockets[0];
+    socket.emit('open');
+    await socket.receive({ type: 'connection_approved', browserId: IDENTITY.browserId });
+    for (const malformed of [null, [], 'cloud_status', 0, true]) {
+      const before = socket.sent.length;
+      await socket.receive(malformed);
+      assert.equal(socket.sent.length, before + 1, 'Reject valid JSON with the wrong envelope shape without losing the reply');
+      assert.equal(socket.sent.at(-1).ok, false);
+      assert.equal(socket.sent.at(-1).code, 'invalid_message');
+    }
+    const calls = h.runtimeCalls || h.calls;
+    assert.equal(calls.length, 0, 'Malformed messages must never reach background dispatch');
+    await socket.receive(cmd);
+    assert.equal(calls.length, 1, 'The same approved connection must still accept a valid command');
+    assert.equal(socket.sent.at(-1).ok, true);
+  });
 }
 
 test('firefox: hello, pending refusal, approval, rejection', async () => {

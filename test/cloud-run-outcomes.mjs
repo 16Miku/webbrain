@@ -132,21 +132,34 @@ for (const browser of ['chrome', 'firefox']) {
     const source = fs.readFileSync(new URL(`../src/${browser}/src/agent/agent.js`, import.meta.url), 'utf8');
     const method = source.slice(source.indexOf('  async _scheduleAutoProgressResume('), source.indexOf('  _plainFinalProgressBlock('));
     const helper = vm.runInNewContext(`({${method}})._scheduleAutoProgressResume`);
+    const ownershipSource = source.slice(source.indexOf('  _scheduleCreationContext('), source.indexOf('  _scheduleCreationResult('));
+    const ownership = vm.runInNewContext(`({${ownershipSource}})._scheduleCreationContext`);
+    const abort = new AbortController(), run = {}, task = { role: 'user', content: 'Read the current page' };
     let native = 0, cloud = 0;
     const fake = { scheduler: { createResumeJob: async () => { native++; return { success: true }; } },
       cloudRunContexts: new Map([[7, { deferResume: async args => { cloud++; assert.equal(args.after_seconds, 90); return { success: true }; } }]]),
       _effectiveRunMode: () => 'act', _isActionMode: () => true, _shouldBlockDoneForProgress: () => true,
       _getTabUrlTitle: async () => ({}), _buildAutoProgressResumeInstruction: () => 'Continue',
-      conversationIds: new Map(), _resumeTaskId: () => 'task' };
+      conversationIds: new Map(), _resumeTaskId: () => 'task',
+      _scheduleCreationContext: ownership, _runAbortSignal: () => abort.signal,
+      _runAbortStates: new Map([[7, run]]), _steeringRuns: new Map(), _planExecutionGuards: new Map(),
+      conversations: new Map([[7, [task]]]), _activeTaskBinding: messages => ({ taskIndex: 0, text: messages[0].content }),
+      isRunning: () => true, _checkAbort: () => abort.signal.aborted, _hasUnvalidatedSteering: () => false };
     await helper.call(fake, 7);
     assert.equal(cloud, 1); assert.equal(native, 0);
     fake.cloudRunContexts.clear(); await helper.call(fake, 7);
     assert.equal(native, 1);
     const start = source.indexOf("    if (name === 'schedule_resume') {");
     const route = source.slice(start, source.indexOf('      if (!this.scheduler)', start));
-    const toolRoute = vm.runInNewContext(`(async function(name,tabId,args){${route}\n}})`);
+    const toolRoute = vm.runInNewContext(`(async function(name,tabId,args){${route}\n}})`, {
+      earlyCdpAbortSignal: abort.signal, earlyCdpDispatchState: null,
+      contentPipelineAbortSignal: abort.signal, contentPipelineDispatchState: null,
+    });
     fake.cloudRunContexts.set(7, { deferResume: async () => ({ success: true, cloud: true }) });
     fake._resumeArgsWithProgressGuard = (_tab, args) => args;
     assert.equal((await toolRoute.call(fake, 'schedule_resume', 7, {})).cloud, true);
+    fake._getTabUrlTitle = async () => { abort.abort(); return {}; };
+    assert.equal(await helper.call(fake, 7), null, 'Actual ownership helper blocks Cloud scheduling after Stop during metadata read');
+    assert.equal(cloud, 1); assert.equal(native, 1);
   });
 }

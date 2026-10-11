@@ -13,6 +13,41 @@ function extract(source, name) {
 
 for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
   const { DECISION_SETTINGS_KEYS } = await import(`../src/${build}/src/agent/decision-config.js`);
+  test(`${build}: main execution clears the planner activity and preserves tool activity`, async () => {
+    const browser = await engine.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      const source = read(build, 'src/ui/sidepanel.js');
+      const activityStart = source.indexOf('const THINKING_ACTIVITY_KEYS = [');
+      const activityEnd = source.indexOf('// A new turn is reading-first', activityStart);
+      const thinkingStart = source.indexOf("    case 'thinking':");
+      const thinkingEnd = source.indexOf("    case 'text':", thinkingStart);
+      await page.setContent('<div id="activity"><span id="text"></span><span id="live"></span></div>');
+      await page.addScriptTag({ content: `
+        const agentActivity = document.querySelector('#activity');
+        const activityText = document.querySelector('#text');
+        const activityLiveStatus = document.querySelector('#live');
+        const t = value => value;
+        const compactProgressVisible = true;
+        function hideInspectionBanner() {}
+        ${source.slice(activityStart, activityEnd)}
+        function update(type, data) { switch(type) { ${source.slice(thinkingStart, thinkingEnd)} } }
+      ` });
+      for (const step of [1, 8]) {
+        await page.evaluate(step => {
+          update('thinking', { step: 0, note: 'Planning…' });
+          if (activityText.textContent !== 'Planning…') throw new Error('Planner status missing');
+          update('thinking', { step });
+        }, step);
+        assert.equal(await page.locator('#text').textContent(), 'sp.activity.communicating');
+        assert.equal(await page.locator('#live').textContent(), 'sp.activity.communicating');
+        await page.evaluate(() => { showActivity('Opening composer'); update('thinking', { step: 9 }); });
+        assert.equal(await page.locator('#text').textContent(), 'Opening composer');
+      }
+      await page.evaluate(() => hideActivity());
+      assert.equal(await page.locator('#live').textContent(), '');
+    } finally { await browser.close(); }
+  });
   test(`${build}: native composer honors delivery settings, explicitly steers, and preserves drafts across races`, async () => {
     const browser = await engine.launch({ headless: true });
     try {
@@ -39,7 +74,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         'sameTabId', 'getQueuedComposerMessages', 'setQueuedComposerMessages',
         'queueUnconsumedSteeringMessages', 'steerComposerMessage', 'syncComposerDeliveryState',
         'queuedComposerButton', 'renderQueuedComposerMessages', 'removeQueuedComposerMessage',
-        'enqueueQueuedComposerMessage', 'syncSendButtonState', 'sendMessage',
+        'enqueueQueuedComposerMessage', 'composerSubmissionIsCurrent', 'queuedComposerSubmissionIsCurrent',
+        'syncSendButtonState', 'sendMessage',
       ].map(name => extract(source, name)).join('\n');
       const listenersStart = source.indexOf("sendBtn.addEventListener('click', sendMessage);");
       const listenersEnd = source.indexOf("inputEl.addEventListener('input', handleInput);", listenersStart);
@@ -56,7 +92,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         var queuedSteeringMessageIds = new Set(), tabInputDrafts = new Map();
         var clearedConversationRunRequestIds = new Set(), queuedComposerMessageSeq = 0;
         var sent = [], notices = [], requestSeq = 0, heldResponse = null;
-        var responseMode = 'accept';
+        var responseMode = 'accept', heldRefresh = null, releaseRefresh = null, refreshCalls = 0;
         var storageData = { composerDeliveryMode: 'steer' }, storageListeners = [];
         var chrome = { storage: {
           local: {
@@ -99,7 +135,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function normalizeScreenshotCommandText(value) { return value; }
         function normalizeSelectionSourceGrounding() { return null; }
         function normalizeSelectionAction() { return ''; }
-        function waitForVisibleSidePanelStateRefresh() { return Promise.resolve(); }
+        function waitForVisibleSidePanelStateRefresh() { refreshCalls++; return heldRefresh || Promise.resolve(); }
         function dismissSelectionAskAction() {}
         function stopListening() {}
         function permissionSkipCommandContextForDraft() { return null; }
@@ -133,6 +169,12 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.equal(await page.locator('#btn-send').getAttribute('title'), 'sp.steer.title · sp.queue.send (Alt+Shift+Enter)',
         'Saved preference hydrates both settings and composer');
       assert.equal(await page.locator('#btn-steer').count(), 0, 'No separate composer Steer button');
+      await input.fill('Queue through the explicit shortcut');
+      await input.press('Alt+Shift+Enter');
+      await page.waitForFunction(() => getQueuedComposerMessages(1).length === 1);
+      assert.equal(await page.evaluate(() => sent.length), 0, 'Alt+Shift+Enter queues even when Steer is the default');
+      assert.equal(await page.evaluate(() => composerDeliveryMode), 'steer', 'The shortcut does not change the saved default');
+      await page.evaluate(() => { queuedComposerMessagesByTab.clear(); renderQueuedComposerMessages(); });
       await deliverySetting.selectOption('queue');
       await page.waitForFunction(() => composerDeliveryMode === 'queue');
       assert.equal(await page.evaluate(() => storageData.composerDeliveryMode), 'queue');
@@ -252,6 +294,30 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.equal(await page.evaluate(() => composerDeliveryMode), 'queue', 'Removing preference restores Queue');
       await page.evaluate(() => hydrateDeliverySetting());
       assert.equal(await deliverySetting.inputValue(), 'queue', 'Missing setting hydrates to Queue');
+      for (const change of ['tab switch', 'new draft']) {
+        const before = await page.evaluate(() => {
+          currentTabId = renderedTabId = 1; isProcessing = true;
+          queuedComposerMessagesByTab.clear(); renderQueuedComposerMessages();
+          heldRefresh = new Promise(resolve => { releaseRefresh = resolve; });
+          return { sent: sent.length, refreshCalls };
+        });
+        await input.fill('Clicked command for tab one');
+        await page.locator('#btn-send').click();
+        await page.waitForFunction(calls => refreshCalls > calls, before.refreshCalls);
+        await page.evaluate(async change => {
+          if (change === 'tab switch') {
+            tabInputDrafts.set(1, inputEl.value); currentTabId = renderedTabId = 2;
+          }
+          inputEl.value = 'Private unsent replacement draft';
+          heldRefresh = null; releaseRefresh(); releaseRefresh = null;
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }, change);
+        assert.equal(await page.evaluate(() => sent.length), before.sent, change);
+        assert.equal(await page.evaluate(() => getQueuedComposerMessages(1).length), 0, change);
+        assert.equal(await page.evaluate(() => getQueuedComposerMessages(2).length), 0, change);
+        assert.equal(await input.inputValue(), 'Private unsent replacement draft', change);
+        if (change === 'tab switch') assert.equal(await page.evaluate(() => tabInputDrafts.get(1)), 'Clicked command for tab one');
+      }
       await page.evaluate(() => { isProcessing = false; syncSendButtonState(); });
       assert.equal(await page.locator('#btn-steer').count(), 0);
       assert.equal(await page.locator('#btn-send').getAttribute('title'), 'sp.btn.send');

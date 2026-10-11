@@ -425,15 +425,20 @@
       const fullyVisible = _isFullyVisibleForInteraction(el, insets);
       const coveredByFixed = fullyVisible && _isCoveredByFixedNonModalSurface(el, view);
       if (!fullyVisible || coveredByFixed) {
+        window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
         el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
         const rAfter = el.getBoundingClientRect();
         if (rAfter.top < insets.top) {
+          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
           view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' });
         } else if (rAfter.bottom > view.innerHeight - insets.bottom) {
+          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
           view.scrollBy({ top: rAfter.bottom - (view.innerHeight - insets.bottom) + 16, behavior: 'instant' });
         }
       }
-    } catch {
+    } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
+      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
       try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
     }
   }
@@ -1476,6 +1481,7 @@
     try {
       runClick();
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       cleanupGuard();
       _filePickerGuardStates.delete(guardId);
       throw error;
@@ -1783,6 +1789,7 @@
             if (actionDeadlineExpired()) return deadlineFailure();
             inp.scrollIntoView({ block: 'center', inline: 'center' });
             if (actionDeadlineExpired()) return deadlineFailure();
+            window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: inp });
             inp.focus();
             el = inp;
             textResolvedExact = (needle === ltxt);
@@ -1823,6 +1830,7 @@
                 if (actionDeadlineExpired()) return deadlineFailure();
                 inp.scrollIntoView({ block: 'center', inline: 'center' });
                 if (actionDeadlineExpired()) return deadlineFailure();
+                window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: inp });
                 inp.focus();
                 el = inp;
                 textResolvedExact = (needle === ltxt);
@@ -1966,6 +1974,7 @@
           }
           if (target) {
             if (actionDeadlineExpired()) return deadlineFailure();
+            window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target });
             target.focus();
             resolved = target;
           }
@@ -2042,9 +2051,11 @@
           return { success: true, method: 'select-already-set', selectedText: match.text.trim(), selectedValue: match.value };
         }
         if (actionDeadlineExpired()) return deadlineFailure();
+        window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: sel });
         sel.focus();
         if (actionDeadlineExpired()) return deadlineFailure();
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        window.__wbPageMonitor?.beforeLocalDispatch();
         dispatched = true;
         if (nativeSetter) nativeSetter.call(sel, match.value);
         else sel.value = match.value;
@@ -2065,6 +2076,7 @@
     // Do NOT scrollIntoView (hidden selects inside modals scroll to wrong position).
     if (el instanceof HTMLSelectElement) {
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: el });
       el.focus();
       if (actionDeadlineExpired()) return deadlineFailure();
       const options = Array.from(el.options).map(o => o.text.trim());
@@ -2088,6 +2100,7 @@
       }
       if (nearbySel) {
         if (actionDeadlineExpired()) return deadlineFailure();
+        window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: nearbySel });
         nearbySel.focus();
         if (actionDeadlineExpired()) return deadlineFailure();
         const options = Array.from(nearbySel.options).map(o => o.text.trim());
@@ -2212,8 +2225,10 @@
     if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
-    dispatched = true;
-    const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+    const filePickerGuard = withLocalPageDispatch(() => {
+      dispatched = true;
+      return clickWithoutNativeFilePicker(() => el.click());
+    });
     if (filePickerGuard.blocked) {
       return {
         ...filePickerBlockedResponse(filePickerGuard.blocked, params.text || el.innerText?.trim() || ''),
@@ -2279,7 +2294,14 @@
     return _typeTextInner(params, actionDeadlineExpired);
   }
 
-  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false) {
+  function withLocalPageDispatch(callback) {
+    const monitor = window.__wbPageMonitor;
+    if (typeof monitor?.withLocalDispatch === 'function') return monitor.withLocalDispatch(callback);
+    monitor?.beforeLocalDispatch();
+    return callback();
+  }
+
+  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false, ownInputScope = null) {
     const doc = el.ownerDocument;
     let dispatched = false;
     const failure = (error, extra = {}) => ({
@@ -2299,28 +2321,18 @@
     }
     const selection = el.getRootNode?.().getSelection?.() || doc.defaultView?.getSelection();
     if (!selection || !el.isConnected) return failure('The editable target is no longer available.');
-    // Native editing represents line feeds with <br> and block nodes. Read
-    // logical line boundaries rather than CSS-dependent innerText paragraph
-    // spacing; a lone <br> is the native caret placeholder of an empty block.
-    const blockTags = new Set(['DIV', 'P', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
-    const readText = (node) => {
-      if (node.nodeType === 3) return node.nodeValue || '';
-      if (node.nodeType !== 1) return '';
-      if (node.tagName === 'BR') return '\n';
-      const children = Array.from(node.childNodes);
-      if (children.length === 1 && children[0].nodeName === 'BR'
-          && (node === el || blockTags.has(node.tagName))) return '';
-      // Firefox leaves one trailing caret <br> after native line insertion.
-      // Additional <br> nodes before it remain real (including blank lines).
-      if (children.at(-1)?.nodeName === 'BR' && (node === el || blockTags.has(node.tagName))) children.pop();
-      return children.map((child, index) => {
-        const previousChild = children[index - 1];
-        const boundary = index > 0 && previousChild.nodeName !== 'BR'
-          && (blockTags.has(child.nodeName) || blockTags.has(previousChild.nodeName));
-        return (boundary ? '\n' : '') + readText(child);
-      }).join('');
-    };
-    const previous = readText(el);
+    // Model-backed paragraph editors have semantic document line breaks.
+    // Ordinary editors must verify the same rendered value their input
+    // handlers read; accepting browser-created blank lines corrupts saves.
+    const draftJsEditor = isDraftJsEditor(el);
+    if (draftJsEditor && readDraftJsText(el) === null) {
+      return failure('The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+        { recoveryRequired: 'fresh_tree', retryable: false });
+    }
+    const semanticEditor = readProseMirrorText(el) !== null;
+    const readValue = () => _editableTextValue(el);
+    const previous = readValue();
+    const nativeClearContext = clear && text === '' ? _nativeChatCaretContext(el) : null;
     const selectContents = (collapse) => {
       const range = doc.createRange();
       let container = el;
@@ -2336,8 +2348,11 @@
       selection.removeAllRanges();
       selection.addRange(range);
     };
-    const edit = (command, inputType, data = null) => {
+    const edit = async (command, inputType, data = null, commandData = data) => {
       const htmlBefore = el.innerHTML;
+      const rootBefore = el.getRootNode?.() || doc;
+      const pageUrlBefore = doc.location?.href || doc.URL || '';
+      const nativeContextBefore = _nativeChatCaretContext(el);
       const rangeBefore = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
       if (!rangeBefore || !el.contains(rangeBefore.startContainer) || !el.contains(rangeBefore.endContainer)) {
         return failure('The text selection moved outside the intended editor before insertion.');
@@ -2345,14 +2360,53 @@
       // execCommand is the native editing fallback: it preserves markup and
       // the editor's undo stack. Its beforeinput behavior differs by browser,
       // so offer the page a cancellable gate BEFORE invoking the command.
-      const accepted = el.dispatchEvent(new InputEvent('beforeinput', {
+      window.__wbPageMonitor?.beforeLocalDispatch();
+      const verifyNativeObservation = nativeContextBefore && typeof window.__wbPageMonitor?.captureLocalInputObservation === 'function'
+        ? window.__wbPageMonitor.captureLocalInputObservation(el) : null;
+      const beforeInputGate = () => el.dispatchEvent(new InputEvent('beforeinput', {
         bubbles: true, composed: true, cancelable: true, inputType, data,
       }));
+      const accepted = window.__wbPageMonitor?.withLocalDispatch
+        ? window.__wbPageMonitor.withLocalDispatch(beforeInputGate) : beforeInputGate();
+      if (!accepted) {
+        // React/model editors can cancel native insertion while handling the
+        // requested edit themselves. Allow their bounded render to settle
+        // before claiming that no mutation happened. Never send another edit.
+        await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+        const changed = el.innerHTML !== htmlBefore || !el.isConnected;
+        if (changed) dispatched = true;
+        if (actionDeadlineExpired()) return expired();
+        if (!changed) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
+        const nativeContextAfter = _nativeChatCaretContext(el);
+        const sameScope = el.isConnected && el.ownerDocument === doc
+          && doc.defaultView?.document === doc && (el.getRootNode?.() || doc) === rootBefore
+          && (doc.location?.href || doc.URL || '') === pageUrlBefore
+          && ((!nativeContextBefore && !nativeContextAfter)
+            || _sameNativeChatCaretContext(nativeContextBefore, nativeContextAfter));
+        const unknown = () => failure('The editor handled a cancelled beforeinput and changed. Its complete value could not be verified in the same scope. No additional text was dispatched.',
+          { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false });
+        if (!sameScope || (draftJsEditor && readDraftJsText(el) === null)) return unknown();
+        try {
+          if (verifyNativeObservation) {
+            if (!verifyNativeObservation()) throw Object.assign(new Error(`The native text observation lost its original operation or received browser intervention (${verifyNativeObservation.reason || 'observation_invalid'})${verifyNativeObservation.diagnostic ? ' [' + verifyNativeObservation.diagnostic + ']' : ''}.`), { code: 'page_feedback_pending' });
+          } else window.__wbPageMonitor?.beforeLocalDispatch();
+        }
+        catch (error) { return failure(error?.message || 'The editor scope changed during page-handled text entry.',
+          { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false,
+            ...(error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}) }); }
+        const value = readValue();
+        const expected = clear ? text : previous + text;
+        const normalize = value => String(value).replace(/\r\n?/g, '\n');
+        if (normalize(value) !== normalize(expected)) return unknown();
+        return { success: true, verified: true, dispatched: true, outcomeUnknown: false,
+          pageHandledBeforeInput: true, nativeBeforeInputCancelled: true,
+          method: 'contenteditable-page-handled-beforeinput', value: value.slice(0, 100), fieldMeta: _fieldMeta(el) };
+      }
       if (el.innerHTML !== htmlBefore || !el.isConnected) {
+        window.__wbPageMonitor?.beforeLocalDispatch();
         dispatched = true;
         return failure('The editor changed while handling beforeinput. No additional text was dispatched.');
       }
-      if (!accepted) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
       if (actionDeadlineExpired()) return expired();
       const range = selection.rangeCount ? selection.getRangeAt(0) : null;
       let active = doc.activeElement;
@@ -2362,12 +2416,33 @@
           || range.endContainer !== rangeBefore.endContainer || range.endOffset !== rangeBefore.endOffset) {
         return failure('The editor focus or selection changed before text insertion.');
       }
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       try {
-        if (!doc.execCommand(command, false, data)) {
+        const execute = () => {
+          const previous = _messageRecipientOwnedInputScope;
+          _messageRecipientOwnedInputScope = ownInputScope?.el === el ? ownInputScope : null;
+          const classBefore = ownInputScope?.el === el
+            ? _nativeChatDraftClassTokens(el.getAttribute('class') || '') : null;
+          const inputCount = ownInputScope?.count;
+          try { return doc.execCommand(command, false, commandData); }
+          finally {
+            _messageRecipientOwnedInputScope = previous;
+            if (classBefore && ownInputScope.count > inputCount) {
+              const classAfter = _nativeChatDraftClassTokens(el.getAttribute('class') || '');
+              if (classAfter) {
+                ownInputScope.classRemovalTokens ||= new Set();
+                for (const token of classAfter) if (!classBefore.has(token)) ownInputScope.classRemovalTokens.add(token);
+              }
+            }
+          }
+        };
+        const inserted = window.__wbPageMonitor?.withLocalDispatch ? window.__wbPageMonitor.withLocalDispatch(execute) : execute();
+        if (!inserted) {
           return failure('The editor rejected native text entry. No DOM replacement was attempted.');
         }
       } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
         return failure(`Native text entry failed: ${error?.message || String(error)}`);
       }
       return null;
@@ -2375,29 +2450,43 @@
 
     const hasNonTextContent = () => !!el.querySelector('img, svg, canvas, video, audio, iframe, object, embed, [contenteditable="false"]');
     const mustClear = clear && (previous !== '' || hasNonTextContent());
-    if (mustClear) {
+    if (mustClear && (!text || semanticEditor)) {
       selectContents(false);
-      const deletionFailure = edit('delete', 'deleteContentBackward');
+      const deletionFailure = await edit('delete', 'deleteContentBackward');
       if (deletionFailure) return deletionFailure;
       await new Promise(resolve => setTimeout(resolve, 30));
       if (actionDeadlineExpired()) return expired();
-      if (!el.isConnected || readText(el) !== '' || hasNonTextContent()) {
+      if (!el.isConnected || String(el.textContent || '') !== '' || hasNonTextContent()) {
         return failure('The editor could not be proven empty. No replacement text was inserted.');
       }
+      if (nativeClearContext) _rememberNativeChatEmptyCaret(el, nativeClearContext);
     }
     if (text) {
       // Keep the legacy append contract, but retain every existing rich-text
       // node instead of assigning textContent for the entire editor.
-      if (!mustClear) selectContents(true);
-      const insertionFailure = edit('insertText', 'insertText', text);
+      // Replace an ordinary editor in one native operation. Deleting first
+      // creates caret/whitespace nodes that can survive the second insertion.
+      if (!semanticEditor || !mustClear) selectContents(!clear && !_nativeChatCaretValueIsEmpty(el));
+      // Chromium's multiline insertText creates empty DIV blocks that add
+      // extra innerText line feeds. Native HTML insertion of escaped literal
+      // text preserves whitespace and undo/input handling without replacing
+      // the editor DOM. The wrapper only formats the newly inserted text.
+      const literal = String(text).replace(/\r\n?/g, '\n')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const insertionFailure = semanticEditor
+        ? await edit('insertText', 'insertText', text)
+        : await edit('insertHTML', 'insertText', text, `<span style="white-space: pre-wrap">${literal}</span>`);
       if (insertionFailure) return insertionFailure;
     }
     await new Promise(resolve => setTimeout(resolve, 30));
     if (actionDeadlineExpired()) return expired();
-    const value = readText(el);
+    if (draftJsEditor && readDraftJsText(el) === null) {
+      return failure('The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+        { recoveryRequired: 'verify_or_restore_field', retryable: false });
+    }
+    const value = readValue();
     const expected = clear ? text : previous + text;
-    // Native editing encodes boundary/repeated spaces as nonbreaking spaces.
-    const normalize = value => value.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+    const normalize = value => String(value).replace(/\r\n?/g, '\n');
     if (!el.isConnected || normalize(value) !== normalize(expected)) {
       return failure('The complete settled rich-text value could not be verified exactly.');
     }
@@ -2518,22 +2607,19 @@
       }
       const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
       if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      if (nativeSetter) nativeSetter.call(el, match.value);
-      else el.value = match.value;
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      const dispatchResult = withLocalPageDispatch(() => {
+        dispatched = true;
+        if (nativeSetter) nativeSetter.call(el, match.value);
+        else el.value = match.value;
+        if (actionDeadlineExpired()) return deadlineFailure();
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        if (actionDeadlineExpired()) return deadlineFailure();
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      if (dispatchResult) return dispatchResult;
       await new Promise(resolve => setTimeout(resolve, 30));
       if (actionDeadlineExpired()) return deadlineFailure();
       return { success: true, ...(el.isConnected && el.value === match.value ? { verified: true } : {}), method: 'select', value: el.value };
-    }
-
-    if (params.clear) {
-      if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      el.value = '';
     }
 
     const proto = el instanceof HTMLTextAreaElement
@@ -2542,17 +2628,19 @@
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
     if (actionDeadlineExpired()) return deadlineFailure();
-    dispatched = true;
-    if (nativeInputValueSetter) {
-      nativeInputValueSetter.call(el, (params.clear ? '' : (el.value || '')) + params.text);
-    } else {
-      el.value = (params.clear ? '' : (el.value || '')) + params.text;
-    }
-
-    if (actionDeadlineExpired()) return deadlineFailure();
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    if (actionDeadlineExpired()) return deadlineFailure();
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    const dispatchResult = withLocalPageDispatch(() => {
+      dispatched = true;
+      if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(el, (params.clear ? '' : (el.value || '')) + params.text);
+      } else {
+        el.value = (params.clear ? '' : (el.value || '')) + params.text;
+      }
+      if (actionDeadlineExpired()) return deadlineFailure();
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      if (actionDeadlineExpired()) return deadlineFailure();
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    if (dispatchResult) return dispatchResult;
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
     if (actionDeadlineExpired()) return deadlineFailure();
 
@@ -2701,6 +2789,7 @@
           : 'window.find reported a match, but WebBrain could not verify a visible current selection in the top document (for example, the active match may be inside a frame while an older top-document selection remains). Do not claim it is visibly highlighted. The browser Find UI was not opened.',
       };
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       return { success: false, found: false, dispatched: false, noDispatch: true, error: `find_text failed: ${error.message || error}` };
     }
   }
@@ -2807,13 +2896,19 @@
       // the same event object on document again would fire those listeners
       // twice per key (double-advancing ARIA listboxes, menus, etc.).
       if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      target.dispatchEvent(down);
-      // A keydown listener may run across the deadline. Always release the
-      // synthetic key before returning the partial-dispatch timeout so pages
-      // that track held keys are not left in a stuck state.
-      const expiredAfterKeydown = actionDeadlineExpired();
-      target.dispatchEvent(up);
+      const expiredAfterKeydown = withLocalPageDispatch(() => {
+        // Private page validation can consume the last part of the budget.
+        // Recheck inside the dispatch callback before emitting keydown.
+        if (actionDeadlineExpired()) return true;
+        dispatched = true;
+        target.dispatchEvent(down);
+        // A keydown listener may run across the deadline. Always release the
+        // synthetic key before returning the partial-dispatch timeout so pages
+        // that track held keys are not left in a stuck state.
+        const expired = actionDeadlineExpired();
+        target.dispatchEvent(up);
+        return expired;
+      });
       if (expiredAfterKeydown) return deadlineFailure();
       if (key === 'Tab' && !moveTabFocus()) return deadlineFailure();
     }
@@ -2905,6 +3000,7 @@
 
     if (target) {
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       if (direction === 'down') target.scrollBy(0, amount);
       else if (direction === 'up') target.scrollBy(0, -amount);
@@ -2916,6 +3012,7 @@
     // Always also scroll the window in case both are needed (some pages have
     // both window and container scrolling).
     if (actionDeadlineExpired()) return deadlineFailure();
+    window.__wbPageMonitor?.beforeLocalDispatch();
     dispatched = true;
     if (direction === 'down') window.scrollBy(0, amount);
     else if (direction === 'up') window.scrollBy(0, -amount);
@@ -3104,6 +3201,7 @@
     if (target) {
       containerBefore = target.scrollTop;
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       scrollElementInstant(target, direction, amount);
       containerAfter = target.scrollTop;
@@ -3114,6 +3212,7 @@
     const shouldScrollWindow = params.alsoWindow === true || !movedContainer;
     if (shouldScrollWindow && windowCanMove) {
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       if (direction === 'down') window.scrollBy(0, amount);
       else if (direction === 'up') window.scrollBy(0, -amount);
@@ -3166,6 +3265,8 @@
     try {
       return smartScrollPage(params, actionDeadlineExpired);
     } catch (e) {
+     if (e?.code === 'page_feedback_pending') throw e;
+      if (e?.code === 'page_feedback_pending') throw e;
       const fallback = legacyScrollPage(params || {}, actionDeadlineExpired);
       return {
         ...fallback,
@@ -3181,6 +3282,68 @@
     const type = params.type || 'tables';
 
     if (type === 'tables') {
+      if (Array.isArray(params.columns)) {
+        const tables = Array.from(document.querySelectorAll('table'));
+        const hasCaption = params.caption !== undefined;
+        const hasIndex = params.table_index !== undefined;
+        if ((hasCaption && (typeof params.caption !== 'string' || !params.caption))
+            || (hasIndex && (!Number.isSafeInteger(params.table_index) || params.table_index < 0))
+            || (hasCaption && hasIndex)) {
+          return { success: false, error: 'Use one exact caption or one nonnegative table_index. No complete export was captured.' };
+        }
+        const matches = typeof params.caption === 'string'
+          ? tables.filter(table => (table.caption?.innerText || '').trim() === params.caption)
+          : Number.isSafeInteger(params.table_index) && params.table_index >= 0
+            ? tables.slice(params.table_index, params.table_index + 1)
+            : tables.length === 1 ? tables : [];
+        if (matches.length !== 1) return { success: false, error: 'Select exactly one table by its exact caption or table_index. No complete export was captured.' };
+        const table = matches[0];
+        const first = params.first_data_row === undefined ? 1 : params.first_data_row;
+        if (!Number.isSafeInteger(first) || first < 0) return { success: false, error: 'first_data_row must be a nonnegative integer.' };
+        const nativeRows = Array.from(table.querySelectorAll('tr')).filter(row => row.closest('table') === table);
+        const cellsOf = row => Array.from(row.querySelectorAll('th,td')).filter(cell => cell.closest('tr') === row)
+          .map(cell => typeof cell.innerText === 'string' ? cell.innerText : cell.textContent || '');
+        // Source headers remain evidence even when the caller includes row zero
+        // or renames a sensitive column in its requested output schema.
+        const headerRows = [];
+        let headerChars = 0;
+        for (const [index, row] of nativeRows.entries()) {
+          if (index !== 0 && row.closest('thead')?.closest('table') !== table
+              && !Array.from(row.querySelectorAll('th')).some(cell => cell.closest('tr') === row)) continue;
+          const cells = cellsOf(row);
+          headerChars += cells.reduce((sum, cell) => sum + cell.length, 0);
+          if (headerRows.length >= 10000 || headerChars > 2000000) {
+            return { success: false, error: 'The source headers exceed the complete snapshot limit. No sampled export is returned.' };
+          }
+          headerRows.push(cells);
+        }
+        const filter = params.row_filter;
+        if (filter !== undefined && (!filter || typeof filter !== 'object' || Array.isArray(filter)
+            || !Number.isSafeInteger(filter.column) || filter.column < 0
+            || !Array.isArray(filter.equals) || filter.equals.length > 10000
+            || filter.equals.some(value => typeof value !== 'string'))) {
+          return { success: false, error: 'row_filter needs a column index and exact string values.' };
+        }
+        const selected = filter ? new Set(filter.equals) : null;
+        const found = new Set();
+        const rows = [];
+        let chars = 0;
+        for (const row of nativeRows.slice(first)) {
+          const cells = cellsOf(row);
+          if (selected && !selected.has(cells[filter.column])) continue;
+          if (selected) found.add(cells[filter.column]);
+          chars += cells.reduce((sum, cell) => sum + cell.length, 0);
+          if (rows.length >= 10000 || chars > 2000000) return { success: false, error: 'The complete table exceeds the snapshot limit. Select explicit rows or fewer data; no sampled export is returned.' };
+          rows.push(cells);
+        }
+        if (selected && [...selected].some(value => !found.has(value))) {
+          return { success: false, error: 'One or more exact row_filter values were not found in the selected table. No complete export was captured.' };
+        }
+        if (!window.__wbAxDocumentToken) window.__wbAxDocumentToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        return { schema: 'webbrain.table-snapshot.v1', success: true,
+          documentToken: window.__wbAxDocumentToken, pageUrl: location.href,
+          tableIndex: tables.indexOf(table), caption: (table.caption?.innerText || '').trim(), headerRows, rows };
+      }
       return Array.from(document.querySelectorAll('table')).slice(0, 10).map((table, i) => {
         const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
           Array.from(tr.querySelectorAll('th, td')).map(cell => cell.innerText.trim())
@@ -3221,6 +3384,7 @@
       try {
         existing = document.querySelector(params.selector);
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         resolve({
           success: false,
           found: false,
@@ -3988,6 +4152,7 @@
           warnings.push(`No element matched selector "${selector}".`);
         }
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         warnings.push(`Invalid selector: ${e.message}`);
       }
     }
@@ -4284,6 +4449,7 @@
     const labelText = String(params?.label || '').trim().slice(0, 100);
     const overlay = document.createElement('div');
     overlay.setAttribute('data-webbrain-dev-highlight', '');
+    (window.__wbPageMonitorDecorations ??= new WeakSet()).add(overlay);
     Object.assign(overlay.style, {
       position: 'fixed',
       pointerEvents: 'none',
@@ -4442,6 +4608,7 @@
           warnings.push(`No element matched selector "${selector}".`);
         }
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         warnings.push(`Invalid selector: ${e.message}`);
       }
     }
@@ -4504,6 +4671,7 @@
             media: sheet.media ? Array.from(sheet.media).join(', ') : '',
           });
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           if (warnings.length < 10) {
             warnings.push(`Could not read stylesheet ${sheet.href || 'inline'}: ${e.name || e.message}`);
           }
@@ -4550,60 +4718,13 @@
 
   function _contentEditableValueMatches(actual, expected) {
     const normalizeNewlines = value => String(value).replace(/\r\n?/g, '\n');
-    const actualText = normalizeNewlines(actual);
-    const expectedText = normalizeNewlines(expected);
-    if (actualText === expectedText) return true;
-
-    // Chromium serializes line feeds inserted into contenteditable fields as
-    // block nodes. An empty line becomes <div><br></div>, and innerText then
-    // exposes one extra newline for each empty block: "a\n\nb" reads back as
-    // "a\n\n\nb". Leading and trailing line feeds are doubled. Accept only
-    // that deterministic expansion while keeping every non-newline character
-    // and every ordinary single line break exact.
-    let actualOffset = 0;
-    let expectedOffset = 0;
-    while (actualOffset < actualText.length || expectedOffset < expectedText.length) {
-      const actualBreak = actualText.indexOf('\n', actualOffset);
-      const expectedBreak = expectedText.indexOf('\n', expectedOffset);
-      const actualTextEnd = actualBreak < 0 ? actualText.length : actualBreak;
-      const expectedTextEnd = expectedBreak < 0 ? expectedText.length : expectedBreak;
-      if (actualText.slice(actualOffset, actualTextEnd) !== expectedText.slice(expectedOffset, expectedTextEnd)) {
-        return false;
-      }
-      if (actualBreak < 0 || expectedBreak < 0) return actualBreak === expectedBreak;
-
-      let actualRunEnd = actualBreak;
-      while (actualText[actualRunEnd] === '\n') actualRunEnd += 1;
-      let expectedRunEnd = expectedBreak;
-      while (expectedText[expectedRunEnd] === '\n') expectedRunEnd += 1;
-      const actualRun = actualRunEnd - actualBreak;
-      const expectedRun = expectedRunEnd - expectedBreak;
-      const boundaryRun = expectedBreak === 0 || expectedRunEnd === expectedText.length;
-      const expandedRun = boundaryRun
-        ? actualRun === expectedRun * 2
-        : expectedRun > 1 && actualRun === (expectedRun * 2) - 1;
-      if (actualRun !== expectedRun && !expandedRun) return false;
-      actualOffset = actualRunEnd;
-      expectedOffset = expectedRunEnd;
-    }
-    return true;
+    return normalizeNewlines(actual) === normalizeNewlines(expected);
   }
 
   function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false, semanticNewlines = false) {
     const expected = clear ? text : previous + text;
     if (!normalizeNewlines) return actual === expected;
-    if (semanticNewlines) return String(actual).replace(/\r\n?/g, '\n') === String(expected).replace(/\r\n?/g, '\n');
-    if (clear) return _contentEditableValueMatches(actual, expected);
-    const normalize = value => String(value).replace(/\r\n?/g, '\n');
-    const actualText = normalize(actual);
-    const previousText = normalize(previous);
-    if (!actualText.startsWith(previousText)) return false;
-    const actualSuffix = actualText.slice(previousText.length);
-    if (!previousText) return _contentEditableValueMatches(actualSuffix, text);
-    // A suffix that begins with a newline is internal to the full editor even
-    // though it is now at the boundary of this sliced comparison. Prefix both
-    // sides with the same marker so Chromium's internal-run rule is applied.
-    return _contentEditableValueMatches(`\u0000${actualSuffix}`, `\u0000${text}`);
+    return _contentEditableValueMatches(actual, expected);
   }
 
   function readProseMirrorText(el) {
@@ -4621,9 +4742,125 @@
     return children.map(read).join('\n');
   }
 
+  function readEmptyCaretText(el) {
+    // A sole BR can be either a browser caret or an authored literal LF.
+    // Generic DOM shape cannot establish which; keep its rendered value.
+    // DraftJS/ProseMirror markers and exact native-clear receipts prove their
+    // own empty state independently. Only a genuinely empty DOM is generic.
+    return el?.isContentEditable && el.childNodes?.length === 0
+      && el.innerText === '' && el.textContent === '' ? '' : null;
+  }
+
+  const _nativeChatEmptyCaretReceipts = new WeakMap();
+
+  function _nativeChatCaretContext(el) {
+    try {
+      const context = window.__wb_get_native_chat_context?.(el);
+      return context && ['telegram', 'whatsapp-self', 'whatsapp'].includes(context.service) ? context : null;
+    } catch { return null; }
+  }
+
+  function _sameNativeChatCaretContext(before, after) {
+    return !!before && !!after && before.id === after.id && before.service === after.service && before.name === after.name
+      && before.root === after.root && before.transcript === after.transcript
+      && before.header === after.header && before.carrier === after.carrier && before.owner === after.owner
+      && before.title === after.title && before.selfMarker === after.selfMarker && before.peerIdentity === after.peerIdentity
+      && before.aliasWitnessSignature === after.aliasWitnessSignature;
+  }
+
+  function _singleEditableCaretBreak(el) {
+    if (!el?.isContentEditable || String(el.textContent || '') !== '') return null;
+    let node = el;
+    for (let depth = 0; depth < 8; depth++) {
+      const children = Array.from(node.childNodes).filter(child => child.nodeType !== 8
+        && !(child.nodeType === 3 && !child.nodeValue));
+      if (children.length !== 1 || children[0].nodeType !== 1) return null;
+      node = children[0];
+      if (node.tagName === 'BR') return node;
+      if (!/^(?:SPAN|DIV|P|B|STRONG|I|EM|U|S)$/.test(node.tagName)
+          || node.getAttribute('contenteditable') === 'false') return null;
+    }
+    return null;
+  }
+
+  function isDraftJsEditor(el) {
+    return !!el?.isContentEditable && (el.classList?.contains('public-DraftEditor-content')
+      || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true'));
+  }
+
+  function readDraftJsText(el) {
+    if (!el?.isContentEditable || !el.childNodes) return null;
+    const roots = Array.from(el.childNodes);
+    if (roots.length !== 1 || roots[0].nodeType !== 1 || roots[0].tagName !== 'DIV'
+        || roots[0].getAttribute('data-contents') !== 'true') return null;
+    let visited = 0;
+    const supported = node => {
+      if (++visited > 4096 || node.shadowRoot || node.hidden || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
+          || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return false;
+      const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+      return !!style && (style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility)
+        && style.opacity !== '0' && style.contentVisibility !== 'hidden');
+    };
+    if (!supported(el) || !supported(roots[0])) return null;
+    const blocks = Array.from(roots[0].childNodes);
+    if (!blocks.length) return null;
+    const texts = [];
+    for (const block of blocks) {
+      if (block.nodeType !== 1 || block.tagName !== 'DIV' || block.getAttribute('data-block') !== 'true'
+          || !block.getAttribute('data-offset-key') || !supported(block)) return null;
+      const children = Array.from(block.childNodes);
+      const body = children[0];
+      if (children.length !== 1 || body?.nodeType !== 1 || body.tagName !== 'DIV'
+          || !body.classList.contains('public-DraftStyleDefault-block')
+          || !body.getAttribute('data-offset-key') || !supported(body)) return null;
+      const leaves = [];
+      const read = (node, depth = 0) => {
+        if (depth > 32 || node.nodeType !== 1 || !supported(node)) return false;
+        if (node.tagName === 'BR') {
+          if (node.getAttribute('data-text') !== 'true' || node.childNodes.length) return false;
+          leaves.push(null); return true;
+        }
+        if (node.tagName !== 'SPAN') return false;
+        const descendants = Array.from(node.childNodes);
+        if (node.getAttribute('data-text') === 'true') {
+          if (!descendants.every(child => child.nodeType === 3)) return false;
+          leaves.push(descendants.map(child => child.nodeValue || '').join('')); return true;
+        }
+        return descendants.length > 0 && descendants.every(child => read(child, depth + 1));
+      };
+      if (!body.childNodes.length || !Array.from(body.childNodes).every(node => read(node))) return null;
+      // DraftJS's sole data-text BR in an empty block is a caret placeholder.
+      // Real document breaks are separators between blocks (or text in leaves).
+      // Mixed BR/text and embeds are unsupported; keep their rendered fallback.
+      const placeholders = leaves.filter(value => value === null).length;
+      if (placeholders && (placeholders !== 1 || leaves.some(value => value !== null && value !== ''))) return null;
+      texts.push(leaves.filter(value => value !== null).join(''));
+    }
+    return texts.join('\n');
+  }
+
+  function _rememberNativeChatEmptyCaret(el, context) {
+    const br = _singleEditableCaretBreak(el);
+    if (br && _sameNativeChatCaretContext(context, _nativeChatCaretContext(el))) {
+      _nativeChatEmptyCaretReceipts.set(el, { context, br });
+    }
+  }
+
+  function _nativeChatCaretValueIsEmpty(el) {
+    const receipt = _nativeChatEmptyCaretReceipts.get(el);
+    if (!receipt) return false;
+    if (receipt.br === _singleEditableCaretBreak(el)
+        && _sameNativeChatCaretContext(receipt.context, _nativeChatCaretContext(el))) return true;
+    _nativeChatEmptyCaretReceipts.delete(el);
+    return false;
+  }
+
   function _editableTextValue(el) {
-    const semantic = readProseMirrorText(el);
-    return semantic !== null ? semantic : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
+    const semantic = isDraftJsEditor(el) ? readDraftJsText(el) : (readProseMirrorText(el) ?? readEmptyCaretText(el));
+    // Only a successful explicit native-chat delete may certify this exact
+    // caret node as empty. Generic editors and authored LF/BR keep raw readback.
+    return semantic !== null ? semantic : _nativeChatCaretValueIsEmpty(el) ? ''
+      : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
   }
 
   // Pick the single commit path for set_field({submit:true}). Synthetic
@@ -4868,6 +5105,225 @@
   }
 
   const _messageRecipientDispatchBindings = new Map();
+  const _nativeChatPreparedDrafts = new Map();
+  const _nativeTelegramReadBindings = new Map();
+  const _nativeIdentityPreparationBindings = new Map();
+  let _nativeTelegramReadOwner = '';
+
+  function _setNativeTelegramReadOwner(value) {
+    const owner = typeof value === 'string' && value.length <= 16000 ? value : '';
+    if (owner === _nativeTelegramReadOwner) return;
+    _nativeTelegramReadOwner = owner;
+    for (const record of _nativeTelegramReadBindings.values()) {
+      record.observer.disconnect(); clearTimeout(record.timer);
+    }
+    _nativeTelegramReadBindings.clear();
+    for (const record of _nativeIdentityPreparationBindings.values()) {
+      record.observer.disconnect(); clearTimeout(record.timer);
+    }
+    _nativeIdentityPreparationBindings.clear();
+  }
+
+  function _nativeTelegramReadRendered(node) {
+    if (!node?.isConnected || node.ownerDocument !== document) return false;
+    const rect = node.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    for (let ancestor = node, depth = 0; ancestor; ancestor = ancestor.parentElement) {
+      if (++depth > 128) return false;
+      const style = getComputedStyle(ancestor);
+      if (ancestor.hidden || ancestor.inert || ancestor.getAttribute('aria-hidden') === 'true'
+          || style.display === 'none' || ['hidden','collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+    }
+    return true;
+  }
+
+  function _nativeTelegramReadControl(target) {
+    const context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context || !_nativeTelegramReadRendered(target)
+        || target.closest('form,[contenteditable="true"],input,textarea,select,a[href],[onclick],[data-action]')) return null;
+    const nativeNodes = [context.root,context.transcript,context.composer,context.header,context.carrier,context.peerIdentity];
+    if (nativeNodes.some(node => !_nativeTelegramReadRendered(node))) return null;
+    const titleTarget = target === context.carrier || target === context.peerIdentity
+      || (target.matches('span.i18n') && target.childElementCount === 0 && context.peerIdentity.contains(target));
+    if (titleTarget && !target.closest('button,[role="button"],[role="menuitem"],[data-action],.emoji-status')) {
+      return {context,target,control:context.carrier,phase:'open_profile',nodes:[...nativeNodes,target]};
+    }
+    const visible = selector => Array.from(document.querySelectorAll(selector)).filter(_nativeTelegramReadRendered);
+    const triggers = visible('#column-left .sidebar-header .sidebar-tools-button.btn-menu-toggle.is-visible');
+    const trigger = triggers.length === 1 ? triggers[0] : null;
+    if (!trigger || !trigger.matches('button,[role="button"]') || trigger.matches(':disabled,[aria-disabled="true"]')) return null;
+    const control = target.closest('button,[role="button"]');
+    if (control === trigger && (target === trigger || (trigger.contains(target) && target.matches('span,svg,path')))) {
+      // Only open a closed native tools menu; never toggle an existing menu a
+      // second time as a fallback for the same prepared action.
+      if (trigger.classList.contains('menu-open')) return null;
+      return {context,target,control:trigger,phase:'open_menu',nodes:[...nativeNodes,trigger,target]};
+    }
+    const openTriggers = visible('.btn-menu-toggle.menu-open');
+    const menus = visible('.btn-menu.active');
+    const menu = menus.length === 1 ? menus[0] : null;
+    if (openTriggers.length !== 1 || openTriggers[0] !== trigger || !menu
+        || menu.parentElement !== document.body || !menu.matches('.bottom-right.was-open')
+        || !control?.matches('.btn-menu-item[role="button"]') || control.parentElement !== menu
+        || control.matches('[aria-disabled="true"]') || !menu.contains(target)) return null;
+    const items = Array.from(menu.children).filter(node => node.matches('.btn-menu-item[role="button"]'));
+    const settings = items.filter(item => {
+      const icons = Array.from(item.querySelectorAll(':scope > .tgico.btn-menu-item-icon')).filter(_nativeTelegramReadRendered);
+      return icons.length === 1 && icons[0].textContent === '\uea22';
+    });
+    if (settings.length !== 1 || settings[0] !== control
+        || _hasMessageCommitName(control.getAttribute('aria-label') || control.textContent || '')) return null;
+    const icon = control.querySelector(':scope > .tgico.btn-menu-item-icon');
+    return {context,target,control,phase:'open_settings',nodes:[...nativeNodes,trigger,menu,control,icon,target]};
+  }
+
+  function _sameNativeTelegramReadContext(before, after) {
+    return !!before && !!after && ['root','transcript','composer','header','carrier','peerIdentity','peer','alias','url','timeOrigin']
+      .every(key => before[key] === after[key]);
+  }
+
+  window.__wb_get_native_telegram_alias_preparation_target = preparation => {
+    try {
+      if (!_sameNativeTelegramReadContext(preparation,window.__wb_get_native_telegram_alias_preparation?.())) return null;
+      // This native hint chooses a read-only affordance; it never certifies
+      // self identity. Ordinary aliases must inspect their current peer profile.
+      const candidates = preparation.peerIdentity?.getAttribute('data-me-as-notes') === '1' ? [
+        ...document.querySelectorAll('body > .btn-menu.active.bottom-right.was-open > .btn-menu-item[role="button"]'),
+        ...document.querySelectorAll('#column-left .sidebar-header .sidebar-tools-button.btn-menu-toggle.is-visible'),
+      ] : [preparation.carrier];
+      for (const target of candidates) {
+        const proof = _nativeTelegramReadControl(target);
+        if (proof && _sameNativeTelegramReadContext(preparation,proof.context)) return {
+          target,phase:proof.phase === 'open_settings' ? 'open_self_settings' : proof.phase,
+        };
+      }
+      return null;
+    } catch { return null; }
+  };
+
+  function _bindNativeTelegramRead(target) {
+    if (!_nativeTelegramReadOwner) return null;
+    const proof = _nativeTelegramReadControl(target);
+    if (!proof) return null;
+    while (_nativeTelegramReadBindings.size >= 8) {
+      const [token, old] = _nativeTelegramReadBindings.entries().next().value;
+      old.observer.disconnect();clearTimeout(old.timer);_nativeTelegramReadBindings.delete(token);
+    }
+    const token = 'wbtr_' + globalThis.crypto.randomUUID();
+    const record = {...proof,owner:_nativeTelegramReadOwner,documentToken:_axDocumentToken(),
+      humanRevision:_messageRecipientHumanRevision,expiresAt:Date.now()+30000,stale:false};
+    record.isMaterial = mutation => _nativeTelegramReadMaterialMutation(record, mutation);
+    record.observer = new MutationObserver(records => { if (records.some(record.isMaterial)) record.stale=true; });
+    record.observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,
+      attributeFilter:_nativeTelegramReadMaterialAttributes});
+    record.timer=setTimeout(()=>{record.observer.disconnect();_nativeTelegramReadBindings.delete(token);},30000);
+    _nativeTelegramReadBindings.set(token,record);
+    return {token};
+  }
+
+  function _consumeNativeTelegramRead(params, target) {
+    const token = String(params.nativeTelegramReadRepairBinding?.token || '');
+    const record = _nativeTelegramReadBindings.get(token);
+    if (record) { _nativeTelegramReadBindings.delete(token); clearTimeout(record.timer); }
+    if (record?.observer.takeRecords().some(record.isMaterial)) record.stale=true;
+    record?.observer.disconnect();
+    const current = _nativeTelegramReadControl(target);
+    return record && !record.stale && record.expiresAt >= Date.now()
+      && record.owner === _nativeTelegramReadOwner && record.owner === params._nativeChatOwner
+      && record.documentToken === _axDocumentToken() && record.humanRevision === _messageRecipientHumanRevision
+      && record.target === target && current?.control === record.control && current?.phase === record.phase
+      && current.nodes.length === record.nodes.length && current.nodes.every((node,index)=>node===record.nodes[index])
+      && _sameNativeTelegramReadContext(record.context,current.context) ? record : null;
+  }
+
+  function _nativeTelegramReadStillCurrent(record) {
+    let context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context && record) {
+      const verified = window.__wb_get_native_chat_context?.(record.context.composer);
+      if (verified?.service === 'telegram' && verified.alias) context = {...verified,
+        composer:record.context.composer,url:location.href,timeOrigin:performance.timeOrigin};
+    }
+    return !!record && record.owner === _nativeTelegramReadOwner
+      && record.documentToken === _axDocumentToken() && record.humanRevision === _messageRecipientHumanRevision
+      && _sameNativeTelegramReadContext(record.context,context);
+  }
+  // Private, read-only adapter evidence captured before inference. It does not
+  // replace the independent one-use recipient/dispatch token obtained later.
+  const _nativeTelegramReadMaterialAttributes = ['class','style','hidden','inert','aria-hidden','data-peer-id','data-thread-id','role','type','href','onclick','data-action','data-action-id',
+    'aria-disabled','aria-label','aria-labelledby','aria-describedby','aria-controls','aria-haspopup','aria-expanded','aria-selected','aria-pressed','aria-checked',
+    'title','disabled','name','id','form','formaction','formmethod','formtarget','action','method','target','download','tabindex','contenteditable','readonly'];
+  function _nativeTelegramReadMaterialMutation(record, mutation) {
+    if (mutation.type === 'attributes') return record.nodes.some(node => mutation.target === node || mutation.target.contains(node))
+      || (mutation.attributeName === 'data-peer-id' && record.context.transcript.contains(mutation.target));
+    // Transcript rows may arrive or be edited during read-only preparation.
+    // Their peer identity is independently rechecked; the exact transcript
+    // container, editor, current header and prepared control remain pinned.
+    const textPins = record.nodes.filter(node => node !== record.context.root && node !== record.context.transcript);
+    if (mutation.type === 'characterData') return textPins.some(node => node.contains(mutation.target));
+    if ([...mutation.removedNodes].some(node => record.nodes.some(pin => node === pin || node.contains?.(pin)))) return true;
+    if (record.context.transcript.contains(mutation.target)) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        const peers = [node, ...node.querySelectorAll('[data-peer-id]')].filter(candidate => candidate.hasAttribute('data-peer-id'));
+        if (peers.length > 256 || peers.some(candidate => candidate.getAttribute('data-peer-id') !== record.context.peer)) return true;
+      }
+    }
+    if (!textPins.some(node => node === mutation.target || node.contains(mutation.target))) return false;
+    const changed = [...mutation.addedNodes, ...mutation.removedNodes];
+    if (record.context.composer === mutation.target || record.context.composer.contains(mutation.target)
+        || record.context.peerIdentity === mutation.target || record.context.peerIdentity.contains(mutation.target)) return changed.length > 0;
+    return changed.some(node => window.__wbPageMonitor?.isReadonlyPreparationDecoration?.(node) !== true);
+  }
+  window.__wb_get_readonly_identity_preparation = (owner, target = null, captureAuthority = null) => {
+    if (!owner || window.__wbPageMonitor?.active !== true) return null;
+    // Only the current pre-inference monitor capture may initialize a cold
+    // private owner. A model parameter or a retained capture cannot adopt it.
+    if (captureAuthority) {
+      if (window.__wbPageMonitor.currentIdentityPreparationCapture?.(captureAuthority, owner) !== true) return null;
+      _setNativeTelegramReadOwner(owner);
+    }
+    if (owner !== _nativeTelegramReadOwner) return null;
+    const context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context) return null;
+    target ||= window.__wb_get_native_telegram_alias_preparation_target?.(context)?.target;
+    const proof = _nativeTelegramReadControl(target);
+    if (!proof || !_sameNativeTelegramReadContext(context, proof.context)) return null;
+    while (_nativeIdentityPreparationBindings.size >= 4) {
+      const [key, old] = _nativeIdentityPreparationBindings.entries().next().value;
+      old.observer.disconnect(); clearTimeout(old.timer); _nativeIdentityPreparationBindings.delete(key);
+    }
+    const token = 'wbip_' + globalThis.crypto.randomUUID();
+    const nodes = [...new Set(proof.nodes)];
+    const record = { ...proof, owner, nodes, documentToken: _axDocumentToken(),
+      humanRevision: _messageRecipientHumanRevision, expiresAt: Date.now() + 120000, stale: false };
+    record.isMaterial = mutation => _nativeTelegramReadMaterialMutation(record, mutation);
+    record.observer = new MutationObserver(records => { if (records.some(record.isMaterial)) record.stale = true; });
+    record.observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
+      attributeFilter: _nativeTelegramReadMaterialAttributes });
+    const snapshot = Object.freeze({ schema: 'webbrain.readonly-identity-preparation/1', readonly: true, owner, token,
+      documentToken: record.documentToken, phase: proof.phase, target, action: proof.control,
+      scope: proof.control.parentElement, nodes: Object.freeze(nodes), identities: Object.freeze([context.peerIdentity]),
+      signature: JSON.stringify([context.peer, context.alias, context.url, context.timeOrigin,
+        record.documentToken, record.humanRevision, proof.phase]), allowedTools: Object.freeze(['click_ax']) });
+    record.snapshot = snapshot;
+    record.timer = setTimeout(() => { record.observer.disconnect(); _nativeIdentityPreparationBindings.delete(token); }, 120000);
+    _nativeIdentityPreparationBindings.set(token, record);
+    return snapshot;
+  };
+  window.__wb_readonly_identity_preparation_matches = snapshot => {
+    const record = _nativeIdentityPreparationBindings.get(snapshot?.token);
+    if (!record || record.snapshot !== snapshot || record.owner !== _nativeTelegramReadOwner
+        || record.expiresAt < Date.now() || window.__wbPageMonitor?.active !== true) return false;
+    if (record.observer.takeRecords().some(record.isMaterial)) record.stale = true;
+    const current = _nativeTelegramReadControl(record.target);
+    const currentNodes = [...new Set(current?.nodes || [])];
+    return !record.stale && record.documentToken === _axDocumentToken()
+      && record.humanRevision === _messageRecipientHumanRevision
+      && current?.control === record.control && current?.phase === record.phase
+      && currentNodes.length === record.nodes.length && currentNodes.every((node, index) => node === record.nodes[index])
+      && _sameNativeTelegramReadContext(record.context, current.context);
+  };
   const _twitterHistoryObservations = new WeakMap();
 
   function _settledTwitterHistory(log, messageIds = []) {
@@ -4938,6 +5394,70 @@
     return _messageRecipientDispatchControl(expected) === _messageRecipientDispatchControl(actual);
   }
 
+  let _messageRecipientHumanRevision = 0;
+  let _messageRecipientOwnedInputScope = null;
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'input', 'change', 'wheel', 'touchmove']) {
+    document.addEventListener(type, event => {
+      if (!event.isTrusted) return;
+      _messageRecipientHumanRevision++;
+      // Only the exact synchronous native writer owns these input events.
+      // Physical keys, pointer/scroll and later input still change the fence.
+      if (type === 'input' && _messageRecipientOwnedInputScope?.el === event.target)
+        _messageRecipientOwnedInputScope.count++;
+    }, true);
+  }
+
+  function _messageRecipientUploadTarget(selector) {
+    if (window !== window.top || typeof selector !== 'string' || !selector.trim()) return null;
+    try {
+      const matches = [];
+      const visit = root => {
+        matches.push(...root.querySelectorAll(selector));
+        for (const el of root.querySelectorAll('*')) if (el.shadowRoot) visit(el.shadowRoot);
+      };
+      visit(document);
+      const target = matches.length === 1 ? matches[0] : null;
+      return target instanceof HTMLInputElement && target.type === 'file'
+        && !target.disabled && !target.matches(':disabled')
+        && target.getAttribute('aria-disabled') !== 'true' && target.isConnected ? target : null;
+    } catch { return null; }
+  }
+
+  function _messageRecipientUploadOwner(target, composer) {
+    if (!target || !composer || target.ownerDocument !== document || composer.ownerDocument !== document) return null;
+    const composerForm = _composedClosestElement(composer, 'form');
+    if (target.form || target.hasAttribute('form')) {
+      const modal = _findTopmostBlockingModal();
+      return target.form && target.form === composerForm
+        && (!modal || (_isComposedAncestor(modal, target) && _isComposedAncestor(modal, composer)))
+        ? target.form : null;
+    }
+    // A hidden input can be a sibling of the editor. Require a local shared
+    // compose container rather than treating the whole page as its owner.
+    for (let owner = _composedParent(target), depth = 0; owner && depth < 8;
+      owner = _composedParent(owner), depth++) {
+      if (owner === document.body || owner === document.documentElement || owner === document) return null;
+      if (owner.nodeType !== 1 || /^(?:MAIN|HTML|BODY)$/.test(owner.tagName)
+          || owner.getAttribute('role') === 'main') continue;
+      if (_isComposedAncestor(owner, composer)) {
+        const modal = _findTopmostBlockingModal();
+        return !modal || _isComposedAncestor(modal, owner) ? owner : null;
+      }
+    }
+    return null;
+  }
+
+  function _messageRecipientUploadInputSignature(target) {
+    return JSON.stringify(['type','accept','multiple','name','id','form','capture','webkitdirectory']
+      .map(name => target?.getAttribute?.(name))
+      .concat([!!target?.disabled, target?.getAttribute?.('aria-disabled'),
+        target?.form?.action || '', target?.form?.method || '']));
+  }
+
+  function _messageRecipientUploadFilesSignature(target) {
+    return JSON.stringify(Array.from(target?.files || []).map(file => [file.name, file.size, file.type, file.lastModified]));
+  }
+
   function _rememberMessageRecipientDispatchBinding(composer, identities, dispatch = {}) {
     const tool = String(dispatch.tool || '');
     const actionTarget = dispatch.actionTarget || null;
@@ -4961,15 +5481,31 @@
           )).filter(value => value.identity && /^(?:to|cc|bcc)$/.test(value.role)).slice(0, 16)
         : [],
       supportsRecipientSets: dispatch.supportsRecipientSets === true,
+      conversationRecipientEvidence: dispatch.conversationRecipientEvidence || null,
       identityKey,
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
+      nativeTelegramBaseline: dispatch.nativeChatMessageBaseline?.complete === true
+        && dispatch.nativeChatMessageBaseline.coverage === 'mounted_native_id_floor'
+        ? Object.freeze({ threadKey: dispatch.nativeChatMessageBaseline.threadKey,
+            messageIds: Object.freeze([...dispatch.nativeChatMessageBaseline.messageIds]) }) : null,
       ...(Array.isArray(dispatch.existingMessageIds) ? { existingMessageIds: [...dispatch.existingMessageIds] } : {}),
       twitterEmptyConversationBaseline: dispatch.twitterEmptyConversationBaseline === true,
       gmailComposeFlow: dispatch.gmailComposeFlow === true,
       composerSubject: String(dispatch.composerSubject || ''),
       composerSubjectAvailable: dispatch.composerSubjectAvailable === true,
       pageUrl: location.href,
+      documentToken: _axDocumentToken(),
+      messageAttachment: dispatch.messageAttachment === true,
+      uploadSourceKey: String(dispatch.uploadSourceKey || ''),
+      uploadOwner: dispatch.messageAttachment === true ? _messageRecipientUploadOwner(actionTarget, composer) : null,
+      uploadInputSignature: dispatch.messageAttachment === true ? _messageRecipientUploadInputSignature(actionTarget) : '',
+      uploadFilesSignature: dispatch.messageAttachment === true ? _messageRecipientUploadFilesSignature(actionTarget) : '',
+      uploadFiles: dispatch.messageAttachment === true ? Array.from(actionTarget.files || []) : [],
+      humanRevision: _messageRecipientHumanRevision,
+      nativeOwner: String(dispatch.nativeOwner || ''),
+      nativeChatBaseline: dispatch.nativeChatMessageBaseline?.complete === true
+        ? JSON.parse(JSON.stringify(dispatch.nativeChatMessageBaseline)) : null,
       timer: null,
     };
     _messageRecipientDispatchBindings.set(token, record);
@@ -4981,11 +5517,143 @@
     return token;
   }
 
+  function _disposeNativeChatDraft(token) {
+    const record = _nativeChatPreparedDrafts.get(token);
+    if (record) { record.observer.disconnect(); clearTimeout(record.timer); }
+    _nativeChatPreparedDrafts.delete(token);
+  }
+
+  // This lease witnesses an owned draft and an explicitly blocked submit
+  // boundary. It never proves that typing had no page-side effect.
+  // This predicate preserves an owned draft for read-only latest repair only.
+  // It cannot authorize Enter or replace the full dispatch validator.
+  function _nativeChatDraftLatestOnly(recipient, params, el) {
+    if (!recipient || recipient.nativeOwner !== params._nativeChatOwner
+        || recipient.humanRevision + (recipient.nativeDraftOwnInputs?.el === el
+          ? recipient.nativeDraftOwnInputs.count : 0) !== _messageRecipientHumanRevision
+        || recipient.documentToken !== _axDocumentToken() || recipient.pageUrl !== location.href
+        || recipient.composer !== el || recipient.actionTarget !== el || !el?.isConnected
+        || typeof params.text !== 'string' || _editableTextValue(el) !== params.text) return false;
+    const native = window.__wb_get_native_chat_context?.(el);
+    if (native?.service !== 'telegram' || native.latestPositionVerified !== true || native.atLatest !== false) return false;
+    // Pending native status is material even when the mounted ID set is unchanged.
+    if (native.transcript.querySelector(native.webA
+        ? '.MessageOutgoingStatus .icon-message-pending,.MessageOutgoingStatus .icon-message-failed'
+        : '.bubble.is-sending,.bubble.is-error,.bubble.is-outgoing')) return false;
+    const identity = _probeMessageRecipientGuard({ tool:'observe_active_conversation', args:{},
+      adapterName:recipient.adapterName,
+      expectedConversationRecipientEvidence:recipient.conversationRecipientEvidence });
+    const baseline = identity.nativeChatMessageBaseline, expected = recipient.nativeTelegramBaseline;
+    return identity.success === true && identity.conclusive === true && identity.messageSend === false
+      && _messageRecipientIdentityKey(identity.strongRecipientCandidates) === recipient.identityKey
+      && identity.messageBody === recipient.messageBody
+      && baseline?.coverage === 'mounted_native_id_floor' && !!expected
+      && baseline.threadKey === expected.threadKey
+      && JSON.stringify(baseline.messageIds) === JSON.stringify(expected.messageIds);
+  }
+
+  function _nativeChatDraftClassTokens(value) {
+    if (typeof value !== 'string' || value.length > 2048) return null;
+    const tokens = value.trim().split(/\s+/).filter(Boolean);
+    return tokens.length <= 128 ? new Set(tokens) : null;
+  }
+
+  // Only one-way cleanup of classes introduced by this exact synchronous
+  // native writer is presentation. Every other class transition is material.
+  function _nativeChatDraftHasMaterialMutation(record, mutations) {
+    if (mutations.length > 256) return true;
+    for (let index = 0; index < mutations.length; index++) {
+      const mutation = mutations[index];
+      if (mutation.type !== 'attributes' || mutation.attributeName !== 'class'
+          || mutation.target !== record.el) return true;
+      const next = mutations.slice(index + 1).find(item => item.type === 'attributes'
+        && item.attributeName === 'class' && item.target === record.el);
+      const before = _nativeChatDraftClassTokens(mutation.oldValue || '');
+      const after = _nativeChatDraftClassTokens(next ? next.oldValue || '' : record.el.getAttribute('class') || '');
+      if (!before || !after || [...after].some(token => !before.has(token))) return true;
+      const retained = [...before].filter(token => after.has(token));
+      if (JSON.stringify(retained) !== JSON.stringify([...after])) return true;
+      const removed = [...before].filter(token => !after.has(token));
+      if (removed.some(token => !record.classRemovalTokens.has(token))) return true;
+      for (const token of removed) record.classRemovalTokens.delete(token);
+    }
+    return false;
+  }
+
+  function _nativeChatDraftCurrent(params, element = null, observeOnly = false) {
+    const token = String(params._nativeChatDraftBinding?.token || '');
+    const record = _nativeChatPreparedDrafts.get(token);
+    if (!record) return null;
+    if (_nativeChatDraftHasMaterialMutation(record, record.observer.takeRecords())) record.changed = true;
+    const el = element || window.__wb_ax_lookup?.(params.ref_id || record.ref);
+    if (record.changed || record.owner !== params._nativeChatOwner || !record.owner
+        || record.humanRevision !== _messageRecipientHumanRevision
+        || record.documentToken !== _axDocumentToken() || record.url !== location.href
+        || record.el !== el || !el?.isConnected
+        || (params.text !== undefined && params.text !== record.body)
+        || _editableTextValue(el) !== record.body) {
+      _disposeNativeChatDraft(token); return null;
+    }
+    if (_validateMessageRecipientDispatchBinding(record.recipient, params, el).success) return record;
+    // Retain only a read-only witness while the same native Telegram viewport
+    // is temporarily away from latest. Dispatch still requires full validation.
+    if (observeOnly && _nativeChatDraftLatestOnly(record.recipient,
+        { ...params, text:record.body }, el)) return { ...record, waitingForLatest:true };
+    _disposeNativeChatDraft(token); return null;
+  }
+
+  function _rememberNativeChatDraft(params, el, recipient) {
+    const native = window.__wb_get_native_chat_context?.(el);
+    if (params._nativeChatDraftPreparation !== true
+        || !recipient?.nativeOwner || recipient.nativeOwner !== params._nativeChatOwner
+        || !recipient.nativeChatBaseline?.complete
+        || !['telegram','whatsapp'].includes(native?.service)
+        || !recipient.conversationRecipientEvidence?.contextNodes?.length
+        || recipient.humanRevision + (recipient.nativeDraftOwnInputs?.el === el
+          ? recipient.nativeDraftOwnInputs.count : 0) !== _messageRecipientHumanRevision
+        || recipient.documentToken !== _axDocumentToken() || recipient.pageUrl !== location.href
+        || recipient.composer !== el || recipient.actionTarget !== el || !el?.isConnected
+        || typeof params.text !== 'string' || _editableTextValue(el) !== params.text
+        || (!_validateMessageRecipientDispatchBinding(recipient, params, el).success
+          && !_nativeChatDraftLatestOnly(recipient, params, el))) return null;
+    while (_nativeChatPreparedDrafts.size >= 8) _disposeNativeChatDraft(_nativeChatPreparedDrafts.keys().next().value);
+    const token = crypto.randomUUID();
+    const record = { el, ref:params.ref_id, body:String(params.text), recipient,
+      owner:params._nativeChatOwner, documentToken:_axDocumentToken(), url:location.href,
+      humanRevision:_messageRecipientHumanRevision, changed:false, observer:null, timer:null,
+      classRemovalTokens:new Set(recipient.nativeDraftOwnInputs?.classRemovalTokens || []) };
+    record.observer = new MutationObserver(mutations => {
+      if (_nativeChatDraftHasMaterialMutation(record, mutations)) record.changed = true;
+    });
+    // Scroll geometry is read again at recovery. Any material node/identity or
+    // draft change, including change-and-return, retires the original lease.
+    for (const node of new Set(recipient.conversationRecipientEvidence.contextNodes)) {
+      record.observer.observe(node, { attributes:true, attributeOldValue:true, attributeFilter:['id','role','aria-label','aria-labelledby','aria-disabled','disabled','contenteditable','data-peer-id','data-list-key','data-testid','data-id','inert','aria-hidden','class'], childList:true, subtree:true, characterData:true });
+    }
+    record.observer.observe(native.transcript, { subtree:true, childList:true, characterData:true, attributes:true, attributeOldValue:true });
+    _nativeChatPreparedDrafts.set(token, record);
+    record.timer = setTimeout(() => _disposeNativeChatDraft(token), 60000);
+    return { token };
+  }
+
   function _consumeMessageRecipientDispatchBinding(params = {}, actualTarget = null) {
     const token = String(params.messageRecipientDispatchBinding?.token || '');
     const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
     if (token) _messageRecipientDispatchBindings.delete(token);
     if (expected?.timer) clearTimeout(expected.timer);
+    const validated = _validateMessageRecipientDispatchBinding(expected, params, actualTarget);
+    if (validated.success === true && window.__wb_get_native_chat_context?.(expected?.composer)?.service === 'whatsapp'
+        && window.__wb_prepare_native_chat_send?.(expected.composer, expected.messageBody) !== true) {
+      const nativeChatReadRepair = window.__wb_native_chat_read_repair?.(expected.composer);
+      return { success: false, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        reasonCode: 'native_chat_baseline_unavailable',
+        ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+        error: nativeChatReadRepair?.message || 'The native WhatsApp live message tail cannot establish a send baseline. Observe the latest messages before sending.' };
+    }
+    return validated;
+  }
+
+  function _validateMessageRecipientDispatchBinding(expected, params = {}, actualTarget = null, afterAttachment = false) {
     let pointTarget = null;
     const pointX = Number(params.dispatchPoint?.x);
     const pointY = Number(params.dispatchPoint?.y);
@@ -4995,6 +5663,16 @@
     const dispatchedTarget = actualTarget || pointTarget;
     if (!expected || !expected.composer?.isConnected || !expected.actionTarget?.isConnected
       || expected.pageUrl !== location.href
+      || expected.documentToken !== _axDocumentToken()
+      || (expected.messageAttachment && (window !== window.top
+        || expected.humanRevision !== _messageRecipientHumanRevision
+        || dispatchedTarget !== expected.actionTarget
+        || params.uploadSourceKey !== expected.uploadSourceKey
+        || _messageRecipientUploadOwner(expected.actionTarget, expected.composer) !== expected.uploadOwner
+        || _messageRecipientUploadInputSignature(expected.actionTarget) !== expected.uploadInputSignature
+        || (!afterAttachment && (_messageRecipientUploadFilesSignature(expected.actionTarget) !== expected.uploadFilesSignature
+          || Array.from(expected.actionTarget.files || []).some((file, index) => file !== expected.uploadFiles[index])
+          || expected.actionTarget.files.length !== expected.uploadFiles.length))))
       || (dispatchedTarget && !_messageRecipientDispatchTargetsMatch(expected.actionTarget, dispatchedTarget))) {
       return {
         success: false,
@@ -5014,6 +5692,8 @@
       adapterName: expected.adapterName,
       expectedRecipients: expected.expectedRecipients,
       supportsRecipientSets: expected.supportsRecipientSets,
+      uploadSourceKey: expected.uploadSourceKey,
+      expectedConversationRecipientEvidence: expected.conversationRecipientEvidence,
     });
     if (live?.dispatchTargetChanged === true) {
       return {
@@ -5030,9 +5710,17 @@
         ? live.strongRecipientCandidates
         : live?.strongIdentityCandidates,
     );
+    if (expected.nativeTelegramBaseline && (live?.nativeChatMessageBaseline?.complete !== true
+        || live.nativeChatMessageBaseline.coverage !== 'mounted_native_id_floor'
+        || live.nativeChatMessageBaseline.threadKey !== expected.nativeTelegramBaseline.threadKey
+        || JSON.stringify(live.nativeChatMessageBaseline.messageIds) !== JSON.stringify(expected.nativeTelegramBaseline.messageIds))) {
+      return { success: false, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        reasonCode: 'native_chat_baseline_changed_before_dispatch',
+        error: 'The latest native Telegram message baseline changed after send preparation. No message was sent. Observe the current conversation before deciding whether to send; the draft may remain in the composer.' };
+    }
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
       || liveIdentityKey !== expected.identityKey
-      || !expected.messageBody
+      || (expected.messageAttachment ? live?.messageAttachment !== true : !expected.messageBody)
       || live?.messageBody !== expected.messageBody
       || (expected.existingMessageIds
         && JSON.stringify(live?.existingMessageIds) !== JSON.stringify(expected.existingMessageIds))
@@ -5051,6 +5739,82 @@
       };
     }
     return { success: true, matched: true };
+  }
+
+  function _attachMessageRecipientBoundUpload(params = {}, deadlineExpired = () => false) {
+    const fail = (error, extra = {}) => ({ success: false, dispatched: false, noDispatch: true,
+      messageRecipientGuard: true, error, ...extra });
+    const target = _messageRecipientUploadTarget(params.selector);
+    const expected = _messageRecipientDispatchBindings.get(String(params.messageRecipientDispatchBinding?.token || ''));
+    if (!target || !expected || expected.tool !== 'upload_file' || expected.actionTarget !== target) {
+      return fail('Attachment blocked because the exact verified file input is unavailable.',
+        { reasonCode: 'recipient_dispatch_binding_stale' });
+    }
+    if (deadlineExpired()) return fail('Upload action deadline expired before attachment.', { deadlineExpired: true });
+    const base64 = params.base64;
+    // Match the existing Firefox upload cap and reject oversized data before
+    // allocation or file assignment. These bytes come from the private source
+    // resolver, never a model argument or page attribute.
+    if (typeof base64 !== 'string' || base64.length > Math.ceil(25 * 1024 * 1024 / 3) * 4) {
+      return fail('Recipient-bound attachment exceeds the 25MB limit or has no file data.');
+    }
+    let file, transfer;
+    try {
+      const binary = atob(base64);
+      if (binary.length > 25 * 1024 * 1024) return fail('Recipient-bound attachment exceeds the 25MB limit.');
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      file = new File([bytes], String(params.filename || 'attachment'),
+        { type: String(params.mimeType || 'application/octet-stream') });
+      transfer = new DataTransfer();
+      transfer.items.add(file);
+    } catch { return fail('Recipient-bound attachment data could not be decoded.'); }
+    const typeCheck = globalThis.__wbFileUploadPolicy?.validateUploadFile(target.getAttribute('accept'), params);
+    if (!typeCheck?.success) return typeCheck || fail('The file type validator is unavailable. Re-observe before attaching.');
+    const pageGuard = params.pageFeedbackGuard;
+    const monitor = window.__wbPageMonitor;
+    if (pageGuard?.operationId) {
+      if (typeof monitor?.activatePreparedDispatch !== 'function' || typeof monitor?.withPreparedDispatch !== 'function') {
+        return fail('The page monitor is unavailable before attachment.', { pageFeedbackPending: true });
+      }
+      monitor.activatePreparedDispatch({ operationId: pageGuard.operationId, kind: 'input', element: target });
+    }
+    if (deadlineExpired()) return fail('Upload action deadline expired before attachment.', { deadlineExpired: true });
+    const guard = _consumeMessageRecipientDispatchBinding(params, target);
+    if (!guard.success) return guard;
+    let dispatched = false;
+    try {
+      const attach = () => {
+        monitor?.beforeLocalDispatch?.({ kind: 'input', target });
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
+        if (!setter) throw new Error('Native file-input assignment is unavailable.');
+        setter.call(target, transfer.files);
+        const assignedFiles = [...target.files || []];
+        dispatched = true;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        // An input handler may synchronously switch a conversation. Never
+        // follow it with a change event against a different recipient.
+        const stillBound = _validateMessageRecipientDispatchBinding(expected, params, target, true);
+        if (!stillBound.success) return { ...stillBound, dispatched: true, noDispatch: false,
+          outcomeUnknown: true, retryable: false };
+        const currentFiles = [...target.files || []];
+        if (assignedFiles.length !== currentFiles.length || assignedFiles.some((file, index) => file !== currentFiles[index])) {
+          return { ...fail('The page changed the attached file during its input handler. Inspect the conversation before retrying.',
+            { reasonCode: 'recipient_upload_file_changed_during_dispatch' }), dispatched: true, noDispatch: false,
+            outcomeUnknown: true, retryable: false };
+        }
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        return { success: true, dispatched: true, file: file.name,
+          attached: { name: file.name, size: file.size }, verified: false,
+          attachmentState: target.isConnected && target.files?.length ? 'input_attached' : 'page_consumed',
+          remoteStateVerified: false };
+      };
+      return pageGuard?.operationId ? monitor.withPreparedDispatch(pageGuard.operationId, attach) : attach();
+    } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
+      return { success: false, dispatched, noDispatch: !dispatched, outcomeUnknown: dispatched,
+        retryable: !dispatched, messageRecipientGuard: true, error: error?.message || String(error) };
+    }
   }
 
   // Above this length the per-candidate rescan below stops being worth its
@@ -5498,7 +6262,36 @@
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
   // the corresponding conversation is active.
-  function _probeMessageRecipientGuard(params = {}) {
+  // Isolated-world, read-only bridge for private pre-inference footprints.
+  // Only controls in the verified composer's own native footer are eligible;
+  // neither runtime params nor the page's main world receive DOM references.
+  window.__wb_get_message_conversation_context = target => {
+    try {
+      if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)
+          || target?.nodeType !== 1 || !target.isConnected || target.ownerDocument !== document) return null;
+      const footer = target.closest('footer');
+      const control = target.closest('button,[role="button"],input,select,textarea,'
+        + '[contenteditable="true"],[contenteditable=""],[role="textbox"]');
+      const excluded = 'aside,nav,search,[role="navigation"],[role="complementary"],[role="search"],'
+        + '[role="searchbox"],[role="log"],[role="listbox"],[role="menu"],'
+        + '[data-message-id],[data-message-direction],[data-outgoing],article';
+      if (!footer || !control || !footer.contains(control) || target.closest(excluded)
+          || /^search$/i.test(control.getAttribute('type') || '')) return null;
+      let context = null;
+      _probeMessageRecipientGuard({ tool: 'observe_active_conversation', adapterName: 'generic-messaging', args: {} }, evidence => {
+        if (evidence?.footer !== footer || evidence.composer?.closest('footer') !== footer
+            || !footer.contains(target) || !evidence.pane.contains(evidence.carrier)) return null;
+        context = Object.freeze({ ...evidence, name: evidence.aliases[0],
+          aliases: Object.freeze([...evidence.aliases]),
+          labelledByNodes: Object.freeze([...evidence.labelledByNodes]),
+          contextNodes: Object.freeze([...evidence.contextNodes]) });
+        return null;
+      });
+      return context;
+    } catch { return null; }
+  };
+
+  function _probeMessageRecipientGuard(params = {}, receiveConversationContext = null) {
     try {
       const tool = String(params.tool || '');
       const observationOnly = tool === 'observe_active_conversation';
@@ -5687,7 +6480,10 @@
       let target = null;
       let dispatchTarget = null;
       let targetResolved = observationOnly || tool === 'press_keys';
-      if (tool === 'click_ax' || tool === 'set_field') {
+      if (tool === 'upload_file') {
+        target = _messageRecipientUploadTarget(args.selector);
+        targetResolved = !!target;
+      } else if (tool === 'click_ax' || tool === 'set_field') {
         const refId = String(args.ref_id || '');
         if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
         targetResolved = !!target;
@@ -6179,8 +6975,32 @@
             && ((_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
                 && (_isEligibleTextClickTarget(control) || verifiedGmailBody))
               || verifiedLinkedInPublicPostControl(control)));
+      const nativeLayoutContext = typeof window.__wb_get_native_chat_context === 'function'
+        ? window.__wb_get_native_chat_context(layoutCandidate) : null;
+      if (!observationOnly && tool === 'click_ax' && targetResolved && params.bindDispatch === true
+          && typeof params._nativeChatOwner === 'string' && params._nativeChatOwner === _nativeTelegramReadOwner) {
+        const nativeTelegramReadRepairBinding = _bindNativeTelegramRead(target);
+        if (nativeTelegramReadRepairBinding) return {success:true,messageSend:false,conclusive:true,
+          nativeTelegramRepair:true,nativeTelegramReadRepairBinding,identityCandidates:[]};
+      }
+      const nativeWhatsappComposer = location.hostname === 'web.whatsapp.com'
+        && layoutCandidate?.matches?.('[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
+      if (nativeWhatsappComposer && nativeLayoutContext?.service !== 'whatsapp-self') {
+        const repair = window.__wb_get_native_whatsapp_repair?.();
+        if (!observationOnly && tool === 'click_ax' && targetResolved
+            && window.__wb_native_whatsapp_repair_action?.(target)) {
+          return { success: true, messageSend: false, conclusive: true, composerAvailable: true,
+            nativeWhatsappRepair: true, identityCandidates: [] };
+        }
+        if (nativeLayoutContext?.service !== 'whatsapp') {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, nativeWhatsappRepairAvailable: !!repair,
+            reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [],
+            error: 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
+        }
+      }
       const layoutComposer = layoutCandidate
-        && (layoutInComposeDialog
+        && (nativeLayoutContext?.service === 'telegram' || layoutInComposeDialog
           || !viewportHeight
           || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
         ? layoutCandidate
@@ -6197,7 +7017,23 @@
           nonMessagingTarget: true, reasonCode: 'non_messaging_target', identityCandidates: [],
         };
       }
-      if (observationOnly) {
+      if (tool === 'upload_file') {
+        composer = layoutComposer;
+        const uploadOwner = _messageRecipientUploadOwner(target, composer);
+        const linkedInPrivateComposer = params.adapterName !== 'linkedin'
+          || (/^\/messaging(?:\/|$)/.test(location.pathname)
+            || !!_composedClosestElement(uploadOwner, '.msg-form,.msg-overlay-conversation-bubble,.msg-convo-wrapper'));
+        const linkedInPublicComposer = params.adapterName === 'linkedin'
+          && (!!_composedClosestElement(composer, '.share-box')
+            || !!uploadOwner?.querySelector?.('[data-control-name="share.post"]'));
+        if (!targetResolved || !composer || !String(params.uploadSourceKey || '')
+            || !uploadOwner || !linkedInPrivateComposer || linkedInPublicComposer) {
+          return { success: true, messageSend: null, conclusive: false,
+            composerAvailable: !!composer, reasonCode: 'recipient_upload_target_unverifiable', identityCandidates: [] };
+        }
+        dispatchTarget = target;
+        messageSend = true;
+      } else if (observationOnly) {
         composer = layoutComposer;
       } else if (tool === 'press_keys') {
         if (!editable(active) || !visible(active) || !layoutComposer) {
@@ -6437,6 +7273,8 @@
       const strongRecipients = [];
       const strongSeen = new Set();
       const observedRecipientCandidates = [];
+      let conversationRecipientEvidence = null;
+      let nativeChatMessageBaseline = null;
       const gmailRecipientMode = params.adapterName === 'gmail';
       const inConversationHeaderBand = (el) => {
         if (headerBandBottom <= 0) return false;
@@ -6461,7 +7299,75 @@
       };
 
       let gmailComposeRoot = null;
-      if (gmailRecipientMode) {
+      const nativeTelegramComposer = /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(location.hostname)
+        && composer.matches?.('.input-message-input[contenteditable="true"],#editable-message-text[contenteditable="true"][role="textbox"]');
+      if (nativeLayoutContext?.service === 'whatsapp') {
+        const context = nativeLayoutContext;
+        const footer = composer.closest('footer');
+        const contextNodes = [context.carrier, context.header, context.root, context.transcript, context.selectedRow, context.selected, context.rowTitle, footer, composer];
+        if (composer !== layoutCandidate || !footer || contextNodes.some(node => !node?.isConnected)) {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, identityCandidates: [], reasonCode: 'native_whatsapp_contact_binding_required' };
+        }
+        conversationRecipientEvidence = { carrier: context.carrier, header: context.header, pane: context.root,
+          footer, composer, labelledByNodes: [], contextNodes, aliases: [context.id, context.name],
+          signature: JSON.stringify([context.id, context.name, location.href,
+            contextNodes.map(node => ['data-testid','aria-selected','aria-label','hidden','inert','aria-hidden'].map(attribute => node.getAttribute(attribute)))]) };
+        const nativeRows = Array.from(context.transcript.querySelectorAll('[role="row"] [data-id][data-testid^="conv-msg-"]'));
+        const nativeIds = nativeRows.map(node => node.getAttribute('data-id'));
+        const pendingNative = nativeRows.some(node => node.querySelector('[data-icon="tail-out"]')
+          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]')).some(status => /^(?:read|delivered)$/i.test(compact(status.getAttribute('aria-label')))));
+        nativeChatMessageBaseline = { schema: 'webbrain-native-opaque-baseline/1', threadKey: 'dom:' + context.id,
+          documentEpoch: context.documentEpoch, timeOrigin: context.timeOrigin, url: context.url,
+          tailId: context.id + ':' + nativeIds.at(-1),
+          messageIds: nativeIds.map(id => context.id + ':' + id),
+          complete: context.atLatest && nativeRows.length > 0 && nativeRows.length <= 200
+            && nativeIds.every((id, index) => id && nativeRows[index].getAttribute('data-testid') === 'conv-msg-' + id)
+            && new Set(nativeIds).size === nativeIds.length && !pendingNative };
+        strongIdentities.push(context.id);
+        strongRecipients.push({ identity: context.id, role: 'to' });
+        observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name] });
+      } else if (nativeTelegramComposer) {
+        const context = typeof window.__wb_get_native_chat_context === 'function'
+          ? window.__wb_get_native_chat_context(composer) : null;
+        const modal = typeof _findTopmostBlockingModal === 'function' ? _findTopmostBlockingModal() : null;
+        if (context?.service !== 'telegram' || !context.carrier || !context.header
+            || (modal && (!modal.contains(composer) || !modal.contains(context.header)))) {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, identityCandidates: [], strongIdentityCandidates: [],
+            error: 'The native Telegram route, header, composer and transcript do not identify one active peer.' };
+        }
+        if (!observationOnly && messageSend === true && context.atLatest !== true) {
+          const nativeChatReadRepair = window.__wb_native_chat_read_repair?.(composer);
+          return { success: true, messageSend: null, conclusive: false, composerAvailable: true,
+            identityCandidates: [], strongIdentityCandidates: [], reasonCode: 'native_telegram_latest_required',
+            ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+            error: nativeChatReadRepair?.message || 'The native Telegram latest message position is not verified. Observe its latest messages before sending.' };
+        }
+        const footer = composer.parentElement;
+        const contextNodes = new Set([context.carrier, context.header, context.root, context.transcript, context.scrollPane, context.latestMarker, footer, composer,
+          ...(context.aliasWitnessNodes ? [context.peerIdentity, ...context.aliasWitnessNodes] : [])].filter(Boolean));
+        for (const start of [context.carrier, composer]) {
+          for (let node = start.parentElement; node && node !== context.root; node = node.parentElement) contextNodes.add(node);
+        }
+        const identityAttributes = ['id','role','aria-hidden','inert','data-peer-id','data-list-key'];
+        conversationRecipientEvidence = { carrier: context.carrier, header: context.header, pane: context.root,
+          footer, composer, labelledByNodes: [], contextNodes: [...contextNodes],
+          signature: JSON.stringify([context.id, context.name, location.href,
+            ...(context.aliasWitnessSignature ? [context.aliasWitnessSignature] : []),
+            [...contextNodes].map(node => identityAttributes.map(attribute => node.getAttribute(attribute)))]) };
+        nativeChatMessageBaseline = window.__wb_get_native_telegram_message_baseline?.(composer) || null;
+        if (!observationOnly && messageSend === true && nativeChatMessageBaseline?.complete !== true) {
+          return { success: true, messageSend: null, conclusive: false, composerAvailable: true,
+            nativeChatMessageBaseline, identityCandidates: [], strongIdentityCandidates: [],
+            reasonCode: 'native_telegram_baseline_unavailable',
+            error: 'The native latest Telegram message IDs or pending statuses cannot establish a send baseline. Observe the current conversation before sending; do not repeat an uncertain send.' };
+        }
+        strongIdentities.push(context.id);
+        strongRecipients.push({ identity: context.id, role: 'to' });
+        observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name,
+          ...(context.alias ? [context.alias, '@' + context.alias] : [])] });
+      } else if (gmailRecipientMode) {
         const recipientRole = (el, root = null) => {
           const roleFromAttribute = (attribute, value) => {
             const text = compact(value, 120).toLowerCase();
@@ -6724,11 +7630,99 @@
           addStrongIdentity(el);
           if (strongIdentities.length >= 8) break;
         }
+        if (!strongIdentities.length && params.adapterName === 'generic-messaging'
+            && params.supportsRecipientSets !== true) {
+          // Some conversation headers expose the contact name as a button
+          // rather than a heading. A shared local header/footer pane proves
+          // ownership; a page-wide button or a sidebar name proves nothing.
+          try {
+            const footer = composer.closest?.('footer');
+            const excluded = 'aside,nav,[role="navigation"],[role="complementary"],[role="log"],'
+              + '[role="listbox"],[role="menu"],[role="toolbar"],[data-message-id],[data-message-direction],[data-outgoing],article';
+            const actionLabel = /^(?:call(?:\s|$)|(?:voice|video|audio)\s+call(?:\s|$)|search(?:\s|$)|menu(?:\s|$)|more(?:\s|$)|settings(?:\s|$)|back(?:\s|$)|close(?:\s|$)|arama(?:\s|$)|ara(?:\s|$)|suchen(?:\s|$)|rechercher(?:\s|$)|buscar(?:\s|$)|llamar(?:\s|$)|appel(?:\s|$))/iu;
+            if (footer && !footer.closest(excluded)) {
+              for (let pane = footer.parentElement, depth = 0; pane && depth < 8
+                && pane !== document.body && pane !== document.documentElement; pane = pane.parentElement, depth++) {
+                if (pane.closest(excluded)) break;
+                const ownedHeader = header => {
+                  let branch = header;
+                  for (let level = 0; level < 4; level++) {
+                    const parent = branch.parentElement;
+                    if (parent === pane) return true;
+                    if (parent?.tagName !== 'DIV' || parent.children.length !== 1) return false;
+                    branch = parent;
+                  }
+                  return false;
+                };
+                const headers = Array.from(pane.querySelectorAll('header')).filter(header => (
+                  ownedHeader(header) && visible(header) && !footer.contains(header) && !header.closest(excluded)
+                    && inConversationHeaderBand(header) && !independentScrollableRegion(header, composer)
+                ));
+                if (!headers.length) continue;
+                // Stop at the closest pane with a header, including when its
+                // evidence is ambiguous. A broader app header cannot rescue it.
+                if (headers.length !== 1 || composerCandidates.some(editor => editor !== composer
+                    && pane.contains(editor) && !composer.contains(editor) && !editor.contains(composer)
+                    && !verifiedNavigationEditable(editor))) break;
+                const header = headers[0];
+                const modal = typeof _findTopmostBlockingModal === 'function' ? _findTopmostBlockingModal() : null;
+                if (modal && (!modal.contains(composer) || !modal.contains(header))) break;
+                const contacts = Array.from(header.querySelectorAll('button,[role="button"]')).filter(control => {
+                  if (!visible(control) || editable(control) || control.closest('header') !== header
+                      || control.closest(excluded) || control.disabled || control.getAttribute('aria-disabled') === 'true'
+                      || control.form || control.hasAttribute('form') || !inConversationHeaderBand(control)
+                      || independentScrollableRegion(control, composer)) return false;
+                  const name = String(control.innerText || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+                  const labels = [name, control.getAttribute('aria-label'), control.getAttribute('title')].filter(Boolean);
+                  return !!name && name.length <= 120 && !labels.some(label => actionLabel.test(String(label).trim())
+                    || _hasMessageCommitName(label) || _COMPOSER_UTILITY_LABEL_RE.test(String(label).trim()));
+                });
+                if (contacts.length !== 1) break;
+                const carrier = contacts[0];
+                const name = compact(carrier.innerText, 120);
+                const labelledByNodes = [];
+                let labelledByValid = true;
+                for (const id of String(composer.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+                  const matches = composer.getRootNode().querySelectorAll(`[id="${CSS.escape(id)}"]`);
+                  if (matches.length !== 1) { labelledByValid = false; break; }
+                  labelledByNodes.push(matches[0]);
+                }
+                if (!labelledByValid) break;
+                const identityAttributes = ['id','role','aria-label','title','aria-labelledby','aria-hidden','inert',
+                  'data-recipient-id','data-conversation-id','data-thread-id','data-chat-id'];
+                const contextNodes = new Set([carrier, header, pane, footer, composer]);
+                for (const start of [carrier, composer]) {
+                  for (let node = start.parentElement; node && node !== pane; node = node.parentElement) contextNodes.add(node);
+                }
+                conversationRecipientEvidence = { carrier, header, pane, footer, composer, labelledByNodes, contextNodes: [...contextNodes],
+                  signature: JSON.stringify([name,
+                    [...contextNodes].map(node => identityAttributes.map(attribute => node.getAttribute(attribute))),
+                    ['aria-label','aria-labelledby','placeholder','title'].map(attribute => composer.getAttribute(attribute)),
+                    labelledByNodes.map(node => node.textContent)]) };
+                strongIdentities.push(name);
+                const phone = String(composer.getAttribute('aria-label') || '').trim()
+                  .match(/^(?:type|write|send)\s+(?:a\s+)?message\s+to\s+(\+?[\d ()-]{7,32})$/i)?.[1]?.trim() || '';
+                const phoneDigits = phone.replace(/\D/g, '').length;
+                conversationRecipientEvidence.aliases = phone && phoneDigits >= 7 && phoneDigits <= 15
+                  ? [name, phone] : [name];
+                break;
+              }
+            }
+          } catch { /* An unsupported header remains unverified. */ }
+        }
         for (const identity of strongIdentities) {
-          const item = { identity, role: 'to', aliases: [identity] };
+          const item = { identity, role: 'to', aliases: conversationRecipientEvidence?.aliases || [identity] };
           strongRecipients.push({ identity, role: 'to' });
           observedRecipientCandidates.push(item);
         }
+      }
+
+      // The isolated monitor reads this exact local proof synchronously. Its
+      // closure-only callback never participates in the public message API,
+      // authorizes an action, or needs the expensive message-history scan.
+      if (typeof receiveConversationContext === 'function') {
+        return receiveConversationContext(observationOnly && params.adapterName === 'generic-messaging'
+          && params.supportsRecipientSets !== true ? conversationRecipientEvidence : null);
       }
 
       // ── Generic recipient discovery (every site) ────────────────────────
@@ -6829,6 +7823,19 @@
         } catch { /* chip read is best-effort */ }
       }
 
+      const expectedConversation = params.expectedConversationRecipientEvidence;
+      if (expectedConversation && (!conversationRecipientEvidence
+          || ['carrier','header','pane','footer'].some(key => expectedConversation[key] !== conversationRecipientEvidence[key])
+          || expectedConversation.signature !== conversationRecipientEvidence.signature
+          || expectedConversation.contextNodes.length !== conversationRecipientEvidence.contextNodes.length
+          || expectedConversation.contextNodes.some((node, index) => node !== conversationRecipientEvidence.contextNodes[index])
+          || expectedConversation.labelledByNodes.length !== conversationRecipientEvidence.labelledByNodes.length
+          || expectedConversation.labelledByNodes.some((node, index) => node !== conversationRecipientEvidence.labelledByNodes[index]))) {
+        return { success: false, messageSend: null, conclusive: false, dispatchTargetChanged: true,
+          identityCandidates: [], strongIdentityCandidates: [],
+          error: 'The verified conversation header or composer destination changed before dispatch.' };
+      }
+
       const composerText = (() => {
         try {
           if ('value' in composer) return String(composer.value || '');
@@ -6864,7 +7871,7 @@
       );
       const messageRecipientDispatchToken = params.bindDispatch === true
         && messageSend === true
-        && !!messageBody
+        && (tool === 'upload_file' || !!messageBody)
         && (!twitterConversation || twitterBaselineComplete)
         && (params.supportsRecipientSets === true
           ? strongRecipients.length > 0
@@ -6876,8 +7883,13 @@
             adapterName: params.adapterName,
             expectedRecipients: params.expectedRecipients,
             supportsRecipientSets: params.supportsRecipientSets,
+            conversationRecipientEvidence,
             messageBody,
             messageBodyBaselineCount,
+            nativeChatMessageBaseline,
+            nativeOwner: params._nativeChatOwner,
+            messageAttachment: tool === 'upload_file',
+            uploadSourceKey: params.uploadSourceKey,
             ...(twitterConversation ? {
               existingMessageIds: twitterMessageIds,
               ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
@@ -6896,6 +7908,8 @@
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
         composerAvailable: true,
+        ...(nativeChatMessageBaseline ? { nativeChatMessageBaseline } : {}),
+        ...(tool === 'upload_file' ? { messageAttachment: true } : {}),
         ...(composerRef ? { composerRef } : {}),
         composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
         messageBody,
@@ -6922,6 +7936,7 @@
           : {}),
       };
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       return {
         success: false,
         messageSend: null,
@@ -6937,7 +7952,7 @@
 
   // --- Message handler ---
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.target !== 'content') return;
+    if (msg.target !== 'content' || msg.action?.startsWith('page_monitor_')) return;
     // Only the newest installed copy answers. An orphaned copy from a
     // previous extension load still has a live DOM but a dead runtime
     // context — it receives this message and can never respond, which used
@@ -6966,10 +7981,19 @@
       return;
     }
 
+    if (location.hostname === 'web.whatsapp.com'
+        && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
+      window.__wb_update_native_chat_owner?.(msg.params?._nativeChatOwner || '', msg.params?._nativeChatPendingRestore || null);
+    }
+    if (location.hostname === 'web.telegram.org' && /^\/k\/?$/.test(location.pathname)
+        && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
+      _setNativeTelegramReadOwner(msg.params?._nativeChatOwner || '');
+    }
+
     const handlers = {
       'jev_validate_target': () => ({ success: !!jevBinding }),
       'get_page_info': () => getPageInfo(),
-      'get_page_info_cdp': () => getPageInfoFull(msg.params || {}),
+      'get_page_info_cdp': () => ({ ...getPageInfoFull(msg.params || {}), tableCount: document.querySelectorAll('table').length }),
       'get_interactive_elements': () => getInteractiveElements(),
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(),
       'get_file_input_targets': () => getFileInputTargets(),
@@ -6980,6 +8004,7 @@
       'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
       'consume_message_recipient_dispatch_binding': () => _consumeMessageRecipientDispatchBinding(msg.params || {}),
+      'attach_message_recipient_bound_upload': () => _attachMessageRecipientBoundUpload(msg.params || {}, actionDeadlineExpired),
       'prepare_focused_type_dispatch': () => _prepareFocusedTypeDispatch(msg.params || {}),
       'verify_focused_type_dispatch': () => _verifyFocusedTypeDispatch(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
@@ -6992,15 +8017,18 @@
         }
         const params = msg.params && typeof msg.params === 'object' ? msg.params : {};
         const probe = _probeMessageRecipientGuard({ ...params, tool: 'observe_active_conversation', args: {} });
-        return window.__wb_observe_chat_dom({ ...params, probe });
+        const observation = window.__wb_observe_chat_dom({ ...params, probe });
+        const draft = _nativeChatDraftCurrent(params, null, true);
+        return { ...observation, ...(draft ? (draft.waitingForLatest
+          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}) };
       },
       'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
       'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),
       'extract_data': () => extractData(msg.params || {}),
       'inspect_element_styles': () => inspectElementStyles(msg.params || {}),
-      'patch_element': () => patchDevElement(msg.params || {}),
-      'revert_patch': () => revertDevElementPatch(msg.params || {}),
-      'highlight_element': () => highlightDevElement(msg.params || {}),
+      'patch_element': () => { window.__wbPageMonitor?.beforeLocalDispatch(); return patchDevElement(msg.params || {}); },
+      'revert_patch': () => { window.__wbPageMonitor?.beforeLocalDispatch(); return revertDevElementPatch(msg.params || {}); },
+      'highlight_element': () => { window.__wbPageMonitor?.beforeLocalDispatch(); return highlightDevElement(msg.params || {}); },
       // Internal bridge used by inspect_event_listeners. The temporary DOM
       // marker lets CDP resolve the exact ref_id target, including nodes in
       // open shadow roots, and is removed in a finally block by agent.js.
@@ -7014,6 +8042,7 @@
         try {
           return { success: true, started: startAttentionFlash() };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error?.message || String(error) };
         }
       },
@@ -7022,6 +8051,7 @@
           stopAttentionFlash();
           return { success: true };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error?.message || String(error) };
         }
       },
@@ -7086,6 +8116,7 @@
             refScopeUrl,
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { error: 'Failed to build accessibility tree: ' + (e && e.message || String(e)) };
         }
       },
@@ -7113,6 +8144,7 @@
             refScopeUrl: location.href,
           };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error?.message || String(error) };
         }
       },
@@ -7172,8 +8204,9 @@
             );
           }
           if (!_isFullyVisibleForInteraction(el)) {
-            try { _scrollElementIntoClearView(el); } catch {}
+            try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           }
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
           if (!el.isConnected || rect.width < 1 || rect.height < 1) {
@@ -7313,6 +8346,7 @@
                 messageDispatched: false,
                 messageRecipientGuard: true,
                 reasonCode: recipientValidation.reasonCode,
+                ...(recipientValidation.nativeChatReadRepair ? { nativeChatReadRepair: recipientValidation.nativeChatReadRepair } : {}),
               });
             }
           }
@@ -7322,6 +8356,25 @@
               { deadlineExpired: true, retryable: true },
             );
           }
+          if (msg.params?._prepareTrustedNativeButton === true) {
+            // Preparation never clicks. The Agent only selects this path for a
+            // model-certified, non-recipient-bound top-level native BUTTON.
+            if (tag !== 'button') return msg.params._requireTrustedNativeButton === true
+              ? failure('The exact target is no longer a native button.')
+              : { success: true, nativeButton: false, dispatched: false, noDispatch: true };
+            const visibility = _axFallbackVisibility(el);
+            const x = Math.round(rect.left + rect.width / 2), y = Math.round(rect.top + rect.height / 2);
+            const hit = _shadowAwareElementFromPoint(x, y);
+            if (!visibility.visible || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight
+                || !hit || !_isComposedAncestor(el, hit) || _axInteractiveHitDescendant(el, hit)) {
+              return failure('The native button is hidden, covered or has an ambiguous physical target. Re-observe before clicking.');
+            }
+            return { success: true, trustedButtonRequired: true, dispatched: false, noDispatch: true,
+              ref_id, tag, name: String(targetName || '').slice(0, 160), preparedActive, buttonStrongState: fallbackStateBefore.strong,
+              buttonDisabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+              documentToken, refScopeUrl: location.href, x, y,
+              rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) } };
+          }
           rememberInteractionPoint(el, 'click_ax');
           const syntheticClickStartedAt = Date.now();
           if (actionDeadlineExpired()) {
@@ -7330,11 +8383,24 @@
               { deadlineExpired: true, retryable: true },
             );
           }
-          dispatched = true;
           const syntheticClickDispatchStartedAt = performance.now();
-          const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+          let nativeWhatsappRepairSnapshot = null;
+          let nativeTelegramReadRecord = null;
+          const filePickerGuard = withLocalPageDispatch(() => {
+            if (msg.params?._nativeTelegramReadRepairRequired === true) {
+              nativeTelegramReadRecord = _consumeNativeTelegramRead(msg.params,el);
+              if (!nativeTelegramReadRecord || actionDeadlineExpired()) return {nativeTelegramReadBlocked:true};
+            }
+            nativeWhatsappRepairSnapshot = window.__wb_native_whatsapp_repair_snapshot?.(el) || null;
+            window.__wb_prepare_native_chat_contact?.(el);
+            dispatched = true;
+            return clickWithoutNativeFilePicker(() => el.click());
+          });
           const syntheticClickDispatchMs = Math.max(0, performance.now() - syntheticClickDispatchStartedAt);
           const fallbackStateAfterImmediate = _axFallbackState(el);
+          if (filePickerGuard.nativeTelegramReadBlocked) return failure(
+            'The native Telegram profile preparation changed. Re-observe the current chat and choose its exact native read-only control.',
+            {reasonCode:'native_telegram_read_preparation_stale'});
           if (filePickerGuard.blocked) {
             return failure(
               filePickerBlockedResponse(filePickerGuard.blocked, targetName || '').error,
@@ -7361,6 +8427,9 @@
             const resp = {
               success: true,
               method: 'click_ax',
+              ...(window.__wb_native_whatsapp_repair_matches?.(nativeWhatsappRepairSnapshot)
+                ? { _nativeWhatsappReadRepair: true } : {}),
+              ...(_nativeTelegramReadStillCurrent(nativeTelegramReadRecord) ? {_nativeTelegramReadRepair:true} : {}),
               ref_id,
               tag,
               _preparedActive: preparedActive,
@@ -7477,6 +8546,7 @@
                 try {
                   resolve(buildResponse());
                 } catch (e) {
+                  if (e?.code === 'page_feedback_pending') throw e;
                   resolve(failure(e && e.message || String(e)));
                 }
               }, responseDelayMs);
@@ -7484,6 +8554,7 @@
           }
           return buildResponse();
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
       },
@@ -7542,6 +8613,7 @@
               }
               markedTarget = marked[0];
             } catch (error) {
+              if (error?.code === 'page_feedback_pending') throw error;
               return failure(`Trusted checkbox marker cleanup failed: ${error?.message || error}`);
             }
           }
@@ -7556,8 +8628,9 @@
             return failure(`set_checked only supports native input[type="checkbox"] controls; ${ref_id} resolved to ${tag || 'unknown'}${inputType ? `[type="${inputType}"]` : ''}.`);
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { _scrollElementIntoClearView(el); } catch {}
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           const rect = el.getBoundingClientRect();
@@ -7631,8 +8704,10 @@
             };
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          dispatched = true;
-          el.click();
+          withLocalPageDispatch(() => {
+            dispatched = true;
+            el.click();
+          });
           if (actionDeadlineExpired()) return deadlineFailure();
           const checkedAfter = !!el.checked;
           const success = checkedAfter === checked;
@@ -7664,6 +8739,7 @@
             }),
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
       },
@@ -7704,7 +8780,7 @@
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { _scrollElementIntoClearView(el); } catch {}
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -7719,11 +8795,19 @@
             } catch { return null; }
           })();
           const fieldMeta = _fieldMeta(el);
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'fresh_tree', retryable: false },
+          );
           let previous = '';
           let method = '';
           let selectExpected = null;
           if (el.isContentEditable) {
             previous = _editableTextValue(el);
+            if (readProseMirrorText(el) === null) {
+              const native = await _insertContentEditableText(el, text, !!clear, actionDeadlineExpired);
+              return { ...native, ref_id, rect: typeRect, fieldMeta };
+            }
             return failure(
               'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
               {
@@ -7768,6 +8852,7 @@
                 return failure(`No <option> matching "${text}" in select ref_id ${ref_id}.`);
               }
               if (actionDeadlineExpired()) return deadlineFailure();
+              window.__wbPageMonitor?.beforeLocalDispatch();
               dispatched = true;
               const selSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
               if (selSetter) selSetter.call(el, match.value); else el.value = match.value;
@@ -7779,6 +8864,7 @@
               method = 'type_ax_select';
             } else {
               if (actionDeadlineExpired()) return deadlineFailure();
+              window.__wbPageMonitor?.beforeLocalDispatch();
               dispatched = true;
               previous = el.value || '';
               if (clear) el.value = '';
@@ -7809,10 +8895,14 @@
               { ref_id, verified: false, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false, fieldMeta },
             );
           }
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
+          );
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verified = selectExpected !== null
             ? actual === selectExpected
-            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, readProseMirrorText(el) !== null);
+            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
           const fallbackAttempted = false;
           if (!verified) {
             return failure(
@@ -7843,12 +8933,16 @@
             fallbackAttempted,
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
       },
       'set_field': async () => {
         let dispatched = false;
         let submissionDispatched = false;
+        let submissionBlockedBeforeDispatch = false;
+        let submissionBlockReason = '';
+        let nativeDraftBinding = null;
         const failure = (error, extra = {}) => ({
           success: false,
           error,
@@ -7891,7 +8985,17 @@
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { _scrollElementIntoClearView(el); } catch {}
+          const recoveringDraft = msg.params?._nativeChatDraftBinding
+            ? _nativeChatDraftCurrent(msg.params, el) : null;
+          if (msg.params?._nativeChatDraftBinding && !recoveringDraft) return failure(
+            'The owned draft changed before recovery. Observe the conversation and reconcile the remaining draft.',
+            { reasonCode:'native_chat_draft_changed', submitted:false, submissionDispatched:false });
+          const preparedRecipient = msg.params?._nativeChatDraftPreparation === true
+            ? _messageRecipientDispatchBindings.get(String(msg.params?.messageRecipientDispatchBinding?.token || ''))
+            : null;
+          const originalRecipient = preparedRecipient
+            ? { ...preparedRecipient, nativeDraftOwnInputs:{ el, count:0 } } : null;
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -7923,9 +9027,22 @@
             return failure(`ref_id ${ref_id} is not a text field (tag=${el.tagName}). set_field works on input/textarea/contenteditable only.`);
           }
           const fieldMeta = _fieldMeta(el);
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'fresh_tree', retryable: false },
+          );
           let prevValue = '';
-          if (el.isContentEditable) {
+          let pageHandledBeforeInput = false;
+          if (recoveringDraft) {
             prevValue = _editableTextValue(el);
+          } else if (el.isContentEditable) {
+            prevValue = _editableTextValue(el);
+            if (readProseMirrorText(el) === null) {
+              const native = await _insertContentEditableText(el, text, clear, actionDeadlineExpired, originalRecipient?.nativeDraftOwnInputs);
+              if (!native.success) return { ...native, ref_id, rect, fieldMeta };
+              dispatched = native.dispatched === true;
+              pageHandledBeforeInput = native.pageHandledBeforeInput === true;
+            } else {
             return failure(
               'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
               {
@@ -7939,8 +9056,10 @@
                 _expectedValue: (clear ? '' : prevValue) + text,
               },
             );
+            }
           } else {
             if (actionDeadlineExpired()) return deadlineFailure();
+            window.__wbPageMonitor?.beforeLocalDispatch();
             dispatched = true;
             prevValue = el.value || '';
             const proto = el.tagName === 'TEXTAREA'
@@ -7967,8 +9086,12 @@
               { ref_id, verified: false, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
             );
           }
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
+          );
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, readProseMirrorText(el) !== null);
+          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
           const fallbackAttempted = false;
           let nativeSubmitAttempted = false;
           let submissionOutcomeUnknown = false;
@@ -8004,7 +9127,9 @@
                 const result = { dispatched: false, completedWithinDeadline: false };
                 if (actionDeadlineExpired()) return result;
                 const eventInit = { key, code: key, keyCode, bubbles: true, cancelable: true };
+                window.__wbPageMonitor?.beforeLocalDispatch();
                 result.dispatched = true;
+                if (key === 'Enter') submissionDispatched = true;
                 el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
                 const expiredAfterKeydown = actionDeadlineExpired();
                 if (!expiredAfterKeydown && includeKeypress) {
@@ -8022,15 +9147,33 @@
               const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
               let submissionObserved = false;
               let submissionCancelled = false;
+              if (recoveringDraft) {
+                if (!_nativeChatDraftCurrent(msg.params, el)) return failure(
+                  'The owned draft changed during action preparation. Observe it again before sending.',
+                  { reasonCode:'native_chat_draft_changed', submitted:false, submissionDispatched:false });
+                _disposeNativeChatDraft(msg.params._nativeChatDraftBinding.token);
+              }
               if (msg.params?.messageRecipientGuardRequired === true) {
                 const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
+                  submissionBlockedBeforeDispatch = true;
+                  submissionBlockReason = recipientValidation.reasonCode;
+                  nativeDraftBinding = !pageHandledBeforeInput
+                    ? _rememberNativeChatDraft(msg.params, el, originalRecipient) : null;
                   return failure(recipientValidation.error, {
                     verified: true,
                     submitted: false,
                     messageDispatched: false,
+                    submissionDispatched: false,
+                    submissionOutcomeUnknown: false,
+                    submissionBlockedBeforeDispatch: true,
+                    submissionBlockReason,
+                    draftMutationDispatched: dispatched,
+                    outcomeUnknown: dispatched,
+                    ...(nativeDraftBinding ? { _nativeChatDraftBinding: nativeDraftBinding } : {}),
                     messageRecipientGuard: true,
                     reasonCode: recipientValidation.reasonCode,
+                    ...(recipientValidation.nativeChatReadRepair ? { nativeChatReadRepair: recipientValidation.nativeChatReadRepair } : {}),
                   });
                 }
               }
@@ -8094,8 +9237,14 @@
               } finally {
                 removeSubmitObserver();
               }
-            } catch {
+            } catch (error) {
               submissionOutcomeUnknown = true;
+              if (error?.code === 'page_feedback_pending' && !submissionDispatched
+                  && !pageHandledBeforeInput) {
+                submissionBlockedBeforeDispatch = true;
+                submissionBlockReason = 'page_feedback_pending';
+                nativeDraftBinding = _rememberNativeChatDraft(msg.params, el, originalRecipient);
+              }
             }
           }
           if (!verified) {
@@ -8118,7 +9267,9 @@
           }
           return {
             success: true,
+            dispatched,
             method: 'set_field',
+            ...(pageHandledBeforeInput ? { dispatched: true, pageHandledBeforeInput: true, nativeBeforeInputCancelled: true } : {}),
             ref_id,
             rect,
             verified: true,
@@ -8126,8 +9277,12 @@
             fallbackAttempted,
             submitted: nativeSubmitAttempted || undefined,
             outcomeUnknown: submissionOutcomeUnknown || undefined,
+            ...(submit ? { submissionDispatched, submissionBlockedBeforeDispatch } : {}),
+            ...(submissionBlockReason ? { submissionBlockReason } : {}),
+            ...(nativeDraftBinding ? { _nativeChatDraftBinding: nativeDraftBinding } : {}),
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
       },
@@ -8143,6 +9298,7 @@
           if (!el || !el.isConnected) return { success: false, error: `ref_id ${ref_id} is stale` };
           const typeable = el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
           if (!typeable) return { success: false, error: `ref_id ${ref_id} is not a text field` };
+          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
           try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
           try { el.focus({ preventScroll: true }); } catch {}
           if (el.isContentEditable) {
@@ -8177,6 +9333,7 @@
             },
           };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error && error.message || String(error) };
         }
       },
@@ -8189,6 +9346,8 @@
           if (typeof window.__wb_ax_lookup !== 'function') return { success: false, verified: false, error: 'accessibility-tree.js not injected' };
           const el = window.__wb_ax_lookup(ref_id);
           if (!el || !el.isConnected) return { success: false, verified: false, error: `ref_id ${ref_id} is stale` };
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null)
+            return { success: false, verified: false, error: 'The DraftJS editor structure cannot establish its exact document text.' };
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verifiesAppend = el.isContentEditable && typeof appendText === 'string';
           const expectedPrefix = verifiesAppend
@@ -8203,12 +9362,13 @@
                   expectedPrefix,
                   verifiesAppend ? appendText : expected,
                   !verifiesAppend,
-                  el.isContentEditable, readProseMirrorText(el) !== null,
+                  el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null),
                 ),
             actual: actual.slice(0, 200),
             fieldMeta: _fieldMeta(el),
           };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, verified: false, error: error && error.message || String(error) };
         }
       },
@@ -8257,6 +9417,8 @@
           if (!(el.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA')) {
             return { success: false, error: 'target is not a text field' };
           }
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null)
+            return { success: false, verified: false, error: 'The DraftJS editor structure cannot establish its exact document text.' };
           const value = String(el.isContentEditable ? _editableTextValue(el) : (el.value || ''));
           if (!globalThis.crypto?.subtle) return { success: false, error: 'SHA-256 is unavailable' };
           const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
@@ -8266,7 +9428,7 @@
           return {
             success: true,
             ...(typeof expected === 'string' ? {
-              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, readProseMirrorText(el) !== null),
+              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null)),
             } : {}),
             valueLength: value.length,
             valueSha256,
@@ -8274,6 +9436,7 @@
             stableSelector: _stableFieldSelector(el),
           };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error && error.message || String(error) };
         }
       },
@@ -8297,6 +9460,7 @@
               }
             : { success: true };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, error: e?.message || String(e) };
         }
       },
@@ -8311,6 +9475,7 @@
       'ax_resolve_rect': () => {
         try {
           const { ref_id, forClickFallback = false } = msg.params || {};
+          const observeOnly = msg.params?.observeOnly === true && forClickFallback === true;
           if (typeof ref_id !== 'string') return { success: false, error: 'ref_id (string, e.g. "ref_42") is required' };
           if (typeof window.__wb_ax_lookup !== 'function') return { success: false, error: 'accessibility-tree.js not injected' };
           const el = window.__wb_ax_lookup(ref_id);
@@ -8327,8 +9492,10 @@
               : '';
             return { success: false, error: `ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids.`, suggestions };
           }
-          try { _scrollElementIntoClearView(el); } catch {}
-          showAgentWorkingTarget(el, 'ax_resolve_rect');
+          if (!observeOnly) {
+            try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
+            showAgentWorkingTarget(el, 'ax_resolve_rect');
+          }
           let r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
@@ -8376,7 +9543,7 @@
                 break;
               }
             }
-            if (!hitOk && topmost) {
+            if (!observeOnly && !hitOk && topmost) {
               try {
                 const floatingBar = _floatingTopBarRect(topmost);
                 const bRect = floatingBar || topmost.getBoundingClientRect();
@@ -8408,6 +9575,7 @@
           else if (interactiveHitDescendant) fallbackBlockedReason = 'target center resolves to an interactive descendant that must not receive an automatic trusted click';
           else if (fallbackStatic.blockedReason) fallbackBlockedReason = fallbackStatic.blockedReason;
           if (forClickFallback && !window.__wbAxDocumentToken) {
+            if (observeOnly) return { success: false, error: 'The observed target document is unavailable. Re-observe the page.' };
             window.__wbAxDocumentToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
           }
           const fallbackState = forClickFallback ? _axFallbackState(el) : null;
@@ -8435,6 +9603,9 @@
               fallbackState: fallbackState.strong,
               fallbackStrongState: fallbackState.strong,
               fallbackWeakState: fallbackState.weak,
+              ...(observeOnly ? { refScopeUrl: location.href,
+                fallbackNativeButtonDisabled: tag === 'button'
+                  ? !!el.disabled || el.getAttribute('aria-disabled') === 'true' : null } : {}),
               isComputedVisible: visibility.visible,
               isEditable,
               isNativeControl,
@@ -8446,6 +9617,7 @@
             } : {}),
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, error: e && e.message || String(e) };
         }
       },
@@ -8476,7 +9648,9 @@
           // BOTH rects against that frame is what drag_drop wants.
           // Source may end up partly off-screen if the two are far
           // apart vertically — flagged via inViewport on the return.
+          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: fromEl });
           try { fromEl.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: toEl });
           try { toEl.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
           showAgentWorkingTarget(toEl, 'ax_resolve_two_rects');
 
@@ -8510,6 +9684,7 @@
             to: measure(toEl, tr, toRefId),
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, error: e && e.message || String(e) };
         }
       },
@@ -8673,6 +9848,7 @@
     // guards) from a full navigation no AX scope ever observed (drop stale
     // debt). Attach on every return path, including failures.
     const withLiveDocumentScope = (value) => {
+      finishPageAction();
       if ((msg.action === 'field_value_digest' || msg.action === 'ax_verify_field_value')
           && value && typeof value === 'object') {
         try {
@@ -8684,7 +9860,9 @@
     };
 
     let result;
+    let finishPageAction = () => {};
     try {
+      finishPageAction = window.__wbPageMonitor?.beginContentAction(msg.action, msg.params || {}) || finishPageAction;
       result = handler();
     } catch (err) {
       // A synchronous throw used to escape the listener without calling
@@ -8692,6 +9870,7 @@
       // "<tool> returned no result." with no diagnosis. Always answer.
       sendResponse(withLiveDocumentScope({
         success: false,
+        ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true } : {}),
         error: `${msg.action} failed: ${err?.message || String(err)}`,
       }));
       return;
@@ -8703,6 +9882,7 @@
         (value) => sendResponse(withLiveDocumentScope(value)),
         (err) => sendResponse(withLiveDocumentScope({
           success: false,
+          ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true } : {}),
           error: `${msg.action} failed: ${err?.message || String(err)}`,
         })),
       );

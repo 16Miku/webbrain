@@ -20,6 +20,7 @@ const DIRECT_ACTION_TOOLS = new Set([
   'solve_captcha',
   'schedule_resume',
   'schedule_task',
+  'chat_send',
 ]);
 
 const NAVIGATION_ACTION_TOOLS = new Set([
@@ -139,7 +140,16 @@ function keyText(args = {}) {
   return JSON.stringify(args?.key ?? args?.keys ?? '').toLowerCase();
 }
 
-function isSelfVerifyingActionResult(name, result) {
+function isSelfVerifyingActionResult(name, result, args = {}) {
+  if (name === 'chat_send') {
+    const threadKey = String(args.thread_key || args.threadKey || '');
+    return !!(threadKey && result?.success === true && result?.sent === true
+      && result?.deliveryVerified === true && result?.verificationRequired === false
+      && result?.dispatched === true && !result?.outcomeUnknown && !result?.error
+      && result.threadKey === threadKey && result?.chatWorkflow?.threadKey === threadKey
+      && result.chatWorkflow.pendingOutbound === false && !result.chatWorkflow.userInput?.required
+      && result?.composer?.available === true && result.composer.empty === true);
+  }
   if (name !== 'schedule_task' && name !== 'schedule_resume') return false;
   return !!(
     result?.success === true
@@ -774,7 +784,48 @@ export function didCompletionActionExecute(name, args = {}, result) {
   return true;
 }
 
-export function isCompletionObservationTool(name, args = {}, result) {
+function validNativeChatBinding(binding) {
+  const telegram = /^dom:telegram:[ak]:-?\d+:0$/.test(binding?.threadKey || '');
+  const whatsapp = /^dom:whatsapp:phone:[a-f0-9]{32}$/.test(binding?.threadKey || '');
+  return binding?.complete === true && typeof binding.body === 'string'
+    && binding.body.length > 0 && binding.body.length <= 20000 && (telegram || whatsapp)
+    && Array.isArray(binding.messageIds) && binding.messageIds.length <= 200
+    && (!whatsapp || binding.messageIds.length > 0)
+    && new Set(binding.messageIds).size === binding.messageIds.length
+    && binding.messageIds.every(id => typeof id === 'string'
+      && id.startsWith(binding.threadKey.slice(4) + ':')
+      && (telegram ? /^\d{1,24}$/.test(id.slice(id.lastIndexOf(':') + 1))
+        : /^[A-Za-z0-9_-]{1,32}$/.test(id.slice(binding.threadKey.length - 3))));
+}
+
+function nativeChatDeliveryAfterBaseline(binding, proof) {
+  if (!validNativeChatBinding(binding) || typeof proof?.messageId !== 'string'
+      || binding.messageIds.includes(proof.messageId)
+      || !proof.messageId.startsWith(binding.threadKey.slice(4) + ':')) return false;
+  if (/^dom:whatsapp:phone:/.test(binding.threadKey)) {
+    // Opaque WhatsApp ids have no chronological ordering. Only the private
+    // content-world mounted-tail certificate can establish a fresh receipt.
+    return proof.nativeMountedTailVerified === true
+      && /^[A-Za-z0-9_-]{1,32}$/.test(proof.messageId.slice(binding.threadKey.length - 3));
+  }
+  const sequence = proof.messageId.slice(proof.messageId.lastIndexOf(':') + 1);
+  return /^\d{1,24}$/.test(sequence)
+    && binding.messageIds.every(id => BigInt(id.slice(id.lastIndexOf(':') + 1)) < BigInt(sequence));
+}
+
+export function isCompletionObservationTool(name, args = {}, result, state = null) {
+  if (name === 'chat_observe') {
+    const proof = result?.chatDeliveryVerification;
+    const binding = state?.lastAction?.chatDeliveryBinding;
+    return result?.success === true && !result.error && !result.outcomeUnknown
+      && !result.denied && !result.skipped && !result.cancelled
+      && result?.chatWorkflow?.pendingOutbound === false && !result.chatWorkflow.userInput?.required
+      && result?.composer?.available === true && result.composer.empty === true
+      && proof?.schema === 'webbrain-chat-completion/1' && !!binding
+      && proof.actionSequence === state.lastAction.sequence && proof.threadKey === binding.threadKey
+      && result.threadKey === binding.threadKey && result.chatWorkflow.threadKey === binding.threadKey
+      && nativeChatDeliveryAfterBaseline(binding, proof);
+  }
   if (name === 'fetch_url' || name === 'research_url') {
     if (MUTATION_METHODS.has(normalizedMethod(args))) return false;
   } else if (!OBSERVATION_TOOLS.has(name)) {
@@ -818,13 +869,16 @@ export function createCompletionInvariantState(runToken = '') {
   };
 }
 
-export function recordCompletionToolResult(state, name, args = {}, result) {
+export function recordCompletionToolResult(state, name, args = {}, result, { chatDeliveryBinding = null, nativeChatReadRepair = false } = {}) {
   const current = state || createCompletionInvariantState();
   const sequence = Number(current.sequence || 0) + 1;
   const next = { ...current, sequence };
+  const ownedNativeReadRepair = nativeChatReadRepair === true && name === 'click_ax'
+    && result?.success === true && !result.outcomeUnknown && result.noDispatch !== true
+    && (result._nativeWhatsappReadRepair === true || result._nativeTelegramReadRepair === true);
 
-  if (didCompletionActionExecute(name, args, result)) {
-    const selfVerified = isSelfVerifyingActionResult(name, result);
+  if (didCompletionActionExecute(name, args, result) && !ownedNativeReadRepair) {
+    const selfVerified = isSelfVerifyingActionResult(name, result, args);
     const downloadAction = DOWNLOAD_ACTION_TOOLS.has(name)
       || args?.__completionDownloadAction === true;
     next.hadAction = true;
@@ -835,6 +889,8 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
     next.lastAction = {
       name,
       sequence,
+      ...(validNativeChatBinding(chatDeliveryBinding)
+        ? { chatDeliveryBinding: { ...chatDeliveryBinding, messageIds: [...chatDeliveryBinding.messageIds] } } : {}),
       ...(selfVerified ? { selfVerified: true } : {}),
       ...(downloadAction ? { downloadAction: true } : {}),
       uncertain: !!(
@@ -865,7 +921,7 @@ export function recordCompletionToolResult(state, name, args = {}, result) {
     return next;
   }
 
-  if (isCompletionObservationTool(name, args, result)) {
+  if (isCompletionObservationTool(name, args, result, current)) {
     if (
       current.verificationDebt
       && current.lastAction?.downloadAction === true
@@ -977,7 +1033,9 @@ export function completionDoneBlock(state, toolName, args = {}) {
   if (state?.verificationDebt) {
     return {
       reason: 'verification_required',
-      error: 'The latest consequential action has not been verified by a successful explicit page/state observation. Re-read the relevant state after the action, then call done again; otherwise finish with outcome="partial" or outcome="failed".',
+      error: 'The latest consequential action has not been verified by a successful explicit page/state observation. Re-read the relevant state after the action, then call done again; otherwise finish with outcome="partial" or outcome="failed".'
+        + (state.lastAction?.downloadAction ? ' Use list_downloads or read_downloaded_file to verify this download.'
+          : ' For parent-page state or absence, use get_accessibility_tree or read_page. verify_form({urlFilter}) reads matching child iframe forms only, not a parent-page URL.'),
       lastAction: state.lastAction ? {
         name: state.lastAction.name,
         sequence: state.lastAction.sequence,

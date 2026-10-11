@@ -1,3 +1,4 @@
+import { renderPageFeedbackNote } from './page-feedback-ui.js';
 import { appendGeneratedMedia, restoreGeneratedMedia } from './generated-media-view.js';
 import { saveScreenshot } from './screenshot-download.js';
 /**
@@ -39,7 +40,7 @@ import {
 import { historyTextFromElement } from './history-text.js';
 import { claimRunError } from './run-error-dedupe.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
-import { runUiUnavailableBeforeSeq } from '../run-ui-journal.js';
+import { runUiUnavailableBeforeSeq, runUiUpdatesForCurrentTask } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { buildMessageInfoPills } from '../message-info.js';
 import { escapeHtml } from './utils.js';
@@ -154,7 +155,10 @@ if (globalThis.browser?.storage?.onChanged) {
   const totalSteps = steps.length;
   const LOCAL_PROVIDER_ORDER = ['unsloth', 'local_openai_proxy', 'jan', 'osaurus', 'lmstudio', 'ollama', 'ods', 'llamacpp', 'vllm', 'sglang', 'localai', 'gpt4all'];
   let current = 0;
-  let localScanStarted = false;
+  let scanGeneration = 0;
+  let dismissed = false;
+  let completing = false;
+  let readyProviderId = null;
   let localModelChoices = [];
   let selectedLocalModelIndex = 0;
   let cloudReady = false;
@@ -169,11 +173,16 @@ if (globalThis.browser?.storage?.onChanged) {
   }
 
   async function dismissOnboarding() {
+    if (dismissed) return;
+    dismissed = true;
+    scanGeneration += 1;
+    browser.storage.onChanged.removeListener(onProviderChange);
     await browser.storage.local.set({ onboardingComplete: true }).catch(() => {});
     overlay.classList.add('hidden');
   }
 
   function setProviderStatus(key, params) {
+    if (dismissed) return;
     if (providerStatus) providerStatus.textContent = t(key, params);
   }
 
@@ -188,7 +197,7 @@ if (globalThis.browser?.storage?.onChanged) {
     try {
       await sendToBackground('set_help_improve_preference', { enabled: requestedValue });
       persistedHelpImprove = requestedValue;
-      if (cloudReady) showCloudReady();
+      if (cloudReady && !dismissed) showCloudReady();
       return true;
     } catch (error) {
       helpImproveCheckbox.checked = persistedHelpImprove;
@@ -230,6 +239,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
   function showProviderFallback(statusKey = 'ob.tokens.none_status') {
     cloudReady = false;
+    readyProviderId = null;
     localModelChoices = [];
     const providerUnknown = statusKey === 'ob.tokens.detect_failed';
     setHelpImproveVisible(providerUnknown);
@@ -239,11 +249,12 @@ if (globalThis.browser?.storage?.onChanged) {
     setProviderStatus(statusKey);
     settingsBtn.textContent = t('ob.btn.settings');
     settingsBtn.disabled = false;
-    skipBtn.disabled = !providerUnknown;
+    skipBtn.disabled = false;
   }
 
   function showLocalChoices(choices) {
     cloudReady = false;
+    readyProviderId = null;
     localModelChoices = choices;
     setHelpImproveVisible(false);
     selectedLocalModelIndex = 0;
@@ -303,30 +314,13 @@ if (globalThis.browser?.storage?.onChanged) {
 
   function showCloudReady() {
     cloudReady = true;
+    readyProviderId = 'webbrain_cloud';
     localModelChoices = [];
     setHelpImproveVisible(true);
     if (providerBody) {
       providerBody.textContent = t('ob.cloud.using').trim();
     }
-    if (providerStatus) {
-      providerStatus.textContent = '';
-      const changeLink = document.createElement('a');
-      changeLink.href = browser.runtime.getURL('src/ui/settings.html#providers');
-      changeLink.target = '_blank';
-      changeLink.rel = 'noopener noreferrer';
-      changeLink.textContent = t('ob.cloud.change');
-      changeLink.addEventListener('click', async (event) => {
-        event.preventDefault();
-        if (!await helpImproveSavePromise.catch(() => false)) return;
-        openProviderSettings();
-        await dismissOnboarding();
-      });
-      providerStatus.append(
-        document.createTextNode(`${t('st.tab.providers')}: `),
-        changeLink,
-        document.createTextNode('.')
-      );
-    }
+    showReadyProviderStatus('');
     providerList?.classList.add('hidden');
     localModels?.classList.add('hidden');
     settingsBtn.textContent = t('ob.btn.start');
@@ -334,7 +328,65 @@ if (globalThis.browser?.storage?.onChanged) {
     skipBtn.disabled = false;
   }
 
+  function configuredActiveProvider({ providers = {}, active } = {}) {
+    const config = providers[active];
+    if (!config || config.enabled === false) return null;
+    if (active !== 'webbrain_cloud' && config.configured !== true) return null;
+    return { id: active, label: config.label || active, model: config.model || '' };
+  }
+
+  function showReadyProviderStatus(prefix) {
+    if (!providerStatus) return;
+    providerStatus.textContent = '';
+    const changeLink = document.createElement('a');
+    changeLink.href = browser.runtime.getURL('src/ui/settings.html#providers');
+    changeLink.target = '_blank';
+    changeLink.rel = 'noopener noreferrer';
+    changeLink.textContent = t('ob.cloud.change');
+    changeLink.addEventListener('click', async (event) => {
+      event.preventDefault();
+      if (!await helpImproveSavePromise.catch(() => false) || dismissed) return;
+      openProviderSettings();
+      await dismissOnboarding();
+    });
+    providerStatus.append(
+      document.createTextNode(`${prefix}${t('st.tab.providers')}: `),
+      changeLink,
+      document.createTextNode('.')
+    );
+  }
+
+  function showConfiguredProviderReady(provider) {
+    if (provider.id === 'webbrain_cloud') {
+      showCloudReady();
+      return;
+    }
+    cloudReady = false;
+    readyProviderId = provider.id;
+    localModelChoices = [];
+    setHelpImproveVisible(false);
+    if (providerBody) providerBody.textContent = t('ob.tokens.local_note');
+    const model = provider.model ? ` · ${provider.model}` : '';
+    showReadyProviderStatus(`${t('st.providers.selected')}: ${provider.label}${model}. `);
+    providerList?.classList.add('hidden');
+    localModels?.classList.add('hidden');
+    settingsBtn.textContent = t('ob.btn.start');
+    settingsBtn.disabled = false;
+    skipBtn.disabled = false;
+  }
+
+  function onProviderChange(changes, area) {
+    if (dismissed || area !== 'local' || (!changes.providers && !changes.activeProvider)) return;
+    if (current === totalSteps - 1) void scanLocalModels();
+    else scanGeneration += 1;
+  }
+  browser.storage.onChanged.addListener(onProviderChange);
+
   async function scanLocalModels() {
+    const generation = ++scanGeneration;
+    const isCurrent = () => !dismissed && current === totalSteps - 1 && generation === scanGeneration;
+    cloudReady = false;
+    readyProviderId = null;
     localModelChoices = [];
     settingsBtn.disabled = true;
     skipBtn.disabled = true;
@@ -346,8 +398,10 @@ if (globalThis.browser?.storage?.onChanged) {
 
     try {
       const { providers = {}, active } = await sendToBackground('get_providers');
-      if (active === 'webbrain_cloud' && providers.webbrain_cloud?.enabled !== false) {
-        showCloudReady();
+      if (!isCurrent()) return;
+      const ready = configuredActiveProvider({ providers, active });
+      if (ready) {
+        showConfiguredProviderReady(ready);
         return;
       }
       const localProviderIds = Object.keys(providers)
@@ -358,8 +412,11 @@ if (globalThis.browser?.storage?.onChanged) {
         try {
           // Upper bound only — this does NOT freeze the UI. Probes run in
           // parallel: a reachable server answers in well under a second, and a
-          // closed port fails fast. 5s just caps a slow/stalled server. (Kept
-          // equal to the Chrome build for parity.)
+          // closed port fails fast (connection refused). 5s just caps the rare
+          // case of a cold offscreen-proxy round-trip or a server that accepts
+          // the connection but stalls. (The original "no models" bug was a
+          // service-worker dynamic import in providers/manager.js, since fixed;
+          // the old 2.5s was also too tight for a cold proxy.)
           const res = await withTimeout(
             sendToBackground('list_provider_models', { providerId, detectServerIdentity: true }),
             5000
@@ -381,6 +438,7 @@ if (globalThis.browser?.storage?.onChanged) {
         }
       }));
 
+      if (!isCurrent()) return;
       const choices = detected.flatMap((d) => d.choices);
       const errors = detected.map((d) => d.error).filter(Boolean);
       if (choices.length > 0) {
@@ -399,7 +457,7 @@ if (globalThis.browser?.storage?.onChanged) {
         showProviderFallback();
       }
     } catch {
-      showProviderFallback('ob.tokens.detect_failed');
+      if (isCurrent()) showProviderFallback('ob.tokens.detect_failed');
     }
   }
 
@@ -422,10 +480,8 @@ if (globalThis.browser?.storage?.onChanged) {
     settingsBtn.classList.toggle('hidden', !isLast);
     skipBtn.classList.toggle('hidden', !isLast);
     if (!isLast) nextBtn.textContent = t('ob.btn.next');
-    if (isLast && !localScanStarted) {
-      localScanStarted = true;
-      scanLocalModels();
-    }
+    if (isLast) void scanLocalModels();
+    else scanGeneration += 1;
   }
 
   nextBtn.addEventListener('click', () => {
@@ -437,10 +493,30 @@ if (globalThis.browser?.storage?.onChanged) {
   });
 
   settingsBtn.addEventListener('click', async () => {
-    if (cloudReady) {
-      if (!await helpImproveSavePromise.catch(() => false)) return;
-      await dismissOnboarding();
-      inputEl?.focus();
+    if (readyProviderId) {
+      if (completing || dismissed) return;
+      completing = true;
+      const selected = readyProviderId;
+      const generation = scanGeneration;
+      settingsBtn.disabled = true;
+      try {
+        if (!await helpImproveSavePromise.catch(() => false)) {
+          if (!dismissed && generation === scanGeneration) settingsBtn.disabled = false;
+          return;
+        }
+        const ready = configuredActiveProvider(await sendToBackground('get_providers'));
+        if (dismissed || current !== totalSteps - 1 || generation !== scanGeneration) return;
+        if (ready?.id !== selected) {
+          void scanLocalModels();
+          return;
+        }
+        await dismissOnboarding();
+        inputEl?.focus();
+      } catch {
+        if (!dismissed && generation === scanGeneration) showProviderFallback('ob.tokens.detect_failed');
+      } finally {
+        completing = false;
+      }
       return;
     }
 
@@ -461,7 +537,7 @@ if (globalThis.browser?.storage?.onChanged) {
           syncProviderPickerButton();
         }
         await testConnection({ providerId: choice.providerId });
-        dismissOnboarding();
+        await dismissOnboarding();
         inputEl?.focus();
       } catch (e) {
         settingsBtn.disabled = false;
@@ -1084,6 +1160,7 @@ const clearingConversationTabs = new Set();
 const selectionGroundingByTab = new Map();
 let newConversationConfirmationState = null;
 const localRunRequestIds = new Map();
+const submittedClarificationIds = new Set();
 const localRunFollowers = new Map();
 const cancelledRunRecoveryRequestIds = new Set();
 const conversationClearFollowerCancellationRequestIds = new Set();
@@ -1687,12 +1764,20 @@ function isSuccessfulDoneUpdate(update) {
 }
 
 function updatesContainSuccessfulDone(updates) {
-  return Array.isArray(updates) && updates.some(isSuccessfulDoneUpdate);
+  const current = runUiUpdatesForCurrentTask(updates);
+  if (updatesContainActFailure(current)) return false;
+  for (let index = current.length - 1; index >= 0; index--) {
+    const update = current[index], result = update?.data?.result;
+    if (update?.type === 'tool_result' && update?.data?.name === 'done'
+        && result?.done === true && !result.blockedDone) return isSuccessfulDoneUpdate(update);
+  }
+  return false;
 }
 
 function updatesContainStoreReviewFailure(updates) {
-  return Array.isArray(updates) && updates.some((u) => (
+  return runUiUpdatesForCurrentTask(updates).some((u) => (
     u?.type === 'error' || u?.type === 'quota' ||
+    (u?.type === 'run_status' && ['persistence_degraded', 'cancelled', 'stopped'].includes(u?.data?.status)) ||
     u?.type === 'attachment_rejected' ||
     u?.type === 'max_steps_reached' ||
     u?.error ||
@@ -1700,10 +1785,26 @@ function updatesContainStoreReviewFailure(updates) {
   ));
 }
 
+function updatesContainActFailure(updates) {
+  return updatesContainStoreReviewFailure(runUiUpdatesForCurrentTask(updates)
+    .filter(update => update?.type !== 'max_steps_reached'));
+}
+
+function isSuccessfulActCompletion(response) {
+  if (!response || response.quota || response.success === false || response.ok === false) return false;
+  // Delivery recovery may emit a step-limit trace after its accepted done.
+  // Act still requires a current server verdict or a fresh successful done.
+  if (updatesContainActFailure(response.updates)) return false;
+  if (typeof response.runSucceeded === 'boolean') return response.runSucceeded;
+  if (typeof response.successfulDone === 'boolean') return response.successfulDone;
+  return updatesContainSuccessfulDone(response.updates);
+}
+
 function isSuccessfulAskCompletion(mode, response) {
   if (mode !== 'ask') return false;
   if (!response || response.quota || response.success === false || response.ok === false) return false;
   if (updatesContainStoreReviewFailure(response.updates)) return false;
+  if (typeof response.runSucceeded === 'boolean') return response.runSucceeded;
   const content = typeof response.content === 'string' ? response.content.trim() : '';
   return !!content && !parseSubscribeError(content) && !parseCostAllowanceError(content);
 }
@@ -2091,6 +2192,9 @@ function nodeHasAssistantRenderableContent(node) {
   if (!node) return false;
   if (node.nodeType === 3) return !!node.textContent?.trim();
   if (node.nodeType !== 1) return false;
+  // Copy controls accompany output; their invisible labels must not reveal
+  // an empty reply after its text is cleared or its progress log is hidden.
+  if (node.matches?.('.msg-copy-btn, .code-copy-btn')) return false;
   if (!progressContentNodeIsVisible(node)) return false;
   if (node.matches?.(ASSISTANT_RENDERABLE_ELEMENT_SELECTOR)) return true;
   for (const child of node.childNodes || []) {
@@ -2665,7 +2769,7 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
       'edit',
       item.id,
       'sp.queue.edit',
-      '<path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>',
+      '<path d="M17 3a2.828 2.828 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path><path d="m15 5 4 4"></path>',
     );
     const remove = queuedComposerButton(
       'queued-message-delete',
@@ -2680,7 +2784,7 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
     if (isTabProcessing(tabId) && !isTabAbortRequested(tabId)) {
       const steer = queuedComposerButton(
         'queued-message-steer', 'steer', item.id, 'sp.steer.title',
-        '<path d="M4 19v-5a7 7 0 0 1 7-7h9"></path><path d="m15 2 5 5-5 5"></path>',
+        '<path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path>',
       );
       steer.disabled = steeringRequestsByTab.has(Number(tabId)) || isAwaitingPlanReviewForTab(tabId);
       row.classList.add('has-steer');
@@ -2921,18 +3025,34 @@ function clearQueuedComposerMessagesForTab(tabId) {
   if (sameTabId(currentTabId, numericTabId)) renderQueuedComposerMessages(numericTabId);
 }
 
+function composerSubmissionIsCurrent(item, { text = item?.text, allowProcessing = false } = {}) {
+  return !!item && (allowProcessing || !isProcessing)
+    && sameTabId(currentTabId, item.tabId) && sameTabId(renderedTabId, item.tabId)
+    && inputEl.value.trim() === text;
+}
+
+function queuedComposerSubmissionIsCurrent(item) {
+  if (!composerSubmissionIsCurrent(item)) return false;
+  return getQueuedComposerMessages(item.tabId).some(queued => queued.id === item.id && queued.text === item.text);
+}
+
 function drainQueuedComposerMessageForCurrentTab() {
   if (isProcessing || currentTabId == null || renderedTabId !== currentTabId) return false;
   if (inputEl.value !== '') return false;
   if (steeringRequestsByTab.has(Number(currentTabId))) return false;
-  const item = shiftQueuedComposerMessage(currentTabId);
+  const tabId = currentTabId;
+  const item = getQueuedComposerMessages(tabId)[0];
   if (!item) return false;
   resetComposerHistoryNavigation(currentTabId);
   inputEl.value = item.text;
   autoResizeInput();
   updateSlashCommandAutocomplete();
   syncSendButtonState();
-  Promise.resolve().then(() => sendMessage()).catch((e) => {
+  const submission = { tabId, id: item.id, text: item.text };
+  inputEl.queuedComposerSubmission = submission;
+  Promise.resolve().then(() => sendMessage({
+    __queuedComposerMessage: submission,
+  })).catch((e) => {
     addMessage('error', t('sp.error_prefix', { msg: e?.message || String(e) }));
   });
   return true;
@@ -3221,6 +3341,7 @@ const SCHEDULED_VISIBLE_STATUSES = new Set(['pending', 'queued', 'paused', 'runn
 const COMPLETED_SCHEDULED_JOB_AUTO_HIDE_MS = 15 * 1000;
 const pinnedCompletedScheduledJobIds = new Set();
 const pendingScheduledPlannerFallbackMessages = new Map();
+const pendingScheduledPageFeedback = new Map();
 const scheduledAssistantPreparationJobIds = new Set();
 let scheduledJobAutoHideTimer = null;
 
@@ -3325,6 +3446,15 @@ function flushScheduledPlannerFallbackMessage(jobId, assistantEl = null) {
   return true;
 }
 
+function flushScheduledPageFeedback(jobId, assistantEl) {
+  const id = String(jobId || '');
+  if (!assistantEl || !pendingScheduledPageFeedback.has(id)) return;
+  const events = pendingScheduledPageFeedback.get(id);
+  pendingScheduledPageFeedback.delete(id);
+  for (const data of events.values()) renderPageFeedbackNote(assistantEl, data, t);
+  schedulePersist();
+}
+
 function ensureScheduledTerminalMessage(job) {
   const jobId = job?.id ? String(job.id) : '';
   if (!jobId || !isUrlTargetScheduledJob(job)) return null;
@@ -3332,12 +3462,14 @@ function ensureScheduledTerminalMessage(job) {
   if (existing && scheduledAssistantPreparationJobIds.has(jobId)) return existing;
   if (existing) {
     flushScheduledPlannerFallbackMessage(jobId, existing);
+    flushScheduledPageFeedback(jobId, existing);
     return existing;
   }
   resetChatNavigation();
   const msgEl = addMessage('assistant', '');
   msgEl.dataset.scheduledJobId = jobId;
   flushScheduledPlannerFallbackMessage(jobId, msgEl);
+  flushScheduledPageFeedback(jobId, msgEl);
   return msgEl;
 }
 
@@ -3633,6 +3765,7 @@ async function handleScheduledJobEvent(data, tabId) {
       }
       if (jobId) currentAssistantEl.dataset.scheduledJobId = jobId;
       flushScheduledPlannerFallbackMessage(jobId, currentAssistantEl);
+      flushScheduledPageFeedback(jobId, currentAssistantEl);
       showActivity(t('sp.scheduled.running', { title }));
     } finally {
       if (preparingScheduledAssistant) scheduledAssistantPreparationJobIds.delete(jobId);
@@ -5313,18 +5446,82 @@ async function adoptRestoredRunState(tabId, state) {
   }
 }
 
+
+function clarificationSubmissionKey(tabId, requestId, clarifyId) {
+  return JSON.stringify([Number(tabId), String(requestId || ''), String(clarifyId || '')]);
+}
+
+function invalidateUnresolvedClarifyCards(assistantEl, currentClarifyId = '') {
+  for (const card of assistantEl?.querySelectorAll('.clarify-card') || []) {
+    if (card.classList.contains('clarify-answered') || String(card.dataset.clarifyId || '') === currentClarifyId) continue;
+    clearClarifyCountdown(card);
+    if (card.dataset.permission === '1') card.remove();
+    else {
+      card.classList.add('clarify-obsolete');
+      for (const control of card.querySelectorAll('button, input')) control.disabled = true;
+    }
+  }
+}
+
+async function restorePendingCurrentClarification(tabId, state, assistantEl, shouldContinue) {
+  const runUi = state?.runUi;
+  const requestId = String(runUi?.requestId || '');
+  const runId = String(runUi?.runId || state?.runId || '');
+  const stillCurrent = () => shouldContinue()
+    && assistantEl?.isConnected && assistantEl.dataset.runRequestId === requestId
+    && (!runId || String(assistantEl.dataset.runId || '') === runId)
+    && !isTabAbortRequested(tabId) && !cancelledRunRecoveryRequestIds.has(requestId)
+    && (!localRunRequestIds.has(Number(tabId)) || localRunRequestIds.get(Number(tabId)) === requestId);
+  if (!stillCurrent()) return false;
+  if (!Object.prototype.hasOwnProperty.call(state || {}, 'pendingCurrentClarification')) return false;
+  // Replay/attachment/ACK waits can outlive the actual question. Read the live
+  // entry again before recovering a card; this read never answers or renews it.
+  let fresh;
+  try { fresh = await sendToBackground('agent_run_state', { tabId, requestId }); }
+  catch { return false; }
+  if (!stillCurrent()) return false;
+  const current = fresh?.pendingCurrentClarification;
+  if (fresh?.runUi?.requestId !== requestId || String(fresh?.runId || '') !== runId) return false;
+  if (Number(fresh.runUi.seq || 0) < Number(assistantEl.dataset.lastRenderedSeq || 0)) return false;
+  if (!fresh?.running || isTerminalRunUiStatus(fresh?.runUi?.status) || !current) {
+    invalidateUnresolvedClarifyCards(assistantEl);
+    return false;
+  }
+  if (current.tabId !== Number(tabId) || current.requestId !== requestId
+      || current.runId !== runId || !current.clarifyId || current.data?.clarifyId !== current.clarifyId) return false;
+  const pending = current;
+  invalidateUnresolvedClarifyCards(assistantEl, pending.clarifyId);
+  const key = clarificationSubmissionKey(tabId, requestId, pending.clarifyId);
+  if (submittedClarificationIds.has(key)) return false;
+  const existing = assistantEl.querySelector(`.clarify-card[data-clarify-id="${CSS.escape(pending.clarifyId)}"]`);
+  if (existing?.dataset.clarifySubmissionFailed === '1') {
+    // A failed transport did not settle this exact live entry. Restore controls
+    // for another explicit user choice; never resend the prior answer.
+    existing.classList.remove('clarify-answered');
+    delete existing.dataset.clarifySubmissionFailed;
+    existing.querySelector('.clarify-your-answer')?.remove();
+    for (const control of existing.querySelectorAll('button, input')) control.disabled = false;
+  }
+  currentAssistantEl = assistantEl;
+  renderClarifyCard({ ...pending.data, tabId, requestId, runId, forceNewScheduledCard: false });
+  return !!assistantEl.querySelector(`.clarify-card[data-clarify-id="${CSS.escape(pending.clarifyId)}"]`);
+}
+
 async function applyActiveRunState(numericTabId, state, { shouldContinue = () => true } = {}) {
   const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
   const requestId = String(runUi?.requestId || '');
   const shouldApplyState = () => shouldContinue()
     && !isConversationClearInProgress(numericTabId)
     && (!requestId || !clearedConversationRunRequestIds.has(requestId))
+    && (!localRunRequestIds.has(Number(numericTabId)) || !requestId
+      || localRunRequestIds.get(Number(numericTabId)) === requestId)
     && sameTabId(currentTabId, numericTabId)
     && sameTabId(renderedTabId, numericTabId);
   if (!shouldApplyState()) return false;
   if (runUi?.requestId) {
+    const lastAssistantEl = messagesEl.querySelector('.message.assistant:last-of-type');
     const runAssistantEl = messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(runUi.requestId))}"]`)
-      || messagesEl.querySelector('.message.assistant:last-of-type')
+      || (lastAssistantEl && !lastAssistantEl.dataset.runRequestId ? lastAssistantEl : null)
       || addMessage('assistant', '');
     currentAssistantEl = runAssistantEl;
     runAssistantEl.dataset.runRequestId = String(runUi.requestId);
@@ -5373,6 +5570,9 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     }
     for (const event of replayEvents) {
       if (Number(event?.seq || 0) <= lastRenderedSeq) continue;
+      if (event?.type === 'clarify' && Object.prototype.hasOwnProperty.call(state, 'pendingCurrentClarification')
+          && (!state.running || state.pendingCurrentClarification?.requestId !== requestId
+            || state.pendingCurrentClarification?.clarifyId !== event.data?.clarifyId)) continue;
       const eventSeq = Number(event.seq || 0);
       const representedBySnapshotStream = shouldRestoreStreamedText
         && event.type === 'text_delta'
@@ -5394,7 +5594,6 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
             }
           : event.data,
       });
-      runAssistantEl.dataset.lastRenderedSeq = String(event.seq);
     }
     reconcileRunMessageAttachmentState(
       numericTabId,
@@ -5449,6 +5648,10 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
   // and its Approve/Cancel would post a decision the background has no plan for.
   // The card just expired above is skipped by invalidatePlanReviewCards' guard.
   invalidatePlanReviewCards({ tabId: numericTabId });
+  if (runUi?.requestId && currentAssistantEl?.dataset.runRequestId === requestId) {
+    await restorePendingCurrentClarification(numericTabId, state, currentAssistantEl, shouldApplyState);
+    if (!shouldApplyState()) return false;
+  }
   if (state?.running || state?.starting) {
     setTabProcessing(numericTabId, true);
     hideRecommendedActions();
@@ -8775,8 +8978,16 @@ async function sendMessage(extraChatParams = {}) {
       ...(retryOptions ? { __retry: { ...retryOptions, mode: 'ask' } } : {}),
     };
   }
+  // A click owns the currently displayed draft and tab, before any asynchronous
+  // preference/refresh work. A new draft or competing send revokes that claim.
+  const composerSubmission = { tabId: currentTabId, text: inputEl.value.trim() };
+  const submissionRenderedTabId = renderedTabId;
+  const submissionStartedDuringRun = isProcessing;
   dismissSelectionAskAction();
   const retryOptions = extraChatParams?.__retry || null;
+  const automaticDraft = inputEl.queuedComposerSubmission;
+  const queuedComposerMessage = extraChatParams?.__queuedComposerMessage
+    || (automaticDraft && queuedComposerSubmissionIsCurrent(automaticDraft) ? automaticDraft : null);
   const modeOverride = ['ask', 'act', 'dev'].includes(extraChatParams?.__mode) ? extraChatParams.__mode : null;
   const onContextMenuClaimRejected = typeof extraChatParams?.__onContextMenuClaimRejected === 'function'
     ? extraChatParams.__onContextMenuClaimRejected
@@ -8791,6 +9002,7 @@ async function sendMessage(extraChatParams = {}) {
   const rawAgentTabId = Number(chatExtraParams.__agentTabId);
   const agentTabId = Number.isFinite(rawAgentTabId) ? rawAgentTabId : null;
   delete chatExtraParams.__deliveryMode;
+  delete chatExtraParams.__queuedComposerMessage;
   delete chatExtraParams.__retry;
   delete chatExtraParams.__mode;
   delete chatExtraParams.__onContextMenuClaimRejected;
@@ -8830,6 +9042,12 @@ async function sendMessage(extraChatParams = {}) {
   if (selectionAction) chatExtraParams.selectionAction = selectionAction;
   await composerDeliveryModeReady;
   await waitForVisibleSidePanelStateRefresh();
+  if (!sameTabId(submissionRenderedTabId, composerSubmission.tabId)
+      || !composerSubmissionIsCurrent(composerSubmission, { allowProcessing: submissionStartedDuringRun })) {
+    await releaseOwnedContextMenuClaim();
+    return false;
+  }
+  if (queuedComposerMessage && !queuedComposerSubmissionIsCurrent(queuedComposerMessage)) return false;
   if (agentPrompt && (
     !agentDisplayText
     || agentTabId == null
@@ -8949,8 +9167,10 @@ async function sendMessage(extraChatParams = {}) {
   saveInputDraftForTab(tabId, '');
   hideSlashCommandAutocomplete();
 
+  let expectedComposerDraft = composerSubmission.text;
   if (!retryOptions && text.startsWith('/')) {
     inputEl.value = '';
+    expectedComposerDraft = '';
     autoResizeInput();
     syncSendButtonState();
   }
@@ -8961,7 +9181,12 @@ async function sendMessage(extraChatParams = {}) {
     && sameTabId(renderedTabId, tabId);
   if (!renderToCurrentTab) {
     await releaseOwnedContextMenuClaim();
-    if (text) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
+    if (text && !tabInputDrafts.has(Number(tabId))) saveInputDraftForTab(tabId, agentPrompt ? submittedText : text);
+    return false;
+  }
+  if (!composerSubmissionIsCurrent(composerSubmission, { text: expectedComposerDraft })) {
+    saveInputDraftForTab(tabId, inputEl.value);
+    await releaseOwnedContextMenuClaim();
     return false;
   }
   if (!text) {
@@ -8971,6 +9196,14 @@ async function sendMessage(extraChatParams = {}) {
     autoResizeInput();
     syncSendButtonState();
     return;
+  }
+  // Automatic follow-ups retain queue ownership through asynchronous preference,
+  // visible-state and slash preflight. A newer draft, removed item or competing run must
+  // not substitute a different command or consume this item's place in FIFO.
+  if (queuedComposerMessage) {
+    if (!queuedComposerSubmissionIsCurrent(queuedComposerMessage)) return false;
+    removeQueuedComposerMessage(tabId, queuedComposerMessage.id);
+    if (inputEl.queuedComposerSubmission === queuedComposerMessage) delete inputEl.queuedComposerSubmission;
   }
   setTabProcessing(tabId, true);
   setTabAbortRequested(tabId, false);
@@ -9154,7 +9387,7 @@ async function sendMessage(extraChatParams = {}) {
       chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
     }
     accepted = true;
-    completedSuccessfully = res?.successfulDone === true || updatesContainSuccessfulDone(res?.updates);
+    completedSuccessfully = isSuccessfulActCompletion(res);
     promptEligibleCompletion = completedSuccessfully || isSuccessfulAskCompletion(modeForSend, res);
     if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
@@ -9641,6 +9874,21 @@ function handleAgentUpdateMessage(msg) {
   const { type, data } = msg;
 
   switch (type) {
+    case 'page_feedback': {
+      const jobId = String(data?.scheduledJobId || '');
+      const target = jobId ? findScheduledAssistantMessageForJob(jobId) : eventAssistantEl;
+      if (jobId && (!target || scheduledAssistantPreparationJobIds.has(jobId))) {
+        if (data.navigation && data.id) {
+          const events = pendingScheduledPageFeedback.get(jobId) || new Map();
+          events.set(data.id, data);
+          while (events.size > 32) events.delete(events.keys().next().value);
+          pendingScheduledPageFeedback.set(jobId, events);
+          while (pendingScheduledPageFeedback.size > 50) pendingScheduledPageFeedback.delete(pendingScheduledPageFeedback.keys().next().value);
+        }
+      } else if (renderPageFeedbackNote(target || currentAssistantEl, data, t)) schedulePersist();
+      break;
+    }
+
     case 'steering_applied': {
       const id = String(data?.id || '');
       if (id && !messagesEl.querySelector(`[data-steering-message-id="${CSS.escape(id)}"]`)) {
@@ -9653,9 +9901,9 @@ function handleAgentUpdateMessage(msg) {
 
     case 'thinking':
       if (data?.note) {
-        // Planner notes carry more information than a generic wait state, so
-        // keep them intact instead of immediately replacing them with a step.
+        // Keep the planner phase visible until the first main execution step.
         showActivity(String(data.note));
+        if (data.step === 0) activityDisplayMode = 'planning';
       } else {
         startThinkingActivity();
       }
@@ -9908,7 +10156,7 @@ function handleAgentUpdateMessage(msg) {
       // in the current assistant bubble; the user picks an option or
       // types a custom answer, and we post `clarify_response` back to
       // the bg.
-      renderClarifyCard(data);
+      renderClarifyCard({ ...data, tabId: msg.tabId ?? currentTabId, requestId: msg.requestId, runId: msg.runId });
       break;
 
     case 'clarify_auto':
@@ -9996,8 +10244,6 @@ function workflowHealingTargetLabel(target) {
 }
 
 function renderClarifyCard(data) {
-  hideActivity();
-  playClarifySound();
   const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
   if (tabId == null) return;
   const scheduledJobId = data?.scheduledJobId ? String(data.scheduledJobId) : '';
@@ -10018,17 +10264,32 @@ function renderClarifyCard(data) {
   }
   const clarifyId = String(data.clarifyId || '');
   if (!clarifyId) return;
+  const requestId = String(data.requestId || assistantEl.dataset.runRequestId || '');
+  const submissionKey = clarificationSubmissionKey(tabId, requestId, clarifyId);
+  if (submittedClarificationIds.has(submissionKey)) return;
+  const existing = assistantEl.querySelector(`.clarify-card[data-clarify-id="${CSS.escape(clarifyId)}"]`);
+  if (existing) {
+    if (!existing.classList.contains('clarify-answered') && Number(data.deadlineTs) > Number(existing.dataset.deadlineTs || 0)) {
+      applyClarifyTimeoutExtension(data);
+    }
+    return;
+  }
 
   const content = assistantEl.querySelector('.message-content');
   if (!content) return;
+  hideActivity();
+  playClarifySound();
 
   const card = document.createElement('div');
   card.className = 'clarify-card';
   card.dataset.clarifyId = clarifyId;
   card.dataset.tabId = String(tabId);
+  card.dataset.runRequestId = requestId;
+  if (data.runId || assistantEl.dataset.runId) card.dataset.runId = String(data.runId || assistantEl.dataset.runId);
+  if (data.pendingReconciliation === true) card.dataset.pendingReconciliation = '1';
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
-    : data.workflowHealing
+    : data.workflowHealing || data.pendingReconciliation === true
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -10055,7 +10316,8 @@ function renderClarifyCard(data) {
 
   const qEl = document.createElement('div');
   qEl.className = 'clarify-question';
-  qEl.textContent = String(data.question || '').slice(0, 600);
+  if (data.pendingReconciliation === true) qEl.style.whiteSpace = 'pre-wrap';
+  qEl.textContent = String(data.question || '').slice(0, data.pendingReconciliation === true ? 6000 : 600);
   card.appendChild(qEl);
 
   if (data.workflowHealing) {
@@ -10746,7 +11008,13 @@ function submitPlanReview(card, tabId, planId, action, editedText) {
 }
 
 function submitClarify(card, tabId, clarifyId, answer, source) {
-  if (card.classList.contains('clarify-answered')) return;
+  if (card.dataset.pendingReconciliation === '1' && (source === 'option' || source === 'text')) source = 'manual';
+  if (card.classList.contains('clarify-answered') || card.classList.contains('clarify-obsolete')) return;
+  const requestId = String(card.dataset.runRequestId || card.closest('.message.assistant')?.dataset.runRequestId || '');
+  const submissionKey = clarificationSubmissionKey(tabId, requestId, clarifyId);
+  if (submittedClarificationIds.has(submissionKey)) return;
+  submittedClarificationIds.add(submissionKey);
+  while (submittedClarificationIds.size > 256) submittedClarificationIds.delete(submittedClarificationIds.values().next().value);
   card.classList.add('clarify-answered');
   clearClarifyCountdown(card);
 
@@ -10808,7 +11076,16 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     clarifyPayload.question = card.dataset.memoryQuestion;
   }
   sendToBackground('clarify_response', clarifyPayload)
+    .then(response => {
+      if (response?.matched !== false) return;
+      submittedClarificationIds.delete(submissionKey);
+      card.dataset.clarifySubmissionFailed = '1';
+      if (sameTabId(currentTabId, tabId)) void restoreActiveRunState(tabId);
+    })
     .catch(() => {
+      submittedClarificationIds.delete(submissionKey);
+      card.dataset.clarifySubmissionFailed = '1';
+      if (sameTabId(currentTabId, tabId)) void restoreActiveRunState(tabId);
       if (isScheduledClarify) {
         setTabProcessing(tabId, false);
         setTabAbortRequested(tabId, false);
@@ -12176,7 +12453,7 @@ function addPlanAutoApprovedNote(data) {
   const confidence = planReviewConfidenceText(data) || '—';
   note.textContent = typeof t === 'function'
     ? t('sp.plan.auto_approved', { confidence })
-    : `Plan auto-approved (confidence ${confidence}) — running…`;
+    : `Plan auto-approved (confidence ${confidence})`;
   const stepsContainer = getOrCreateStepsContainer();
   if (stepsContainer) {
     stepsContainer.appendChild(note);
@@ -12463,9 +12740,9 @@ function beginThinkingActivity() {
 }
 
 function startThinkingActivity() {
-  // Generic thinking copy is only an initial placeholder. Once a concrete
-  // status arrives, later generic updates must not replace it.
-  if (activityDisplayMode !== 'idle') return;
+  // A main step ends the planner status. Keep concrete tool statuses until
+  // another concrete update arrives.
+  if (activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning') return;
   beginThinkingActivity();
 }
 
