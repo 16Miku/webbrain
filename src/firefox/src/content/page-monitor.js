@@ -35,10 +35,12 @@
   let pointerHeld = false, composing = false, localOperation = null, controlIterator = null;
   let preparedOperationCursor = 0;
   let requestGeneration = 0, unreported = 0, interventionUnreported = 0, pendingDOM = null;
+  let interventionDiagnostic = '';
   let lastViewport = '';
   let agentResize = null;
   let lastFeedbackDelivery = Promise.resolve();
   let agentTurn = null, userTurn = null, lastUserTarget = null;
+  let identityPreparationCapture = null;
   let matchedEvents = new WeakMap();
   const activePointers = new Set();
   const fenceAttribute = 'data-webbrain-page-revision';
@@ -123,7 +125,14 @@
     const intervention = pending && (event.kind !== 'dom' || event.source !== 'page');
     const owner = runToken;
     if (pending) unreported++;
-    if (intervention) { interventionRevision++; interventionUnreported++; }
+    if (intervention) {
+      interventionRevision++; interventionUnreported++;
+      if (!(event.kind === 'dom' && event.source === 'unknown' && interventionDiagnostic.startsWith('dom.'))) {
+        const kind = ['dom', 'activity', 'input', 'click', 'selection', 'scroll', 'navigation', 'resize'].includes(event.kind) ? event.kind : 'other';
+        const source = ['user', 'page', 'unknown'].includes(event.source) ? event.source : 'other';
+        interventionDiagnostic = `feedback.${kind}.${source}`;
+      }
+    }
     try {
       const delivery = Promise.resolve(api.runtime.sendMessage({ target: 'background', action: 'page_feedback', feedback }))
         .then(() => { if (owner === runToken) {
@@ -367,6 +376,9 @@
       return op;
     };
     for (const op of operations.values()) {
+      // Keep late scroll/blur commits attributable without claiming a fresh
+      // physical key or pointer sequence after the action already returned.
+      if (op.finished && kind !== 'scroll' && !(kind === 'input' && event?.type === 'change')) continue;
       // Preparation can focus only the field that was already identified for
       // this input action. A page script moving focus elsewhere stays visible.
       if (kind === 'focus' && op.focusEligible && op.focusTarget === el && lastUserAt <= op.userAt) {
@@ -454,7 +466,13 @@
         signatures.set(option, signature(option));
       }
     }
-    signatures.set(el, signature(el));
+    const current = signature(el);
+    signatures.set(el, current);
+    // A value setter produces input/change events without a DOM mutation.
+    // Keep the periodic sampler aligned with the event already consumed here;
+    // immutable inference bindings still retain their original field state.
+    for (const op of operations.values())
+      if (!op.dispatched && op.target === el && op.until >= Date.now()) op.preparedTargetSignature = current;
   }
   function signature(el) {
     if (ignored(el)) return '';
@@ -567,20 +585,199 @@
     + '[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="textbox"],'
     + '[role="combobox"],[role="listbox"],[role="option"],[role="slider"],[role="spinbutton"],[role="tab"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]';
   const entityOwnerSelector = 'dialog,[role="dialog"],[role="alertdialog"],[role="region"],article,[role="article"],[role="listitem"]';
+  const navigationOwnerSelector = 'nav,[role="navigation"],header,[role="banner"],[role="tablist"]';
   const modelEntityIdentityAttributes = ['data-recipient', 'data-conversation', 'data-thread', 'data-chat', 'data-channel',
     'data-resource', 'data-entity', 'data-record', 'data-post', 'data-item', 'data-message', 'data-user', 'data-account'];
   const modelEntityIdentitySelector = modelEntityIdentityAttributes.flatMap(attribute => [attribute,
     `${attribute}-id`, `${attribute}-key`, `${attribute}-name`]).map(attribute => `[${attribute}]`).join(',');
   const modelActionTools = new Set([...passiveRebaseTools].filter(tool => !tool.startsWith('iframe_')));
   const modelFocusTools = new Set(['type_text', 'press_keys', 'input', 'focus']);
+  const decorativeEventNames = new WeakMap();
+  function hasDecorativeEventHandler(node) {
+    const nativePrototype = Object.getPrototypeOf(node);
+    let eventNames = decorativeEventNames.get(nativePrototype);
+    if (!eventNames) {
+      const names = new Set();
+      for (let prototype = nativePrototype; prototype; prototype = Object.getPrototypeOf(prototype)) {
+        for (const name of Object.getOwnPropertyNames(prototype)) if (/^on[a-z]/i.test(name)) names.add(name);
+      }
+      eventNames = [...names];
+      decorativeEventNames.set(nativePrototype, eventNames);
+    }
+    try {
+      return [...eventNames, ...Object.getOwnPropertyNames(node).filter(name => /^on[a-z]/i.test(name))]
+        .some(name => typeof node[name] === 'function');
+    } catch { return true; }
+  }
+  function isReadonlyPreparationDecoration(node) {
+    if (!(node instanceof SVGElement) || node.localName !== 'svg' || node.getAttribute('aria-hidden') !== 'true') return false;
+    const nodes = [node, ...node.querySelectorAll('*')];
+    return nodes.length <= 128 && nodes.every(current => current instanceof SVGElement && !current.shadowRoot
+      && !current.matches(modelControlSelector + ',' + modelEntityIdentitySelector)
+      && !current.matches('a,title,desc,[href],[tabindex],[contenteditable],[aria-label],[aria-labelledby],[aria-describedby],[data-action],[data-target],[data-command],[data-operation]')
+      && !current.hasAttribute('xlink:href') && !current.textContent.trim()
+      && (!current.hasAttribute('role') || ['img', 'presentation', 'none'].includes(current.getAttribute('role')))
+      && ![...current.attributes].some(attribute => /^on/i.test(attribute.name)) && !hasDecorativeEventHandler(current));
+  }
+  function modelHit(target, action, hit) {
+    if (target !== action || hit === target || !(hit instanceof SVGElement)) return hit;
+    const svg = hit.closest('svg[aria-hidden="true"]');
+    if (!svg || !svg.isConnected || svg.ownerDocument !== document || !target.contains(svg)) return hit;
+    const nodes = [svg, ...svg.querySelectorAll('*')];
+    if (nodes.length > 128) return hit;
+    const path = [];
+    for (let parent = svg.parentElement; parent && parent !== action; parent = parent.parentElement) {
+      path.push(parent);
+      if (path.length + nodes.length > 128) return hit;
+    }
+    if (nodes.some(node => !(node instanceof SVGElement))) return hit;
+    nodes.push(...path);
+    for (const node of nodes) {
+      if (node.closest(modelControlSelector) !== action
+          || node.matches(modelEntityIdentitySelector)
+          || node.matches('a,title,desc,[href],[tabindex],[aria-label],[aria-labelledby],[aria-describedby],[data-action],[data-target],[data-command],[data-operation]')
+          || node.hasAttribute('xlink:href')
+          || (node.hasAttribute('role') && !['img','presentation','none'].includes(node.getAttribute('role')))
+          || [...node.attributes].some(attribute => /^on/i.test(attribute.name))
+          || hasDecorativeEventHandler(node)) return hit;
+    }
+    // Capture qualification while the original child is connected. A later
+    // decorative replacement can compare against this same original action;
+    // overlays, handlers, names and interactive descendants never normalize.
+    return target;
+  }
   const semanticAttributes = ['id', 'role', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-modal', 'aria-current',
     'aria-required', 'aria-readonly', 'aria-disabled', 'aria-expanded', 'aria-selected', 'aria-checked', 'aria-pressed',
     'aria-valuenow', 'aria-valuetext', 'aria-hidden', 'contenteditable', 'tabindex', 'name', 'placeholder', 'title', 'alt',
     'for', 'form', 'type', 'href', 'target', 'download', 'action', 'method', 'enctype', 'accept', 'multiple',
     'formaction', 'formmethod', 'formenctype', 'formtarget', 'novalidate', 'formnovalidate', 'required', 'readonly',
     'disabled', 'open', 'inert', 'popover', 'onclick', 'data-selected'];
-  function modelSemantic(el, { text = false, directText = false, control = false, observedName = false, structuralFile = false } = {}) {
+  const modelIdentityDataAttributePattern = /^data-(?:(?:recipient|conversation|thread|chat|channel|resource|entity|record|post|item|message|user|account)(?:-(?:id|key|name|type))?|id|key|uuid|target|action|command|operation|selected|active|current|state|status|testid)$/;
+  function plainDescriptionTypeIsInert(node) {
+    const type = node.getAttribute('type');
+    if (type === null) return true;
+    // These HTML text containers have no native type-dependent behavior. A
+    // custom descriptor still passes the complete noninteractive subtree check.
+    return node.namespaceURI === 'http://www.w3.org/1999/xhtml' && !node.hasAttribute('is')
+      && /^(?:div|span|[a-z][a-z0-9._]*-[a-z0-9._-]+)$/.test(node.localName)
+      && type.length <= 64 && /^[a-zA-Z0-9_-]*$/.test(type);
+  }
+  function redundantButtonDescription(el) {
+    // Only independently named native buttons can ignore a plain description
+    // that repeats that exact name. Referenced identities and controls remain
+    // meaningful, including hidden descendants and native event handlers.
+    if (el?.tagName !== 'BUTTON' || el.shadowRoot || !el.isConnected || el.ownerDocument !== document
+        || (el.getAttribute('role') && el.getAttribute('role') !== 'button')) return null;
+    const authored = el.getAttribute('aria-label');
+    if (typeof authored !== 'string' || authored.length > 128 || !authored.trim()) return null;
+    const ids = (el.getAttribute('aria-describedby') || '').trim().split(/\s+/).filter(Boolean);
+    if (ids.length !== 1 || ids[0].length > 128 || /[\u0000-\u0020\u007f]/.test(ids[0])) return null;
+    try {
+      const matches = el.getRootNode().querySelectorAll(`[id="${CSS.escape(ids[0])}"]`);
+      if (matches.length === 0) return { node: null }; // No current description; later targets are checked again.
+      if (matches.length !== 1) return null;
+      const root = matches[0];
+      if (root === el || root.contains(el) || !root.isConnected || root.ownerDocument !== document) return null;
+      const control = root.closest(modelControlSelector);
+      if (control && control !== el) return null;
+      const boundaries = 'main,[role="main"],aside,[role="complementary"],section,form,[role="form"],'+entityOwnerSelector+','+navigationOwnerSelector+','+modelEntityIdentitySelector;
+      const boundary = root.closest(boundaries);
+      if (boundary && boundary !== el.closest(boundaries) && !boundary.contains(el)) return null;
+      const pending = [root]; let visited = 0, text = '';
+      while (pending.length) {
+        if (++visited > 128) return null;
+        const node = pending.pop();
+        if (node.nodeType === 3) {
+          text += node.data;
+          if (text.length > 512) return null;
+          continue;
+        }
+        if (node.nodeType === 8) continue; // Nonrendered comments still consume the traversal bound.
+        if (!(node instanceof Element) || node.shadowRoot || node.isContentEditable
+            || node.matches(modelControlSelector+','+modelEntityIdentitySelector)
+            || node.matches('script,style,template,slot,img,svg,canvas,video,audio,iframe,object,embed,'
+              +'[href],[xlink\\:href],[tabindex],[contenteditable],[aria-label],[aria-labelledby],[aria-describedby],'
+              +'[aria-details],[aria-live],[title],[alt],[placeholder],[name],[value],[form],'
+              +'[data-action],[data-target],[data-command],[data-operation],[popover]')
+            || !plainDescriptionTypeIsInert(node)
+            || semanticAttributes.some(attribute => !['id','role','aria-hidden','type'].includes(attribute) && node.hasAttribute(attribute))
+            || [...node.attributes].some(attribute => modelIdentityDataAttributePattern.test(attribute.name))
+            || (node.hasAttribute('role') && !['tooltip','presentation','none'].includes(node.getAttribute('role')))
+            || [...node.attributes].some(attribute => /^on/i.test(attribute.name))
+            || hasDecorativeEventHandler(node)) return null;
+        if (pending.length + visited + node.childNodes.length > 128) return null;
+        pending.push(...[...node.childNodes].reverse());
+      }
+      if (text.trim() !== authored.trim()) return null;
+      // A nested duplicate contributes neither new text nor new child identity.
+      // Bound the original button's other descendants, not just its name.
+      if (el.contains(root) && el.querySelectorAll('*').length > 256) return null;
+      return { node: root };
+    } catch { return null; }
+  }
+  function ownedNativeButtonWrapper(el) {
+    // A plain wrapper may repeat its sole native button's existing duplicate
+    // description. Its identity, type, focus/state attributes stay fully bound.
+    if (!(el instanceof Element) || el.tagName === 'BUTTON' || !el.isConnected || el.ownerDocument !== document
+        || el.namespaceURI !== 'http://www.w3.org/1999/xhtml' || el.hasAttribute('is') || el.shadowRoot
+        || el.isContentEditable || el.tabIndex >= 0
+        || el.matches(modelControlSelector+','+entityOwnerSelector+','+navigationOwnerSelector+','+modelEntityIdentitySelector)
+        || el.matches('main,[role="main"],aside,[role="complementary"],section,form,[role="form"],fieldset,label,'
+          +'[aria-label],[aria-labelledby],[aria-details],[aria-live],[title],[alt],[placeholder],[name],[value],[href],'
+          +'[contenteditable],[data-action],[data-target],[data-command],[data-operation]')
+        || (el.hasAttribute('role') && !['none','presentation'].includes(el.getAttribute('role')))
+        || [...el.attributes].some(attribute => modelIdentityDataAttributePattern.test(attribute.name) || /^on/i.test(attribute.name))
+        || hasDecorativeEventHandler(el)) return null;
+    const descendants = el.querySelectorAll('*');
+    if (descendants.length > 256 || [...descendants].some(node => node.shadowRoot)) return null;
+    const controls = [...descendants].filter(node => node.matches(modelControlSelector));
+    if (controls.length !== 1 || controls[0].tagName !== 'BUTTON') return null;
+    const button = controls[0], description = redundantButtonDescription(button);
+    const pending = [...el.childNodes].reverse(); let visited = 0, text = '';
+    while (pending.length) {
+      if (++visited > 256) return null;
+      const node = pending.pop();
+      if (node === button || node === description?.node) continue;
+      if (node.nodeType === 3) { text += node.data; if (text.length > 512 || node.data.trim()) return null; continue; }
+      if (node.nodeType === 8) continue;
+      if (!(node instanceof Element) || node.shadowRoot || node.isContentEditable || node.tabIndex >= 0
+          || node.matches(modelControlSelector+','+entityOwnerSelector+','+navigationOwnerSelector+','+modelEntityIdentitySelector)
+          || node.matches('main,[role="main"],aside,[role="complementary"],section,form,[role="form"],fieldset,label,'
+            +'slot,script,style,template,img,svg,canvas,video,audio,iframe,object,embed,[href],[xlink\\:href],'
+            +'[contenteditable],[aria-label],[aria-labelledby],[aria-describedby],[aria-details],[aria-live],[title],'
+            +'[alt],[placeholder],[name],[value],[form],[data-action],[data-target],[data-command],[data-operation]')
+          || (node.hasAttribute('role') && !['none','presentation'].includes(node.getAttribute('role')))
+          || [...node.attributes].some(attribute => modelIdentityDataAttributePattern.test(attribute.name) || /^on/i.test(attribute.name))
+          || hasDecorativeEventHandler(node)) return null;
+      if (pending.length + visited + node.childNodes.length > 256) return null;
+      pending.push(...[...node.childNodes].reverse());
+    }
+    return { button, description };
+  }
+  function redundantOwnedButtonWrapperDescription(el) {
+    const owned = ownedNativeButtonWrapper(el);
+    // Reuse the native button's exact canonical-or-absent description proof.
+    // Every later mounted node is fully checked again before it can normalize.
+    return owned?.description && (el.getAttribute('aria-describedby') || '').trim()
+      === (owned.button.getAttribute('aria-describedby') || '').trim() ? owned.description : null;
+  }
+  function redundantDescriptionBinding(el) {
+    return redundantButtonDescription(el) || redundantOwnedButtonWrapperDescription(el);
+  }
+  function buttonTextWithoutDescription(el, description) {
+    if (!description || !el.contains(description)) return el.textContent;
+    const pending = [...el.childNodes].reverse(); let text = '';
+    while (pending.length) {
+      const node = pending.pop();
+      if (node === description) continue;
+      if (node.nodeType === 3) text += node.data;
+      else pending.push(...[...node.childNodes].reverse());
+    }
+    return text;
+  }
+  function modelSemantic(el, { text = false, directText = false, control = false, observedName = false, nameOnly = false, structuralFile = false } = {}) {
     const style = getComputedStyle(el);
+    const redundantDescription = redundantDescriptionBinding(el);
     let accessibleName = null;
     if (text) {
       // The selected target retains the name the model actually observed.
@@ -590,18 +787,19 @@
       else accessibleName = [el.getAttribute('aria-label'), el.getAttribute('alt'), el.getAttribute('title'),
         [...el.querySelectorAll('img,svg title,[aria-label]')].map(node => [node.getAttribute('alt'), node.getAttribute('aria-label'), node.textContent])];
     }
-    return JSON.stringify([el.tagName, semanticAttributes.map(name => el.getAttribute(name)),
-      [...el.attributes].filter(attribute => /^data-(?:(?:recipient|conversation|thread|chat|channel|resource|entity|record|post|item|message|user|account)(?:-(?:id|key|name|type))?|id|key|uuid|target|action|command|operation|selected|active|current|state|status|testid)$/.test(attribute.name))
+    return JSON.stringify([el.tagName, semanticAttributes.map(name => name === 'aria-describedby' && redundantDescription ? null : el.getAttribute(name)),
+      [...el.attributes].filter(attribute => modelIdentityDataAttributePattern.test(attribute.name))
         .map(attribute => [attribute.name, attribute.value]).sort(([left], [right]) => left.localeCompare(right)),
       structuralFile ? null : style.display, structuralFile ? null : style.visibility,
-      structuralFile ? null : style.opacity, structuralFile ? null : style.contentVisibility, el.inert === true, popoverOpen(el),
-      text ? el.textContent : directText ? [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.data) : null,
+      structuralFile ? null : Number(style.opacity) === 0, structuralFile ? null : style.contentVisibility, el.inert === true, popoverOpen(el),
+      text && !nameOnly ? buttonTextWithoutDescription(el, redundantDescription?.node) : directText ? [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.data) : null,
       accessibleName, control ? controlState(el) : null,
       control && /^(INPUT|TEXTAREA|SELECT|OPTION)$/.test(el.tagName) ? el.value : null,
       control && el.isContentEditable ? el.innerHTML : null]);
   }
   function modelLabels(el) {
     const labels = new Set(el.labels || []);
+    const redundantDescription = redundantDescriptionBinding(el);
     for (const attribute of ['aria-labelledby', 'aria-describedby']) {
       for (const id of (el.getAttribute(attribute) || '').split(/\s+/).filter(Boolean)) {
         const root = el.getRootNode();
@@ -611,6 +809,7 @@
         // Ambiguous references cannot establish an exact action context.
         if (!matches?.length) continue;
         if (matches.length !== 1) return null;
+        if (attribute === 'aria-describedby' && matches[0] === redundantDescription?.node) continue;
         labels.add(matches[0]);
       }
     }
@@ -636,9 +835,56 @@
       return context;
     } catch { return null; }
   }
-  function dialogTextIsCovered(owner, boundTextNodes, addNode, identities, form) {
+  function navigationTextMatchesName(control) {
+    if (!control.matches('button,a[href],[role="button"],[role="link"]')
+        || !['', 'button', 'link'].includes(control.getAttribute('role') || '')
+        || typeof window.__wb_ax_name !== 'function') return false;
+    const pending = [...control.childNodes], text = [];
+    let visited = 0;
+    while (pending.length) {
+      if (++visited > 256) return false;
+      const node = pending.pop();
+      if (node.nodeType === 3) { text.push(node.data); continue; }
+      if (!(node instanceof Element) || ignored(node) || node.getAttribute('aria-hidden') === 'true') continue;
+      const style = getComputedStyle(node);
+      if (style.display === 'none' || ['hidden','collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') continue;
+      if (node.shadowRoot) return false;
+      pending.push(...node.childNodes);
+    }
+    const renderedText = text.reverse().join('').replace(/\s+/g, ' ').trim();
+    return !renderedText || renderedText === window.__wb_ax_name(control).replace(/\s+/g, ' ').trim();
+  }
+  function unexposedDecoration(node, control) {
+    const hidden = node.closest('[aria-hidden="true"]');
+    if (!hidden || hidden === control || !control.contains(hidden)) return null;
+    const labels = modelLabels(control);
+    // An explicitly referenced hidden label still names or describes the
+    // control. It cannot be treated as unexposed decorative content.
+    if (!labels || labels.some(label => label.node === node || label.node.contains(node))) return false;
+    const nodes = [node, ...node.querySelectorAll('*')];
+    for (let parent = node.parentElement; parent && parent !== control; parent = parent.parentElement) {
+      nodes.push(parent);
+      if (nodes.length > 128) return false;
+    }
+    if (nodes.length > 128) return false;
+    return nodes.every(current => !current.shadowRoot
+      && current.closest(modelControlSelector) === control && !current.matches(modelEntityIdentitySelector)
+      && !current.matches('a,[href],[tabindex],[contenteditable],[aria-labelledby],[aria-describedby],[data-action],[data-target],[data-command],[data-operation]')
+      && !current.hasAttribute('xlink:href')
+      && (!current.hasAttribute('role') || ['img', 'presentation', 'none'].includes(current.getAttribute('role')))
+      && ![...current.attributes].some(attribute => /^on/i.test(attribute.name))
+      && !hasDecorativeEventHandler(current));
+  }
+  function dialogTextIsCovered(owner, boundTextNodes, addNode, identities, form, namedNavigationControls = null) {
     const authoredLabel = node => ['aria-label', 'aria-labelledby', 'aria-describedby', 'title', 'alt']
-      .some(attribute => node.getAttribute(attribute)?.trim());
+      .some(attribute => (attribute !== 'aria-describedby' || !redundantDescriptionBinding(node))
+        && node.getAttribute(attribute)?.trim());
+    const readOnlyIdentityDisplay = node => node.matches('[role="textbox"][aria-readonly="true"]')
+      && !node.isContentEditable && !node.matches('input,textarea,select,a,button')
+      && !node.hasAttribute('onclick') && (!node.hasAttribute('tabindex') || node.tabIndex < 0)
+      && !node.querySelector(modelControlSelector)
+      && ![...node.querySelectorAll('*')].some(child => child.hasAttribute('onclick') || child.tabIndex >= 0);
     const collectedIdentities = new Set();
     const addIdentity = node => {
       const pending = [node];
@@ -658,6 +904,7 @@
       }
       return true;
     };
+    const redundantDescriptions = new Set([...boundTextNodes].map(node => redundantButtonDescription(node)?.node).filter(Boolean));
     const stack = [...owner.childNodes];
     let visited = 0;
     while (stack.length) {
@@ -679,6 +926,7 @@
         continue;
       }
       if (!(node instanceof Element) || ignored(node)) continue;
+      if (redundantDescriptions.has(node)) continue; // Only the fully checked duplicate subtree of a bound button.
       const style = getComputedStyle(node);
       if (style.display === 'none' || style.opacity === '0' || style.contentVisibility === 'hidden') continue;
       // A zero-size/display:contents wrapper can still expose destination
@@ -687,6 +935,9 @@
       if (boundTextNodes.has(node)) continue;
       if (node.matches(modelEntityIdentitySelector) || node.matches(entityOwnerSelector)
           || node.matches(modelControlSelector)) return false;
+      // Bind the same plain wrapper before any tooltip appears. Normalizing
+      // duplicate text never exempts its original type, identity or focus/state.
+      if (ownedNativeButtonWrapper(node) && !addNode(node)) return false;
       if (authoredLabel(node)) {
         // Account avatars and other authored labels are meaningful context.
         // Bind their complete subtree and expose the current rendered identity
@@ -702,27 +953,106 @@
     // including label roots outside the dialog. Editable descendants keep
     // their existing value continuation instead of acquiring extra bindings.
     for (const root of boundTextNodes) {
+      if (!owner.contains(root) && root.matches(modelControlSelector)
+          && (!readOnlyIdentityDisplay(root) || !addIdentity(root))) return false;
       // Authored wrappers can conceal nested account labels. Their reference
       // chains are collected when admitted, even for roots already visited.
       const descendants = root.querySelectorAll('*');
       if (root.shadowRoot || descendants.length > 256) return false;
+      const redundantDescription = redundantButtonDescription(root)?.node;
       for (const child of descendants) {
+        if (redundantDescription && (child === redundantDescription || redundantDescription.contains(child))) continue;
         if (ignored(child)) continue;
+        const decoration = unexposedDecoration(child, root);
+        if (decoration !== false && modelHit(root, root, child) === root && child instanceof SVGElement) continue;
+        if (decoration !== null) {
+          // Keep exact hidden semantics bound. Hidden controls, identities or
+          // native event handlers cannot gain a decorative exemption, even
+          // when they have no authored label of their own.
+          if (!decoration || (!namedNavigationControls?.has(root) && !addNode(child))) return false;
+          continue;
+        }
+        const readOnlyDisplay = readOnlyIdentityDisplay(child);
         if (child.shadowRoot || ((child.matches(modelEntityIdentitySelector) || child.matches(entityOwnerSelector)
-            || child.matches(modelControlSelector)) && !boundTextNodes.has(child))) return false;
+            || child.matches(modelControlSelector)) && !boundTextNodes.has(child) && !readOnlyDisplay)) return false;
         // An ARIA textbox can be a read-only destination display. Only real
         // editable DOM hosts need the native value-continuation exemption.
         if (!child.isContentEditable && !child.closest('input,textarea,select')) {
           const style = getComputedStyle(child);
-          if (authoredLabel(child) && style.display !== 'none' && style.opacity !== '0' && style.contentVisibility !== 'hidden') {
+          if ((authoredLabel(child) || readOnlyDisplay) && style.display !== 'none' && style.opacity !== '0' && style.contentVisibility !== 'hidden') {
             if (!addIdentity(child)) return false;
-          } else if (!addNode(child)) return false;
+          } else if (!namedNavigationControls?.has(root) && !addNode(child)) return false;
         }
       }
     }
     return true;
   }
-  function actionFootprint(target) {
+  function readonlyPreparationMatches(snapshot, target = snapshot?.target, owner = snapshot?.owner) {
+    if (!snapshot || snapshot.schema !== 'webbrain.readonly-identity-preparation/1' || snapshot.readonly !== true
+        || typeof owner !== 'string' || !owner || owner.length > 1000 || snapshot.owner !== owner
+        || typeof snapshot.token !== 'string' || !snapshot.token || snapshot.token.length > 100
+        || typeof snapshot.documentToken !== 'string' || !snapshot.documentToken || snapshot.documentToken.length > 100
+        || typeof snapshot.phase !== 'string' || !/^[a-z][a-z0-9_]{0,63}$/.test(snapshot.phase)
+        || typeof snapshot.signature !== 'string' || snapshot.signature.length > 8192
+        || !Array.isArray(snapshot.allowedTools) || snapshot.allowedTools.length !== 1 || snapshot.allowedTools[0] !== 'click_ax'
+        || !Array.isArray(snapshot.nodes) || !snapshot.nodes.length || snapshot.nodes.length > 32
+        || !Array.isArray(snapshot.identities) || !snapshot.identities.length || snapshot.identities.length > 8
+        || snapshot.target !== target || !(target instanceof Element)
+        || !(snapshot.action instanceof Element) || !(snapshot.scope instanceof Element)
+        || snapshot.scope === document.body || snapshot.scope === document.documentElement
+        || snapshot.action.parentElement !== snapshot.scope
+        || !(snapshot.action === target || snapshot.action.contains(target))
+        || !snapshot.nodes.includes(target) || !snapshot.nodes.includes(snapshot.action)
+        || snapshot.identities.some(node => !snapshot.nodes.includes(node))) return false;
+    const nodes = [target, snapshot.action, snapshot.scope, ...snapshot.nodes, ...snapshot.identities];
+    if (nodes.some(node => !(node instanceof Element) || node.ownerDocument !== document || !node.isConnected || !visible(node))
+        || target.closest('form,[role="form"],footer,input,textarea,select,[contenteditable]:not([contenteditable="false"])')
+        || snapshot.action.form || snapshot.action.hasAttribute('href')
+        || snapshot.action.matches('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[type="submit"],[type="image"]')
+        || !['', 'button'].includes(snapshot.action.getAttribute('role') || '')) return false;
+    try { return window.__wb_readonly_identity_preparation_matches?.(snapshot) === true; }
+    catch { return false; }
+  }
+  function mainActionOwner(action) {
+    const main = action.closest('main,[role="main"]');
+    if (!main || main === action || main === document.body || main === document.documentElement || !visible(main)) return null;
+    const mains = document.querySelectorAll('main,[role="main"]');
+    if (mains.length > 64 || [...mains].some(other => other !== main && visible(other))) return null;
+    // A native primary landmark can own a form-less page action. Walk a
+    // bounded page, rather than requiring every passive descendant to fit
+    // the tiny-editor fallback. All current material controls remain bound.
+    const nodes = [], walker = document.createTreeWalker(main, NodeFilter.SHOW_ELEMENT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (nodes.length >= 2048) return null;
+      nodes.push(node);
+    }
+    const local = node => node.closest('main,[role="main"]') === main
+      && !node.closest('aside,nav,[role="navigation"],[role="complementary"]');
+    const activeNode = (node, structuralFile = false) => {
+      for (let current = structuralFile ? bindingParent(node) : node; current && current !== main; current = bindingParent(current)) {
+        const style = getComputedStyle(current);
+        if (current.inert || current.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+            || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+      }
+      return true;
+    };
+    const headings = nodes.filter(node => local(node) && visible(node) && activeNode(node)
+      && node.matches('h1,h2,h3,h4,h5,h6,[role="heading"],[aria-current]'));
+    const controls = nodes.filter(node => local(node) && node.matches(modelControlSelector)
+      && activeNode(node, node.matches('input[type="file"]')));
+    const identities = nodes.filter(node => local(node) && visible(node) && activeNode(node) && node.matches(modelEntityIdentitySelector));
+    const owners = nodes.filter(node => local(node) && activeNode(node) && node.matches(entityOwnerSelector + ',form,[role="form"]'));
+    const ownedHeadings = headings.filter(node => !action.contains(node)
+      && !node.closest(entityOwnerSelector + ',form,[role="form"]'));
+    const primary = ownedHeadings.filter(node => node.matches('h1,[role="heading"][aria-level="1"]'));
+    const purpose = primary.length ? primary : ownedHeadings;
+    if (purpose.length !== 1 || !purpose[0].textContent.trim() || headings.length > 32
+        || controls.length > 64 || identities.length > 64 || owners.length > 64) return null;
+    return { main, headings, controls, identities, owners };
+  }
+  function actionFootprint(target, readonlyPreparation = null) {
+    if (readonlyPreparation && !readonlyPreparationMatches(readonlyPreparation, target)) return null;
     const structuralFile = target instanceof Element && target.tagName === 'INPUT' && target.type === 'file';
     if (!(target instanceof Element) || target.ownerDocument !== document || !target.isConnected
         || (!structuralFile && !visible(target)) || ignored(target)) return null;
@@ -730,15 +1060,41 @@
       const root = node.getRootNode();
       if (root instanceof ShadowRoot && root.mode !== 'open') return null;
     }
-    const action = target.matches(modelControlSelector) ? target : target.closest(modelControlSelector);
+    const action = readonlyPreparation?.action || (target.matches(modelControlSelector) ? target : target.closest(modelControlSelector));
     if (!action || (!structuralFile && !visible(action))) return null;
     const form = action.form || target.closest('form,[role="form"]');
     const ownerBase = form || action;
     const conversation = currentConversationContext(target);
     if (conversation && form && !conversation.footer.contains(form)) return null;
-    let owner = conversation?.pane || (ownerBase.matches(entityOwnerSelector) ? ownerBase : ownerBase.closest(entityOwnerSelector));
+    let owner = readonlyPreparation?.scope || conversation?.pane || (ownerBase.matches(entityOwnerSelector) ? ownerBase : ownerBase.closest(entityOwnerSelector));
+    let navigationOwner = false;
+    let nativeFileSection = null;
+    let mainOwner = null;
+    if (!owner && !form && !conversation) {
+      const section = action.closest('section'), purpose = window.__wb_ax_section_purpose?.(section);
+      if (section && purpose && section.querySelectorAll('*').length <= 256
+          && section.querySelectorAll(modelControlSelector).length <= 64) {
+        const files = [...section.querySelectorAll('input[type="file"]')];
+        const sections = [...document.querySelectorAll('section')];
+        const distinctPurpose = sections.length <= 64 && !sections.some(other => other !== section
+          && other.querySelector('input[type="file"]') && window.__wb_ax_section_purpose?.(other)?.text === purpose.text);
+        if (files.length === 1 && !files[0].disabled && !files[0].closest('fieldset[disabled]') && distinctPurpose) {
+          owner = section; nativeFileSection = purpose;
+        }
+      }
+    }
+    if (!owner && !form) {
+      const navigation = action.closest(navigationOwnerSelector);
+      // These are actual local landmarks, not an arbitrary control relabeled
+      // as its own owner. They require complete observed context below.
+      if (navigation && navigation !== action) { owner = navigation; navigationOwner = true; }
+    }
+    if (!owner && !form && !conversation && !structuralFile) {
+      mainOwner = mainActionOwner(action);
+      if (mainOwner) owner = mainOwner.main;
+    }
     let unstructuredOwner = false;
-    let meaningfulOwner = !!conversation;
+    let meaningfulOwner = !!conversation || !!readonlyPreparation;
     if (!owner && form && [...form.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],'+modelEntityIdentitySelector)]
       .some(node => node.closest('form,[role="form"]') === form && !node.closest(entityOwnerSelector)
         && !node.closest('aside,nav,[role="navigation"],[role="complementary"]'))) owner = form;
@@ -760,7 +1116,15 @@
       }
       if (!owner) { owner = fallback; unstructuredOwner = true; }
     }
-    const nodes = [], ancestors = [], boundTextNodes = new Set(), dialogIdentities = new Set();
+    if (!owner && form && [...document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]')]
+      .some(node => visible(node) && !node.closest('form,[role="form"],'+entityOwnerSelector)
+        && !node.closest('aside,nav,[role="navigation"],[role="complementary"]'))) {
+      // Ordinary forms often sit directly below a page heading without a
+      // wrapper/region. Bind the form and its controls, plus every heading
+      // below, instead of including unrelated body counters in its owner.
+      owner = form; unstructuredOwner = true; meaningfulOwner = true;
+    }
+    const nodes = [], ancestors = [], boundTextNodes = new Set(), dialogIdentities = new Set(), namedNavigationControls = new Set();
     let uncoveredLabel = false;
     const addNode = (node, options = {}) => {
       const previous = nodes.find(item => item.node === node);
@@ -802,7 +1166,15 @@
       const controls = form.elements ? [...form.elements] : [...form.querySelectorAll(modelControlSelector)];
       for (const control of controls) if (!addNode(control, { text: true, control: true })) return null;
     }
-    if (conversation) {
+    if (readonlyPreparation) {
+      // An adapter may prove a read-only identity-preparation control outside
+      // an ordinary semantic landmark. Bind its original current pins and
+      // expose its actual identities; no model flag or button name is proof.
+      if (!addNode(owner)) return null;
+      for (const node of readonlyPreparation.nodes) if (!addNode(node,
+        readonlyPreparation.identities.includes(node) ? { text: true } : {})) return null;
+      for (const node of readonlyPreparation.identities) dialogIdentities.add(node);
+    } else if (conversation) {
       // Reuse the recipient guard's exact local conversation proof. Its
       // matcher is re-run for every comparison; history and sidebar controls
       // are outside this footprint, including when their counters update.
@@ -815,8 +1187,19 @@
       const controls = conversation.footer.querySelectorAll(modelControlSelector);
       if (controls.length > 64) return null;
       for (const control of controls) if (!addNode(control, { text: true, control: true })) return null;
+    } else if (mainOwner) {
+      if (!addNode(owner, { directText: true })) return null;
+      for (const node of mainOwner.owners) if (!addNode(node, { directText: true })) return null;
+      for (const node of mainOwner.headings) if (!addNode(node, { text: true })) return null;
+      for (const node of mainOwner.identities) if (!addNode(node, { text: true, control: true })) return null;
+      for (const node of mainOwner.controls) if (!addNode(node, { text: true, control: true })) return null;
+      meaningfulOwner = !uncoveredLabel;
     } else if (owner) {
       if (!addNode(owner, { directText: true })) return null;
+      if (nativeFileSection) {
+        if (!addNode(nativeFileSection.node, { text: true })) return null;
+        dialogIdentities.add(nativeFileSection.node);
+      }
       const belongs = (node, allowNavigation = false) => {
         const closest = node.closest(entityOwnerSelector);
         const relatedForm = node.closest('form,[role="form"]');
@@ -826,10 +1209,10 @@
             : 'aside,nav,[role="navigation"],[role="complementary"]');
       };
       const headings = [...owner.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],[aria-current]')]
-        .filter(belongs);
+        .filter(node => belongs(node, navigationOwner));
       if (headings.length > 32) return null;
       for (const heading of headings) if (!addNode(heading, { text: true })) return null;
-      const identities = [...owner.querySelectorAll(modelEntityIdentitySelector)].filter(belongs);
+      const identities = [...owner.querySelectorAll(modelEntityIdentitySelector)].filter(node => belongs(node, navigationOwner));
       if (identities.length > 64) return null;
       for (const identity of identities) if (!addNode(identity, { text: true, control: true })) return null;
       meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector);
@@ -837,16 +1220,28 @@
       // Bind every local control, excluding a separate entity, form or sidebar.
       const headingFreeDialog = !meaningfulOwner && owner.matches('dialog,[role="dialog"],[role="alertdialog"]');
       for (const control of owner.querySelectorAll(modelControlSelector)) {
-        if (belongs(control, headingFreeDialog) && !addNode(control, { text: true, control: true })) return null;
+        if (!belongs(control, headingFreeDialog || navigationOwner)) continue;
+        // Other authored navigation names stay bound exactly as observed.
+        // Their non-name badge/icon text does not become account identity.
+        // The target, selected items, fields and declared entities retain
+        // their full text/value bindings; all outside control text is covered.
+        const nameOnly = navigationOwner && control !== action && !control.contains(target)
+          && !control.matches('input,textarea,select,option,[contenteditable]:not([contenteditable="false"]),[aria-current],[aria-selected],[aria-pressed],[data-selected],'+modelEntityIdentitySelector)
+          && !!(control.getAttribute('aria-label') || control.getAttribute('aria-labelledby') || control.getAttribute('title'))
+          && navigationTextMatchesName(control);
+        if (!addNode(control, { text: true, control: true, observedName: nameOnly, nameOnly })) return null;
+        if (nameOnly) namedNavigationControls.add(control);
       }
       // A heading-free dialog can supply a boundary when all local labels,
       // text and controls are bound and identities are completely observed.
-      meaningfulOwner ||= headingFreeDialog && dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form) && !uncoveredLabel;
+      if (navigationOwner) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, namedNavigationControls) && !uncoveredLabel;
+      else if (nativeFileSection) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form) && !uncoveredLabel;
+      else meaningfulOwner ||= headingFreeDialog && dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form) && !uncoveredLabel;
     }
     // An arbitrary container/toolbar with no entity anchor cannot establish
     // the recipient or item. Such targets retain strict legacy dispatch only.
     if (!owner || !meaningfulOwner) return null;
-    if (!conversation && (!owner || unstructuredOwner)) {
+    if (!conversation && (!owner || unstructuredOwner || nativeFileSection)) {
       // Without an explicit entity boundary, an outside conversation heading
       // may identify the recipient. Never infer that a small form/toolbar owns
       // it; broad heading binding is a conservative fallback for these pages.
@@ -855,17 +1250,22 @@
       for (const heading of headings) if (!addNode(heading, { text: true })) return null;
     }
     const rect = structuralFile ? null : target.getBoundingClientRect();
-    const hit = structuralFile ? null : deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    if (!structuralFile && (!hit || !(target === hit || target.contains(hit) || (action.contains(target) && action.contains(hit))))) return null;
+    const rawHit = structuralFile ? null : deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!structuralFile && (!rawHit || !(target === rawHit || target.contains(rawHit) || (action.contains(target) && action.contains(rawHit))))) return null;
+    const hit = structuralFile ? null : modelHit(target, action, rawHit);
     return { model: true, structuralFile, target, scope: owner || form || action, ancestors, nodes, hit,
       dialogIdentities,
+      ...(mainOwner ? { observedMainControls: mainOwner.controls.filter(node => visible(node)) } : {}),
       ...(conversation ? { conversationCarrier: conversation.carrier, conversationComposer: conversation.composer } : {}),
       context: JSON.stringify([location.href, document.baseURI, currentViewport(), window.scrollX, window.scrollY,
         rect ? [rect.left, rect.top, rect.width, rect.height] : null,
-        ...(conversation ? [[conversation.signature, conversation.aliases]] : [])]) };
+        ...(conversation ? [[conversation.signature, conversation.aliases]] : []),
+        ...(readonlyPreparation ? [[readonlyPreparation.owner, readonlyPreparation.token,
+          readonlyPreparation.phase, readonlyPreparation.signature]] : [])]),
+      ...(readonlyPreparation ? { readonlyPreparation } : {}) };
   }
   function operationBinding(op, target = op?.preparedBinding?.target) {
-    return op?.preparedBinding?.model === true ? actionFootprint(target) : preparedBinding(target);
+    return op?.preparedBinding?.model === true ? actionFootprint(target, op.preparedBinding.readonlyPreparation) : preparedBinding(target);
   }
   function inputContinuationValue(item, target) {
     if (item.node !== target) return item.value;
@@ -938,7 +1338,8 @@
     if (params.ref_id && snapshot.hasRefs && snapshot.refs.get(params.ref_id) !== target) return {};
     if (!params.ref_id && !params.selector && !params.nativeTarget && !params.textMatch && modelFocusTools.has(params.tool)
         && snapshot.focusTarget !== target) return {};
-    if (before) return samePreparedBinding(before, actionFootprint(target)) ? { binding: before } : {};
+    if (before?.readonlyPreparation && params.tool !== 'click_ax') return {};
+    if (before) return samePreparedBinding(before, actionFootprint(target, before.readonlyPreparation)) ? { binding: before } : {};
     const current = modelCandidateIdentity(target);
     return current && previous.value === current.value && previous.parent === current.parent && previous.form === current.form
       ? { uncertified: true } : {};
@@ -949,40 +1350,80 @@
   function captureModel(params = {}) {
     if (!active || params.runToken !== runToken) return { ready: false, runToken, documentToken };
     flushPendingMutations(); sampleFormControls();
-    const priorityTarget = params.actionTarget && typeof params.actionTarget === 'object'
-      ? modelTarget(params.actionTarget) : null;
-    let page;
+    const authority = Object.freeze({ runToken, documentToken, owner: params.nativeChatOwner,
+      userAt: lastUserAt, interventionRevision });
+    identityPreparationCapture = authority;
+    try { return captureCurrentModel(params, authority); }
+    finally { if (identityPreparationCapture === authority) identityPreparationCapture = null; }
+  }
+  function currentIdentityPreparationCapture(authority, owner) {
+    return !!authority && authority === identityPreparationCapture && active && !disposed
+      && authority.runToken === runToken && authority.documentToken === documentToken
+      && authority.userAt === lastUserAt && authority.interventionRevision === interventionRevision
+      && typeof owner === 'string' && owner.length > 0 && owner.length <= 1000 && authority.owner === owner;
+  }
+  function captureCurrentModel(params, authority) {
+    let readonlyPreparation = null;
+    if (typeof params.nativeChatOwner === 'string' && params.nativeChatOwner.length <= 1000) {
+      try {
+        const candidate = window.__wb_get_readonly_identity_preparation?.(params.nativeChatOwner, null, authority);
+        if (readonlyPreparationMatches(candidate, candidate?.target, params.nativeChatOwner)) readonlyPreparation = candidate;
+      } catch { /* Unsupported adapters retain the ordinary certificate. */ }
+    }
+    const nativeReadTarget = typeof params.nativeChatOwner === 'string' && params.nativeChatOwner.length <= 1000
+      ? window.__wb_native_chat_read_target?.(params.nativeChatOwner) : null;
+    const priorityTarget = readonlyPreparation?.target || nativeReadTarget?.target || (params.actionTarget && typeof params.actionTarget === 'object'
+      ? modelTarget(params.actionTarget) : null);
+    const observationRoot = /^ref_[A-Za-z0-9_-]+$/.test(params.observationRef || '')
+      ? window.__wb_ax_lookup?.(params.observationRef) : null;
+    const validObservationRoot = observationRoot instanceof Element && observationRoot.ownerDocument === document
+      && observationRoot.isConnected && window.__wb_ax_lookup?.(params.observationRef) === observationRoot;
+    let page, observationScopeCaptured = false;
+    const observedRefs = [];
     if (params.includeTree === true) {
       try {
         if (typeof window.__generateAccessibilityTree !== 'function') throw new Error('unavailable');
-        const boundedTreeText = (content, limit) => {
-          if (content.length <= limit) return content;
-          // Preserve complete AX lines so an omitted long attribute cannot
-          // make an unseen node appear covered by a partly printed ref.
-          const suffix = '\n[observation truncated]';
-          const end = content.lastIndexOf('\n', limit - suffix.length);
-          return (end >= 0 ? content.slice(0, end) : '') + suffix;
+        const boundedTreeText = (tree, limit, offset = 0) => {
+          const content = tree.pageContent, suffix = '\n[observation truncated]';
+          const end = content.length <= limit ? content.length : Math.max(0, content.lastIndexOf('\n', limit - suffix.length));
+          // Trust only complete formatter-owned units retained in this exact
+          // prefix, never bracket tokens inside page-controlled text fields.
+          for (const record of window.__wb_ax_observed_refs?.(tree, end) || [])
+            observedRefs.push({ ref: record.ref, end: offset + record.end });
+          return content.length <= limit ? content : content.slice(0, end) + suffix;
         };
         // Reserve space for the requested owner's current identity evidence.
         // AX omits some visible generic wrappers (for example recipient chips).
-        const tree = window.__generateAccessibilityTree('visible', 15, priorityTarget ? 5000 : 6000);
+        const contextual = priorityTarget || validObservationRoot;
+        const tree = window.__generateAccessibilityTree('visible', 15, contextual ? 4000 : 6000);
         if (!tree || tree.error || typeof tree.pageContent !== 'string') throw new Error('unavailable');
-        page = { success: true, ...tree, pageContent: boundedTreeText(tree.pageContent, priorityTarget ? 5000 : 6000), url: location.href };
+        page = { success: true, ...tree, pageContent: boundedTreeText(tree, contextual ? 4000 : 6000), url: location.href };
+        if (validObservationRoot) {
+          const scoped = window.__generateAccessibilityTree('visible', 15, priorityTarget ? 3000 : 6000, params.observationRef);
+          if (scoped && !scoped.error && typeof scoped.pageContent === 'string') {
+            const prefix = '\n\n[CURRENT REQUESTED OBSERVATION SCOPE]\n';
+            page.pageContent += prefix + boundedTreeText(scoped, priorityTarget ? 3000 : 6000, page.pageContent.length + prefix.length);
+            observationScopeCaptured = true;
+          }
+        }
         if (priorityTarget) {
-          const scope = actionFootprint(priorityTarget)?.scope || priorityTarget.closest(entityOwnerSelector) || priorityTarget;
+          const scope = actionFootprint(priorityTarget, readonlyPreparation)?.scope || priorityTarget.closest(entityOwnerSelector) || priorityTarget;
           const scopeRef = window.__wb_ax_ref?.(scope);
           if (!scopeRef) throw new Error('unavailable');
           const scoped = window.__generateAccessibilityTree('visible', 15, scope === priorityTarget ? 4000 : 3000, scopeRef);
           if (!scoped || scoped.error || typeof scoped.pageContent !== 'string') throw new Error('unavailable');
-          page.pageContent += '\n\n[CURRENT REQUESTED ACTION CONTEXT]\n' + boundedTreeText(scoped.pageContent, scope === priorityTarget ? 4000 : 3000);
+          const prefix = '\n\n[CURRENT REQUESTED ACTION CONTEXT]\n';
+          page.pageContent += prefix + boundedTreeText(scoped, scope === priorityTarget ? 4000 : 3000, page.pageContent.length + prefix.length);
           if (scope !== priorityTarget) {
             const targetRef = window.__wb_ax_ref?.(priorityTarget);
             if (!targetRef) throw new Error('unavailable');
             const targetTree = window.__generateAccessibilityTree('visible', 15, 1000, targetRef);
             // Hidden file controls can have a structural certificate while
             // their visible owner is the only AX observation available.
-            if (!targetTree?.error && typeof targetTree?.pageContent === 'string')
-              page.pageContent += '\n[CURRENT EXACT ACTION TARGET]\n' + boundedTreeText(targetTree.pageContent, 1000);
+            if (!targetTree?.error && typeof targetTree?.pageContent === 'string') {
+              const targetPrefix = '\n[CURRENT EXACT ACTION TARGET]\n';
+              page.pageContent += targetPrefix + boundedTreeText(targetTree, 1000, page.pageContent.length + targetPrefix.length);
+            }
           }
         }
         // The Agent sends this complete object through its 16k serializer.
@@ -994,13 +1435,16 @@
       } catch { return { ready: false, runToken, documentToken, reason: 'observation_unavailable' }; }
     }
     const targets = new Map(), uncertified = new WeakMap(), refs = new Map(), seen = new Set(), publicNodes = new Set();
-    if (page) for (const match of page.pageContent.matchAll(/\[(ref_[A-Za-z0-9_-]+)\]/g)) {
-      const ref = match[1], node = window.__wb_ax_lookup?.(ref);
+    if (page) for (const { ref, end } of observedRefs) {
+      if (end > page.pageContent.length) continue;
+      const node = window.__wb_ax_lookup?.(ref);
       if (node instanceof Element) { refs.set(ref, node); publicNodes.add(node); }
     }
     let evidenceLength = 0;
     const exposedEditableNames = new WeakMap();
     const exposedCompleteLabels = new WeakSet();
+    const collateralMainControls = new WeakSet();
+    let collateralHeaderExposed = false;
     const exposeIdentity = (node, { authoredEditableName = false, completeLabel = false } = {}) => {
       if (publicNodes.has(node) && !authoredEditableName && !completeLabel) return true;
       if (completeLabel && exposedCompleteLabels.has(node)) return true;
@@ -1046,6 +1490,33 @@
       if (completeLabel) exposedCompleteLabels.add(node);
       return true;
     };
+    const exposeMainControl = node => {
+      if (publicNodes.has(node) || collateralMainControls.has(node)) return true;
+      const editable = node.matches('input,textarea,select,[contenteditable]:not([contenteditable="false"])');
+      if (exposeIdentity(node, { authoredEditableName: editable })) return true;
+      // A rendered but genuinely unnamed collateral control still belongs to
+      // the page action. Describe its structure without revealing its value.
+      // Named/associated-label failures and observation limits stay failures.
+      if (!visible(node) || node.closest('[aria-hidden="true"]') || node.labels?.length
+          || ['aria-label', 'title', 'placeholder', 'alt', 'aria-labelledby', 'aria-describedby']
+            .some(attribute => String(node.getAttribute(attribute) || '').trim())
+          || (!editable && node.textContent.trim())) return false;
+      const role = node.getAttribute('role') || '', type = /^(INPUT|BUTTON)$/.test(node.tagName) ? node.type : '';
+      if (role.length > 128 || type.length > 128) return false;
+      const ref = window.__wb_ax_ref?.(node);
+      if (!ref || window.__wb_ax_lookup?.(ref) !== node) return false;
+      const header = collateralHeaderExposed ? '' : '\n\n[CURRENT VISIBLE COLLATERAL CONTROL]\n';
+      const line = header + `visible collateral ${node.tagName.toLowerCase()} role=${JSON.stringify(role)} type=${JSON.stringify(type)}`
+        + (editable ? ' editable=true' : '') + (node.readOnly === true ? ' readonly=true' : '')
+        + (node.disabled === true ? ' disabled=true' : '') + ` name-unavailable=true direct-action=false [${ref}] state-values-omitted\n`;
+      if (evidenceLength + line.length > MODEL_EVIDENCE_MAX || page.pageContent.length + line.length > MODEL_PUBLIC_MAX
+          || JSON.stringify({ ...page, pageContent: page.pageContent + line }).length > 16000) return false;
+      page.pageContent += line; evidenceLength += line.length; collateralHeaderExposed = true;
+      refs.set(ref, node); collateralMainControls.add(node);
+      // Do not add it to publicNodes: inventory-only refs cannot authorize a
+      // direct action or acquire an uncertified fallback during the scan.
+      return true;
+    };
     const observedFootprint = footprint => {
       if (!page) return true;
       if (!footprint.structuralFile && !publicNodes.has(footprint.target)) return false;
@@ -1060,6 +1531,7 @@
           if (!exposeIdentity(composer, { authoredEditableName: true })) return false;
         } else if (!publicNodes.has(composer)) return false;
       }
+      if (footprint.observedMainControls?.some(node => !exposeMainControl(node))) return false;
       const evidence = footprint.nodes.filter(item => item.node !== footprint.target
         && (item.node === footprint.conversationCarrier
           || footprint.dialogIdentities?.has(item.node)
@@ -1071,7 +1543,7 @@
     const captureTarget = node => {
       if (!(node instanceof Element) || ignored(node) || seen.has(node) || seen.size >= MODEL_SCAN_LIMIT) return;
       seen.add(node);
-      const footprint = targets.size < MODEL_TARGET_LIMIT ? actionFootprint(node) : null;
+      const footprint = targets.size < MODEL_TARGET_LIMIT ? actionFootprint(node, node === readonlyPreparation?.target ? readonlyPreparation : null) : null;
       if (footprint && !observedFootprint(footprint)) return;
       if (!footprint && page && !publicNodes.has(node)) return;
       if (footprint) targets.set(node, footprint);
@@ -1101,6 +1573,11 @@
       for (let index = children.length - 1; index >= 0; index--) stack.push(children[index]);
     }
     const snapshotToken = randomToken();
+    if (!active || params.runToken !== runToken || (readonlyPreparation
+        && !readonlyPreparationMatches(readonlyPreparation, readonlyPreparation.target, params.nativeChatOwner)) || (nativeReadTarget
+        && window.__wb_native_chat_read_target_matches?.(nativeReadTarget) !== true)) {
+      return { ready: false, runToken, documentToken, reason: 'context_changed' };
+    }
     const focusTarget = deepActiveElement();
     const focusedTargetAvailable = targets.has(focusTarget);
     // Metadata-only tests/integration use an existing AX lookup without a new
@@ -1110,18 +1587,20 @@
     for (const [key, snapshot] of modelSnapshots) if (snapshot.until < Date.now()) modelSnapshots.delete(key);
     while (modelSnapshots.size > 2) modelSnapshots.delete(modelSnapshots.keys().next().value);
     return { ready: true, runToken, documentToken, snapshotToken, targetCount: targets.size, focusedTargetAvailable,
+      ...(params.observationRef ? { observationScopeCaptured } : {}),
       ...(page ? { page } : {}) };
   }
   function preparedBindingChanged(op, { allowFocusRebind = false } = {}) {
     if (op?.allowPassiveRebase === true && op.preparedBinding?.model === true && op.focusBound
         && !allowFocusRebind && deepActiveElement() !== op.focusTarget) return true;
     return op?.allowPassiveRebase === true && !!op.preparedBinding
-      && (!op.dispatched || (op.preparedBinding.model === true && op.kind === 'input'))
+      && (!op.dispatched || (op.preparedBinding.model === true && (op.kind === 'input' || op.pointerPreparationOnly === true)))
       && !operationBindingMatches(op);
   }
   function rebasePassivePreparation(op, params = {}) {
     const continuingInput = op?.dispatched && op.kind === 'input' && op.preparedBinding?.model === true;
-    if (!active || !op || op.allowPassiveRebase !== true || (op.dispatched && !continuingInput) || op.coordinateSensitive || op.layoutInvalidated
+    const continuingPreparation = op?.dispatched && op.pointerPreparationOnly === true && op.preparedBinding?.model === true;
+    if (!active || !op || op.allowPassiveRebase !== true || (op.dispatched && !continuingInput && !continuingPreparation) || op.coordinateSensitive || op.layoutInvalidated
         || op.until < Date.now() || lastUserAt > op.userAt || interventionUnreported
         || op.preparedInterventionRevision !== interventionRevision
         || (pendingDOM && pendingDOM.source !== 'page')
@@ -1398,11 +1877,28 @@
   }
   function onMutations(records) {
     if (!active) return;
-    let changed = false, source = 'page', target = '';
+    let changed = false, attributed = false, source = 'page', target = '';
+    let diagnosticRecord = null;
+    const diagnostic = el => {
+      const op = operations.get(localOperation?.operationId), ownTarget = op?.target;
+      const type = ['childList', 'characterData', 'attributes', 'layout', 'control', 'prepared-style', 'animation-settled', 'shadow', 'popover'].includes(diagnosticRecord?.type)
+        ? diagnosticRecord.type : 'other';
+      const attribute = diagnosticRecord?.type === 'attributes'
+        ? ['class', 'style', 'hidden', 'aria-hidden', 'aria-label', 'aria-labelledby', 'contenteditable', 'role', 'tabindex', 'disabled', 'readonly', 'value', 'open', 'inert', 'selected'].includes(diagnosticRecord.attributeName)
+          ? diagnosticRecord.attributeName : 'other'
+        : '';
+      const relation = el === document.body || el === document.documentElement ? 'document'
+        : el === ownTarget ? 'target' : ownTarget?.contains?.(el) ? 'descendant'
+          : el?.contains?.(ownTarget) ? 'ancestor'
+            : op?.preparedBinding?.scope && ![document.body, document.documentElement].includes(op.preparedBinding.scope)
+              && op.preparedBinding.scope.contains?.(el) ? 'scoped' : 'outside';
+      return `dom.${type}.${relation}${attribute ? '.' + attribute : ''}`;
+    };
     const noteChange = (el, agentUserAt) => {
       // Attribute the marked input/write's synchronous handlers to that dispatch.
       // Later DOM writes stay observable, including writes on the same target.
       if ((Number.isFinite(agentUserAt) && lastUserAt <= agentUserAt) || (agentTurn && lastUserAt <= agentTurn.userAt)) {
+        attributed = true;
         const expectedAt = Number.isFinite(agentUserAt) ? agentUserAt : agentTurn?.userAt;
         for (const op of operations.values()) if (op.userAt === expectedAt && related(op.target, el)) rememberAgentLayout(op);
         return;
@@ -1410,10 +1906,13 @@
       changed = true;
       target ||= targetName(el);
       if (userTurn || (Date.now() - lastUserAt < 1500 && related(lastUserTarget, el))) source = 'user';
-      else if (source !== 'user' && [...operations.values()].some(op => op.dispatched && op.until >= Date.now())) source = 'unknown';
+      else if (source !== 'user' && [...operations.values()].some(op => op.dispatched && !op.finished && !op.pointerPreparationOnly && op.until >= Date.now())) {
+        source = 'unknown'; interventionDiagnostic = diagnostic(el);
+      }
     };
     const changes = [...records];
     for (const record of records) {
+      diagnosticRecord = record;
       if (record.type !== 'popover' && record.type !== 'prepared-style'
           && (record.type !== 'attributes' || !['class', 'style', 'hidden', 'aria-hidden', 'open', 'inert', 'selected'].includes(record.attributeName))) continue;
       if (ignored(record.target)) continue;
@@ -1439,6 +1938,7 @@
     let measured = 0;
     const seedBudget = { remaining: 600 };
     for (const record of changes) {
+      diagnosticRecord = record;
       const el = record.target.nodeType === 1 ? record.target
         : record.target.host || record.target.parentElement || record.target.getRootNode?.().host;
       if (baseNavigationMutation(record, el)) { noteChange(document.documentElement, record.agentUserAt); continue; }
@@ -1459,7 +1959,10 @@
       // Native input already reports user edits, and agent input's synchronous
       // DOM writes are attributed to its dispatch. Keep those paths deduplicated
       // while observing independent page-script changes to editable text.
-      if (editableTextMutation && (userTurn || (agentTurn && lastUserAt <= agentTurn.userAt))) continue;
+      if (editableTextMutation && (userTurn || (agentTurn && lastUserAt <= agentTurn.userAt))) {
+        attributed ||= !!agentTurn && lastUserAt <= agentTurn.userAt;
+        continue;
+      }
       if (accessibleNameContentMutation && el.tagName === 'OPTION' && el.selected) {
         const select = el.closest('select');
         if (select && !ignored(select)) noteChange(select, record.agentUserAt);
@@ -1473,6 +1976,7 @@
         // silently at the end of a large, same-task update.
         changed = true;
         if (source !== 'user') source = agentTurn && lastUserAt <= agentTurn.userAt ? 'agent' : 'unknown';
+        if (source === 'unknown') interventionDiagnostic = 'dom.measurement_cap';
         target ||= targetName(el);
         break;
       }
@@ -1515,11 +2019,15 @@
       if (!identityChanged && (next === previous || (!visible(el) && !previous?.startsWith('[true')))) continue;
       noteChange(el, record.agentUserAt);
     }
-    if (!changed) return;
-    // Keep prepared-target baselines aligned with changes already reported by
-    // the DOM observer; the CSSOM sampler should only report unseen changes.
+    if (!changed && !attributed) return;
+    // Keep sampling baselines aligned with changes the DOM observer already
+    // consumed, including attributed agent writes. Otherwise the later CSSOM
+    // sample re-reports those writes after their synchronous attribution ends.
+    // Immutable prepared/model bindings remain unchanged and still fence stale
+    // targets at dispatch.
     for (const op of operations.values())
       if (!op.dispatched && op.target && op.until >= Date.now()) op.preparedTargetSignature = signature(op.target);
+    if (!changed) return;
     if (source !== 'page' && source !== 'agent') interventionRevision++;
     revision++; publishRevision();
     clearTimeout(domTimer);
@@ -1559,7 +2067,7 @@
     if (disposed || !state?.active || state.documentToken !== documentToken) return;
     if (active && runToken === state.runToken) return;
     stop();
-    active = true; runToken = state.runToken; seq = 0; revision = 0; interventionRevision = 0; publishRevision();
+    active = true; runToken = state.runToken; seq = 0; revision = 0; interventionRevision = 0; interventionDiagnostic = ''; publishRevision();
     observer = new MutationObserver(onMutations);
     observeRoot(document);
     controlTimer = setInterval(() => { sampleFormControls(); samplePreparedTargets(); }, 250);
@@ -1607,7 +2115,19 @@
         if (guard.documentToken !== documentToken || guard.revision !== revision || !operations.has(guard.operationId)
             || domTimer || unreported) { event.preventDefault(); return; }
         const el = elementFor(event);
-        dispatch({ operationId: guard.operationId, kind: 'scroll', scrollIntoView: true, runToken });
+        const prepared = operations.get(guard.operationId);
+        // Only this current, privately fenced selector scroll is preparation.
+        // It cannot erase an earlier input or any queued intervention.
+        const selectorPreparationOnly = active && guard.runToken === runToken
+          && !!guard.nativeSecret && guard.nativeSecret === prepared.nativeSecret
+          && prepared.kind === 'scroll' && !prepared.dispatched && !prepared.consequentialInputPending
+          && prepared.allowPassiveRebase === true && passiveRebaseTools.has(prepared.modelBindingTool || prepared.tool)
+          && prepared.preparedBinding?.model === true && !prepared.modelBindingInvalid
+          && prepared.preparedRevision === revision && prepared.preparedInterventionRevision === interventionRevision
+          && prepared.userAt === lastUserAt && prepared.until >= Date.now()
+          && !prepared.layoutInvalidated && !prepared.nativeWheel && !interventionUnreported
+          && prepared.target === el && prepared.preparedBinding.target === el && operationBindingMatches(prepared, el);
+        dispatch({ operationId: guard.operationId, kind: 'scroll', scrollIntoView: true, runToken }, selectorPreparationOnly);
         const op = operations.get(guard.operationId);
         op.target = el; op.scrollAncestors.clear();
         for (let node = el?.parentElement || el?.getRootNode?.().host; node; node = node.parentElement || node.getRootNode?.().host) op.scrollAncestors.add(node);
@@ -1715,8 +2235,10 @@
       const expectedInput = expected('input', el, event);
       const expectedClick = !expectedInput && el.matches?.('input[type="checkbox"],input[type="radio"],select,option')
         ? expected('click', el, event) : null;
+      const localInput = !event.isTrusted && agentTurn && lastUserAt <= agentTurn.userAt
+        && localOperation?.started && operations.get(localOperation.operationId)?.target === el;
       if (ignored(el)) return;
-      if (expectedInput || expectedClick) { refreshControl(el); return; }
+      if (expectedInput || expectedClick || localInput) { refreshControl(el); return; }
       if (event.isTrusted) interact('input', el);
       else { revision++; send({ kind: 'input', source: 'page', target: targetName(el) }); }
       refreshControl(el);
@@ -1847,7 +2369,7 @@
       && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page')
       && !previous.modelBindingInvalid && !previous.layoutInvalidated
       && operationTarget === previous.preparedBinding.target
-      && samePreparedBinding(previous.preparedBinding, actionFootprint(operationTarget)) ? previous.preparedBinding : null;
+      && samePreparedBinding(previous.preparedBinding, actionFootprint(operationTarget, previous.preparedBinding.readonlyPreparation)) ? previous.preparedBinding : null;
     const proofRequired = expected || inherited;
     const allowPassiveRebase = inherited ? previous.allowPassiveRebase === true : params.allowPassiveRebase === true;
     const controlStateAtPrepare = operationTarget && /^(INPUT|TEXTAREA|SELECT|OPTION)$/.test(operationTarget.tagName)
@@ -1866,10 +2388,11 @@
       coordinateSensitive, coordinateTarget, coordinateHit, coordinateTargetAtPoint,
       coordinatePoint: coordinateSensitive ? { x: params.x, y: params.y } : null,
       coordinateRect: rectFor(coordinateTarget),
-      until: Date.now() + 30000, dispatched: false, userAt: lastUserAt, preparedRevision: revision });
+      until: Date.now() + 30000, dispatched: false, pointerPreparationOnly: false, selectorPreparationOnly: false, consequentialInputPending: false, userAt: lastUserAt, preparedRevision: revision });
     return proofRequired ? { modelBindingValid: !!certified } : {};
   }
-  function dispatch(params) {
+  // The second argument is private producer provenance, never message/model params.
+  function dispatch(params, selectorPreparationOnly = false) {
     if (!active || (params.runToken && params.runToken !== runToken)) return;
     const op = operations.get(params.operationId) || { operationId: params.operationId, userAt: lastUserAt };
     if (params.fenceOnly && !op.nativeSecret) op.nativeSecret = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -1882,6 +2405,22 @@
     if (!params.release) op.eventTypes = Array.isArray(params.eventTypes) ? new Set(params.eventTypes) : null;
     op.focused = params.kind === 'input'; op.kind = params.kind;
     op.nativeWheel = params.nativeWheel === true;
+    // Only certified, unheld pointer movement is preparation. Once this same
+    // operation has consequential input, later movement cannot downgrade it.
+    const consequentialInputPending = op.consequentialInputPending === true
+      || (op.dispatched && !op.finished && op.pointerPreparationOnly !== true && op.selectorPreparationOnly !== true);
+    op.selectorPreparationOnly = selectorPreparationOnly === true;
+    const movementEvents = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove'];
+    op.pointerPreparationOnly = !consequentialInputPending && params.pointerPreparationOnly === true
+      && !params.fenceOnly && !params.release && params.kind === 'click' && params.navigationCandidate === false
+      && passiveRebaseTools.has(op.modelBindingTool || op.tool) && op.allowPassiveRebase === true
+      && op.preparedBinding?.model === true
+      && !op.modelBindingInvalid && op.preparedBinding.target === op.target
+      && Array.isArray(params.eventTypes) && params.eventTypes.length === movementEvents.length
+      && movementEvents.every(type => params.eventTypes.includes(type));
+    // History is monotonic until fresh prepare, even across finish/fence calls.
+    op.consequentialInputPending = consequentialInputPending
+      || (!params.fenceOnly && !op.pointerPreparationOnly && !op.selectorPreparationOnly);
     if (!params.release) op.navigationCandidate = params.kind === 'click' && params.navigationCandidate !== false;
     op.scrollAncestors = params.addScrollTarget ? op.scrollAncestors || new Set() : new Set();
     if (params.scrollIntoView || params.nativeWheel || ['input', 'click'].includes(params.kind)) {
@@ -1890,7 +2429,7 @@
     }
     op.windowScroll = params.scrollIntoView || (params.kind === 'scroll' && !op.target) || ['input', 'click'].includes(params.kind);
     op.kinds = new Set([params.kind, 'dom', ...(params.kind === 'input' ? ['selection'] : []), 'scroll']);
-    op.until = Date.now() + (params.fenceOnly ? 30000 : 1500); op.dispatched = !params.fenceOnly;
+    op.until = Date.now() + (params.fenceOnly ? 30000 : 1500); op.dispatched = !params.fenceOnly; op.finished = false;
     if (op.dispatched && op.target) {
       op.targetRectAtDispatch = rectFor(op.target);
       op.targetParentAtDispatch = op.target.parentElement;
@@ -1967,7 +2506,8 @@
     'hover', 'drag_drop', 'patch_element', 'revert_patch', 'highlight_element', 'execute_js',
     'ax_prepare_field_for_trusted_type', 'ax_resolve_two_rects', 'ax_resolve_rect']);
   function beginContentAction(action, params = {}) {
-    if (!active || !localMutations.has(action)) return () => {};
+    if (!active || !localMutations.has(action)
+        || (action === 'ax_resolve_rect' && params.observeOnly === true && params.forClickFallback === true)) return () => {};
     const operationId = `local-${randomToken()}`;
     const previous = localOperation;
     const target = resolveTarget({ ...params, textMatch: action === 'click' ? params.text : undefined })
@@ -2000,7 +2540,7 @@
     if (!params._bidiPrepare) beforeLocalDispatch({ preparation: true });
     return () => {
       const op = operations.get(operationId);
-      if (op) op.until = Date.now() + 200;
+      if (op) { op.until = Date.now() + 200; op.finished = true; }
       localOperation = previous;
     };
   }
@@ -2040,6 +2580,39 @@
     try { return callback(); }
     finally { op.synchronous = previous; }
   }
+  function captureLocalInputObservation(target) {
+    const owner = localOperation, op = operations.get(owner?.operationId);
+    const token = runToken, stamp = documentToken, userAt = lastUserAt;
+    const invalidation = () => {
+      if (!active) return 'monitor_inactive';
+      if (runToken !== token) return 'run_changed';
+      if (documentToken !== stamp) return 'document_changed';
+      if (!owner || !op || localOperation !== owner || operations.get(owner.operationId) !== op) return 'operation_changed';
+      if (owner.started !== true || !op.dispatched || op.finished || op.kind !== 'input') return 'operation_inactive';
+      if (!(op.until >= Date.now())) return 'operation_expired';
+      if (op.target !== target || !target?.isConnected || target.ownerDocument !== document) return 'target_changed';
+      if (lastUserAt !== userAt) return 'user_intervention';
+      if (op.modelBindingInvalid) return 'model_binding_invalid';
+      if (deepActiveElement() !== target) return 'focus_changed';
+      return '';
+    };
+    // This certifies the exact current native draft, not delivery or unrelated
+    // page state. Global intervention/revision debt remains unchanged and still
+    // fences every later dispatch against its own fresh model observation.
+    // The caller separately verifies the exact native peer/node scope and text.
+    const verify = () => {
+      verify.reason = invalidation();
+      verify.diagnostic = verify.reason === 'unknown_intervention' ? interventionDiagnostic : '';
+      if (verify.reason) return false;
+      flushPendingMutations(op); sampleFormControls(op.target);
+      const selection = target.getRootNode?.().getSelection?.() || window.getSelection();
+      const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      verify.reason = invalidation() || (!range || !target.contains(range.startContainer) || !target.contains(range.endContainer) ? 'selection_changed' : '');
+      verify.diagnostic = verify.reason === 'unknown_intervention' ? interventionDiagnostic : '';
+      return !verify.reason;
+    };
+    return verify;
+  }
   const onMessage = (msg, _sender, respond) => {
     if (disposed || msg?.target !== 'content') return;
     if (msg.action === 'page_monitor_state') {
@@ -2074,11 +2647,20 @@
       const rebased = !params.release && !layoutChanged && rebasePassivePreparation(prepared, params);
       if (!params.release && active && (prepared?.modelBindingInvalid || layoutChanged || bindingChanged || (!rebased && (domTimer || unreported)) || (prepared && prepared.preparedRevision !== revision)
           || (params.documentToken && (params.documentToken !== documentToken || (!rebased && params.documentRevision !== revision))))) {
+        // Content-free veto facts only; the existing dispatch predicate above is unchanged.
+        const preparationVeto = {
+          modelBindingInvalid: prepared?.modelBindingInvalid === true,
+          layoutChanged: layoutChanged === true, preparedBindingChanged: bindingChanged === true,
+          passiveRebased: rebased === true, pendingFeedback: !!(domTimer || unreported),
+          revisionChanged: !!prepared && prepared.preparedRevision !== revision,
+          documentChanged: !!params.documentToken && params.documentToken !== documentToken,
+          documentRevisionChanged: !!params.documentToken && !rebased && params.documentRevision !== revision,
+        };
         if (domTimer) {
           clearTimeout(domTimer); domTimer = null; const observation = pendingDOM; pendingDOM = null;
           if (observation) send(observation);
         }
-        void lastFeedbackDelivery.then(() => respond({ ready: false, pageFeedbackPending: true }));
+        void lastFeedbackDelivery.then(() => respond({ ready: false, pageFeedbackPending: true, preparationVeto }));
         return true;
       }
       dispatch(params); publishRevision();
@@ -2089,13 +2671,18 @@
       } } : {}) });
     }
     else if (msg.action === 'page_monitor_finish') {
-      const op = operations.get(msg.params?.operationId);
-      if (op) op.until = Date.now() + 200;
+      const params = msg.params || {};
+      const op = operations.get(params.operationId);
+      if (Object.prototype.hasOwnProperty.call(params, 'documentToken')
+          && (!active || params.runToken !== runToken || params.documentToken !== documentToken || !op)) {
+        respond({ ready: false }); return;
+      }
+      if (op) { op.until = Date.now() + 200; op.finished = true; }
       respond({ ready: true });
     }
   };
   api.runtime.onMessage.addListener(onMessage);
-  window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalDispatch, dispatch, activatePreparedDispatch, withPreparedDispatch, registerDecoration,
+  window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture,
     get active() { return active; },
     get disposed() { return disposed; },
     dispose() { disposed = true; requestGeneration++; stop(); api.runtime.onMessage.removeListener?.(onMessage); } };

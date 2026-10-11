@@ -139,6 +139,41 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   AX observation of its owner together with the new private footprint. Target
   selectors and labels retain their exact strings throughout validation and
   preparation; truncation cannot certify a different target.
+- Native navigation, header/banner and tab-list landmarks can own an action
+  when their complete bounded local context was observed with that same
+  decision. Transparent wrappers do not prevent the landmark from owning its
+  controls. Account text, profile destinations, selected state and exact target
+  objects remain bound. An unrelated hidden notification badge may remount
+  under an unchanged authored name; a generic account label cannot conceal a
+  different rendered account name. This rule uses semantic structure on every
+  site, without URL or control-name exceptions.
+- Noninteractive `aria-hidden` icon labels inside an exact control remain
+  privately bound without requiring model-visible dialog identity from an AX
+  hidden node. The bounded predicate is rechecked for every hidden descendant;
+  handlers, interactive/recipient fields and explicitly referenced hidden
+  name or purpose descriptions retain their normal identity checks.
+- A noninteractive decorative SVG hit can normalize to the already bound
+  control, so replacing its artwork does not replace the action. Interactive
+  descendants, handler properties, recipient/action attributes, changed HTML
+  wrappers, overlays and changed target/owner objects still invalidate the
+  original decision. This does not grant a new control a certificate.
+- An original target with an unverified owner context is distinct from a
+  previously verified target that changed. The owned monitor's
+  `target_context_unverified` diagnostic prioritizes a fresh bounded observation
+  before a new model decision. It does not dispatch the old action or promote
+  its unverified fingerprint. Five unsuccessful attempts end with
+  `action_context_unverified`; real target, document and user changes keep their
+  existing invalidation behavior.
+- `calculate` is independent of passive DOM changes. A genuine arithmetic-only
+  task can retain its terminal answer after an unavailable AX refresh only when
+  an actual successful literal-result receipt still matches the current task,
+  run and provider. Broader natural instructions also require current no-read,
+  arithmetic/output-only planner metadata and conservative complete instruction
+  and output-format checks. Browser work, sending, submission, scheduling,
+  downloads, pending messages, ledgers, actions and verification debt prevent
+  this retention. Stop and accepted corrections invalidate the receipt. No
+  completion-verifier requirement is waived; unrecognized wording uses the
+  ordinary completion path.
 - Protected conversation attachments use the existing submission and recipient
   authorization. One explicit source is bound to one exact main-frame file input
   and its local composer. Hidden inputs retain structural identity, input
@@ -164,6 +199,14 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   another approval question cannot repair missing evidence. Recipient
   clarifications report `recipientBinding` separately from general user
   authorization and suppress repeated questions for known technical blockers.
+- A cancelled `beforeinput` handled by a native chat editor can receive an
+  exact read-only draft certificate while its original operation, document,
+  identity nodes, editor, focus and selection remain current. The certificate
+  proves the draft's present value; it does not prove delivery, clear global
+  mutation debt or authorize Enter or Send through an old snapshot. Every
+  later dispatch retains its fresh observation and recipient checks. An
+  uncertain send remains pending until actual delivery is verified or the
+  user answers its exact app-owned reconciliation confirmation manually.
 - A single explicit `done` candidate survives passive DOM updates before and
   after its tool batch. Success still requires the completion verifier's fresh
   evidence; partial/failure outcomes remain incomplete. The summary does not

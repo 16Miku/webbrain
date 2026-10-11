@@ -139,10 +139,11 @@ function normalizeWorkflowScope(input) {
 
 function parseAttributes(text) {
   const attrs = {};
-  const regex = /([A-Za-z_][\w-]*)="([^"]*)"/g;
+  const regex = /([A-Za-z_][\w-]*)="((?:\\.|[^"\\])*)"/g;
   let match;
   while ((match = regex.exec(String(text || '')))) {
-    attrs[match[1]] = cleanText(match[2]);
+    // The native AX emitter escapes quotes and backslashes, not JS sequences.
+    attrs[match[1]] = cleanText(match[2].replace(/\\(["\\])/g, '$1'));
   }
   return attrs;
 }
@@ -150,18 +151,18 @@ function parseAttributes(text) {
 export function parseAccessibilityTreeDescriptors(value) {
   const out = [];
   for (const line of String(value || '').split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z][\w-]*)(?:\s+"([^"]*)")?[^\n]*?\[(ref_[A-Za-z0-9_-]+)\](.*)$/);
+    const match = line.match(/^\s*([A-Za-z][\w-]*)(?:\s+"((?:\\"|\\(?!")|[^"\\])*)")?[^\n]*?\[(ref_[A-Za-z0-9_-]+)\](.*)$/);
     if (!match) continue;
     const attrs = parseAttributes(match[4]);
     const descriptor = {
       refId: match[3],
       role: cleanText(match[1]),
-      ...(cleanText(match[2]) ? { name: cleanText(match[2]) } : {}),
+      ...(cleanText(match[2]) ? { name: cleanText(match[2].replace(/\\"/g, '"')) } : {}),
       ...(attrs.href ? { href: safeHttpUrl(attrs.href) || cleanText(attrs.href) } : {}),
       ...(attrs.type ? { type: attrs.type } : {}),
       ...(attrs.placeholder ? { placeholder: attrs.placeholder } : {}),
-      ...(attrs.id ? { id: attrs.id } : {}),
-      ...(attrs.name ? { fieldName: attrs.name } : {}),
+      ...(attrs.dom_id || attrs.id ? { id: attrs.dom_id || attrs.id } : {}),
+      ...(attrs.field_name || attrs.name ? { fieldName: attrs.field_name || attrs.name } : {}),
       ...(attrs['aria-label'] ? { ariaLabel: attrs['aria-label'] } : {}),
     };
     out.push(descriptor);
@@ -963,6 +964,8 @@ export function scoreWorkflowTarget(target, candidate) {
   const current = normalizeTarget(candidate);
   if (!expected || !current) return 0;
   if (expected.role && current.role && normalizeComparable(expected.role) !== normalizeComparable(current.role)) return 0;
+  // A recycled DOM id cannot override a contradictory native form identity.
+  if (expected.fieldName && current.fieldName && expected.fieldName !== current.fieldName) return 0;
   let score = 0;
   const addExact = (field, points) => {
     if (!expected[field] || !current[field]) return;

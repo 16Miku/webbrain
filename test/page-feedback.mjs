@@ -1254,9 +1254,10 @@ for (const path of ['local', 'memory']) {
           return {};
         };
         client.sendCommand = async (_tab, method, params) => {
-          if (method === 'DOM.setFileInputFiles' || method === 'Runtime.callFunctionOn') mutations.push(method);
-          if (method === 'Runtime.callFunctionOn') runtimeCalls.push(params);
-          return { result: { value: { success: true, dispatched: true } } };
+          const assignment = method === 'Runtime.callFunctionOn' && params.functionDeclaration.includes('this.files = transfer.files');
+          if (method === 'DOM.setFileInputFiles' || assignment) mutations.push(method);
+          if (assignment) runtimeCalls.push(params);
+          return { result: { value: { success: true, dispatched: true, connected: true, fileInput: true, disabled: false, accept: '' } } };
         };
         let started = false;
         const options = { beforeDispatch: () => { started = true; } };
@@ -1281,4 +1282,319 @@ for (const path of ['local', 'memory']) {
       } finally { api.tabs.sendMessage = originalMessage; agent._releaseRunEntry(tab); }
     });
   }
+}
+
+
+// Exercise the production feedback method and actual recorder note boundary.
+// Only extension transport and the durable append sink are simulated.
+async function feedbackDecisionTraceMethod(build, records) {
+  const policy = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+  const recovery = await import(`../src/${build}/src/agent/page-feedback-recovery.js`);
+  const media = await import(`../src/${build}/src/agent/media-download-binding.js`);
+  const { projectTraceEventData } = await import(`../src/${build}/src/trace/privacy.js`);
+  const feedbackPath = new URL(`../src/${build}/src/agent/page-feedback.js`, import.meta.url);
+  const source = fs.readFileSync(feedbackPath, 'utf8');
+  const recorder = fs.readFileSync(new URL(`../src/${build}/src/trace/recorder.js`, import.meta.url), 'utf8');
+  const noteStart = recorder.indexOf('export function recordNote(');
+  const noteEnd = recorder.indexOf('\nasync function _retryCount(', noteStart);
+  assert.ok(noteStart >= 0 && noteEnd > noteStart);
+  const recordNote = vm.runInNewContext(recorder.slice(noteStart, noteEnd).replace('export ', '') + '\nrecordNote;', {
+    _appendEvent: (runId, kind, data) => records.push(structuredClone({ runId, kind, data, metadata: projectTraceEventData(kind, data) })),
+  });
+  const imports = source.match(/^import [^\n]+;\r?\n/gm) || [];
+  assert.equal(imports.length, 4);
+  const context = vm.createContext({ ...policy, ...recovery, ...media, trace: { recordNote },
+    chrome: api, browser: api, setTimeout, clearTimeout, crypto: globalThis.crypto });
+  return vm.runInContext(source.replace(/^import [^\n]+;\r?\n/gm, '').replace(/^export /gm, '')
+    + '\nObject.assign(pageFeedbackMethods._applyPendingPageFeedback, { diagnosticSummary: typeof feedbackEventSummary === \"function\" ? feedbackEventSummary : null });', context);
+}
+
+for (const build of ['chrome', 'firefox']) {
+  const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+
+  test(`${build}: feedback decision trace distinguishes page activity, user input and binding changes`, async () => {
+    const records = [], apply = await feedbackDecisionTraceMethod(build, records);
+    for (const change of ['passive', 'page_focus', 'page_input', 'user_input', 'style', 'child', 'document', 'steering', 'run']) {
+      const agent = setup(Agent), tab = nextTab++, messages = [{ role: 'system', content: '' },
+        { role: 'user', content: 'Publish the current draft' }];
+      agent._applyPendingPageFeedback = apply;
+      const previousNavigation = api.webNavigation;
+      await agent._claimRunEntry(tab, 'interactive');
+      try {
+        api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'document-1' }] };
+        const binding = bind(agent, tab), child = bind(agent, tab, 2, 'child-private-document', 'child-private-token');
+        await agent._capturePageFeedbackModelState(tab);
+        agent.currentRunId.set(tab, 'diagnostic-private-run-id');
+        const originalStateCurrent = agent._pageFeedbackStateCurrent; let stateChecks = 0;
+        agent._pageFeedbackStateCurrent = (...args) => { stateChecks++; return originalStateCurrent.apply(agent, args); };
+        if (change === 'document') api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'replacement-private-document' }] };
+        if (change === 'steering') agent._steeringRuns.set(tab, { acceptedIds: new Set(['private-steering-id']) });
+        if (change === 'run') agent.executeTool = async () => {
+          const run = agent._pageFeedbackRuns.get(tab);
+          agent._pageFeedbackRuns.set(tab, { ...run });
+          return { success: true, pageContent: 'Current view' };
+        };
+        const event = { kind: change === 'page_focus' ? 'activity' : ['page_input', 'user_input'].includes(change) ? 'input' : 'dom',
+          source: change === 'user_input' ? 'user' : 'page',
+          target: change === 'style' ? 'style#PRIVATE_STYLE_TARGET' : 'PRIVATE_TARGET_WITH_SECRET' };
+        assert.equal((change === 'child' ? child : binding).send(event).accepted, true);
+        const superseded = await agent._applyPendingPageFeedback(tab, messages, () => {}, {
+          responseToolCalls: [{ function: { name: 'done', arguments: JSON.stringify({ summary: 'Published', outcome: 'success' }) } }],
+        });
+        const note = records.at(-1);
+        assert.equal(note.kind, 'note'); assert.equal(note.data.note, 'page_feedback_decision'); assert.equal(note.data.step, 0);
+        const details = note.data.extra;
+        assert.deepEqual(note.metadata.extra.context, details.context, 'Safe causal details survive the actual metadata-only trace projection');
+        assert.equal(superseded, change !== 'passive', `Diagnostic fields must not change existing retention decisions: ${change}`);
+        assert.equal(details.reason, change === 'passive' ? 'passive_dom' : 'intervention_or_document');
+        assert.equal(details.disposition, change === 'passive' ? 'retained' : 'superseded');
+        assert.equal(stateChecks, ['document', 'run'].includes(change) ? 0 : 1, 'Preserve the original state-check short circuit and call count');
+        assert.deepEqual(details.context.bindingAtRefresh, { documentMatches: change !== 'document', currentRun: change !== 'run',
+          stateCurrent: ['document', 'run'].includes(change) ? null : change !== 'steering',
+          sameDocument: !['document', 'run', 'steering'].includes(change) });
+        assert.deepEqual(details.context.feedback.observed, { count: 1, omitted: 0, events: [{ kind: event.kind, source: event.source,
+          frameId: change === 'child' ? 2 : 0, baseStyleLink: change === 'style' }] });
+        assert.deepEqual(details.context.feedback.pendingAtRefresh, { count: 0, omitted: 0, events: [] });
+        assert.deepEqual(details.context.feedback.pendingAtDecision, { count: 0, omitted: 0, events: [] });
+        assert.doesNotMatch(JSON.stringify(details), /PRIVATE|private|https?:|document-1|content-1/);
+      } finally { api.webNavigation = previousNavigation; agent._releaseRunEntry(tab); }
+    }
+  });
+
+  test(`${build}: feedback decision trace bounds all queues and retains pending input attribution`, async () => {
+    const records = [], agent = setup(Agent), tab = nextTab++, messages = [{ role: 'system', content: '' }, { role: 'user', content: 'Publish' }];
+    agent._applyPendingPageFeedback = await feedbackDecisionTraceMethod(build, records);
+    await agent._claimRunEntry(tab, 'interactive');
+    try {
+      const binding = bind(agent, tab);
+      await agent._capturePageFeedbackModelState(tab);
+      agent.currentRunId.set(tab, 'diagnostic-private-run-id');
+      for (let index = 0; index < 32; index++) assert.equal(binding.send({ kind: 'dom', source: 'page',
+        target: index === 0 ? 'link#PRIVATE_STYLE_TARGET' : `PRIVATE_URL_https://secret.invalid/${index}` }).accepted, true);
+      agent.executeTool = async () => {
+        for (let index = 0; index < 12; index++) assert.equal(binding.send({ kind: 'input', source: 'user',
+          target: `PRIVATE_INPUT_TOKEN_${index}` }).accepted, true);
+        return { success: true, pageContent: 'Current view' };
+      };
+      assert.equal(await agent._applyPendingPageFeedback(tab, messages, () => {}, {
+        responseToolCalls: [{ function: { name: 'done', arguments: '{"summary":"Published","outcome":"success"}' } }],
+      }), true);
+      const details = records.at(-1).data.extra;
+      assert.deepEqual(records.at(-1).metadata.extra.context, details.context, 'Safe bounded queues survive exhausted content budgets');
+      assert.equal(details.reason, 'intervention_or_document');
+      assert.equal(details.context.feedback.observed.count, 32); assert.equal(details.context.feedback.observed.omitted, 24);
+      assert.equal(details.context.feedback.observed.events[0].baseStyleLink, true);
+      for (const name of ['pendingAtRefresh', 'pendingAtDecision']) {
+        assert.equal(details.context.feedback[name].count, 12); assert.equal(details.context.feedback[name].omitted, 4);
+        assert.ok(details.context.feedback[name].events.every(event => event.kind === 'input' && event.source === 'user' && event.frameId === 0));
+      }
+      for (const queue of Object.values(details.context.feedback)) {
+        assert.equal(queue.events.length, 8);
+        for (const event of queue.events) assert.deepEqual(Object.keys(event), ['kind', 'source', 'frameId', 'baseStyleLink']);
+      }
+      assert.ok(JSON.stringify(details.context.feedback).length < 2500);
+      const defensive = agent._applyPendingPageFeedback.diagnosticSummary([null, { kind: 'PRIVATE_KIND', source: 'PRIVATE_SOURCE', frameId: -1,
+        target: { toString() { throw new Error('Diagnostic must not coerce page data'); } } },
+        { kind: 'dom', source: 'page', frameId: 0, target: 'style#' + 'PRIVATE'.repeat(100000) }]);
+      assert.deepEqual(JSON.parse(JSON.stringify(defensive)).events, [
+        { kind: 'other', source: 'unknown', frameId: null, baseStyleLink: false },
+        { kind: 'other', source: 'unknown', frameId: null, baseStyleLink: false },
+        { kind: 'dom', source: 'page', frameId: 0, baseStyleLink: true },
+      ]);
+      assert.doesNotMatch(JSON.stringify(details), /PRIVATE|private|https?:|document-1|content-1/);
+    } finally { agent._releaseRunEntry(tab); }
+  });
+}
+
+
+// A current read inspects the fresh page; it does not act on the former focus.
+// Exercise the normal MAIN barrier, batch and real verify_form implementation.
+for (const build of ['chrome', 'firefox']) {
+  const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+
+  test(`${build}: current read-only form verification survives top-frame page focus`, async () => {
+    const tab = nextTab++, entered = deferred(), release = deferred(), updates = [];
+    let requests = 0, nativeReads = 0, formRead = null;
+    const agent = setup(Agent, { supportsTools: true, chat: async () => {
+      requests++;
+      if (requests === 1) {
+        entered.resolve(); await release.promise;
+        return { content: null, toolCalls: [{ id: 'current-form-read', function: { name: 'verify_form', arguments: '{"selector":"#current-form","urlFilter":""}' } }] };
+      }
+      return { content: null, toolCalls: [{ id: 'honest-partial', function: { name: 'done', arguments: '{"summary":"The current form was inspected; no save is claimed.","outcome":"partial"}' } }] };
+    } });
+    allowBatchPreparation(agent);
+    agent.planBeforeAct = false; agent.maxSteps = 3; agent.autoScreenshot = 'off';
+    agent._maybeRunPlannerGate = async () => ({ proceed: true, requestKind: 'execute', requiresStateChange: true });
+    agent._maybeReinjectAdapter = async () => {};
+    agent._ensureProgressSessionForCurrentTask = async () => ({ mode: 'inactive' });
+    agent._currentTaskLedgerRows = () => [];
+    const execute = Agent.prototype.executeTool;
+    agent.executeTool = async function (id, name, ...args) {
+      if (name === 'get_accessibility_tree') return { success: true, pageContent: 'form "Current form" [ref_1]' };
+      assert.ok(['verify_form', 'done'].includes(name));
+      const result = await execute.call(this, id, name, ...args);
+      if (name === 'verify_form') formRead = result;
+      return result;
+    };
+    const original = { attach: cdpClient.attach, evaluate: cdpClient.evaluate,
+      sendCommand: cdpClient.sendCommand, executeScript: api.tabs.executeScript,
+      navigation: api.webNavigation };
+    const form = { found: true, action: '', method: 'post', fieldCount: 1,
+      fields: [{ name: 'title', id: 'title', selector: '#title', type: 'text', value: 'Current value', label: 'Title' }] };
+    cdpClient.attach = async () => {};
+    cdpClient.evaluate = async (_id, code) => {
+      assert.match(code, /#current-form/); nativeReads++;
+      return { result: { value: structuredClone(form) } };
+    };
+    cdpClient.sendCommand = async () => { throw new Error('No screenshot transport in this offline fixture'); };
+    api.tabs.executeScript = async (_id, { code }) => {
+      assert.match(code, /#current-form/); nativeReads++;
+      return [structuredClone(form)];
+    };
+    api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'document-1' }] };
+    const running = agent.processMessage(tab, 'Inspect the current form without submitting it',
+      (type, data) => updates.push({ type, data }), 'act');
+    try {
+      await entered.promise;
+      assert.equal(bind(agent, tab).send({ kind: 'activity', source: 'page', target: 'button#page-autofocus' }).accepted, true);
+      release.resolve();
+      await running;
+      assert.equal(nativeReads, 1, 'The proposed current read must execute once through the real verify_form handler');
+      assert.equal(requests, 2, 'Harmless page focus must not discard the read and require another model decision');
+      const messages = agent.conversations.get(tab) || [];
+      const results = messages.filter(message => message.role === 'tool' && message.tool_call_id === 'current-form-read');
+      assert.equal(results.length, 1); assert.match(results[0].content, /Current value/);
+      assert.equal(formRead.success, true); assert.equal(formRead.scope, 'top');
+      assert.equal(formRead.fields[0].value, 'Current value');
+      assert.equal(formRead.submitted, undefined, 'Inspection does not grant submission evidence');
+      assert.ok(updates.some(update => update.type === 'page_feedback'));
+    } finally {
+      release.resolve(); cdpClient.attach = original.attach; cdpClient.evaluate = original.evaluate;
+      cdpClient.sendCommand = original.sendCommand;
+      if (original.executeScript === undefined) delete api.tabs.executeScript; else api.tabs.executeScript = original.executeScript;
+      api.webNavigation = original.navigation;
+      if (agent._pageFeedbackRuns.has(tab)) agent._finishPageFeedbackRun(tab);
+      agent._releaseRunEntry(tab);
+    }
+  });
+
+  test(`${build}: page-focus read retention preserves human, document and action fences`, async () => {
+    const apply = await feedbackDecisionTraceMethod(build, []);
+    for (const change of ['focus', 'pending_focus', 'user_activity', 'user_input', 'page_input', 'selection',
+      'navigation', 'child', 'frame_focus', 'style', 'activity_style', 'document', 'run', 'steering', 'pending_user',
+      'click', 'type', 'keys', 'upload', 'chat_preparation', 'calculate', 'success_done', 'partial_done', 'failed_done', 'mixed', 'malformed']) {
+      const agent = setup(Agent), tab = nextTab++, messages = [{ role: 'system', content: '' }, { role: 'user', content: 'Inspect the current form' }];
+      agent._applyPendingPageFeedback = apply;
+      const navigation = api.webNavigation;
+      await agent._claimRunEntry(tab, 'interactive');
+      try {
+        api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'document-1' }] };
+        const binding = bind(agent, tab), child = bind(agent, tab, 2, 'child-document', 'child-token');
+        await agent._capturePageFeedbackModelState(tab);
+        if (change === 'document') api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'replacement-document' }] };
+        if (change === 'steering') agent._steeringRuns.set(tab, { acceptedIds: new Set(['new-task-revision']) });
+        let refreshed = false;
+        agent.executeTool = async (_id, name) => {
+          assert.equal(name, 'get_accessibility_tree');
+          if (!refreshed && change.startsWith('pending_')) binding.send({ kind: change === 'pending_focus' ? 'activity' : 'input',
+            source: change === 'pending_focus' ? 'page' : 'user', target: 'input#current-field' });
+          if (change === 'run') agent._pageFeedbackRuns.set(tab, { ...agent._pageFeedbackRuns.get(tab) });
+          refreshed = true; return { success: true, pageContent: 'Current form' };
+        };
+        const event = { kind: ['page_input', 'user_input'].includes(change) ? 'input'
+          : ['selection', 'navigation'].includes(change) ? change : change === 'style' ? 'dom' : 'activity',
+          source: ['user_activity', 'user_input'].includes(change) ? 'user' : 'page',
+          target: change === 'frame_focus' ? 'iframe#child' : ['style', 'activity_style'].includes(change) ? 'style#changed' : 'input#page-autofocus' };
+        if (change === 'navigation') agent.observePageNavigation({ tabId: tab, frameId: 0,
+          url: 'https://example.com/changed', transitionType: 'link' }, 'history');
+        else assert.equal((change === 'child' ? child : binding).send(event).accepted, true, change);
+        let name = ({ click: 'click_ax', type: 'type_text', keys: 'press_keys', upload: 'upload_file',
+          chat_preparation: 'chat_observe', calculate: 'calculate', success_done: 'done', partial_done: 'done', failed_done: 'done' })[change] || 'verify_form';
+        let args = name === 'done' ? { summary: 'A terminal candidate', outcome: change.split('_')[0] }
+          : name === 'verify_form' ? { selector: '', urlFilter: '' } : { ref_id: 'ref_1', selector: '#current-field', text: 'new value' };
+        const calls = [{ function: { name, arguments: change === 'malformed' ? '{' : JSON.stringify(args) } }];
+        if (change === 'mixed') calls.push({ function: { name: 'type_text', arguments: '{"text":"new value"}' } });
+        const superseded = await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: calls });
+        assert.equal(superseded, !['focus', 'pending_focus'].includes(change), change);
+      } finally { api.webNavigation = navigation; agent._releaseRunEntry(tab); }
+    }
+  });
+}
+
+// A history update at the identical full URL is state refresh, not a displayed navigation.
+for (const build of ['chrome', 'firefox']) {
+  const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+  const { renderPageFeedbackNote } = await import(`../src/${build}/src/ui/page-feedback-ui.js`);
+  const withNoticeDocument = action => {
+    const previous = globalThis.document;
+    globalThis.document = { createElement: () => ({ dataset: {}, setAttribute(name, value) { this[name] = value; } }) };
+    try { return action(); } finally { globalThis.document = previous; }
+  };
+  const assistant = () => ({ children: [], querySelectorAll() { return this.children; },
+    appendChild(node) { this.children.push(node); } });
+  const translate = (key, values) => {
+    assert.equal(key, 'sp.monitor.navigation');
+    return values.before + ' -> ' + values.after;
+  };
+  test(`${build}: equal history URL suppresses only its misleading navigation note`, () => withNoticeDocument(() => {
+    const url = 'https://example.com/thread?current=1#same';
+    for (const [navigationType, before, after, visible] of [
+      ['history', url, url, false],
+      ['committed', url, url, true],
+      ['fragment', url, url, true],
+      [undefined, url, url, true],
+      ['history', url, url.replace('current=1', 'current=2'), true],
+      ['history', url, url.replace('#same', '#other'), true],
+      ['history', '', '', true],
+      ['history', 'https://example.com/' + 'a'.repeat(2000), 'https://example.com/' + 'a'.repeat(2000), true],
+    ]) {
+      const element = assistant();
+      assert.equal(renderPageFeedbackNote(element, { id: 'notice', navigation: true,
+        navigationType, before, after }, translate), visible);
+      assert.equal(element.children.length, Number(visible));
+      if (visible) assert.equal(element.children[0].role, 'status');
+    }
+    const changed = assistant();
+    const data = { id: 'changed', navigation: true, navigationType: 'history', before: url, after: url + '2' };
+    assert.equal(renderPageFeedbackNote(changed, data, translate), true);
+    assert.equal(changed.children[0].textContent, 'https://example.com/thread -> https://example.com/thread',
+      'Full route comparison must precede the existing privacy display redaction.');
+    assert.equal(renderPageFeedbackNote(changed, data, translate), false, 'Existing notice dedup remains intact.');
+  }));
+  test(`${build}: equal history metadata reaches UI while unsafe response is still superseded`, async () => {
+    const agent = setup(Agent), tab = nextTab++, updates = [], messages = [
+      { role: 'system', content: '' }, { role: 'user', content: 'Send exactly the requested message to the current recipient' }];
+    let reads = 0;
+    agent.executeTool = async (_tab, name) => {
+      assert.equal(name, 'get_accessibility_tree', 'Only the existing refresh reader may execute.');
+      reads++; return { success: true, pageContent: 'Current recipient and empty composer' };
+    };
+    await agent._claimRunEntry(tab, 'interactive');
+    try {
+      bind(agent, tab);
+      const run = agent._pageFeedbackRuns.get(tab), revision = run.revision;
+      agent.observePageNavigation({ tabId: tab, frameId: 0, url: 'https://example.com/new',
+        transitionType: 'link' }, 'history');
+      assert.equal(run.events.size, 1);
+      assert.ok(run.revision > revision);
+      assert.equal(await agent._applyPendingPageFeedback(tab, messages, (type, data) => updates.push({ type, data }), {
+        responseToolCalls: [{ function: { name: 'chat_send', arguments: '{"text":"requested message"}' } }],
+      }), true, 'Equal history still refreshes and supersedes an unsafe response.');
+      assert.equal(reads, 1);
+      const note = updates.find(update => update.data.navigation).data;
+      assert.equal(note.navigationType, 'history');
+      assert.equal(note.before, note.after);
+      withNoticeDocument(() => assert.equal(renderPageFeedbackNote(assistant(), note, translate), false));
+      assert.equal(agent._activeTaskBinding(messages).text, 'Send exactly the requested message to the current recipient');
+      assert.equal(run.events.size, 0);
+      run.onUpdate = (type, data) => updates.push({ type, data });
+      agent.observePageNavigation({ tabId: tab, frameId: 0, url: 'https://example.com/new',
+        transitionType: 'link' }, 'history');
+      agent._finishPageFeedbackRun(tab);
+      const terminalNote = updates.at(-1).data;
+      assert.equal(terminalNote.navigationType, 'history', 'The final notice transport keeps the same type.');
+      withNoticeDocument(() => assert.equal(renderPageFeedbackNote(assistant(), terminalNote, translate), false));
+    } finally { agent._releaseRunEntry(tab); }
+  });
 }

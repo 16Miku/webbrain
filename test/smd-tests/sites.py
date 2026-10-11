@@ -9,6 +9,7 @@ from pathlib import Path
 from playwright.sync_api import Page, TimeoutError as PWTimeout
 
 from common import TestResult, inject_smd, collect_smd
+from url_hosts import url_has_host
 
 TESTS = []
 
@@ -75,7 +76,7 @@ def test_pinterest(page, js_path, sdir):
     if "error" in data:
         r.error = data["error"]; r.screenshot_path = _screenshot(page, sdir, "pinterest"); return r
     urls = data.get("urls", [])
-    pinimg = [u for u in urls if "pinimg.com" in u]
+    pinimg = [u for u in urls if url_has_host(u, "pinimg.com")]
     originals = [u for u in pinimg if "/originals/" in u]
     r.profile_detected = data.get("profile"); r.url_count = len(urls); r.sample_urls = urls[:3]
     r.assertions = [
@@ -100,7 +101,7 @@ def test_reddit(page, js_path, sdir):
     if "error" in data:
         r.error = data["error"]; r.screenshot_path = _screenshot(page, sdir, "reddit"); return r
     urls = data.get("urls", [])
-    reddit_imgs = [u for u in urls if "redd.it" in u or "redditmedia.com" in u]
+    reddit_imgs = [u for u in urls if url_has_host(u, "redd.it", "redditmedia.com")]
     r.profile_detected = data.get("profile"); r.url_count = len(urls); r.sample_urls = urls[:3]
     r.assertions = [
         f"profile == 'reddit' (got: {r.profile_detected})",
@@ -123,7 +124,7 @@ def test_instagram(page, js_path, sdir):
     if "error" in data:
         r.error = data["error"]; r.screenshot_path = _screenshot(page, sdir, "instagram"); return r
     urls = data.get("urls", [])
-    ig = [u for u in urls if "cdninstagram.com" in u or "fbcdn.net" in u]
+    ig = [u for u in urls if url_has_host(u, "cdninstagram.com", "fbcdn.net")]
     r.profile_detected = data.get("profile"); r.url_count = len(urls)
     r.sample_urls = [u[:90] for u in urls[:3]]; r.needs_login = logged_out
     r.assertions = [
@@ -148,7 +149,7 @@ def test_twitter(page, js_path, sdir):
     if "error" in data:
         r.error = data["error"]; r.screenshot_path = _screenshot(page, sdir, "twitter"); return r
     urls = data.get("urls", [])
-    twimg = [u for u in urls if "twimg.com" in u]
+    twimg = [u for u in urls if url_has_host(u, "twimg.com")]
     has_orig = any("name=orig" in u for u in twimg)
     r.profile_detected = data.get("profile"); r.url_count = len(urls); r.sample_urls = urls[:3]
     r.needs_login = logged_out
@@ -411,7 +412,7 @@ def test_youtube(page, js_path, sdir):
     if "error" in data:
         r.error = data["error"]; r.screenshot_path = _screenshot(page, sdir, "youtube"); return r
     urls = data.get("urls", [])
-    ytimg = [u for u in urls if "ytimg.com" in u]
+    ytimg = [u for u in urls if url_has_host(u, "ytimg.com")]
     r.profile_detected = data.get("profile"); r.url_count = len(urls)
     r.sample_urls = [u[:90] for u in urls[:3]]
     r.assertions = [

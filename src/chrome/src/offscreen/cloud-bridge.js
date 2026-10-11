@@ -128,6 +128,10 @@
           sendJson({ ok: false, error: `Invalid JSON message: ${e.message}` }, nextSocket);
           return;
         }
+        if (!msg || typeof msg !== 'object' || Array.isArray(msg)) {
+          sendJson({ ok: false, code: 'invalid_message', error: 'Cloud bridge message must be a JSON object.' }, nextSocket);
+          return;
+        }
 
         if (msg.type === 'connection_pending' || msg.type === 'connection_approved' || msg.type === 'connection_rejected') {
           if (!identity.token) return;

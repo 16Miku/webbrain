@@ -94,9 +94,13 @@ LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`) et GPT4All
 (`:4891/v1`) fonctionnent de la même manière. Une carte générique **Proxy local
 compatible OpenAI** accepte aussi les passerelles de boucle locale authentifiées
 comme CLIProxyAPI ; consultez la [configuration sécurisée du proxy](docs/fr/providers-and-models.md#exemple-de-proxy-dabonnement-cliproxyapi).
-Chargez un modèle avec **au moins une fenêtre de contexte de
-16k jetons** — 8k ne fonctionne qu'avec le niveau Compact, et 4k est trop petit
-pour le prompt système et les schémas d'outils. WebBrain détecte
+Dimensionnez la fenêtre chargée pour le prompt et les schémas d'outils du niveau
+choisi, la page, l'historique et la sortie demandée. **16k est une valeur de
+configuration par défaut, pas un minimum garanti ; Compact ne tient pas
+nécessairement dans 8k.** Mid et Full peuvent dépasser 16k avant même que
+l'historique s'accumule ; la compression ne réduit pas le prompt ni les schémas
+fixes. L'estimation ne remplace pas le tokenizer du modèle ; consultez le
+[guide de contexte](docs/providers-and-models.md#local-providers). WebBrain détecte
 automatiquement la fenêtre réelle pour llama.cpp, Ollama et LM Studio, et
 compacte la conversation à mesure qu'elle se remplit. Il existe aussi un relais
 `ollama launch webbrain --model <model>` en préversion. Détails :

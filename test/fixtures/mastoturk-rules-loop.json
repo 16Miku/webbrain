@@ -1,0 +1,470 @@
+{
+  "schema": "webbrain-semantic-retry-replay/1",
+  "source": "Sanitized actual 30-tool signup rules loop; public page text only, synthetic host/ref IDs/opaque values; no account or personal data.",
+  "steps": [
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_1]\n link [ref_2] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_3]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_4] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_5] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_6] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_7"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000001",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000001",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000001",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000001",
+        "ref_id": "ref_7"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_8]\n link [ref_9] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_10]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_11] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_12] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_13] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_14"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000002",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000002",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000002",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000001",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000002",
+        "ref_id": "ref_14"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_15]\n link [ref_16] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_17]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_18] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_19] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_20] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_21"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000003",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000003",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000003",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000002",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000003",
+        "ref_id": "ref_21"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_22]\n link [ref_23] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_24]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_25] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_26] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_27] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_28"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000004",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000004",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000004",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000003",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000004",
+        "ref_id": "ref_28"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_29]\n link [ref_30] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_31]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_32] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_33] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_34] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "read_page",
+      "args": {
+        "limit": 3000
+      },
+      "result": {
+        "url": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000004",
+        "text": "Kabul kuralları\n\n\n\n\n\nAyrıntılarınız\n\n\n\n\n\nE-postanızı onaylayın\n\n\n\nBazı temel kurallar.\nBunlar, mastoturk.org moderatörleri tarafından ayarlanmış ve uygulanmıştır.\n\n\n\nGenel Saygı ve Nezaket\nTüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söylemi ve kişisel saldırılar yasaktır.\n\nHerkesin özgürce kendini ifade edebilmesi için güvenli bir ortam oluşturmalıyız.\n\n\n\n\n\n\nYanıltıcı ve Sahte Bilgi Yaymak Yasaktır\nYanıltıcı, sahte haberler veya dezenformasyon yaymak, yasalara aykırı içerikler yasaktır. Bilgi paylaşırken güvenilir kaynaklara yer vermek teşvik edilir.\n\n\n\n\n\n\nOnayla\nGeri\n\n\n\n\n\n\n\n\n\n\n\n\n      \n      Stop WebBrain",
+        "hasMore": false,
+        "textTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_35"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000005",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000005",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000005",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000004",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000005",
+        "ref_id": "ref_35"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_36]\n link [ref_37] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_38]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_39] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_40] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_41] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_42"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000006",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000006",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000006",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000005",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000006",
+        "ref_id": "ref_42"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_43]\n link [ref_44] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_45]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_46] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_47] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_48] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "click",
+      "args": {
+        "text": "Onayla"
+      },
+      "result": {
+        "success": false,
+        "error": "The browser changed during action preparation."
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_49"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000007",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000007",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000007",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000006",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000007",
+        "ref_id": "ref_49"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_50]\n link [ref_51] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_52]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_53] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_54] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_55] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_56"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000008",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000008",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000008",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000007",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000008",
+        "ref_id": "ref_56"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_57]\n link [ref_58] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_59]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_60] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_61] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_62] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 400
+      },
+      "result": {
+        "success": true,
+        "moved": true,
+        "scrollY": 354,
+        "scrollYBefore": 0
+      }
+    },
+    {
+      "name": "click_ax",
+      "args": {
+        "ref_id": "ref_63"
+      },
+      "result": {
+        "success": true,
+        "verified": true,
+        "trusted": false,
+        "tag": "a",
+        "name": "Onayla",
+        "navigates": true,
+        "observedEffects": [
+          "url"
+        ],
+        "pageUrlChanged": true,
+        "href": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000009",
+        "resolvedHref": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000009",
+        "targetUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000009",
+        "previousUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000008",
+        "currentUrl": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000009",
+        "ref_id": "ref_63"
+      }
+    },
+    {
+      "name": "get_accessibility_tree",
+      "args": {
+        "filter": "visible",
+        "maxDepth": 10
+      },
+      "result": {
+        "pageContent": "heading [ref_64]\n link [ref_65] href=\"/\"\nheading \"Bazı temel kurallar.\" [ref_66]\nbutton \"Genel Saygı ve Nezaket Tüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söy\" [ref_67] type=\"button\"\nbutton \"Yanıltıcı ve Sahte Bilgi Yaymak Yasaktır Yanıltıcı, sahte haberler veya dezenformasyon yaymak, yasal\" [ref_68] type=\"button\" occluded=true\nbutton \"Stop WebBrain\" [ref_69] type=\"button\" dom_id=\"webbrain-agent-stop-button\"",
+        "depthTruncated": false
+      }
+    },
+    {
+      "name": "read_page",
+      "args": {
+        "limit": 3000
+      },
+      "result": {
+        "url": "https://rules.fixture.invalid/auth/sign_up?accept=00000000000000000000000000000009",
+        "text": "Kabul kuralları\n\n\n\n\n\nAyrıntılarınız\n\n\n\n\n\nE-postanızı onaylayın\n\n\n\nBazı temel kurallar.\nBunlar, mastoturk.org moderatörleri tarafından ayarlanmış ve uygulanmıştır.\n\n\n\nGenel Saygı ve Nezaket\nTüm kullanıcılar birbirine saygılı davranmalıdır. Hakaret, tehdit, nefret söylemi ve kişisel saldırılar yasaktır.\n\nHerkesin özgürce kendini ifade edebilmesi için güvenli bir ortam oluşturmalıyız.\n\n\n\n\n\n\nYanıltıcı ve Sahte Bilgi Yaymak Yasaktır\nYanıltıcı, sahte haberler veya dezenformasyon yaymak, yasalara aykırı içerikler yasaktır. Bilgi paylaşırken güvenilir kaynaklara yer vermek teşvik edilir.\n\n\n\n\n\n\nOnayla\nGeri\n\n\n\n\n\n\n\n\n\n\n\n\n      \n      Stop WebBrain",
+        "hasMore": false,
+        "textTruncated": false
+      }
+    }
+  ]
+}

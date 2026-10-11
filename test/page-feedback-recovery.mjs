@@ -7,6 +7,24 @@ for (const browser of ['chrome', 'firefox']) {
   const { accountFeedbackSupersession, resetFeedbackSupersession, feedbackSupersessionMetadata,
     PAGE_FEEDBACK_NUDGE_AT, PAGE_FEEDBACK_STOP_AT, PAGE_FEEDBACK_STOP_CODE } = recovery;
 
+  test(browser + ': unchanged but originally unverified targets have an honest bounded recovery reason', () => {
+    const run = {};
+    const attempts = Array.from({ length: PAGE_FEEDBACK_STOP_AT }, () => accountFeedbackSupersession(run, {
+      passive: true, reason: 'target_context_unverified', stage: 'response', toolNames: ['click_ax'],
+    }));
+    assert.match(attempts[PAGE_FEEDBACK_NUDGE_AT - 1].message, /ACTION CONTEXT UNVERIFIED/);
+    assert.equal(attempts.at(-1).code, 'action_context_unverified');
+    assert.match(attempts.at(-1).message, /could not be bound to a verified action context/);
+    assert.doesNotMatch(attempts.at(-1).message, /page kept changing/);
+    assert.deepEqual(attempts.at(-1).metadata, { stage: 'response', streak: PAGE_FEEDBACK_STOP_AT,
+      toolNames: ['click_ax'], reason: 'target_context_unverified' });
+    const intervention = accountFeedbackSupersession(run, { passive: false, reason: 'target_context_unverified' });
+    assert.equal(intervention.stop, false); assert.equal(intervention.streak, 0);
+    const drift = Array.from({ length: PAGE_FEEDBACK_STOP_AT }, () => accountFeedbackSupersession(run, { passive: true })).at(-1);
+    assert.equal(drift.code, PAGE_FEEDBACK_STOP_CODE); assert.match(drift.message, /page kept changing/);
+    assert.equal(feedbackSupersessionMetadata({ reason: 'https://private.invalid/body' }).reason, undefined);
+  });
+
   test(`${browser}: repeated passive no-dispatch responses have a bounded recovery budget`, () => {
     const run = {};
     const attempts = Array.from({ length: 12 }, () => accountFeedbackSupersession(run, {

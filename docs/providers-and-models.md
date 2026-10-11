@@ -14,6 +14,13 @@ decision switches. See [the settings guide](https://webbrain.one/docs/settings/#
 and [data flow](privacy-and-data-flow.md#decision-models-and-completion-verification)
 for setup and disclosure details. Existing `#multimodal` settings links still work.
 
+Browser chat includes the configured main provider and text-model labels in its
+trusted per-turn context, so identity answers can use the current selection
+instead of guessing. Assistive model labels stay separate. Automatic routes such
+as `openrouter/free` identify the configured route; they do not establish which
+upstream model the router selected. Endpoint URLs, credentials, local model paths
+and private inference-profile ARNs are omitted from this identity context.
+
 ### Decision models
 
 Select OpenRouter (the default), TypeSafe directly, or a local/custom System One
@@ -497,7 +504,9 @@ additionally depends on the model's tool-use training, the runtime's chat
 template/parser, and a current runtime version (LocalAI added tool streaming in
 3.10).
 
-**Context window.** Load local models with **at least a 16k-token context window** for reliable agent runs — that's the usable minimum. 8k can work with the Compact tier selected; 4k is too small to hold the system prompt + tool schemas. The agent reads the window from `provider.contextWindow` (`providers/base.js`) to drive auto-compaction; when a provider config doesn't set `contextWindow`, local providers default to a conservative **16k** (cloud/router default to 128k). **Test connection** / **Load models** auto-detect for **llama.cpp**, **ODS**, **Ollama**, and **LM Studio** when reported (llama.cpp / ODS `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). Detection refreshes the 16k default; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / vLLM / SGLang / LocalAI / Unsloth Studio do not auto-detect yet. You can still set `config.contextWindow` explicitly, and the model server must actually be started with that much context (e.g. `llama-server -c 16384`).
+**Context window.** Size the loaded context for the selected prompt tier, its tool schemas, the live page/history and the requested output. **16k is a local configuration fallback, not a reliable minimum for every tier.** Current Mid and Full agent prompts can exceed that window before useful history accumulates. Use a larger loaded window for these tiers; the quality audit verified a Full-tier 64K run with real compaction and restarts. A smaller Compact setup needs its own sizing check and offers fewer tools, including no native long-chat tool set. Automatically summarizing old history cannot shrink the fixed prompt or schemas, and the character-based estimate is not an exact model tokenizer.
+
+The agent reads `provider.contextWindow` (`providers/base.js`) to drive auto-compaction. When no value is configured, local providers default to **16k**; cloud/router defaults depend on the known model, with a category fallback of 128k. **Test connection** / **Load models** auto-detect for **llama.cpp**, **ODS**, **Ollama**, and **LM Studio** when reported (llama.cpp / ODS `GET /props` `n_ctx`, Ollama `GET /api/ps` live context then `/api/show` `num_ctx`, LM Studio `/api/v0/models` `loaded_context_length`). Detection refreshes the local fallback; it shrinks a larger manual override only from live/runtime context (not from Ollama `/api/show` alone). Jan / vLLM / SGLang / LocalAI / Unsloth Studio do not auto-detect yet. Set `config.contextWindow` to match the server's actual loaded window; increasing the setting alone does not enlarge the model server's context.
 
 ### Prompt/tool tiers and modes
 

@@ -26,7 +26,7 @@ const modelHtml = html
   .replace('</aside>', '</aside><aside id="sidebar"><h2 id="sidebar-heading">Unrelated sidebar</h2></aside>');
 
 async function fixture(browser, build, body = html, { realAccessibilityTree = false, contentLibrary = false,
-  richTextLibrary = false, fixtureUrl = 'https://monitor.test/start' } = {}) {
+  richTextLibrary = false, sampleAfterOwnInput = false, fixtureUrl = 'https://monitor.test/start' } = {}) {
   const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
   await context.route(`${new URL(fixtureUrl).origin}/**`, route => route.fulfill({ contentType: 'text/html', body }));
   await context.addInitScript(realAccessibilityTree => {
@@ -49,6 +49,17 @@ async function fixture(browser, build, body = html, { realAccessibilityTree = fa
       }
     });
   }, realAccessibilityTree);
+  if (sampleAfterOwnInput) await context.addInitScript(() => {
+    const interval = window.setInterval;
+    let sample;
+    window.setInterval = function (callback, delay, ...args) {
+      if (delay === 250) sample = callback;
+      return interval.call(this, callback, delay, ...args);
+    };
+    document.addEventListener('input', event => {
+      if (!event.isTrusted && event.target.id === 'field') setTimeout(() => sample?.(), 0);
+    });
+  });
   if (richTextLibrary) await context.addInitScript({
     content: fs.readFileSync(new URL(`../src/${build}/src/content/rich-text-toolbar-heuristic.js`, import.meta.url), 'utf8'),
   });
@@ -326,6 +337,110 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
 }
 
 for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
+  test(`${build}: ordinary forms bind their outside page heading across the real field handler`, { timeout: 60000 }, async t => {
+    const browser = await engine.launch({ headless: true });
+    const body = `<!doctype html><style>body{font:18px sans-serif;margin:32px}label{display:block;margin:18px 0}aside{position:absolute;right:35px;top:20px}</style>
+      <h1 id="page-heading">QA contact form</h1><aside id="counter">100</aside>
+      <form id="form" action="/send"><label>Name <input id="field" name="name"></label>
+      <label>Email <input id="email" name="email"></label><button id="send">Send</button></form>`;
+    try {
+      await t.test('the periodic sample cannot reinterpret an own value setter during field verification', async () => {
+        const { context, page } = await treeModelFixture(browser, build, body, {
+          contentLibrary: true, sampleAfterOwnInput: true,
+        });
+        try {
+          const snapshot = await captureTreeModel(page);
+          const ref = snapshot.page.pageContent.split('\n').find(line => /textbox "Name"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          assert.equal((await prepareModel(page, snapshot, { tool: 'set_field', ref_id: ref })).modelBindingValid, true);
+          assert.equal((await modelMessage(page, 'set_field', { ref_id: ref, text: 'WebBrain QA' })).success, true);
+          await page.waitForTimeout(180);
+          assert.equal((await page.evaluate(() => feedback)).some(event => event.kind === 'dom' && event.source === 'unknown'), false,
+            'A timer tick after own input attribution ends must preserve the already observed value write');
+          const next = await captureTreeModel(page);
+          const email = next.page.pageContent.split('\n').find(line => /textbox "Email"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          assert.equal((await validateModel(page, next, { tool: 'set_field', ref_id: email })).ready, true);
+        } finally { await context.close(); }
+      });
+      await t.test('an unrelated sidebar cannot starve an unchanged observed field', async () => {
+        const { context, page } = await treeModelFixture(browser, build, body, { contentLibrary: true });
+        try {
+          const snapshot = await captureTreeModel(page);
+          const ref = snapshot.page.pageContent.split('\n').find(line => /textbox "Name"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          assert.ok(ref, snapshot.page.pageContent);
+          const target = { tool: 'set_field', ref_id: ref };
+          assert.equal((await validateModel(page, snapshot, target)).ready, true);
+          assert.equal((await prepareModel(page, snapshot, target)).modelBindingValid, true);
+          await page.evaluate(() => { document.getElementById('counter').textContent = '101'; });
+          const fence = await modelMessage(page, 'page_monitor_dispatch', { operationId: 'model-prepared', kind: 'input', ref_id: ref, fenceOnly: true });
+          assert.equal(fence.ready, true, JSON.stringify(fence));
+          const result = await modelMessage(page, 'set_field', { ref_id: ref, text: 'WebBrain QA' });
+          assert.equal(result.success, true, JSON.stringify(result));
+          assert.equal(await page.locator('#field').inputValue(), 'WebBrain QA');
+          assert.equal((await page.evaluate(() => feedback)).some(event => event.kind === 'input'), false,
+            'Own synchronous field events must not become independent page interventions');
+          await modelMessage(page, 'page_monitor_finish', { operationId: 'model-prepared' });
+          const next = await captureTreeModel(page);
+          const emailRef = next.page.pageContent.split('\n').find(line => /textbox "Email"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          await page.evaluate(() => { window.counterTimer = setInterval(() => { document.getElementById('counter').textContent = String(Number(document.getElementById('counter').textContent) + 1); }, 50); });
+          await page.waitForTimeout(280);
+          const validation = await validateModel(page, next, { tool: 'set_field', ref_id: emailRef });
+          assert.equal(validation.ready, true,
+            `The finished action late-event grace must not make unrelated counters invalidate the next inference: ${JSON.stringify({ validation, feedback: await page.evaluate(() => feedback) })}`);
+          assert.equal((await prepareModel(page, next, { tool: 'set_field', ref_id: emailRef })).modelBindingValid, true);
+          assert.equal((await modelMessage(page, 'set_field', { ref_id: emailRef, text: 'qa@example.test' })).success, true);
+          await page.evaluate(() => { clearInterval(counterTimer); });
+          assert.equal(await page.evaluate(() => submissions), 0);
+        } finally { await context.close(); }
+      });
+      await t.test('independent page input after the dispatch task still invalidates the next decision', async () => {
+        const { context, page } = await treeModelFixture(browser, build, body, { contentLibrary: true });
+        try {
+          const snapshot = await captureTreeModel(page);
+          const ref = snapshot.page.pageContent.split('\n').find(line => /textbox "Name"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          assert.equal((await prepareModel(page, snapshot, { tool: 'set_field', ref_id: ref })).modelBindingValid, true);
+          assert.equal((await modelMessage(page, 'set_field', { ref_id: ref, text: 'WebBrain QA' })).success, true);
+          const next = await captureTreeModel(page);
+          await page.evaluate(() => { const field = document.getElementById('field'); field.value = 'Independent page edit'; field.dispatchEvent(new Event('input', { bubbles: true })); });
+          assert.equal((await validateModel(page, next, { tool: 'set_field', ref_id: ref })).ready, false);
+          assert.ok((await page.evaluate(() => feedback)).some(event => event.kind === 'input' && event.source === 'page'));
+        } finally { await context.close(); }
+      });
+      await t.test('human typing immediately after a finished field action is not absorbed by its late-event grace', async () => {
+        const { context, page } = await treeModelFixture(browser, build, body, { contentLibrary: true });
+        try {
+          const snapshot = await captureTreeModel(page);
+          const ref = snapshot.page.pageContent.split('\n').find(line => /textbox "Name"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          assert.equal((await prepareModel(page, snapshot, { tool: 'set_field', ref_id: ref })).modelBindingValid, true);
+          assert.equal((await modelMessage(page, 'set_field', { ref_id: ref, text: 'WebBrain QA' })).success, true);
+          await modelMessage(page, 'page_monitor_finish', { operationId: 'model-prepared' });
+          await page.evaluate(() => { feedback = []; });
+          await page.keyboard.type('x');
+          assert.ok((await page.evaluate(() => feedback)).some(event => event.source === 'user'),
+            'A finished action must not claim the next real user key/input sequence');
+        } finally { await context.close(); }
+      });
+      for (const [name, mutate] of [
+        ['page identity', () => { document.getElementById('page-heading').textContent = 'Different contact form'; }],
+        ['form action', () => { document.getElementById('form').action = '/other'; }],
+        ['sibling form value', () => { document.getElementById('email').value = 'other@example.test'; }],
+        ['same-ref node replacement', () => { const field = document.getElementById('field'); field.replaceWith(field.cloneNode(true)); }],
+      ]) await t.test(`${name} changes still reject before field dispatch`, async () => {
+        const { context, page } = await treeModelFixture(browser, build, body, { contentLibrary: true });
+        try {
+          const snapshot = await captureTreeModel(page);
+          const ref = snapshot.page.pageContent.split('\n').find(line => /textbox "Name"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+          const target = { tool: 'set_field', ref_id: ref };
+          assert.equal((await prepareModel(page, snapshot, target)).modelBindingValid, true);
+          await page.evaluate(mutate);
+          const fence = await modelMessage(page, 'page_monitor_dispatch', { operationId: 'model-prepared', kind: 'input', ref_id: ref, fenceOnly: true });
+          assert.equal(fence.ready, false);
+          assert.equal(await page.locator('#field').inputValue(), '');
+          assert.equal(await page.evaluate(() => submissions), 0);
+        } finally { await context.close(); }
+      });
+    } finally { await browser.close(); }
+  });
+
   test(`${build}: focused snapshots reach actual content handlers and preserve native dispatch phases`, { timeout: 60000 }, async t => {
     const browser = await engine.launch({ headless: true });
     try {

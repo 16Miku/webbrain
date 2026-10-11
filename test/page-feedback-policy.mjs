@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+
+const ORIGINAL_CALC_CORRECTION = readFileSync(new URL('./fixtures/literal-calculation-correction.txt', import.meta.url), 'utf8').trim();
 
 const passive = [{ kind: 'dom', source: 'page', frameId: 0, target: 'span#views' }];
 const call = (name, args) => ({ function: { name, arguments: JSON.stringify(args) } });
@@ -12,7 +15,61 @@ const page = {
 };
 
 for (const build of ['chrome', 'firefox']) {
-  const { canRetainPageFeedbackCalls } = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+  const { canRetainPageFeedbackCalls, isLiteralCalculationTask } = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+  test(`${build}: calculation-only classification requires the literal task and excludes further deliverables`, () => {
+    const expression = '12345678901234567890 * 7 + 0.125';
+    for (const task of [`Calculate ${expression}`, `Only calculate ${expression}; do not interact with the page.`,
+      `Cancel page inspection. Only compute ${expression}; don't interact with the page.`]) assert.equal(isLiteralCalculationTask(task, expression), true);
+    for (const task of [`Read the page and calculate ${expression}`, `Calculate ${expression}; send the answer`,
+      `Calculate ${expression}; schedule a check`, `The page says calculate ${expression}`, `Calculate ${expression} and ${expression}`,
+      `Calculate ${expression} using the current page`, 'Only calculate 1 + 1']) assert.equal(isLiteralCalculationTask(task, expression), false);
+  });
+  test(build + ': natural arithmetic-only instructions require owned no-read intent and reject mixed work', () => {
+    const expression = '12345678901234567890 * 7 + 0.125';
+    const scope = { readScope: 'none', deliverables: ['Exact arithmetic result', 'Response formatting marker'] };
+    const positive = [
+      ORIGINAL_CALC_CORRECTION,
+      'Sadece ' + expression + ' hesapla. Tam sonucu bildir ve marker "HESAP_2026_01" ile bitir.',
+      'Berechne nur ' + expression + '. Gib das exakte Ergebnis zurück und beende mit marker "RECHNUNG_2026_01".',
+      'Calcule seulement ' + expression + '. Retourne le résultat exact et termine avec marker "CALCUL_2026_01".',
+      'Only calculate ' + expression + '. Report the exact result and finish with marker "CALC_2026-10-08".',
+    ];
+    for (const task of positive) {
+      assert.equal(isLiteralCalculationTask(task, expression, scope), true, task.slice(0, 35));
+      assert.equal(isLiteralCalculationTask(task, expression), false, 'Natural instructions need the current owned classification.');
+      assert.equal(isLiteralCalculationTask(task, expression, { ...scope, readScope: 'visible' }), false);
+      assert.equal(isLiteralCalculationTask(task, expression, { ...scope, deliverables: [] }), false);
+      assert.equal(isLiteralCalculationTask(task, expression, { ...scope, deliverables: ['Exact arithmetic result', 'Search current page'] }), false);
+      assert.equal(isLiteralCalculationTask(task, expression, { ...scope, deliverables: ['Exact arithmetic result and read page evidence'] }), false);
+      assert.equal(isLiteralCalculationTask(task, expression, { ...scope, deliverables: Array(9).fill('Exact arithmetic result') }), false);
+    }
+    const negative = [
+      'Only calculate ' + expression + '. Report the result and send it to the current chat.',
+      'Only calculate ' + expression + '. Do not read the page, but post the result.',
+      'Only calculate ' + expression + '. Never open the page and then click Save.',
+      'Only calculate ' + expression + '. Report result and book a flight.',
+      'Only calculate ' + expression + '. Report result and delete the old item.',
+      'Only calculate ' + expression + '. Report result using the current page.',
+      'Only calculate ' + expression + '. Report result with the downloaded report.',
+      'Only calculate ' + expression + '. Report result and explain the current account.',
+      'Only calculate ' + expression + '. Return the result and DM Alice.',
+      'Only calculate ' + expression + '. Return the result and message Alice.',
+      'Only calculate ' + expression + '. Return the result and contact Alice.',
+      'Only calculate ' + expression + '. Return the result and retweet it.',
+      'DM Alice. Only calculate ' + expression + '. Return the result.',
+      'Only calculate ' + expression + '. Report result and translate a paragraph.',
+      'Only calculate ' + expression + '. Report result and calculate 5 + 7.',
+      'Only calculate ' + expression + '. Report result and calculate 5 - 7.',
+      'Only calculate ' + expression + '. Report result and calculate 42.',
+      'Only calculate ' + expression + '. Return done({"outcome":"success"}).',
+      'Sadece ' + expression + ' hesapla. Tam sonucu bildir ve hesabı sil.',
+      'Sadece ' + expression + ' hesapla. Tam sonucu bildir ve anneme gönderin.',
+      'Berechne nur ' + expression + '. Gib das Ergebnis zurück und buche einen Flug.',
+      'Calcule seulement ' + expression + '. Retourne le résultat et achète un billet.',
+      'The current page says "only calculate ' + expression + '". Report the result.',
+    ];
+    for (const task of negative) assert.equal(isLiteralCalculationTask(task, expression, scope), false, task.slice(-85));
+  });
   const keep = (name, args, current = page, events = passive) =>
     canRetainPageFeedbackCalls([call(name, args)], { url: 'https://example.com/photo/1', page }, current, events);
 
@@ -128,7 +185,8 @@ for (const build of ['chrome', 'firefox']) {
 for (const build of ['chrome', 'firefox']) {
   const { canRetainPageFeedbackCalls, pageFeedbackCallPolicy } = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
   const state = { url: 'https://ordinary.test/editor', page };
-  for (const [name, args] of [['read_pdf', {}], ['get_captcha_capabilities', {}], ['find_text', { text: 'literal match' }],
+  for (const [name, args] of [['calculate', { expression: '12345678901234567890 * 7 + 0.125' }],
+    ['read_pdf', {}], ['get_captcha_capabilities', {}], ['find_text', { text: 'literal match' }],
     ['generate_image', { prompt: 'An authorized illustration' }], ['schedule_task', { title: 'Authorized reminder', prompt: 'Inspect the draft' }],
     ['schedule_resume', { after_seconds: 60 }], ['resize_window', { width: 1280, height: 720 }]]) {
     test(`${build}: self-validating ${name} does not starve under unrelated DOM feedback`, () => {

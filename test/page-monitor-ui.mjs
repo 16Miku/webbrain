@@ -205,6 +205,8 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
     host.pageMonitorState({ tab: { id: tab }, frameId: 0 }, documentToken);
     await page.exposeFunction('feedbackToHost', feedback => host.observePageFeedback({ tab: { id: tab }, frameId: 0 }, feedback));
     await page.exposeFunction('monitorStateFromHost', token => host.pageMonitorState({ tab: { id: tab }, frameId: 0 }, token));
+    await page.addScriptTag({ content: read('chrome', 'content/rich-text-toolbar-heuristic.js') });
+    await page.addScriptTag({ content: read('chrome', 'content/accessibility-tree.js') });
     await page.evaluate(() => {
       const original = chrome.runtime.sendMessage;
       chrome.runtime.sendMessage = async message => {
@@ -226,10 +228,6 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
         toolbar.innerHTML = '<button aria-label="Bold">B</button><button aria-label="Italic">I</button>';
         document.body.append(toolbar);
       });
-      window.__wb_ax_lookup = ref => document.getElementById(ref);
-      window.__wb_ax_ref = node => node.id;
-      window.__generateAccessibilityTree = () => ({ pageContent: 'dialog [ref_compose_dialog]\ntextbox "Post text" [ref_trusted_editor]',
-        viewport: { width: innerWidth, height: innerHeight } });
       window._fieldMeta = el => ({ tag: 'div', contentEditable: true, ariaLabel: el.getAttribute('aria-label') });
       window._editableTextValue = el => el.innerText.replace(/\n$/, '');
       window.readProseMirrorText = () => null;
@@ -239,6 +237,7 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
       window._stableFieldSelector = el => '#' + el.id;
       window._setFieldValueMatches = (actual, prefix, text, clear) => actual === (clear ? '' : prefix) + text;
     });
+    const editorRef = await page.evaluate(() => __wb_ax_ref(document.getElementById('ref_trusted_editor')));
     const source = read('chrome', 'content/content.js');
     const entries = ['ax_prepare_field_for_trusted_type', 'ax_verify_field_value', 'field_value_digest'].map(action => {
       const start = source.indexOf(`'${action}': ${action === 'field_value_digest' ? 'async ' : ''}() => {`), end = source.indexOf('\n      },', start);
@@ -259,7 +258,7 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
     }, host._pageFeedbackRuns.get(tab).token);
     assert.ok(capturedBinding.targetCount > 0, 'The heading-free compose dialog must certify its editor');
     const result = await host.executeTool(tab, 'set_field',
-      { ref_id: 'ref_trusted_editor', text: 'A verified post', clear: true });
+      { ref_id: editorRef, text: 'A verified post', clear: true });
     assert.equal(result.success, true, JSON.stringify({ result, preparations, feedback: await page.evaluate(() => feedback), commands: commands.filter(item => item.method.startsWith('Input.')) }));
     assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'A verified post');
     assert.equal(commands.filter(item => item.method === 'Input.insertText').length, 1);
@@ -269,7 +268,7 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
     await host._capturePageFeedbackModelState(tab, []);
     commands.length = 0; preparations.length = 0; changeToolbarAfterFocus = true;
     const interrupted = await host.executeTool(tab, 'set_field',
-      { ref_id: 'ref_trusted_editor', text: 'The next verified post', clear: true });
+      { ref_id: editorRef, text: 'The next verified post', clear: true });
     assert.equal(interrupted.success, false);
     assert.match(interrupted.error, /could not reselect it.*Browser changed during action preparation/);
     assert.equal(preparations.length, 2);
@@ -289,7 +288,7 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
     host._pageFeedbackRuns.get(tab).events.clear();
     await host._capturePageFeedbackModelState(tab, []);
     const retried = await host.executeTool(tab, 'set_field',
-      { ref_id: 'ref_trusted_editor', text: 'The next verified post', clear: true });
+      { ref_id: editorRef, text: 'The next verified post', clear: true });
     assert.equal(retried.success, true, JSON.stringify(retried));
     assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'The next verified post');
     assert.equal(commands.filter(item => item.method === 'Input.insertText').length, 1);
@@ -378,16 +377,30 @@ test('Chrome: unrelated layout shifts during an agent operation stay observable'
 });
 
 async function installContentEditableFallback(page, build) {
-  const insertion = read(build, 'content/content.js').match(/^  async function _insertContentEditableText\([\s\S]*?^  }/m)?.[0];
+  const source = read(build, 'content/content.js');
+  const ownInputScope = source.match(/^  let _messageRecipientOwnedInputScope = null;$/m)?.[0];
+  assert.ok(ownInputScope, 'Use the real private production owned-input scope');
+  const insertion = source.match(/^  async function _insertContentEditableText\([\s\S]*?^  }/m)?.[0];
   assert.ok(insertion, 'Exercise the real contenteditable fallback with the real monitor');
-  await page.addScriptTag({ content: `window._fieldMeta = () => ({ contentEditable: true }); window.richTextInsertion = ${insertion};` });
+  const caretReceipts = source.match(/^  const _nativeChatEmptyCaretReceipts = new WeakMap\(\);$/m)?.[0];
+  assert.ok(caretReceipts, 'Exercise the private production native-chat caret receipt state');
+  const readers = ['readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText', '_nativeChatCaretContext', '_sameNativeChatCaretContext',
+    '_singleEditableCaretBreak', '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue'].map(name => {
+    const reader = source.match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  }`, 'm'))?.[0];
+    assert.ok(reader, `Exercise the production ${name} readback used by native editor insertion`);
+    return reader;
+  });
+  await page.addScriptTag({ content: read(build, 'content/chat-observation.js') });
+  const settleDelay = source.match(/^  const SET_FIELD_VERIFY_DELAY_MS = \d+;$/m)?.[0];
+  assert.ok(settleDelay, 'Use the same bounded page-handler render delay as production');
+  await page.addScriptTag({ content: `${ownInputScope}\n${caretReceipts}\n${settleDelay}\n${readers.join('\n')}\nwindow._fieldMeta = () => ({ contentEditable: true }); window.richTextInsertion = ${insertion};` });
   await page.evaluate(() => {
     const editor = document.createElement('div'); editor.id = 'rich-editor'; editor.contentEditable = 'true';
     document.body.prepend(editor);
     window.typeRichText = async ({ text, clear }) => {
       const finish = __wbPageMonitor.beginContentAction('type', { selector: '#rich-editor' });
       try { editor.focus(); return await richTextInsertion(editor, text, clear); }
-      catch (error) { return { success: false, code: error.code, dispatched: error.dispatched }; }
+      catch (error) { return { success: false, error: error.message, code: error.code, dispatched: error.dispatched }; }
       finally { finish(); }
     };
   });
@@ -1079,14 +1092,23 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const old = document.createElement('button'); old.id = 'stale-iframe-target'; old.textContent = 'Old target';
         document.body.append(old);
       });
-      await page.waitForTimeout(150);
-      const guard = await page.evaluate(() => {
+      // Observe setup feedback instead of racing the monitor's 150ms debounce.
+      await page.waitForFunction(() => feedback.some(event => event.kind === 'dom' && event.source === 'page'),
+        null, { timeout: 3000 });
+      const preparation = await page.evaluate(async () => {
         feedback = [];
-        deliver('page_monitor_prepare', { operationId: 'stale-iframe-click', tool: 'click', selector: '#stale-iframe-target' });
-        deliver('page_monitor_dispatch', { operationId: 'stale-iframe-click', kind: 'click',
+        const request = (action, params) => new Promise(resolve => messageListeners.forEach(fn => fn({
+          target: 'content', action, params: { runToken: monitorRunToken, ...params },
+        }, {}, resolve)));
+        const prepare = await request('page_monitor_prepare', { operationId: 'stale-iframe-click',
+          tool: 'click', selector: '#stale-iframe-target' });
+        const dispatch = await request('page_monitor_dispatch', { operationId: 'stale-iframe-click', kind: 'click',
           selector: '#stale-iframe-target', fenceOnly: true });
-        return lastMonitorResponse.guard;
+        return { prepare, dispatch };
       });
+      assert.equal(preparation.prepare.ready, true);
+      assert.equal(preparation.dispatch.ready, true, JSON.stringify(preparation.dispatch));
+      const guard = preparation.dispatch.guard;
       assert.equal(guard.operationId, 'stale-iframe-click');
       const outcome = await page.evaluate(monitorGuard => {
         document.getElementById('stale-iframe-target').remove();
@@ -1812,6 +1834,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
   test(`${build}: frames, open shadow DOM and dispatch preparation retain external changes`, async () => {
     const { browser, page } = await fixture(engine, build);
     try {
+      const childNavigation = page.waitForEvent('framenavigated', {
+        predicate: frame => frame.url() === 'https://monitor.test/frame', timeout: 10000,
+      });
       await page.evaluate(() => {
         const host = document.createElement('div'); host.id = 'shadow-host';
         host.attachShadow({ mode: 'open' }).innerHTML = '<button id="shadow-button">Before</button>';
@@ -1819,8 +1844,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const frame = document.createElement('iframe'); frame.name = 'NestedSource'; frame.src = 'https://monitor.test/frame';
         document.body.prepend(frame);
       });
-      await page.waitForFunction(() => document.querySelector('iframe')?.contentWindow?.feedback);
-      const child = page.frames().find(frame => frame.url() === 'https://monitor.test/frame');
+      const child = await childNavigation;
+      await child.waitForFunction(() => window.__wbPageMonitor?.active
+        && pageMonitorStateRequests.at(-1) === 'NestedSource' && document.getElementById('human'));
       assert.equal(await child.evaluate(() => pageMonitorStateRequests.at(-1)), 'NestedSource',
         'The monitor registers the frame name with background for later named-target resolution');
       await page.locator('#human').click();
@@ -2104,7 +2130,12 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     const { browser, page } = await fixture(engine, build);
     try {
       await installContentEditableFallback(page, build);
-      await page.evaluate(() => { document.getElementById('rich-editor').textContent = 'Original'; });
+      await page.evaluate(() => {
+        const editor = document.getElementById('rich-editor');
+        // Model-backed paragraph editors retain the native delete/insert
+        // sequence. Ordinary editors now replace in one native operation.
+        editor.classList.add('ProseMirror'); editor.innerHTML = '<p>Original</p>';
+      });
       await page.waitForTimeout(200);
       await page.evaluate(() => {
         feedback = []; const schedule = window.setTimeout;
@@ -3095,6 +3126,39 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       });
       await page.waitForTimeout(200);
       assert.deepEqual(await page.evaluate(() => feedback), [], 'A marked synchronous toggle must not feed back into its own run');
+    } finally { await browser.close(); }
+  });
+
+  test(`${build}: observed agent writes refresh pending target samples and preserve later page edits`, async () => {
+    const { browser, page } = await fixture(engine, build);
+    try {
+      await page.evaluate(() => {
+        const toggle = document.getElementById('human');
+        toggle.setAttribute('aria-pressed', 'false');
+        monitorEnabled = false; deliver('page_monitor_state'); monitorEnabled = true; deliver('page_monitor_state');
+      });
+      await page.waitForTimeout(200);
+      await page.evaluate(() => {
+        feedback = [];
+        // A parked preparation remains live beyond the next periodic sample,
+        // so attribution cannot depend on the 200 ms local-action expiry.
+        deliver('page_monitor_prepare', { operationId: 'parked-toggle', tool: 'click', selector: '#human', allowPassiveRebase: true });
+        const finish = __wbPageMonitor.beginContentAction('execute_js');
+        try { __wbPageMonitor.beforeLocalDispatch(); document.getElementById('human').setAttribute('aria-pressed', 'true'); }
+        finally { finish(); }
+      });
+      await page.waitForTimeout(600);
+      assert.deepEqual(await page.evaluate(() => feedback), [], 'The periodic sampler must not report an already observed agent write.');
+      const stale = await page.evaluate(() => {
+        try {
+          __wbPageMonitor.activatePreparedDispatch({ operationId: 'parked-toggle', kind: 'click', element: document.getElementById('human') });
+          return null;
+        } catch (error) { return error.code; }
+      });
+      assert.equal(stale, 'page_feedback_pending', 'Refreshing the sampling baseline must preserve the immutable target binding.');
+      await page.evaluate(() => { document.getElementById('human').setAttribute('aria-pressed', 'false'); });
+      await page.waitForFunction(() => feedback.some(event => event.kind === 'dom' && event.target === 'button#human'));
+      assert.equal(await page.evaluate(() => feedback.find(event => event.kind === 'dom').source), 'page');
     } finally { await browser.close(); }
   });
 

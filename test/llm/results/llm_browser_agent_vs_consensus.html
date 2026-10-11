@@ -147,10 +147,10 @@ rows.forEach((r,i)=> r.rank = i+1);
 
 function fmtPct(x){ return (x*100).toFixed(1)+'%'; }
 function fmtMs(x){ return Math.round(x).toLocaleString()+' ms'; }
-function fmtNum(x){ return (x||0).toLocaleString(); }
+function fmtNum(x){ const n = Number(x); return (Number.isFinite(n) ? n : 0).toLocaleString(); }
 function fmtUsd(x){ return '$'+(x||0).toFixed(4); }
 function shortModel(m){ return m.length>40 ? m.slice(0,38)+'…' : m; }
-function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 const fastest = rows.slice().sort((a,b)=>a.avg_latency_ms-b.avg_latency_ms)[0];
 const bestAgree = rows.slice().sort((a,b)=>b.agreement_rate-a.agreement_rate)[0];
@@ -162,7 +162,7 @@ document.getElementById('kpis').innerHTML = [
   ['Best agreement with majority', shortModel(bestAgree.model), fmtPct(bestAgree.agreement_rate)],
   ['Fastest per case', shortModel(fastest.model), fmtMs(fastest.avg_latency_ms)],
   ['Only paid endpoint', shortModel(cheapest.model), fmtUsd(cheapest.cost_usd)+' / 100 cases'],
-].map(([lbl,name,val])=> '<div class="kpi"><div class="lbl">'+lbl+'</div><div class="val">'+val+'</div><div class="sml">'+name+'</div></div>').join('');
+].map(([lbl,name,val])=> '<div class="kpi"><div class="lbl">'+escapeHtml(lbl)+'</div><div class="val">'+escapeHtml(val)+'</div><div class="sml">'+escapeHtml(name)+'</div></div>').join('');
 
 function rankBadge(r,key){
   const vals = rows.map(x=>x[key]);
@@ -248,7 +248,7 @@ function renderPTM(filter){
     const u = DATA.task_user[tid] || '';
     if (filt && !u.toLowerCase().includes(filt) && !tid.includes(filt)) continue;
     const maj = DATA.majority[tid] || {};
-    html += '<tr><td>'+tid+'</td><td class="user">'+escapeHtml(u)+'</td><td><span class="pill">'+escapeHtml(maj.tool||'')+'</span> <span class="sub">'+(maj.support||0)+'/'+(maj.total||0)+'</span></td>';
+    html += '<tr><td>'+tid+'</td><td class="user">'+escapeHtml(u)+'</td><td><span class="pill">'+escapeHtml(maj.tool||'')+'</span> <span class="sub">'+fmtNum(maj.support)+'/'+fmtNum(maj.total)+'</span></td>';
     modelOrder.forEach(m=>{
       const c = (DATA.per_model[m]||[])[i-1];
       const t = c && c.tool;
@@ -268,8 +268,8 @@ const hardest = Object.entries(DATA.majority).sort((a,b)=> a[1].share - b[1].sha
 document.querySelector('#hardtable tbody').innerHTML = hardest.map(entry=>{
   const tid = entry[0], m = entry[1];
   const dist = DATA.votes[tid]||{};
-  const distHtml = Object.entries(dist).sort((a,b)=>b[1]-a[1]).map(kv=>'<span class="pill">'+escapeHtml(kv[0])+': '+kv[1]+'</span>').join(' ');
-  return '<tr><td>'+tid+'</td><td>'+escapeHtml(DATA.task_user[tid]||'')+'</td><td><span class="pill">'+escapeHtml(m.tool)+'</span></td><td class="num">'+m.support+'/'+m.total+'</td><td class="num">'+(m.share*100).toFixed(0)+'%</td><td>'+distHtml+'</td></tr>';
+  const distHtml = Object.entries(dist).sort((a,b)=>b[1]-a[1]).map(kv=>'<span class="pill">'+escapeHtml(kv[0])+': '+fmtNum(kv[1])+'</span>').join(' ');
+  return '<tr><td>'+escapeHtml(tid)+'</td><td>'+escapeHtml(DATA.task_user[tid]||'')+'</td><td><span class="pill">'+escapeHtml(m.tool)+'</span></td><td class="num">'+fmtNum(m.support)+'/'+fmtNum(m.total)+'</td><td class="num">'+(m.share*100).toFixed(0)+'%</td><td>'+distHtml+'</td></tr>';
 }).join('');
 
 document.querySelector('#costtable tbody').innerHTML = rows.map(r=>{

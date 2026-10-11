@@ -494,7 +494,7 @@ for (const [browser, Agent] of variants) {
           assertCompleteToolHistory(messages);
           if (!options.tools?.length) {
             recoveries++;
-            return { content: 'The month could not be selected. The second post is incomplete.' };
+            return { content: JSON.stringify({ final_text: 'The month could not be selected. The second post is incomplete.' }) };
           }
           // Bound the test even if a regression lets the production loop run on.
           if (attempts >= 3) return { content: 'Unexpected extra browser step.' };
@@ -704,4 +704,425 @@ for (const [browser, Agent] of variants) {
       assert.equal(messages[3].content[1].image_url.url, 'data:image/png;base64,c2NyZWVu');
     } finally { release.resolve(); agent._releaseRunEntry(54); }
   });
+}
+
+
+// A real guarded chooser discovery is a bounded handoff, never a successful upload.
+for (const [browser, Agent] of variants) {
+  const guarded = selector => ({ success: false, filePickerBlocked: true, selector,
+    ref_id: 'ref_picker', dispatched: true, error: 'Native chooser blocked; use upload_file.' });
+  const failed = { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, error: 'Preparation changed' };
+  const clickArgs = { ref_id: 'ref_picker' };
+  const seed = agent => {
+    assert.equal(agent._checkLoop(81, 'click_ax', clickArgs, failed).kind, 'none');
+    assert.equal(agent._checkLoop(81, 'click_ax', clickArgs, failed).kind, 'nudge');
+  };
+  test(`${browser}: guarded file-picker handoff reaches a fresh upload decision without queued dispatch`, async () => {
+    const agent = setup(Agent); allowBatchPreparation(agent); seed(agent);
+    agent._beginCompletionInvariant(81);
+    const invariant = agent.completionInvariants.get(81), calls = [], checkpoints = [];
+    agent._executeToolImpl = async (_tab, name, args) => {
+      calls.push({ name, args });
+      return name === 'click_ax' ? guarded('#owned-image')
+        : { success: true, dispatched: true, localAttachmentState: 'page_consumed', verified: false, remoteStateVerified: false };
+    };
+    const invoke = (entries, step) => agent._executeToolBatch(81, entries, messages, () => {}, agent._activeProvider(81), null,
+      new Set(['click_ax', 'upload_file']), step, { beforeConsequentialTool: async ({ name }) => { checkpoints.push(name); return true; } });
+    const tool = (id, name, args) => ({ id, function: { name, arguments: JSON.stringify(args) } });
+    const messages = [];
+    const first = await invoke([tool('discover', 'click_ax', clickArgs),
+      tool('queued-upload', 'upload_file', { selector: '#old-input', downloadId: 9 })], 1);
+    assert.equal(first.action, 'continue', 'First current guarded discovery must retain normal tool-enabled execution');
+    assert.deepEqual(calls.map(call => call.name), ['click_ax']);
+    assert.equal(JSON.parse(messages.find(m => m.tool_call_id === 'queued-upload').content).skipped, true);
+    assert.match(messages.find(m => m.tool_call_id === 'discover').content, /FILE INPUT DISCOVERED/);
+    assert.equal(agent.failedActionLoops.get(81).get('click_ax|{"ref_id":"ref_picker"}'), 2);
+    const afterClick = agent.completionInvariants.get(81);
+    assert.equal(afterClick.runToken, invariant.runToken);
+    assert.equal(afterClick.verificationDebt, true);
+    assert.equal(afterClick.lastAction.uncertain, true);
+    assert.equal(afterClick.sequence, 1);
+    const originalSend = api.tabs.sendMessage;
+    await agent._beginPageFeedbackRun(81, 'interactive');
+    const feedback = agent._pageFeedbackRuns.get(81);
+    const binding = { runToken: feedback.token, documentToken: 'current-document', snapshotToken: 'current-snapshot' };
+    feedback.modelState = { token: feedback.token, url: feedback.url, frames: new Map(), steeringRevision: 0, actionBinding: binding };
+    let certificateReady = false; const validations = [];
+    api.tabs.sendMessage = async (_tab, message) => {
+      if (message.action === 'page_monitor_validate_model') {
+        validations.push(message.params);
+        return { ...binding, ready: certificateReady, reason: certificateReady ? 'current' : 'target_uncovered' };
+      }
+      if (message.action === 'page_monitor_prepare') return { ready: true, modelBindingValid: true };
+      return {};
+    };
+    try {
+      const rejected = await agent.executeTool(81, 'upload_file', { selector: '#owned-image', downloadId: 9 });
+      assert.equal(rejected.errorCode, 'action_binding_unavailable');
+      assert.equal(rejected.noDispatch, true); assert.equal(rejected.dispatched, false);
+      assert.deepEqual(calls.map(call => call.name), ['click_ax'], 'Discovery cannot bypass the original certificate gate');
+      assert.equal(agent.completionInvariants.get(81).verificationDebt, true);
+      certificateReady = true;
+    const second = await invoke([tool('fresh-upload', 'upload_file', { selector: '#owned-image', downloadId: 9 })], 2);
+    assert.equal(second.action, 'continue');
+    assert.deepEqual(calls.map(call => call.name), ['click_ax', 'upload_file']);
+    assert.equal(calls[1].args.selector, '#owned-image');
+    assert.ok(checkpoints.includes('upload_file'), 'Normal consequential ownership checkpoint remains required');
+    const content = messages.find(m => m.tool_call_id === 'fresh-upload').content;
+    assert.match(content, /"verified":false/); assert.match(content, /"remoteStateVerified":false/);
+    assert.equal(validations.length, 2, 'Both denied and freshly certified uploads use the real binding validator');
+    assert.ok(validations.every(probe => probe.tool === 'upload_file' && probe.selector === '#owned-image'));
+    const afterUpload = agent.completionInvariants.get(81);
+    assert.equal(afterUpload.runToken, invariant.runToken, 'Handoff must not reset the completion run owner');
+    assert.equal(afterUpload.sequence, 2);
+    assert.equal(afterUpload.verificationDebt, true, 'Local file handling cannot clear remote verification debt');
+    } finally { agent._finishPageFeedbackRun(81); api.tabs.sendMessage = originalSend; }
+  });
+  test(`${browser}: guarded file-picker handoff cannot evade repeated selector failures across refs or tools`, () => {
+    const agent = setup(Agent); seed(agent);
+    assert.equal(agent._checkLoop(81, 'click_ax', clickArgs, guarded('#owned-image')).kind, 'nudge');
+    assert.equal(agent.failedActionLoops.get(81).get('click_ax|{"ref_id":"ref_picker"}'), 2);
+    assert.equal(agent._checkLoop(81, 'click_ax', clickArgs, guarded('#owned-image')).kind, 'stop');
+    const other = setup(Agent);
+    assert.equal(other._checkLoop(81, 'click_ax', clickArgs, guarded('#same-input')).kind, 'nudge');
+    assert.equal(other._checkLoop(81, 'click', { selector: '#other-button' }, guarded('#same-input')).kind, 'none');
+    assert.equal(other.failedActionLoops.get(81).size, 1);
+    other._clearPageLoopState(81);
+    assert.equal(other._checkLoop(81, 'click_ax', clickArgs, guarded('#same-input')).kind, 'nudge');
+  });
+  test(`${browser}: guarded file-picker handoff excludes unknown, no-dispatch and malformed discoveries`, () => {
+    for (const delta of [{ outcomeUnknown: true }, { noDispatch: true }, { dispatched: false },
+      { cancelled: true }, { inconclusive: true }, { mutationMayHaveOccurred: true }, { nonRetryable: true }, { filePickerBlocked: false }, { selector: '' }, { selector: ' #file' },
+      { selector: '#file\n' }, { selector: 'x'.repeat(2049) }]) {
+      const agent = setup(Agent); seed(agent);
+      assert.equal(agent._checkLoop(81, 'click_ax', clickArgs, { ...guarded('#file'), ...delta }).kind, 'stop');
+    }
+    const exhausted = setup(Agent); seed(exhausted); exhausted.loopNudges.set(81, 8);
+    assert.equal(exhausted._checkLoop(81, 'click_ax', clickArgs, guarded('#file')).kind, 'stop', 'Existing stop counters must still hold');
+    const bounded = setup(Agent);
+    for (let i = 0; i < 16; i++) assert.equal(bounded._checkLoop(81, 'click_ax', { ref_id: `ref_${i}` }, guarded(`#file-${i}`)).kind, 'nudge');
+    assert.equal(bounded._checkLoop(81, 'click_ax', { ref_id: 'ref_extra' }, guarded('#extra')).kind, 'none');
+    assert.equal(bounded.filePickerDiscoveries.get(81).size, 16);
+  });
+}
+
+// Production Agent owns the run signal; Scheduler owns real durable writes/alarms.
+const schedulingVariants = await Promise.all(variants.map(async ([browser, Agent]) =>
+  [browser, Agent, await import(`../src/${browser}/src/agent/scheduler.js`)]));
+async function schedulingFixture(Agent, Scheduler, phase = '', fault = '') {
+  const entered = deferred(), release = deferred();
+  const savedApi = { storage: api.storage, tabs: api.tabs, alarms: api.alarms };
+  const values = new Map([[Scheduler.SCHEDULED_JOBS_KEY, []]]), alarms = new Map();
+  let jobWrites = 0;
+  const gate = async name => { if (phase === name) { entered.resolve(); await release.promise; } };
+  const local = {
+    async get(key) { if (key === Scheduler.SCHEDULED_JOBS_KEY) await gate('storage-read'); return { [key]: structuredClone(values.get(key)) }; },
+    async set(entries) {
+      const jobs = Object.hasOwn(entries, Scheduler.SCHEDULED_JOBS_KEY);
+      if (jobs) { jobWrites++; await gate('storage-write'); }
+      if (jobs && ['rollback-rejected', 'write-and-rollback-rejected', 'rollback-and-clear-rejected'].includes(fault) && jobWrites > 1) throw new Error('Owned rollback ACK rejected');
+      for (const [k, v] of Object.entries(entries)) values.set(k, structuredClone(v));
+      if (jobs && ['write-ack-rejected', 'write-and-rollback-rejected'].includes(fault) && jobWrites === 1) throw new Error('Write ACK lost after durable save');
+    },
+    async remove(key) { values.delete(key); },
+  };
+  api.storage = { local, session: { ...local, async set(entries) { await gate('conversation-persist'); for (const [k, v] of Object.entries(entries)) values.set(k, structuredClone(v)); } } };
+  api.tabs = { ...savedApi.tabs, async get(id) { await gate('tab-read'); return { id, url: 'https://example.com/', title: 'Owned fixture' }; } };
+  api.alarms = {
+    async create(name, spec) {
+      if (phase === 'alarm-delivery') { alarms.set(name, structuredClone(spec)); await gate('alarm-delivery'); }
+      else { await gate('alarm-create'); alarms.set(name, structuredClone(spec)); }
+    },
+    async clear(name) { if (['clear-rejected', 'rollback-and-clear-rejected'].includes(fault)) throw new Error('Alarm clear ACK rejected'); return alarms.delete(name); },
+  };
+  const agent = setup(Agent), tabId = 901;
+  agent._persistNow = Agent.prototype._persistNow.bind(agent);
+  agent.conversations.set(tabId, [{ role: 'system', content: 'Neutral fixture.' }, { role: 'user', content: 'Schedule the owned read-only inspection later.' }]);
+  agent.conversationIds.set(tabId, 'owned-scheduling-conversation');
+  agent.conversationModes.set(tabId, 'act');
+  if (phase === 'conversation-persist') agent.chatSessions.set(tabId, {});
+  await agent._claimRunEntry(tabId, 'interactive', { standaloneChat: true, detachedRequestId: 'owned-scheduling-request' }, () => {});
+  const manager = new Scheduler.ScheduledJobManager({ api, agent, loadProviders: async () => {}, sendUpdate() {}, showIndicator() {}, hideIndicator() {} });
+  agent.setScheduler(manager);
+  let resultDispatchState = null;
+  const finalize = agent._finalizeToolResultOnce.bind(agent);
+  agent._finalizeToolResultOnce = (...args) => { resultDispatchState = args[4]; return finalize(...args); };
+  let queue;
+  if (phase === 'save-queue') {
+    queue = manager._withJobMutation(async () => { await release.promise; });
+    const original = manager._saveJobUnlessDuplicate.bind(manager);
+    manager._saveJobUnlessDuplicate = (...args) => { entered.resolve(); return original(...args); };
+  }
+  return { agent, manager, tabId, entered, release, alarms, values,
+    clearFault: () => { fault = ''; },
+    jobs: () => values.get(Scheduler.SCHEDULED_JOBS_KEY), dispatchStarted: () => resultDispatchState?.started === true,
+    async close() { release.resolve(); await queue; agent._finishSteeringRun(tabId); agent._releaseRunEntry(tabId); Object.assign(api, savedApi); },
+  };
+}
+const schedulingArgs = name => name === 'schedule_resume'
+  ? { after_seconds: 90, reason: 'Wait for the owned page.', resume_instruction: 'Read the owned page; send nothing.' }
+  : { title: 'Owned read-only inspection', prompt: 'Read the owned page; send nothing.', schedule: { type: 'once', after_seconds: 90 }, target: { type: 'current_tab' }, mode: 'ask' };
+for (const [browser, Agent, Scheduler] of schedulingVariants) {
+  for (const name of ['schedule_resume', 'schedule_task']) {
+    test(`${browser}: ${name} normal private run saves one job and alarm`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler);
+      try { const result = await f.agent.executeTool(f.tabId, name, schedulingArgs(name)); assert.equal(result.success, true); assert.equal(f.jobs().length, 1); assert.equal(f.jobs()[0].id, result.jobId); assert.equal(f.alarms.size, 1); }
+      finally { await f.close(); }
+    });
+    for (const phase of ['tab-read', 'save-queue', 'storage-read', 'storage-write', 'alarm-create']) {
+      test(`${browser}: ${name} Stop during ${phase} cannot leave a live new job`, async () => {
+        const f = await schedulingFixture(Agent, Scheduler, phase);
+        try {
+          const signal = f.agent._runAbortSignal(f.tabId);
+          const pending = f.agent.executeTool(f.tabId, name, schedulingArgs(name));
+          await f.entered.promise; f.agent.abort(f.tabId); assert.equal(signal.aborted, true); f.release.resolve();
+          const result = await pending;
+          console.log(JSON.stringify({ schedulingCase: `${browser}/${name}/${phase}`, result, jobs: f.jobs(), alarms: [...f.alarms] }));
+          assert.equal(f.jobs().filter(j => ['pending', 'queued', 'running'].includes(j.status)).length, 0);
+          assert.equal(f.alarms.size, 0); assert.equal(result.success, false); assert.equal(result.cancelled, true);
+          assert.equal(f.dispatchStarted(), ['storage-write', 'alarm-create'].includes(phase));
+          if (!['storage-write', 'alarm-create'].includes(phase)) { assert.equal(result.noDispatch, true); assert.equal(f.jobs().length, 0); }
+        } finally { await f.close(); }
+      });
+    }
+    test(`${browser}: ${name} accepted steering during tab preparation cannot schedule the old task`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler, 'tab-read');
+      try {
+        const signal = f.agent._runAbortSignal(f.tabId);
+        const pending = f.agent.executeTool(f.tabId, name, schedulingArgs(name)); await f.entered.promise;
+        assert.equal(f.agent.steerMessage(f.tabId, 'Stop scheduling. New task: only calculate 2 + 2.', { requestId: 'owned-scheduling-request', messageId: 'owned-correction' }).accepted, true);
+        assert.equal(signal.aborted, false); f.release.resolve(); const result = await pending;
+        console.log(JSON.stringify({ schedulingCase: `${browser}/${name}/steering`, result, jobs: f.jobs(), alarms: [...f.alarms] }));
+        assert.equal(f.jobs().length, 0); assert.equal(f.alarms.size, 0); assert.equal(result.success, false); assert.equal(result.noDispatch, true);
+      } finally { await f.close(); }
+    });
+  }
+  test(`${browser}: schedule_resume Stop during actual conversation persistence cannot schedule`, async () => {
+    const f = await schedulingFixture(Agent, Scheduler, 'conversation-persist');
+    try {
+      const pending = f.agent.executeTool(f.tabId, 'schedule_resume', schedulingArgs('schedule_resume')); await f.entered.promise;
+      f.agent.abort(f.tabId); f.release.resolve(); const result = await pending;
+      console.log(JSON.stringify({ schedulingCase: `${browser}/schedule_resume/conversation-persist`, result, jobs: f.jobs(), alarms: [...f.alarms] }));
+      assert.equal(f.jobs().length, 0); assert.equal(f.alarms.size, 0); assert.equal(result.success, false); assert.equal(result.cancelled, true); assert.equal(result.noDispatch, true);
+    } finally { await f.close(); }
+  });
+}
+
+for (const [browser, Agent, Scheduler] of schedulingVariants) {
+  for (const name of ['schedule_resume', 'schedule_task']) {
+    test(`${browser}: ${name} task-object replacement during preparation cannot schedule`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler, 'tab-read');
+      try {
+        const pending = f.agent.executeTool(f.tabId, name, schedulingArgs(name)); await f.entered.promise;
+        const old = f.agent.conversations.get(f.tabId)[1];
+        f.agent.conversations.get(f.tabId)[1] = { ...old }; // Same text, different app-owned task.
+        f.release.resolve(); const result = await pending;
+        assert.equal(result.success, false); assert.equal(result.noDispatch, true);
+        assert.equal(f.jobs().length, 0); assert.equal(f.alarms.size, 0);
+      } finally { await f.close(); }
+    });
+    test(`${browser}: ${name} original linked run cannot create work after a new run replaces it`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler, 'tab-read');
+      try {
+        const pending = f.agent.executeTool(f.tabId, name, schedulingArgs(name)); await f.entered.promise;
+        f.agent._finishSteeringRun(f.tabId); f.agent._releaseRunEntry(f.tabId);
+        await f.agent._claimRunEntry(f.tabId, 'interactive', { standaloneChat: true, detachedRequestId: 'new-owned-run' }, () => {});
+        assert.equal(f.agent._runAbortSignal(f.tabId).aborted, false);
+        f.release.resolve(); const result = await pending;
+        assert.equal(result.success, false); assert.equal(result.noDispatch, true);
+        assert.equal(f.jobs().length, 0); assert.equal(f.alarms.size, 0);
+      } finally { await f.close(); }
+    });
+    test(`${browser}: ${name} Stop while a duplicate is being read preserves the previously valid job`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler);
+      try {
+        const first = await f.agent.executeTool(f.tabId, name, schedulingArgs(name));
+        const saved = structuredClone(f.jobs()), savedAlarms = [...f.alarms];
+        const originalGet = api.storage.local.get;
+        const entered = deferred(), release = deferred();
+        api.storage.local.get = async key => {
+          const value = await originalGet(key);
+          if (key === Scheduler.SCHEDULED_JOBS_KEY) { entered.resolve(); await release.promise; }
+          return value;
+        };
+        const pending = f.agent.executeTool(f.tabId, name, schedulingArgs(name)); await entered.promise;
+        f.agent.abort(f.tabId); release.resolve(); const result = await pending;
+        assert.equal(result.success, false); assert.equal(result.noDispatch, true);
+        assert.deepEqual(f.jobs(), saved); assert.deepEqual([...f.alarms], savedAlarms);
+        assert.equal(f.jobs()[0].id, first.jobId); assert.equal(f.jobs()[0].status, 'pending');
+      } finally { await f.close(); }
+    });
+    test(`${browser}: ${name} ordinary deduplication still returns the preexisting job`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler);
+      try {
+        const first = await f.agent.executeTool(f.tabId, name, schedulingArgs(name));
+        const saved = structuredClone(f.jobs());
+        const second = await f.agent.executeTool(f.tabId, name, schedulingArgs(name));
+        assert.equal(second.success, true); assert.equal(second.deduped, true);
+        assert.equal(second.jobId, first.jobId); assert.equal(f.alarms.size, 1); assert.deepEqual(f.jobs(), saved);
+      } finally { await f.close(); }
+    });
+    for (const fault of ['write-ack-rejected', 'write-and-rollback-rejected', 'rollback-rejected', 'clear-rejected']) {
+      test(`${browser}: ${name} ${fault} reports verified cancellation or explicit scheduling uncertainty`, async () => {
+        const phase = fault === 'clear-rejected' ? 'alarm-create' : 'storage-write';
+        const f = await schedulingFixture(Agent, Scheduler, phase, fault);
+        try {
+          const pending = f.agent.executeTool(f.tabId, name, schedulingArgs(name)); await f.entered.promise;
+          f.agent.abort(f.tabId); f.release.resolve(); const result = await pending;
+          console.log(JSON.stringify({ schedulingFault: `${browser}/${name}/${fault}`, result, jobs: f.jobs(), alarms: [...f.alarms] }));
+          assert.equal(result.success, false); assert.equal(result.scheduled, false);
+          assert.equal(result.cancelled, true); assert.equal(f.dispatchStarted(), true);
+          assert.equal(result.dispatched, true); assert.equal(result.noDispatch, false);
+          assert.equal(result.retryable, false);
+          if (fault === 'write-ack-rejected') {
+            assert.equal(result.outcomeUnknown, false); assert.equal(result.schedulingCancelled, true);
+            assert.equal(f.jobs().filter(job => ['pending', 'queued', 'running'].includes(job.status)).length, 0);
+            assert.equal(f.alarms.size, 0);
+          } else {
+            assert.equal(result.outcomeUnknown, true); assert.equal(result.recoveryRequired, 'verify_scheduled_job');
+          }
+          assert.equal(result.jobId, f.jobs()[0].id); assert.notEqual(result.done, true);
+        } finally { await f.close(); }
+      });
+    }
+  }
+  test(`${browser}: automatic progress resume uses the original run signal across the real tab lookup`, async () => {
+    const f = await schedulingFixture(Agent, Scheduler, 'tab-read');
+    try {
+      // Establish the independent progress-ledger trigger; ownership/signal and scheduling are real.
+      f.agent._shouldBlockDoneForProgress = () => true;
+      f.agent._buildAutoProgressResumeInstruction = () => 'Continue the owned read-only task.';
+      const pending = f.agent._scheduleAutoProgressResume(f.tabId); await f.entered.promise;
+      f.agent.abort(f.tabId); f.release.resolve(); const result = await pending;
+      assert.equal(result, null); assert.equal(f.jobs().length, 0); assert.equal(f.alarms.size, 0);
+    } finally { await f.close(); }
+  });
+  test(`${browser}: a direct non-Agent scheduler caller retains its ordinary creation behavior`, async () => {
+    const f = await schedulingFixture(Agent, Scheduler);
+    try {
+      const result = await f.manager.createTaskJob({ tabId: f.tabId, conversationId: 'manual', source: 'ui', args: schedulingArgs('schedule_task'), currentUrl: 'https://example.com/' });
+      assert.equal(result.success, true); assert.equal(f.jobs().length, 1); assert.equal(f.alarms.size, 1);
+    } finally { await f.close(); }
+  });
+}
+
+for (const [browser, Agent, Scheduler] of schedulingVariants) {
+  for (const intervention of ['Stop', 'steering']) {
+    test(`${browser}: alarm delivered before creation ACK cannot create a URL helper after ${intervention}`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler, 'alarm-delivery');
+      const tabs = [], navigations = [], removed = [], agentRuns = [];
+      let originClosed = false, pending, delivery;
+      const originalGet = api.tabs.get;
+      api.tabs.get = async id => {
+        if (id === f.tabId && originClosed) throw new Error('Originating tab closed after its old run ended');
+        if (id === 1902) return { id, url: 'https://owned.example/inspection', title: 'Owned helper' };
+        return originalGet(id);
+      };
+      api.tabs.create = async args => { tabs.push(structuredClone(args)); return { id: 1902, ...args }; };
+      api.tabs.update = async (id, args) => { navigations.push({ id, ...structuredClone(args) }); return { id, ...args }; };
+      api.tabs.remove = async id => { removed.push(id); };
+      f.agent.processMessage = async (...args) => { agentRuns.push(args[0]); assert.fail('Cancelled creation started a scheduled Agent task'); };
+      try {
+        const args = { ...schedulingArgs('schedule_task'), target: { type: 'url', url: 'https://owned.example/inspection' } };
+        pending = f.agent.executeTool(f.tabId, 'schedule_task', args); await f.entered.promise;
+        if (intervention === 'Stop') f.agent.abort(f.tabId);
+        else {
+          assert.equal(f.agent.steerMessage(f.tabId, 'New task: calculate only 2 + 2.', { requestId: 'owned-scheduling-request', messageId: 'alarm-correction' }).accepted, true);
+          assert.equal(f.agent._applyPendingSteering(f.tabId, f.agent.conversations.get(f.tabId), () => {}), true);
+        }
+        // Normal old-run teardown can precede an outstanding browser API ACK.
+        f.agent._finishSteeringRun(f.tabId); f.agent._releaseRunEntry(f.tabId); originClosed = true;
+        const alarmName = [...f.alarms.keys()][0]; assert.ok(alarmName);
+        delivery = f.manager.handleAlarm(alarmName);
+        // Drain already-resolved neutral API awaits; the only held ACK is explicit.
+        for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+        const beforeACK = { tabs: structuredClone(tabs), navigations: structuredClone(navigations), agentRuns: [...agentRuns] };
+        f.release.resolve(); const result = await pending; await delivery;
+        console.log(JSON.stringify({ alarmDuringCreation: `${browser}/${intervention}`, beforeACK, result, jobs: f.jobs(), alarms: [...f.alarms], removed }));
+        assert.deepEqual(beforeACK.tabs, []); assert.deepEqual(beforeACK.navigations, []); assert.deepEqual(beforeACK.agentRuns, []);
+        assert.deepEqual(tabs, []); assert.deepEqual(navigations, []); assert.deepEqual(agentRuns, []);
+        assert.equal(result.success, false); assert.equal(result.schedulingCancelled, true); assert.equal(result.outcomeUnknown, false);
+        assert.equal(f.jobs().filter(job => ['pending', 'queued', 'running'].includes(job.status)).length, 0);
+        assert.equal(f.alarms.size, 0); assert.equal(f.manager._executions.size, 0);
+      } finally {
+        f.release.resolve(); await Promise.allSettled([pending, delivery]); await f.close();
+      }
+    });
+  }
+  test(`${browser}: normal committed alarm dispatches its scheduled Agent task exactly once`, async () => {
+    const f = await schedulingFixture(Agent, Scheduler);
+    const agentRuns = [];
+    f.agent.processMessage = async (id, prompt, _update, mode, _attachments, options) => {
+      agentRuns.push({ id, prompt, mode, scheduledRun: options.scheduledRun, linkedSignal: options.signal instanceof AbortSignal });
+      return 'The owned scheduled read-only inspection completed.';
+    };
+    try {
+      const result = await f.agent.executeTool(f.tabId, 'schedule_task', schedulingArgs('schedule_task'));
+      assert.equal(result.success, true);
+      f.agent._finishSteeringRun(f.tabId); f.agent._releaseRunEntry(f.tabId);
+      const alarmName = [...f.alarms.keys()][0]; await f.manager.handleAlarm(alarmName);
+      console.log(JSON.stringify({ normalAlarm: browser, agentRuns, jobs: f.jobs() }));
+      assert.equal(agentRuns.length, 1); assert.equal(agentRuns[0].id, f.tabId);
+      assert.equal(agentRuns[0].mode, 'ask'); assert.equal(agentRuns[0].scheduledRun, true); assert.equal(agentRuns[0].linkedSignal, true);
+      assert.equal(f.jobs()[0].id, result.jobId); assert.equal(f.jobs()[0].status, 'completed');
+      assert.equal(f.manager._executions.size, 0);
+    } finally { await f.close(); }
+  });
+}
+
+for (const [browser, Agent, Scheduler] of schedulingVariants) {
+  for (const intervention of ['Stop', 'steering']) {
+    test(`${browser}: uncertain creation after ${intervention} holds first and later delivered alarms until acknowledged cancellation`, async () => {
+      const f = await schedulingFixture(Agent, Scheduler, 'alarm-delivery', 'rollback-and-clear-rejected');
+      const tabs = [], navigations = [], agentRuns = [], deliveryErrors = [];
+      let originClosed = false, pending, delivery;
+      const originalGet = api.tabs.get;
+      api.tabs.get = async id => {
+        if (id === f.tabId && originClosed) throw new Error('The original run and tab ended');
+        if (id === 1902) return { id, url: 'https://owned.example/inspection', title: 'Owned helper' };
+        return originalGet(id);
+      };
+      api.tabs.create = async args => { tabs.push(structuredClone(args)); return { id: 1902, ...args }; };
+      api.tabs.update = async (id, args) => { navigations.push({ id, ...structuredClone(args) }); return { id, ...args }; };
+      api.tabs.remove = async () => {};
+      f.agent.processMessage = async id => { agentRuns.push(id); return 'An unintended scheduled task ran.'; };
+      try {
+        const args = { ...schedulingArgs('schedule_task'), target: { type: 'url', url: 'https://owned.example/inspection' } };
+        pending = f.agent.executeTool(f.tabId, 'schedule_task', args); await f.entered.promise;
+        if (intervention === 'Stop') f.agent.abort(f.tabId);
+        else {
+          assert.equal(f.agent.steerMessage(f.tabId, 'New task: calculate only 2 + 2.', { requestId: 'owned-scheduling-request', messageId: 'uncertain-correction' }).accepted, true);
+          assert.equal(f.agent._applyPendingSteering(f.tabId, f.agent.conversations.get(f.tabId), () => {}), true);
+        }
+        f.agent._finishSteeringRun(f.tabId); f.agent._releaseRunEntry(f.tabId); originClosed = true;
+        const alarmName = [...f.alarms.keys()][0]; assert.ok(alarmName);
+        delivery = f.manager.handleAlarm(alarmName).catch(e => deliveryErrors.push(e.message));
+        for (let i = 0; i < 4; i++) await new Promise(resolve => setImmediate(resolve));
+        f.release.resolve(); const result = await pending; await delivery;
+        const first = { tabs: structuredClone(tabs), navigations: structuredClone(navigations), agentRuns: [...agentRuns] };
+        await f.manager.handleAlarm(alarmName).catch(e => deliveryErrors.push(e.message));
+        console.log(JSON.stringify({ uncertainAlarm: `${browser}/${intervention}`, result, first, later: { tabs, navigations, agentRuns }, deliveryErrors, jobs: f.jobs(), alarms: [...f.alarms] }));
+        assert.equal(result.success, false); assert.equal(result.scheduled, false);
+        assert.equal(result.dispatched, true); assert.equal(result.noDispatch, false); assert.equal(result.outcomeUnknown, true);
+        assert.equal(result.retryable, false); assert.equal(result.recoveryRequired, 'verify_scheduled_job');
+        assert.equal(result.jobId, f.jobs()[0].id); assert.notEqual(result.done, true);
+        assert.deepEqual(first, { tabs: [], navigations: [], agentRuns: [] });
+        assert.deepEqual(tabs, []); assert.deepEqual(navigations, []); assert.deepEqual(agentRuns, []); assert.deepEqual(deliveryErrors, []);
+        assert.equal(f.manager._executions.size, 0);
+        // Failed durable cleanup is reported honestly, rather than claiming persistent cancellation.
+        assert.equal(f.jobs()[0].status, 'pending'); assert.equal(f.alarms.size, 1);
+        const refused = await f.manager.runNow(result.jobId);
+        assert.equal(refused.ok, false); assert.equal(refused.outcomeUnknown, true); assert.equal(refused.retryable, false);
+        assert.equal(refused.recoveryRequired, 'verify_scheduled_job'); assert.equal(refused.jobId, result.jobId);
+        assert.equal(f.jobs()[0].status, 'pending'); assert.deepEqual(tabs, []);
+        f.clearFault(); const cancelled = await f.manager.cancelJob(result.jobId);
+        assert.equal(cancelled.ok, true); assert.equal(f.jobs()[0].status, 'cancelled'); assert.equal(f.alarms.size, 0);
+        const terminal = await f.manager.runNow(result.jobId);
+        assert.equal(terminal.ok, false); assert.equal(terminal.recoveryRequired, undefined);
+        await f.manager.handleAlarm(alarmName); assert.deepEqual(tabs, []); assert.deepEqual(agentRuns, []);
+      } finally {
+        f.release.resolve(); await Promise.allSettled([pending, delivery]); await f.close();
+      }
+    });
+  }
 }

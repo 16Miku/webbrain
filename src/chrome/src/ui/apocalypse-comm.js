@@ -1,7 +1,30 @@
 const PRODUCTION_ORIGIN = 'https://webbrain.one';
-const EMPTY_MARKUP = /^(?:\uFEFF|\s|<!--(?:.|\n|\r)*?-->|<!doctype[^>]*>)*$/i;
 const MAX_COMM_BYTES = 128_000;
 const FETCH_TIMEOUT_MS = 5_000;
+
+function isEmptyMarkup(markup) {
+  let cursor = 0;
+  while (cursor < markup.length) {
+    if (markup[cursor].trim() === '') {
+      cursor++;
+      continue;
+    }
+    if (markup.startsWith('<!--', cursor)) {
+      const end = markup.indexOf('-->', cursor + 4);
+      if (end < 0) return false;
+      cursor = end + 3;
+      continue;
+    }
+    if (markup.slice(cursor, cursor + 9).toLowerCase() === '<!doctype') {
+      const end = markup.indexOf('>', cursor + 9);
+      if (end < 0) return false;
+      cursor = end + 1;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
 
 function communicationUrl() {
   const params = new URLSearchParams(globalThis.location?.search || '');
@@ -13,7 +36,7 @@ function communicationUrl() {
 }
 
 function isRenderableMarkup(markup) {
-  return typeof markup === 'string' && markup.length <= MAX_COMM_BYTES && !EMPTY_MARKUP.test(markup);
+  return typeof markup === 'string' && markup.length <= MAX_COMM_BYTES && !isEmptyMarkup(markup);
 }
 
 function insertionAnchor() {

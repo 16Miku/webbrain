@@ -78,6 +78,7 @@
     {
       "matches": ["<all_urls>"],
       "js": [
+        "src/content/file-upload-policy.js",
         "src/content/rich-text-toolbar-heuristic.js",
         "src/content/accessibility-tree.js",
         "src/content/teacher-capture.js",

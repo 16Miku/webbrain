@@ -171,25 +171,7 @@ export class BaseLLMProvider {
   }
 
   _mapMessages(messages) {
-    const sanitized = (Array.isArray(messages) ? messages : []).map((message) => {
-      if (!message || typeof message !== 'object' || (
-        !Object.hasOwn(message, 'webbrainPlannerClarification')
-        && !Object.hasOwn(message, 'webbrainAppOwned')
-        && !Object.hasOwn(message, 'webbrainAppOwnedKind')
-        && !Object.hasOwn(message, 'webbrainSelectionScopeRestored')
-      )) {
-        return message;
-      }
-      const {
-        webbrainPlannerClarification: _plannerClarification,
-        webbrainAppOwned: _appOwned,
-        webbrainAppOwnedKind: _appOwnedKind,
-        webbrainSelectionScopeRestored: _selectionScopeRestored,
-        ...providerMessage
-      } = message;
-      return providerMessage;
-    });
-    return mapProviderMessages(sanitized, this.config);
+    return mapProviderMessages(messages, this.config);
   }
 
   _supportsReasoningContentReplay(_options = {}) {

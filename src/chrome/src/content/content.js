@@ -2301,7 +2301,7 @@
     return callback();
   }
 
-  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false) {
+  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false, ownInputScope = null) {
     const doc = el.ownerDocument;
     let dispatched = false;
     const failure = (error, extra = {}) => ({
@@ -2321,28 +2321,18 @@
     }
     const selection = el.getRootNode?.().getSelection?.() || doc.defaultView?.getSelection();
     if (!selection || !el.isConnected) return failure('The editable target is no longer available.');
-    // Native editing represents line feeds with <br> and block nodes. Read
-    // logical line boundaries rather than CSS-dependent innerText paragraph
-    // spacing; a lone <br> is the native caret placeholder of an empty block.
-    const blockTags = new Set(['DIV', 'P', 'LI', 'PRE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
-    const readText = (node) => {
-      if (node.nodeType === 3) return node.nodeValue || '';
-      if (node.nodeType !== 1) return '';
-      if (node.tagName === 'BR') return '\n';
-      const children = Array.from(node.childNodes);
-      if (children.length === 1 && children[0].nodeName === 'BR'
-          && (node === el || blockTags.has(node.tagName))) return '';
-      // Firefox leaves one trailing caret <br> after native line insertion.
-      // Additional <br> nodes before it remain real (including blank lines).
-      if (children.at(-1)?.nodeName === 'BR' && (node === el || blockTags.has(node.tagName))) children.pop();
-      return children.map((child, index) => {
-        const previousChild = children[index - 1];
-        const boundary = index > 0 && previousChild.nodeName !== 'BR'
-          && (blockTags.has(child.nodeName) || blockTags.has(previousChild.nodeName));
-        return (boundary ? '\n' : '') + readText(child);
-      }).join('');
-    };
-    const previous = readText(el);
+    // Model-backed paragraph editors have semantic document line breaks.
+    // Ordinary editors must verify the same rendered value their input
+    // handlers read; accepting browser-created blank lines corrupts saves.
+    const draftJsEditor = isDraftJsEditor(el);
+    if (draftJsEditor && readDraftJsText(el) === null) {
+      return failure('The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+        { recoveryRequired: 'fresh_tree', retryable: false });
+    }
+    const semanticEditor = readProseMirrorText(el) !== null;
+    const readValue = () => _editableTextValue(el);
+    const previous = readValue();
+    const nativeClearContext = clear && text === '' ? _nativeChatCaretContext(el) : null;
     const selectContents = (collapse) => {
       const range = doc.createRange();
       let container = el;
@@ -2358,8 +2348,11 @@
       selection.removeAllRanges();
       selection.addRange(range);
     };
-    const edit = (command, inputType, data = null) => {
+    const edit = async (command, inputType, data = null, commandData = data) => {
       const htmlBefore = el.innerHTML;
+      const rootBefore = el.getRootNode?.() || doc;
+      const pageUrlBefore = doc.location?.href || doc.URL || '';
+      const nativeContextBefore = _nativeChatCaretContext(el);
       const rangeBefore = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
       if (!rangeBefore || !el.contains(rangeBefore.startContainer) || !el.contains(rangeBefore.endContainer)) {
         return failure('The text selection moved outside the intended editor before insertion.');
@@ -2368,17 +2361,52 @@
       // the editor's undo stack. Its beforeinput behavior differs by browser,
       // so offer the page a cancellable gate BEFORE invoking the command.
       window.__wbPageMonitor?.beforeLocalDispatch();
+      const verifyNativeObservation = nativeContextBefore && typeof window.__wbPageMonitor?.captureLocalInputObservation === 'function'
+        ? window.__wbPageMonitor.captureLocalInputObservation(el) : null;
       const beforeInputGate = () => el.dispatchEvent(new InputEvent('beforeinput', {
         bubbles: true, composed: true, cancelable: true, inputType, data,
       }));
       const accepted = window.__wbPageMonitor?.withLocalDispatch
         ? window.__wbPageMonitor.withLocalDispatch(beforeInputGate) : beforeInputGate();
+      if (!accepted) {
+        // React/model editors can cancel native insertion while handling the
+        // requested edit themselves. Allow their bounded render to settle
+        // before claiming that no mutation happened. Never send another edit.
+        await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+        const changed = el.innerHTML !== htmlBefore || !el.isConnected;
+        if (changed) dispatched = true;
+        if (actionDeadlineExpired()) return expired();
+        if (!changed) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
+        const nativeContextAfter = _nativeChatCaretContext(el);
+        const sameScope = el.isConnected && el.ownerDocument === doc
+          && doc.defaultView?.document === doc && (el.getRootNode?.() || doc) === rootBefore
+          && (doc.location?.href || doc.URL || '') === pageUrlBefore
+          && ((!nativeContextBefore && !nativeContextAfter)
+            || _sameNativeChatCaretContext(nativeContextBefore, nativeContextAfter));
+        const unknown = () => failure('The editor handled a cancelled beforeinput and changed. Its complete value could not be verified in the same scope. No additional text was dispatched.',
+          { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false });
+        if (!sameScope || (draftJsEditor && readDraftJsText(el) === null)) return unknown();
+        try {
+          if (verifyNativeObservation) {
+            if (!verifyNativeObservation()) throw Object.assign(new Error(`The native text observation lost its original operation or received browser intervention (${verifyNativeObservation.reason || 'observation_invalid'})${verifyNativeObservation.diagnostic ? ' [' + verifyNativeObservation.diagnostic + ']' : ''}.`), { code: 'page_feedback_pending' });
+          } else window.__wbPageMonitor?.beforeLocalDispatch();
+        }
+        catch (error) { return failure(error?.message || 'The editor scope changed during page-handled text entry.',
+          { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false,
+            ...(error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}) }); }
+        const value = readValue();
+        const expected = clear ? text : previous + text;
+        const normalize = value => String(value).replace(/\r\n?/g, '\n');
+        if (normalize(value) !== normalize(expected)) return unknown();
+        return { success: true, verified: true, dispatched: true, outcomeUnknown: false,
+          pageHandledBeforeInput: true, nativeBeforeInputCancelled: true,
+          method: 'contenteditable-page-handled-beforeinput', value: value.slice(0, 100), fieldMeta: _fieldMeta(el) };
+      }
       if (el.innerHTML !== htmlBefore || !el.isConnected) {
         window.__wbPageMonitor?.beforeLocalDispatch();
         dispatched = true;
         return failure('The editor changed while handling beforeinput. No additional text was dispatched.');
       }
-      if (!accepted) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
       if (actionDeadlineExpired()) return expired();
       const range = selection.rangeCount ? selection.getRangeAt(0) : null;
       let active = doc.activeElement;
@@ -2391,7 +2419,24 @@
       window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       try {
-        const execute = () => doc.execCommand(command, false, data);
+        const execute = () => {
+          const previous = _messageRecipientOwnedInputScope;
+          _messageRecipientOwnedInputScope = ownInputScope?.el === el ? ownInputScope : null;
+          const classBefore = ownInputScope?.el === el
+            ? _nativeChatDraftClassTokens(el.getAttribute('class') || '') : null;
+          const inputCount = ownInputScope?.count;
+          try { return doc.execCommand(command, false, commandData); }
+          finally {
+            _messageRecipientOwnedInputScope = previous;
+            if (classBefore && ownInputScope.count > inputCount) {
+              const classAfter = _nativeChatDraftClassTokens(el.getAttribute('class') || '');
+              if (classAfter) {
+                ownInputScope.classRemovalTokens ||= new Set();
+                for (const token of classAfter) if (!classBefore.has(token)) ownInputScope.classRemovalTokens.add(token);
+              }
+            }
+          }
+        };
         const inserted = window.__wbPageMonitor?.withLocalDispatch ? window.__wbPageMonitor.withLocalDispatch(execute) : execute();
         if (!inserted) {
           return failure('The editor rejected native text entry. No DOM replacement was attempted.');
@@ -2405,29 +2450,43 @@
 
     const hasNonTextContent = () => !!el.querySelector('img, svg, canvas, video, audio, iframe, object, embed, [contenteditable="false"]');
     const mustClear = clear && (previous !== '' || hasNonTextContent());
-    if (mustClear) {
+    if (mustClear && (!text || semanticEditor)) {
       selectContents(false);
-      const deletionFailure = edit('delete', 'deleteContentBackward');
+      const deletionFailure = await edit('delete', 'deleteContentBackward');
       if (deletionFailure) return deletionFailure;
       await new Promise(resolve => setTimeout(resolve, 30));
       if (actionDeadlineExpired()) return expired();
-      if (!el.isConnected || readText(el) !== '' || hasNonTextContent()) {
+      if (!el.isConnected || String(el.textContent || '') !== '' || hasNonTextContent()) {
         return failure('The editor could not be proven empty. No replacement text was inserted.');
       }
+      if (nativeClearContext) _rememberNativeChatEmptyCaret(el, nativeClearContext);
     }
     if (text) {
       // Keep the legacy append contract, but retain every existing rich-text
       // node instead of assigning textContent for the entire editor.
-      if (!mustClear) selectContents(true);
-      const insertionFailure = edit('insertText', 'insertText', text);
+      // Replace an ordinary editor in one native operation. Deleting first
+      // creates caret/whitespace nodes that can survive the second insertion.
+      if (!semanticEditor || !mustClear) selectContents(!clear && !_nativeChatCaretValueIsEmpty(el));
+      // Chromium's multiline insertText creates empty DIV blocks that add
+      // extra innerText line feeds. Native HTML insertion of escaped literal
+      // text preserves whitespace and undo/input handling without replacing
+      // the editor DOM. The wrapper only formats the newly inserted text.
+      const literal = String(text).replace(/\r\n?/g, '\n')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const insertionFailure = semanticEditor
+        ? await edit('insertText', 'insertText', text)
+        : await edit('insertHTML', 'insertText', text, `<span style="white-space: pre-wrap">${literal}</span>`);
       if (insertionFailure) return insertionFailure;
     }
     await new Promise(resolve => setTimeout(resolve, 30));
     if (actionDeadlineExpired()) return expired();
-    const value = readText(el);
+    if (draftJsEditor && readDraftJsText(el) === null) {
+      return failure('The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+        { recoveryRequired: 'verify_or_restore_field', retryable: false });
+    }
+    const value = readValue();
     const expected = clear ? text : previous + text;
-    // Native editing encodes boundary/repeated spaces as nonbreaking spaces.
-    const normalize = value => value.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+    const normalize = value => String(value).replace(/\r\n?/g, '\n');
     if (!el.isConnected || normalize(value) !== normalize(expected)) {
       return failure('The complete settled rich-text value could not be verified exactly.');
     }
@@ -2838,6 +2897,9 @@
       // twice per key (double-advancing ARIA listboxes, menus, etc.).
       if (actionDeadlineExpired()) return deadlineFailure();
       const expiredAfterKeydown = withLocalPageDispatch(() => {
+        // Private page validation can consume the last part of the budget.
+        // Recheck inside the dispatch callback before emitting keydown.
+        if (actionDeadlineExpired()) return true;
         dispatched = true;
         target.dispatchEvent(down);
         // A keydown listener may run across the deadline. Always release the
@@ -3220,6 +3282,68 @@
     const type = params.type || 'tables';
 
     if (type === 'tables') {
+      if (Array.isArray(params.columns)) {
+        const tables = Array.from(document.querySelectorAll('table'));
+        const hasCaption = params.caption !== undefined;
+        const hasIndex = params.table_index !== undefined;
+        if ((hasCaption && (typeof params.caption !== 'string' || !params.caption))
+            || (hasIndex && (!Number.isSafeInteger(params.table_index) || params.table_index < 0))
+            || (hasCaption && hasIndex)) {
+          return { success: false, error: 'Use one exact caption or one nonnegative table_index. No complete export was captured.' };
+        }
+        const matches = typeof params.caption === 'string'
+          ? tables.filter(table => (table.caption?.innerText || '').trim() === params.caption)
+          : Number.isSafeInteger(params.table_index) && params.table_index >= 0
+            ? tables.slice(params.table_index, params.table_index + 1)
+            : tables.length === 1 ? tables : [];
+        if (matches.length !== 1) return { success: false, error: 'Select exactly one table by its exact caption or table_index. No complete export was captured.' };
+        const table = matches[0];
+        const first = params.first_data_row === undefined ? 1 : params.first_data_row;
+        if (!Number.isSafeInteger(first) || first < 0) return { success: false, error: 'first_data_row must be a nonnegative integer.' };
+        const nativeRows = Array.from(table.querySelectorAll('tr')).filter(row => row.closest('table') === table);
+        const cellsOf = row => Array.from(row.querySelectorAll('th,td')).filter(cell => cell.closest('tr') === row)
+          .map(cell => typeof cell.innerText === 'string' ? cell.innerText : cell.textContent || '');
+        // Source headers remain evidence even when the caller includes row zero
+        // or renames a sensitive column in its requested output schema.
+        const headerRows = [];
+        let headerChars = 0;
+        for (const [index, row] of nativeRows.entries()) {
+          if (index !== 0 && row.closest('thead')?.closest('table') !== table
+              && !Array.from(row.querySelectorAll('th')).some(cell => cell.closest('tr') === row)) continue;
+          const cells = cellsOf(row);
+          headerChars += cells.reduce((sum, cell) => sum + cell.length, 0);
+          if (headerRows.length >= 10000 || headerChars > 2000000) {
+            return { success: false, error: 'The source headers exceed the complete snapshot limit. No sampled export is returned.' };
+          }
+          headerRows.push(cells);
+        }
+        const filter = params.row_filter;
+        if (filter !== undefined && (!filter || typeof filter !== 'object' || Array.isArray(filter)
+            || !Number.isSafeInteger(filter.column) || filter.column < 0
+            || !Array.isArray(filter.equals) || filter.equals.length > 10000
+            || filter.equals.some(value => typeof value !== 'string'))) {
+          return { success: false, error: 'row_filter needs a column index and exact string values.' };
+        }
+        const selected = filter ? new Set(filter.equals) : null;
+        const found = new Set();
+        const rows = [];
+        let chars = 0;
+        for (const row of nativeRows.slice(first)) {
+          const cells = cellsOf(row);
+          if (selected && !selected.has(cells[filter.column])) continue;
+          if (selected) found.add(cells[filter.column]);
+          chars += cells.reduce((sum, cell) => sum + cell.length, 0);
+          if (rows.length >= 10000 || chars > 2000000) return { success: false, error: 'The complete table exceeds the snapshot limit. Select explicit rows or fewer data; no sampled export is returned.' };
+          rows.push(cells);
+        }
+        if (selected && [...selected].some(value => !found.has(value))) {
+          return { success: false, error: 'One or more exact row_filter values were not found in the selected table. No complete export was captured.' };
+        }
+        if (!window.__wbAxDocumentToken) window.__wbAxDocumentToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        return { schema: 'webbrain.table-snapshot.v1', success: true,
+          documentToken: window.__wbAxDocumentToken, pageUrl: location.href,
+          tableIndex: tables.indexOf(table), caption: (table.caption?.innerText || '').trim(), headerRows, rows };
+      }
       return Array.from(document.querySelectorAll('table')).slice(0, 10).map((table, i) => {
         const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
           Array.from(tr.querySelectorAll('th, td')).map(cell => cell.innerText.trim())
@@ -4594,60 +4718,13 @@
 
   function _contentEditableValueMatches(actual, expected) {
     const normalizeNewlines = value => String(value).replace(/\r\n?/g, '\n');
-    const actualText = normalizeNewlines(actual);
-    const expectedText = normalizeNewlines(expected);
-    if (actualText === expectedText) return true;
-
-    // Chromium serializes line feeds inserted into contenteditable fields as
-    // block nodes. An empty line becomes <div><br></div>, and innerText then
-    // exposes one extra newline for each empty block: "a\n\nb" reads back as
-    // "a\n\n\nb". Leading and trailing line feeds are doubled. Accept only
-    // that deterministic expansion while keeping every non-newline character
-    // and every ordinary single line break exact.
-    let actualOffset = 0;
-    let expectedOffset = 0;
-    while (actualOffset < actualText.length || expectedOffset < expectedText.length) {
-      const actualBreak = actualText.indexOf('\n', actualOffset);
-      const expectedBreak = expectedText.indexOf('\n', expectedOffset);
-      const actualTextEnd = actualBreak < 0 ? actualText.length : actualBreak;
-      const expectedTextEnd = expectedBreak < 0 ? expectedText.length : expectedBreak;
-      if (actualText.slice(actualOffset, actualTextEnd) !== expectedText.slice(expectedOffset, expectedTextEnd)) {
-        return false;
-      }
-      if (actualBreak < 0 || expectedBreak < 0) return actualBreak === expectedBreak;
-
-      let actualRunEnd = actualBreak;
-      while (actualText[actualRunEnd] === '\n') actualRunEnd += 1;
-      let expectedRunEnd = expectedBreak;
-      while (expectedText[expectedRunEnd] === '\n') expectedRunEnd += 1;
-      const actualRun = actualRunEnd - actualBreak;
-      const expectedRun = expectedRunEnd - expectedBreak;
-      const boundaryRun = expectedBreak === 0 || expectedRunEnd === expectedText.length;
-      const expandedRun = boundaryRun
-        ? actualRun === expectedRun * 2
-        : expectedRun > 1 && actualRun === (expectedRun * 2) - 1;
-      if (actualRun !== expectedRun && !expandedRun) return false;
-      actualOffset = actualRunEnd;
-      expectedOffset = expectedRunEnd;
-    }
-    return true;
+    return normalizeNewlines(actual) === normalizeNewlines(expected);
   }
 
   function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false, semanticNewlines = false) {
     const expected = clear ? text : previous + text;
     if (!normalizeNewlines) return actual === expected;
-    if (semanticNewlines) return String(actual).replace(/\r\n?/g, '\n') === String(expected).replace(/\r\n?/g, '\n');
-    if (clear) return _contentEditableValueMatches(actual, expected);
-    const normalize = value => String(value).replace(/\r\n?/g, '\n');
-    const actualText = normalize(actual);
-    const previousText = normalize(previous);
-    if (!actualText.startsWith(previousText)) return false;
-    const actualSuffix = actualText.slice(previousText.length);
-    if (!previousText) return _contentEditableValueMatches(actualSuffix, text);
-    // A suffix that begins with a newline is internal to the full editor even
-    // though it is now at the boundary of this sliced comparison. Prefix both
-    // sides with the same marker so Chromium's internal-run rule is applied.
-    return _contentEditableValueMatches(`\u0000${actualSuffix}`, `\u0000${text}`);
+    return _contentEditableValueMatches(actual, expected);
   }
 
   function readProseMirrorText(el) {
@@ -4666,20 +4743,42 @@
   }
 
   function readEmptyCaretText(el) {
-    if (!el?.isContentEditable || el.innerText !== '\n' || el.textContent !== '') return null;
+    // A sole BR can be either a browser caret or an authored literal LF.
+    // Generic DOM shape cannot establish which; keep its rendered value.
+    // DraftJS/ProseMirror markers and exact native-clear receipts prove their
+    // own empty state independently. Only a genuinely empty DOM is generic.
+    return el?.isContentEditable && el.childNodes?.length === 0
+      && el.innerText === '' && el.textContent === '' ? '' : null;
+  }
+
+  const _nativeChatEmptyCaretReceipts = new WeakMap();
+
+  function _nativeChatCaretContext(el) {
+    try {
+      const context = window.__wb_get_native_chat_context?.(el);
+      return context && ['telegram', 'whatsapp-self', 'whatsapp'].includes(context.service) ? context : null;
+    } catch { return null; }
+  }
+
+  function _sameNativeChatCaretContext(before, after) {
+    return !!before && !!after && before.id === after.id && before.service === after.service && before.name === after.name
+      && before.root === after.root && before.transcript === after.transcript
+      && before.header === after.header && before.carrier === after.carrier && before.owner === after.owner
+      && before.title === after.title && before.selfMarker === after.selfMarker && before.peerIdentity === after.peerIdentity
+      && before.aliasWitnessSignature === after.aliasWitnessSignature;
+  }
+
+  function _singleEditableCaretBreak(el) {
+    if (!el?.isContentEditable || String(el.textContent || '') !== '') return null;
     let node = el;
-    for (let depth = 0; depth < 16; depth++) {
-      if (node.nodeType !== 1 || node.shadowRoot || node.hidden
-          || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
-          || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return null;
-      const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
-      if (!style || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
-          || style.opacity === '0' || style.contentVisibility === 'hidden') return null;
-      if (node.tagName === 'BR') return node.childNodes.length === 0 ? '' : null;
-      // Only one caret placeholder through ordinary block/inline wrappers.
-      // Extra text, empty blocks, breaks, embeds or sibling nodes stay literal.
-      if ((node !== el && !['DIV', 'P', 'SPAN'].includes(node.tagName)) || node.childNodes.length !== 1) return null;
-      node = node.childNodes[0];
+    for (let depth = 0; depth < 8; depth++) {
+      const children = Array.from(node.childNodes).filter(child => child.nodeType !== 8
+        && !(child.nodeType === 3 && !child.nodeValue));
+      if (children.length !== 1 || children[0].nodeType !== 1) return null;
+      node = children[0];
+      if (node.tagName === 'BR') return node;
+      if (!/^(?:SPAN|DIV|P|B|STRONG|I|EM|U|S)$/.test(node.tagName)
+          || node.getAttribute('contenteditable') === 'false') return null;
     }
     return null;
   }
@@ -4740,10 +4839,28 @@
     return texts.join('\n');
   }
 
+  function _rememberNativeChatEmptyCaret(el, context) {
+    const br = _singleEditableCaretBreak(el);
+    if (br && _sameNativeChatCaretContext(context, _nativeChatCaretContext(el))) {
+      _nativeChatEmptyCaretReceipts.set(el, { context, br });
+    }
+  }
+
+  function _nativeChatCaretValueIsEmpty(el) {
+    const receipt = _nativeChatEmptyCaretReceipts.get(el);
+    if (!receipt) return false;
+    if (receipt.br === _singleEditableCaretBreak(el)
+        && _sameNativeChatCaretContext(receipt.context, _nativeChatCaretContext(el))) return true;
+    _nativeChatEmptyCaretReceipts.delete(el);
+    return false;
+  }
+
   function _editableTextValue(el) {
-    const semantic = isDraftJsEditor(el) ? readDraftJsText(el)
-      : (readProseMirrorText(el) ?? readEmptyCaretText(el));
-    return semantic !== null ? semantic : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
+    const semantic = isDraftJsEditor(el) ? readDraftJsText(el) : (readProseMirrorText(el) ?? readEmptyCaretText(el));
+    // Only a successful explicit native-chat delete may certify this exact
+    // caret node as empty. Generic editors and authored LF/BR keep raw readback.
+    return semantic !== null ? semantic : _nativeChatCaretValueIsEmpty(el) ? ''
+      : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
   }
 
   // Pick the single commit path for set_field({submit:true}). Synthetic
@@ -4988,6 +5105,225 @@
   }
 
   const _messageRecipientDispatchBindings = new Map();
+  const _nativeChatPreparedDrafts = new Map();
+  const _nativeTelegramReadBindings = new Map();
+  const _nativeIdentityPreparationBindings = new Map();
+  let _nativeTelegramReadOwner = '';
+
+  function _setNativeTelegramReadOwner(value) {
+    const owner = typeof value === 'string' && value.length <= 16000 ? value : '';
+    if (owner === _nativeTelegramReadOwner) return;
+    _nativeTelegramReadOwner = owner;
+    for (const record of _nativeTelegramReadBindings.values()) {
+      record.observer.disconnect(); clearTimeout(record.timer);
+    }
+    _nativeTelegramReadBindings.clear();
+    for (const record of _nativeIdentityPreparationBindings.values()) {
+      record.observer.disconnect(); clearTimeout(record.timer);
+    }
+    _nativeIdentityPreparationBindings.clear();
+  }
+
+  function _nativeTelegramReadRendered(node) {
+    if (!node?.isConnected || node.ownerDocument !== document) return false;
+    const rect = node.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    for (let ancestor = node, depth = 0; ancestor; ancestor = ancestor.parentElement) {
+      if (++depth > 128) return false;
+      const style = getComputedStyle(ancestor);
+      if (ancestor.hidden || ancestor.inert || ancestor.getAttribute('aria-hidden') === 'true'
+          || style.display === 'none' || ['hidden','collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+    }
+    return true;
+  }
+
+  function _nativeTelegramReadControl(target) {
+    const context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context || !_nativeTelegramReadRendered(target)
+        || target.closest('form,[contenteditable="true"],input,textarea,select,a[href],[onclick],[data-action]')) return null;
+    const nativeNodes = [context.root,context.transcript,context.composer,context.header,context.carrier,context.peerIdentity];
+    if (nativeNodes.some(node => !_nativeTelegramReadRendered(node))) return null;
+    const titleTarget = target === context.carrier || target === context.peerIdentity
+      || (target.matches('span.i18n') && target.childElementCount === 0 && context.peerIdentity.contains(target));
+    if (titleTarget && !target.closest('button,[role="button"],[role="menuitem"],[data-action],.emoji-status')) {
+      return {context,target,control:context.carrier,phase:'open_profile',nodes:[...nativeNodes,target]};
+    }
+    const visible = selector => Array.from(document.querySelectorAll(selector)).filter(_nativeTelegramReadRendered);
+    const triggers = visible('#column-left .sidebar-header .sidebar-tools-button.btn-menu-toggle.is-visible');
+    const trigger = triggers.length === 1 ? triggers[0] : null;
+    if (!trigger || !trigger.matches('button,[role="button"]') || trigger.matches(':disabled,[aria-disabled="true"]')) return null;
+    const control = target.closest('button,[role="button"]');
+    if (control === trigger && (target === trigger || (trigger.contains(target) && target.matches('span,svg,path')))) {
+      // Only open a closed native tools menu; never toggle an existing menu a
+      // second time as a fallback for the same prepared action.
+      if (trigger.classList.contains('menu-open')) return null;
+      return {context,target,control:trigger,phase:'open_menu',nodes:[...nativeNodes,trigger,target]};
+    }
+    const openTriggers = visible('.btn-menu-toggle.menu-open');
+    const menus = visible('.btn-menu.active');
+    const menu = menus.length === 1 ? menus[0] : null;
+    if (openTriggers.length !== 1 || openTriggers[0] !== trigger || !menu
+        || menu.parentElement !== document.body || !menu.matches('.bottom-right.was-open')
+        || !control?.matches('.btn-menu-item[role="button"]') || control.parentElement !== menu
+        || control.matches('[aria-disabled="true"]') || !menu.contains(target)) return null;
+    const items = Array.from(menu.children).filter(node => node.matches('.btn-menu-item[role="button"]'));
+    const settings = items.filter(item => {
+      const icons = Array.from(item.querySelectorAll(':scope > .tgico.btn-menu-item-icon')).filter(_nativeTelegramReadRendered);
+      return icons.length === 1 && icons[0].textContent === '\uea22';
+    });
+    if (settings.length !== 1 || settings[0] !== control
+        || _hasMessageCommitName(control.getAttribute('aria-label') || control.textContent || '')) return null;
+    const icon = control.querySelector(':scope > .tgico.btn-menu-item-icon');
+    return {context,target,control,phase:'open_settings',nodes:[...nativeNodes,trigger,menu,control,icon,target]};
+  }
+
+  function _sameNativeTelegramReadContext(before, after) {
+    return !!before && !!after && ['root','transcript','composer','header','carrier','peerIdentity','peer','alias','url','timeOrigin']
+      .every(key => before[key] === after[key]);
+  }
+
+  window.__wb_get_native_telegram_alias_preparation_target = preparation => {
+    try {
+      if (!_sameNativeTelegramReadContext(preparation,window.__wb_get_native_telegram_alias_preparation?.())) return null;
+      // This native hint chooses a read-only affordance; it never certifies
+      // self identity. Ordinary aliases must inspect their current peer profile.
+      const candidates = preparation.peerIdentity?.getAttribute('data-me-as-notes') === '1' ? [
+        ...document.querySelectorAll('body > .btn-menu.active.bottom-right.was-open > .btn-menu-item[role="button"]'),
+        ...document.querySelectorAll('#column-left .sidebar-header .sidebar-tools-button.btn-menu-toggle.is-visible'),
+      ] : [preparation.carrier];
+      for (const target of candidates) {
+        const proof = _nativeTelegramReadControl(target);
+        if (proof && _sameNativeTelegramReadContext(preparation,proof.context)) return {
+          target,phase:proof.phase === 'open_settings' ? 'open_self_settings' : proof.phase,
+        };
+      }
+      return null;
+    } catch { return null; }
+  };
+
+  function _bindNativeTelegramRead(target) {
+    if (!_nativeTelegramReadOwner) return null;
+    const proof = _nativeTelegramReadControl(target);
+    if (!proof) return null;
+    while (_nativeTelegramReadBindings.size >= 8) {
+      const [token, old] = _nativeTelegramReadBindings.entries().next().value;
+      old.observer.disconnect();clearTimeout(old.timer);_nativeTelegramReadBindings.delete(token);
+    }
+    const token = 'wbtr_' + globalThis.crypto.randomUUID();
+    const record = {...proof,owner:_nativeTelegramReadOwner,documentToken:_axDocumentToken(),
+      humanRevision:_messageRecipientHumanRevision,expiresAt:Date.now()+30000,stale:false};
+    record.isMaterial = mutation => _nativeTelegramReadMaterialMutation(record, mutation);
+    record.observer = new MutationObserver(records => { if (records.some(record.isMaterial)) record.stale=true; });
+    record.observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,
+      attributeFilter:_nativeTelegramReadMaterialAttributes});
+    record.timer=setTimeout(()=>{record.observer.disconnect();_nativeTelegramReadBindings.delete(token);},30000);
+    _nativeTelegramReadBindings.set(token,record);
+    return {token};
+  }
+
+  function _consumeNativeTelegramRead(params, target) {
+    const token = String(params.nativeTelegramReadRepairBinding?.token || '');
+    const record = _nativeTelegramReadBindings.get(token);
+    if (record) { _nativeTelegramReadBindings.delete(token); clearTimeout(record.timer); }
+    if (record?.observer.takeRecords().some(record.isMaterial)) record.stale=true;
+    record?.observer.disconnect();
+    const current = _nativeTelegramReadControl(target);
+    return record && !record.stale && record.expiresAt >= Date.now()
+      && record.owner === _nativeTelegramReadOwner && record.owner === params._nativeChatOwner
+      && record.documentToken === _axDocumentToken() && record.humanRevision === _messageRecipientHumanRevision
+      && record.target === target && current?.control === record.control && current?.phase === record.phase
+      && current.nodes.length === record.nodes.length && current.nodes.every((node,index)=>node===record.nodes[index])
+      && _sameNativeTelegramReadContext(record.context,current.context) ? record : null;
+  }
+
+  function _nativeTelegramReadStillCurrent(record) {
+    let context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context && record) {
+      const verified = window.__wb_get_native_chat_context?.(record.context.composer);
+      if (verified?.service === 'telegram' && verified.alias) context = {...verified,
+        composer:record.context.composer,url:location.href,timeOrigin:performance.timeOrigin};
+    }
+    return !!record && record.owner === _nativeTelegramReadOwner
+      && record.documentToken === _axDocumentToken() && record.humanRevision === _messageRecipientHumanRevision
+      && _sameNativeTelegramReadContext(record.context,context);
+  }
+  // Private, read-only adapter evidence captured before inference. It does not
+  // replace the independent one-use recipient/dispatch token obtained later.
+  const _nativeTelegramReadMaterialAttributes = ['class','style','hidden','inert','aria-hidden','data-peer-id','data-thread-id','role','type','href','onclick','data-action','data-action-id',
+    'aria-disabled','aria-label','aria-labelledby','aria-describedby','aria-controls','aria-haspopup','aria-expanded','aria-selected','aria-pressed','aria-checked',
+    'title','disabled','name','id','form','formaction','formmethod','formtarget','action','method','target','download','tabindex','contenteditable','readonly'];
+  function _nativeTelegramReadMaterialMutation(record, mutation) {
+    if (mutation.type === 'attributes') return record.nodes.some(node => mutation.target === node || mutation.target.contains(node))
+      || (mutation.attributeName === 'data-peer-id' && record.context.transcript.contains(mutation.target));
+    // Transcript rows may arrive or be edited during read-only preparation.
+    // Their peer identity is independently rechecked; the exact transcript
+    // container, editor, current header and prepared control remain pinned.
+    const textPins = record.nodes.filter(node => node !== record.context.root && node !== record.context.transcript);
+    if (mutation.type === 'characterData') return textPins.some(node => node.contains(mutation.target));
+    if ([...mutation.removedNodes].some(node => record.nodes.some(pin => node === pin || node.contains?.(pin)))) return true;
+    if (record.context.transcript.contains(mutation.target)) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        const peers = [node, ...node.querySelectorAll('[data-peer-id]')].filter(candidate => candidate.hasAttribute('data-peer-id'));
+        if (peers.length > 256 || peers.some(candidate => candidate.getAttribute('data-peer-id') !== record.context.peer)) return true;
+      }
+    }
+    if (!textPins.some(node => node === mutation.target || node.contains(mutation.target))) return false;
+    const changed = [...mutation.addedNodes, ...mutation.removedNodes];
+    if (record.context.composer === mutation.target || record.context.composer.contains(mutation.target)
+        || record.context.peerIdentity === mutation.target || record.context.peerIdentity.contains(mutation.target)) return changed.length > 0;
+    return changed.some(node => window.__wbPageMonitor?.isReadonlyPreparationDecoration?.(node) !== true);
+  }
+  window.__wb_get_readonly_identity_preparation = (owner, target = null, captureAuthority = null) => {
+    if (!owner || window.__wbPageMonitor?.active !== true) return null;
+    // Only the current pre-inference monitor capture may initialize a cold
+    // private owner. A model parameter or a retained capture cannot adopt it.
+    if (captureAuthority) {
+      if (window.__wbPageMonitor.currentIdentityPreparationCapture?.(captureAuthority, owner) !== true) return null;
+      _setNativeTelegramReadOwner(owner);
+    }
+    if (owner !== _nativeTelegramReadOwner) return null;
+    const context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context) return null;
+    target ||= window.__wb_get_native_telegram_alias_preparation_target?.(context)?.target;
+    const proof = _nativeTelegramReadControl(target);
+    if (!proof || !_sameNativeTelegramReadContext(context, proof.context)) return null;
+    while (_nativeIdentityPreparationBindings.size >= 4) {
+      const [key, old] = _nativeIdentityPreparationBindings.entries().next().value;
+      old.observer.disconnect(); clearTimeout(old.timer); _nativeIdentityPreparationBindings.delete(key);
+    }
+    const token = 'wbip_' + globalThis.crypto.randomUUID();
+    const nodes = [...new Set(proof.nodes)];
+    const record = { ...proof, owner, nodes, documentToken: _axDocumentToken(),
+      humanRevision: _messageRecipientHumanRevision, expiresAt: Date.now() + 120000, stale: false };
+    record.isMaterial = mutation => _nativeTelegramReadMaterialMutation(record, mutation);
+    record.observer = new MutationObserver(records => { if (records.some(record.isMaterial)) record.stale = true; });
+    record.observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
+      attributeFilter: _nativeTelegramReadMaterialAttributes });
+    const snapshot = Object.freeze({ schema: 'webbrain.readonly-identity-preparation/1', readonly: true, owner, token,
+      documentToken: record.documentToken, phase: proof.phase, target, action: proof.control,
+      scope: proof.control.parentElement, nodes: Object.freeze(nodes), identities: Object.freeze([context.peerIdentity]),
+      signature: JSON.stringify([context.peer, context.alias, context.url, context.timeOrigin,
+        record.documentToken, record.humanRevision, proof.phase]), allowedTools: Object.freeze(['click_ax']) });
+    record.snapshot = snapshot;
+    record.timer = setTimeout(() => { record.observer.disconnect(); _nativeIdentityPreparationBindings.delete(token); }, 120000);
+    _nativeIdentityPreparationBindings.set(token, record);
+    return snapshot;
+  };
+  window.__wb_readonly_identity_preparation_matches = snapshot => {
+    const record = _nativeIdentityPreparationBindings.get(snapshot?.token);
+    if (!record || record.snapshot !== snapshot || record.owner !== _nativeTelegramReadOwner
+        || record.expiresAt < Date.now() || window.__wbPageMonitor?.active !== true) return false;
+    if (record.observer.takeRecords().some(record.isMaterial)) record.stale = true;
+    const current = _nativeTelegramReadControl(record.target);
+    const currentNodes = [...new Set(current?.nodes || [])];
+    return !record.stale && record.documentToken === _axDocumentToken()
+      && record.humanRevision === _messageRecipientHumanRevision
+      && current?.control === record.control && current?.phase === record.phase
+      && currentNodes.length === record.nodes.length && currentNodes.every((node, index) => node === record.nodes[index])
+      && _sameNativeTelegramReadContext(record.context, current.context);
+  };
   const _twitterHistoryObservations = new WeakMap();
 
   function _settledTwitterHistory(log, messageIds = []) {
@@ -5059,8 +5395,16 @@
   }
 
   let _messageRecipientHumanRevision = 0;
-  for (const type of ['pointerdown', 'mousedown', 'keydown', 'input', 'change']) {
-    document.addEventListener(type, event => { if (event.isTrusted) _messageRecipientHumanRevision++; }, true);
+  let _messageRecipientOwnedInputScope = null;
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'input', 'change', 'wheel', 'touchmove']) {
+    document.addEventListener(type, event => {
+      if (!event.isTrusted) return;
+      _messageRecipientHumanRevision++;
+      // Only the exact synchronous native writer owns these input events.
+      // Physical keys, pointer/scroll and later input still change the fence.
+      if (type === 'input' && _messageRecipientOwnedInputScope?.el === event.target)
+        _messageRecipientOwnedInputScope.count++;
+    }, true);
   }
 
   function _messageRecipientUploadTarget(selector) {
@@ -5141,6 +5485,10 @@
       identityKey,
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
+      nativeTelegramBaseline: dispatch.nativeChatMessageBaseline?.complete === true
+        && dispatch.nativeChatMessageBaseline.coverage === 'mounted_native_id_floor'
+        ? Object.freeze({ threadKey: dispatch.nativeChatMessageBaseline.threadKey,
+            messageIds: Object.freeze([...dispatch.nativeChatMessageBaseline.messageIds]) }) : null,
       ...(Array.isArray(dispatch.existingMessageIds) ? { existingMessageIds: [...dispatch.existingMessageIds] } : {}),
       twitterEmptyConversationBaseline: dispatch.twitterEmptyConversationBaseline === true,
       gmailComposeFlow: dispatch.gmailComposeFlow === true,
@@ -5155,6 +5503,9 @@
       uploadFilesSignature: dispatch.messageAttachment === true ? _messageRecipientUploadFilesSignature(actionTarget) : '',
       uploadFiles: dispatch.messageAttachment === true ? Array.from(actionTarget.files || []) : [],
       humanRevision: _messageRecipientHumanRevision,
+      nativeOwner: String(dispatch.nativeOwner || ''),
+      nativeChatBaseline: dispatch.nativeChatMessageBaseline?.complete === true
+        ? JSON.parse(JSON.stringify(dispatch.nativeChatMessageBaseline)) : null,
       timer: null,
     };
     _messageRecipientDispatchBindings.set(token, record);
@@ -5166,12 +5517,140 @@
     return token;
   }
 
+  function _disposeNativeChatDraft(token) {
+    const record = _nativeChatPreparedDrafts.get(token);
+    if (record) { record.observer.disconnect(); clearTimeout(record.timer); }
+    _nativeChatPreparedDrafts.delete(token);
+  }
+
+  // This lease witnesses an owned draft and an explicitly blocked submit
+  // boundary. It never proves that typing had no page-side effect.
+  // This predicate preserves an owned draft for read-only latest repair only.
+  // It cannot authorize Enter or replace the full dispatch validator.
+  function _nativeChatDraftLatestOnly(recipient, params, el) {
+    if (!recipient || recipient.nativeOwner !== params._nativeChatOwner
+        || recipient.humanRevision + (recipient.nativeDraftOwnInputs?.el === el
+          ? recipient.nativeDraftOwnInputs.count : 0) !== _messageRecipientHumanRevision
+        || recipient.documentToken !== _axDocumentToken() || recipient.pageUrl !== location.href
+        || recipient.composer !== el || recipient.actionTarget !== el || !el?.isConnected
+        || typeof params.text !== 'string' || _editableTextValue(el) !== params.text) return false;
+    const native = window.__wb_get_native_chat_context?.(el);
+    if (native?.service !== 'telegram' || native.latestPositionVerified !== true || native.atLatest !== false) return false;
+    // Pending native status is material even when the mounted ID set is unchanged.
+    if (native.transcript.querySelector(native.webA
+        ? '.MessageOutgoingStatus .icon-message-pending,.MessageOutgoingStatus .icon-message-failed'
+        : '.bubble.is-sending,.bubble.is-error,.bubble.is-outgoing')) return false;
+    const identity = _probeMessageRecipientGuard({ tool:'observe_active_conversation', args:{},
+      adapterName:recipient.adapterName,
+      expectedConversationRecipientEvidence:recipient.conversationRecipientEvidence });
+    const baseline = identity.nativeChatMessageBaseline, expected = recipient.nativeTelegramBaseline;
+    return identity.success === true && identity.conclusive === true && identity.messageSend === false
+      && _messageRecipientIdentityKey(identity.strongRecipientCandidates) === recipient.identityKey
+      && identity.messageBody === recipient.messageBody
+      && baseline?.coverage === 'mounted_native_id_floor' && !!expected
+      && baseline.threadKey === expected.threadKey
+      && JSON.stringify(baseline.messageIds) === JSON.stringify(expected.messageIds);
+  }
+
+  function _nativeChatDraftClassTokens(value) {
+    if (typeof value !== 'string' || value.length > 2048) return null;
+    const tokens = value.trim().split(/\s+/).filter(Boolean);
+    return tokens.length <= 128 ? new Set(tokens) : null;
+  }
+
+  // Only one-way cleanup of classes introduced by this exact synchronous
+  // native writer is presentation. Every other class transition is material.
+  function _nativeChatDraftHasMaterialMutation(record, mutations) {
+    if (mutations.length > 256) return true;
+    for (let index = 0; index < mutations.length; index++) {
+      const mutation = mutations[index];
+      if (mutation.type !== 'attributes' || mutation.attributeName !== 'class'
+          || mutation.target !== record.el) return true;
+      const next = mutations.slice(index + 1).find(item => item.type === 'attributes'
+        && item.attributeName === 'class' && item.target === record.el);
+      const before = _nativeChatDraftClassTokens(mutation.oldValue || '');
+      const after = _nativeChatDraftClassTokens(next ? next.oldValue || '' : record.el.getAttribute('class') || '');
+      if (!before || !after || [...after].some(token => !before.has(token))) return true;
+      const retained = [...before].filter(token => after.has(token));
+      if (JSON.stringify(retained) !== JSON.stringify([...after])) return true;
+      const removed = [...before].filter(token => !after.has(token));
+      if (removed.some(token => !record.classRemovalTokens.has(token))) return true;
+      for (const token of removed) record.classRemovalTokens.delete(token);
+    }
+    return false;
+  }
+
+  function _nativeChatDraftCurrent(params, element = null, observeOnly = false) {
+    const token = String(params._nativeChatDraftBinding?.token || '');
+    const record = _nativeChatPreparedDrafts.get(token);
+    if (!record) return null;
+    if (_nativeChatDraftHasMaterialMutation(record, record.observer.takeRecords())) record.changed = true;
+    const el = element || window.__wb_ax_lookup?.(params.ref_id || record.ref);
+    if (record.changed || record.owner !== params._nativeChatOwner || !record.owner
+        || record.humanRevision !== _messageRecipientHumanRevision
+        || record.documentToken !== _axDocumentToken() || record.url !== location.href
+        || record.el !== el || !el?.isConnected
+        || (params.text !== undefined && params.text !== record.body)
+        || _editableTextValue(el) !== record.body) {
+      _disposeNativeChatDraft(token); return null;
+    }
+    if (_validateMessageRecipientDispatchBinding(record.recipient, params, el).success) return record;
+    // Retain only a read-only witness while the same native Telegram viewport
+    // is temporarily away from latest. Dispatch still requires full validation.
+    if (observeOnly && _nativeChatDraftLatestOnly(record.recipient,
+        { ...params, text:record.body }, el)) return { ...record, waitingForLatest:true };
+    _disposeNativeChatDraft(token); return null;
+  }
+
+  function _rememberNativeChatDraft(params, el, recipient) {
+    const native = window.__wb_get_native_chat_context?.(el);
+    if (params._nativeChatDraftPreparation !== true
+        || !recipient?.nativeOwner || recipient.nativeOwner !== params._nativeChatOwner
+        || !recipient.nativeChatBaseline?.complete
+        || !['telegram','whatsapp'].includes(native?.service)
+        || !recipient.conversationRecipientEvidence?.contextNodes?.length
+        || recipient.humanRevision + (recipient.nativeDraftOwnInputs?.el === el
+          ? recipient.nativeDraftOwnInputs.count : 0) !== _messageRecipientHumanRevision
+        || recipient.documentToken !== _axDocumentToken() || recipient.pageUrl !== location.href
+        || recipient.composer !== el || recipient.actionTarget !== el || !el?.isConnected
+        || typeof params.text !== 'string' || _editableTextValue(el) !== params.text
+        || (!_validateMessageRecipientDispatchBinding(recipient, params, el).success
+          && !_nativeChatDraftLatestOnly(recipient, params, el))) return null;
+    while (_nativeChatPreparedDrafts.size >= 8) _disposeNativeChatDraft(_nativeChatPreparedDrafts.keys().next().value);
+    const token = crypto.randomUUID();
+    const record = { el, ref:params.ref_id, body:String(params.text), recipient,
+      owner:params._nativeChatOwner, documentToken:_axDocumentToken(), url:location.href,
+      humanRevision:_messageRecipientHumanRevision, changed:false, observer:null, timer:null,
+      classRemovalTokens:new Set(recipient.nativeDraftOwnInputs?.classRemovalTokens || []) };
+    record.observer = new MutationObserver(mutations => {
+      if (_nativeChatDraftHasMaterialMutation(record, mutations)) record.changed = true;
+    });
+    // Scroll geometry is read again at recovery. Any material node/identity or
+    // draft change, including change-and-return, retires the original lease.
+    for (const node of new Set(recipient.conversationRecipientEvidence.contextNodes)) {
+      record.observer.observe(node, { attributes:true, attributeOldValue:true, attributeFilter:['id','role','aria-label','aria-labelledby','aria-disabled','disabled','contenteditable','data-peer-id','data-list-key','data-testid','data-id','inert','aria-hidden','class'], childList:true, subtree:true, characterData:true });
+    }
+    record.observer.observe(native.transcript, { subtree:true, childList:true, characterData:true, attributes:true, attributeOldValue:true });
+    _nativeChatPreparedDrafts.set(token, record);
+    record.timer = setTimeout(() => _disposeNativeChatDraft(token), 60000);
+    return { token };
+  }
+
   function _consumeMessageRecipientDispatchBinding(params = {}, actualTarget = null) {
     const token = String(params.messageRecipientDispatchBinding?.token || '');
     const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
     if (token) _messageRecipientDispatchBindings.delete(token);
     if (expected?.timer) clearTimeout(expected.timer);
-    return _validateMessageRecipientDispatchBinding(expected, params, actualTarget);
+    const validated = _validateMessageRecipientDispatchBinding(expected, params, actualTarget);
+    if (validated.success === true && window.__wb_get_native_chat_context?.(expected?.composer)?.service === 'whatsapp'
+        && window.__wb_prepare_native_chat_send?.(expected.composer, expected.messageBody) !== true) {
+      const nativeChatReadRepair = window.__wb_native_chat_read_repair?.(expected.composer);
+      return { success: false, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        reasonCode: 'native_chat_baseline_unavailable',
+        ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+        error: nativeChatReadRepair?.message || 'The native WhatsApp live message tail cannot establish a send baseline. Observe the latest messages before sending.' };
+    }
+    return validated;
   }
 
   function _validateMessageRecipientDispatchBinding(expected, params = {}, actualTarget = null, afterAttachment = false) {
@@ -5231,6 +5710,14 @@
         ? live.strongRecipientCandidates
         : live?.strongIdentityCandidates,
     );
+    if (expected.nativeTelegramBaseline && (live?.nativeChatMessageBaseline?.complete !== true
+        || live.nativeChatMessageBaseline.coverage !== 'mounted_native_id_floor'
+        || live.nativeChatMessageBaseline.threadKey !== expected.nativeTelegramBaseline.threadKey
+        || JSON.stringify(live.nativeChatMessageBaseline.messageIds) !== JSON.stringify(expected.nativeTelegramBaseline.messageIds))) {
+      return { success: false, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        reasonCode: 'native_chat_baseline_changed_before_dispatch',
+        error: 'The latest native Telegram message baseline changed after send preparation. No message was sent. Observe the current conversation before deciding whether to send; the draft may remain in the composer.' };
+    }
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
       || liveIdentityKey !== expected.identityKey
       || (expected.messageAttachment ? live?.messageAttachment !== true : !expected.messageBody)
@@ -5282,6 +5769,8 @@
       transfer = new DataTransfer();
       transfer.items.add(file);
     } catch { return fail('Recipient-bound attachment data could not be decoded.'); }
+    const typeCheck = globalThis.__wbFileUploadPolicy?.validateUploadFile(target.getAttribute('accept'), params);
+    if (!typeCheck?.success) return typeCheck || fail('The file type validator is unavailable. Re-observe before attaching.');
     const pageGuard = params.pageFeedbackGuard;
     const monitor = window.__wbPageMonitor;
     if (pageGuard?.operationId) {
@@ -6486,8 +6975,32 @@
             && ((_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
                 && (_isEligibleTextClickTarget(control) || verifiedGmailBody))
               || verifiedLinkedInPublicPostControl(control)));
+      const nativeLayoutContext = typeof window.__wb_get_native_chat_context === 'function'
+        ? window.__wb_get_native_chat_context(layoutCandidate) : null;
+      if (!observationOnly && tool === 'click_ax' && targetResolved && params.bindDispatch === true
+          && typeof params._nativeChatOwner === 'string' && params._nativeChatOwner === _nativeTelegramReadOwner) {
+        const nativeTelegramReadRepairBinding = _bindNativeTelegramRead(target);
+        if (nativeTelegramReadRepairBinding) return {success:true,messageSend:false,conclusive:true,
+          nativeTelegramRepair:true,nativeTelegramReadRepairBinding,identityCandidates:[]};
+      }
+      const nativeWhatsappComposer = location.hostname === 'web.whatsapp.com'
+        && layoutCandidate?.matches?.('[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
+      if (nativeWhatsappComposer && nativeLayoutContext?.service !== 'whatsapp-self') {
+        const repair = window.__wb_get_native_whatsapp_repair?.();
+        if (!observationOnly && tool === 'click_ax' && targetResolved
+            && window.__wb_native_whatsapp_repair_action?.(target)) {
+          return { success: true, messageSend: false, conclusive: true, composerAvailable: true,
+            nativeWhatsappRepair: true, identityCandidates: [] };
+        }
+        if (nativeLayoutContext?.service !== 'whatsapp') {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, nativeWhatsappRepairAvailable: !!repair,
+            reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [],
+            error: 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
+        }
+      }
       const layoutComposer = layoutCandidate
-        && (layoutInComposeDialog
+        && (nativeLayoutContext?.service === 'telegram' || layoutInComposeDialog
           || !viewportHeight
           || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
         ? layoutCandidate
@@ -6761,6 +7274,7 @@
       const strongSeen = new Set();
       const observedRecipientCandidates = [];
       let conversationRecipientEvidence = null;
+      let nativeChatMessageBaseline = null;
       const gmailRecipientMode = params.adapterName === 'gmail';
       const inConversationHeaderBand = (el) => {
         if (headerBandBottom <= 0) return false;
@@ -6785,7 +7299,75 @@
       };
 
       let gmailComposeRoot = null;
-      if (gmailRecipientMode) {
+      const nativeTelegramComposer = /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(location.hostname)
+        && composer.matches?.('.input-message-input[contenteditable="true"],#editable-message-text[contenteditable="true"][role="textbox"]');
+      if (nativeLayoutContext?.service === 'whatsapp') {
+        const context = nativeLayoutContext;
+        const footer = composer.closest('footer');
+        const contextNodes = [context.carrier, context.header, context.root, context.transcript, context.selectedRow, context.selected, context.rowTitle, footer, composer];
+        if (composer !== layoutCandidate || !footer || contextNodes.some(node => !node?.isConnected)) {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, identityCandidates: [], reasonCode: 'native_whatsapp_contact_binding_required' };
+        }
+        conversationRecipientEvidence = { carrier: context.carrier, header: context.header, pane: context.root,
+          footer, composer, labelledByNodes: [], contextNodes, aliases: [context.id, context.name],
+          signature: JSON.stringify([context.id, context.name, location.href,
+            contextNodes.map(node => ['data-testid','aria-selected','aria-label','hidden','inert','aria-hidden'].map(attribute => node.getAttribute(attribute)))]) };
+        const nativeRows = Array.from(context.transcript.querySelectorAll('[role="row"] [data-id][data-testid^="conv-msg-"]'));
+        const nativeIds = nativeRows.map(node => node.getAttribute('data-id'));
+        const pendingNative = nativeRows.some(node => node.querySelector('[data-icon="tail-out"]')
+          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]')).some(status => /^(?:read|delivered)$/i.test(compact(status.getAttribute('aria-label')))));
+        nativeChatMessageBaseline = { schema: 'webbrain-native-opaque-baseline/1', threadKey: 'dom:' + context.id,
+          documentEpoch: context.documentEpoch, timeOrigin: context.timeOrigin, url: context.url,
+          tailId: context.id + ':' + nativeIds.at(-1),
+          messageIds: nativeIds.map(id => context.id + ':' + id),
+          complete: context.atLatest && nativeRows.length > 0 && nativeRows.length <= 200
+            && nativeIds.every((id, index) => id && nativeRows[index].getAttribute('data-testid') === 'conv-msg-' + id)
+            && new Set(nativeIds).size === nativeIds.length && !pendingNative };
+        strongIdentities.push(context.id);
+        strongRecipients.push({ identity: context.id, role: 'to' });
+        observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name] });
+      } else if (nativeTelegramComposer) {
+        const context = typeof window.__wb_get_native_chat_context === 'function'
+          ? window.__wb_get_native_chat_context(composer) : null;
+        const modal = typeof _findTopmostBlockingModal === 'function' ? _findTopmostBlockingModal() : null;
+        if (context?.service !== 'telegram' || !context.carrier || !context.header
+            || (modal && (!modal.contains(composer) || !modal.contains(context.header)))) {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, identityCandidates: [], strongIdentityCandidates: [],
+            error: 'The native Telegram route, header, composer and transcript do not identify one active peer.' };
+        }
+        if (!observationOnly && messageSend === true && context.atLatest !== true) {
+          const nativeChatReadRepair = window.__wb_native_chat_read_repair?.(composer);
+          return { success: true, messageSend: null, conclusive: false, composerAvailable: true,
+            identityCandidates: [], strongIdentityCandidates: [], reasonCode: 'native_telegram_latest_required',
+            ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+            error: nativeChatReadRepair?.message || 'The native Telegram latest message position is not verified. Observe its latest messages before sending.' };
+        }
+        const footer = composer.parentElement;
+        const contextNodes = new Set([context.carrier, context.header, context.root, context.transcript, context.scrollPane, context.latestMarker, footer, composer,
+          ...(context.aliasWitnessNodes ? [context.peerIdentity, ...context.aliasWitnessNodes] : [])].filter(Boolean));
+        for (const start of [context.carrier, composer]) {
+          for (let node = start.parentElement; node && node !== context.root; node = node.parentElement) contextNodes.add(node);
+        }
+        const identityAttributes = ['id','role','aria-hidden','inert','data-peer-id','data-list-key'];
+        conversationRecipientEvidence = { carrier: context.carrier, header: context.header, pane: context.root,
+          footer, composer, labelledByNodes: [], contextNodes: [...contextNodes],
+          signature: JSON.stringify([context.id, context.name, location.href,
+            ...(context.aliasWitnessSignature ? [context.aliasWitnessSignature] : []),
+            [...contextNodes].map(node => identityAttributes.map(attribute => node.getAttribute(attribute)))]) };
+        nativeChatMessageBaseline = window.__wb_get_native_telegram_message_baseline?.(composer) || null;
+        if (!observationOnly && messageSend === true && nativeChatMessageBaseline?.complete !== true) {
+          return { success: true, messageSend: null, conclusive: false, composerAvailable: true,
+            nativeChatMessageBaseline, identityCandidates: [], strongIdentityCandidates: [],
+            reasonCode: 'native_telegram_baseline_unavailable',
+            error: 'The native latest Telegram message IDs or pending statuses cannot establish a send baseline. Observe the current conversation before sending; do not repeat an uncertain send.' };
+        }
+        strongIdentities.push(context.id);
+        strongRecipients.push({ identity: context.id, role: 'to' });
+        observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name,
+          ...(context.alias ? [context.alias, '@' + context.alias] : [])] });
+      } else if (gmailRecipientMode) {
         const recipientRole = (el, root = null) => {
           const roleFromAttribute = (attribute, value) => {
             const text = compact(value, 120).toLowerCase();
@@ -7304,6 +7886,8 @@
             conversationRecipientEvidence,
             messageBody,
             messageBodyBaselineCount,
+            nativeChatMessageBaseline,
+            nativeOwner: params._nativeChatOwner,
             messageAttachment: tool === 'upload_file',
             uploadSourceKey: params.uploadSourceKey,
             ...(twitterConversation ? {
@@ -7324,6 +7908,7 @@
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
         composerAvailable: true,
+        ...(nativeChatMessageBaseline ? { nativeChatMessageBaseline } : {}),
         ...(tool === 'upload_file' ? { messageAttachment: true } : {}),
         ...(composerRef ? { composerRef } : {}),
         composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
@@ -7396,10 +7981,19 @@
       return;
     }
 
+    if (location.hostname === 'web.whatsapp.com'
+        && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
+      window.__wb_update_native_chat_owner?.(msg.params?._nativeChatOwner || '', msg.params?._nativeChatPendingRestore || null);
+    }
+    if (location.hostname === 'web.telegram.org' && /^\/k\/?$/.test(location.pathname)
+        && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
+      _setNativeTelegramReadOwner(msg.params?._nativeChatOwner || '');
+    }
+
     const handlers = {
       'jev_validate_target': () => ({ success: !!jevBinding }),
       'get_page_info': () => getPageInfo(),
-      'get_page_info_cdp': () => getPageInfoFull(msg.params || {}),
+      'get_page_info_cdp': () => ({ ...getPageInfoFull(msg.params || {}), tableCount: document.querySelectorAll('table').length }),
       'get_interactive_elements': () => getInteractiveElements(),
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(),
       'get_file_input_targets': () => getFileInputTargets(),
@@ -7423,7 +8017,10 @@
         }
         const params = msg.params && typeof msg.params === 'object' ? msg.params : {};
         const probe = _probeMessageRecipientGuard({ ...params, tool: 'observe_active_conversation', args: {} });
-        return window.__wb_observe_chat_dom({ ...params, probe });
+        const observation = window.__wb_observe_chat_dom({ ...params, probe });
+        const draft = _nativeChatDraftCurrent(params, null, true);
+        return { ...observation, ...(draft ? (draft.waitingForLatest
+          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}) };
       },
       'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
       'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),
@@ -7749,6 +8346,7 @@
                 messageDispatched: false,
                 messageRecipientGuard: true,
                 reasonCode: recipientValidation.reasonCode,
+                ...(recipientValidation.nativeChatReadRepair ? { nativeChatReadRepair: recipientValidation.nativeChatReadRepair } : {}),
               });
             }
           }
@@ -7757,6 +8355,25 @@
               'The page action deadline expired during recipient validation.',
               { deadlineExpired: true, retryable: true },
             );
+          }
+          if (msg.params?._prepareTrustedNativeButton === true) {
+            // Preparation never clicks. The Agent only selects this path for a
+            // model-certified, non-recipient-bound top-level native BUTTON.
+            if (tag !== 'button') return msg.params._requireTrustedNativeButton === true
+              ? failure('The exact target is no longer a native button.')
+              : { success: true, nativeButton: false, dispatched: false, noDispatch: true };
+            const visibility = _axFallbackVisibility(el);
+            const x = Math.round(rect.left + rect.width / 2), y = Math.round(rect.top + rect.height / 2);
+            const hit = _shadowAwareElementFromPoint(x, y);
+            if (!visibility.visible || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight
+                || !hit || !_isComposedAncestor(el, hit) || _axInteractiveHitDescendant(el, hit)) {
+              return failure('The native button is hidden, covered or has an ambiguous physical target. Re-observe before clicking.');
+            }
+            return { success: true, trustedButtonRequired: true, dispatched: false, noDispatch: true,
+              ref_id, tag, name: String(targetName || '').slice(0, 160), preparedActive, buttonStrongState: fallbackStateBefore.strong,
+              buttonDisabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
+              documentToken, refScopeUrl: location.href, x, y,
+              rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) } };
           }
           rememberInteractionPoint(el, 'click_ax');
           const syntheticClickStartedAt = Date.now();
@@ -7767,12 +8384,23 @@
             );
           }
           const syntheticClickDispatchStartedAt = performance.now();
+          let nativeWhatsappRepairSnapshot = null;
+          let nativeTelegramReadRecord = null;
           const filePickerGuard = withLocalPageDispatch(() => {
+            if (msg.params?._nativeTelegramReadRepairRequired === true) {
+              nativeTelegramReadRecord = _consumeNativeTelegramRead(msg.params,el);
+              if (!nativeTelegramReadRecord || actionDeadlineExpired()) return {nativeTelegramReadBlocked:true};
+            }
+            nativeWhatsappRepairSnapshot = window.__wb_native_whatsapp_repair_snapshot?.(el) || null;
+            window.__wb_prepare_native_chat_contact?.(el);
             dispatched = true;
             return clickWithoutNativeFilePicker(() => el.click());
           });
           const syntheticClickDispatchMs = Math.max(0, performance.now() - syntheticClickDispatchStartedAt);
           const fallbackStateAfterImmediate = _axFallbackState(el);
+          if (filePickerGuard.nativeTelegramReadBlocked) return failure(
+            'The native Telegram profile preparation changed. Re-observe the current chat and choose its exact native read-only control.',
+            {reasonCode:'native_telegram_read_preparation_stale'});
           if (filePickerGuard.blocked) {
             return failure(
               filePickerBlockedResponse(filePickerGuard.blocked, targetName || '').error,
@@ -7799,6 +8427,9 @@
             const resp = {
               success: true,
               method: 'click_ax',
+              ...(window.__wb_native_whatsapp_repair_matches?.(nativeWhatsappRepairSnapshot)
+                ? { _nativeWhatsappReadRepair: true } : {}),
+              ...(_nativeTelegramReadStillCurrent(nativeTelegramReadRecord) ? {_nativeTelegramReadRepair:true} : {}),
               ref_id,
               tag,
               _preparedActive: preparedActive,
@@ -8173,6 +8804,10 @@
           let selectExpected = null;
           if (el.isContentEditable) {
             previous = _editableTextValue(el);
+            if (readProseMirrorText(el) === null) {
+              const native = await _insertContentEditableText(el, text, !!clear, actionDeadlineExpired);
+              return { ...native, ref_id, rect: typeRect, fieldMeta };
+            }
             return failure(
               'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
               {
@@ -8305,6 +8940,9 @@
       'set_field': async () => {
         let dispatched = false;
         let submissionDispatched = false;
+        let submissionBlockedBeforeDispatch = false;
+        let submissionBlockReason = '';
+        let nativeDraftBinding = null;
         const failure = (error, extra = {}) => ({
           success: false,
           error,
@@ -8347,6 +8985,16 @@
             return failure(`ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids — do NOT guess ref numbers or invent placeholders.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
+          const recoveringDraft = msg.params?._nativeChatDraftBinding
+            ? _nativeChatDraftCurrent(msg.params, el) : null;
+          if (msg.params?._nativeChatDraftBinding && !recoveringDraft) return failure(
+            'The owned draft changed before recovery. Observe the conversation and reconcile the remaining draft.',
+            { reasonCode:'native_chat_draft_changed', submitted:false, submissionDispatched:false });
+          const preparedRecipient = msg.params?._nativeChatDraftPreparation === true
+            ? _messageRecipientDispatchBindings.get(String(msg.params?.messageRecipientDispatchBinding?.token || ''))
+            : null;
+          const originalRecipient = preparedRecipient
+            ? { ...preparedRecipient, nativeDraftOwnInputs:{ el, count:0 } } : null;
           try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           try { el.focus({ preventScroll: true }); } catch {}
@@ -8384,8 +9032,17 @@
             { ref_id, verified: false, fieldMeta, recoveryRequired: 'fresh_tree', retryable: false },
           );
           let prevValue = '';
-          if (el.isContentEditable) {
+          let pageHandledBeforeInput = false;
+          if (recoveringDraft) {
             prevValue = _editableTextValue(el);
+          } else if (el.isContentEditable) {
+            prevValue = _editableTextValue(el);
+            if (readProseMirrorText(el) === null) {
+              const native = await _insertContentEditableText(el, text, clear, actionDeadlineExpired, originalRecipient?.nativeDraftOwnInputs);
+              if (!native.success) return { ...native, ref_id, rect, fieldMeta };
+              dispatched = native.dispatched === true;
+              pageHandledBeforeInput = native.pageHandledBeforeInput === true;
+            } else {
             return failure(
               'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
               {
@@ -8399,6 +9056,7 @@
                 _expectedValue: (clear ? '' : prevValue) + text,
               },
             );
+            }
           } else {
             if (actionDeadlineExpired()) return deadlineFailure();
             window.__wbPageMonitor?.beforeLocalDispatch();
@@ -8471,6 +9129,7 @@
                 const eventInit = { key, code: key, keyCode, bubbles: true, cancelable: true };
                 window.__wbPageMonitor?.beforeLocalDispatch();
                 result.dispatched = true;
+                if (key === 'Enter') submissionDispatched = true;
                 el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
                 const expiredAfterKeydown = actionDeadlineExpired();
                 if (!expiredAfterKeydown && includeKeypress) {
@@ -8488,15 +9147,33 @@
               const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
               let submissionObserved = false;
               let submissionCancelled = false;
+              if (recoveringDraft) {
+                if (!_nativeChatDraftCurrent(msg.params, el)) return failure(
+                  'The owned draft changed during action preparation. Observe it again before sending.',
+                  { reasonCode:'native_chat_draft_changed', submitted:false, submissionDispatched:false });
+                _disposeNativeChatDraft(msg.params._nativeChatDraftBinding.token);
+              }
               if (msg.params?.messageRecipientGuardRequired === true) {
                 const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
+                  submissionBlockedBeforeDispatch = true;
+                  submissionBlockReason = recipientValidation.reasonCode;
+                  nativeDraftBinding = !pageHandledBeforeInput
+                    ? _rememberNativeChatDraft(msg.params, el, originalRecipient) : null;
                   return failure(recipientValidation.error, {
                     verified: true,
                     submitted: false,
                     messageDispatched: false,
+                    submissionDispatched: false,
+                    submissionOutcomeUnknown: false,
+                    submissionBlockedBeforeDispatch: true,
+                    submissionBlockReason,
+                    draftMutationDispatched: dispatched,
+                    outcomeUnknown: dispatched,
+                    ...(nativeDraftBinding ? { _nativeChatDraftBinding: nativeDraftBinding } : {}),
                     messageRecipientGuard: true,
                     reasonCode: recipientValidation.reasonCode,
+                    ...(recipientValidation.nativeChatReadRepair ? { nativeChatReadRepair: recipientValidation.nativeChatReadRepair } : {}),
                   });
                 }
               }
@@ -8560,8 +9237,14 @@
               } finally {
                 removeSubmitObserver();
               }
-            } catch {
+            } catch (error) {
               submissionOutcomeUnknown = true;
+              if (error?.code === 'page_feedback_pending' && !submissionDispatched
+                  && !pageHandledBeforeInput) {
+                submissionBlockedBeforeDispatch = true;
+                submissionBlockReason = 'page_feedback_pending';
+                nativeDraftBinding = _rememberNativeChatDraft(msg.params, el, originalRecipient);
+              }
             }
           }
           if (!verified) {
@@ -8584,7 +9267,9 @@
           }
           return {
             success: true,
+            dispatched,
             method: 'set_field',
+            ...(pageHandledBeforeInput ? { dispatched: true, pageHandledBeforeInput: true, nativeBeforeInputCancelled: true } : {}),
             ref_id,
             rect,
             verified: true,
@@ -8592,6 +9277,9 @@
             fallbackAttempted,
             submitted: nativeSubmitAttempted || undefined,
             outcomeUnknown: submissionOutcomeUnknown || undefined,
+            ...(submit ? { submissionDispatched, submissionBlockedBeforeDispatch } : {}),
+            ...(submissionBlockReason ? { submissionBlockReason } : {}),
+            ...(nativeDraftBinding ? { _nativeChatDraftBinding: nativeDraftBinding } : {}),
           };
         } catch (e) {
           if (e?.code === 'page_feedback_pending') throw e;
@@ -8787,6 +9475,7 @@
       'ax_resolve_rect': () => {
         try {
           const { ref_id, forClickFallback = false } = msg.params || {};
+          const observeOnly = msg.params?.observeOnly === true && forClickFallback === true;
           if (typeof ref_id !== 'string') return { success: false, error: 'ref_id (string, e.g. "ref_42") is required' };
           if (typeof window.__wb_ax_lookup !== 'function') return { success: false, error: 'accessibility-tree.js not injected' };
           const el = window.__wb_ax_lookup(ref_id);
@@ -8803,8 +9492,10 @@
               : '';
             return { success: false, error: `ref_id ${ref_id} not found.${formatNote} The element may have been removed or the page replaced.${hint} Re-read the accessibility tree to get fresh ids.`, suggestions };
           }
-          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
-          showAgentWorkingTarget(el, 'ax_resolve_rect');
+          if (!observeOnly) {
+            try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
+            showAgentWorkingTarget(el, 'ax_resolve_rect');
+          }
           let r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
@@ -8852,7 +9543,7 @@
                 break;
               }
             }
-            if (!hitOk && topmost) {
+            if (!observeOnly && !hitOk && topmost) {
               try {
                 const floatingBar = _floatingTopBarRect(topmost);
                 const bRect = floatingBar || topmost.getBoundingClientRect();
@@ -8884,6 +9575,7 @@
           else if (interactiveHitDescendant) fallbackBlockedReason = 'target center resolves to an interactive descendant that must not receive an automatic trusted click';
           else if (fallbackStatic.blockedReason) fallbackBlockedReason = fallbackStatic.blockedReason;
           if (forClickFallback && !window.__wbAxDocumentToken) {
+            if (observeOnly) return { success: false, error: 'The observed target document is unavailable. Re-observe the page.' };
             window.__wbAxDocumentToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
           }
           const fallbackState = forClickFallback ? _axFallbackState(el) : null;
@@ -8911,6 +9603,9 @@
               fallbackState: fallbackState.strong,
               fallbackStrongState: fallbackState.strong,
               fallbackWeakState: fallbackState.weak,
+              ...(observeOnly ? { refScopeUrl: location.href,
+                fallbackNativeButtonDisabled: tag === 'button'
+                  ? !!el.disabled || el.getAttribute('aria-disabled') === 'true' : null } : {}),
               isComputedVisible: visibility.visible,
               isEditable,
               isNativeControl,

@@ -806,25 +806,29 @@ window.SocialMediaDownloader = (() => {
   // ---------- URL upgrades (per site) ----------
   const preferHighQuality = urls => [...new Set(urls.map(url => {
     let u = clean(url);
-    // X/Twitter: name=orig
-    if (u.includes("pbs.twimg.com/media/")) {
-      try { const p = new URL(u); p.searchParams.set("name", "orig"); u = p.href; }
-      catch {}
+    let parsed;
+    try { parsed = new URL(u); } catch { return u; }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return u;
+    const host = parsed.hostname;
+    // Upgrade only the actual CDN's path/query, never a host-looking substring
+    // in another URL component. Other media URLs keep their original bytes.
+    if (host === "pbs.twimg.com" && parsed.pathname.startsWith("/media/")) {
+      parsed.searchParams.set("name", "orig");
+      u = parsed.href;
     }
-    // Pinterest: /<size>/ → /originals/. Size folder may carry a
-    // letter suffix (Pinterest added "_RS" / "_AC" etc. for "responsive
-    // sizes" / aspect-cropped variants), so allow an optional _[A-Za-z]+.
-    if (u.includes("pinimg.com/")) {
-      u = u.replace(/pinimg\.com\/(?:\d+x(?:\d+)?(?:_[A-Za-z]+)?|originals)\//i,
-                    "pinimg.com/originals/");
+    // Pinterest size folders can include responsive/aspect-cropped suffixes.
+    if (host === "pinimg.com" || host.endsWith(".pinimg.com")) {
+      const upgradedPath = parsed.pathname.replace(
+        /^\/(?:\d+x(?:\d+)?(?:_[A-Za-z]+)?|originals)\//i, "/originals/");
+      if (upgradedPath !== parsed.pathname) {
+        parsed.pathname = upgradedPath;
+        u = parsed.href;
+      }
     }
-    // Reddit preview: strip sizing params, keep signature
-    if (/preview\.redd\.it|external-preview\.redd\.it/.test(u)) {
-      try {
-        const p = new URL(u);
-        ["width", "height", "blur", "format"].forEach(k => p.searchParams.delete(k));
-        u = p.href;
-      } catch {}
+    // Reddit preview: strip sizing params, keep the actual signature and hash.
+    if (host === "preview.redd.it" || host === "external-preview.redd.it") {
+      ["width", "height", "blur", "format"].forEach(key => parsed.searchParams.delete(key));
+      u = parsed.href;
     }
     return u;
   }))];
@@ -2015,6 +2019,8 @@ window.SocialMediaDownloader = (() => {
 // when SMD is registered as a content_script at document_start: patches
 // are installed before the page's player ever calls addSourceBuffer,
 // so the init segment is captured and saveMse() produces playable bytes.
+// Keep the matcher local: classic scripts can be injected repeatedly in one realm.
+{
 const _SMD_MSE_AUTOARM_HOSTS =
   /(?:^|\.)(?:facebook|fb|instagram|x|twitter|linkedin|reddit|youtube)\.com$|(?:^|\.)youtu\.be$/i;
 try {
@@ -2022,6 +2028,7 @@ try {
     SocialMediaDownloader.armMseRecorder();
   }
 } catch (_) { /* never block on auto-arm */ }
+}
 
 // Log once per realm. Re-injection on the same page (which happens every
 // time the chrome extension calls the download_social_media tool) used

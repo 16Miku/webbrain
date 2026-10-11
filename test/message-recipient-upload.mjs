@@ -50,7 +50,7 @@ async function setup(page, kind, url = 'https://www.instagram.com/direct/t/123/'
     });
   }, kind);
   const sourceRoot = path.resolve('src', kind, 'src', 'content');
-  for (const file of ['rich-text-toolbar-heuristic.js', 'accessibility-tree.js', 'content.js']) {
+  for (const file of ['file-upload-policy.js', 'rich-text-toolbar-heuristic.js', 'accessibility-tree.js', 'content.js']) {
     await page.addScriptTag({ content: await readFile(path.join(sourceRoot, file), 'utf8') });
   }
   const api = {

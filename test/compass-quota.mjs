@@ -14,7 +14,7 @@ globalThis.chrome = globalThis.browser = {
 for (const browser of ['chrome', 'firefox']) {
   const base = new URL(`../src/${browser}/src/`, import.meta.url);
   const { OpenAICompatibleProvider } = await import(new URL('providers/openai.js', base));
-  const { RunUiJournal } = await import(new URL('run-ui-journal.js', base));
+  const { RunUiJournal, runUiUpdatesForCurrentTask } = await import(new URL('run-ui-journal.js', base));
   const { runDetachedWithReconnect } = await import(new URL('run-reconnect.js', base));
   const { Agent } = await import(new URL('agent/agent.js', base));
   const { formatQuotaUsd, socialComposer } = await import(new URL('ui/compass-quota.js', base));
@@ -116,7 +116,7 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(messages.at(-1).content, result.content);
     const background = fs.readFileSync(new URL('background.js', base), 'utf8');
     const classifiers = background.slice(background.indexOf('function isClarificationRequiredRunUpdate('), background.indexOf('async function getRunUiSnapshot('));
-    const { terminalRunUiStatus, runUpdatesSucceeded, askCompletionSucceededForBadge } = vm.runInNewContext(`${classifiers}; ({ terminalRunUiStatus, runUpdatesSucceeded, askCompletionSucceededForBadge })`);
+    const { terminalRunUiStatus, runUpdatesSucceeded, askCompletionSucceededForBadge } = vm.runInNewContext(`${classifiers}; ({ terminalRunUiStatus, runUpdatesSucceeded, askCompletionSucceededForBadge })`, { runUiUpdatesForCurrentTask });
     assert.equal(terminalRunUiStatus('Localized quota stop', events), 'failed');
     assert.equal(runUpdatesSucceeded(events), false, 'user memory must see the stopped turn as unsuccessful');
     assert.equal(askCompletionSucceededForBadge('Localized quota stop', events), false);
@@ -132,7 +132,7 @@ for (const browser of ['chrome', 'firefox']) {
     const panel = fs.readFileSync(new URL('ui/sidepanel.js', base), 'utf8');
     const askEnd = panel.indexOf('\n}\n', panel.indexOf('function isSuccessfulAskCompletion(')) + 3;
     const askClassifiers = panel.slice(panel.indexOf('function updatesContainStoreReviewFailure('), askEnd);
-    const isSuccessfulAskCompletion = vm.runInNewContext(`${askClassifiers}; isSuccessfulAskCompletion`, { parseSubscribeError: () => null, parseCostAllowanceError: () => null });
+    const isSuccessfulAskCompletion = vm.runInNewContext(`${askClassifiers}; isSuccessfulAskCompletion`, { runUiUpdatesForCurrentTask, parseSubscribeError: () => null, parseCostAllowanceError: () => null });
     assert.equal(isSuccessfulAskCompletion('ask', { content: 'Localized quota stop', updates: events }), false);
     assert.equal(isSuccessfulAskCompletion('ask', { content: 'Localized quota stop', quota: error.quota, updates: [] }), false);
     agent._generateContextOnlyResponse = async () => { throw new Error('Other failure'); };

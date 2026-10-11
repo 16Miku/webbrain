@@ -94,6 +94,8 @@ test('the existing workflow consumer still parses the current line format', () =
     name: 'Name',
     type: 'text',
     placeholder: 'Product name',
+    id: 'product-name',
+    fieldName: 'name',
   });
 });
 

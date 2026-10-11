@@ -165,6 +165,18 @@ async function assertHandlerTabSkipsContentTypeProbe(context, settings, extensio
     await settings.waitForFunction(async ({ id, url }) => (await chrome.tabs.get(id)).url === url,
       { id: tabId, url: sourceUrl }, { timeout: 15_000 });
 
+    // Chrome's native PDF document exposes its real MIME even when the URL
+    // is extensionless and the server refuses HEAD. Inspect that document
+    // before replacing it with our own viewer; neither route may re-fetch it.
+    await settings.waitForFunction(async ({ id, url }) => {
+      const { Agent } = await import(chrome.runtime.getURL('src/agent/agent.js'));
+      const agent = Object.create(Agent.prototype);
+      agent._isPdfTabCache = new Map();
+      return agent._isPdfTab(id, url);
+    }, { id: tabId, url: sourceUrl }, { timeout: 15_000 });
+    assert.equal(fixture.requests.some(entry => entry.startsWith('HEAD')), false,
+      'Recognizing the extensionless native PDF must use the already-loaded document MIME.');
+
     // Exactly what the "Open PDF with WebBrain" context menu does. That entry
     // is the only route to a wrapped handler URL, and it appears because the
     // response was application/pdf, not because the URL looked like a PDF.

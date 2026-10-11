@@ -20,6 +20,16 @@ const deferred = () => {
 };
 const read = (build, file) => fs.readFileSync(new URL(`../src/${build}/src/${file}`, import.meta.url), 'utf8');
 
+function positiveSteeringAlignmentFixture(messages) {
+  let payload;
+  try { payload = JSON.parse(messages.at(-1).content); } catch { return null; }
+  if (!payload?.task_binding || !payload.proposed_plan) return null;
+  assert.equal(typeof payload.current_request, 'string');
+  assert.equal(Object.hasOwn(payload.proposed_plan, 'confidence'), false);
+  return { content: JSON.stringify({ task_binding: payload.task_binding, aligned: true,
+    reason: 'The known owned steering fixture matches the current task revision.' }) };
+}
+
 function setup(Agent, implementation = {}) {
   const provider = {
     name: 'steering test', model: 'test', promptTier: 'full', contextWindow: 128000,
@@ -709,7 +719,8 @@ for (const build of ['chrome', 'firefox']) {
         steps: [{ id: '1', action: 'Open the dashboard', tools: ['navigate'] }],
         memory: { use_scratchpad: false, use_progress_ledger: false }, risks: [],
       };
-      agent._chatWithCostAllowance = async () => ({ content: JSON.stringify(plan) });
+      agent._chatWithCostAllowance = async (_provider, messages) => positiveSteeringAlignmentFixture(messages)
+        || { content: JSON.stringify(plan) };
       await agent._claimRunEntry(tabId, 'interactive', options);
       agent._beginSteeringRun(tabId, () => {}, options);
       const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Summarize this Gmail thread.' }];
@@ -876,12 +887,13 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: steering invalidates a real plan review and requires review of the latest revision`, async () => {
     const agent = actSetup(Agent);
     agent._plannerMode = () => 'try'; agent.setPlanReviewSettings({ mode: 'always' });
-    agent._chatWithCostAllowance = async () => ({ content: JSON.stringify({
+    agent._chatWithCostAllowance = async (_provider, messages) => positiveSteeringAlignmentFixture(messages)
+      || { content: JSON.stringify({
       request_kind: 'execute', requires_state_change: true, requires_submission: true,
       read_scope: 'visible_page', summary: 'Add Ipek’s event to the calendar', confidence: 0.99,
       steps: [{ id: '1', action: 'Inspect the invitation and save its event', tools: ['read_page', 'click'] }],
       memory: { use_scratchpad: true, use_progress_ledger: false }, risks: [],
-    }) });
+    }) };
     await agent._claimRunEntry(tabId, 'interactive', options); agent._beginSteeringRun(tabId, () => {}, options);
     const messages = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Add the event.' }];
     agent.conversations.set(tabId, messages); agent._startPlanExecutionGuard(tabId, 'act', { requiresStateChange: true });

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
+
+const ORIGINAL_CALC_CORRECTION = readFileSync(new URL('./fixtures/literal-calculation-correction.txt', import.meta.url), 'utf8').trim();
 
 const PAGE_URL = 'https://example.com/photo/1';
 const documents = new Map();
@@ -84,7 +87,226 @@ const finish = (agent, tab, streaming, updates, options) => streaming
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
 
+  test(build + ': natural arithmetic receipt needs actual calculation and current owned planner intent', async () => {
+    const tab = nextTab++, expression = '12345678901234567890 * 7 + 0.125';
+    let providerCalls = 0;
+    const agent = makeAgent(Agent, async () => { providerCalls++; return {}; });
+    agent.conversations.set(tab, [{ role: 'system', content: 'Owned fixture system.' },
+      { role: 'user', content: ORIGINAL_CALC_CORRECTION }]);
+    agent.conversationModes.set(tab, 'act');
+    const plan = { read_scope: 'none', deliverables: ['Exact arithmetic result', 'Response formatting marker'] };
+    const fields = agent._plannerCompletionGateFields(plan);
+    const guard = agent._startPlanExecutionGuard(tab, 'act', { ...fields, requestKind: 'execute',
+      requiresStateChange: false, requiresSubmission: false });
+    agent._beginCompletionInvariant(tab);
+    const args = { expression };
+    assert.equal(agent._pageFeedbackCalculationComplete(tab), false, 'A plan is not a calculation receipt.');
+    agent._recordCompletionToolResult(tab, 'calculate', args, { success: false, error: 'Owned calculation rejected.' });
+    assert.equal(agent._pageFeedbackCalculationComplete(tab), false, 'Failed calculation cannot establish a receipt.');
+    const result = await agent._executeToolImpl(tab, 'calculate', args);
+    agent._markPlanExecutionToolCall(tab, 'calculate', result);
+    agent._recordCompletionToolResult(tab, 'calculate', args, result);
+    assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
+    for (const [key, value] of [['readScope', 'visible'], ['deliverables', []],
+      ['deliverables', ['Exact arithmetic result and read the page']]]) {
+      const previous = guard[key]; guard[key] = value;
+      assert.equal(agent._pageFeedbackCalculationComplete(tab), false, key);
+      guard[key] = previous;
+      assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
+    }
+    for (const invalid of [Array(9).fill('Exact arithmetic result'), ['Exact arithmetic result', 42],
+      ['Exact arithmetic result', 'x'.repeat(1001)]]) {
+      assert.deepEqual(agent._plannerCompletionGateFields({ ...plan, deliverables: invalid }).deliverables, [],
+        'Invalid extra work must not be silently dropped or truncated from the intent.');
+    }
+    for (const mixed of [
+      'Only calculate ' + expression + '. Report the exact result and post it.',
+      'Only calculate ' + expression + '. Report the result using current page data.',
+    ]) {
+      const mixedTab = nextTab++;
+      agent.conversations.set(mixedTab, [{ role: 'system', content: 'Owned fixture system.' }, { role: 'user', content: mixed }]);
+      agent.conversationModes.set(mixedTab, 'act');
+      agent._startPlanExecutionGuard(mixedTab, 'act', { ...fields, requestKind: 'execute',
+        requiresStateChange: false, requiresSubmission: false });
+      agent._beginCompletionInvariant(mixedTab);
+      agent._markPlanExecutionToolCall(mixedTab, 'calculate', result);
+      agent._recordCompletionToolResult(mixedTab, 'calculate', args, result);
+      assert.equal(agent._pageFeedbackCalculationComplete(mixedTab), false,
+        'Arithmetic-only planner metadata cannot override mixed genuine user instructions.');
+    }
+    assert.equal(providerCalls, 0, 'The classification and actual deterministic tool require no extra model request.');
+  });
+
+  test(`${build}: calculate terminal retention binds the actual result to task/run/provider and excludes unfinished page work`, async () => {
+    const tab = nextTab++, expression = '12345678901234567890 * 7 + 0.125';
+    const agent = makeAgent(Agent, async () => ({}));
+    const task = { role: 'user', content: `Only calculate ${expression}; do not interact with the page.` };
+    agent.conversations.set(tab, [{ role: 'system', content: 'Owned fixture system.' }, task]);
+    agent.conversationModes.set(tab, 'act');
+    const guard = agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false, requiresSubmission: false });
+    agent._beginCompletionInvariant(tab);
+    const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
+    agent._markPlanExecutionToolCall(tab, 'calculate', result);
+    agent._recordCompletionToolResult(tab, 'calculate', args, result);
+    assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
+    const savedCompletion = agent.completionInvariants.get(tab), receipt = guard.pureCalculationReceipt;
+    const provider = agent._activeProvider(tab), config = provider.config;
+    const deny = (name, change, restore) => {
+      change(); assert.equal(agent._pageFeedbackCalculationComplete(tab), false, name); restore();
+      assert.equal(agent._pageFeedbackCalculationComplete(tab), true, `${name}: original fixture restored`);
+    };
+    deny('a genuinely new task with identical wording has different authority', () => agent.conversations.get(tab).push({ ...task, webbrainResumeTaskId: undefined }), () => agent.conversations.get(tab).pop());
+    deny('same provider object changed in place', () => { provider.config = { endpoint: 'https://other-owned-provider.invalid', account: 'different' }; }, () => { provider.config = config; });
+    deny('new completion run cannot inherit old calculation', () => agent._beginCompletionInvariant(tab), () => agent.completionInvariants.set(tab, savedCompletion));
+    deny('Stop wins over a successful calculation', () => agent.abortFlags.set(tab, true), () => agent.abortFlags.delete(tab));
+    deny('unapplied steering cannot reuse result', () => agent._steeringRuns.set(tab, { messages: [{}], revision: 1, authorizedRevision: 0 }), () => agent._steeringRuns.delete(tab));
+    deny('verified prior page action is still page work', () => { savedCompletion.hadAction = true; }, () => { savedCompletion.hadAction = false; });
+    deny('unverified action debt stays outstanding', () => { savedCompletion.verificationDebt = true; }, () => { savedCompletion.verificationDebt = false; });
+    deny('iframe form verification remains required', () => { savedCompletion.iframeFormVerificationDebt = true; }, () => { savedCompletion.iframeFormVerificationDebt = false; });
+    for (const [key, value] of [['requiresStateChange', true], ['requiresSubmission', true], ['requiresDownload', true],
+      ['requiredSchedulingTool', 'schedule_task'], ['siteWorkflow', { job: {} }], ['messaging', { target_kind: 'active_conversation' }],
+      ['draftRecipients', { target_kind: 'active_conversation' }], ['steeringPriorSubmission', { dispatched: true }]]) {
+      const previous = guard[key]; deny(key, () => { guard[key] = value; }, () => { guard[key] = previous; });
+    }
+    deny('unfinished ledger rows cannot be waived', () => agent.progressLedgers.set(tab, [{ id: 'required-row', status: 'pending' }]), () => agent.progressLedgers.delete(tab));
+    deny('uncertain chat send stays pending', () => agent.chatSessions.set(tab, { pendingOutbound: { text: 'owned uncertain body' } }), () => agent.chatSessions.delete(tab));
+    deny('receipt cannot come from another arithmetic expression', () => { receipt.expression = '1 + 1'; }, () => { receipt.expression = expression; });
+    agent.conversations.get(tab).push({ role: 'user', content: `Calculate ${expression}, then send the answer to a recipient.` });
+    assert.equal(agent._pageFeedbackCalculationComplete(tab), false);
+    agent._completionDoneBlock = Agent.prototype._completionDoneBlock;
+    savedCompletion.hadAction = true; savedCompletion.verificationDebt = true;
+    assert.ok(agent._completionDoneBlock(tab, { outcome: 'success', summary: result.result }), 'Ordinary terminal invariant still refuses unresolved actions.');
+  });
+
   for (const streaming of [false, true]) {
+    for (const condition of ['unsupported', 'targeted_recovery', 'target_drift', 'stale_document']) {
+      test(build + ': ' + (streaming ? 'stream' : 'chat') + ' ' + condition + ' action-context diagnostics preserve no-dispatch and fresh-decision fences', async () => {
+        const tab = nextTab++, updates = [], modelMessages = [], captures = [];
+        const oldSend = api.tabs.sendMessage;
+        let agent, send, requests = 0, validations = 0, dispatched = 0, terminalStatus;
+        api.tabs.sendMessage = async (_id, message) => {
+          if (message.action === 'page_monitor_capture_model') {
+            captures.push(message.params);
+            const verified = condition === 'targeted_recovery' && captures.length > 1;
+            return { ready: true, runToken: message.params.runToken, documentToken: 'content-1',
+              snapshotToken: 'owned-' + captures.length, targetCount: verified ? 1 : 0, focusedTargetAvailable: false,
+              page: { success: true, url: PAGE_URL, pageContent: verified
+                ? 'region "Owned action context" [ref_owner]\n button "Owned toolbar control" [ref_standalone]'
+                : 'button "Owned toolbar control" [ref_standalone]' } };
+          }
+          if (message.action === 'page_monitor_validate_model') {
+            validations++;
+            const verified = condition === 'targeted_recovery' && captures.length > 1;
+            return { ready: verified, ...(condition !== 'target_drift' && !verified ? { uncertified: true } : {}),
+              runToken: message.params.runToken, documentToken: condition === 'stale_document' ? 'other-document' : 'content-1',
+              snapshotToken: message.params.snapshotToken };
+          }
+          return { ready: true };
+        };
+        const next = async messages => {
+          modelMessages.push(structuredClone(messages)); requests++;
+          assert.ok(requests <= 5, 'Unverified context keeps the existing bounded recovery budget.');
+          if (condition === 'targeted_recovery' && dispatched) return done();
+          send({});
+          return call('context-' + requests, 'click_ax', { ref_id: 'ref_standalone' });
+        };
+        agent = makeAgent(Agent, next); agent.maxSteps = Infinity;
+        agent._endTraceRun = async (_tab, _run, status) => { terminalStatus = status; };
+        agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { send = bind(agent, tab); return { role: 'user', content }; };
+        agent.executeTool = async (_id, name, args) => {
+          if (name === 'get_accessibility_tree') return { success: true, pageContent: 'button "Owned toolbar control" [ref_standalone]' };
+          if (name === 'done') return { done: true, success: true, summary: args.summary, outcome: args.outcome };
+          assert.equal(condition, 'targeted_recovery'); assert.ok(requests > 1, 'Never certify the rejected first decision.');
+          assert.equal(name, 'click_ax'); dispatched++; return { success: true, dispatched: true, verified: true };
+        };
+        try {
+          const result = await finish(agent, tab, streaming, updates, { detachedRequestId: 'context-' + tab, askStreamingEnabled: false });
+          if (condition === 'targeted_recovery') {
+            assert.equal(result, ANSWER); assert.equal(dispatched, 1); assert.equal(requests, 3);
+            assert.deepEqual(captures[1].actionTarget, { tool: 'click_ax', ref_id: 'ref_standalone' });
+            assert.ok(modelMessages[1].some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m))));
+          } else {
+            assert.equal(requests, 5); assert.equal(validations, 5); assert.equal(dispatched, 0);
+            if (condition === 'unsupported') {
+              assert.match(result, /could not be bound to a verified action context/);
+              assert.doesNotMatch(result, /page kept changing/);
+              assert.equal(terminalStatus, 'action_context_unverified');
+              assert.ok(updates.some(u => u.type === 'warning' && /verified action context/.test(u.data.message)));
+              assert.ok(modelMessages[1].some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m))));
+            } else {
+              assert.match(result, /page kept changing/);
+              assert.equal(modelMessages.some(messages => messages.some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m)))), false);
+              assert.equal(captures.some(c => c.actionTarget), false);
+            }
+          }
+          assert.equal(agent._pageFeedbackRuns.size, 0);
+        } finally { api.tabs.sendMessage = oldSend; documents.delete(tab); }
+      });
+    }
+    for (const variant of ['literal', 'original-natural', 'turkish-natural', 'german-natural']) for (const refreshFails of [false, true]) {
+      test(build + ': ' + (streaming ? 'stream' : 'chat') + ' applied ' + variant + ' calculate-only steering executes exact math once under passive churn' + (refreshFails ? ' with unavailable page refresh' : ''), async () => {
+        const tab = nextTab++, updates = [], expression = '12345678901234567890 * 7 + 0.125';
+        const expected = '86419752308641975230.125';
+        const summary = expected + (variant === 'original-natural' ? ' MIDRUN-CALCULATE-QA-20261008'
+          : variant === 'turkish-natural' ? ' HESAP_2026_01' : variant === 'german-natural' ? ' RECHNUNG_2026_01' : '');
+        let agent, send, requests = 0, calculations = 0, reads = 0, plannerCalls = 0;
+        let entered, release;
+        const planning = new Promise(resolve => { entered = resolve; });
+        const hold = new Promise(resolve => { release = resolve; });
+        const next = async messages => {
+          assert.ok(++requests <= 6, 'Unrelated DOM activity must not repeatedly discard pure calculation.');
+          send({});
+          const calculated = messages.find(message => message.role === 'tool'
+            && message.content.includes(expected));
+          return calculated ? call('finished-compute', 'done', { summary, outcome: 'success' })
+            : call(`exact-compute-${requests}`, 'calculate', { expression });
+        };
+        agent = makeAgent(Agent, next);
+        agent.maxSteps = Infinity;
+        agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
+          send = bind(agent, tab); return { role: 'user', content };
+        };
+        agent._runPlannerIntentGate = async (_tab, enriched) => {
+          if (++plannerCalls === 1) { entered(); await hold; }
+          else assert.ok(enriched.content.includes(expression), 'The revised planner must receive the genuine calculation task.');
+          return { proceed: true, requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
+            ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: ['Exact arithmetic result', 'Response formatting marker'] }) };
+        };
+        agent.executeTool = async (_tab, name, args) => {
+          if (name === 'get_accessibility_tree') {
+            reads++;
+            return refreshFails ? { success: false, error: 'Owned page observation unavailable.' }
+              : { success: true, pageContent: 'text "Unrelated changing sidebar"' };
+          }
+          if (name === 'done') return { done: true, success: true, summary: args.summary, outcome: args.outcome };
+          assert.equal(name, 'calculate', 'The corrected task must not interact with any page control.');
+          calculations++;
+          return agent._executeToolImpl(_tab, name, args);
+        };
+        const options = { detachedRequestId: `calculate-only-${tab}`, askStreamingEnabled: false };
+        const update = (type, data) => updates.push({ type, data });
+        try {
+          const run = streaming
+            ? agent.processMessageStream(tab, 'Inspect the current owned page.', update, 'act', options)
+            : agent.processMessage(tab, 'Inspect the current owned page.', update, 'act', [], options);
+          await planning;
+          const correction = variant === 'original-natural' ? ORIGINAL_CALC_CORRECTION
+            : variant === 'turkish-natural' ? 'Sadece ' + expression + ' hesapla. Tam sonucu bildir ve marker "HESAP_2026_01" ile bitir.'
+            : variant === 'german-natural' ? 'Berechne nur ' + expression + '. Gib das exakte Ergebnis zurück und beende mit marker "RECHNUNG_2026_01".'
+            : 'Cancel page inspection. Only calculate ' + expression + '; do not interact with the page.';
+          assert.equal(agent.steerMessage(tab, correction, {
+            requestId: options.detachedRequestId, messageId: 'genuine-compute-correction',
+          }).accepted, true);
+          release();
+          assert.equal(await run, summary);
+          assert.equal(calculations, 1); assert.equal(requests, 2); assert.equal(plannerCalls, 2);
+          assert.ok(reads > 0, 'The ordinary feedback read remains available; failed reads cannot invalidate literal math.');
+          assert.equal(updates.filter(update => update.type === 'steering_applied').length, 1);
+          assert.equal(updates.some(update => update.type === 'run_status' && update.data.status === 'page_unstable'), false);
+          assert.equal(agent._pageFeedbackRuns.size, 0);
+        } finally { release(); documents.delete(tab); }
+      });
+    }
     // webbrain-traces-1791395643317.json: completed detached research followed
     // by repeated valid Ask completions discarded because X counters changed.
     for (const response of ['done', 'prose', 'empty']) for (const refreshFails of [false, true]) {
