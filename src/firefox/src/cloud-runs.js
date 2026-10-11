@@ -711,7 +711,9 @@ export function createCloudRunController({
   const api = chromeApi;
   const runs = new Map();
   const startingTabs = new Set();
+  const startingRunIds = new Set();
   const startingConversations = new Set();
+  const runAbortControllers = new Map();
   let hydratePromise = null;
   let persistQueue = Promise.resolve();
   let persistTimer = null;
@@ -805,7 +807,7 @@ export function createCloudRunController({
     return tab;
   }
 
-  async function resolveTabId(requestedTabId) {
+  async function resolveTabId(requestedTabId, startup = null) {
     if (requestedTabId != null && requestedTabId !== '') {
       const tab = await api.tabs.get(Number(requestedTabId));
       if (!isUsableCloudTab(tab)) throw new Error(`Tab ${requestedTabId} is not a controllable webpage.`);
@@ -822,6 +824,7 @@ export function createCloudRunController({
 
     const created = await api.tabs.create({ url: 'about:blank', active: true });
     if (created?.id == null) throw new Error('Could not create a browser tab for the cloud run.');
+    if (startup) startup.createdTabId = created.id;
     return created.id;
   }
 
@@ -1001,7 +1004,8 @@ export function createCloudRunController({
       // survives the rolling 200-update window in exported cloud traces.
       run.captchaDiagnostics = { ...scrubbedData, observedAt: run.updatedAt };
     }
-    if (type === 'clarify' && scrubbedData?.clarifyId && !TERMINAL_STATUSES.has(run.status)) {
+    if (type === 'clarify' && scrubbedData?.clarifyId
+        && ['running', 'needs_user_input'].includes(run.status)) {
       run.status = 'needs_user_input';
       run.pendingInput = scrubbedData;
     }
@@ -1061,11 +1065,23 @@ export function createCloudRunController({
     const key = msg.conversationKey ?? msg.conversation_key;
     if (key != null && startingConversations.has(key)) throw cloudRunError('Conversation is already starting.', 409);
     if (key != null) startingConversations.add(key);
-    try { return await startRunReserved(msg); }
+    const startup = { createdTabId: null };
+    try { return await startRunReserved(msg, startup); }
+    catch (error) {
+      // A rejected start has no run owner to clean up a newly created helper.
+      // Track creation explicitly so borrowed user/conversation tabs survive.
+      if (startup.createdTabId != null && !startingTabs.has(startup.createdTabId)
+          && !agent.isRunning(startup.createdTabId)) {
+        startingTabs.add(startup.createdTabId);
+        try { await api.tabs.remove(startup.createdTabId); } catch { /* already closed */ }
+        finally { startingTabs.delete(startup.createdTabId); }
+      }
+      throw error;
+    }
     finally { if (key != null) startingConversations.delete(key); }
   }
 
-  async function startRunReserved(msg = {}) {
+  async function startRunReserved(msg = {}, startup = null) {
     await hydrate();
     const suppliedRunId = msg.runId ?? msg.run_id;
     const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
@@ -1084,7 +1100,10 @@ export function createCloudRunController({
       const previous = [...runs.values()].filter(run => run.conversationKey === conversationKey)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
       let tab = previous ? await api.tabs.get(previous.tabId).catch(() => null) : null;
-      if (!isUsableCloudTab(tab)) tab = await api.tabs.create({ url: 'about:blank', active: true });
+      if (!isUsableCloudTab(tab)) {
+        tab = await api.tabs.create({ url: 'about:blank', active: true });
+        if (startup && tab?.id != null) startup.createdTabId = tab.id;
+      }
       if (tab?.id == null) throw cloudRunError('Could not create a conversation tab.', 500);
       requestedTabId = tab.id;
     }
@@ -1103,7 +1122,7 @@ export function createCloudRunController({
         throw cloudRunError('Parent cloud run is no longer available and has no saved tab.', 409);
       }
     }
-    const tabId = await resolveTabId(requestedTabId);
+    const tabId = await resolveTabId(requestedTabId, startup);
     const workflow = msg._workflow || null;
     const mode = workflow ? 'act' : normalizeCloudRunMode(msg.mode, parentRun?.mode || 'act');
     const workflowParameters = msg._workflowParameters || {};
@@ -1132,9 +1151,12 @@ export function createCloudRunController({
     // an active or persisted run. Besides losing the older run from status
     // queries, replacement aliases both runs' strict-secret registries; the
     // first run to finish would then clear the second run's redaction state.
-    if (runs.has(runId)) {
+    if (runs.has(runId) || startingRunIds.has(runId)) {
       throw cloudRunError(`Cloud run ${runId} already exists.`, 409);
     }
+    // Distinct tabs can reach the awaited startup checks concurrently. Reserve
+    // the caller ID before yielding so both cannot claim the same run record.
+    startingRunIds.add(runId);
     startingTabs.add(tabId);
     try {
       await agent.assertRunStartAllowed?.(tabId, 'cloud', { cloudRun: true });
@@ -1143,6 +1165,7 @@ export function createCloudRunController({
       await activateTab(targetTab);
     } catch (error) {
       startingTabs.delete(tabId);
+      startingRunIds.delete(runId);
       throw error;
     }
     const createdAt = isoNow();
@@ -1172,10 +1195,22 @@ export function createCloudRunController({
       completedAt: null,
     };
     runs.set(run.runId, run);
+    startingRunIds.delete(runId);
+    const runController = new AbortController();
+    runAbortControllers.set(runId, runController);
+    const cancelled = () => runController.signal.aborted;
+    const checkCancellation = () => {
+      if (cancelled()) throw new Error('Abort requested.');
+    };
+    const cancellationOptions = {
+      signal: runController.signal,
+      isDetachedStartCancelled: cancelled,
+    };
     try {
       await persist();
     } catch (error) {
       runs.delete(run.runId);
+      runAbortControllers.delete(runId);
       startingTabs.delete(tabId);
       throw error;
     }
@@ -1196,6 +1231,7 @@ export function createCloudRunController({
             parentTraceSessionId = parentTrace?.conversationId || null;
           } catch { /* lineage lookup is best-effort and must not fail a run */ }
         }
+        checkCancellation();
         if (run.capture === 'video') {
           try {
             if (!startRecording || !stopRecording) throw new Error('Cloud run video capture is unavailable.');
@@ -1219,6 +1255,7 @@ export function createCloudRunController({
             filename: `webbrain-ci-${run.runId}.webm`,
           });
         }
+        checkCancellation();
         if (grantApiMutationsForRun) agent.setTemporaryApiMutationsAllowed(tabId, true);
         sendIndicator(tabId, 'WB_SHOW_AGENT_INDICATORS');
         const publishUpdate = (type, data) => pushUpdate(
@@ -1236,11 +1273,12 @@ export function createCloudRunController({
             workflow,
             workflowParameters,
             publishUpdate,
-            { cloudRun: true, independentRun: true },
+            { cloudRun: true, independentRun: true, ...cancellationOptions },
           );
           content = redactWorkflowValue(replay.summary || '');
           run.summary = redactWorkflowValue(replay.summary || run.summary);
           if (replay.status === 'fallback') {
+            checkCancellation();
             pushUpdate(run, 'workflow_fallback', {
               workflowId: workflow.id,
               stepIndex: replay.stepIndex,
@@ -1251,6 +1289,7 @@ export function createCloudRunController({
                 cloudRun: true,
                 independentRun: true,
                 preserveRichTextToolbarAudit: true,
+                ...cancellationOptions,
               },
             ));
           } else if (replay.status === 'stopped') {
@@ -1264,6 +1303,7 @@ export function createCloudRunController({
           let continuation = false;
           let resumeCount = 0;
           do {
+            checkCancellation();
             let requestedResume = null;
             run.agentOutcome = null;
             run.agentDoneSuccess = false;
@@ -1272,6 +1312,7 @@ export function createCloudRunController({
               independentRun: !continuation,
               trustedContinuation: continuation,
               scheduledResume: continuation,
+              ...cancellationOptions,
               apiMutationsDenied: mode === 'ask',
               outputSchema,
               deferResume(args) {
@@ -1305,7 +1346,7 @@ export function createCloudRunController({
               parentRunId: parentTraceRunId,
               parentSessionId: parentTraceSessionId,
             });
-            if (!requestedResume || ['failed', 'aborting', 'aborted'].includes(run.status)) break;
+            if (!requestedResume || cancelled() || ['failed', 'aborting', 'aborted'].includes(run.status)) break;
             resumeCount++;
             pushUpdate(run, 'cloud_resume_wait', { status: 'waiting', scheduledAt: requestedResume.scheduledAt, attempt: resumeCount });
             // Keep the same run, tab reservation, permission scope and secret
@@ -1315,13 +1356,13 @@ export function createCloudRunController({
             await persist();
             const stopResumeKeepAlive = startResumeKeepAlive();
             try {
-              while (run.status !== 'aborting' && now().getTime() < requestedResume.scheduledAtMs) {
+              while (!cancelled() && run.status !== 'aborting' && now().getTime() < requestedResume.scheduledAtMs) {
                 await waitForResume(Math.min(1000, requestedResume.scheduledAtMs - now().getTime()));
               }
             } finally {
               stopResumeKeepAlive?.();
             }
-            if (run.status === 'aborting') break;
+            if (cancelled() || run.status === 'aborting') break;
             parentTraceRunId = run.traceRunId;
             parentTraceSessionId = null;
             if (parentTraceRunId && typeof workflowTrace?.getRun === 'function') {
@@ -1349,7 +1390,7 @@ export function createCloudRunController({
           ? (run.summary || '[redacted strict structured completion]')
           : redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
-        if (run.status === 'aborting') {
+        if (cancelled() || run.status === 'aborting') {
           run.status = 'aborted';
           run.error = run.error || 'Aborted by cloud_abort.';
         } else if (run.status !== 'failed') {
@@ -1369,13 +1410,12 @@ export function createCloudRunController({
         }
       } catch (error) {
         run.pendingInput = null;
-        run.status = run.status === 'aborting' ? 'aborted' : 'failed';
+        run.status = cancelled() || run.status === 'aborting' ? 'aborted' : 'failed';
         run.error = redactStrictTerminal(
           run, redactWorkflowValue(error?.message || String(error)), strictSecretMode,
         );
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
-        startingTabs.delete(tabId);
         // The bridge flag is a run-scoped grant, not the sidebar's persistent
         // /allow-api setting. Revoke only permission this run added; preserve a
         // pre-existing per-conversation or global user grant.
@@ -1403,7 +1443,9 @@ export function createCloudRunController({
             });
           }
         }
-        if (terminalStatus) run.status = terminalStatus;
+        if (cancelled()) run.status = 'aborted';
+        else if (terminalStatus) run.status = terminalStatus;
+        runAbortControllers.delete(runId);
         run.completedAt = isoNow();
         run.updatedAt = run.completedAt;
         // The run is over, so nothing more can quote these; do not hold the
@@ -1413,6 +1455,10 @@ export function createCloudRunController({
         strictSecretOverflowRuns.delete(run.runId);
         strictTraceOverflowRuns.delete(run.runId);
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
+        // Recording flush is still owned by this run. Keep the tab reserved
+        // through all cleanup so aborting a nonterminal capture cannot cancel
+        // a replacement run or hide its indicators.
+        startingTabs.delete(tabId);
         await persist().catch(() => {});
       }
     })();
@@ -1503,6 +1549,7 @@ export function createCloudRunController({
       run.pendingInput = null;
       run.error = 'Abort requested.';
       run.updatedAt = isoNow();
+      runAbortControllers.get(run.runId)?.abort();
       agent.abort(run.tabId);
       await persist();
     }

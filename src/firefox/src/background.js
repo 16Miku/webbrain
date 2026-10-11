@@ -77,7 +77,7 @@ import {
   uiScaleCommandAction,
 } from './ui/ui-scale.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
-import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
+import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest, runUiUpdatesForCurrentTask } from './run-ui-journal.js';
 import {
   USER_MEMORY_AUTO_CAPTURE_KEY,
   USER_MEMORY_ENABLED_KEY,
@@ -96,7 +96,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
-import { createMemcodeRecall, MEMCODE_RECALL_ENABLED_KEY } from './agent/memcode-recall.js';
+import { createMemcodeRecall } from './agent/memcode-recall.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   SHORTCUT_COMMAND_STORAGE_KEY,
@@ -181,6 +181,7 @@ agent.setConversationScopeChangeListener((tabId, state) => {
 });
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
 const memcodeRecall = createMemcodeRecall({ storage: browser.storage.local, identity: browser.identity });
+agent.memcodeRecall = memcodeRecall;
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
 const teacherSessionStore = createTeacherSessionStore(browser.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
@@ -206,7 +207,11 @@ const scheduler = new ScheduledJobManager({
     await imageGenConfigReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
-  sendUpdate: (tabId, type, data) => {
+  sendUpdate: (tabId, type, data, owner) => {
+    if (owner?.executionId) {
+      sendScheduledAgentUpdate(tabId, type, data, owner);
+      return;
+    }
     browser.runtime.sendMessage({
       target: 'sidepanel',
       action: 'agent_update',
@@ -289,6 +294,7 @@ function isPdfUrl(value) {
 
 function trackPdfResponse(details) {
   if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
+  agent.noteDocumentMime(details);
   const contentType = (details.responseHeaders || [])
     .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
   if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
@@ -2126,8 +2132,10 @@ const runUiJournal = new RunUiJournal({
     void runUiSnapshotPersistence.persistNow(tabId, snapshot);
   },
 });
+const runUiSnapshotReads = new Map();
 
 function beginRunUiSnapshot(tabId, requestId, metadata = {}) {
+  runUiSnapshotReads.delete(tabId);
   runUiPersistenceFailures.delete(tabId);
   return runUiJournal.begin(tabId, requestId, metadata);
 }
@@ -2171,6 +2179,7 @@ function runUpdatesSucceeded(updates = []) {
 
 function terminalRunUiStatus(content, updates = [], error = null) {
   if (error) return 'failed';
+  updates = runUiUpdatesForCurrentTask(updates);
   const text = String(content || '');
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
@@ -2181,14 +2190,9 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false) {
-  const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
-  if (snapshot) {
-    // The journal carries an exact successful-'done' predicate for Act runs;
-    // Ask replies are classified by the caller and OR-ed in for badge styling.
-    snapshot.runSucceeded = snapshot.successfulDone === true || askSucceeded === true;
-  }
-  return snapshot;
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false, allowSuccess = true) {
+  // Keep classification in the journal's atomic terminal persistence update.
+  return runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId), { askSucceeded, allowSuccess });
 }
 
 // Mirror the sidepanel's successful-Ask classification for badge styling
@@ -2199,8 +2203,10 @@ const BADGE_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain 
 const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
+  updates = runUiUpdatesForCurrentTask(updates);
   if (updates.some(update => (
     update?.type === 'error' || update?.type === 'quota'
+    || isPersistenceDegradedRunUpdate(update)
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -2216,18 +2222,36 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
 async function getRunUiSnapshot(tabId) {
   const live = runUiJournal.get(tabId);
   if (live) return live;
-  try {
-    const key = RUN_UI_PREFIX + tabId;
-    const stored = await browser.storage.session?.get(key);
-    const snapshot = stored?.[key];
-    if (snapshot && typeof snapshot === 'object') {
-      return runUiJournal.restore(tabId, snapshot);
-    }
-  } catch {}
-  return null;
+  const pendingRead = runUiSnapshotReads.get(tabId);
+  if (pendingRead) return pendingRead.promise;
+  const read = {};
+  // Cold readers share ownership; only begin/clear may invalidate this read.
+  read.promise = Promise.resolve().then(async () => {
+    try {
+      const pending = runUiPersistenceQueues.get(tabId);
+      if (pending) await pending;
+      const current = runUiJournal.get(tabId);
+      if (current) return current;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const key = RUN_UI_PREFIX + tabId;
+      const stored = await browser.storage.session?.get(key);
+      const latest = runUiJournal.get(tabId);
+      if (latest) return latest;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const snapshot = stored?.[key];
+      if (snapshot && typeof snapshot === 'object') {
+        return runUiJournal.restore(tabId, snapshot);
+      }
+    } catch {}
+    finally { if (runUiSnapshotReads.get(tabId) === read) runUiSnapshotReads.delete(tabId); }
+    return null;
+  });
+  runUiSnapshotReads.set(tabId, read);
+  return read.promise;
 }
 
 function clearRunUiSnapshot(tabId) {
+  runUiSnapshotReads.delete(tabId);
   runUiSnapshotPersistence.cancel(tabId);
   runUiJournal.clear(tabId);
   runUiPersistenceFailures.delete(tabId);
@@ -2242,11 +2266,43 @@ function clearRunUiSnapshot(tabId) {
 function sendAgentUpdate(tabId, requestId, type, data) {
   const event = recordRunUiEvent(tabId, requestId, type, data);
   if (!event) return;
+  if (type === 'clarify') agent._capturePendingClarificationForUi?.(tabId, requestId, event.data ?? data, event);
   browser.runtime.sendMessage({
     target: 'sidepanel', action: 'agent_update', tabId, requestId,
     runId: event?.runId || agent.currentRunId.get(tabId) || null,
     seq: event?.seq || null, type, data: event?.data ?? data,
   }).catch(() => {});
+}
+
+function sendScheduledAgentUpdate(tabId, type, data, owner) {
+  if (tabId == null || !owner?.jobId || !owner?.executionId) return;
+  const requestId = `scheduled:${owner.jobId}:${owner.executionId}`;
+  const terminal = new Set(['completed', 'stopped', 'failed', 'cancelled', 'clarification_required']);
+  let snapshot = runUiJournal.get(tabId);
+  if (type === 'scheduled_job' && data?.event === 'running') {
+    if (snapshot?.requestId === requestId && terminal.has(snapshot.status)) return;
+    // A foreground request owns its tab even before provider preparation ends.
+    // A restored scheduled journal can instead be replaced by a new execution.
+    if (snapshot && snapshot.requestId !== requestId && !terminal.has(snapshot.status)
+        && !snapshot.scheduledJobId) return;
+    if (snapshot?.requestId !== requestId) snapshot = beginRunUiSnapshot(tabId, requestId, {
+      mode: owner.mode || 'act', kind: owner.kind === 'resume' ? 'continue' : 'chat',
+      scheduledJobId: owner.jobId, scheduledExecutionId: owner.executionId,
+    });
+  }
+  if (!snapshot || snapshot.requestId !== requestId || terminal.has(snapshot.status)
+      || snapshot.scheduledJobId !== owner.jobId || snapshot.scheduledExecutionId !== owner.executionId) return;
+  sendAgentUpdate(tabId, requestId, type, data);
+  if (type !== 'scheduled_job') return;
+  const event = data?.event, job = data?.job;
+  if (!['completed', 'failed', 'cancelled', 'paused', 'clarification_required', 'polled', 'triggered', 'queued'].includes(event)) return;
+  const finalContent = String(job?.lastResult || job?.lastError || '');
+  const status = ['cancelled', 'paused'].includes(event) ? 'stopped'
+    : event === 'failed' ? 'failed' : event === 'clarification_required' ? 'clarification_required'
+      : terminalRunUiStatus(finalContent, snapshot.events || []);
+  const finished = finishRunUiSnapshot(tabId, requestId, status, finalContent,
+    owner.mode === 'ask' && job?.lastOutcome === 'success', job?.lastOutcome === 'success');
+  if (finished) void sendAgentRunComplete(tabId, finished).catch(() => {});
 }
 
 function assertNoActiveTabRun(tabId) {
@@ -2406,27 +2462,33 @@ function launchDetachedRun(action, msg, sender) {
 }
 
 async function sendAgentRunComplete(tabId, snapshot = null) {
-  if (tabId == null || !snapshot) return;
+  if (tabId == null || !snapshot || runUiJournal.get(tabId) !== snapshot) return;
+  const { requestId, status, endedAt, seq } = snapshot;
+  const isCurrent = () => runUiJournal.get(tabId) === snapshot
+    && snapshot.requestId === requestId && snapshot.status === status
+    && snapshot.endedAt === endedAt && snapshot.seq === seq;
+  if (endedAt == null || !['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(status)) return;
+  await flushRunUiSnapshot(tabId, snapshot.requestId);
+  if (!isCurrent()) return;
   // Live runs continue in the background even if their side panel is closed
   // or reloaded mid-run (and continuations settle here too), so terminal
   // attention flashes are owned here rather than by the panel. User stops
   // and cancellations never flash; the setting is honored inside
   // flashTabAttention.
   const liveStatus = String(snapshot.status || '');
-  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
-    // Badge styling uses the run's recorded outcome (successful done update
-    // or successful Ask reply), not just the terminal status — a completed
-    // status alone can still mean max-steps were reached without success.
-    flashTabAttention({
-      tabId,
-      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
-    }).catch(() => {});
-  }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  if (!isCurrent()) return;
+  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
+    // The classified snapshot still owns the tab after durable-turn lookup.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
+  }
   const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
   const attachmentDeliveryState = attachmentCount
     ? (snapshot.attachmentDeliveryState === 'not-sent'
@@ -2440,6 +2502,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       attachmentDeliveryState,
     ) || snapshot;
     await flushRunUiSnapshot(tabId, snapshot.requestId);
+    if (!isCurrent()) return;
   }
   browser.runtime.sendMessage({
     target: 'sidepanel',
@@ -2484,7 +2547,25 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   return handleMessage(msg, sender).catch(e => ({ error: e.message, quota: e.quota }));
 });
 
+function assertChatRequestInput(msg) {
+  const validTextType = msg.text == null || typeof msg.text === 'string';
+  const hasText = typeof msg.text === 'string' && msg.text.trim().length > 0;
+  const structuredInputAllowed = msg.action !== 'chat_stream';
+  const hasWorkflow = structuredInputAllowed && typeof msg.workflowId === 'string' && msg.workflowId.trim().length > 0;
+  const hasAttachment = structuredInputAllowed && Array.isArray(msg.attachments) && msg.attachments.some(attachment =>
+    attachment && typeof attachment === 'object'
+    && ['image', 'document', 'text'].includes(attachment.kind)
+    && ((typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith('data:') && attachment.dataUrl.includes(','))
+      || (attachment.kind === 'text' && typeof attachment.textContent === 'string')));
+  if (validTextType && (hasText || hasWorkflow || hasAttachment)) return;
+  const error = new Error('A new chat request requires non-empty text, a supported attachment, or a saved workflow. Use continue_start for an explicit continuation.');
+  error.code = 'invalid_chat_input';
+  error.status = 400;
+  throw error;
+}
+
 async function handleMessage(msg, sender) {
+  if (['chat_start', 'chat', 'chat_stream'].includes(msg.action)) assertChatRequestInput(msg);
   if (msg.action === 'get_page_monitor_state') return agent.pageMonitorState(sender, msg.documentToken, msg.frameName);
   if (msg.action === 'page_feedback') return agent.observePageFeedback(sender, msg.feedback);
   if (String(msg.action || '').startsWith('feedback_')) return feedbackHandoff.handle(msg, sender);
@@ -2569,10 +2650,7 @@ async function handleMessage(msg, sender) {
     case 'memcode_recall_disconnect':
       return { ok: true, ...(await memcodeRecall.disconnect()) };
     case 'memcode_recall_enable': {
-      const status = await memcodeRecall.status();
-      if (!status.connected && msg.enabled) return { ok: false, error: 'Connect MemCode before enabling recall.' };
-      await browser.storage.local.set({ [MEMCODE_RECALL_ENABLED_KEY]: status.connected && msg.enabled === true });
-      return { ok: true, ...(await memcodeRecall.status()) };
+      return { ok: true, ...(await memcodeRecall.setRecallEnabled(msg.enabled === true)) };
     }
 
     case 'add_user_memory': {
@@ -3200,6 +3278,15 @@ async function handleMessage(msg, sender) {
           : false);
       const conversationState = await agent.getConversationState(tabId);
       const activeState = agent.activeRunState(tabId);
+      const pendingClarification = activeState.pendingCurrentClarification;
+      const currentRunUi = runUiJournal.get(tabId);
+      if (pendingClarification && (!activeState.running || currentRunUi !== runUiSnapshot
+          || !requestedRunUi || pendingClarification.requestId !== requestedRunUi.requestId
+          || pendingClarification.runId !== activeState.runId
+          || (requestedRunUi.runId && pendingClarification.runId !== requestedRunUi.runId)
+          || ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(requestedRunUi.status))) {
+        activeState.pendingCurrentClarification = null;
+      }
       const runUiDurable = !runUiSnapshot
         || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || '');
       return {

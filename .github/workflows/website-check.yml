@@ -1,0 +1,40 @@
+name: Website Check
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/website-check.yml"
+      - "web/build/**"
+      - "web/assets/**"
+      - "src/chrome/icons/flags/**"
+      - "src/chrome/icons/providers/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/website-check.yml"
+      - "web/build/**"
+      - "web/assets/**"
+      - "src/chrome/icons/flags/**"
+      - "src/chrome/icons/providers/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test website JSON script boundaries
+        run: node --test web/build/build.test.mjs
+      - name: Build website
+        run: node web/build/build.mjs

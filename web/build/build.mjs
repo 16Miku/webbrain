@@ -34,7 +34,7 @@
 import { copyFile, readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { PLAUSIBLE_ANALYTICS } from './plausible.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -243,9 +243,17 @@ function escHtml(s) {
   }[c]));
 }
 
+function serializeScriptJson(value, space) {
+  // JSON string escaping does not protect an HTML script element's raw-text
+  // boundary. Encode HTML-significant characters without changing JSON data.
+  return JSON.stringify(value, null, space)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026');
+}
+
 function escJson(s) {
-  // JSON.stringify handles escaping; strip the surrounding quotes.
-  return JSON.stringify(String(s == null ? '' : s)).slice(1, -1);
+  return serializeScriptJson(String(s == null ? '' : s)).slice(1, -1);
 }
 
 function homeUrlFor(locale) {
@@ -327,7 +335,7 @@ function buildFaqLanguageOptions(activeLocale) {
 }
 
 function buildFaqLanguageRoutes() {
-  return JSON.stringify(Object.fromEntries(
+  return serializeScriptJson(Object.fromEntries(
     LOCALES.map((locale) => [locale.code, faqPathFor(locale)]),
   ));
 }
@@ -383,7 +391,7 @@ function buildFaqJsonLd(dict, localeBcp47) {
     inLanguage: localeBcp47,
     mainEntity,
   };
-  return JSON.stringify(payload, null, 2);
+  return serializeScriptJson(payload, 2);
 }
 
 function buildSoftwareJsonLd(dict, locale) {
@@ -405,7 +413,7 @@ function buildSoftwareJsonLd(dict, locale) {
     image: LOGO_IMAGE_URL,
     screenshot: SOCIAL_IMAGE_URL,
   };
-  return JSON.stringify(payload, null, 2);
+  return serializeScriptJson(payload, 2);
 }
 
 function buildSubscribeHtml() {
@@ -502,7 +510,7 @@ function applyTemplate(template, dict, locale) {
     .replace(/\{\{locale_code\}\}/g, locale.code)
     .replace(/\{\{locale_code_upper\}\}/g, locale.code.toUpperCase())
     .replace(/\{\{locale_flag_code\}\}/g, LANGUAGE_FLAG_CODES[locale.code])
-    .replace(/\{\{language_flag_codes\}\}/g, JSON.stringify(LANGUAGE_FLAG_CODES))
+    .replace(/\{\{language_flag_codes\}\}/g, () => serializeScriptJson(LANGUAGE_FLAG_CODES))
     .replace(/\{\{locale_bcp47\}\}/g, locale.bcp47)
     .replace(/\{\{locale_dir\}\}/g, locale.dir || 'ltr')
     .replace(/\{\{locale_home_url\}\}/g, canonical)
@@ -514,11 +522,11 @@ function applyTemplate(template, dict, locale) {
     .replace(/\{\{hreflang_links\}\}/g, buildHreflangBlock())
     .replace(/\{\{faq_hreflang_links\}\}/g, buildFaqHreflangBlock())
     .replace(/\{\{faq_language_options\}\}/g, buildFaqLanguageOptions(locale))
-    .replace(/\{\{faq_language_routes\}\}/g, buildFaqLanguageRoutes())
+    .replace(/\{\{faq_language_routes\}\}/g, () => buildFaqLanguageRoutes())
     .replace(/\{\{faq_sidebar_links\}\}/g, buildFaqSidebarLinks(dict))
     .replace(/\{\{faq_sections\}\}/g, buildFaqSections(dict))
-    .replace(/\{\{faq_jsonld\}\}/g, buildFaqJsonLd(dict, locale.bcp47))
-    .replace(/\{\{software_jsonld\}\}/g, buildSoftwareJsonLd(dict, locale));
+    .replace(/\{\{faq_jsonld\}\}/g, () => buildFaqJsonLd(dict, locale.bcp47))
+    .replace(/\{\{software_jsonld\}\}/g, () => buildSoftwareJsonLd(dict, locale));
 
   // String substitutions. Missing keys fall back to English (already loaded
   // via the English dict being the default we pass in); we flag them below.
@@ -686,7 +694,15 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+export {
+  serializeScriptJson, escJson, htmlToPlain, buildFaqJsonLd,
+  buildSoftwareJsonLd, buildFaqLanguageRoutes, applyTemplate,
+};
+
+// Importing the pure builders must not generate site files.
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}

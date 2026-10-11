@@ -264,8 +264,6 @@ export class RichTextToolbarProbe {
             const el = document.querySelectorAll(sel)[index];
             if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
             if (deadlineExpired()) return deadlineFailure();
-            el.focus();
-            if (deadlineExpired()) return deadlineFailure();
             el.setAttribute(markerAttribute, markerValue);
             if (deadlineExpired()) {
               el.removeAttribute(markerAttribute);
@@ -292,6 +290,7 @@ export class RichTextToolbarProbe {
       markerPrepared = true;
       throwIfAborted();
       if (typeof beforeDispatch === 'function') await beforeDispatch(selected.frameId);
+      throwIfAborted();
       const results = await chrome.scripting.executeScript({
         target: { tabId, frameIds: [selected.frameId] },
         func: (markerAttribute, markerValue, txt, clr, actionDeadlineAt) => {
@@ -308,6 +307,14 @@ export class RichTextToolbarProbe {
           }
           [el] = marked;
           if (deadlineExpired()) return deadlineFailure();
+          // Preparation only binds a marker. Focus belongs after this frame's
+          // dispatch fence so it cannot invalidate its own authorized write.
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
+          el.focus({ preventScroll: true });
+          if (deadlineExpired()) return deadlineFailure();
+          if (!el.isConnected || el.getAttribute(markerAttribute) !== markerValue) {
+            return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
+          }
           if (el.isContentEditable) {
             if (clr) {
               if (deadlineExpired()) return deadlineFailure();

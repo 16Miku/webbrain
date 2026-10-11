@@ -75,10 +75,14 @@ async function validate(page, snapshot, target = { tool: 'type_ax', ref_id: snap
 }
 
 for (const build of ['chrome', 'firefox']) {
-  test(`${build}: heading-free dialogs bind their exact action context`, { timeout: 60000 }, async t => {
+  // Sixty isolated scenarios run sequentially; coverage plus other browser files
+  // can exhaust a one-minute collection even when every scenario completes.
+  // Keep individual hangs bounded while budgeting the full collection separately.
+  test(`${build}: heading-free dialogs bind their exact action context`, { timeout: 120000 }, async t => {
+    const scenario = (name, body) => t.test(name, { timeout: 10000 }, body);
     const browser = await (build === 'chrome' ? chromium : firefox).launch({ headless: true });
     try {
-      for (const role of ['dialog', 'alertdialog']) await t.test(`${role}: visible owner and editor are certified without a heading`, async () => {
+      for (const role of ['dialog', 'alertdialog']) await scenario(`${role}: visible owner and editor are certified without a heading`, async () => {
         const { context, page } = await fixture(browser, build, role);
         try {
           await page.locator('#editor').focus();
@@ -97,7 +101,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      await t.test('unrelated timeline counts and headings do not invalidate the dialog', async () => {
+      await scenario('unrelated timeline counts and headings do not invalidate the dialog', async () => {
         const { context, page } = await fixture(browser, build);
         try {
           const snapshot = await capture(page);
@@ -111,7 +115,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      await t.test('real X structure: deep editor, dangling dialog label and account avatar are certified together', async () => {
+      await scenario('real X structure: deep editor, dangling dialog label and account avatar are certified together', async () => {
         const { context, page } = await fixture(browser, build);
         try {
           await page.evaluate(() => {
@@ -148,7 +152,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      for (const change of ['reference-appears', 'duplicate-reference', 'ancestor-limit']) await t.test(`${change}: deep dialog context remains bounded and exact`, async () => {
+      for (const change of ['reference-appears', 'duplicate-reference', 'ancestor-limit']) await scenario(`${change}: deep dialog context remains bounded and exact`, async () => {
         const { context, page } = await fixture(browser, build);
         try {
           await page.evaluate(() => document.getElementById('composer').setAttribute('aria-labelledby', 'missing-header'));
@@ -176,7 +180,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      for (const labelLength of [160, 2200]) await t.test(`generic account label of ${labelLength} characters is fully observed or stays uncertified`, async () => {
+      for (const labelLength of [160, 2200]) await scenario(`generic account label of ${labelLength} characters is fully observed or stays uncertified`, async () => {
         const { context, page } = await fixture(browser, build);
         try {
           const label = 'Account ' + 'A'.repeat(labelLength);
@@ -195,7 +199,7 @@ for (const build of ['chrome', 'firefox']) {
 
       for (const variant of ['image', 'aria-label', 'title', 'labelledby', 'describedby', 'reference-chain', 'reference-cycle', 'reference-order',
         'oversized-label', 'evidence-budget', 'duplicate-reference', 'dangling-reference', 'separate-form', 'sidebar',
-        'editable', 'hidden-visible-child']) await t.test(`${variant}: nested account identities omitted by AX are fully exposed or stay uncertified`, async () => {
+        'editable', 'hidden-visible-child']) await scenario(`${variant}: nested account identities omitted by AX are fully exposed or stay uncertified`, async () => {
         const { context, page } = await fixture(browser, build);
         try {
           const expected = await page.evaluate(variant => {
@@ -285,7 +289,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      for (const placement of ['direct-owner', 'owned-form', 'direct-form']) await t.test(`${placement}: plain destination text is fully observed without publishing editable values as identity`, async () => {
+      for (const placement of ['direct-owner', 'owned-form', 'direct-form']) await scenario(`${placement}: plain destination text is fully observed without publishing editable values as identity`, async () => {
         const { context, page } = await fixture(browser, build);
         try {
           await page.evaluate(placement => {
@@ -325,7 +329,7 @@ for (const build of ['chrome', 'firefox']) {
 
       for (const variant of ['control-display', 'control-visibility', 'reference-display', 'reference-visibility',
         'readonly-inside-display', 'readonly-inside-visibility', 'readonly-reference-display', 'readonly-reference-visibility']) {
-        await t.test(`${variant}: rendered audience changes invalidate an earlier Post certificate despite identical textContent`, async () => {
+        await scenario(`${variant}: rendered audience changes invalidate an earlier Post certificate despite identical textContent`, async () => {
           const { context, page } = await fixture(browser, build);
           try {
             const original = await page.evaluate(variant => {
@@ -373,7 +377,7 @@ for (const build of ['chrome', 'firefox']) {
         });
       }
 
-      await t.test('native input continuation tolerates its own new editable text nodes', async () => {
+      await scenario('native input continuation tolerates its own new editable text nodes', async () => {
         const { context, page } = await fixture(browser, build);
         try {
           await page.locator('#editor').focus();
@@ -400,7 +404,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      for (const kind of ['nested-text', 'generic-label', 'display-contents', 'display-contents-label', 'hidden-label-visible-child', 'label-with-editor', 'label-with-shadow', 'label-with-excluded-control', 'open-shadow', 'separate-form', 'labelled-separate-form', 'labelled-sidebar-control', 'separate-article', 'sidebar-identity', 'nav-control-identity', 'nav-control-shadow']) await t.test(`${kind}: destination identity is completely observed or stays uncertified`, async () => {
+      for (const kind of ['nested-text', 'generic-label', 'display-contents', 'display-contents-label', 'hidden-label-visible-child', 'label-with-editor', 'label-with-shadow', 'label-with-excluded-control', 'open-shadow', 'separate-form', 'labelled-separate-form', 'labelled-sidebar-control', 'separate-article', 'sidebar-identity', 'nav-control-identity', 'nav-control-shadow']) await scenario(`${kind}: destination identity is completely observed or stays uncertified`, async () => {
         const { context, page } = await fixture(browser, build);
         try {
           await page.evaluate(kind => {
@@ -475,7 +479,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      await t.test('a weak referenced owner label cannot establish heading-free editor coverage', async () => {
+      await scenario('a weak referenced owner label cannot establish heading-free editor coverage', async () => {
         const { context, page } = await fixture(browser, build);
         try {
           await page.evaluate(() => document.getElementById('post').setAttribute('aria-describedby', 'composer'));
@@ -487,7 +491,7 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await context.close(); }
       });
 
-      await t.test('new uncovered destination text invalidates an earlier controls-only dialog certificate', async () => {
+      await scenario('new uncovered destination text invalidates an earlier controls-only dialog certificate', async () => {
         const { context, page } = await fixture(browser, build);
         try {
           const snapshot = await capture(page);
@@ -502,7 +506,7 @@ for (const build of ['chrome', 'firefox']) {
       });
 
       for (const change of ['audience', 'control', 'dialog-label', 'dialog-replacement', 'editor-replacement']) {
-        await t.test(`${change} invalidates the observed action context`, async () => {
+        await scenario(`${change} invalidates the observed action context`, async () => {
           const { context, page } = await fixture(browser, build);
           try {
             const snapshot = await capture(page);

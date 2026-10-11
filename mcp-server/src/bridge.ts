@@ -282,7 +282,7 @@ export class WebBrainBridge {
       throw new BridgeError(
         "No WebBrain extension is connected. Open the browser, then set " +
           "WebBrain → Settings → Bridge to " +
-          `ws://127.0.0.1:${config.bridgePort}${config.bridgePath} and enable it.`,
+          `ws://127.0.0.1:${config.bridgePort}${config.bridgePath} and enable the MCP bridge.`,
       );
     }
 

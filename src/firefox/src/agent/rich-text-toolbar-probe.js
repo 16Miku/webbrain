@@ -267,8 +267,6 @@ export class RichTextToolbarProbe {
           const el = document.querySelectorAll(${JSON.stringify(selector)})[${selectedIndex}];
           if (!el) return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
           if (deadlineExpired()) return deadlineFailure();
-          el.focus();
-          if (deadlineExpired()) return deadlineFailure();
           el.setAttribute(markerAttribute, markerValue);
           if (deadlineExpired()) {
             el.removeAttribute(markerAttribute);
@@ -300,6 +298,7 @@ export class RichTextToolbarProbe {
       markerPrepared = true;
       throwIfAborted();
       if (typeof beforeDispatch === 'function') await beforeDispatch(selected.frameId);
+      throwIfAborted();
       const mutationCode = `
       (() => {
         let targetDispatched = false;
@@ -318,6 +317,14 @@ export class RichTextToolbarProbe {
           }
           el = marked[0];
           if (deadlineExpired()) return deadlineFailure();
+          // Preparation only binds a marker. Focus belongs after this frame's
+          // dispatch fence and must retain the exact marked target.
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
+          el.focus({ preventScroll: true });
+          if (deadlineExpired()) return deadlineFailure();
+          if (!el.isConnected || el.getAttribute(markerAttribute) !== markerValue) {
+            return { ok: false, url: location.href, reason: 'target-changed', dispatched: false };
+          }
           if (el.isContentEditable) {
             if (${!!clear}) {
               if (deadlineExpired()) return deadlineFailure();

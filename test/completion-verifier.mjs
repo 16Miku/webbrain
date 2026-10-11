@@ -184,7 +184,7 @@ for (const build of ['chrome', 'firefox']) {
       let llmCalls = 0;
       agent._chatWithCostAllowance = async (_provider, messages, options) => {
         llmCalls++;
-        assert.equal(options.tools, undefined); assert.equal(options.maxTokens, 256);
+        assert.equal(options.tools, undefined); assert.equal(options.maxTokens, 4096);
         assert.match(messages[0].content, /Do not call tools/);
         return { content: JSON.stringify({ outcome: llmCalls === 1 ? 'uncertain' : 'succeeded', reason: 'Published resource is visible.' }) };
       };

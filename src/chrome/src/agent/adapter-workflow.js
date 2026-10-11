@@ -49,6 +49,7 @@ const JOB_FIELDS = new Set([
   'successEvidence',
   'partialEvidence',
   'requiredRowFields',
+  'routes',
 ]);
 const MAX_PROFILE_ITEMS = 16;
 const MAX_EVIDENCE_ITEMS = 8;
@@ -60,6 +61,44 @@ function isPlainObject(value) {
 
 function invalid(error) {
   return { ok: false, error };
+}
+
+// Declarative job routes constrain contracts, not browser navigation. Only a
+// whole path segment may be a wildcard; no model-created regular expression
+// or page label can widen the adapter's supported resource surface.
+function workflowRouteParts(value, template = false) {
+  if (typeof value !== 'string' || value !== value.trim() || !value || value.length > 2048
+      || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.port) return null;
+    const authority = value.slice(value.indexOf('://') + 3).split(/[/?#]/, 1)[0];
+    if (!authority || authority.toLowerCase() !== parsed.hostname || !/^[a-z0-9][a-z0-9.-]*[a-z0-9]$/i.test(authority)) return null;
+    if (template && (parsed.search || parsed.hash)) return null;
+    const rawPath = value.slice(value.indexOf('://') + 3 + authority.length).split(/[?#]/, 1)[0];
+    if (/(?:^|\/)(?:\.|%2e){1,2}(?:\/|$)/i.test(rawPath)) return null;
+    const pathname = parsed.pathname.replace(/\/$/, '') || '/';
+    const rawSegments = pathname === '/' ? [] : pathname.slice(1).split('/');
+    const segments = rawSegments.map(segment => decodeURIComponent(segment));
+    if (segments.some((segment, index) => !segment || /[\\/\u0000-\u001f\u007f]/.test(segment) || segment === '.' || segment === '..'
+        || (segment.includes('*') && (!template || segment !== '*' || rawSegments[index] !== '*')))) return null;
+    return { protocol: parsed.protocol, hostname: parsed.hostname, segments };
+  } catch { return null; }
+}
+
+/** Whether the exact URL belongs to the app-owned job's declared routes. */
+export function adapterWorkflowJobAppliesToUrl(job, url) {
+  if (!isPlainObject(job)) return false;
+  if (job.routes === undefined) return true;
+  if (!Array.isArray(job.routes) || !job.routes.length || job.routes.length > MAX_PROFILE_ITEMS) return false;
+  const current = workflowRouteParts(url);
+  if (!current) return false;
+  return job.routes.some(route => {
+    const expected = workflowRouteParts(route, true);
+    return expected && expected.protocol === current.protocol && expected.hostname === current.hostname
+      && expected.segments.length === current.segments.length
+      && expected.segments.every((segment, index) => segment === '*' || segment === current.segments[index]);
+  });
 }
 
 function validateTokenList(value, field, pattern, allowed = null) {
@@ -135,6 +174,14 @@ function validateWorkflowJob(jobName, job) {
       return invalid(`Workflow job \`${jobName}\` requiredRowFields must not repeat a field.`);
     }
   }
+  if (job.routes !== undefined) {
+    const parts = Array.isArray(job.routes) ? job.routes.map(route => workflowRouteParts(route, true)) : [];
+    if (!Array.isArray(job.routes) || !job.routes.length || job.routes.length > MAX_PROFILE_ITEMS
+        || parts.some(route => !route)
+        || new Set(parts.map(route => JSON.stringify(route))).size !== job.routes.length) {
+      return invalid(`Workflow job \`${jobName}\` routes must be distinct absolute HTTP(S) URLs with only whole-segment wildcards.`);
+    }
+  }
   if (job.requiresSubmission && !job.stateChange) {
     return invalid(`Workflow job \`${jobName}\` cannot require submission without a state change.`);
   }
@@ -206,6 +253,7 @@ export function cloneAdapterWorkflowJob(jobName, job) {
     successEvidence: [...job.successEvidence],
     partialEvidence: [...job.partialEvidence],
     ...(job.requiredRowFields ? { requiredRowFields: [...job.requiredRowFields] } : {}),
+    ...(job.routes ? { routes: [...job.routes] } : {}),
   };
 }
 

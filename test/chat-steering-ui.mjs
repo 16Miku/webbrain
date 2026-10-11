@@ -74,7 +74,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         'sameTabId', 'getQueuedComposerMessages', 'setQueuedComposerMessages',
         'queueUnconsumedSteeringMessages', 'steerComposerMessage', 'syncComposerDeliveryState',
         'queuedComposerButton', 'renderQueuedComposerMessages', 'removeQueuedComposerMessage',
-        'enqueueQueuedComposerMessage', 'syncSendButtonState', 'sendMessage',
+        'enqueueQueuedComposerMessage', 'composerSubmissionIsCurrent', 'queuedComposerSubmissionIsCurrent',
+        'syncSendButtonState', 'sendMessage',
       ].map(name => extract(source, name)).join('\n');
       const listenersStart = source.indexOf("sendBtn.addEventListener('click', sendMessage);");
       const listenersEnd = source.indexOf("inputEl.addEventListener('input', handleInput);", listenersStart);
@@ -91,7 +92,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         var queuedSteeringMessageIds = new Set(), tabInputDrafts = new Map();
         var clearedConversationRunRequestIds = new Set(), queuedComposerMessageSeq = 0;
         var sent = [], notices = [], requestSeq = 0, heldResponse = null;
-        var responseMode = 'accept';
+        var responseMode = 'accept', heldRefresh = null, releaseRefresh = null, refreshCalls = 0;
         var storageData = { composerDeliveryMode: 'steer' }, storageListeners = [];
         var chrome = { storage: {
           local: {
@@ -134,7 +135,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function normalizeScreenshotCommandText(value) { return value; }
         function normalizeSelectionSourceGrounding() { return null; }
         function normalizeSelectionAction() { return ''; }
-        function waitForVisibleSidePanelStateRefresh() { return Promise.resolve(); }
+        function waitForVisibleSidePanelStateRefresh() { refreshCalls++; return heldRefresh || Promise.resolve(); }
         function dismissSelectionAskAction() {}
         function stopListening() {}
         function permissionSkipCommandContextForDraft() { return null; }
@@ -293,6 +294,30 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.equal(await page.evaluate(() => composerDeliveryMode), 'queue', 'Removing preference restores Queue');
       await page.evaluate(() => hydrateDeliverySetting());
       assert.equal(await deliverySetting.inputValue(), 'queue', 'Missing setting hydrates to Queue');
+      for (const change of ['tab switch', 'new draft']) {
+        const before = await page.evaluate(() => {
+          currentTabId = renderedTabId = 1; isProcessing = true;
+          queuedComposerMessagesByTab.clear(); renderQueuedComposerMessages();
+          heldRefresh = new Promise(resolve => { releaseRefresh = resolve; });
+          return { sent: sent.length, refreshCalls };
+        });
+        await input.fill('Clicked command for tab one');
+        await page.locator('#btn-send').click();
+        await page.waitForFunction(calls => refreshCalls > calls, before.refreshCalls);
+        await page.evaluate(async change => {
+          if (change === 'tab switch') {
+            tabInputDrafts.set(1, inputEl.value); currentTabId = renderedTabId = 2;
+          }
+          inputEl.value = 'Private unsent replacement draft';
+          heldRefresh = null; releaseRefresh(); releaseRefresh = null;
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }, change);
+        assert.equal(await page.evaluate(() => sent.length), before.sent, change);
+        assert.equal(await page.evaluate(() => getQueuedComposerMessages(1).length), 0, change);
+        assert.equal(await page.evaluate(() => getQueuedComposerMessages(2).length), 0, change);
+        assert.equal(await input.inputValue(), 'Private unsent replacement draft', change);
+        if (change === 'tab switch') assert.equal(await page.evaluate(() => tabInputDrafts.get(1)), 'Clicked command for tab one');
+      }
       await page.evaluate(() => { isProcessing = false; syncSendButtonState(); });
       assert.equal(await page.locator('#btn-steer').count(), 0);
       assert.equal(await page.locator('#btn-send').getAttribute('title'), 'sp.btn.send');

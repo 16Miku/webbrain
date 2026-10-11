@@ -1338,6 +1338,11 @@ for (const [label, sourcePath, manualOpen] of [
       throw new Error(`Escape should close the popup and retain the shortcut: ${JSON.stringify(popupState)}`);
     }
 
+    // Measure resting geometry; the previous click can leave the floating
+    // button hovered and its 130ms lift/scale transition still running.
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(150);
+
     await page.evaluate(() => {
       const topCopy = document.createElement('p');
       topCopy.id = 'top-copy';
@@ -1407,7 +1412,13 @@ for (const [label, sourcePath, manualOpen] of [
       reopenedState.questionRect.top + reopenedState.questionRect.height / 2,
     );
     await page.keyboard.type('What is the point?');
-    await page.keyboard.press('Control+Enter');
+    // Dismissal moves focus before the chord finishes. Hold both keys until
+    // that happens so the modifier-release ownership race is deterministic.
+    await page.keyboard.down('Control');
+    await page.keyboard.down('Enter');
+    await page.waitForFunction(() => !window.__webbrainSelectionShortcut.getState().popupVisible);
+    await page.keyboard.up('Enter');
+    await page.keyboard.up('Control');
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
     const submittedState = await page.evaluate(() => ({
       message: window.__selectionMessages[0],
@@ -1422,6 +1433,12 @@ for (const [label, sourcePath, manualOpen] of [
     }
     if (submittedState.pageKeys.length) {
       throw new Error(`capture-phase dialog keystrokes leaked to the page: ${JSON.stringify(submittedState.pageKeys)}`);
+    }
+    await page.evaluate(() => { document.body.tabIndex = -1; document.body.focus(); });
+    await page.keyboard.press('Control');
+    const unrelatedKeys = await page.evaluate(() => window.__selectionPageKeys);
+    if (!unrelatedKeys.includes('down:Control') || !unrelatedKeys.includes('up:Control')) {
+      throw new Error(`completed dialog chord swallowed a new page key stroke: ${JSON.stringify(unrelatedKeys)}`);
     }
   });
 
@@ -4296,8 +4313,13 @@ for (const browserKind of ['chrome', 'firefox']) {
   });
 }
 
-test('set_field (chrome): trusted contenteditable input updates framework state and enables submit', async (page) => {
+test('set_field (chrome): model-backed editor trusted input updates framework state and enables submit', async (page) => {
   await setup(page, 'trusted-click-fallback.html');
+  await page.evaluate(() => {
+    const editor = document.getElementById('framework-editor');
+    editor.classList.add('ProseMirror');
+    editor.innerHTML = '<p><br class="ProseMirror-trailingBreak"></p>';
+  });
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 30000 });
   const content = String(tree?.pageContent || '');
   const editorMatch = content.match(/textbox "Framework post text" \[(ref_\d+)\]/);
@@ -4324,7 +4346,7 @@ test('set_field (chrome): trusted contenteditable input updates framework state 
     disabled: document.getElementById('framework-post').getAttribute('aria-disabled'),
     events: window.__frameworkInputEvents,
   }));
-  if (before.text || before.disabled !== 'true' || before.events.length !== 0) {
+  if (before.text !== '\n' || before.disabled !== 'true' || before.events.length !== 0) {
     throw new Error(`contenteditable preflight mutated framework state: ${JSON.stringify(before)}`);
   }
 
@@ -4376,7 +4398,7 @@ test('set_field (chrome): trusted contenteditable input updates framework state 
   }
 });
 
-test('type_ax (chrome): Gmail-style empty blocks verify without masking text corruption', async (page) => {
+test('type_ax (chrome): Gmail-style editor appends literal blank lines without masking corruption', async (page) => {
   await setup(page, 'trusted-click-fallback.html');
   await page.evaluate(() => {
     const editor = document.getElementById('editable-row');
@@ -4410,17 +4432,12 @@ test('type_ax (chrome): Gmail-style empty blocks verify without masking text cor
       text: appendText,
       clear: false,
     });
-    const result = await agent._maybeFallbackFieldWithCdp(
-      42,
-      'type_ax',
-      { ref_id: editorMatch[1], text: appendText, clear: false },
-      preflight,
-    );
+    const result = preflight;
     const after = await page.evaluate(() => {
       const editor = document.getElementById('editable-row');
       return {
         innerText: editor.innerText,
-        preservedPrefix: editor.innerHTML.startsWith('Hey Andrew,<div><br></div><div>Thank you!</div>'),
+        preservedPrefix: editor.firstChild?.textContent === 'Hey Andrew,' && editor.children[1]?.textContent.startsWith('Thank you!'),
         directBlankBlocks: Array.from(editor.children)
           .filter(child => child.tagName === 'DIV' && child.innerHTML.toLowerCase() === '<br>').length,
       };
@@ -4428,12 +4445,11 @@ test('type_ax (chrome): Gmail-style empty blocks verify without masking text cor
     if (
       result?.success !== true
       || result.verified !== true
-      || result.trusted !== true
-      || after.innerText !== 'Hey Andrew,\n\n\nThank you!\n\n\nAre these good enough?'
+      || after.innerText !== 'Hey Andrew,\n\n\nThank you!\n\nAre these good enough?'
       || after.preservedPrefix !== true
-      || after.directBlankBlocks !== 2
+      || after.directBlankBlocks !== 1
     ) {
-      throw new Error(`Gmail-style block expansion should verify: ${JSON.stringify({ result, after })}`);
+      throw new Error(`Gmail-style append must preserve the requested literal lines: ${JSON.stringify({ result, after })}`);
     }
 
     await page.evaluate(() => {
@@ -4447,12 +4463,7 @@ test('type_ax (chrome): Gmail-style empty blocks verify without masking text cor
       text: corruptAppend,
       clear: false,
     });
-    const corruptResult = await agent._maybeFallbackFieldWithCdp(
-      42,
-      'type_ax',
-      { ref_id: editorMatch[1], text: corruptAppend, clear: false },
-      corruptPreflight,
-    );
+    const corruptResult = corruptPreflight;
     if (
       corruptResult?.success !== false
       || corruptResult.verified !== false
@@ -5469,8 +5480,15 @@ test('SMD: X photo modal wins over background timeline media', async (page) => {
 });
 
 (async () => {
+  const onlyArgument = process.argv.slice(2).find(value => value.startsWith('--only='));
+  const only = onlyArgument ? new RegExp(onlyArgument.slice(7), 'i') : null;
+  const chromiumEntries = only ? tests.filter(entry => only.test(entry.name)) : tests;
+  const firefoxEntries = only ? firefoxTests.filter(entry => only.test(entry.name)) : firefoxTests;
+  const total = chromiumEntries.length + firefoxEntries.length;
+  if (total === 0) throw new Error(`No fixtures matched ${onlyArgument}.`);
   let passed = 0, failed = 0;
   const runTests = async (browserType, entries) => {
+    if (entries.length === 0) return;
     const browser = await browserType.launch();
     const context = await browser.newContext();
     for (const t of entries) {
@@ -5489,8 +5507,8 @@ test('SMD: X photo modal wins over background timeline media', async (page) => {
     await browser.close();
   };
 
-  await runTests(chromium, tests);
-  await runTests(playwrightFirefox, firefoxTests);
-  console.log(`\n  ${passed} passed, ${failed} failed (${tests.length + firefoxTests.length} total)`);
+  await runTests(chromium, chromiumEntries);
+  await runTests(playwrightFirefox, firefoxEntries);
+  console.log(`\n  ${passed} passed, ${failed} failed (${total} total)`);
   process.exit(failed > 0 ? 1 : 0);
 })();

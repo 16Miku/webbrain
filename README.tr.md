@@ -99,8 +99,13 @@ CLIProxyAPI gibi kimlik doğrulamalı geri döngü (loopback) ağ geçitlerini d
 [Unsloth Studio kurulumu](docs/providers-and-models.md#unsloth-studio).
 **Osaurus (Yerel)**; model keşfi, akış (streaming) ve araç çağrıları (tool calls) özellikleri aracılığıyla Mac üzerindeki Osaurus sunucusuna bağlanır; bkz.
 [Osaurus kurulumu](docs/providers-and-models.md#osaurus).
-**En az 16 bin (16k) token'lık bağlam penceresine (context window)** sahip bir model yükleyin; 8 bin (8k) kapasiteli modeller yalnızca
-Compact (Kompakt) seviyesinde çalışır ve4K, sistem istemi (system prompt) ve araç şemaları toplamı için çok küçük bir kapasitedir.
+Yüklü modelin bağlam penceresini seçilen seviyenin sistem istemi ve araç şemaları,
+sayfa ve konuşma geçmişi ile istenen çıktı için boyutlandırın. **16k bir varsayılan
+ayar değeridir, yeterli olacağı garanti edilen bir alt sınır değildir; Compact
+seviyesinin 8k'ya sığacağı da garanti edilmez.** Mid ve Full, geçmiş birikmeden
+bile 16k'yı aşabilir; sıkıştırma sabit istem ve şemaları küçültemez. Boyut
+tahmini modelin gerçek tokenizer hesabı değildir; bkz.
+[bağlam rehberi](docs/providers-and-models.md#local-providers).
 WebBrain; llama.cpp, Ollama ve LM Studio için ilgili pencereyi otomatik olarak algılar
 ve alan doldukça konuşma içeriğini otomatik olarak sıkıştırır. Ollama,
 llama.cpp, LM Studio ve LocalAI için, ekran görüntüleri eklenmeden önce

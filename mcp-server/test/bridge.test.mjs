@@ -43,8 +43,9 @@ function fakeExtension(url, handler, { client = "webbrain-extension" } = {}) {
   return socket;
 }
 
-test("handshake, command correlation, and payload shape", async () => {
+test("handshake, command correlation, and payload shape", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const seen = [];
@@ -76,8 +77,9 @@ test("handshake, command correlation, and payload shape", async () => {
   await bridge.stop();
 });
 
-test("concurrent commands resolve to their own replies", async () => {
+test("concurrent commands resolve to their own replies", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const ext = fakeExtension(bridgeUrl(), async (msg) => {
@@ -99,8 +101,9 @@ test("concurrent commands resolve to their own replies", async () => {
   await bridge.stop();
 });
 
-test("extension errors surface as BridgeError with status", async () => {
+test("extension errors surface as BridgeError with status", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const ext = fakeExtension(bridgeUrl(), () => ({
@@ -124,8 +127,9 @@ test("extension errors surface as BridgeError with status", async () => {
   await bridge.stop();
 });
 
-test("no extension attached produces an actionable message", async () => {
+test("no extension attached produces an actionable message", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   await assert.rejects(
@@ -141,8 +145,9 @@ test("no extension attached produces an actionable message", async () => {
   await bridge.stop();
 });
 
-test("a client that is not the extension is rejected", async () => {
+test("a client that is not the extension is rejected", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const rogue = fakeExtension(bridgeUrl(), () => ({ ok: true, result: {} }), {
@@ -155,8 +160,9 @@ test("a client that is not the extension is rejected", async () => {
   await bridge.stop();
 });
 
-test("a web-page origin cannot replace the connected extension", async () => {
+test("a web-page origin cannot replace the connected extension", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const extension = fakeExtension(bridgeUrl(), (msg) => ({
@@ -187,8 +193,9 @@ test("a web-page origin cannot replace the connected extension", async () => {
   await bridge.stop();
 });
 
-test("a new socket cannot inherit an earlier extension handshake", async () => {
+test("a new socket cannot inherit an earlier extension handshake", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const extension = fakeExtension(bridgeUrl(), () => ({ ok: true, result: {} }));
@@ -215,8 +222,9 @@ test("a new socket cannot inherit an earlier extension handshake", async () => {
   await bridge.stop();
 });
 
-test("disconnect mid-command rejects rather than hanging", async () => {
+test("disconnect mid-command rejects rather than hanging", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const ext = fakeExtension(bridgeUrl(), async () => {
@@ -239,8 +247,9 @@ test("disconnect mid-command rejects rather than hanging", async () => {
   await bridge.stop();
 });
 
-test("awaitSettled polls to a terminal status", async () => {
+test("awaitSettled polls to a terminal status", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   let polls = 0;
@@ -270,8 +279,9 @@ test("awaitSettled polls to a terminal status", async () => {
   await bridge.stop();
 });
 
-test("awaitSettled stops on needs_user_input and surfaces clarify_id", async () => {
+test("awaitSettled stops on needs_user_input and surfaces clarify_id", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const ext = fakeExtension(bridgeUrl(), (msg) => {
@@ -362,8 +372,9 @@ test("describeSnapshot lists workflow healing candidates as answerable", () => {
   assert.match(text, /allowed_answers: candidate_0, candidate_1, deny/);
 });
 
-test("awaitSettled reports a timeout without aborting the run", async () => {
+test("awaitSettled reports a timeout without aborting the run", async (t) => {
   const bridge = new WebBrainBridge();
+  t.after(() => bridge.stop());
   await bridge.start();
 
   const actions = [];

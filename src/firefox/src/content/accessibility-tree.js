@@ -287,6 +287,46 @@
     }
   }
 
+  function nativeSectionPurpose(section) {
+    if (section?.tagName !== 'SECTION' || section.ownerDocument !== document || !section.isConnected
+        || (section.getAttribute('role') && section.getAttribute('role') !== 'region')) return null;
+    for (let node = section; node; node = node.parentElement || node.getRootNode?.().host) {
+      const style = getComputedStyle(node);
+      if (node.inert || node.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+          || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0
+          || style.contentVisibility === 'hidden') return null;
+    }
+    if (!isVisible(section)) return null;
+    // Native sections often use a plain caption instead of an h2/aria-label.
+    // Name only current rendered noninteractive text, never field values or
+    // text belonging to a nested entity/control. The monitor separately binds
+    // the complete section identity before certifying an action.
+    const excluded = 'button,a,input,textarea,select,option,[contenteditable]:not([contenteditable="false"]),'
+      + '[role="button"],[role="link"],[role="textbox"],[role="combobox"],[role="checkbox"],[role="radio"],'
+      + '[role="switch"],[role="tab"],[role="menuitem"],[role="slider"],[role="spinbutton"]';
+    const stack = [...section.childNodes].reverse();
+    let visited = 0;
+    while (stack.length) {
+      if (++visited > 256) return null;
+      const node = stack.pop();
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.data.replace(/\s+/g, ' ').trim(), parent = node.parentElement;
+        if (text.length >= 3 && text.length <= 512 && parent && isVisible(parent)
+            && !parent.closest(excluded)) return { text, node: parent };
+        continue;
+      }
+      if (!(node instanceof Element) || node.matches('script,style,template,section,article,aside,nav,form,dialog,'
+          + '[role="region"],[role="dialog"],[role="alertdialog"],[role="article"],[role="listitem"],'+excluded)) continue;
+      const style = getComputedStyle(node);
+      if (node.inert || node.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+          || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0
+          || style.contentVisibility === 'hidden') continue;
+      if (node.shadowRoot) return null;
+      stack.push(...[...node.childNodes].reverse());
+    }
+    return null;
+  }
+
   // ── Accessible name (matches Claude's priority order) ───────────────────
   function getAccessibleName(el) {
     const tag = el.tagName.toLowerCase();
@@ -467,6 +507,11 @@
       } catch {}
     }
 
+    if (tag === 'section') {
+      const purpose = nativeSectionPurpose(el);
+      if (purpose) return purpose.text.length > MAX_NAME_LEN ? purpose.text.slice(0, MAX_NAME_LEN) + '...' : purpose.text;
+    }
+
     // Fallback: direct text children only, at least 3 chars.
     let text = '';
     for (const child of el.childNodes) {
@@ -486,6 +531,17 @@
     if (cs.visibility === 'hidden') return false;
     if (cs.opacity === '0') return false;
     if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return false;
+    return true;
+  }
+
+  function isRenderedDropdownMenu(el) {
+    if (!el?.isConnected || el.getClientRects().length === 0) return false;
+    for (let node = el; node instanceof Element; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true'
+          || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+    }
     return true;
   }
 
@@ -829,10 +885,11 @@
   }
 
   // ── Line formatting ────────────────────────────────────────────────────
-  function formatLine(el, depth) {
+  function formatLine(el, depth, origin = null) {
     const role = getRole(el);
     let name = getAccessibleName(el);
     const ref = getOrMintRef(el);
+    if (origin) origin.ref = ref;
     const tag = el.tagName.toLowerCase();
 
     let line = ' '.repeat(depth) + role;
@@ -1021,8 +1078,9 @@
     return line;
   }
 
-  function formatOption(opt, depth) {
+  function formatOption(opt, depth, origin = null) {
     const ref = getOrMintRef(opt);
+    if (origin) origin.ref = ref;
     const rawName = opt.textContent ? opt.textContent.trim() : '';
     const name = rawName.replace(/\s+/g, ' ').substring(0, MAX_NAME_LEN).replace(/"/g, '\\"');
     let line = ' '.repeat(depth) + 'option';
@@ -1033,6 +1091,44 @@
       line += ' value="' + opt.value.replace(/"/g, '\\"') + '"';
     }
     return line;
+  }
+
+  // Formatter-owned origins stay private: page text may contain real ref
+  // tokens in names, roles or attributes, so text matching is not authority.
+  const treeLineOrigins = new WeakMap();
+  const TREE_REF_ORIGIN = Symbol('formatter-owned-AX-refs');
+  function pushTreeLine(lines, node, depth, offscreen = false, option = false) {
+    const origin = {};
+    const text = option ? formatOption(node, depth, origin) : formatLine(node, depth, origin);
+    const records = treeLineOrigins.get(lines) || [];
+    records.push({ index: lines.length, ref: origin.ref, node: new WeakRef(node) });
+    treeLineOrigins.set(lines, records);
+    lines.push(text + (offscreen && !isInViewport(node) ? ' offscreen=true' : ''));
+  }
+  function formatterRefs(lines, start = 0, end = lines.length, prefixLength = 0) {
+    const records = new Map((treeLineOrigins.get(lines) || []).map(record => [record.index, record]));
+    const refs = [];
+    let offset = prefixLength;
+    for (let index = start; index < end; index++) {
+      const record = records.get(index);
+      if (record) refs.push(Object.freeze({ ref: record.ref, node: record.node, end: offset + lines[index].length }));
+      offset += lines[index].length + 1;
+    }
+    return refs;
+  }
+  function withFormatterRefs(result, lines, start = 0, end = lines.length, prefixLength = 0) {
+    // Enumerable Symbols survive our object spreads but are omitted by JSON
+    // and runtime message serialization. No values or nodes enter public output.
+    result[TREE_REF_ORIGIN] = Object.freeze({ text: result.pageContent,
+      refs: Object.freeze(formatterRefs(lines, start, end, prefixLength)) });
+    return result;
+  }
+  function observedTreeRefs(tree, visibleLength = tree?.pageContent?.length) {
+    const origin = tree?.[TREE_REF_ORIGIN];
+    if (!origin || origin.text !== tree.pageContent || !Number.isSafeInteger(visibleLength)
+        || visibleLength < 0 || visibleLength > origin.text.length) return [];
+    return origin.refs.filter(record => record.end <= visibleLength
+      && record.node.deref() === lookup(record.ref)).map(({ ref, end }) => ({ ref, end }));
   }
 
   // ── Walker ─────────────────────────────────────────────────────────────
@@ -1076,6 +1172,9 @@
 
   function walk(el, depth, opts, lines, hoistedRoot = false) {
     if (!el || !el.tagName) return;
+    // A native popup may hide through a parent transition while its buttons
+    // retain their own rects. Do not leak its hidden options into visible AX.
+    if (opts.filter !== 'all' && el.matches?.('.dropdown-menu') && !isRenderedDropdownMenu(el)) return;
 
     // Skip nodes already emitted in the priority/action prelude.
     if (depth > 0 && opts._skipPrioritySet && opts._skipPrioritySet.has(el)) return;
@@ -1095,13 +1194,16 @@
     // it wouldn't normally pass the include filter.
     const included = shouldInclude(el, opts) || (opts.refId != null && depth === 0);
 
-    if (included) {
+    if (included && !opts._emittedRefs?.has(getOrMintRef(el))) {
+      opts._emittedRefs?.add(getOrMintRef(el));
       opts._onIncluded?.(el);
-      lines.push(formatLine(el, depth));
+      pushTreeLine(lines, el, depth, opts._markOffscreen);
 
       if (el.tagName.toLowerCase() === 'select' && el.options) {
         for (const opt of el.options) {
-          lines.push(formatOption(opt, depth + 1));
+          if (opts._emittedRefs?.has(getOrMintRef(opt))) continue;
+          opts._emittedRefs?.add(getOrMintRef(opt));
+          pushTreeLine(lines, opt, depth + 1, false, true);
         }
       }
     }
@@ -1121,6 +1223,108 @@
       }
     } else if (nodeHasWalkableChildren(el) && omittedDescendantWouldBeIncluded(el, opts)) {
       opts.depthTruncated = true;
+    }
+  }
+
+  // Fresh portals are interaction context for rooted reads as well as
+  // full-page reads. Their public inventory uses the same bounded tree and
+  // continuation; the underlying article scope does not become a page read.
+  function hoistOpenOverlays(opts, lines) {
+    // Hoist "overlay" surfaces (open listboxes, menus, dialogs,
+    // alertdialogs, expanded comboboxes, aria-modal containers) to the
+    // TOP of the tree output. Portals often render these as children of
+    // <body> positioned AFTER lots of base page content, which means a
+    // DOM-order walk under soft-truncation commonly misses them entirely.
+    // Without this, the model can't see the currency picker, timezone
+    // picker, confirmation dialog, etc. that just opened in response to
+    // its last click. Emitting them first guarantees they survive any
+    // later truncation.
+    const overlaySelectors = [
+      '.dropdown-menu',
+      '[role=listbox]',
+      '[role=menu]',
+      '[role=dialog]',
+      '[role=alertdialog]',
+      '[aria-modal="true"]',
+      '[role=combobox][aria-expanded="true"]',
+      'dialog[open]',
+      '[data-overlay]',
+      '.modal.show',
+      '.modal-overlay',
+      '.modal.open',
+      '[class*="DialogContent"]',
+      '[class*="ModalContent"]',
+      '[data-state="open"][role="dialog"]',
+    ];
+    const overlayEls = [];
+    const seen = new WeakSet();
+    // On pierce-enabled sites (LinkedIn's interop shell, Bilibili), the
+    // dialog we must hoist can live inside an open shadow root where
+    // document.querySelectorAll can't see it. Collect those roots so the
+    // overlay scan covers them too — without piercing, a freshly-opened
+    // composer dialog is completely absent from the tree output and the
+    // model falls back to blind coordinate clicks.
+    const overlayRoots = [document];
+    if (window.__wbSiteInteractions.shouldPierceShadowRoots()) {
+      const collectShadowRoots = (root, depth) => {
+        if (depth > 4) return;
+        let hosts;
+        try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const host of hosts) {
+          if (host.shadowRoot) {
+            overlayRoots.push(host.shadowRoot);
+            collectShadowRoots(host.shadowRoot, depth + 1);
+          }
+        }
+      };
+      collectShadowRoots(document, 0);
+    }
+    try {
+      for (const sel of overlaySelectors) {
+        for (const root of overlayRoots) {
+          const nodes = root.querySelectorAll(sel);
+          for (const n of nodes) {
+            if (seen.has(n)) continue;
+            if (!n.isConnected) continue;
+            if (n.matches('.dropdown-menu') && !isRenderedDropdownMenu(n)) continue;
+            // Quick visibility gate — don't emit hidden overlay shells.
+            try {
+              const r = n.getBoundingClientRect();
+              if (r.width < 1 || r.height < 1) continue;
+              const s = window.getComputedStyle(n);
+              if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
+            } catch (e) { continue; }
+            // Selector order may find a dialog before its modal wrapper.
+            // Keep only the outermost visible overlay in either order.
+            if (overlayEls.some(existing => isComposedAncestor(existing, n))) continue;
+            let insertionIndex = overlayEls.length;
+            for (let i = overlayEls.length - 1; i >= 0; i--) {
+              if (!isComposedAncestor(n, overlayEls[i])) continue;
+              seen.delete(overlayEls[i]);
+              overlayEls.splice(i, 1);
+              insertionIndex = i;
+            }
+            seen.add(n);
+            overlayEls.splice(insertionIndex, 0, n);
+          }
+        }
+      }
+    } catch (e) {}
+    if (overlayEls.length) {
+      lines.push(opts._emittedRefs ? '[open overlays — current context after requested subtree]' : '[open overlays — rendered first so they survive truncation]');
+      for (const n of overlayEls) {
+        if (n.matches('.dropdown-menu')) {
+          // Mastodon's native portal has no ARIA menu role and may extend
+          // below the viewport. Publish its exact root and rendered action
+          // inventory, with explicit offscreen metadata; ordinary AX
+          // slicing still bounds large menus. Reading never activates it.
+          const menuOpts = { ...opts, refId: getOrMintRef(n), _markOffscreen: true };
+          walk(n, 0, menuOpts, lines, true);
+          opts.depthTruncated ||= menuOpts.depthTruncated;
+        } else walk(n, 0, opts, lines, true);
+      }
+      lines.push('[/open overlays]');
+      opts._skipOverlaySet = seen;
     }
   }
 
@@ -1272,7 +1476,7 @@
       pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling or answering a whole-document question, call get_accessibility_tree(${JSON.stringify(continuationArgs)}) exactly for the next chunk.]`;
     }
 
-    return {
+    return withFormatterRefs({
       pageContent,
       truncated: hasMore,
       hasMore,
@@ -1282,7 +1486,8 @@
       totalChars: output.length,
       chunkStart: chunk.charStart,
       chunkEnd: chunk.charEnd,
-    };
+    }, lines, chunk.startNode, chunk.endNode,
+      safePage > 1 ? `[tree page ${safePage}; ${omittedBefore} earlier nodes omitted]\n`.length : 0);
   }
 
   function fingerprintTreeContent(output) {
@@ -1320,9 +1525,7 @@
   function actionableTreeSnapshotSignatures(lines) {
     const signatures = [];
     const seen = new Set();
-    for (const line of lines) {
-      const match = String(line || '').match(/\[(ref_\d+)\]/);
-      const refId = match?.[1];
+    for (const { ref: refId } of formatterRefs(lines)) {
       if (!refId || seen.has(refId)) continue;
       seen.add(refId);
       const el = window.__wbElementMap[refId]?.deref?.();
@@ -1348,9 +1551,11 @@
     if (!(window.__wbAxTreeSnapshots instanceof Map)) window.__wbAxTreeSnapshots = new Map();
     const key = treeSnapshotKey(scope, treeRevision);
     window.__wbAxTreeSnapshots.delete(key);
+    const snapshotLines = lines.slice();
+    treeLineOrigins.set(snapshotLines, (treeLineOrigins.get(lines) || []).slice());
     window.__wbAxTreeSnapshots.set(key, {
       output,
-      lines: lines.slice(),
+      lines: snapshotLines,
       treeRevision,
       actionSignatures: actionableTreeSnapshotSignatures(lines),
     });
@@ -1534,6 +1739,7 @@
         ? detectGmailConversationExpansionState(conversationRoot)
         : null;
       const conversationMetadata = {
+        tableCount: document.querySelectorAll('table').length,
         ...(conversationRootRefId ? { conversationRootRefId } : {}),
         ...(conversationExpansionState ? { conversationExpansionState } : {}),
       };
@@ -1609,101 +1815,23 @@
             };
           }
         }
-        walk(el, 0, opts, lines);
+        // A scoped read budgets its requested subtree first. Fresh portals
+        // remain available afterwards through the same bounded continuation.
+        // Shared refs prevent an anchored popup or item being emitted twice.
+        opts._emittedRefs = new Set();
+        const scopedOpts = { ...opts, _markOffscreen: !!el.closest('.dropdown-menu') };
+        walk(el, 0, scopedOpts, lines);
+        opts.depthTruncated ||= scopedOpts.depthTruncated;
+        hoistOpenOverlays(opts, lines);
       } else if (document.body) {
-        // Hoist "overlay" surfaces (open listboxes, menus, dialogs,
-        // alertdialogs, expanded comboboxes, aria-modal containers) to the
-        // TOP of the tree output. Portals often render these as children of
-        // <body> positioned AFTER lots of base page content, which means a
-        // DOM-order walk under soft-truncation commonly misses them entirely.
-        // Without this, the model can't see the currency picker, timezone
-        // picker, confirmation dialog, etc. that just opened in response to
-        // its last click. Emitting them first guarantees they survive any
-        // later truncation.
-        const overlaySelectors = [
-          '[role=listbox]',
-          '[role=menu]',
-          '[role=dialog]',
-          '[role=alertdialog]',
-          '[aria-modal="true"]',
-          '[role=combobox][aria-expanded="true"]',
-          'dialog[open]',
-          '[data-overlay]',
-          '.modal.show',
-          '.modal-overlay',
-          '.modal.open',
-          '[class*="DialogContent"]',
-          '[class*="ModalContent"]',
-          '[data-state="open"][role="dialog"]',
-        ];
-        const overlayEls = [];
-        const seen = new WeakSet();
-        // On pierce-enabled sites (LinkedIn's interop shell, Bilibili), the
-        // dialog we must hoist can live inside an open shadow root where
-        // document.querySelectorAll can't see it. Collect those roots so the
-        // overlay scan covers them too — without piercing, a freshly-opened
-        // composer dialog is completely absent from the tree output and the
-        // model falls back to blind coordinate clicks.
-        const overlayRoots = [document];
-        if (window.__wbSiteInteractions.shouldPierceShadowRoots()) {
-          const collectShadowRoots = (root, depth) => {
-            if (depth > 4) return;
-            let hosts;
-            try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
-            for (const host of hosts) {
-              if (host.shadowRoot) {
-                overlayRoots.push(host.shadowRoot);
-                collectShadowRoots(host.shadowRoot, depth + 1);
-              }
-            }
-          };
-          collectShadowRoots(document, 0);
-        }
-        try {
-          for (const sel of overlaySelectors) {
-            for (const root of overlayRoots) {
-              const nodes = root.querySelectorAll(sel);
-              for (const n of nodes) {
-                if (seen.has(n)) continue;
-                if (!n.isConnected) continue;
-                // Quick visibility gate — don't emit hidden overlay shells.
-                try {
-                  const r = n.getBoundingClientRect();
-                  if (r.width < 1 || r.height < 1) continue;
-                  const s = window.getComputedStyle(n);
-                  if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
-                } catch (e) { continue; }
-                // Selector order may find a dialog before its modal wrapper.
-                // Keep only the outermost visible overlay in either order.
-                if (overlayEls.some(existing => isComposedAncestor(existing, n))) continue;
-                let insertionIndex = overlayEls.length;
-                for (let i = overlayEls.length - 1; i >= 0; i--) {
-                  if (!isComposedAncestor(n, overlayEls[i])) continue;
-                  seen.delete(overlayEls[i]);
-                  overlayEls.splice(i, 1);
-                  insertionIndex = i;
-                }
-                seen.add(n);
-                overlayEls.splice(insertionIndex, 0, n);
-              }
-            }
-          }
-        } catch (e) {}
-        if (overlayEls.length) {
-          lines.push('[open overlays — rendered first so they survive truncation]');
-          for (const n of overlayEls) {
-            walk(n, 0, opts, lines, true);
-          }
-          lines.push('[/open overlays]');
-          opts._skipOverlaySet = seen;
-        }
+        hoistOpenOverlays(opts, lines);
         if (effFilter === 'visible') {
           const priority = collectPriorityActionSurfaces();
           if (priority.elements.length) {
             lines.push('[priority action surfaces - editable/focused/submit controls rendered first]');
             for (const n of priority.elements) {
               collectJevControl(n);
-              lines.push(formatLine(n, 0));
+              pushTreeLine(lines, n, 0);
             }
             lines.push('[/priority action surfaces]');
             opts._skipPrioritySet = priority.set;
@@ -1795,7 +1923,7 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport, treeRevision, depthTruncated, ...conversationMetadata };
+      return withFormatterRefs({ pageContent: output, viewport, treeRevision, depthTruncated, ...conversationMetadata }, lines);
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),
@@ -1906,8 +2034,10 @@
   window.__wb_expand_gmail_conversation_for_read = expandGmailConversationForRead;
   window.__wb_ax_lookup = lookup;
   window.__wb_ax_ref = getOrMintRef;
+  window.__wb_ax_observed_refs = observedTreeRefs;
   window.__wb_ax_name = getAccessibleName;
   window.__wb_ax_role = getRole;
+  window.__wb_ax_section_purpose = nativeSectionPurpose;
   window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;
   window.__wb_ax_suggest = suggestNearRefs;
 })();

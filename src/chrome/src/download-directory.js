@@ -34,40 +34,31 @@ export function filenameInDownloadDirectory(directory, filename) {
   return `${normalizedDirectory}/${basename}`;
 }
 
-export function createDownloadDirectoryListener(api) {
-  let directory = '';
-  let changedBeforeReady = false;
-  const ready = Promise.resolve(api.storage.local.get(DOWNLOAD_DIRECTORY_STORAGE_KEY))
-    .then((stored) => {
-      if (!changedBeforeReady) {
-        directory = normalizeDownloadDirectory(stored?.[DOWNLOAD_DIRECTORY_STORAGE_KEY]);
-      }
-    })
-    .catch(() => {});
-
-  api.storage?.onChanged?.addListener?.((changes, area) => {
-    if (area !== 'local' || !changes[DOWNLOAD_DIRECTORY_STORAGE_KEY]) return;
-    changedBeforeReady = true;
-    directory = normalizeDownloadDirectory(changes[DOWNLOAD_DIRECTORY_STORAGE_KEY].newValue);
-  });
-
-  return function routeWebBrainDownload(downloadItem, suggest) {
-    if (downloadItem?.byExtensionId !== api.runtime.id) {
-      suggest();
-      return undefined;
-    }
-
-    ready.then(() => {
-      const filename = filenameInDownloadDirectory(directory, downloadItem.filename);
-      suggest(filename ? { filename } : undefined);
-    });
-    return true;
-  };
+export async function configuredDownloadDirectory(api) {
+  if (!api?.storage?.local?.get) return '';
+  try {
+    const stored = await api.storage.local.get(DOWNLOAD_DIRECTORY_STORAGE_KEY);
+    return normalizeDownloadDirectory(stored?.[DOWNLOAD_DIRECTORY_STORAGE_KEY]);
+  } catch {
+    return '';
+  }
 }
 
-export function installDownloadDirectoryRouting(api) {
-  if (!api?.downloads?.onDeterminingFilename?.addListener) return null;
-  const listener = createDownloadDirectoryListener(api);
-  api.downloads.onDeterminingFilename.addListener(listener);
-  return listener;
+/**
+ * Resolve the configured relative path before starting each
+ * download. Missing storage keeps tests and older runtimes on the original
+ * filename. Callers must supply a real filename rather than guessing from the
+ * URL, because doing so would override a server-selected Content-Disposition
+ * filename.
+ */
+export async function filenameInConfiguredDownloadDirectory(api, filename) {
+  const original = filename || undefined;
+  // Keep invalid explicit paths intact so the native API rejects them, even
+  // when a configured subdirectory would otherwise strip their components.
+  if (typeof original === 'string' && (/^(?:[/\\]|[a-zA-Z]:)/.test(original)
+      || original.split(/[\\/]/).includes('..'))) return original;
+  const directory = await configuredDownloadDirectory(api);
+  if (!directory) return original;
+  if (!original) return undefined;
+  return filenameInDownloadDirectory(directory, original) || original;
 }

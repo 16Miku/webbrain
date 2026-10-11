@@ -1,13 +1,26 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { BidiSession } from '../firefox-companion/session.mjs';
 import { nativeReplyMessages } from '../firefox-companion/native-messages.mjs';
-const profile = await mkdtemp(join(tmpdir(), 'webbrain-firefox-test-'));
+const temporaryRoot = await realpath(tmpdir());
+const profilePrefix = 'webbrain-firefox-test-';
+const profile = await mkdtemp(join(temporaryRoot, profilePrefix));
+const assertOwnedProfile = async () => {
+  const resolved = await realpath(profile);
+  const equal = (left, right) => process.platform === 'win32'
+    ? left.toLowerCase() === right.toLowerCase() : left === right;
+  assert.ok(equal(dirname(resolved), temporaryRoot) && basename(resolved).startsWith(profilePrefix),
+    'Firefox cleanup must remain inside its owned temporary profile prefix.');
+  return resolved;
+};
+await assertOwnedProfile();
+const artifacts = resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS || 'ci/artifacts/quality-audit-2026-10-07/firefox-bidi-actual');
+await mkdir(artifacts, { recursive: true });
 await writeFile(join(profile, 'user.js'), `user_pref("browser.download.folderList", 2); user_pref("browser.download.dir", ${JSON.stringify(profile)}); user_pref("browser.download.useDownloadDir", true);`);
 if (process.env.FIREFOX_TEST_DPR) await writeFile(join(profile, 'user.js'), `user_pref("layout.css.devPixelsPerPx", ${JSON.stringify(process.env.FIREFOX_TEST_DPR)});\n`, { flag: 'a' });
 const server = createServer(async (_req, res) => {
@@ -171,7 +184,7 @@ try {
   assert.equal(fullPage.saved, true, 'captured PNG can be saved through Firefox downloads');
   assert.equal(session.runs.has(runId), true, 'standalone capture preserves active automation');
   console.log(`PASS: full-page PNG ${fullPage.width}x${fullPage.height}, ${fullPage.transferredChunks} native chunks, footer pixels, below-fold privacy and local save`);
-  await writeFile('/tmp/webbrain3-firefox-full-page.png', Buffer.from(fullPage.dataUrl.split(',')[1], 'base64'));
+  await writeFile(join(artifacts, 'webbrain3-firefox-full-page.png'), Buffer.from(fullPage.dataUrl.split(',')[1], 'base64'));
   await evaluate(`document.querySelector('#capture-noise').remove();document.querySelector('#capture-private').remove();document.querySelector('#capture-footer').remove();`);
   await evaluate(`document.activeElement.blur()`);
   assert.equal((await session.perform(runId, 'key', { ...await mark('body'), key: 'Escape' })).success, true);
@@ -239,7 +252,7 @@ try {
   await session.send('browsingContext.navigate', { context: settings.context, url: extensionOrigin + '/src/ui/settings.html', wait: 'complete' });
   await session.send('script.evaluate', { target: { context: settings.context }, expression: "(async () => { document.querySelector('[data-tab=display]').click(); await new Promise(r => setTimeout(r, 500)); document.getElementById('firefox-bidi-card').closest('details').open = true; document.getElementById('firefox-bidi-card').scrollIntoView({behavior:'instant', block:'center'}); await new Promise(r => setTimeout(r, 250)); })()", awaitPromise: true });
   const screenshot = await extensionEval(`browser.tabs.query({}).then(tabs => browser.tabs.captureTab(tabs.find(tab => tab.url.endsWith('/src/ui/settings.html')).id, {format:'png'}))`);
-  await writeFile('/tmp/webbrain3-firefox-bidi-settings.png', Buffer.from(screenshot.value.split(',')[1], 'base64'));
+  await writeFile(join(artifacts, 'webbrain3-firefox-bidi-settings.png'), Buffer.from(screenshot.value.split(',')[1], 'base64'));
   await evaluate(`window.addEventListener('beforeunload', event => { event.preventDefault(); event.returnValue = ''; })`);
   assert.equal((await session.perform(runId, 'navigate', { url: url + 'next' })).success, true);
   assert.equal((await evaluate('location.href')).value, url + 'next');
@@ -279,5 +292,6 @@ try {
   firefox.kill('SIGTERM');
   await new Promise(resolve => { if (firefox.exitCode != null) resolve(); else { firefox.once('exit', resolve); setTimeout(resolve, 3000); } });
   server.close();
-  await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  const ownedProfile = await assertOwnedProfile();
+  await rm(ownedProfile, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 }

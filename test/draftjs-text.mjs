@@ -24,7 +24,9 @@ function element(tagName, attrs = {}, childNodes = []) {
     get children() { return this.childNodes.filter(node => node.nodeType === 1); },
     get firstElementChild() { return this.children[0] || null; },
     get textContent() { return this.childNodes.map(node => node.nodeType === 3 ? node.nodeValue : node.textContent).join(''); },
-    focus() {}, getBoundingClientRect: () => ({ x: 10, y: 20, width: 300, height: 90 }),
+    focus() { doc.activeElement = this; }, dispatchEvent: () => true,
+    contains(node) { return node === this || this.children.some(child => child.contains(node)); },
+    querySelector: () => null, getBoundingClientRect: () => ({ x: 10, y: 20, width: 300, height: 90 }),
   };
 }
 const leaf = value => element('SPAN', { 'data-text': 'true' }, [textNode(value)]);
@@ -60,8 +62,9 @@ function typeIntoCaret(editor, value) {
   parent.childNodes = [textNode(value)]; editor.innerText = value;
 }
 function functionSource(source, name) {
-  const start = source.indexOf(`function ${name}(`);
+  let start = source.indexOf(`function ${name}(`);
   assert(start >= 0, name);
+  if (source.slice(start - 6, start) === 'async ') start -= 6;
   const indent = source.slice(source.lastIndexOf('\n', start) + 1, start);
   const end = source.indexOf(`\n${indent}}`, start) + indent.length + 2;
   assert(end > start, name); return source.slice(start, end);
@@ -74,20 +77,34 @@ function handlerSource(source, action) {
 }
 function contentHarness(build, current) {
   const source = fs.readFileSync(`src/${build}/src/content/content.js`, 'utf8');
-  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText', '_editableTextValue'];
+  const ownInputScope = source.match(/^  let _messageRecipientOwnedInputScope = null;$/m)?.[0];
+  assert.ok(ownInputScope, 'Use the real private production owned-input scope');
+  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText',
+    '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
+    '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue', '_insertContentEditableText'];
   if (build === 'chrome') names.unshift('_contentEditableValueMatches');
+  let selectedRange = null;
+  doc.defaultView.getSelection = () => ({ get rangeCount() { return selectedRange ? 1 : 0; },
+    removeAllRanges() { selectedRange = null; }, addRange(range) { selectedRange = range; }, getRangeAt() { return selectedRange; } });
+  doc.createRange = () => ({ startContainer: null, endContainer: null, startOffset: 0, endOffset: 0,
+    selectNodeContents(node) { this.startContainer = this.endContainer = node; this.endOffset = node.childNodes.length; },
+    collapse() { this.startOffset = this.endOffset; }, cloneRange() { return { ...this }; } });
+  doc.execCommand = (command, _ui, value) => {
+    if (command === 'insertHTML') value = value.replace(/^<span style="white-space: pre-wrap">|<\/span>$/g, '')
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    if (command === 'insertText' || command === 'insertHTML') current.onInsert?.(current.editor, value);
+    return true;
+  };
   const context = vm.createContext({ crypto: webcrypto, TextEncoder, Uint8Array,
+    _nativeChatEmptyCaretReceipts: new WeakMap(), InputEvent: class { constructor(type, data) { Object.assign(this, { type }, data); } },
     window: { __wb_ax_lookup: () => current.editor }, msg: { params: {} },
     actionDeadlineExpired: () => false, _scrollElementIntoClearView() {}, showAgentWorkingTarget() {},
     _fieldMeta: () => ({ tag: 'div', contentEditable: true, role: 'textbox', ariaLabel: 'Post text' }),
     _stableFieldSelector: () => '#editor',
     SET_FIELD_VERIFY_DELAY_MS: 0, setTimeout: resolve => resolve(),
-    document: { execCommand: (command, _ui, value) => {
-      if (command === 'insertText') current.onInsert?.(current.editor, value);
-      return true;
-    } },
+    document: doc,
   });
-  vm.runInContext(names.map(name => functionSource(source, name)).join('\n'), context);
+  vm.runInContext(`${ownInputScope}\n${names.map(name => functionSource(source, name)).join('\n')}`, context);
   const handlers = Object.fromEntries(['type_ax', 'set_field', 'ax_verify_field_value', 'field_value_digest']
     .map(action => [action, vm.runInContext(`(${handlerSource(source, action)})`, context)]));
   return { read: editor => { context.el = editor; return vm.runInContext('_editableTextValue(el)', context); },
@@ -116,20 +133,16 @@ for (const build of ['chrome', 'firefox']) {
     });
   });
 
-  test(`${build}: generic single caret placeholders are empty without losing real breaks or spaces`, async () => {
+  test(`${build}: unmarked single breaks retain literal text without empty-placeholder provenance`, async () => {
     const current = { editor: caret() }, h = contentHarness(build, current);
     for (const wrappers of [[], ['DIV'], ['P'], ['SPAN'], ['DIV', 'SPAN']]) {
       current.editor = caret(wrappers);
-      assert.equal(h.read(current.editor), '');
+      assert.equal(h.read(current.editor), '\n');
       const verification = await h.call('ax_verify_field_value', { ref_id: 'ref_42', expected: '' });
-      assert.equal(verification.verified, true);
+      assert.equal(verification.verified, false);
       const digest = await h.call('field_value_digest', { ref_id: 'ref_42', expected: '' });
-      assert.equal(digest.verified, true); assert.equal(digest.valueLength, 0);
-      assert.equal(digest.valueSha256, createHash('sha256').update('').digest('hex'));
-      if (build === 'chrome') {
-        const before = await h.call('type_ax', { ref_id: 'ref_42', text: 'abc', clear: false });
-        assert.equal(before._expectedValue, 'abc');
-      }
+      assert.equal(digest.verified, false); assert.equal(digest.valueLength, 1);
+      assert.equal(digest.valueSha256, createHash('sha256').update('\n').digest('hex'));
     }
     for (const kind of ['two-breaks', 'two-blocks', 'space', 'text-newline', 'hidden', 'embed', 'extra-empty-sibling']) {
       const editor = caret();
@@ -167,10 +180,6 @@ for (const build of ['chrome', 'firefox']) {
     current.editor = draft([' Existing ', '']);
     const suffix = 'suffix';
     const expectedAppend = h.read(current.editor) + suffix;
-    if (build === 'chrome') {
-      const initial = await h.call('type_ax', { ref_id: 'ref_42', text: suffix, clear: false });
-      assert.equal(initial._expectedValue, expectedAppend);
-    }
     current.editor = draft([' Existing ', suffix]);
     assert.equal((await h.call('ax_verify_field_value', { ref_id: 'ref_42', expected: expectedAppend, appendText: suffix })).verified, true);
     current.editor = draft(['Existing', suffix]);
@@ -237,7 +246,7 @@ for (const build of ['chrome', 'firefox']) {
       return capture(root, { complete: true, identity: 'twitter:alice' });
     };
     assert.equal(read(draft([''], { raw: '\n' })), '');
-    for (const wrappers of [[], ['DIV', 'SPAN']]) assert.equal(read(caret(wrappers)), '');
+    for (const wrappers of [[], ['DIV', 'SPAN']]) assert.equal(read(caret(wrappers)), '\n');
     assert.equal(read(draft([' Leading ', '', 'line ', ''], { raw: 'visual spacing' })), ' Leading \n\nline \n');
     assert.equal(read(draft([tweet], { styledUrl: true })), tweet);
     const publishedBody = snapshot(draft([tweet], { styledUrl: true }));
@@ -262,9 +271,16 @@ for (const build of ['chrome', 'firefox']) {
   });
 }
 
-test('Chrome: empty caret appends complete one trusted insertion without text debt', async t => {
+test('Chrome: native appends preserve strong empty-editor proof and do not retry ambiguous literal prefix loss', async t => {
   for (const mode of ['draftjs', 'direct-caret', 'wrapped-caret']) await t.test(mode, async () => {
     const current = { editor: mode === 'draftjs' ? draft([''], { raw: '\n' }) : caret(mode === 'direct-caret' ? [] : ['DIV', 'SPAN']) }, h = contentHarness('chrome', current);
+    let nativeInsertions = 0;
+    current.onInsert = (editor, text) => {
+      nativeInsertions++;
+      if (mode === 'draftjs') {
+        const next = draft([text], { styledUrl: true }); editor.childNodes = next.childNodes; editor.innerText = next.innerText;
+      } else typeIntoCaret(editor, text);
+    };
     const args = { ref_id: 'ref_42', text: tweet, clear: false };
     const oldMessage = api.tabs.sendMessage, oldAttach = cdpClient.attach, oldSend = cdpClient.sendCommand;
     const agent = new Agent({}); const commands = [];
@@ -285,13 +301,14 @@ test('Chrome: empty caret appends complete one trusted insertion without text de
     };
     try {
       const initial = await h.call('type_ax', args);
-      assert.equal(initial.noDispatch, true); assert.equal(initial._expectedValue, tweet,
-        'The empty caret BR must not become an append prefix');
+      assert.equal(initial.dispatched, true); assert.equal(initial.success, mode === 'draftjs');
+      assert.equal(nativeInsertions, 1, 'The native insertion runs once.');
       const typed = await agent._maybeFallbackFieldWithCdp(41, 'type_ax', args, initial);
-      assert.equal(typed.success, true); assert.equal(typed.verified, true);
+      assert.equal(typed.success, mode === 'draftjs'); assert.equal(typed.verified, mode === 'draftjs');
       const finalized = await agent._finalizeTextMutationResult(41, 'type_ax', args, typed);
-      assert.equal(finalized.success, true); assert.equal(agent._uncertainTextMutations.has(41), false);
-      assert.equal(commands.filter(method => method === 'Input.insertText').length, 1);
+      assert.equal(finalized.success, mode === 'draftjs'); assert.equal(agent._uncertainTextMutations.has(41), mode !== 'draftjs');
+      assert.equal(commands.filter(method => method === 'Input.insertText').length, 0,
+        'An already dispatched native write must not be replayed through CDP.');
       assert.equal(h.read(current.editor), tweet);
     } finally { api.tabs.sendMessage = oldMessage; cdpClient.attach = oldAttach; cdpClient.sendCommand = oldSend; }
   });
@@ -314,10 +331,11 @@ test('Chrome: CDP selector and node readback preserve DraftJS blocks and exact a
       for (const wrappers of [[], ['DIV', 'SPAN']]) {
         editor = caret(wrappers);
         const emptySignature = await cdpClient.textEntrySignature(41, target);
-        assert.equal(emptySignature, '0:811c9dc5');
-        assert.equal(await cdpClient.verifyTextEntry(41, { ...target, text: '', clear: true }), true);
+        assert.notEqual(emptySignature, '0:811c9dc5');
+        assert.equal(await cdpClient.verifyTextEntry(41, { ...target, text: '', clear: true }), null);
         typeIntoCaret(editor, 'abc');
-        assert.equal(await cdpClient.verifyTextEntry(41, { ...target, text: 'abc', beforeSignature: emptySignature }), true);
+        assert.equal(await cdpClient.verifyTextEntry(41, { ...target, text: 'abc', beforeSignature: emptySignature }), null,
+          'A vanished literal prefix must not verify as a successful append.');
       }
       editor = draft([''], { raw: '\n' }); const beforeSignature = await cdpClient.textEntrySignature(41, target);
       assert.equal(beforeSignature, '0:811c9dc5');

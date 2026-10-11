@@ -1,3 +1,6 @@
+import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
+import '../content/file-upload-policy.js';
+const { validateUploadFile, observedFileViewerResource, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__wbFileUploadPolicy;
 /**
  * CDP Client for Chrome DevTools Protocol
  * Provides access to shadow DOM, cross-origin iframes, pixel-perfect screenshots,
@@ -50,22 +53,141 @@ function readProseMirrorText(el) {
 }
 
 function readEmptyCaretText(el) {
-  if (!el?.isContentEditable || el.innerText !== '\n' || el.textContent !== '') return null;
-  let node = el;
-  for (let depth = 0; depth < 16; depth++) {
-    if (node.nodeType !== 1 || node.shadowRoot || node.hidden
-        || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
-        || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return null;
-    const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
-    if (!style || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
-        || style.opacity === '0' || style.contentVisibility === 'hidden') return null;
-    if (node.tagName === 'BR') return node.childNodes.length === 0 ? '' : null;
-    // Only one caret placeholder through ordinary block/inline wrappers.
-    // Extra text, empty blocks, breaks, embeds or sibling nodes stay literal.
-    if ((node !== el && !['DIV', 'P', 'SPAN'].includes(node.tagName)) || node.childNodes.length !== 1) return null;
-    node = node.childNodes[0];
+  // A sole BR can be either a browser caret or an authored literal LF.
+  // Generic DOM shape cannot establish which; keep its rendered value.
+  // DraftJS/ProseMirror markers and exact native-clear receipts prove their
+  // own empty state independently. Only a genuinely empty DOM is generic.
+  return el?.isContentEditable && el.childNodes?.length === 0
+    && el.innerText === '' && el.textContent === '' ? '' : null;
+}
+
+// This private object exists only around one native SelectAll/Delete operation.
+// A caret BR without this exact event/node history remains an authored LF.
+function nativeTextClearReceipt(el) {
+  if (!el?.isConnected || !el.isContentEditable) return null;
+  const doc = el.ownerDocument, view = doc.defaultView, root = el.getRootNode(), url = doc.URL;
+  const parent = node => node.parentNode || (node.nodeType === 11 ? node.host : null);
+  const ancestors = []; for (let node = parent(el); node; node = parent(node)) ancestors.push(node);
+  // The original roots expose their activeElement even for a closed shadow tree.
+  // Pin every host up to the document rather than rediscovering through .shadowRoot.
+  const activeBindings = [];
+  for (let scope = root, target = el; scope; target = scope.host, scope = target?.getRootNode()) {
+    activeBindings.push([scope, target]);
+    if (scope === doc) break;
   }
-  return null;
+  const selection = () => root.getSelection?.() || view.getSelection();
+  const range = () => { const value = selection(); return value?.rangeCount === 1 ? value.getRangeAt(0) : null; };
+  const sameRange = (a, b) => !!a && !!b && a.startContainer === b.startContainer && a.startOffset === b.startOffset
+    && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+  const within = value => !!value && el.contains(value.startContainer) && el.contains(value.endContainer);
+  const originalRange = range()?.cloneRange();
+  let invalid = false, closed = false, selected = 0, deleted = 0, released = 0, before = 0, inputs = 0, caret = null, settledRange = null;
+  const current = () => {
+    let node = parent(el);
+    for (const ancestor of ancestors) { if (node !== ancestor) return false; node = parent(node); }
+    return !closed && !invalid && el.isConnected && doc.defaultView === view && view.document === doc
+      && doc.URL === url && el.getRootNode() === root
+      && activeBindings.every(([scope, target]) => scope.activeElement === target) && (!selected || within(range()));
+  };
+  if (!current()) return null;
+  // The transport refreshes these private markers before its own input commands.
+  // All other editor/identity mutations remain part of the receipt's fence.
+  const relevant = record => !(record.type === 'attributes'
+      && ['data-webbrain-native-target', 'data-webbrain-page-revision'].includes(record.attributeName))
+    && (record.target === el || el.contains(record.target)
+    || (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes]
+      .some(node => node === el || node.contains?.(el) || ancestors.some(ancestor => node === ancestor || node.contains?.(ancestor))))
+    || (record.type === 'attributes' && ancestors.includes(record.target)
+      && /^(?:id|role|aria-label|contenteditable|disabled|readonly|inert|hidden|data-)/.test(record.attributeName || '')));
+  const observer = new view.MutationObserver(records => { if (records.some(relevant)) invalid = true; });
+  observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  for (const [scope] of activeBindings) if (scope !== doc) {
+    observer.observe(scope, { subtree: true, childList: true, characterData: true, attributes: true });
+  }
+  const drain = () => { if (observer.takeRecords().some(relevant)) invalid = true; };
+  const drainNativeDelete = () => {
+    if (observer.takeRecords().some(record => relevant(record)
+      && !(['childList', 'characterData'].includes(record.type) && (record.target === el || el.contains(record.target))))) invalid = true;
+  };
+  let retargetedInput = null;
+  const handlers = {
+    keydown(event) {
+      if (!event.isTrusted || event.target !== el || !current()) { invalid = true; return; }
+      if (event.code === 'KeyA' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+          && selected === 0 && deleted === 0) { selected++; return; }
+      if (event.code === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+          && selected === 1 && deleted === 0) { deleted++; return; }
+      invalid = true;
+    },
+    keyup(event) {
+      if (!event.isTrusted || event.target !== el) { invalid = true; return; }
+      if (event.code === 'KeyA' && selected === 1 && deleted === 0) return;
+      if (event.code === 'Delete' && deleted === 1 && released === 0) { released++; return; }
+      invalid = true;
+    },
+    beforeinput(event) {
+      drain();
+      if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+          || selected !== 1 || deleted !== 1 || before !== 0 || !current()) { invalid = true; return; }
+      before++;
+    },
+    input(event) {
+      if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+          || before !== 1 || inputs !== 0 || (root !== doc && retargetedInput !== event) || !current()) { invalid = true; return; }
+      // Discard exactly the browser's native deletion records. Later framework
+      // changes, including a change followed by restoration, invalidate proof.
+      drainNativeDelete(); inputs++;
+      caret = el.isContentEditable && el.childNodes.length === 1 && el.firstChild?.nodeName === 'BR'
+        && el.firstChild.attributes.length === 0 && el.textContent === '' ? el.firstChild : null;
+      settledRange = range()?.cloneRange();
+    },
+    selectionchange() {
+      if (inputs) { if (!sameRange(range(), settledRange)) invalid = true; }
+      else if (!selected && !sameRange(range(), originalRange)) invalid = true;
+      else if (!within(range())) invalid = true;
+    },
+    focusin(event) { if (event.target !== el) invalid = true; },
+    focusout() { invalid = true; },
+    blur() { invalid = true; },
+    pointerdown() { invalid = true; }, wheel() { invalid = true; },
+    paste() { invalid = true; }, drop() { invalid = true; },
+  };
+  const listeners = [];
+  const listen = (scope, name, handler) => { scope.addEventListener(name, handler, true); listeners.push([scope, name, handler]); };
+  for (const [name, handler] of Object.entries(handlers)) {
+    // Native events are retargeted to the host at document listeners. Count the
+    // exact keyboard/input sequence once, in the original editable's own root.
+    listen(root, name, handler);
+    if (root !== doc) listen(doc, name, event => {
+      if (name === 'selectionchange' || ['focusout', 'blur', 'pointerdown', 'wheel', 'paste', 'drop'].includes(name)) handler(event);
+      else if (!event.isTrusted || !event.composed || event.target !== activeBindings.at(-1)[1]) invalid = true;
+      else if (name === 'input' && event.inputType === 'deleteContentForward'
+          && before === 1 && inputs === 0 && current()) {
+        // Drain the browser deletion before this capture listener's microtask
+        // checkpoint delivers it as an unrelated mutation. The own-root
+        // listener still must validate this exact event and exact editable.
+        retargetedInput = event;
+        drainNativeDelete();
+      }
+    });
+  }
+  const dispose = () => {
+    if (closed) return; closed = true;
+    observer.disconnect();
+    for (const [scope, name, handler] of listeners) scope.removeEventListener(name, handler, true);
+    view.clearTimeout(timer);
+  };
+  const timer = view.setTimeout(dispose, 5000);
+  return {
+    current() { drain(); return current(); },
+    verify() {
+      drain();
+      return current() && selected === 1 && deleted === 1 && released === 1 && before === 1 && inputs === 1
+        && sameRange(range(), settledRange) && !!caret && el.childNodes.length === 1 && el.firstChild === caret
+        && caret.attributes.length === 0 && el.textContent === '' && el.innerText === '\n';
+    },
+    dispose,
+  };
 }
 
 function isDraftJsEditor(el) {
@@ -223,6 +345,12 @@ export class CDPClient {
     this._onDebuggerDetach = (source, reason) => {
       const tabId = source?.tabId;
       if (tabId == null) return;
+      const pendingAttach = this.attachPromises.get(tabId);
+      if (pendingAttach) {
+        pendingAttach.cancelled = true;
+        pendingAttach.detached = true;
+        this.attachGenerations.set(tabId, (this.attachGenerations.get(tabId) || 0) + 1);
+      }
       this.stopDialogHandling(tabId);
       this.pendingDialogs.delete(tabId);
       this._dropWebMCPSession(tabId, `Debugger detached: ${reason || 'unknown reason'}`);
@@ -303,15 +431,44 @@ export class CDPClient {
 
     const attachPromise = new Promise((resolve, reject) => {
       chrome.debugger.attach({ tabId }, '1.3', async () => {
+        let recovered = false;
         if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-          return;
+          const attachError = new Error(chrome.runtime.lastError.message);
+          if (attachError.message !== `Another debugger is already attached to the tab with id: ${tabId}.`) {
+            reject(attachError); return;
+          }
+          const current = () => !attachPromise.cancelled && this.attachGenerations.get(tabId) === generation;
+          if (!current()) { reject(new Error('Debugger attachment was cancelled')); return; }
+          // Chrome retains this extension's debugger connection across worker
+          // restarts. sendCommand is authorized only for this extension's own
+          // client, so a successful literal read proves ownership without
+          // disconnecting a different debugger or trusting getTargets.attached.
+          try {
+            await new Promise((resolveProbe, rejectProbe) => {
+              const timer = setTimeout(() => rejectProbe(attachError), 1500);
+              try {
+                chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate',
+                  { expression: 'void 0', returnByValue: true, timeout: 1000 }, result => {
+                    const error = chrome.runtime.lastError;
+                    clearTimeout(timer);
+                    if (error || result?.exceptionDetails || result?.result?.type !== 'undefined') rejectProbe(attachError);
+                    else resolveProbe();
+                  });
+              } catch (error) { clearTimeout(timer); rejectProbe(error); }
+            });
+            recovered = true;
+          } catch {
+            reject(current() ? attachError : new Error('Debugger attachment was cancelled'));
+            return;
+          }
         }
 
         const isCurrentGeneration = this.attachGenerations.get(tabId) === generation;
 
         if (attachPromise.cancelled || !isCurrentGeneration) {
-          if (!this.sessions.has(tabId)) {
+          const pendingAttach = this.attachPromises.get(tabId);
+          if (!recovered && !attachPromise.detached && !this.sessions.has(tabId)
+              && (!pendingAttach || pendingAttach === attachPromise)) {
             try { chrome.debugger.detach({ tabId }, () => {}); } catch {}
           }
           reject(new Error('Debugger attachment was cancelled'));
@@ -526,6 +683,10 @@ export class CDPClient {
           : params.type === 'mousePressed' ? ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointerdown', 'mousedown', 'click', 'input', 'change']
             : params.type === 'mouseWheel' ? ['wheel'] : ['pointerup', 'mouseup', 'click', 'input', 'change'] } : {}),
         ...target,
+        // Derive preparation from the actual command, never caller metadata.
+        // Held-button movement is consequential drag/recovery input.
+        pointerPreparationOnly: method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved'
+          && params.button === 'none' && params.buttons === 0,
       });
     }
 
@@ -601,7 +762,7 @@ export class CDPClient {
               size = (await this.sendCommand(tabId, 'Runtime.callFunctionOn', { objectId,
                 functionDeclaration: 'function () { return { width: this.clientWidth, height: this.clientHeight }; }', returnByValue: true }, currentSession))?.result?.value;
             }
-          } finally { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }, currentSession); }
+          } finally { this.releaseObject(tabId, objectId, currentSession); }
           if (!keyboard) {
             const q = quads?.[0];
             if (!q || !size?.width || !size?.height) throw new Error('Cannot resolve native input frame');
@@ -626,7 +787,7 @@ export class CDPClient {
           continue;
         }
         try { return await this._pageAgentObjectTarget(tabId, objectId, currentSession); }
-        finally { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }, currentSession); }
+        finally { this.releaseObject(tabId, objectId, currentSession); }
       }
       throw new Error('Native input frame nesting exceeds the monitor limit');
     } finally {
@@ -2208,7 +2369,7 @@ export class CDPClient {
       });
       return this._formatEventListeners(result?.listeners, relation, eventTypes);
     } finally {
-      try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+      this.releaseObject(tabId, objectId);
     }
   }
 
@@ -2225,7 +2386,7 @@ export class CDPClient {
       });
       return this._formatEventListeners(result?.listeners, relation, eventTypes);
     } finally {
-      try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+      this.releaseObject(tabId, objectId);
     }
   }
 
@@ -2296,13 +2457,20 @@ export class CDPClient {
     }
   }
 
+  // Runtime cleanup is best effort: a stalled renderer or lost acknowledgement
+  // must not delay a known observation/action result or replace its error.
+  releaseObject(tabId, objectId, sessionId = '') {
+    if (!objectId) return;
+    try { void this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }, sessionId).catch(() => {}); } catch {}
+  }
+
   /**
-   * Release Runtime objects returned by querySelectorPierce.
+   * Schedule release of Runtime objects returned by querySelectorPierce.
    */
   async releaseObjectGroup(tabId, objectGroup) {
     if (!objectGroup) return;
     try {
-      await this.sendCommand(tabId, 'Runtime.releaseObjectGroup', { objectGroup });
+      void this.sendCommand(tabId, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => {});
     } catch {}
   }
 
@@ -2368,7 +2536,9 @@ export class CDPClient {
     try {
       return await this.sendCommand(tabId, 'Runtime.callFunctionOn', params);
     } finally {
-      await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }).catch(() => {});
+      // Object cleanup cannot delay or replace a known page result. In
+      // particular, keep a proven no-dispatch result even if cleanup stalls.
+      this.releaseObject(tabId, objectId);
     }
   }
 
@@ -2671,8 +2841,40 @@ export class CDPClient {
    * Set file input files (for upload).
    */
   async setFileInputFiles(tabId, objectId, filePaths, options = {}) {
+    const checkAbort = () => { if (options.abortSignal?.aborted) throw options.abortSignal.reason || new Error('File attachment stopped.'); };
+    checkAbort();
+    const input = await this.callFunctionOn(tabId, `function() { return { fileInput: this instanceof HTMLInputElement && this.type === 'file', accept: this.getAttribute('accept') || '' }; }`, objectId);
+    const metadata = input?.result?.value;
+    if (!metadata?.fileInput) return { success: false, dispatched: false, noDispatch: true, error: 'Target is not a current file input.' };
+    const preparedFiles = [];
+    for (const filePath of filePaths) {
+      if (!metadata.accept.trim() || metadata.accept.trim() === '*' || metadata.accept.trim() === '*/*') continue;
+      const bytes = await this.probeLocalFile(tabId, filePath, { includeData: true, maxBytes: 8192, readPrefixBytes: 8192 });
+      const typeCheck = bytes?.readable === true ? validateUploadFile(metadata.accept, bytes) : { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, reasonCode: 'file_type_unverified', error: 'The actual saved file bytes could not be read before attachment.' };
+      checkAbort();
+      if (!typeCheck.success) {
+        if (typeCheck.actualMime === 'text/html' && options.sourceUrl) {
+          const viewer = await this.probeLocalFile(tabId, filePath, { includeData: true, maxBytes: 262144, readPrefixBytes: 262144 });
+          checkAbort();
+          const sameSavedFile = viewer?.readable === true && viewer.filename === bytes.filename && viewer.size === bytes.size && viewer.lastModified === bytes.lastModified && String(viewer.base64 || '').startsWith(String(bytes.base64 || '').slice(0, Math.floor(8192 / 3) * 4));
+          const sourceResolution = sameSavedFile ? observedFileViewerResource(viewer.base64, options.sourceUrl) : null;
+          if (sourceResolution) return { ...typeCheck, sourceResolution };
+        }
+        return typeCheck;
+      }
+      preparedFiles.push({ filePath, bytes });
+    }
+    checkAbort();
+    for (const { filePath, bytes } of preparedFiles) {
+      const currentBytes = await this.probeLocalFile(tabId, filePath, { includeData: true, maxBytes: 8192, readPrefixBytes: 8192 });
+      checkAbort();
+      if (currentBytes?.readable !== true || currentBytes.filename !== bytes.filename || currentBytes.size !== bytes.size || currentBytes.lastModified !== bytes.lastModified || currentBytes.base64 !== bytes.base64) return { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, reasonCode: 'file_identity_changed', error: 'The saved file changed after its content was inspected. Re-read the intended file before attaching it.' };
+    }
+    const current = await this.callFunctionOn(tabId, `function() { return { connected: this.isConnected, fileInput: this instanceof HTMLInputElement && this.type === 'file', disabled: this.disabled, accept: this.getAttribute('accept') || '' }; }`, objectId);
+    if (!current?.result?.value?.connected || !current.result.value.fileInput || current.result.value.disabled || current.result.value.accept !== metadata.accept) return { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, error: 'The file input or accepted types changed before attachment. Re-observe the intended input.' };
     const target = hasPageAgentDispatchOwner(tabId) ? await this._pageAgentObjectTarget(tabId, objectId) : {};
     await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'input', eventTypes: ['input', 'change'], ...target });
+    checkAbort();
     options.beforeDispatch?.();
     await this.sendCommand(tabId, 'DOM.setFileInputFiles', {
       objectId,
@@ -2699,6 +2901,12 @@ export class CDPClient {
     throwIfAborted();
     await this.sendCommand(tabId, 'Runtime.enable');
     throwIfAborted();
+    const input = await this.callFunctionOn(tabId, `function() { return { connected: this.isConnected, fileInput: this instanceof HTMLInputElement && this.type === 'file', accept: this.getAttribute('accept') || '' }; }`, objectId);
+    throwIfAborted();
+    const accept = input?.result?.value?.accept;
+    if (!input?.result?.value?.connected || !input.result.value.fileInput) return { success: false, dispatched: false, noDispatch: true, error: 'Target is not a current file input.' };
+    const checked = validateUploadFile(accept, { base64, filename, mimeType });
+    if (!checked.success) return checked;
     const target = hasPageAgentDispatchOwner(tabId) ? await this._pageAgentObjectTarget(tabId, objectId) : {};
     const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, {
       kind: 'input', eventTypes: ['input', 'change'], fenceOnly: true, prepareMonitor: true, ...target,
@@ -2706,7 +2914,7 @@ export class CDPClient {
     throwIfAborted();
     if (typeof options?.beforeDispatch === 'function') options.beforeDispatch();
     const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
-      functionDeclaration: `function (base64, filename, mimeType, actionDeadlineAt, pageGuard) {
+      functionDeclaration: `function (base64, filename, mimeType, actionDeadlineAt, expectedAccept, pageGuard) {
         ${PAGE_AGENT_DOM_ACTION_SOURCE}
         const deadlineExpired = () => Number(actionDeadlineAt) > 0 && Date.now() >= Number(actionDeadlineAt);
         if (deadlineExpired()) {
@@ -2715,6 +2923,10 @@ export class CDPClient {
         if (!(this instanceof HTMLInputElement) || this.type !== 'file') {
           return { success: false, dispatched: false, error: 'Target is not an <input type=file>.' };
         }
+        if (!this.isConnected || (this.getAttribute('accept') || '') !== expectedAccept) return { success: false, dispatched: false, noDispatch: true, error: 'The file input or accepted types changed before attachment.' };
+        ${FILE_UPLOAD_POLICY_SOURCE}
+        const typeCheck = validateUploadFile(this.getAttribute('accept'), { base64, filename, mimeType });
+        if (!typeCheck.success) return typeCheck;
         let dispatched = false;
         try {
           const binary = atob(base64);
@@ -2730,9 +2942,16 @@ export class CDPClient {
             return { success: false, dispatched: false, noDispatch: true, pageFeedbackPending: true,
               error: 'The page changed before the in-memory upload could dispatch.' };
           }
+          if (deadlineExpired()) {
+            return { success: false, dispatched: false, deadlineExpired: true, error: 'Upload action deadline expired before dispatch' };
+          }
           this.files = transfer.files;
           dispatched = true;
           this.dispatchEvent(new Event('input', { bubbles: true }));
+          if (deadlineExpired()) {
+            return { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
+              deadlineExpired: true, error: 'Upload action deadline expired during input dispatch' };
+          }
           this.dispatchEvent(new Event('change', { bubbles: true }));
           return { success: true, dispatched: true, name: file.name, size: file.size, type: file.type };
         } catch (error) {
@@ -2746,6 +2965,7 @@ export class CDPClient {
         { value: String(filename || 'attachment') },
         { value: String(mimeType || 'application/octet-stream') },
         { value: deadlineAt },
+        { value: accept },
         { value: pageGuard || null },
       ],
       returnByValue: true,
@@ -3101,7 +3321,10 @@ export class CDPClient {
    * If DOM.setFileInputFiles dispatches input/change, the event path is the
    * detached element only; delegated page handlers on document, forms, or drop
    * zones cannot treat the probe as a real user upload. Returns
-   * {exists, readable, size}, or null if the probe could not run.
+   * {exists, readable, size}, or null if the probe could not run. includeData
+   * retains the complete-payload attachment cap unless readPrefixBytes is
+   * explicitly supplied; that bounded mode reports total size and the exact
+   * byte-window length/truncation without loading the rest of the file.
    */
   async probeLocalFile(tabId, filePath, options = {}) {
     let objectId = null;
@@ -3144,31 +3367,34 @@ export class CDPClient {
       if (!objectId) return null;
       await this.sendCommand(tabId, 'DOM.setFileInputFiles', { objectId, files: [filePath] });
       const res = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
-        functionDeclaration: `async function (includeData, maxBytes) {
+        functionDeclaration: `async function (includeData, maxBytes, prefixBytes) {
           const f = this.files && this.files[0];
           if (!f) return { exists: false, readable: null, size: 0 };
           let readable = null;
-          try { await f.slice(0, 1).arrayBuffer(); readable = true; }
+          try { await (f.size === 0 ? f : f.slice(0, 1)).arrayBuffer(); readable = true; }
           catch (e) { readable = false; }
           if (!includeData || !readable) return { exists: true, readable, size: f.size };
-          if (f.size > maxBytes) return { exists: true, readable: false, size: f.size,
+          if (!prefixBytes && f.size > maxBytes) return { exists: true, readable: false, size: f.size,
             error: 'Recipient-bound attachment exceeds the 25MB limit.' };
           try {
-            const bytes = new Uint8Array(await f.arrayBuffer());
+            const bytes = new Uint8Array(await (prefixBytes ? f.slice(0, prefixBytes) : f).arrayBuffer());
             if (bytes.length > maxBytes) return { exists: true, readable: false, size: bytes.length,
               error: 'Recipient-bound attachment exceeds the 25MB limit.' };
             let binary = '';
             for (let i = 0; i < bytes.length; i += 0x8000) {
               binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
             }
-            return { exists: true, readable: true, size: bytes.length,
-              base64: btoa(binary), filename: f.name, mimeType: f.type };
+            return { exists: true, readable: true, size: prefixBytes ? f.size : bytes.length,
+              base64: btoa(binary), filename: f.name, mimeType: f.type, lastModified: f.lastModified,
+              ...(prefixBytes ? { dataBytesRead: bytes.length, dataTruncated: bytes.length < f.size } : {}) };
           } catch { return { exists: true, readable: false, size: f.size }; }
         }`,
         objectId,
         arguments: [
           { value: options.includeData === true },
           { value: Math.min(25 * 1024 * 1024, Math.max(0, Number(options.maxBytes) || 25 * 1024 * 1024)) },
+          { value: Math.min(25 * 1024 * 1024, Math.max(0, Number(options.maxBytes) || 25 * 1024 * 1024),
+            Math.max(0, Math.floor(Number(options.readPrefixBytes) || 0))) },
         ],
         returnByValue: true,
         awaitPromise: true,
@@ -3179,7 +3405,7 @@ export class CDPClient {
       return null;
     } finally {
       if (objectId) {
-        try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch (e) {}
+        this.releaseObject(tabId, objectId);
       }
     }
   }
@@ -3236,6 +3462,7 @@ export class CDPClient {
    * Handle file download via CDP.
    */
   async downloadFile(tabId, url, filename) {
+    filename = await filenameInConfiguredDownloadDirectory(chrome, filename);
     return new Promise(async (resolve, reject) => {
       const downloadId = await new Promise((res) => {
         chrome.downloads.download({ url, filename, saveAs: true }, (id) => {
@@ -4152,7 +4379,7 @@ export class CDPClient {
     } finally {
       if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
       if (releaseObject && objectId) {
-        try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+        this.releaseObject(tabId, objectId);
       }
     }
   }
@@ -4420,7 +4647,7 @@ export class CDPClient {
             }
           } finally {
             if (scrollObjectId) {
-              try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId: scrollObjectId }); } catch {}
+              this.releaseObject(tabId, scrollObjectId);
             }
           }
         } else {
@@ -4700,14 +4927,21 @@ export class CDPClient {
             objectId,
             functionDeclaration: `function(actionDeadlineAt, pageGuard) {
               ${PAGE_AGENT_DOM_ACTION_SOURCE}
-              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+              let dispatched = false;
+              const deadlineFailure = () => ({ success: false, dispatched, noDispatch: !dispatched,
+                outcomeUnknown: dispatched, retryable: !dispatched, deadlineExpired: true,
+                error: 'Click action deadline expired' });
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
               if (!this || !this.isConnected) return false;
               if (!beforePageAgentDomAction(pageGuard, 'focus'))
                 return { pageFeedbackPending: true, noDispatch: true, dispatched: false };
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
+              dispatched = true;
               try { this.focus(); } catch {}
-              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return false;
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
               if (!this.isConnected || !beforePageAgentDomAction(pageGuard, 'click'))
                 return { pageFeedbackPending: true, noDispatch: false, dispatched: true };
+              if (actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt) return deadlineFailure();
               this.click();
               return true;
             }`,
@@ -4718,6 +4952,9 @@ export class CDPClient {
           if (clicked?.result?.value?.pageFeedbackPending === true) {
             await this.consumeFileInputClickGuard(tabId);
             return pageFeedbackClickResult(priorDispatchAttempted, clicked.result.value.dispatched === true);
+          }
+          if (clicked?.result?.value?.deadlineExpired === true) {
+            return pageDeadlineResult(priorDispatchAttempted || clicked.result.value.dispatched === true, clicked.result.value.error);
           }
           if (clicked?.result?.value === false) {
             return pageDeadlineResult(priorDispatchAttempted, 'Click action deadline expired before click dispatch');
@@ -4749,7 +4986,7 @@ export class CDPClient {
         // fall through
       } finally {
         if (objectId) {
-          try { void this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }).catch(() => {}); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -4766,7 +5003,9 @@ export class CDPClient {
     const fb = await this.evaluateFunction(tabId, `function (sel, actionDeadlineAt, pageGuard) {
         ${PAGE_AGENT_DOM_ACTION_SOURCE}
         const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
-        const deadlineFailure = () => ({ success: false, dispatched: false, noDispatch: true, deadlineExpired: true, error: 'Click action deadline expired' });
+        let dispatched = false;
+        const deadlineFailure = () => ({ success: false, dispatched, noDispatch: !dispatched,
+          outcomeUnknown: dispatched, retryable: !dispatched, deadlineExpired: true, error: 'Click action deadline expired' });
         if (deadlineExpired()) return deadlineFailure();
         const queryDeep = (root) => {
           try { const h = root.querySelector(sel); if (h) return h; } catch (e) { return null; }
@@ -4787,12 +5026,15 @@ export class CDPClient {
         if (deadlineExpired()) return deadlineFailure();
         if (!beforePageAgentDomAction(pageGuard, 'focus'))
           return { success: false, pageFeedbackPending: true, noDispatch: true, dispatched: false };
+        if (deadlineExpired()) return deadlineFailure();
+        dispatched = true;
         try { el.focus(); } catch (e) {}
         if (deadlineExpired()) return deadlineFailure();
         if (!el.isConnected)
           return { success: false, dispatched: true, outcomeUnknown: true, retryable: false, error: 'Click target changed during focus.' };
         if (!beforePageAgentDomAction(pageGuard, 'click'))
           return { success: false, pageFeedbackPending: true, noDispatch: false, dispatched: true };
+        if (deadlineExpired()) return deadlineFailure();
         el.click();
         const r = el.getBoundingClientRect();
         return {
@@ -4839,7 +5081,8 @@ export class CDPClient {
       const semantic = draftJs ? (${readDraftJsText.toString()})(el)
         : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
       if (draftJs && semantic === null) return null;
-      const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
       return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
     }`;
     if (Number.isInteger(nodeId) && nodeId > 0) {
@@ -4859,7 +5102,7 @@ export class CDPClient {
         return null;
       } finally {
         if (objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -4893,7 +5136,8 @@ export class CDPClient {
         const semantic = draftJs ? (${readDraftJsText.toString()})(el)
         : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
         if (draftJs && semantic === null) return null;
-        const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
         return (${TEXT_ENTRY_SIGNATURE_SOURCE})(value);
       })()
     `).catch(() => null);
@@ -4911,6 +5155,52 @@ export class CDPClient {
     }
     // CDP modifier bits: Alt=1, Control=2, Meta=4, Shift=8.
     return /mac/i.test(platform) ? 4 : 2;
+  }
+
+  async captureTextClearReceipt(tabId, { selector = '', nodeId = null, focused = false } = {}) {
+    let targetObjectId = null, receiptObjectId = null;
+    try {
+      if (Number.isInteger(nodeId) && nodeId > 0) {
+        const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
+        targetObjectId = resolved?.object?.objectId;
+        if (targetObjectId) receiptObjectId = (await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+          objectId: targetObjectId, returnByValue: false,
+          functionDeclaration: `function () { return (${nativeTextClearReceipt.toString()})(this); }`,
+        }))?.result?.objectId;
+      } else {
+        receiptObjectId = (await this.sendCommand(tabId, 'Runtime.evaluate', {
+          returnByValue: false,
+          expression: `(() => {
+            const find = root => {
+              const matches = root.querySelectorAll(${JSON.stringify(selector || ':not(*)')});
+              if (matches.length > 1) return null;
+              if (matches.length === 1) return matches[0];
+              for (const node of root.querySelectorAll('*')) if (node.shadowRoot) { const found = find(node.shadowRoot); if (found) return found; }
+              return null;
+            };
+            let active = document.activeElement; while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            return (${nativeTextClearReceipt.toString()})(${focused === true} ? active : find(document));
+          })()`,
+        }))?.result?.objectId;
+      }
+      if (!receiptObjectId) return null;
+      const invoke = async name => {
+        try {
+          const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', { objectId: receiptObjectId,
+            returnByValue: true, functionDeclaration: 'function (name) { return this[name](); }', arguments: [{ value: name }] });
+          return result?.result?.value === true;
+        } catch { return false; }
+      };
+      return {
+        current: () => invoke('current'), verify: () => invoke('verify'),
+        dispose: async () => { await invoke('dispose'); await this.releaseObject(tabId, receiptObjectId); },
+      };
+    } catch {
+      if (receiptObjectId) await this.releaseObject(tabId, receiptObjectId);
+      return null;
+    } finally {
+      if (targetObjectId) await this.releaseObject(tabId, targetObjectId);
+    }
   }
 
   /**
@@ -4941,7 +5231,8 @@ export class CDPClient {
         : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
       if (draftJs && semantic === null) return { found: true, verified: false };
       if (semantic !== null) expected = expected.replace(/\\r\\n?/g, '\\n');
-      const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
       const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
       const exactInsertion = () => {
         if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
@@ -4958,7 +5249,8 @@ export class CDPClient {
       return {
         found: true,
         verified: shouldClear
-          ? value === expected
+          ? value === expected && !(expected === '' && semantic === null && el.isContentEditable
+            && (el.innerText !== '' || el.querySelector('br')))
           : !!beforeSignature && exactInsertion(),
       };
     }`;
@@ -4985,7 +5277,7 @@ export class CDPClient {
         return null;
       } finally {
         if (objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -5026,7 +5318,8 @@ export class CDPClient {
         : ((${readProseMirrorText.toString()})(el) ?? (${readEmptyCaretText.toString()})(el));
         if (draftJs && semantic === null) return { found: true, verified: false };
         if (semantic !== null) expected = expected.replace(/\\r\\n?/g, '\\n');
-        const value = semantic !== null ? semantic : String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+        const value = semantic !== null ? semantic : String(el.isContentEditable
+        ? (el.textContent === '' && el.innerText === '\\n' ? '\\n' : (el.textContent || '')) : (el.value || ''));
         const signatureOf = ${TEXT_ENTRY_SIGNATURE_SOURCE};
         const exactInsertion = () => {
           if (value.length > ${TEXT_ENTRY_PROOF_MAX_CHARS}) return false;
@@ -5043,7 +5336,8 @@ export class CDPClient {
         return {
           found: true,
           verified: shouldClear
-            ? value === expected
+            ? value === expected && !(expected === '' && semantic === null && el.isContentEditable
+              && (el.innerText !== '' || el.querySelector('br')))
             : !!beforeSignature && exactInsertion(),
         };
       })()
@@ -5278,7 +5572,7 @@ export class CDPClient {
         });
         if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
         if (releaseObject && objectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+          this.releaseObject(tabId, objectId);
         }
       }
     }
@@ -5451,7 +5745,7 @@ export class CDPClient {
           }
         } finally {
           if (objectId) {
-            try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId }); } catch {}
+            this.releaseObject(tabId, objectId);
           }
         }
       } else {
@@ -5564,7 +5858,7 @@ export class CDPClient {
       }
       finally {
         if (focusObjectId) {
-          try { await this.sendCommand(tabId, 'Runtime.releaseObject', { objectId: focusObjectId }); } catch {}
+          this.releaseObject(tabId, focusObjectId);
         }
       }
     }
@@ -5596,97 +5890,101 @@ export class CDPClient {
       focused = focusResult?.result?.value === true;
     }
 
-    // Clear existing content if requested. Use Select All + Delete via key events
-    // so the page observes proper input events.
-    if (clear) {
-      try {
-        // Select all
-        const selectAllModifiers = await this.selectAllModifier(tabId);
+    const clearReceipt = clear ? await this.captureTextClearReceipt(tabId, { selector, nodeId: info.nodeId }) : null;
+    try {
+      // Clear existing content if requested. Use Select All + Delete via key events
+      // so the page observes proper input events.
+      if (clear) {
+        try {
+          // Select all
+          const selectAllModifiers = await this.selectAllModifier(tabId);
+          throwIfAborted();
+          dispatched = true;
+          await dispatchKeyPress({
+            key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
+          });
+          // Delete selection
+          await dispatchKeyPress({
+            key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+          });
+        } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
+          if (actionExpired()) throwIfAborted();
+          return {
+            success: false,
+            dispatched,
+            ...(dispatched ? {} : { noDispatch: true }),
+            verified: false,
+            mutationMayHaveOccurred: dispatched,
+            error: `Could not safely clear the text field: ${e?.message || String(e)}`,
+          };
+        }
+        const cleared = await this.verifyTextEntry(tabId, {
+          selector,
+          nodeId: info.nodeId,
+          text: '',
+          clear: true,
+        });
         throwIfAborted();
+        if ((clearReceipt && await clearReceipt.current() !== true)
+            || (cleared !== true && (String(text ?? '') === '' || await clearReceipt?.verify() !== true))) {
+          return {
+            success: false,
+            dispatched: true,
+            verified: false,
+            mutationMayHaveOccurred: true,
+            error: 'The existing field value could not be proven empty, so no replacement text was inserted.',
+          };
+        }
+      }
+
+      // Type via Input.insertText — atomic, fires beforeinput/input correctly.
+      try {
         dispatched = true;
-        await dispatchKeyPress({
-          key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
-        });
-        // Delete selection
-        await dispatchKeyPress({
-          key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-        });
+        markDispatch();
+        await this.sendCommand(tabId, 'Input.insertText', { text });
+        throwIfAborted();
       } catch (e) {
         if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) throwIfAborted();
         return {
           success: false,
-          dispatched,
-          ...(dispatched ? {} : { noDispatch: true }),
+          dispatched: true,
           verified: false,
-          mutationMayHaveOccurred: dispatched,
-          error: `Could not safely clear the text field: ${e?.message || String(e)}`,
+          mutationMayHaveOccurred: true,
+          error: `Text insertion outcome became uncertain: ${e?.message || String(e)}`,
         };
       }
-      const cleared = await this.verifyTextEntry(tabId, {
+
+      const verified = await this.verifyTextEntry(tabId, {
         selector,
         nodeId: info.nodeId,
-        text: '',
-        clear: true,
+        text,
+        clear,
+        beforeSignature,
       });
-      throwIfAborted();
-      if (cleared !== true) {
+      if (verified !== true) {
         return {
           success: false,
           dispatched: true,
           verified: false,
           mutationMayHaveOccurred: true,
-          error: 'The existing field value could not be proven empty, so no replacement text was inserted.',
+          error: 'Text was inserted, but the complete settled field value could not be verified exactly.',
         };
       }
-    }
-
-    // Type via Input.insertText — atomic, fires beforeinput/input correctly.
-    try {
-      dispatched = true;
-      markDispatch();
-      await this.sendCommand(tabId, 'Input.insertText', { text });
-      throwIfAborted();
-    } catch (e) {
-      if (e?.code === 'page_feedback_pending') throw e;
-      if (actionExpired()) throwIfAborted();
       return {
-        success: false,
-        dispatched: true,
-        verified: false,
-        mutationMayHaveOccurred: true,
-        error: `Text insertion outcome became uncertain: ${e?.message || String(e)}`,
+        success: true,
+        verified: true,
+        method: 'cdp-insert-text',
+        tag: info.tag,
+        rect: {
+          x: Math.round(info.x - (info.width || 1) / 2),
+          y: Math.round(info.y - (info.height || 1) / 2),
+          w: Math.round(info.width || 1),
+          h: Math.round(info.height || 1),
+        },
       };
-    }
-
-    const verified = await this.verifyTextEntry(tabId, {
-      selector,
-      nodeId: info.nodeId,
-      text,
-      clear,
-      beforeSignature,
-    });
-    if (verified !== true) {
-      return {
-        success: false,
-        dispatched: true,
-        verified: false,
-        mutationMayHaveOccurred: true,
-        error: 'Text was inserted, but the complete settled field value could not be verified exactly.',
-      };
-    }
-    return {
-      success: true,
-      verified: true,
-      method: 'cdp-insert-text',
-      tag: info.tag,
-      rect: {
-        x: Math.round(info.x - (info.width || 1) / 2),
-        y: Math.round(info.y - (info.height || 1) / 2),
-        w: Math.round(info.width || 1),
-        h: Math.round(info.height || 1),
-      },
-    };
+    } finally { await clearReceipt?.dispose(); }
   }
 
   /**

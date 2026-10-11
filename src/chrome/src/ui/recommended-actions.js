@@ -1,4 +1,5 @@
 import { isDirectPublicMediaUrl, isMastodonMediaPage } from '../agent/public-media-url.js';
+import { isCommunicationThreadContext } from '../agent/read-completeness.js';
 import { COUPON_MERCHANT_DOMAINS } from './coupon-domains.js';
 import { t } from './i18n.js';
 
@@ -277,6 +278,9 @@ function hasEmailThreadSignal(pageInfo = {}) {
 }
 
 function isCommunicationThread(pageInfo = {}, host = '', path = '/') {
+  if (/^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(host)) {
+    return isCommunicationThreadContext(pageInfo.url || '', 'telegram');
+  }
   const signal = communicationSignal(pageInfo);
   const route = `${pageInfo.url || ''} ${path}`;
   if (EMAIL_HOST_RE.test(host)) {

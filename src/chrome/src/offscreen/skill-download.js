@@ -170,6 +170,30 @@
     }
   }
 
+  let genericJobs = null;
+  const genericTypes = new Set(['authenticated-download-start', 'authenticated-download-status', 'authenticated-download-cancel', 'authenticated-download-forget', 'authenticated-download-release']);
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!genericTypes.has(message?.type)) return false;
+    if (sender?.id !== chrome.runtime.id || sender?.tab || sender?.url !== chrome.runtime.getURL('src/background.js')) {
+      sendResponse({ success: false, error: 'Authenticated download staging requires the extension background sender.' });
+      return false;
+    }
+    if (!/^[\da-f-]{36}$/i.test(String((message.type === 'authenticated-download-release' ? message.releaseToken : message.jobId) || ''))) {
+      sendResponse({ success: false, error: 'Invalid authenticated download job.' }); return false;
+    }
+    (async () => {
+      genericJobs ||= import('../network/download-staging.js').then(module => { const disk = module.createDiskDownloadStore(); return module.createAuthenticatedDownloadJobs(disk.stage, disk.release); });
+      const jobs = await genericJobs;
+      if (message.type === 'authenticated-download-start') return await jobs.start(message.jobId, message.url);
+      if (message.type === 'authenticated-download-release') { await jobs.release(message.releaseToken); return { success: true }; }
+      if (message.type === 'authenticated-download-status') return await jobs.status(message.jobId);
+      if (message.type === 'authenticated-download-cancel') await jobs.cancel(message.jobId);
+      if (message.type === 'authenticated-download-forget') await jobs.forget(message.jobId);
+      return { success: true };
+    })().then(sendResponse, error => sendResponse({ success: false, error: String(error?.message || error) }));
+    return true;
+  });
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'skill-download-prepare') {
       prepare(message).then(sendResponse);

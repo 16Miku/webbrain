@@ -166,10 +166,10 @@ rows.forEach((r,i)=> r.rank = r.is_reference ? '—' : i);
 
 function fmtPct(x){ return (x*100).toFixed(1)+'%'; }
 function fmtMs(x){ return Math.round(x).toLocaleString()+' ms'; }
-function fmtNum(x){ return (x||0).toLocaleString(); }
+function fmtNum(x){ const n = Number(x); return (Number.isFinite(n) ? n : 0).toLocaleString(); }
 function fmtUsd(x){ return '$'+(x||0).toFixed(4); }
 function shortModel(m){ return m.length>40 ? m.slice(0,38)+'…' : m; }
-function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function escapeHtml(s){ return String(s ?? '').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 // KPIs
 const bestMatch = others[0];
@@ -182,7 +182,7 @@ document.getElementById('kpis').innerHTML = [
   ['Furthest from Sonnet', shortModel(worstMatch.model), fmtPct(worstMatch.sonnet_match_rate)],
   ['Fastest local model', shortModel(fastest.model), fmtMs(fastest.avg_latency_ms)],
   ['Sonnet itself (100 cases)', SONNET, fmtUsd(sonnetRow.cost_usd)],
-].map(kv=> '<div class="kpi"><div class="lbl">'+kv[0]+'</div><div class="val">'+kv[2]+'</div><div class="sml">'+kv[1]+'</div></div>').join('');
+].map(kv=> '<div class="kpi"><div class="lbl">'+escapeHtml(kv[0])+'</div><div class="val">'+escapeHtml(kv[2])+'</div><div class="sml">'+escapeHtml(kv[1])+'</div></div>').join('');
 
 function rankBadge(r,key){
   if (r.is_reference && key !== 'avg_latency_ms') return '<span class="badge ref">'+fmtPct(r[key])+'</span>';

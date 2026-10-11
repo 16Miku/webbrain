@@ -42,7 +42,7 @@ async function fixture(kind, engine, Agent, options = {}) {
     window.sent = 0;
     document.querySelector('#send').addEventListener('click', () => window.sent++);
   });
-  for (const file of ['rich-text-toolbar-heuristic.js', 'accessibility-tree.js', 'content.js']) {
+  for (const file of ['file-upload-policy.js', 'rich-text-toolbar-heuristic.js', 'accessibility-tree.js', 'content.js']) {
     await page.addScriptTag({ content: await readFile(path.resolve('src', kind, 'src/content', file), 'utf8') });
   }
   const agent = new Agent({ getActive: () => ({ supportsVision: false }) });
@@ -294,7 +294,7 @@ for (const [kind, engine, Agent] of [['chrome', chromium, ChromeAgent], ['firefo
       assert.equal(blocked, null, JSON.stringify(blocked));
       const result = await call(f.page, 'attach_message_recipient_bound_upload', {
         selector: '#file', ...context, uploadSourceKey: context.messageRecipientUploadSourceKey,
-        filename: 'fixture.png', mimeType: 'image/png', base64: Buffer.from('synthetic image bytes').toString('base64'),
+        filename: 'fixture.png', mimeType: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS3kAAAAASUVORK5CYII=',
       });
       assert.equal(result.success, true, JSON.stringify(result));
       assert.equal(result.verified, false);
