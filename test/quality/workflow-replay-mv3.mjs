@@ -19,9 +19,24 @@ const runtimeValue = 'PARAMETER_QA_2026_ıİşŞğĞüÜöÖçÇ_中文_😀_<li
 const runtimeSecret = 'RUNTIME_PRIVATE_PARAMETER_ONLY_456';
 const fixtureKey = 'owned-fixture-provider-key-never-export';
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
-function html(url) {
-  const generation = url.searchParams.get('generation') || 'demonstration';
-  const mode = url.searchParams.get('mode') || 'normal';
+function fixtureGeneration(value) {
+  switch (value) {
+    case null: case '': case 'demonstration': return 'demonstration';
+    case 'fresh-replay': return 'fresh-replay';
+    case 'stop-before-submit': return 'stop-before-submit';
+    case 'explicit-new-replay': return 'explicit-new-replay';
+    case 'uncertain-value': return 'uncertain-value';
+    default: return null;
+  }
+}
+function fixtureMode(value) {
+  switch (value) {
+    case null: case '': case 'normal': return 'normal';
+    case 'uncertain': return 'uncertain';
+    default: return null;
+  }
+}
+function html(generation, mode) {
   return `<!doctype html><meta charset="utf-8"><title>Owned workflow QA</title>
   <style>body{font:16px system-ui;margin:24px}input,button{font:inherit;margin:8px;padding:8px}label{display:block}</style>
   <h1>Owned workflow QA</h1><p>Document generation ${generation}</p>
@@ -60,7 +75,13 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(503, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: { message: 'Deterministic workflow fixture must not need model fallback.', code: 'owned_fixture_unavailable' } })); return;
   }
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html(url));
+  const generation = fixtureGeneration(url.searchParams.get('generation'));
+  const mode = fixtureMode(url.searchParams.get('mode'));
+  if (generation === null || mode === null) {
+    res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end('{"error":"Unsupported workflow fixture preset."}'); return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html(generation, mode));
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
@@ -79,6 +100,33 @@ try {
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const extensionId = new URL(worker.url()).host;
+  const rejectedPresets = [
+    { name: 'generation-html-script', query: { generation: '<script>globalThis.qaInjected=true</script>' } },
+    { name: 'generation-attribute', query: { generation: '\" autofocus onfocus=\"globalThis.qaInjected=true' } },
+    { name: 'generation-script-boundary', query: { generation: '</ScRiPt><script>globalThis.qaInjected=true</script>' } },
+    { name: 'mode-script-boundary', query: { mode: '</script><script>globalThis.qaInjected=true</script>' } },
+    { name: 'unknown-generation', query: { generation: 'unknown-preset' } },
+    { name: 'unknown-mode', query: { mode: 'unknown-mode' } },
+  ];
+  const rejectionPage = await context.newPage();
+  try {
+    for (const { name, query } of rejectedPresets) {
+      const response = await rejectionPage.goto(`${base}/form?${new URLSearchParams(query)}`);
+      assert.equal(response.status(), 400, name);
+      assert.match(response.headers()['content-type'], /^application\/json\b/i, name);
+      const body = await response.text();
+      assert.equal(body, '{"error":"Unsupported workflow fixture preset."}', name);
+      for (const value of Object.values(query)) assert.equal(body.includes(value), false, name);
+      const rendered = await rejectionPage.evaluate(() => ({ injected: globalThis.qaInjected === true,
+        forms: document.querySelectorAll('form').length }));
+      assert.equal(rendered.injected, false, name);
+      assert.equal(rendered.forms, 0, name);
+    }
+  } finally { await rejectionPage.close(); }
+  assert.equal(posts.length, 0, 'Rejected presets cannot submit a form.');
+  assert.equal(providerRequests.length, 0, 'Rejected presets cannot call the provider.');
+  cases.push({ name: 'untrusted-fixture-presets-rejected', passed: true, negativeQueries: rejectedPresets.length,
+    status: 400, reflectedQueryValues: false, executedInjectedScript: false });
   harness = await context.newPage(); await harness.goto(`chrome-extension://${extensionId}/src/ui/settings.html`);
   const message = async (action, data = {}) => {
     const pending = harness.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
