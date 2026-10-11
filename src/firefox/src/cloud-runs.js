@@ -3,6 +3,7 @@ import {
   finalizeSavedWorkflowDraft,
   normalizeSavedWorkflow,
 } from './agent/workflows.js';
+import { normalizeTaskMemory, redactBotMemoryValue } from './agent/bot-memory.js';
 import { isCredentialField } from './agent/credential-fields.js';
 import { validateResumeArgs } from './agent/scheduler.js';
 import { PRIVATE_RESULT_TYPE, importPrivateResultRecipient, encryptPrivateResult } from './private-results.js';
@@ -62,6 +63,44 @@ const SENSITIVE_URL_PATH_LABELS = new Set([
 
 function cloudRunError(message, status) {
   return Object.assign(new Error(message), { status });
+}
+
+function normalizeCloudTaskMemory(msg) {
+  const values = [msg.taskMemory, msg.task_memory].filter(value => value !== undefined);
+  if (!values.length) return null;
+  try {
+    if (values.some(value => value === null)
+        || (values.length === 2 && JSON.stringify(values[0]) !== JSON.stringify(values[1]))) throw new Error();
+    return normalizeTaskMemory(values[0]);
+  } catch {
+    throw cloudRunError('Invalid private task memory configuration.', 400);
+  }
+}
+
+async function cloudMemoryOwner(memory) {
+  if (!memory) return null;
+  const digest = async (field, value) => {
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`bot-memory-owner-v1:${field}:${value}`));
+    return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, '0')).join('');
+  };
+  return { version: 1, botIdHash: await digest('bot', memory.botId),
+    runIdHash: await digest('run', memory.runId), callbackTokenHash: await digest('token', memory.callbackToken) };
+}
+
+function assertMemoryContinuation(parent, owner) {
+  if (!parent?.memoryProtected && !owner) return;
+  const previous = parent?.memoryOwner;
+  if (!parent?.memoryProtected || previous?.version !== 1
+      || !['botIdHash', 'runIdHash', 'callbackTokenHash'].every(key => /^[a-f0-9]{64}$/.test(previous[key] || ''))) {
+    throw cloudRunError('Protected continuation identity is unavailable. Start an independent task.', 409);
+  }
+  if (!owner) throw cloudRunError('A protected continuation requires fresh private task memory.', 409);
+  if (owner.botIdHash !== previous.botIdHash) {
+    throw cloudRunError('A protected continuation must belong to the same bot.', 409);
+  }
+  if (owner.runIdHash === previous.runIdHash || owner.callbackTokenHash === previous.callbackTokenHash) {
+    throw cloudRunError('A protected continuation requires a new run-scoped memory envelope.', 409);
+  }
 }
 
 export function normalizeCloudRunMode(value, fallback = 'act') {
@@ -600,6 +639,8 @@ function compactCloudRunForPersistence(run) {
     traceRunId: run?.traceRunId || null,
     parentRunId: run?.parentRunId || null,
     conversationKey: run?.conversationKey || null,
+    memoryProtected: run?.memoryProtected === true,
+    memoryOwner: run?.memoryOwner || null,
     providerId: run?.providerId || null,
     expectedModel: run?.expectedModel || null,
     mode: run?.mode || 'act',
@@ -722,6 +763,9 @@ export function createCloudRunController({
   const startingRunIds = new Set();
   const startingConversations = new Set();
   const runAbortControllers = new Map();
+  // Private envelopes live only for the active handle, outside snapshots and
+  // session persistence. Only hashed identity binding survives a restart.
+  const memoryConfigurations = new Map();
   let hydratePromise = null;
   let persistQueue = Promise.resolve();
   let persistTimer = null;
@@ -938,6 +982,8 @@ export function createCloudRunController({
   }
 
   function pushUpdate(run, type, data, runtimeValues = []) {
+    const memory = memoryConfigurations.get(run.runId);
+    if (memory) data = redactBotMemoryValue(data, memory, { includeContext: true });
     run.updatedAt = isoNow();
     const previous = run.updates.at(-1);
     const strictSecretMode = privateRecipients.has(run.runId) || agent.strictSecretMode === true;
@@ -1073,11 +1119,14 @@ export function createCloudRunController({
   }
 
   async function startRun(msg = {}) {
+    const taskMemory = normalizeCloudTaskMemory(msg);
+    if (taskMemory && msg._workflow) throw cloudRunError('Memory-protected tasks require ordinary guarded browser execution.', 409);
+    const memoryOwner = await cloudMemoryOwner(taskMemory);
     const key = msg.conversationKey ?? msg.conversation_key;
     if (key != null && startingConversations.has(key)) throw cloudRunError('Conversation is already starting.', 409);
     if (key != null) startingConversations.add(key);
     const startup = { createdTabId: null };
-    try { return await startRunReserved(msg, startup); }
+    try { return await startRunReserved(msg, startup, taskMemory, memoryOwner); }
     catch (error) {
       // A rejected start has no run owner to clean up a newly created helper.
       // Track creation explicitly so borrowed user/conversation tabs survive.
@@ -1087,12 +1136,19 @@ export function createCloudRunController({
         try { await api.tabs.remove(startup.createdTabId); } catch { /* already closed */ }
         finally { startingTabs.delete(startup.createdTabId); }
       }
+      if (taskMemory) {
+        // Rebuild the error: changing message alone leaves its original stack
+        // and extra fields available to background diagnostics.
+        const safe = cloudRunError(redactBotMemoryValue(error?.message || String(error), taskMemory, { includeContext: true }), error?.status);
+        if (typeof error?.code === 'string') safe.code = redactBotMemoryValue(error.code, taskMemory);
+        throw safe;
+      }
       throw error;
     }
     finally { if (key != null) startingConversations.delete(key); }
   }
 
-  async function startRunReserved(msg = {}, startup = null) {
+  async function startRunReserved(msg = {}, startup = null, taskMemory = null, memoryOwner = null) {
     await hydrate();
     const recipient = msg.private_result_public_key == null
       ? null : await importPrivateResultRecipient(msg.private_result_public_key);
@@ -1100,6 +1156,7 @@ export function createCloudRunController({
     const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
     const savedParent = parentRunId ? runs.get(parentRunId) : null;
+    if (parentRunId) assertMemoryContinuation(savedParent, memoryOwner);
     const providerId = msg.providerId ?? msg.provider_id ?? savedParent?.providerId ?? null;
     const expectedModel = msg.expectedModel ?? msg.expected_model ?? savedParent?.expectedModel ?? null;
     if (providerId != null || expectedModel != null) {
@@ -1129,6 +1186,7 @@ export function createCloudRunController({
       // A fresh root resets only its own conversation; child messages retain it.
       const previous = [...runs.values()].filter(run => run.conversationKey === conversationKey)
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+      if (previous) assertMemoryContinuation(previous, memoryOwner);
       let tab = previous ? await api.tabs.get(previous.tabId).catch(() => null) : null;
       if (!isUsableCloudTab(tab)) {
         tab = await api.tabs.create({ url: 'about:blank', active: true });
@@ -1157,7 +1215,10 @@ export function createCloudRunController({
     const mode = workflow ? 'act' : normalizeCloudRunMode(msg.mode, parentRun?.mode || 'act');
     const workflowParameters = msg._workflowParameters || {};
     const workflowParameterValues = workflow ? Object.values(workflowParameters) : [];
-    const redactWorkflowValue = value => redactWorkflowRuntimeValues(value, workflowParameterValues);
+    const redactWorkflowValue = value => {
+      const redacted = redactWorkflowRuntimeValues(value, workflowParameterValues);
+      return taskMemory ? redactBotMemoryValue(redacted, taskMemory, { includeContext: true }) : redacted;
+    };
     const task = workflow
       ? `Run saved workflow: ${workflow.name}`
       : String(msg.task || msg.text || '').trim();
@@ -1204,15 +1265,17 @@ export function createCloudRunController({
       conversationKey: conversationKey || parentRun?.conversationKey || null,
       providerId,
       expectedModel,
+      memoryProtected: !!taskMemory,
+      memoryOwner,
       status: 'running',
       workflowId: workflow?.id || null,
       traceRunId: null,
       parentRunId,
       mode,
       tabId,
-      task,
+      task: redactWorkflowValue(task),
       structured,
-      outputSchema,
+      outputSchema: redactWorkflowValue(outputSchema),
       capture: msg.capture === 'video' ? 'video' : 'none',
       result: undefined,
       summary: '',
@@ -1227,6 +1290,7 @@ export function createCloudRunController({
       completedAt: null,
     };
     runs.set(run.runId, run);
+    if (taskMemory) memoryConfigurations.set(run.runId, taskMemory);
     startingRunIds.delete(runId);
     if (recipient) privateRecipients.set(run.runId, recipient);
     const runController = new AbortController();
@@ -1245,6 +1309,7 @@ export function createCloudRunController({
       runs.delete(run.runId);
       runAbortControllers.delete(runId);
       privateRecipients.delete(run.runId);
+      memoryConfigurations.delete(run.runId);
       startingTabs.delete(tabId);
       throw error;
     }
@@ -1292,14 +1357,11 @@ export function createCloudRunController({
         checkCancellation();
         if (grantApiMutationsForRun) agent.setTemporaryApiMutationsAllowed(tabId, true);
         sendIndicator(tabId, 'WB_SHOW_AGENT_INDICATORS');
-        const publishUpdate = (type, data) => pushUpdate(
-          run,
-          type,
-          workflow && type === 'text_delta'
-            ? { ...(data || {}), content: '[workflow output redacted]' }
-            : data,
-          workflowParameterValues,
-        );
+        const publishUpdate = (type, data) => {
+          if (taskMemory && memoryConfigurations.get(run.runId) !== taskMemory) return;
+          pushUpdate(run, type, workflow && type === 'text_delta'
+            ? { ...(data || {}), content: '[workflow output redacted]' } : data, workflowParameterValues);
+        };
         let content;
         if (workflow) {
           const replay = await agent.replaySavedWorkflow(
@@ -1344,6 +1406,7 @@ export function createCloudRunController({
             content = await agent.processMessage(tabId, prompt, publishUpdate, mode, [], {
               cloudRun: true,
               privateFinalResult: !!recipient,
+              ...(taskMemory ? { taskMemory } : {}),
               ...(providerId == null ? {} : { providerId }),
               independentRun: !continuation,
               trustedContinuation: continuation,
@@ -1451,7 +1514,7 @@ export function createCloudRunController({
             // until the encrypted result is ready, or release the browser lock.
             const terminalStatus = run.status;
             run.status = 'running';
-            const privateResult = await encryptPrivateResult(recipient, run.runId, raw);
+            const privateResult = await encryptPrivateResult(recipient, run.runId, redactWorkflowValue(raw));
             if (run.status === 'aborting') {
               run.status = 'aborted';
               run.error = run.error || 'Aborted by cloud_abort.';
@@ -1511,6 +1574,7 @@ export function createCloudRunController({
         strictTraceValues.delete(run.runId);
         strictSecretOverflowRuns.delete(run.runId);
         strictTraceOverflowRuns.delete(run.runId);
+        memoryConfigurations.delete(run.runId);
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
         // Recording flush is still owned by this run. Keep the tab reserved
         // through all cleanup so aborting a nonterminal capture cannot cancel
@@ -1554,6 +1618,9 @@ export function createCloudRunController({
     if (!run) return { ok: false, status: 404, reason: 'run_not_found', warnings: [] };
     if (run.workflowId) {
       return { ok: false, status: 422, reason: 'workflow_run_not_compilable', warnings: [] };
+    }
+    if (run.memoryProtected) {
+      return { ok: false, status: 409, reason: 'memory_protected_workflow_unsupported', warnings: [] };
     }
     if (run.status !== 'completed') {
       return { ok: false, status: 409, reason: 'successful_run_required', warnings: [] };
