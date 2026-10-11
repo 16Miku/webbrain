@@ -445,6 +445,89 @@ export async function readCaptchaFrameUserAgent(tabId, frameId) {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
+// document_start captures callbacks for widgets rendered during page load.
+// Also ensure the bridge exists for older tabs and inherited-origin fallbacks.
+const CAPTCHA_CALLBACK_BRIDGE_FILE = 'src/content/captcha-callback-bridge.js';
+// Wait once for late renders or callback registration. After a successful
+// field application, the retry only discovers and invokes callbacks.
+const CAPTCHA_BRIDGE_SETTLE_RETRY_MS = 1500;
+// scripting.executeScript resolves `files` relative to the calling
+// document on Firefox MV2 (not the extension root), so the file path
+// below is root-absolute. Chrome resolves relative to the root.
+const CAPTCHA_CALLBACK_BRIDGE_SCRIPT_FILE = '/src/content/captcha-callback-bridge.js';
+
+// Self-contained for MAIN-world scripting and the MV2 tag fallback. The
+// injectable frameId can identify an ancestor of a srcdoc/about:blank widget.
+async function installCaptchaCallbackBridgeInPage(target, src) {
+  let frameDocument = document;
+  let frameWindow = window;
+  try {
+    for (const segment of Array.isArray(target?.framePath) ? target.framePath : []) {
+      const element = Array.from(frameDocument.querySelectorAll('iframe'))[segment.index];
+      const nextDocument = element?.contentDocument;
+      const nextWindow = element?.contentWindow;
+      if (!nextDocument || !nextWindow
+          || (segment.frameUrl && String(nextWindow.location.href) !== segment.frameUrl)
+          || (segment.frameName && String(nextWindow.name || element.name || '') !== segment.frameName)) return false;
+      frameDocument = nextDocument;
+      frameWindow = nextWindow;
+    }
+    if (target?.frameUrl && String(frameWindow.location.href) !== target.frameUrl) return false;
+    if (Number.isFinite(target?.documentTimeOrigin)
+        && frameWindow.performance.timeOrigin !== target.documentTimeOrigin) return false;
+    const pageWindow = frameWindow.wrappedJSObject || frameWindow;
+    if (pageWindow.__webbrainCaptchaCallbacks) return true;
+    // Await the script before provider dispatch or token application; merely
+    // appending it leaves a race with render() in the descendant document.
+    return await new Promise(resolve => {
+      const script = frameDocument.createElement('script');
+      const finish = success => { clearTimeout(timer); script.remove(); resolve(success); };
+      const timer = setTimeout(() => finish(false), 2000);
+      script.onload = () => finish(!!pageWindow.__webbrainCaptchaCallbacks);
+      script.onerror = () => finish(false);
+      script.src = src;
+      (frameDocument.head || frameDocument.documentElement).appendChild(script);
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
+export async function ensureCaptchaCallbackBridge(tabId, target = null, api = globalThis.browser || globalThis.chrome) {
+  const frameIds = Number.isInteger(target?.frameId) ? [target.frameId] : null;
+  const hasFramePath = Array.isArray(target?.framePath) && target.framePath.length > 0;
+  try {
+    if (typeof api.scripting?.executeScript === 'function') {
+      const results = await api.scripting.executeScript({
+        target: frameIds ? { tabId, frameIds } : { tabId, allFrames: true },
+        world: 'MAIN',
+        ...(hasFramePath ? {
+          func: installCaptchaCallbackBridgeInPage,
+          args: [target, api.runtime.getURL(CAPTCHA_CALLBACK_BRIDGE_FILE)],
+        } : { files: [CAPTCHA_CALLBACK_BRIDGE_SCRIPT_FILE] }),
+      });
+      if (hasFramePath) return results?.some(entry => entry.result === true) === true;
+      return true;
+    }
+  } catch (_) { /* fall through to tag injection */ }
+  try {
+    // Runtimes without the scripting API: run the bridge through a page
+    // <script> tag so it still executes in MAIN world. Page CSP may block
+    // it; fail-open.
+    const src = api.runtime.getURL(CAPTCHA_CALLBACK_BRIDGE_FILE);
+    const code = `(${installCaptchaCallbackBridgeInPage.toString()})(${JSON.stringify(target)}, ${JSON.stringify(src)})`;
+    let results;
+    if (frameIds) {
+      results = await api.tabs.executeScript(tabId, { frameId: frameIds[0], matchAboutBlank: true, code });
+    } else {
+      results = await api.tabs.executeScript(tabId, { allFrames: true, matchAboutBlank: true, code });
+    }
+    return results?.some(result => result === true) === true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export async function injectToken(tabId, {
   fieldName,
   alsoSet,
@@ -470,9 +553,11 @@ export async function injectToken(tabId, {
     callbackHint,
     target: target || {},
   };
-  const code = `(() => {
+  // Best-effort fallback for documents without the early content script.
+  await ensureCaptchaCallbackBridge(tabId, target);
+  const injectionCode = callbackOnly => `(() => {
     const inject = ${injectCaptchaTokenInPage.toString()};
-    const payload = ${JSON.stringify(pagePayload)};
+    const payload = ${JSON.stringify({ ...pagePayload, callbackOnly })};
     let frameDocument = typeof document !== 'undefined' ? document : null;
     let frameWindow = typeof window !== 'undefined' ? window : globalThis;
     for (const segment of Array.isArray(payload?.target?.framePath) ? payload.target.framePath : []) {
@@ -515,26 +600,54 @@ export async function injectToken(tabId, {
     }
     return inject(payload, { document: frameDocument, window: frameWindow });
   })()`;
-  const details = Number.isInteger(target?.frameId)
-    ? { code, frameId: target.frameId, matchAboutBlank: true }
-    : { code, ...(target?.frameUrl ? { allFrames: true } : {}) };
-  const results = await browser.tabs.executeScript(tabId, details);
-  const outputs = (results || []).filter(Boolean);
-  const successes = outputs.filter(output => output.success === true);
-  if (successes.length === 1) {
-    return {
-      ...successes[0],
-      frameId: Number.isInteger(target?.frameId) ? target.frameId : null,
-    };
+  const runOnce = async (callbackOnly = false) => {
+    const code = injectionCode(callbackOnly);
+    const details = Number.isInteger(target?.frameId)
+      ? { code, frameId: target.frameId, matchAboutBlank: true }
+      : { code, ...(target?.frameUrl ? { allFrames: true } : {}) };
+    const results = await browser.tabs.executeScript(tabId, details);
+    const outputs = (results || []).filter(Boolean);
+    const successes = outputs.filter(output => output.success === true);
+    if (successes.length === 1) {
+      return {
+        ...successes[0],
+        frameId: Number.isInteger(target?.frameId) ? target.frameId : null,
+      };
+    }
+    if (successes.length > 1) {
+      return {
+        success: false,
+        ambiguousTarget: true,
+        error: 'Token injection matched more than one frame; pass an exact frameUrl.',
+        matchedFrames: successes.map(output => ({ frameUrl: output.frameUrl })),
+      };
+    }
+    return outputs.find(output => !output.skipped)
+      || { success: false, error: 'injection script returned no matching frame result' };
+  };
+  const first = await runOnce();
+  // A clean miss means the widget may be rendering right now: no callback
+  // was invoked and either no callbacks were found or the widget's field /
+  // site key was absent while the frame identity itself matched
+  // (staleTarget without skipped). Frame-identity staleness (skipped),
+  // ambiguity, and target errors cannot resolve by waiting.
+  const cleanMiss = !first?.calledCallback
+    && (first?.callbackCandidates === 0 || first?.staleTarget === true)
+    && !first?.skipped && !first?.ambiguousTarget && !first?.targetRequired;
+  if (cleanMiss) {
+    await new Promise(resolve => setTimeout(resolve, CAPTCHA_BRIDGE_SETTLE_RETRY_MS));
+    if (!first.success) return { ...(await runOnce()), bridgeSettleRetried: true };
+    // Field events may have completed the challenge and removed its widget or
+    // navigated the frame. Preserve that application even if discovery fails.
+    try {
+      const retry = await runOnce(true);
+      if (retry.success) {
+        return { ...retry, fieldUpdated: first.fieldUpdated,
+          fieldsUpdated: first.fieldsUpdated, fieldsTouched: first.fieldsTouched,
+          bridgeSettleRetried: true };
+      }
+    } catch (_) { /* The successful application may have navigated the page. */ }
+    return { ...first, bridgeSettleRetried: true };
   }
-  if (successes.length > 1) {
-    return {
-      success: false,
-      ambiguousTarget: true,
-      error: 'Token injection matched more than one frame; pass an exact frameUrl.',
-      matchedFrames: successes.map(output => ({ frameUrl: output.frameUrl })),
-    };
-  }
-  return outputs.find(output => !output.skipped)
-    || { success: false, error: 'injection script returned no matching frame result' };
+  return first;
 }

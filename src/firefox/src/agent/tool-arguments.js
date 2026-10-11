@@ -186,7 +186,10 @@ export function validateToolArguments(toolName, args, parameters) {
   const failures = [];
   validateValue(normalizedArgs, closedParameters, '$', failures);
   if (failures.length) {
-    return validationFailure(toolName, failures, `Invalid or undeclared argument(s): ${[...new Set(failures)].join(', ')}.`);
+    const enumGuidance = Object.entries(closedParameters.properties || {})
+      .filter(([key, schema]) => failures.includes(`$.${key}`) && Array.isArray(schema.enum))
+      .map(([key, schema]) => `${key} must be one of ${JSON.stringify(schema.enum)}.`).join(' ');
+    return validationFailure(toolName, failures, `Invalid or undeclared argument(s): ${[...new Set(failures)].join(', ')}. ${enumGuidance}`.trim());
   }
   if (toolName === 'get_accessibility_tree') {
     const refs = [['$.ref_id', normalizedArgs.ref_id],

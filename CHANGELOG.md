@@ -152,7 +152,88 @@ The complete dated audit, including earlier failures, tracked effects and verifi
 - Fixed page feedback attribution and monitoring for keyboard actions, shadow DOM, forms, redirects, stylesheets, frames, and animated page changes.
 - Fixed completion evidence freshness and scope so unrelated or stale page changes cannot satisfy a run.
 
-## [39.2.0] - 2026-10-07
+## [39.2.2] - 2026-10-10
+
+### Changed
+- test(feedback): wait safely for asynchronous submission result
+- fix(captcha): resolve Firefox bridge script from extension root
+- fix(captcha): persist bridge registration across restarts
+- fix(captcha): scope callback bridge to enabled providers
+
+## [39.2.1] - 2026-10-10
+
+### Changed
+- chore: bump version to 39.2.0
+- fix(captcha): preserve callback completion and retries
+- feat(providers): add Claude Sonnet 5.5 and Haiku 5.5 support to Anthropic provider
+- docs(faq): localize subscription-unrecognized, emergency-box and offline-licensing in all locales
+- docs(faq): add paid-but-asks-again subscription entry, promote workflow-editor to locale sources
+
+## [39.2.0] - 2026-10-10
+
+### Fixed
+- Preserve CAPTCHA completion callbacks for widgets rendered during page load in Chrome and Firefox.
+- Prevent callback retries from replaying response-field events or replacing a successful field application.
+- Install the Firefox callback bridge in the detected inherited-origin descendant frame.
+
+## [39.1.4] - 2026-10-09
+
+### Changed
+- Complete release locale coverage and requested local provider label
+- Remove retired CAPTCHA locale keys required by release checks
+- Match local WebGPU bundle to its native runtime factory
+- Pin renamed d1 browser decision package
+- Use service-worker-safe imports and guarded local decision diagnostics
+- Add opt-in pinned FP32 local decision provider
+- feat(providers): support custom titles and unlimited duplicates
+- Exclude mutable accounting metadata from feedback snapshots
+- Freeze feedback traces when the rating prompt opens
+- Publish Ling 3.0 Flash VL budget vision benchmark and raw results
+- Attach feedback traces to GitHub drafts with explicit consent
+- Bound rejected WebMCP registration retries and explain DOM recovery
+- Add Ling and Nex historical planner panel and prepare matched vision replay
+- fix(agent): propagate completion cost stops to scheduled jobs
+- Add Ling 3.1 Flash planner benchmark and blog comparison
+- fix(agent): isolate completion evidence to the active run
+- fix(agent): scope completion freshness to shared evidence
+- fix(agent): fingerprint complete UTF-16 document text
+- fix(agent): verify moving visual evidence with fresh AX
+- fix(agent): preserve completion fallback and evidence freshness
+- feat(agent): verify completion with decision models and fresh evidence
+- Recover rate-limited browser inference without replaying tools
+- Consume final-step steering before terminating a run
+- Reset superseded skills before steering reauthorization
+- Hide unconfigured media generation tools and guidance
+- Skip superseded planner recommendations and allow form-free image previews
+- Preserve recovery task hashes and recognize localized LinkedIn previews
+- Preserve steering through emergency trims and initial responses
+- version up
+- build(deps): bump @modelcontextprotocol/sdk in /mcp-server
+- Fix media service-worker imports and support OpenRouter videos
+- Fix steering reauthorization and LinkedIn message inspection
+- version up
+- Add OpenRouter and Comfy media providers
+- Add Turkish README translation for WebBrain
+- version up
+- fix: accept successful fal.ai generation as completion evidence
+- fix: honor GPT-6.1 and Opus 5.5 contracts
+- feat: add GPT-6.1 Sol and Claude Opus 5.5
+- Unify bridge controls in Bridge tab with preset pills, queue shortcut, and full localization
+- Translate composer delivery setting in all locales
+- Simplify steering controls and add default delivery setting
+- chore: release v39.0.0
+- build(deps): bump multidict
+- build(deps): bump multidict
+- build(deps): bump proxy-addr
+- build(deps): bump proxy-addr from 2.0.7 to 2.0.8 in /mcp-server
+- Add optional steering to active chat runs
+- Benchmark Ling 3.0 Flash VL against Nex-N2.5 and MiniMax M3
+- fix: harden fal.ai media generation
+- chore: uncomment the .gitignore
+- fix: match source-inspection regexes in chrome background.js
+- feat: add fal.ai generative media tool to the assistant
+
+## [39.2.0-preview] - 2026-10-07
 
 ### Added
 - Added generative media creation with fal.ai, OpenRouter, and Comfy providers, including video support and safer provider handling.
@@ -200,9 +281,7 @@ The complete dated audit, including earlier failures, tracked effects and verifi
 - Announce SafeSocial on Google Play
 - Run release fixtures and finish portable browser test support
 - feat(providers): add Freebuff2API integration
-- fix(providers): correct DemonRoute card, ordering, tests and docs
 - Keep Cloud continuations tracked and report actual completion outcomes
-- Add DemonRoute as a built-in provider card
 - Address review regressions in text targeting and LinkedIn guards
 - Preserve guarded key dispatch and portable browser regression checks
 - Fix composer detection and eligible text click preference

@@ -383,6 +383,29 @@ export async function readCaptchaFrameUserAgent(tabId, frameId) {
 
 // ─── Token injection ───────────────────────────────────────────────────
 
+// document_start captures callbacks for widgets rendered during page load.
+// Also ensure the bridge exists for older tabs and inherited-origin fallbacks.
+const CAPTCHA_CALLBACK_BRIDGE_FILE = 'src/content/captcha-callback-bridge.js';
+// Wait once for late renders or callback registration. After a successful
+// field application, the retry only discovers and invokes callbacks.
+const CAPTCHA_BRIDGE_SETTLE_RETRY_MS = 1500;
+
+export async function ensureCaptchaCallbackBridge(tabId, target = null) {
+  try {
+    const targetSpec = Number.isInteger(target?.frameId)
+      ? { tabId, frameIds: [target.frameId] }
+      : { tabId, allFrames: true };
+    await chrome.scripting.executeScript({
+      target: targetSpec,
+      world: 'MAIN',
+      files: [CAPTCHA_CALLBACK_BRIDGE_FILE],
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
 export async function injectToken(tabId, {
   fieldName,
   alsoSet,
@@ -411,26 +434,55 @@ export async function injectToken(tabId, {
   const targetSpec = Number.isInteger(target?.frameId)
     ? { tabId, frameIds: [target.frameId] }
     : (target?.frameUrl ? { tabId, allFrames: true } : { tabId });
-  const results = await chrome.scripting.executeScript({
-    target: targetSpec,
-    world: 'MAIN',
-    args: [pagePayload],
-    func: injectCaptchaTokenInPage,
-  });
-  const outputs = (results || []).map(entry => ({
-    ...(entry?.result || {}),
-    frameId: Number.isInteger(entry?.frameId) ? entry.frameId : null,
-  }));
-  const successes = outputs.filter(output => output.success === true);
-  if (successes.length === 1) return successes[0];
-  if (successes.length > 1) {
-    return {
-      success: false,
-      ambiguousTarget: true,
-      error: 'Token injection matched more than one frame; pass an exact frameUrl.',
-      matchedFrames: successes.map(output => ({ frameId: output.frameId, frameUrl: output.frameUrl })),
-    };
+  // Best-effort fallback for documents without the early content script.
+  await ensureCaptchaCallbackBridge(tabId, target);
+  const runOnce = async (callbackOnly = false) => {
+    const results = await chrome.scripting.executeScript({
+      target: targetSpec,
+      world: 'MAIN',
+      args: [{ ...pagePayload, callbackOnly }],
+      func: injectCaptchaTokenInPage,
+    });
+    const outputs = (results || []).map(entry => ({
+      ...(entry?.result || {}),
+      frameId: Number.isInteger(entry?.frameId) ? entry.frameId : null,
+    }));
+    const successes = outputs.filter(output => output.success === true);
+    if (successes.length === 1) return successes[0];
+    if (successes.length > 1) {
+      return {
+        success: false,
+        ambiguousTarget: true,
+        error: 'Token injection matched more than one frame; pass an exact frameUrl.',
+        matchedFrames: successes.map(output => ({ frameId: output.frameId, frameUrl: output.frameUrl })),
+      };
+    }
+    return outputs.find(output => !output.skipped)
+      || { success: false, error: 'injection script returned no matching frame result' };
+  };
+  const first = await runOnce();
+  // A clean miss means the widget may be rendering right now: no callback
+  // was invoked and either no callbacks were found or the widget's field /
+  // site key was absent while the frame identity itself matched
+  // (staleTarget without skipped). Frame-identity staleness (skipped),
+  // ambiguity, and target errors cannot resolve by waiting.
+  const cleanMiss = !first?.calledCallback
+    && (first?.callbackCandidates === 0 || first?.staleTarget === true)
+    && !first?.skipped && !first?.ambiguousTarget && !first?.targetRequired;
+  if (cleanMiss) {
+    await new Promise(resolve => setTimeout(resolve, CAPTCHA_BRIDGE_SETTLE_RETRY_MS));
+    if (!first.success) return { ...(await runOnce()), bridgeSettleRetried: true };
+    // Field events may have completed the challenge and removed its widget or
+    // navigated the frame. Preserve that application even if discovery fails.
+    try {
+      const retry = await runOnce(true);
+      if (retry.success) {
+        return { ...retry, fieldUpdated: first.fieldUpdated,
+          fieldsUpdated: first.fieldsUpdated, fieldsTouched: first.fieldsTouched,
+          bridgeSettleRetried: true };
+      }
+    } catch (_) { /* The successful application may have navigated the page. */ }
+    return { ...first, bridgeSettleRetried: true };
   }
-  return outputs.find(output => !output.skipped)
-    || { success: false, error: 'injection script returned no matching frame result' };
+  return first;
 }

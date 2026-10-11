@@ -27468,7 +27468,7 @@ test('offscreen cloud bridge reconnects with backoff and rejects remote control 
   assert.equal(sockets[0].sent[0].protocolVersion, 2);
   assert.deepEqual(
     JSON.parse(JSON.stringify(sockets[0].sent[0].capabilities)),
-    ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1'],
+    ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1'],
   );
   sockets[0].close();
   assert.equal(timers[0].delay, 500);
@@ -28977,6 +28977,33 @@ test('delivery recovery keeps generated credential delivery in loose mode only',
     const strictDone = agent._deliveryRecoveryDoneTool();
     assert.match(strictDone?.function?.description || '', /Never include passwords/i);
     assert.doesNotMatch(strictDone?.function?.description || '', /generated a new credential for this task/i);
+  }
+});
+
+test('encrypted final delivery is scoped to its Cloud tab and leaves ordinary strict prompts intact', () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({});
+    agent.strictSecretMode = true;
+    agent.cloudRunContexts.set(7, { privateFinalResult: true });
+    const privatePrompt = agent._buildSystemPrompt('act', 7);
+    assert.match(privatePrompt, /PRIVATE FINAL DELIVERY/);
+    assert.doesNotMatch(privatePrompt, /STRICT SECRET HANDLING IS ON/);
+    assert.match(agent._buildSystemPrompt('act', 8), /STRICT SECRET HANDLING IS ON/);
+    const privateDone = agent._deliveryRecoveryDoneTool('delivery_recovery', null, 'en', 7);
+    assert.match(privateDone.function.description, /generated a new credential/);
+    const ordinaryDone = agent._deliveryRecoveryDoneTool('delivery_recovery', null, 'en', 8);
+    assert.match(ordinaryDone.function.description, /Never include passwords/);
+    const field = {actual: 'not-published', fieldMeta: {type: 'password'}};
+    agent._annotateCredentialField('set_field', field, 7);
+    assert.equal(field.actual, undefined);
+    assert.match(field.note, /PRIVATE FINAL DELIVERY/);
+    assert.equal(field.strictSecretMode, true);
+    const ordinary = {actual: 'not-published', fieldMeta: {type: 'password'}};
+    agent._annotateCredentialField('set_field', ordinary, 8);
+    assert.match(ordinary.note, /STRICT MODE IS ON/);
+    assert.equal(agent.strictSecretMode, true);
+    agent.cloudRunContexts.delete(7);
+    assert.match(agent._buildSystemPrompt('act', 7), /STRICT SECRET HANDLING IS ON/);
   }
 });
 
@@ -65484,7 +65511,7 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
     ['firefox', 'src/firefox/src/agent/agent.js', isCredentialFieldFx, CREDENTIAL_NOTE_STRICT_FX],
   ]) {
     const source = fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const start = source.indexOf('_annotateCredentialField(toolName, response) {');
+    const start = source.indexOf('_annotateCredentialField(toolName, response, tabId = null) {');
     const end = source.indexOf('\n  }\n\n', start);
     assert.ok(start >= 0 && end > start, `${label}: credential result annotator should remain independently testable`);
     const method = vm.runInNewContext(`({${source.slice(start, end + 4)}})._annotateCredentialField`, {
@@ -68909,6 +68936,8 @@ test('inferContextWindow: model-aware cloud/router defaults and local 16k fallba
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-opus-5-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-sonnet-5-5' }), 1000000);
+    assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-5-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-fable-5' }), 1000000);
     assert.equal(infer({ category: 'cloud', providerName: 'anthropic', model: 'claude-haiku-4-5' }), 200000);
     assert.equal(infer({ category: 'cloud', providerName: 'gemini', model: 'gemini-3.1-flash' }), 1000000);
@@ -71116,7 +71145,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   const expectedIds = `
     302ai abacus aihubmix alibaba-coding-plan alibaba-coding-plan-cn
     azure-cognitive-services bailing baseten berget cerebras chutes clarifai
-    cloudferro-sherlock cohere cortecs deepinfra demonroute digitalocean dinference drun
+    cloudferro-sherlock cohere cortecs deepinfra digitalocean dinference drun
     evroc fastrouter freebuff2api friendli google-vertex google-vertex-anthropic helicone
     iflowcn inception inference io-net jiekou kilo kimi-for-coding
     kuae-cloud-coding-plan llama lucidquery meganova minimax-cn-coding-plan
@@ -71129,7 +71158,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   `.trim().split(/\s+/);
   const excluded = ['github-models', 'github-copilot', 'gitlab', 'sap-ai-core'];
 
-  assert.equal(expectedIds.length, 81);
+  assert.equal(expectedIds.length, 80);
   assert.deepEqual(ProviderCatalogCh.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(ProviderCatalogFx.ADDITIONAL_PROVIDER_IDS, expectedIds);
   assert.deepEqual(
@@ -71143,7 +71172,7 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
     ['firefox', ProviderManagerFx, 'src/firefox'],
   ]) {
     const defaults = new PM()._defaultConfigs();
-    const expectedDefaultCount = label === 'chrome' ? 114 : 113;
+    const expectedDefaultCount = label === 'chrome' ? 113 : 112;
     assert.equal(
       Object.keys(defaults).length,
       expectedDefaultCount,
@@ -71265,30 +71294,6 @@ test('extended provider catalog is complete, mirrored, safe, and excluded-provid
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.nearai.suggestions,
     ['z-ai/glm-5.3-flash', 'Qwen/Qwen3.8-27B'],
-  );
-  assert.deepEqual(
-    {
-      baseUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.baseUrl,
-      model: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.model,
-      contextWindow: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.contextWindow,
-      supportsVision: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsVision,
-      supportsTools: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsTools,
-      supportsAskStreaming: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.supportsAskStreaming,
-      apiKeyUrl: ProviderCatalogCh.ADDITIONAL_PROVIDER_DEFAULTS.demonroute.apiKeyUrl,
-    },
-    {
-      baseUrl: 'https://api.demonroute.com/v1',
-      model: 'dphn/Dolphin3.0-Llama3.1-8B',
-      contextWindow: 131072,
-      supportsVision: false,
-      supportsTools: true,
-      supportsAskStreaming: true,
-      apiKeyUrl: 'https://demonroute.com',
-    },
-  );
-  assert.deepEqual(
-    ProviderCatalogCh.ADDITIONAL_PROVIDER_UI.demonroute.suggestions,
-    ['dphn/Dolphin3.0-Llama3.1-8B', 'NousResearch/Hermes-3-Llama-3.1-8B'],
   );
   assert.deepEqual(
     ProviderCatalogCh.ADDITIONAL_PROVIDER_UI['kimi-for-coding'].suggestions,
@@ -75574,7 +75579,7 @@ test('Anthropic and AWS Bedrock forward a required named tool choice', async () 
   }
 });
 
-test('Claude Opus 5.5 normalizes mandatory-thinking and tool-choice restrictions', async () => {
+test('Claude 5.5 generation normalizes mandatory-thinking and tool-choice restrictions', async () => {
   const tool = {
     type: 'function',
     function: {
@@ -75587,35 +75592,37 @@ test('Claude Opus 5.5 normalizes mandatory-thinking and tool-choice restrictions
   const originalFetch = globalThis.fetch;
   try {
     for (const Provider of [AnthropicProviderCh, AnthropicProviderFx]) {
-      const provider = new Provider({
-        baseUrl: 'https://api.anthropic.com',
-        model: 'claude-opus-5-5',
-        apiKey: 'test-key',
-      });
-      const prepared = provider._prepareRequestBody({
-        thinking: { type: 'disabled' },
-        tool_choice: { type: 'tool', name: 'done' },
-      });
-      assert.equal(prepared.thinking, undefined, `${Provider.name}: Opus 5.5 must not disable thinking`);
-      assert.deepEqual(prepared.output_config, { effort: 'low' }, `${Provider.name}: disabled thinking must become low effort`);
-      assert.deepEqual(prepared.tool_choice, { type: 'auto' }, `${Provider.name}: Opus 5.5 must not force named tools`);
+      for (const model of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+        const provider = new Provider({
+          baseUrl: 'https://api.anthropic.com',
+          model,
+          apiKey: 'test-key',
+        });
+        const prepared = provider._prepareRequestBody({
+          thinking: { type: 'disabled' },
+          tool_choice: { type: 'tool', name: 'done' },
+        });
+        assert.equal(prepared.thinking, undefined, `${Provider.name} ${model}: 5.5 must not disable thinking`);
+        assert.deepEqual(prepared.output_config, { effort: 'low' }, `${Provider.name} ${model}: disabled thinking must become low effort`);
+        assert.deepEqual(prepared.tool_choice, { type: 'auto' }, `${Provider.name} ${model}: 5.5 must not force named tools`);
 
-      let requestBody = null;
-      globalThis.fetch = async (_url, init) => {
-        requestBody = JSON.parse(init.body);
-        return new Response(JSON.stringify({
-          content: [{ type: 'tool_use', id: 'done_1', name: 'done', input: {} }],
-          usage: { input_tokens: 1, output_tokens: 1 },
-        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
-      };
-      await provider.chat([{ role: 'user', content: 'Finish.' }], {
-        tools: [tool],
-        toolChoice: forced,
-        extraBody: { thinking: { type: 'disabled' } },
-      });
-      assert.equal(requestBody.thinking, undefined, `${Provider.name}: classifier disable must not reach Opus 5.5`);
-      assert.deepEqual(requestBody.output_config, { effort: 'low' }, `${Provider.name}: classifier must set low effort`);
-      assert.deepEqual(requestBody.tool_choice, { type: 'auto' }, `${Provider.name}: forced tool request must become auto`);
+        let requestBody = null;
+        globalThis.fetch = async (_url, init) => {
+          requestBody = JSON.parse(init.body);
+          return new Response(JSON.stringify({
+            content: [{ type: 'tool_use', id: 'done_1', name: 'done', input: {} }],
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        };
+        await provider.chat([{ role: 'user', content: 'Finish.' }], {
+          tools: [tool],
+          toolChoice: forced,
+          extraBody: { thinking: { type: 'disabled' } },
+        });
+        assert.equal(requestBody.thinking, undefined, `${Provider.name} ${model}: classifier disable must not reach 5.5`);
+        assert.deepEqual(requestBody.output_config, { effort: 'low' }, `${Provider.name} ${model}: classifier must set low effort`);
+        assert.deepEqual(requestBody.tool_choice, { type: 'auto' }, `${Provider.name} ${model}: forced tool request must become auto`);
+      }
     }
   } finally {
     globalThis.fetch = originalFetch;
@@ -92875,7 +92882,7 @@ test('download evidence recognizes completed core, screenshot, social, and skill
   }
 });
 
-test('planner-bypassed managed cloud runs never enable the execution guard', () => {
+test('planner-bypassed managed cloud Act runs retain the execution guard', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     const guard = agent._startPlanExecutionGuard(
@@ -92884,7 +92891,12 @@ test('planner-bypassed managed cloud runs never enable the execution guard', () 
       { proceed: true, requestKind: 'execute', requiresStateChange: false },
       { cloudRun: true, outputSchema: null },
     );
-    assert.equal(guard.enabled, false, `${AgentClass.name}: planner-bypassed cloud run enabled the guard`);
+    assert.equal(guard.enabled, true, `${AgentClass.name}: planner-bypassed cloud run disabled the guard`);
+    assert.equal(
+      agent._planOnlyTerminalDecision(8637 + index, "I'll navigate to the page now.")?.retry,
+      true,
+      `${AgentClass.name}: Cloud Act accepted a promise as completion`,
+    );
   }
 });
 
@@ -120779,6 +120791,8 @@ for (const [label, Provider, VertexProvider, AgentClass] of [
     for (const model of [
       'claude-opus-5',
       'claude-opus-5.5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
       'claude-opus-4-8@20260801',
       'claude-sonnet-5@20260801',
       'claude-mythos-preview',

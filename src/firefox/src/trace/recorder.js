@@ -15,6 +15,7 @@ import { createTraceStats, addTraceEvent, aggregateTraceRuns } from './stats.js'
 import { projectTraceEventData, projectTraceRun } from './privacy.js';
 import { toolOutcome } from './tool-outcome.js';
 import { feedbackRecordingPolicy, feedbackRunsToEvict, FEEDBACK_RUN_BYTES, FEEDBACK_HISTORY_BYTES } from './feedback-policy.js';
+import { normalizeRejectedToolResponse } from '../agent/model-output-diagnostics.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -813,6 +814,7 @@ export function recordLLMResponse(runId, step, {
   outputTokens,
   requestedMaxTokens,
   recoveryAttempt,
+  rejectedToolResponse,
 }) {
   return _appendEvent(runId, 'llm_response', {
     step,
@@ -841,6 +843,7 @@ export function recordLLMResponse(runId, step, {
     ...(Number.isInteger(outputTokens) ? { outputTokens } : {}),
     ...(Number.isInteger(requestedMaxTokens) ? { requestedMaxTokens } : {}),
     ...(Number.isInteger(recoveryAttempt) && recoveryAttempt > 0 ? { recoveryAttempt } : {}),
+    ...(normalizeRejectedToolResponse(rejectedToolResponse) ? { rejectedToolResponse: normalizeRejectedToolResponse(rejectedToolResponse) } : {}),
   });
 }
 

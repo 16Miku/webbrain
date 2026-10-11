@@ -5,6 +5,8 @@ import {
 } from './agent/workflows.js';
 import { isCredentialField } from './agent/credential-fields.js';
 import { validateResumeArgs } from './agent/scheduler.js';
+import { PRIVATE_RESULT_TYPE, importPrivateResultRecipient, encryptPrivateResult } from './private-results.js';
+const PRIVATE_RESULT_PLACEHOLDER = '[Private final answer encrypted for this workspace.]';
 
 const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
 const CLOUD_RUN_STORAGE_KEY = 'webbrainCloudRunSnapshots';
@@ -110,6 +112,8 @@ function scrubCloudValue(value) {
       if (LARGE_IMAGE_KEY.test(normalizedKey) && typeof item === 'string' && item.length > 500) {
         return `[large payload omitted: ${item.length} chars]`;
       }
+      if (key === 'ciphertext' && typeof item === 'string' && item.length <= 90000
+          && /^[A-Za-z0-9+/]*={0,2}$/.test(item)) return item;
       if (typeof item === 'string' && item.length > CLOUD_STRING_LIMIT) {
         return `${item.slice(0, CLOUD_STRING_LIMIT)}\n[truncated ${item.length - CLOUD_STRING_LIMIT} chars for cloud persistence]`;
       }
@@ -213,7 +217,8 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
     return {
       ...data,
       result: {
-        success: result.success === true,
+        ...(typeof result.success === 'boolean' ? { success: result.success }
+          : result.error || result.isError === true ? { success: false } : {}),
         ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
         sensitivePayloadRedacted: true,
       },
@@ -266,7 +271,8 @@ function cloudSafeUpdateData(type, data, { strictSecretMode = false } = {}) {
     return {
       ...data,
       result: {
-        success: result.success === true,
+        ...(typeof result.success === 'boolean' ? { success: result.success }
+          : result.error || result.isError === true ? { success: false } : {}),
         ...(Number.isFinite(Number(result.status)) ? { status: Number(result.status) } : {}),
         sensitivePayloadRedacted: true,
       },
@@ -594,6 +600,8 @@ function compactCloudRunForPersistence(run) {
     traceRunId: run?.traceRunId || null,
     parentRunId: run?.parentRunId || null,
     conversationKey: run?.conversationKey || null,
+    providerId: run?.providerId || null,
+    expectedModel: run?.expectedModel || null,
     mode: run?.mode || 'act',
     captchaDiagnostics: run?.captchaDiagnostics || null,
     tabId: run?.tabId,
@@ -840,6 +848,8 @@ export function createCloudRunController({
   const strictSecretValues = new Map();
   const strictTraceValues = new Map();
   const strictSecretOverflowRuns = new Set();
+  const privateRecipients = new Map();
+  const privateStructuredResults = new Map();
   const strictTraceOverflowRuns = new Set();
 
   function rememberStrictCandidates(run, candidates, registry, overflowRuns) {
@@ -929,7 +939,7 @@ export function createCloudRunController({
   function pushUpdate(run, type, data, runtimeValues = []) {
     run.updatedAt = isoNow();
     const previous = run.updates.at(-1);
-    const strictSecretMode = agent.strictSecretMode === true;
+    const strictSecretMode = privateRecipients.has(run.runId) || agent.strictSecretMode === true;
     if (strictSecretMode) rememberStrictSecrets(run, type, data);
     // Consecutive text_delta events upsert the same seq: content grows in place
     // and ts advances. Full-array pollers are fine; append-only / seq-cursor
@@ -969,7 +979,7 @@ export function createCloudRunController({
       // declares survives. Redacting those by leaf type returned `completed`
       // with every string and number replaced by a placeholder, which satisfies
       // strict mode by making the run useless.
-      const publicSummary = strictSecretMode
+      const publicSummary = privateRecipients.has(run.runId) ? PRIVATE_RESULT_PLACEHOLDER : strictSecretMode
         ? redactStrictSecretValues(run, result.summary, true)
         : safeResult.summary;
       if (result.cloudFailed) {
@@ -977,7 +987,8 @@ export function createCloudRunController({
         run.error = safeResult.error || 'done_json failed';
         run.summary = publicSummary || run.summary;
       } else if (Object.prototype.hasOwnProperty.call(result, 'cloudResult')) {
-        run.result = strictSecretMode
+        if (privateRecipients.has(run.runId)) privateStructuredResults.set(run.runId, structuredClone(result.cloudResult));
+        run.result = privateRecipients.has(run.runId) ? PRIVATE_RESULT_PLACEHOLDER : strictSecretMode
           ? redactStrictSecretValues(run, result.cloudResult, true)
           : result.cloudResult;
         run.summary = publicSummary || run.summary;
@@ -1082,9 +1093,28 @@ export function createCloudRunController({
 
   async function startRunReserved(msg = {}, startup = null) {
     await hydrate();
+    const recipient = msg.private_result_public_key == null
+      ? null : await importPrivateResultRecipient(msg.private_result_public_key);
     const suppliedRunId = msg.runId ?? msg.run_id;
     const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
+    const savedParent = parentRunId ? runs.get(parentRunId) : null;
+    const providerId = msg.providerId ?? msg.provider_id ?? savedParent?.providerId ?? null;
+    const expectedModel = msg.expectedModel ?? msg.expected_model ?? savedParent?.expectedModel ?? null;
+    if (providerId != null || expectedModel != null) {
+      if (msg._workflow || typeof providerId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(providerId)
+          || typeof expectedModel !== 'string' || !expectedModel.trim() || expectedModel.length > 256) {
+        throw cloudRunError('Per-run model selection requires provider_id and expected_model.', 400);
+      }
+      let provider;
+      try { provider = agent.providerManager?.getProvider?.(providerId); } catch { /* reject missing providers below */ }
+      if (!provider || provider.model !== expectedModel) {
+        throw cloudRunError('The configured browser model is missing or changed. Reconfigure this browser before running the task.', 409);
+      }
+      if (savedParent?.providerId && (providerId !== savedParent.providerId || expectedModel !== savedParent.expectedModel)) {
+        throw cloudRunError('A continuation must use its parent run model.', 409);
+      }
+    }
     let parentRun = null;
     let requestedTabId = msg.tabId ?? msg.tab_id;
     const conversationKey = msg.conversationKey ?? msg.conversation_key ?? null;
@@ -1171,6 +1201,8 @@ export function createCloudRunController({
     const run = {
       runId,
       conversationKey: conversationKey || parentRun?.conversationKey || null,
+      providerId,
+      expectedModel,
       status: 'running',
       workflowId: workflow?.id || null,
       traceRunId: null,
@@ -1195,6 +1227,7 @@ export function createCloudRunController({
     };
     runs.set(run.runId, run);
     startingRunIds.delete(runId);
+    if (recipient) privateRecipients.set(run.runId, recipient);
     const runController = new AbortController();
     runAbortControllers.set(runId, runController);
     const cancelled = () => runController.signal.aborted;
@@ -1210,13 +1243,14 @@ export function createCloudRunController({
     } catch (error) {
       runs.delete(run.runId);
       runAbortControllers.delete(runId);
+      privateRecipients.delete(run.runId);
       startingTabs.delete(tabId);
       throw error;
     }
 
     (async () => {
       let recordingId = null;
-      const strictSecretMode = agent.strictSecretMode === true;
+      const strictSecretMode = !!recipient || agent.strictSecretMode === true;
       try {
         // A continuation starts only after its parent has finished, so the
         // agent's active-run map cannot identify the parent here. The cloud
@@ -1308,6 +1342,8 @@ export function createCloudRunController({
             run.agentDoneSuccess = false;
             content = await agent.processMessage(tabId, prompt, publishUpdate, mode, [], {
               cloudRun: true,
+              privateFinalResult: !!recipient,
+              ...(providerId == null ? {} : { providerId }),
               independentRun: !continuation,
               trustedContinuation: continuation,
               scheduledResume: continuation,
@@ -1385,7 +1421,7 @@ export function createCloudRunController({
         // told not to. Value redaction rather than blanking, because for an
         // unstructured run this text *is* the result: the answer survives with
         // the literal struck.
-        run.content = strictSecretMode && structured
+        run.content = recipient ? PRIVATE_RESULT_PLACEHOLDER : strictSecretMode && structured
           ? (run.summary || '[redacted strict structured completion]')
           : redactStrictTerminal(run, redactWorkflowValue(content), strictSecretMode);
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
@@ -1407,14 +1443,36 @@ export function createCloudRunController({
             }
           }
         }
+        if (recipient && run.status !== 'aborted') {
+          const raw = structured ? privateStructuredResults.get(run.runId) : content;
+          if (raw !== undefined) {
+            // Encryption is asynchronous. Pollers must not observe completion
+            // until the encrypted result is ready, or release the browser lock.
+            const terminalStatus = run.status;
+            run.status = 'running';
+            const privateResult = await encryptPrivateResult(recipient, run.runId, raw);
+            if (run.status === 'aborting') {
+              run.status = 'aborted';
+              run.error = run.error || 'Aborted by cloud_abort.';
+            } else {
+              run.summary = PRIVATE_RESULT_PLACEHOLDER;
+              run.result = { type: PRIVATE_RESULT_TYPE, public_result: PRIVATE_RESULT_PLACEHOLDER,
+                private_result: privateResult };
+              run.status = terminalStatus;
+            }
+          }
+        }
       } catch (error) {
         run.pendingInput = null;
         run.status = cancelled() || run.status === 'aborting' ? 'aborted' : 'failed';
-        run.error = redactStrictTerminal(
+        run.error = recipient ? 'Private Cloud run failed before delivering its encrypted final answer. Review the redacted trace before retrying.' : redactStrictTerminal(
           run, redactWorkflowValue(error?.message || String(error)), strictSecretMode,
         );
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
+        privateRecipients.delete(run.runId);
+        privateStructuredResults.delete(run.runId);
+        startingTabs.delete(tabId);
         // The bridge flag is a run-scoped grant, not the sidebar's persistent
         // /allow-api setting. Revoke only permission this run added; preserve a
         // pre-existing per-conversation or global user grant.

@@ -2130,7 +2130,19 @@
             </div>
 
             <div class="field"><label for="decision-provider" data-i18n="st.decision.provider"></label>
-              <select id="decision-provider"><option value="openrouter">OpenRouter</option><option value="typesafe">TypeSafe</option><option value="local" data-i18n="st.decision.local"></option></select>
+              <select id="decision-provider"><option value="openrouter">OpenRouter</option><option value="typesafe">TypeSafe</option><option value="local" data-i18n="st.decision.local"></option><option value="webgpu_d1" data-i18n="st.d1.provider"></option></select>
+            </div>
+            <div id="d1-controls" hidden>
+              <p class="settings-description" data-i18n="st.d1.warning"></p>
+              <label><input type="checkbox" id="d1-consent"> <span data-i18n="st.d1.consent"></span></label>
+              <div class="btn-row" style="margin-top:10px;flex-wrap:wrap">
+                <button class="btn-secondary" data-d1-command="download" data-i18n="st.d1.download"></button>
+                <button class="btn-secondary" data-d1-command="load" data-i18n="st.d1.load"></button>
+                <button class="btn-secondary" data-d1-command="stop" data-i18n="st.d1.stop"></button>
+                <button class="btn-secondary" data-d1-command="reset" data-i18n="st.d1.unload"></button>
+                <button class="btn-secondary" data-d1-command="clear" data-i18n="st.d1.remove"></button>
+              </div>
+              <div class="test-result show" id="d1-status" role="status"></div>
             </div>
             <div class="field"><label for="decision-model" data-i18n="st.decision.model"></label>
               <input id="decision-model" list="decision-models" autocomplete="off"><datalist id="decision-models"></datalist>

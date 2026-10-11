@@ -572,7 +572,7 @@ test('Chrome unpacked extension: worker flush, consent, login return and isolate
     assert.equal(context.pages().some(page => page.url().startsWith('https://github.com/')), false);
     const githubOpened = context.waitForEvent('page');
     await panel.getByRole('button', { name: 'Upload trace and open GitHub', exact: true }).click();
-    await panel.waitForFunction(() => feedbackResult === true || globalThis.feedbackError);
+    await panel.waitForFunction(() => globalThis.feedbackResult === true || globalThis.feedbackError);
     assert.equal(await panel.evaluate(() => globalThis.feedbackError), undefined);
     const github = await githubOpened;
     await github.getByRole('link', { name: 'Return to feedback' }).waitFor({ state: 'visible' });

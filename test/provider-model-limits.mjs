@@ -17,6 +17,8 @@ for (const browser of ['chrome', 'firefox']) {
   assert.equal(inferMaxOutputTokens({}), null, `${browser}: unknown model should not invent an output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'claude-sonnet-5' }), 128000, `${browser}: Sonnet 5 output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'claude-opus-5-5' }), 128000, `${browser}: Opus 5.5 output ceiling`);
+  assert.equal(inferMaxOutputTokens({ model: 'claude-sonnet-5-5' }), 128000, `${browser}: Sonnet 5.5 output ceiling`);
+  assert.equal(inferMaxOutputTokens({ model: 'claude-haiku-5-5' }), 128000, `${browser}: Haiku 5.5 output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'claude-haiku-4-5' }), 64000, `${browser}: Haiku 4.5 output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'anthropic.claude-haiku-4-5' }), 64000, `${browser}: Bedrock Haiku slug should match`);
   assert.equal(inferMaxOutputTokens({ model: 'gpt-6.1-sol' }), 128000, `${browser}: GPT-6.1 Sol output ceiling`);
