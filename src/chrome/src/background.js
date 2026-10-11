@@ -2025,26 +2025,32 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
 async function getRunUiSnapshot(tabId) {
   const live = runUiJournal.get(tabId);
   if (live) return live;
+  const pendingRead = runUiSnapshotReads.get(tabId);
+  if (pendingRead) return pendingRead.promise;
   const read = {};
+  // Cold readers share ownership; only begin/clear may invalidate this read.
+  read.promise = Promise.resolve().then(async () => {
+    try {
+      const pending = runUiPersistenceQueues.get(tabId);
+      if (pending) await pending;
+      const current = runUiJournal.get(tabId);
+      if (current) return current;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const key = RUN_UI_PREFIX + tabId;
+      const stored = await chrome.storage.session?.get(key);
+      const latest = runUiJournal.get(tabId);
+      if (latest) return latest;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const snapshot = stored?.[key];
+      if (snapshot && typeof snapshot === 'object') {
+        return runUiJournal.restore(tabId, snapshot);
+      }
+    } catch {}
+    finally { if (runUiSnapshotReads.get(tabId) === read) runUiSnapshotReads.delete(tabId); }
+    return null;
+  });
   runUiSnapshotReads.set(tabId, read);
-  try {
-    const pending = runUiPersistenceQueues.get(tabId);
-    if (pending) await pending;
-    const current = runUiJournal.get(tabId);
-    if (current) return current;
-    if (runUiSnapshotReads.get(tabId) !== read) return null;
-    const key = RUN_UI_PREFIX + tabId;
-    const stored = await chrome.storage.session?.get(key);
-    const latest = runUiJournal.get(tabId);
-    if (latest) return latest;
-    if (runUiSnapshotReads.get(tabId) !== read) return null;
-    const snapshot = stored?.[key];
-    if (snapshot && typeof snapshot === 'object') {
-      return runUiJournal.restore(tabId, snapshot);
-    }
-  } catch {}
-  finally { if (runUiSnapshotReads.get(tabId) === read) runUiSnapshotReads.delete(tabId); }
-  return null;
+  return read.promise;
 }
 
 function clearRunUiSnapshot(tabId) {

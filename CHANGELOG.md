@@ -11,7 +11,7 @@ This changelog was generated from the repository Git history and release tags. V
 - General DOM monitoring repairs prevent decorative icons, passive updates and acknowledged agent preparation from incorrectly invalidating unchanged controls, while retaining checks for real target or user changes.
 - Mid-run task changes, Stop, durable chat recovery, Telegram/WhatsApp observation, recipient ownership and completion receipts are covered by causal and installed-browser regressions.
 - File download/upload ownership, literal editor input, exact calculation and complete literal table delivery are repaired across Chrome and Firefox.
-- The final unfiltered suite passed 9,765 Node/main cases and all 21 installed browser stages. Coverage: 65.16% lines/statements, 78.74% branches, 87.25% functions. Both browser builds passed.
+- The original audit passed 9,765 Node/main cases and all 21 installed browser stages; coverage was 65.16% lines/statements, 78.74% branches and 87.25% functions. The Codex review follow-up additionally passed 72 focused, 155 neighbouring and 2,450 main regression cases. Both browser builds passed.
 - Real-account two-hour endurance remains unverified. The first fresh PR CodeQL findings check flagged 32 changed-code alerts (31 high, one medium); the comparison and directly related QA fixture repair are recorded in the appendix. This entry records the proposed release; the audited runtime remains 40.0.8.
 
 The complete dated audit, including earlier failures, tracked effects and verification limits, is copied in the [40.2.0 appendix at the end of this changelog](#appendix-4020-quality-audit). A standalone copy is available in [the audit report](docs/quality-audit-2026-10-07.md).
@@ -23,6 +23,7 @@ The complete dated audit, including earlier failures, tracked effects and verifi
 - Added a full-suite Node coverage command and optional live-model browser checks.
 
 ### Fixed
+- Share concurrent cold UI snapshot reads so service-worker restart and continuation cannot discard saved events or progress; preserve clear/new-run invalidation.
 - Reject injected URL parameters in the disposable workflow QA server without changing valid fixtures or weakening replay checks.
 - Keep Enter-dispatch uncertainty truthful when reusing an owned chat draft, without weakening pending-send or duplicate-send guards.
 - Preserve exact native commit acknowledgement provenance for independent completion reconciliation after interrupted observation.
@@ -4943,3 +4944,29 @@ One newly flagged condition exposed a concrete injection path in the disposable 
 The whole installed workflow test completed once with exit 0 at 2026-10-11 02:28:34 UTC. **All five cases passed**, including six once-navigated malicious/unknown query browser/server checks and the original four workflow replay, Stop and uncertainty cases. All 34 original assertion-containing lines are retained. All 12 valid preset/default HTML combinations remain byte-identical. The 1,182 product files, fixture, package, lock and index stayed stable during execution; provider fallback requests and external calls were zero. The fixture SHA-256 is `02766f9c98ea758197586c49e213ca5ec85bb54c4c4b1901e714da3f41eab87c`. Local proof: `ci/artifacts/quality-audit-2026-10-07/publication-workflow-fixture-injection-fix-4d8e4c59-82d3-4f15-b0fc-27dbf4eac751/fix-proof-final.json`, SHA-256 `1cb662d4da3ccd38428a1398bb44dbfcb4ab6e73ba71861d031b0c976895fe43`.
 
 This follow-up changes the workflow fixture and audit documentation only. The previously completed unfiltered C8 run and its coverage percentages remain dated evidence for the frozen audited product; they are not relabelled as a new full-suite run after the fixture edit. The initial PR-head security failure remains recorded. Further remote checks may run on the follow-up commit, and their actual results must be reported separately. Real-account two-hour endurance and the bug-free objective remain unqualified.
+
+#### PR #408 Codex review follow-up — October 11
+
+Codex's first review, on `50c8d73a`, identified concurrent cold UI snapshot reads cancelling one another. An `agent_run_state` read overlapping `beginContinuationRunUiSnapshot` after a service-worker restart could make the continuation treat a saved journal as absent and discard its progress and events. The correction is general and applies to both Chrome and Firefox.
+
+`getRunUiSnapshot` now shares one in-flight storage read per tab. Starting a new journal or clearing a conversation still invalidates that read; a late result respects a newer live journal and cannot resurrect cleared state. A failed shared read releases its slot so a later read can retry. Only the paired snapshot-reader functions changed in shipping code.
+
+Meaningful regression proof: with the added tests and original code, **64/72 passed and eight failed**; after the fix, **72/72 passed**, with no skips or cancellations. The cold continuation reproduction previously replaced persisted sequence 2 with sequence 0. It now preserves sequence 2, acknowledged sequence 1 and the retained event, then appends sequence 3. The tests also cover both original read completion orders, shared-read failure/retry and the existing clear/new-run fences.
+
+Validation on the corrected source:
+
+- `node --test test/run-ui-scheduled-lifecycle.mjs`: **72 passed**.
+- Ten neighbouring persistence, startup, continuation, transport, CDP restart/clear and assistant UI test files: **155 passed**, with no failures, skips or cancellations.
+- `node test/run.js`: **2,450 passed, zero failed**.
+- Normal `npm run build:all`: both browser builds passed; all 1,182 source/build files matched.
+- Syntax and whitespace checks passed. Main remained `6da190593be3990dceb83396fb42b9e779ef9f1e`, with no new upstream commits or merge conflicts. The 29 unrelated local files were preserved.
+
+The full 9,765-case coverage run above belongs to the original audited source, before this follow-up. It was not rerun for this focused change. These results do not add a real-account endurance or fresh model-reliability claim. Runtime version remains 40.0.8.
+
+Local evidence: `ci/artifacts/quality-audit-2026-10-07/pr408-cold-run-ui-snapshot-7f40172c-9f97-48e2-bdf7-6d22bf10069f/green-result.json` (SHA-256 `5f1f32a8e5a650dda11171f861dc8787981be3db90b01ff0e36b7a587e1a437f`) and the neighbouring/main logs under `ci/artifacts/pr408-review-cycle/`. Private artifacts are not published.
+
+The completed scan of the preceding exact head `fa49ffef` now confirms workflow fixture alert **#234 fixed**. Its PR inventory contains 59 open alerts and one fixed alert among the same 60 IDs; no new alert IDs appeared. JavaScript analysis returned 59 findings without analysis errors, while Python and Actions returned zero. The separate findings check still reports **31 changed-code annotations: 30 high and one medium**.
+
+The bounded review finds no additional confirmed actionable regression in the 18 test/report/builder annotations: current paths use text-node assignment, escaped or numeric output, HTML-safe JSON serialization, trusted fixture parsing or intentional operator-authored CLI regexes. The 13 shipping annotations retain their inherited conditional trust/fidelity assessments; their flagged statements are also present on main, but that comparison does not close vulnerabilities. No findings were dismissed or waived, and this is not a security-clean claim.
+
+This correction requires a fresh Codex review. Merge readiness must use that review and the resulting head's checks; the earlier review and scan do not qualify a later revision.

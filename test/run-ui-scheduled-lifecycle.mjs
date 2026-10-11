@@ -48,7 +48,7 @@ function backgroundHarness({ Journal, source, runUiUpdatesForCurrentTask }, opti
   });
   context.browser = context.chrome;
   const functions = [
-    section(source, 'function beginRunUiSnapshot(', 'async function beginContinuationRunUiSnapshot('),
+    section(source, 'function beginRunUiSnapshot(', 'function recordRunUiEvent('),
     section(source, 'function recordRunUiEvent(', 'function isClarificationRequiredRunUpdate('),
     section(source, 'function isClarificationRequiredRunUpdate(', 'function finishRunUiSnapshot('),
     section(source, 'function finishRunUiSnapshot(', '// Mirror the sidepanel'),
@@ -682,6 +682,87 @@ for (const item of builds) {
       assert.equal(await read, current);
       assert.equal(h.journal.get(77), current);
     }
+  });
+
+  for (const reverse of [false, true]) {
+    test(`${item.build}: concurrent cold snapshot readers preserve the same stored journal (${reverse ? 'last' : 'first'} read resolves first)`, async () => {
+      const h = backgroundHarness(item);
+      h.journal.begin(77, 'cold-owned-request', { mode: 'act' });
+      h.journal.record(77, 'cold-owned-request', 'run_status', { status: 'thinking' });
+      h.journal.record(77, 'cold-owned-request', 'text_delta', { text: 'Preserved owned output.' });
+      const saved = structuredClone(h.stored.get(77));
+      h.journal.clear(77);
+      const reads = [];
+      h.context.chrome.storage.session.get = () => new Promise(resolve => { reads.push(resolve); });
+      const first = h.context.getRunUiSnapshot(77);
+      const second = h.context.getRunUiSnapshot(77);
+      await flushMicrotasks();
+      const storageReadCount = reads.length;
+      for (const release of reverse ? [...reads].reverse() : reads) {
+        release({ 'runUi:77': structuredClone(saved) });
+        await flushMicrotasks();
+      }
+      const results = await Promise.all([first, second]);
+      assert.ok(results.every(result => result?.requestId === 'cold-owned-request'));
+      assert.equal(results[0], results[1]);
+      assert.equal(h.journal.get(77), results[0]);
+      assert.equal(results[0].seq, saved.seq);
+      assert.deepEqual(results[0].events, saved.events);
+      assert.equal(storageReadCount, 1, 'readers of the same cold journal share its storage read');
+      assert.equal(h.context.runUiSnapshotReads.size, 0);
+    });
+  }
+
+  test(`${item.build}: a remount read cannot discard persisted events during a cold same-request continuation`, async () => {
+    const h = backgroundHarness(item);
+    h.journal.begin(77, 'cold-continuation-request', { mode: 'act', foreground: true });
+    h.journal.record(77, 'cold-continuation-request', 'run_status', { status: 'thinking' });
+    h.journal.record(77, 'cold-continuation-request', 'plan_review', { planId: 'retained-owned-plan' });
+    h.journal.acknowledge(77, 'cold-continuation-request', 1);
+    const saved = structuredClone(h.stored.get(77));
+    h.journal.clear(77);
+    const reads = [];
+    h.context.chrome.storage.session.get = () => new Promise(resolve => { reads.push(resolve); });
+    const continuation = h.context.beginContinuationRunUiSnapshot(77, 'cold-continuation-request', { kind: 'continue' });
+    await flushMicrotasks();
+    const remount = h.context.getRunUiSnapshot(77);
+    await flushMicrotasks();
+    for (const release of reads) {
+      release({ 'runUi:77': structuredClone(saved) });
+      await flushMicrotasks();
+    }
+    const [resumed, observed] = await Promise.all([continuation, remount]);
+    assert.equal(resumed.seq, 2, 'continuation preserves the persisted sequence instead of beginning a new journal');
+    assert.equal(resumed.ackedSeq, 1);
+    assert.equal(resumed.foreground, true);
+    assert.deepEqual(resumed.events, saved.events);
+    assert.equal(observed, resumed);
+    const next = h.context.recordRunUiEvent(77, 'cold-continuation-request', 'text_delta', { text: 'Continued owned output.' });
+    assert.equal(next.seq, 3);
+    assert.deepEqual(resumed.events.map(event => event.seq), [2, 3]);
+    assert.equal(reads.length, 1);
+  });
+
+  test(`${item.build}: a failed shared cold read permits a later storage retry`, async () => {
+    const h = backgroundHarness(item);
+    const rejects = [];
+    h.context.chrome.storage.session.get = () => new Promise((_resolve, reject) => { rejects.push(reject); });
+    const first = h.context.getRunUiSnapshot(77);
+    const second = h.context.getRunUiSnapshot(77);
+    await flushMicrotasks();
+    for (const reject of rejects) reject(new Error('Owned storage read failed.'));
+    assert.deepEqual(await Promise.all([first, second]), [null, null]);
+    assert.equal(h.context.runUiSnapshotReads.size, 0);
+    let retries = 0;
+    h.context.chrome.storage.session.get = async key => {
+      retries++;
+      return { [key]: { requestId: 'retry-owned-request', status: 'running', events: [], seq: 4 } };
+    };
+    const recovered = await h.context.getRunUiSnapshot(77);
+    assert.equal(recovered.requestId, 'retry-owned-request');
+    assert.equal(recovered.seq, 4);
+    assert.equal(retries, 1);
+    assert.equal(rejects.length, 1);
   });
 
   test(`${item.build}: clearing a conversation during stored UI read cannot resurrect its previous success`, async () => {
