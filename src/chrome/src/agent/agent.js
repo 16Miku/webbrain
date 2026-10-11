@@ -37749,7 +37749,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       if (coordinates.block) return coordinates.block;
       args = coordinates.args;
       let prepared;
-      try { prepared = await memory.prepare(tabId, name, args || {}, { signal: linked.signal }); }
+      if (name === 'click' && args?.index != null) {
+        const index = typeof args.index === 'number' || (typeof args.index === 'string' && /^\d+$/.test(args.index)) ? Number(args.index) : NaN;
+        if (!Number.isSafeInteger(index) || index < 0) return { success: false, botMemory: true, noDispatch: true, dispatched: false, error: 'Choose a valid observed element index.' };
+        args = { ...args, index };
+      }
+      const detected = executionContext?.detectedSubmitAction || executionContext?.detectedSubmit;
+      const detectedSubmit = detected?.isSubmit === true;
+      const consequentialSubmit = detectedSubmit && classifySubmitRisk(detected, detected.url).risk !== SubmitRisk.LOW_RISK_SEARCH;
+      try { prepared = await memory.prepare(tabId, name, args || {}, { signal: linked.signal, detectedSubmit, consequentialSubmit }); }
       catch (error) {
         this._throwIfAborted(linked.signal);
         return { success: false, botMemory: true, noDispatch: true, dispatched: false, error: error.message };

@@ -22,7 +22,7 @@ const OBSERVATION_TOOLS = new Set([
 // and recipient checks still run before the guarded inner dispatch.
 const DELEGATED_GUARD_TOOLS = new Set(['chat_send']);
 const SECRET_KEY = /password|passwd|secret|token|authorization|cookie|credential|api.?key|otp|pin|binary|image|base64/i;
-const SAFE_ARGUMENTS = new Set(['ref_id', 'selector', 'text', 'key', 'keys', 'url', 'urlFilter', 'method', 'submit', 'clear', 'checked', 'x', 'y', 'tool_id', 'name', 'action', 'intent']);
+const SAFE_ARGUMENTS = new Set(['ref_id', 'selector', 'text', 'index', 'exact', 'matchIndex', 'textMatch', 'key', 'keys', 'url', 'urlFilter', 'method', 'submit', 'clear', 'checked', 'x', 'y', 'tool_id', 'name', 'action', 'intent']);
 const compact = (value, max = 512) => String(value ?? '').slice(0, max);
 const randomId = () => globalThis.crypto.randomUUID();
 
@@ -177,7 +177,9 @@ export function observeMemoryPageInPage(args = {}) {
     return text;
   };
   let element = null;
-  if (typeof args.ref_id === 'string' && typeof window.__wb_ax_lookup === 'function') {
+  if (args.toolName === 'click' && typeof window.__wb_resolve_click_target_for_submit_probe === 'function') {
+    try { element = window.__wb_resolve_click_target_for_submit_probe(args); } catch { /* unavailable or ambiguous target */ }
+  } else if (typeof args.ref_id === 'string' && typeof window.__wb_ax_lookup === 'function') {
     try { element = window.__wb_ax_lookup(args.ref_id); } catch { /* stale ref */ }
   } else if (typeof args.selector === 'string') {
     try {
@@ -192,10 +194,19 @@ export function observeMemoryPageInPage(args = {}) {
   const label = clip(safeText(element?.getAttribute?.('aria-label') || element?.innerText || element?.getAttribute?.('title') || ''), 512);
   const form = element?.form || element?.closest?.('form');
   let scope = form || element;
-  for (let depth = 0; scope && depth < 4 && !scope.querySelector?.('textarea,[contenteditable=true],input:not([type=hidden])'); depth++) scope = scope.parentElement;
+  const draftSelector = 'textarea,[contenteditable=true],input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]):not([type=checkbox]):not([type=radio])';
+  let draftFields = [];
+  for (let depth = 0; scope && depth < 10 && scope !== document.body && scope !== document.documentElement; depth++) {
+    const fields = [...(scope.matches?.(draftSelector) ? [scope] : []), ...Array.from(scope.querySelectorAll?.(draftSelector) || [])]
+      .filter(field => !sensitive(metadata(field)));
+    // A form binds its fields. A form-less composer needs one nearest editor;
+    // a shared page container with multiple editors cannot identify this draft.
+    if (form || fields.length === 1) { draftFields = fields; break; }
+    if (fields.length > 1) break;
+    scope = scope.parentElement || scope.getRootNode?.()?.host;
+  }
   const drafts = [];
-  for (const field of Array.from(scope?.querySelectorAll?.('textarea,[contenteditable=true],input:not([type=hidden])') || []).slice(0, 12)) {
-    if (sensitive(metadata(field))) continue;
+  for (const field of draftFields.slice(0, 12)) {
     const value = clip(field.isContentEditable ? field.innerText : field.value, 2048);
     if (value) drafts.push(value);
   }
@@ -366,7 +377,7 @@ export class BotMemorySession {
     return ['about:blank', 'about:newtab', 'about:home', 'chrome://newtab/',
       'chrome://new-tab-page/', 'edge://newtab/', 'chrome-search://local-ntp/local-ntp.html'].includes(current);
   }
-  async prepare(tabId, name, args, { signal = null } = {}) {
+  async prepare(tabId, name, args, { signal = null, consequentialSubmit = false, detectedSubmit = false } = {}) {
     if (this.pending.size && (name === 'done_json' || (name === 'done' && !['partial', 'failed'].includes(args?.outcome)))) {
       return { allowed: false, reason: 'A dispatched action still has an uncertain outcome. Read its result and use bot_memory_verify before claiming success, or finish with an honest partial/failed outcome.' };
     }
@@ -379,6 +390,10 @@ export class BotMemorySession {
     if (await this.canBootstrapNavigation(tabId, name, args)) return { allowed: true, readOnly: true, bootstrapNavigation: true };
     const observation = await this.observation(tabId, name, args);
     if (!observation.url || !observation.targets.length) return { allowed: false, reason: 'Observe the target page before acting.' };
+    if ((name === 'click' || consequentialSubmit) && observation.elementFacts?.found !== true) {
+      return { allowed: false, reason: 'The action target could not be resolved. Read the page and choose an observed control.' };
+    }
+    if (detectedSubmit) observation.elementFacts = { ...observation.elementFacts, isSubmit: true, consequentialSubmit: consequentialSubmit === true };
     const requestId = randomId();
     const safeArgs = sanitizeMemoryArguments(args, observation);
     const response = await this.call('prepare', { requestId,
@@ -387,7 +402,9 @@ export class BotMemorySession {
         elementFacts: observation.elementFacts },
     }, { signal });
     if (response.allowed !== true) return { allowed: false, reason: compact(response.reason || 'This action is already completed or cannot be safely identified.') };
-    if (response.readOnly === true) return { allowed: true, readOnly: true };
+    if (response.readOnly === true) return consequentialSubmit
+      ? { allowed: false, reason: 'A consequential submission requires a matching action reservation.' }
+      : { allowed: true, readOnly: true };
     const reservation = response.reservation;
     if (!reservation || typeof reservation.attemptId !== 'string' || reservation.requestId !== requestId
         || !this.config.policy.actions.some(action => action.key === reservation.actionKey)
