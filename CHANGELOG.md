@@ -101,6 +101,98 @@ The complete dated audit, including earlier failures, tracked effects and verifi
 - Persisted exact scheduled completion outcomes before snapshot cloning, and kept late terminal or restored UI events from overwriting a resumed or newer task.
 - Classified completion and notifications against the latest accepted task correction, preserving earlier events in history while preventing an old success or error from replacing the corrected task's result.
 
+## [40.1.1] - 2026-10-11
+
+### Changed
+- fix(ci): patch-release meta test covers sharded pipeline
+- fix(ci): release-workflow meta test covers sharded suite
+- ci: compose npm test from shards, fixtures on tail job
+- fix(web): drop Multilingual UI feature card from homepage
+- ci: shard Build and Package tests across parallel jobs
+- Add last update date to prompt injection defense
+- fix(web): align homepage tests and locales with current landing structure
+- fix(release): promote Unreleased changelog draft instead of failing
+- fix(cloud-runs): keep tab reserved through video flush cleanup
+- 40.1.0
+- feat(web): optimize homepage section ordering and presentation
+- 40.0.9
+- fix: share cold UI snapshot reads across concurrent callers
+- docs: add fresh PR scan results to the 40.2.0 audit
+- test: constrain workflow fixtures and record PR scan findings
+- fix: harden browser workflows and document 40.2.0 audit
+- feat(runtime): merge cloud execution recovery, private results, and tool fixes
+- Add explainer visuals 10-12 and modernize SafeSocial as 13
+- Fix empty assistant reply bubbles
+- Fix cross-site editor and dialog verification
+- version up
+- added tests
+- version up
+- Bump extension version to 40.0.6
+- Fix repeated message approvals and chat dispatch
+- version up
+- Fix browser action progress during passive page updates
+- agent: track finite collection read progress
+- Fix photo downloads rejected by passive page updates
+- Prevent browser feedback from starving agent progress
+- Fix completion retries during passive page updates
+- version up
+- bugfixes
+- 40.0.1
+- icon change
+- changes
+- docs: add 40.0.0 changelog
+- Bound child frame gestures and guard iframe clicks
+- Attribute agent-driven window resizes
+- Refresh workflow page before AI fallback
+- Attribute local synthetic clicks to agent dispatch
+- Prepare Firefox BiDi target frame monitor
+- Close page feedback review gaps
+- Fix keyboard activation feedback attribution
+- track form and accessibility navigation changes
+- track form validation bypass changes
+- fix page feedback frame and state monitoring
+- Fence Firefox fallback uploads against stale page feedback
+- version up
+- fix page feedback for base and animated changes
+- fix page feedback for GET forms and stylesheets
+- fix redirect correlation and bounded page monitoring
+- observe submitter form association changes
+- attribute local form events and shadow focus
+- attribute capture scroll and correlate click navigation
+- cover all form state and hidden native labels
+- observe form submission method changes
+- fence WebMCP dispatch after page feedback
+- fix remaining page feedback monitor review findings
+- Fence accessibility focus and BiDi dispatch
+- Observe accessible-name relationship changes
+- Track editable text and field metadata changes
+- Guard CDP click fallbacks against page feedback
+- Fix native hover attribution and guarded JS evaluation
+- Fix stale page feedback dispatch races
+- Fix page feedback dispatch fencing
+- fix page feedback review findings
+- fix page monitor review findings
+- avoid idle waits on automatic scroll events
+- track shadow text and select state changes
+- fix fenced iframe click monitoring
+- fix layout and recovery monitoring feedback
+- align monitor tests with page dispatch timing
+- fix page feedback review findings
+- fix: monitor popovers and release gestures over owned UI
+- fix: observe full text and aria-pressed state changes
+- fix: monitor focus movement and large related-frame changes
+- fix: attribute preparation scrolls and recover empty Firefox frames
+- fix: fence selector scrolling and observe viewport state
+- fix: attribute contenteditable gate and synchronous native edits
+- fix: await frame monitors and register owned decorations
+- fix: defer input attribution until actual dispatch
+- fix: scope navigation correlation to dispatched frames
+- fix: attribute native uploads to the Firefox file input
+- fix: correlate navigation with dispatched page actions
+- test: cover explicit queue shortcut after main update
+- fix: monitor subtree replacements and late shadow roots
+- feat: monitor browser changes during agent runs
+
 ## [40.0.8] - 2026-10-07
 
 ### Added
