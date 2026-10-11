@@ -163,6 +163,20 @@ input and Firefox uses trusted automation when enabled. DraftJS multiline input
 uses a single public plain-text paste. See [rich-text input](rich-text-input.md)
 for editor detection, frame ownership and exact full-document readback.
 
+Chrome selector typing also verifies the complete current selection before
+replacing a DraftJS or ProseMirror document with one native `Input.insertText`.
+It keeps the existing draft intact when selection cannot be proved. Deleting
+first can mount a placeholder and disable Publish, invalidating preparation
+before replacement text arrives. Explicit empty clears and generic editor
+clearing retain native deletion and clear receipts; Firefox uses its existing
+editor and companion paths.
+
+Before each model decision, a sole visible dialog is captured by its subtree,
+including the normal overlay context and any explicitly requested observation
+scope. This avoids repeatedly formatting an occluded live timeline. Ordinary
+AX reads retain full-page pagination, and only targets whose complete identity
+was actually exposed in the current observation can receive action authority.
+
 Rejects non-typeable input types (checkbox, radio, submit, file) with a clear error.
 
 ### `set_field({ref_id, text, clear, submit})`

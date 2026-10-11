@@ -97,7 +97,7 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal((await validate(page, snapshot, { tool: 'click_ax', ref_id: snapshot.postRef })).ready, true);
           const anonymous = await validate(page, snapshot, { tool: 'click_ax', ref_id: snapshot.anonymousRef });
           assert.equal(anonymous.ready, false);
-          assert.equal(anonymous.uncertified, true, 'An anonymous toolbar still lacks an entity boundary');
+          assert.equal(anonymous.reason, 'target_uncovered', 'The background toolbar was not observed in the dialog capture');
         } finally { await context.close(); }
       });
 
@@ -534,3 +534,55 @@ test('Chrome and Firefox dialog ownership logic stays byte-identical', () => {
   const source = build => fs.readFileSync(new URL(`../src/${build}/src/content/page-monitor.js`, import.meta.url), 'utf8');
   assert.equal(source('chrome'), source('firefox'));
 });
+
+for (const [build, launcher] of [['chrome', chromium], ['firefox', firefox]]) {
+  test(`${build}: large occluded background remains responsive without acquiring action authority`, async () => {
+    const browser = await launcher.launch({ headless: true });
+    const { context, page } = await fixture(browser, build);
+    try {
+      await page.evaluate(() => {
+        const composer = document.getElementById('composer');
+        Object.assign(composer.style, { zIndex: '10', background: 'white' });
+        const background = document.createElement('div'); background.id = 'large-background';
+        for (let group = 0; group < 100; group++) {
+          const region = document.createElement('section'); region.setAttribute('role', 'region');
+          region.style.cssText = 'position:absolute;left:40px;top:40px;width:100px;height:80px';
+          const heading = document.createElement('h2'); heading.textContent = 'Owned background ' + group;
+          region.append(heading);
+          for (let index = 0; index < 20; index++) {
+            const button = document.createElement('button'); button.id = `background-${group}-${index}`;
+            button.style.cssText = 'position:absolute;left:0;top:0;width:100px;height:30px';
+            const label = document.createElement('span'); label.textContent = 'Background action ' + index;
+            button.append(label); region.append(button);
+          }
+          background.append(region);
+        }
+        document.body.append(background);
+      });
+      const measurement = await page.evaluate(async () => {
+        const generate = window.__generateAccessibilityTree;
+        let treeMs = 0;
+        window.__generateAccessibilityTree = (...args) => {
+          const start = performance.now();
+          try { return generate(...args); }
+          finally { treeMs += performance.now() - start; }
+        };
+        const start = performance.now();
+        const snapshot = await deliver('page_monitor_capture_model', { includeTree: true });
+        return { snapshot, elapsed: performance.now() - start, treeMs,
+          editorRef: __wb_ax_ref(document.getElementById('editor')),
+          backgroundRef: __wb_ax_ref(document.getElementById('background-0-0')) };
+      });
+      console.log(JSON.stringify({ build, captureMs: Math.round(measurement.elapsed), treeMs: Math.round(measurement.treeMs), backgroundControls: 2000 }));
+      assert.equal(measurement.snapshot.ready, true);
+      assert.ok(measurement.elapsed < 3000, `One model observation must remain responsive: ${measurement.elapsed}ms`);
+      const validateTarget = ref_id => page.evaluate(({ snapshotToken, ref_id }) => deliver('page_monitor_validate_model', {
+        snapshotToken, tool: 'click_ax', ref_id,
+      }), { snapshotToken: measurement.snapshot.snapshotToken, ref_id });
+      assert.equal((await validateTarget(measurement.editorRef)).ready, true);
+      assert.equal((await validateTarget(measurement.backgroundRef)).ready, false, 'An unobserved background cannot borrow the composer certificate.');
+      await page.locator('#audience').evaluate(node => { node.textContent = 'Different audience'; });
+      assert.equal((await validateTarget(measurement.editorRef)).ready, false, 'Capture speed cannot weaken the complete local identity fence.');
+    } finally { await context.close(); await browser.close(); }
+  });
+}

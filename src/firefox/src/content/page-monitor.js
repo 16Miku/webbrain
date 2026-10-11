@@ -1524,7 +1524,15 @@
         // Reserve space for the requested owner's current identity evidence.
         // AX omits some visible generic wrappers (for example recipient chips).
         const contextual = priorityTarget || validObservationRoot;
-        const tree = window.__generateAccessibilityTree('visible', 15, contextual ? 4000 : 6000);
+        const dialogs = [...document.querySelectorAll('dialog,[role="dialog"],[role="alertdialog"]')];
+        const visibleDialogs = dialogs.length <= 32 ? dialogs.filter(node => visible(node)
+          && !node.closest('[aria-hidden="true"]')) : [];
+        const dialogRoots = visibleDialogs.filter(node => !visibleDialogs.some(other => other !== node && other.contains(node)));
+        // A sole open dialog owns the current observation. The normal AX
+        // reader still handles the full page and explicitly requested scopes;
+        // model capture must not repeatedly format its occluded live timeline.
+        const dialogRef = dialogRoots.length === 1 ? window.__wb_ax_ref?.(dialogRoots[0]) : undefined;
+        const tree = window.__generateAccessibilityTree('visible', 15, contextual ? 4000 : 6000, dialogRef);
         if (!tree || tree.error || typeof tree.pageContent !== 'string') throw new Error('unavailable');
         page = { success: true, ...tree, pageContent: boundedTreeText(tree, contextual ? 4000 : 6000), url: location.href };
         if (validObservationRoot) {
@@ -1686,6 +1694,10 @@
     };
     const captureTarget = node => {
       if (!(node instanceof Element) || ignored(node) || seen.has(node) || seen.size >= MODEL_SCAN_LIMIT) return;
+      // Unobserved nodes cannot receive a model certificate. Avoid rebuilding
+      // their full owner footprints across a large live page; hidden file
+      // inputs still need the existing structural owner proof.
+      if (page && !publicNodes.has(node) && !(node.tagName === 'INPUT' && node.type === 'file')) return;
       seen.add(node);
       const footprint = targets.size < MODEL_TARGET_LIMIT ? actionFootprint(node, node === readonlyPreparation?.target ? readonlyPreparation : null) : null;
       if (footprint && !observedFootprint(footprint)) return;

@@ -8,7 +8,7 @@ const { validateUploadFile, observedFileViewerResource, source: FILE_UPLOAD_POLI
  */
 
 import { combineImages } from './image-utils.js';
-import { beforePageAgentDispatch, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from '../agent/page-feedback.js';
+import { beforePageAgentDispatch, capturePageAgentInputCompletion, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from '../agent/page-feedback.js';
 
 const SELECTOR_SCROLL_DISPATCH_SOURCE = `
   const beforeSelectorScroll = (element, guard) => {
@@ -5364,6 +5364,62 @@ export class CDPClient {
     }
   }
 
+  async _managedTextReplacementSelection(tabId, selector, nodeId) {
+    let objectId = null, objectGroup = null;
+    try {
+      if (Number.isInteger(nodeId) && nodeId > 0) {
+        objectId = (await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId }))?.object?.objectId;
+      } else {
+        const targets = await this.querySelectorPierce(tabId, selector);
+        objectGroup = targets?.objectGroup;
+        if (targets?.objectIds?.length === 1) objectId = targets.objectIds[0];
+      }
+      if (!objectId) return null;
+      const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId, returnByValue: true,
+        functionDeclaration: `function () {
+          const draftJs = (${isDraftJsEditor.toString()})(this);
+          if (!draftJs && !this.classList.contains('ProseMirror')) return { managedEditor: false };
+          const failed = { managedEditor: true, selected: false };
+          if (!this.isConnected || !this.isContentEditable || this.getAttribute('aria-readonly') === 'true') return failed;
+          const root = this.getRootNode(), view = this.ownerDocument.defaultView;
+          if (root.activeElement !== this) return failed;
+          const selection = root.getSelection?.() || view.getSelection();
+          if (selection?.rangeCount !== 1) return failed;
+          const range = selection.getRangeAt(0);
+          if (!this.contains(range.startContainer) || !this.contains(range.endContainer)) return failed;
+          if (draftJs && (${readDraftJsText.toString()})(this) === null) return failed;
+          // Selection coverage is structural, independent of the text reader's
+          // supported block formats. Empty blocks and inline atoms also occupy
+          // document positions even though they contribute no text nodes.
+          const walker = this.ownerDocument.createTreeWalker(this, view.NodeFilter.SHOW_TEXT | view.NodeFilter.SHOW_ELEMENT);
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node.nodeType === 3) {
+              if (node.length && (range.comparePoint(node, 0) !== 0 || range.comparePoint(node, node.length) !== 0)) return failed;
+              continue;
+            }
+            const placeholder = node.tagName === 'BR' && (draftJs
+              || node.classList.contains('ProseMirror-trailingBreak'));
+            if (placeholder) {
+              if (!node.parentElement.textContent && range.comparePoint(node.parentNode,
+                  Array.prototype.indexOf.call(node.parentNode.childNodes, node)) !== 0) return failed;
+            } else if (node.getAttribute('contenteditable') === 'false' || /^(BR|IMG|HR|INPUT|VIDEO|AUDIO|IFRAME)$/.test(node.tagName)) {
+              const index = Array.prototype.indexOf.call(node.parentNode.childNodes, node);
+              if (range.comparePoint(node.parentNode, index) !== 0 || range.comparePoint(node.parentNode, index + 1) !== 0) return failed;
+            } else if (!node.childNodes.length && /^(block|list-item|table-cell|flow-root|flex|grid)$/.test(view.getComputedStyle(node).display)
+                && range.comparePoint(node, 0) !== 0) return failed;
+          }
+          return { managedEditor: true, selected: true };
+        }`,
+      });
+      return result?.result?.value || null;
+    } catch { return null; }
+    finally {
+      if (objectGroup) await this.sendCommand(tabId, 'Runtime.releaseObjectGroup', { objectGroup }).catch(() => null);
+      else if (objectId) await this.releaseObject(tabId, objectId);
+    }
+  }
+
   /**
    * Prove a text edit landed. Returns `true` when proven and `null` when it
    * could not be proven — never `false`.
@@ -6159,9 +6215,12 @@ export class CDPClient {
 
     const clearReceipt = clear ? await this.captureTextClearReceipt(tabId, { selector, nodeId: info.nodeId }) : null;
     try {
-      // Clear existing content if requested. Use Select All + Delete via key events
-      // so the page observes proper input events.
+      // Keep managed replacements atomic; explicit empty clears and generic
+      // fields still use the native Select All + Delete path.
       if (clear) {
+        const replacement = insertionText !== ''
+          ? await this._managedTextReplacementSelection(tabId, selector, info.nodeId) : null;
+        throwIfAborted();
         try {
           // Select all
           const selectAllModifiers = await this.selectAllModifier(tabId);
@@ -6170,10 +6229,11 @@ export class CDPClient {
           await dispatchKeyPress({
             key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
           });
-          // Delete selection
-          await dispatchKeyPress({
-            key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-          });
+          if (replacement?.managedEditor !== true) {
+            await dispatchKeyPress({
+              key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+            });
+          }
         } catch (e) {
           if (e?.code === 'page_feedback_pending') throw e;
           if (actionExpired()) throwIfAborted();
@@ -6186,7 +6246,24 @@ export class CDPClient {
             error: `Could not safely clear the text field: ${e?.message || String(e)}`,
           };
         }
-        const cleared = await this.verifyTextEntry(tabId, {
+        const selectedReplacement = replacement?.managedEditor === true
+          ? await this._managedTextReplacementSelection(tabId, selector, info.nodeId) : null;
+        throwIfAborted();
+        if (replacement?.managedEditor === true && selectedReplacement?.selected !== true) {
+          const unchanged = typeof beforeSignature === 'string' && await this.textEntrySignature(tabId, {
+            selector, nodeId: info.nodeId,
+          }) === beforeSignature;
+          throwIfAborted();
+          const failure = { success: false, dispatched: true, verified: false, mutationMayHaveOccurred: !unchanged,
+            outcomeUnknown: !unchanged, retryable: unchanged, repeatBlocked: !unchanged,
+            recoveryRequired: unchanged ? 'fresh_tree' : 'verify_or_restore_field',
+            error: 'The original editor could not be proven fully selected. No replacement text was inserted. Re-observe before trying again.' };
+          if (unchanged && typeof resolveOptions.onUnchangedPreparation === 'function') resolveOptions.onUnchangedPreparation(failure);
+          return failure;
+        }
+        // Managed editors replace the proved selection atomically. Deleting first
+        // mounts placeholders and changes Post state before the insertion.
+        const cleared = replacement?.managedEditor === true ? true : await this.verifyTextEntry(tabId, {
           selector,
           nodeId: info.nodeId,
           text: '',
@@ -6205,6 +6282,10 @@ export class CDPClient {
         }
       }
 
+      // Capture this exact operation before input changes the editor. Only its
+      // acknowledged, verified write may finish; lost input retains uncertainty.
+      const inputGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'input', selector, fenceOnly: true });
+      const finishInput = capturePageAgentInputCompletion(globalThis.chrome, tabId, inputGuard);
       // Type via Input.insertText — atomic, fires beforeinput/input correctly.
       try {
         dispatched = true;
@@ -6238,6 +6319,11 @@ export class CDPClient {
           mutationMayHaveOccurred: true,
           error: 'Text was inserted, but the complete settled field value could not be verified exactly.',
         };
+      }
+      if (finishInput && !await finishInput()) {
+        return { success: false, dispatched: true, verified: false, outcomeUnknown: true,
+          mutationMayHaveOccurred: true, retryable: false,
+          error: 'The editor value was verified, but its owned input operation could not be completed. Re-observe before acting.' };
       }
       return {
         success: true,

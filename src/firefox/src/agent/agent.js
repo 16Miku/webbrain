@@ -18847,6 +18847,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return sources;
   }
 
+  async _socialDraftClarificationArgs(tabId, args) {
+    const guard = this._planExecutionGuards.get(tabId), social = guard?.socialPublication;
+    const target = social?.clarificationTarget;
+    const question = String(args?.question || ''), options = Array.isArray(args?.options) ? args.options : [];
+    if (!guard?.enabled || social?.contract?.status !== 'clarify' || !target
+        || target.taskKey !== guard.taskKey || guard.taskKey !== this._progressTaskKeyHash(tabId)
+        || !question.includes('\\') || !options.some(option => typeof option === 'string' && option.includes('\\'))
+        || args?.purpose || this._checkAbort(tabId) || this._hasPendingSteering(tabId)) return args;
+    let fresh;
+    try {
+      if (await this._currentUrl(tabId) !== target.pageUrl) return args;
+      fresh = await this._detectLikelySubmitAction(tabId, target.tool, target.args);
+    } catch { return args; }
+    if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
+        || social.needsRecompile || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
+        || fresh?.isSubmit !== true || fresh.publicationControl !== true
+        || fresh.publicationSnapshot?.complete !== true || fresh.publicationSnapshot.posts?.length !== 1
+        || fresh.publicationSnapshot.posts[0]?.complete !== true) return args;
+    const body = fresh.publicationSnapshot.posts[0].bodyText;
+    if (typeof body !== 'string' || !body) return args;
+    const encoded = JSON.stringify(body).slice(1, -1);
+    if (encoded === body || !question.includes(encoded)
+        || !options.some(option => typeof option === 'string' && option.includes(encoded))) return args;
+    // Only correct the exact JSON representation of this freshly observed
+    // draft before displaying it. The page supplies a proposal, never intent;
+    // the human's displayed selection becomes the authoritative answer.
+    return { ...args, question: question.split(encoded).join(body),
+      options: options.map(option => typeof option === 'string' ? option.split(encoded).join(body) : option),
+      require_explicit_answer: true };
+  }
+
   _recordSocialPublicationClarification(tabId, guard, question, answer, source) {
     if (!guard?.enabled || this._planExecutionGuards.get(tabId) !== guard
         || !['user', 'option'].includes(source) || !question || !answer) return;
@@ -19268,6 +19299,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (social?.needsRecompile || !action || action.platform !== live.adapterName
         || !publicationProgress(social?.contract, social?.outcomes).eligible.includes(action.id)) {
       if (social?.contract?.status === 'clarify') {
+        if (!Number.isFinite(args.x) && !Number.isFinite(args.y) && (args.ref_id || args.selector)) {
+          social.clarificationTarget = { taskKey: guard.taskKey, pageUrl, tool: name, args: structuredClone(args) };
+        }
         return blocked('Publication details are unresolved: ' + social.contract.reason
           + ' Resolve the missing detail, not just permission. If the post text is missing, include the complete proposed text in one clarification; a yes/no approval without that text cannot supply it.');
       }
@@ -34763,6 +34797,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // / timeout note). Permission and form-submit prompts use separate
     // helpers and never time out.
     if (name === 'clarify') {
+      args = await this._socialDraftClarificationArgs(tabId, args);
       const clarificationGuard = this._planExecutionGuards.get(tabId);
       // Models sometimes copy a JSON-escaped post body into clarify text,
       // leaving literal `\"` after the tool-call JSON is parsed. The card

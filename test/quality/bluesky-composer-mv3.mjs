@@ -97,7 +97,8 @@ const server = http.createServer(async (request, response) => {
           await current.page.evaluate(() => qaChurnFeed());
           current.inferenceChanges++;
           await new Promise(resolve => setTimeout(resolve, 240));
-          call = { name: current.tool, args: { ref_id: current.beforeWrite.editor, text: body, clear: true } };
+          call = { name: current.tool, args: { ...(current.tool === 'type_text'
+            ? { selector: '.ProseMirror' } : { ref_id: current.beforeWrite.editor }), text: body, clear: true } };
         } else if (step === 2) {
           current.writeResult = tools.findLast(tool => tool.name === current.tool)?.result;
           current.afterWrite = await current.page.evaluate(() => qaSnapshot());
@@ -112,6 +113,12 @@ const server = http.createServer(async (request, response) => {
           call = { name: 'click_ax', args: { ref_id: fresh.publish } };
         } else if (step === 4 && current.writeResult?.success === true)
           call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
+        else if (step > 3 && step % 2 === 1 && current.writeResult?.success === true
+            && !tools.some(tool => tool.name === 'click_ax') && last?.name === 'get_accessibility_tree') {
+          const fresh = references(observed?.result); assert.ok(fresh.publish);
+          current.publishRetryReobserved = true;
+          call = { name: 'click_ax', args: { ref_id: fresh.publish } };
+        } else if (last?.name === 'click_ax') call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
         else call = { name: 'done', args: { outcome: current.writeResult?.success === true ? 'success' : 'partial',
           summary: 'The exact owned local Bluesky post was published once and freshly verified.' } };
         current.calls.push(call);
@@ -150,7 +157,7 @@ body{margin:0;font:16px sans-serif;background:#eee}#composer{position:absolute;l
 <div id="editor-row"><div data-testid="userAvatarImage" data-expoimage="true"><img id="avatar" alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='42' height='42'%3E%3Crect width='42' height='42' fill='%238ac'/%3E%3C/svg%3E"></div><div id="editor-host"></div></div>
 <div id="footer"><div role="button" tabindex="0" aria-label="Anyone can interact" data-testid="openReplyGateButton">Anyone can interact</div>
 <div role="button" tabindex="0" aria-label="Add image">Add image</div></div></div></div><script>
-qaEditorLibrary.mountEditor('');window.qaEvents=[];window.qaCommands=[];window.qaFeedChanges=0;window.qaSaved=[];
+qaEditorLibrary.mountEditor(window.qaInitialDraft||'');window.qaEvents=[];window.qaCommands=[];window.qaFeedChanges=0;window.qaSaved=[];
 for(const type of ['beforeinput','input','paste'])document.querySelector('#editor-host').addEventListener(type,event=>
   qaEvents.push({type,trusted:event.isTrusted,inputType:event.inputType,data:event.data}),true);
 const execCommand=document.execCommand.bind(document);
@@ -228,15 +235,20 @@ try {
   assert.equal((await message('update_provider',{providerId:'openrouter',config:{apiKey:'owned-fixture-fake-key',
     baseUrl:`http://127.0.0.1:${server.address().port}/v1`,model:'minimax/minimax-m3',enabled:true,contextWindow:1000000,supportsAskStreaming:false}})).ok,true);
   assert.equal((await message('set_active_provider',{providerId:'openrouter'})).ok,true);
-  for(const {scenario,tool,body} of [
+  for(const {scenario,tool,body,prefilled} of [
     {scenario:'set_field',tool:'set_field',body:singleLineBody},
     {scenario:'type_ax',tool:'type_ax',body:singleLineBody},
     {scenario:'set_field_multiline',tool:'set_field',body:multilineBody},
-  ]){
-    const page=await context.newPage(),pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));await page.goto(fixtureUrl);
+    {scenario:'prefilled_type_ax',tool:'type_ax',body:singleLineBody,prefilled:true},
+    {scenario:'prefilled_type_text',tool:'type_text',body:singleLineBody,prefilled:true},
+  ].filter(item=>!process.env.WEBBRAIN_QUALITY_BLUESKY_CASE||item.scenario===process.env.WEBBRAIN_QUALITY_BLUESKY_CASE)){
+    const page=await context.newPage(),pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
+    if(prefilled)await page.addInitScript(()=>{window.qaInitialDraft='Old owned draft "Local book" by @owned.bsky.social.';});
+    await page.goto(fixtureUrl);
     await page.waitForSelector('.ProseMirror');
     const initial=await page.evaluate(()=>qaSnapshot());
-    assert.equal(initial.model,'');assert.equal(initial.editorName,null);assert.equal(initial.placeholder,"What's up?");assert.equal(initial.publishEnabled,false);
+    assert.equal(initial.model,prefilled?'Old owned draft "Local book" by @owned.bsky.social.':'');assert.equal(initial.editorName,null);
+    assert.equal(initial.placeholder,prefilled?null:"What's up?");assert.equal(initial.publishEnabled,!!prefilled);
     const tabId=await harness.evaluate(async url=>(await chrome.tabs.query({})).findLast(tab=>tab.url===url)?.id,fixtureUrl);assert.ok(tabId);
     current={scenario,tool,body,page,marker:`Owned Bluesky regression path ${scenario}.`,requests:[],calls:[],steps:0,compilers:0,audits:0,judges:0,inferenceChanges:0};
     const probeStart=await worker.evaluate(()=>({commands:blueskyFixtureProbe.commands.length,transports:blueskyFixtureProbe.transports.length}));

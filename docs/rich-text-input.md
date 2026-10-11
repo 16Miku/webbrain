@@ -75,6 +75,11 @@ main boundaries. Installed Chrome extension tests also run the complete X and
 Bluesky typing, local publication and fresh completion-proof flow. These are
 owned local fixtures; no live account is used or posted to.
 
+Chrome replacement selection is checked independently of ProseMirror's paragraph
+text reader, so headings, lists and blockquotes can also be replaced. Full native
+selection must cover empty blocks and inline atoms as well as text; an intercepted
+partial selection leaves the original application document intact.
+
 When context verification or repeated page changes prevent the next action,
 the task shows a specific explanation and Give up / Retry choices. Retry keeps
 completed progress and verifies the current page again using the normal checks.
@@ -82,6 +87,6 @@ completed progress and verifies the current page again using the normal checks.
 Run the focused suite with:
 
 ```sh
-node --test test/rich-text-frameworks.mjs test/firefox-rich-text-readback.mjs test/draftjs-text.mjs test/iframe-preparation-focus.mjs test/contenteditable-literal.mjs test/contenteditable-beforeinput.mjs
+node --test test/rich-text-frameworks.mjs test/cdp-managed-text-selection.mjs test/firefox-rich-text-readback.mjs test/draftjs-text.mjs test/iframe-preparation-focus.mjs test/contenteditable-literal.mjs test/contenteditable-beforeinput.mjs
 npm run test:composer-context
 ```
