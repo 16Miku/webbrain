@@ -17,7 +17,7 @@
   "nav.blog": "博客",
   "nav.docs": "文档",
   "nav.security": "安全",
-  "banner.top_mcp": "新增：适用于 Claude Code、Codex 和 Cursor 的 MCP 服务器",
+  "banner.top_mcp": "适用于 Claude Code、Codex 和 Cursor 的 MCP 服务器",
   "nav.language_aria": "选择语言",
   "nav.github": "GitHub",
   "nav.github_stars_aria": "在 GitHub 上为 WebBrain 加星",
