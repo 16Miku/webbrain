@@ -746,12 +746,12 @@ export const AGENT_TOOLS = [
         properties: {
           question: {
             type: 'string',
-            description: 'The question to show the user. One sentence, plain English. Frame it as a real either/or, not "is this OK?" — e.g. "Did you mean the WordPress REST API application password, or a specific plugin\'s API key?" not "Should I proceed?"',
+            description: 'The question to show the user. One sentence, plain English. Frame it as a real either/or, not "is this OK?" — e.g. "Did you mean the WordPress REST API application password, or a specific plugin\'s API key?" not "Should I proceed?" Write plain text with real quotation marks only — never include backslash escapes like \\". Stray escapes are stripped before display, so include only characters you want shown.',
           },
           options: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Optional list of 2-4 suggested answers shown as buttons. The user can also type a custom answer. If the user does not answer before the clarify timeout, options[0] is auto-selected — put the safe/default choice first. Omit if the question is genuinely open-ended (timeout then yields a non-confirmation timeout marker, not user approval).',
+            description: 'Optional list of 2-4 suggested answers shown as buttons. The user can also type a custom answer. If the user does not answer before the clarify timeout, options[0] is auto-selected — put the safe/default choice first. Omit if the question is genuinely open-ended (timeout then yields a non-confirmation timeout marker, not user approval). Write plain text with real quotation marks only — never include backslash escapes like \\". Stray escapes are stripped before display.',
           },
           safe_first: {
             type: 'boolean',
