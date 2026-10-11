@@ -2,6 +2,86 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
+// Keep these document readers equivalent to the content/CDP readers. A rendered
+// prefix cannot certify an unsupported DraftJS document, and paragraph spacing
+// in innerText is not the document's authored line breaks.
+function readProseMirrorText(el) {
+  if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
+  const read = node => {
+    if (node.nodeType === 3) return node.nodeValue || '';
+    if (node.nodeType !== 1) return '';
+    if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
+    return Array.from(node.childNodes).map(read).join('');
+  };
+  const children = Array.from(el.childNodes);
+  if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
+  return children.map(read).join('\n');
+}
+
+function isDraftJsEditor(el) {
+  return !!el?.isContentEditable && (el.classList?.contains('public-DraftEditor-content')
+    || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true'));
+}
+
+function readDraftJsText(el) {
+  if (!el?.isContentEditable || !el.childNodes) return null;
+  const roots = Array.from(el.childNodes);
+  if (roots.length !== 1 || roots[0].nodeType !== 1 || roots[0].tagName !== 'DIV'
+      || roots[0].getAttribute('data-contents') !== 'true') return null;
+  let visited = 0;
+  const supported = node => {
+    if (++visited > 4096 || node.shadowRoot || node.hidden || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
+        || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return false;
+    const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+    return !!style && (style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility)
+      && style.opacity !== '0' && style.contentVisibility !== 'hidden');
+  };
+  if (!supported(el) || !supported(roots[0])) return null;
+  const blocks = Array.from(roots[0].childNodes);
+  if (!blocks.length) return null;
+  const texts = [];
+  for (const block of blocks) {
+    if (block.nodeType !== 1 || block.tagName !== 'DIV' || block.getAttribute('data-block') !== 'true'
+        || !block.getAttribute('data-offset-key') || !supported(block)) return null;
+    const children = Array.from(block.childNodes);
+    const body = children[0];
+    if (children.length !== 1 || body?.nodeType !== 1 || body.tagName !== 'DIV'
+        || !body.classList.contains('public-DraftStyleDefault-block')
+        || !body.getAttribute('data-offset-key') || !supported(body)) return null;
+    const leaves = [];
+    const read = (node, depth = 0) => {
+      if (depth > 32 || node.nodeType !== 1 || !supported(node)) return false;
+      if (node.tagName === 'BR') {
+        if (node.getAttribute('data-text') !== 'true' || node.childNodes.length) return false;
+        leaves.push(null); return true;
+      }
+      if (node.tagName !== 'SPAN') return false;
+      const descendants = Array.from(node.childNodes);
+      if (node.getAttribute('data-text') === 'true') {
+        if (!descendants.every(child => child.nodeType === 3)) return false;
+        leaves.push(descendants.map(child => child.nodeValue || '').join('')); return true;
+      }
+      return descendants.length > 0 && descendants.every(child => read(child, depth + 1));
+    };
+    if (!body.childNodes.length || !Array.from(body.childNodes).every(node => read(node))) return null;
+    const placeholders = leaves.filter(value => value === null).length;
+    if (placeholders && (placeholders !== 1 || leaves.some(value => value !== null && value !== ''))) return null;
+    texts.push(leaves.filter(value => value !== null).join(''));
+  }
+  return texts.join('\n');
+}
+
+function readRichTextFieldValue(el, semanticKind = '') {
+  if (!el?.isConnected) return null;
+  const draftJs = semanticKind === 'draftjs' || isDraftJsEditor(el);
+  const semantic = draftJs ? readDraftJsText(el) : readProseMirrorText(el);
+  if ((draftJs || semanticKind === 'prosemirror') && semantic === null) return null;
+  return semantic !== null ? semantic : (el.isContentEditable ? el.innerText : el.value);
+}
+
+const FIELD_TEXT_READBACK_SOURCE = [readProseMirrorText, isDraftJsEditor, readDraftJsText, readRichTextFieldValue]
+  .map(fn => fn.toString()).join('\n');
+
 const sipMask = (1n << 64n) - 1n;
 const sipRotate = (value, bits) => ((value << BigInt(bits)) | (value >> BigInt(64 - bits))) & sipMask;
 function pageActionSignature(secret, data) {
@@ -281,7 +361,7 @@ export class BidiSession {
     const match = await this.locate(payload.token, payload.url, run.context);
     assertLive();
     let nativeSequence = 0;
-    const markNativeDispatch = async (kind, { rebindFocus = false } = {}) => {
+    const markNativeDispatch = async (kind, { rebindFocus = false, domDispatch = false } = {}) => {
       assertLive();
       const guard = payload.pageFeedbackGuard;
       if (!guard) return; // Compatibility with clients without page monitoring.
@@ -290,6 +370,9 @@ export class BidiSession {
         const error = new Error('Page changed during native preparation; no further input sent');
         error.code = 'page_feedback_pending'; throw error;
       }
+      // A public framework event uses the existing prepared DOM phase gate.
+      // It cannot consume a trusted-event marker or advance its native sequence.
+      if (domDispatch) return;
       const marker = createNativeActionMarker(guard, kind, ++nativeSequence);
       const checked = await this.call(match, `(el, marker, kind, action) => {
         if (!el.isConnected) return false;
@@ -404,7 +487,20 @@ export class BidiSession {
     if (checkable && (!['checkbox', 'radio'].includes(checkable.inputType) || typeof checkable.desiredChecked !== 'boolean')) {
       throw new Error('Invalid checkable target metadata');
     }
-    const before = typing ? await this.call(match, '(el) => el.isContentEditable ? el.innerText : el.value') : null;
+    const before = typing ? await this.call(match, `(el) => {
+      ${FIELD_TEXT_READBACK_SOURCE}
+      const value = readRichTextFieldValue(el);
+      if (value === null) return null;
+      const semanticKind = isDraftJsEditor(el) ? 'draftjs'
+        : readProseMirrorText(el) !== null ? 'prosemirror' : '';
+      return { value, semanticKind };
+    }`) : null;
+    if (typing && (before.result?.type === 'null' || before.result?.value === null)) {
+      throw new Error('The rich-text editor structure cannot establish its exact document text; no text sent');
+    }
+    const beforeReadback = typing ? unpackRemoteObjectValue(before.result?.type ? before.result : before.result?.value) : null;
+    const beforeSnapshot = beforeReadback && typeof beforeReadback === 'object' && Object.hasOwn(beforeReadback, 'value')
+      ? beforeReadback : { value: before?.result?.value, semanticKind: '' };
     const assertFocus = async () => {
       assertLive();
       const focused = await this.call(match, '(el) => el.isConnected && !el.disabled && el.getRootNode().activeElement === el');
@@ -493,12 +589,22 @@ export class BidiSession {
         const platform = await this.call(match, '() => navigator.platform');
         await press('a', /Mac/.test(platform.result?.value || '') ? '\uE03D' : '\uE009');
         await press('\uE003');
+        if (beforeSnapshot.semanticKind === 'draftjs') {
+          const cleared = await this.call(match, `(el) => {
+            ${FIELD_TEXT_READBACK_SOURCE}
+            return readRichTextFieldValue(el, 'draftjs') === '';
+          }`);
+          if (cleared.result?.value !== true) throw new Error('DraftJS clearing did not establish an empty document; no further text sent');
+        }
       } else {
         const positioned = await this.call(match, `(el) => {
           if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
           if (el.isContentEditable) {
             const selection = getSelection(); const range = document.createRange();
-            range.selectNodeContents(el); range.collapse(false);
+            let container = el;
+            while (container.lastChild?.nodeType === 1 && container.lastChild.isContentEditable
+                && container.lastChild.nodeName !== 'BR') container = container.lastChild;
+            range.selectNodeContents(container); range.collapse(false);
             selection.removeAllRanges(); selection.addRange(range);
           } else if (typeof el.setSelectionRange === 'function') {
             const end = el.value.length; el.setSelectionRange(end, end);
@@ -507,24 +613,76 @@ export class BidiSession {
         }`);
         if (positioned.result?.value !== true) throw new Error('Could not position caret for append; no text sent');
       }
-      // One character per dispatch bounds work after Stop and catches focus changes between keys.
-      for (const char of payload.text) {
-        if (char === '\n' || char === '\r') {
-          await assertFocus();
-          // Enter is a submit shortcut on many editors, even with Shift. Insert a literal
-          // newline through the editing command instead; never synthesize a submit key.
-          const marker = await markNativeDispatch('input');
-          let inserted;
-          try {
-            dispatch.started = true;
-            inserted = await this.call(match, `(el, text) => {
-              if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
-              return document.execCommand('insertText', false, text);
-            }`, [{ type: 'string', value: char }]);
-          } finally { await clearNativeDispatch(marker); }
-          if (inserted.result?.value !== true) throw new Error('Editor rejected literal newline insertion');
-          assertLive();
-        } else await press(char);
+      if (beforeSnapshot.semanticKind === 'draftjs' && /[\r\n]/.test(payload.text)) {
+        // DraftJS treats literal LF editing commands inconsistently. Its public paste
+        // handler accepts a whole plain-text document without using a submit shortcut.
+        const positioned = await this.call(match, `(el, clear) => {
+          if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
+          const leaves = el.querySelectorAll('[data-text="true"]');
+          const leaf = leaves[clear ? 0 : leaves.length - 1];
+          if (!leaf) return false;
+          const range = el.ownerDocument.createRange();
+          if (leaf.nodeName === 'BR') range.setStartBefore(leaf);
+          else {
+            const text = clear ? leaf.firstChild : leaf.lastChild;
+            if (text?.nodeType !== 3) return false;
+            range.setStart(text, clear ? 0 : text.nodeValue.length);
+          }
+          range.collapse(true);
+          const selection = el.ownerDocument.defaultView.getSelection();
+          selection.removeAllRanges(); selection.addRange(range);
+          return true;
+        }`, [{ type: 'boolean', value: clear }]);
+        if (positioned.result?.value !== true) throw new Error('Could not position the DraftJS caret; no further text sent');
+        // Let the browser's selectionchange reach the framework before the paste.
+        await new Promise(resolve => setTimeout(resolve, 30));
+        await assertFocus();
+        const marker = await markNativeDispatch('input', { domDispatch: true });
+        try {
+          dispatch.started = true;
+          const pasted = await this.call(match, `(el, text, guardJson) => {
+            ${FIELD_TEXT_READBACK_SOURCE}
+            if (!el.isConnected || el.getRootNode().activeElement !== el || readDraftJsText(el) === null) return false;
+            const view = el.ownerDocument.defaultView;
+            const data = new view.DataTransfer(); data.setData('text/plain', text);
+            const event = new view.ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true, clipboardData: data });
+            // Firefox drops the constructor's clipboardData. Preserve the public
+            // plain-text payload without reading or writing the OS clipboard.
+            if (event.clipboardData?.getData('text/plain') !== text)
+              Object.defineProperty(event, 'clipboardData', { value: data });
+            const guard = JSON.parse(guardJson);
+            if (guard && !el.dispatchEvent(new view.CustomEvent('webbrain-agent-dom-dispatch', {
+              detail: JSON.stringify({ ...guard, dispatchPhase: 'input' }), bubbles: true, composed: true, cancelable: true,
+            }))) return false;
+            el.dispatchEvent(event);
+            // Cancellation can mean the framework consumed the paste. Only the
+            // settled exact document readback below establishes its outcome.
+            return true;
+          }`, [{ type: 'string', value: payload.text.replace(/\r\n?/g, '\n') },
+            { type: 'string', value: JSON.stringify(payload.pageFeedbackGuard || null) }]);
+          if (pasted.result?.value !== true) throw new Error('DraftJS paste dispatch could not be established; inspect before another write');
+        } finally { await clearNativeDispatch(marker); }
+        assertLive();
+      } else {
+        // One character per dispatch bounds work after Stop and catches focus changes between keys.
+        for (const char of payload.text.replace(/\r\n?/g, '\n')) {
+          if (char === '\n' || char === '\r') {
+            await assertFocus();
+            // Enter is a submit shortcut on many editors, even with Shift. Insert a literal
+            // newline through the editing command instead; never synthesize a submit key.
+            const marker = await markNativeDispatch('input');
+            let inserted;
+            try {
+              dispatch.started = true;
+              inserted = await this.call(match, `(el, text) => {
+                if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
+                return document.execCommand('insertText', false, text);
+              }`, [{ type: 'string', value: char }]);
+            } finally { await clearNativeDispatch(marker); }
+            if (inserted.result?.value !== true) throw new Error('Editor rejected literal newline insertion');
+            assertLive();
+          } else await press(char);
+        }
       }
     } else if (action === 'key') {
       const keys = { Enter: '\uE007', Tab: '\uE004', Escape: '\uE00C', Backspace: '\uE003', Delete: '\uE017', ArrowLeft: '\uE012', ArrowRight: '\uE014', ArrowUp: '\uE013', ArrowDown: '\uE015', Home: '\uE011', End: '\uE010' };
@@ -537,8 +695,15 @@ export class BidiSession {
     if (typing) {
       await new Promise(resolve => setTimeout(resolve, 100));
       assertLive();
-      const expected = clear ? payload.text : String(before.result?.value || '') + payload.text;
-      const verified = await this.call(match, '(el, expected) => el.isConnected && (el.isContentEditable ? el.innerText : el.value) === expected', [{ type: 'string', value: expected }]);
+      const expected = clear ? payload.text : String(beforeSnapshot.value || '') + payload.text;
+      const verified = await this.call(match, `(el, expected, semanticKind) => {
+        ${FIELD_TEXT_READBACK_SOURCE}
+        const actual = readRichTextFieldValue(el, semanticKind);
+        if (actual === null) return false;
+        if (!el.isContentEditable) return actual === expected;
+        const normalize = value => String(value).replace(/\\r\\n?/g, '\\n');
+        return normalize(actual) === normalize(expected);
+      }`, [{ type: 'string', value: expected }, { type: 'string', value: beforeSnapshot.semanticKind || '' }]);
       if (verified.result?.value !== true) return { success: false, dispatched: true, verified: false, submitted: false, outcomeUnknown: true, retryable: false, error: 'Trusted typing did not match the requested value; inspect before another write.' };
       if (action === 'field' && payload.submit === true) {
         assertLive();

@@ -29978,7 +29978,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           ...params,
           ...(typeof expected === 'string' ? { expected } : {}),
         },
-      });
+      }, Number.isInteger(target.frameId) ? { frameId: target.frameId } : undefined);
       if (response?.success !== true
           || !Number.isInteger(response.valueLength)
           || response.valueLength < 0
@@ -41572,7 +41572,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         dispatched = true;
         markEarlyCdpDispatched();
         try {
-          const response = await chrome.tabs.sendMessage(tabId, {
+          let response = await chrome.tabs.sendMessage(tabId, {
             target: 'content',
             action: 'type',
             params: {
@@ -41583,6 +41583,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               dispatchBinding: binding,
             },
           }, { frameId: targetFrameId });
+          if (response?.trustedTypeRequired === true && response.noDispatch === true
+              && response.dispatched !== true && typeof response.ref_id === 'string') {
+            response = await this._maybeFallbackFieldWithCdp(tabId, 'type_ax', {
+              ref_id: response.ref_id, text, clear,
+            }, response, {}, earlyCdpAbortSignal, targetFrameId);
+          }
           return {
             ...(response || { success: false, dispatched: false, noDispatch: true, error: 'Iframe type returned no response' }),
             frameId: targetFrameId,
@@ -45153,6 +45159,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     response,
     messageRecipientContext = {},
     upstreamAbortSignal = null,
+    frameId = 0,
   ) {
     if (CONTENT_ACTION_SIGNAL_DEADLINES.has(upstreamAbortSignal)) {
       return this._maybeFallbackFieldWithCdpImpl(
@@ -45162,6 +45169,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         response,
         messageRecipientContext,
         upstreamAbortSignal,
+        frameId,
       );
     }
     try {
@@ -45173,6 +45181,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           response,
           messageRecipientContext,
           abortSignal,
+          frameId,
         ),
         toolName,
         this._contentActionDeadlineMs(toolName, args),
@@ -45193,6 +45202,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     response,
     messageRecipientContext = {},
     abortSignal = null,
+    frameId = 0,
   ) {
     if (!response || (toolName !== 'type_ax' && toolName !== 'set_field')) return response;
     const expected = typeof response._expectedValue === 'string' ? response._expectedValue : null;
@@ -45232,7 +45242,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     let trustedDispatched = false;
     let trustedTextAttempted = false;
     let beforePreparation = null;
-    const digestTarget = { locatorType: 'ax', refId: args.ref_id };
+    const digestTarget = { locatorType: 'ax', refId: args.ref_id, frameId };
+    const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0;
+    const sendContent = message => chrome.tabs.sendMessage(tabId, {
+      ...message, ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
+    }, { frameId });
     const finishPreparationFailure = async failure => {
       if (!trustedDispatched || trustedTextAttempted || !beforePreparation?.documentToken || abortSignal?.aborted) return failure;
       const afterPreparation = await this._textMutationValueDigest(tabId, digestTarget);
@@ -45257,7 +45271,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       this._throwIfAborted(abortSignal);
       beforePreparation = await this._textMutationValueDigest(tabId, digestTarget);
       this._throwIfAborted(abortSignal);
-      let prepared = await chrome.tabs.sendMessage(tabId, {
+      let prepared = await sendContent({
         target: 'content',
         action: 'ax_prepare_field_for_trusted_type',
         params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
@@ -45273,7 +45287,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
       await cdpClient.attach(tabId);
       this._throwIfAborted(abortSignal);
-      if (prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0) {
+      // Child-frame rectangles are frame-relative. Focus/selection are already
+      // bound to the exact editor there; do not click them as top-frame points.
+      if (frameId === 0 && prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0) {
         const x = prepared.rect.x + prepared.rect.w / 2;
         const y = prepared.rect.y + prepared.rect.h / 2;
         this._throwIfAborted(abortSignal);
@@ -45293,7 +45309,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // same ref and restore the requested selection immediately before
         // dispatch: replacement selects all; append collapses at the end so
         // existing rich-editor markup and spacing survive unchanged.
-        const reselected = await chrome.tabs.sendMessage(tabId, {
+        const reselected = await sendContent({
           target: 'content',
           action: 'ax_prepare_field_for_trusted_type',
           params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
@@ -45319,29 +45335,43 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       // A lost response can precede a delayed applied write. After this
       // boundary an unchanged sample cannot make the text command retry-safe.
       trustedTextAttempted = true;
-      if (trustedText || appendingContentEditable) {
-        await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
+      const pageHandledPaste = prepared.editorKind === 'draftjs' && /[\r\n]/.test(trustedText);
+      let verification;
+      if (pageHandledPaste) {
+        verification = await sendContent({
+          target: 'content', action: 'ax_paste_draft',
+          params: { ref_id: args.ref_id, text: trustedText, clear: clearsExisting },
+        });
+        this._throwIfAborted(abortSignal);
+        if (!verification?.success || verification.verified !== true) {
+          return verification || { ...failed, dispatched: true, noDispatch: false,
+            outcomeUnknown: true, retryable: false, error: 'The editor paste result is unknown. Check the draft before retrying.' };
+        }
       } else {
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+        if (trustedText || appendingContentEditable) {
+          await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
+        } else {
+          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+          });
+          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
+          });
+        }
+        this._throwIfAborted(abortSignal);
+        await new Promise(resolve => setTimeout(resolve, 120));
+        this._throwIfAborted(abortSignal);
+        verification = await sendContent({
+          target: 'content',
+          action: 'ax_verify_field_value',
+          params: {
+            ref_id: args.ref_id,
+            expected,
+            ...(appendingContentEditable ? { appendText: trustedText } : {}),
+          },
         });
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-        });
+        this._throwIfAborted(abortSignal);
       }
-      this._throwIfAborted(abortSignal);
-      await new Promise(resolve => setTimeout(resolve, 120));
-      this._throwIfAborted(abortSignal);
-      const verification = await chrome.tabs.sendMessage(tabId, {
-        target: 'content',
-        action: 'ax_verify_field_value',
-        params: {
-          ref_id: args.ref_id,
-          expected,
-          ...(appendingContentEditable ? { appendText: trustedText } : {}),
-        },
-      });
-      this._throwIfAborted(abortSignal);
       if (!verification?.success || verification.verified !== true) {
         return {
           ...failed,
@@ -45358,11 +45388,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         ...response,
         success: true,
         dispatched: true,
-        trusted: true,
+        trusted: !pageHandledPaste,
         verified: true,
         method: `${toolName}_cdp_fallback`,
         fallbackAttempted: true,
-        trustedFallback: true,
+        trustedFallback: !pageHandledPaste,
+        ...(pageHandledPaste ? { pageHandledPaste: true } : {}),
         fieldMeta: verification.fieldMeta || prepared.fieldMeta || response.fieldMeta,
       };
       delete recovered.error;
@@ -45390,7 +45421,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           this._throwIfAborted(abortSignal);
         }
         if (messageRecipientContext.messageRecipientGuardRequired === true) {
-          const recipientValidation = await chrome.tabs.sendMessage(tabId, {
+          const recipientValidation = await sendContent({
             target: 'content',
             action: 'consume_message_recipient_dispatch_binding',
             params: {

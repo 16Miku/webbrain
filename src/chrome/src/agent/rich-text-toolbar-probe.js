@@ -307,6 +307,13 @@ export class RichTextToolbarProbe {
           }
           [el] = marked;
           if (deadlineExpired()) return deadlineFailure();
+          if (el.isContentEditable && (el.classList.contains('public-DraftEditor-content')
+              || ['ProseMirror', 'ql-editor', 'cke_editable', 'mce-content-body', 'cm-content'].some(name => el.classList.contains(name))
+              || el.getAttribute('data-slate-editor') === 'true' || el.getAttribute('data-lexical-editor') === 'true'
+              || Array.from(el.children).some(child => child.getAttribute('data-contents') === 'true'))) {
+            return { ok: false, dispatched: false, trustedTypeRequired: true,
+              error: 'This rich-text editor requires trusted browser typing. Read its current accessibility tree and use type_ax with the editor reference.' };
+          }
           // Preparation only binds a marker. Focus belongs after this frame's
           // dispatch fence so it cannot invalidate its own authorized write.
           window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
@@ -361,7 +368,8 @@ export class RichTextToolbarProbe {
       return {
         success: false,
         ...(result?.dispatched ? { dispatched: true } : { dispatched: false, noDispatch: true }),
-        retryable: true,
+        retryable: result?.trustedTypeRequired !== true,
+        ...(result?.trustedTypeRequired ? { trustedTypeRequired: true } : {}),
         error: result?.error || 'The iframe target changed before typing. Re-read the iframe and retry.',
       };
     } finally {

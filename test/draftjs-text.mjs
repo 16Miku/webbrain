@@ -79,7 +79,7 @@ function contentHarness(build, current) {
   const source = fs.readFileSync(`src/${build}/src/content/content.js`, 'utf8');
   const ownInputScope = source.match(/^  let _messageRecipientOwnedInputScope = null;$/m)?.[0];
   assert.ok(ownInputScope, 'Use the real private production owned-input scope');
-  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText',
+  const names = ['_setFieldValueMatches', 'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
     '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
     '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue', '_insertContentEditableText'];
   if (build === 'chrome') names.unshift('_contentEditableValueMatches');
@@ -117,7 +117,7 @@ function contentHarness(build, current) {
 const tweet = "Hidden gem on HF: AveLabs grafted Qwen3.8-27B's language head back onto Perplexity's pplx-decider-v1-27b. One set of weights handles both typed decisions and full chat on one server. https://huggingface.co/AveLabs/Qwen3.8-27B-Perplexing-Pegasus-NVFP4";
 
 for (const build of ['chrome', 'firefox']) {
-  if (build === 'firefox') test('Firefox: settled DraftJS write proof rejects unsupported reconciliation', async t => {
+  if (build === 'firefox') test('Firefox: DraftJS leaves its model untouched without trusted automation', async t => {
     for (const action of ['type_ax', 'set_field']) await t.test(action, async () => {
       let attempts = 0;
       const current = { editor: draft([''], { raw: '\n' }), onInsert(editor, value) {
@@ -127,9 +127,9 @@ for (const build of ['chrome', 'firefox']) {
         editor.firstElementChild.firstElementChild.firstElementChild.childNodes.push(suffix);
       } }, h = contentHarness(build, current);
       const result = await h.call(action, { ref_id: 'ref_42', text: 'body', clear: false });
-      assert.equal(attempts, 1); assert.equal(result.success, false); assert.equal(result.verified, false);
-      assert.equal(result.dispatched, true); assert.equal(result.recoveryRequired, 'verify_or_restore_field');
-      assert.equal(h.read(current.editor), 'body', 'The visible matching prefix remains observation-only');
+      assert.equal(attempts, 0); assert.equal(result.success, false); assert.equal(result.verified, false);
+      assert.equal(result.noDispatch, true); assert.equal(result.trustedTypeRequired, true);
+      assert.equal(h.read(current.editor), '', 'The existing DraftJS model remains untouched');
     });
   });
 
@@ -301,14 +301,14 @@ test('Chrome: native appends preserve strong empty-editor proof and do not retry
     };
     try {
       const initial = await h.call('type_ax', args);
-      assert.equal(initial.dispatched, true); assert.equal(initial.success, mode === 'draftjs');
-      assert.equal(nativeInsertions, 1, 'The native insertion runs once.');
+      assert.equal(initial.dispatched, mode !== 'draftjs'); assert.equal(initial.success, false);
+      assert.equal(nativeInsertions, mode === 'draftjs' ? 0 : 1, 'Framework DOM is untouched before trusted input.');
       const typed = await agent._maybeFallbackFieldWithCdp(41, 'type_ax', args, initial);
       assert.equal(typed.success, mode === 'draftjs'); assert.equal(typed.verified, mode === 'draftjs');
       const finalized = await agent._finalizeTextMutationResult(41, 'type_ax', args, typed);
       assert.equal(finalized.success, mode === 'draftjs'); assert.equal(agent._uncertainTextMutations.has(41), mode !== 'draftjs');
-      assert.equal(commands.filter(method => method === 'Input.insertText').length, 0,
-        'An already dispatched native write must not be replayed through CDP.');
+      assert.equal(commands.filter(method => method === 'Input.insertText').length, mode === 'draftjs' ? 1 : 0,
+        'Only a proven no-dispatch result may send one trusted insertion.');
       assert.equal(h.read(current.editor), tweet);
     } finally { api.tabs.sendMessage = oldMessage; cdpClient.attach = oldAttach; cdpClient.sendCommand = oldSend; }
   });

@@ -210,7 +210,7 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       const settleDelay = source.match(/^  const SET_FIELD_VERIFY_DELAY_MS = \d+;$/m)?.[0];
       assert.ok(settleDelay, 'Use the production page-handler render delay');
       const functions = [ownInputScope, caretReceipts, settleDelay].join('\n') + '\n' + [
-        'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText',
+        'readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText',
         '_nativeChatCaretContext', '_sameNativeChatCaretContext', '_singleEditableCaretBreak',
         '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue',
         '_insertContentEditableText', '_typeTextInner',
@@ -282,14 +282,15 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       assert.equal(await page.evaluate(() => window.events.some(event => event.type === 'input')), false);
       checked++;
 
-      // These deletion-phase checks exercise a model-backed paragraph editor.
+      // A model-owned document must reach trusted input without a DOM edit.
       await setup('<p>Original <strong>format</strong></p>', '', true);
       const replacement = await type({ text: 'New\ntext', clear: true });
-      assert.equal(replacement.success, true, `${engineName}/${build}: ${JSON.stringify(replacement)}`);
-      assert.equal(replacement.verified, true);
+      assert.equal(replacement.success, false, `${engineName}/${build}: ${JSON.stringify(replacement)}`);
+      assert.equal(replacement.noDispatch, true);
+      assert.equal(replacement.trustedTypeRequired, true);
       const gates = await page.evaluate(() => window.events.filter(event => event.type === 'beforeinput'));
-      assert.equal(gates[0].inputType, 'deleteContentBackward');
-      assert.ok(gates.find(event => event.inputType === 'insertText' && !event.html.includes('Original')));
+      assert.equal(gates.length, 0);
+      assert.equal(await page.locator('#editor').innerHTML(), '<p>Original <strong>format</strong></p>');
       checked++;
 
       for (const text of [' leading  middle trailing ', 'a\n\nb\n', '\n']) {
@@ -308,15 +309,15 @@ if (process.argv.includes('--dom')) for (const [engineName, engine] of Object.en
       await setup('<p>Original</p>', 'restore-deletion', true);
       const restored = await type({ text: 'Never inserted', clear: true });
       assert.equal(restored.success, false);
-      assert.equal(restored.mutationMayHaveOccurred, true);
-      assert.equal(await page.locator('#editor').innerText(), 'Restored');
+      assert.equal(restored.noDispatch, true);
+      assert.equal(await page.locator('#editor').innerText(), 'Original');
       assert.equal(await page.evaluate(() => window.events.some(event => event.inputType === 'insertText')), false);
       checked++;
 
       await setup('<p>Original</p>', 'retarget-after-delete', true);
       const movedAfterDelete = await type({ text: 'Never inserted', clear: true });
       assert.equal(movedAfterDelete.success, false);
-      assert.equal(movedAfterDelete.mutationMayHaveOccurred, true, 'clear happened before the target selection changed');
+      assert.equal(movedAfterDelete.noDispatch, true, 'model-owned nodes are untouched before trusted input');
       assert.equal(await page.locator('#other-editor').innerText(), 'Untouched');
       assert.equal(await page.evaluate(() => window.events.some(event => event.inputType === 'insertText')), false);
       checked++;

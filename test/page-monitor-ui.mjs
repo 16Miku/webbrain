@@ -94,7 +94,9 @@ test('Chrome AX preparation attributes actual scrolling without claiming field i
       const start = source.indexOf(`'${action}': () => {`), end = source.indexOf('\n      },', start);
       assert.ok(start > 0 && end > start); return source.slice(start, end + 8);
     });
-    await page.addScriptTag({ content: `window.axHelpers = { ${entries.join(',\n')} };` });
+    const draftJsEditor = source.match(/^  function isDraftJsEditor\([\s\S]*?^  }/m)?.[0];
+    assert.ok(draftJsEditor, 'Use the production editor classification required by trusted preparation');
+    await page.addScriptTag({ content: `${draftJsEditor}\nwindow.axHelpers = { ${entries.join(',\n')} };` });
     await page.evaluate(() => {
       for (let i = 1; i <= 3; i++) {
         const box = document.createElement('div'); box.id = `scroll-box-${i}`;
@@ -384,7 +386,7 @@ async function installContentEditableFallback(page, build) {
   assert.ok(insertion, 'Exercise the real contenteditable fallback with the real monitor');
   const caretReceipts = source.match(/^  const _nativeChatEmptyCaretReceipts = new WeakMap\(\);$/m)?.[0];
   assert.ok(caretReceipts, 'Exercise the private production native-chat caret receipt state');
-  const readers = ['readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'readDraftJsText', '_nativeChatCaretContext', '_sameNativeChatCaretContext',
+  const readers = ['readProseMirrorText', 'readEmptyCaretText', 'isDraftJsEditor', 'isModelManagedEditor', 'readDraftJsText', '_nativeChatCaretContext', '_sameNativeChatCaretContext',
     '_singleEditableCaretBreak', '_rememberNativeChatEmptyCaret', '_nativeChatCaretValueIsEmpty', '_editableTextValue'].map(name => {
     const reader = source.match(new RegExp(`^  function ${name}\\([\\s\\S]*?^  }`, 'm'))?.[0];
     assert.ok(reader, `Exercise the production ${name} readback used by native editor insertion`);
@@ -2126,21 +2128,22 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     } finally { await browser.close(); }
   });
 
-  test(`${build}: contenteditable fallback skips remaining insertion after user intervention`, async () => {
+  test(`${build}: contenteditable fallback stops after user intervention during a page-handled edit`, async () => {
     const { browser, page } = await fixture(engine, build);
     try {
       await installContentEditableFallback(page, build);
       await page.evaluate(() => {
         const editor = document.getElementById('rich-editor');
-        // Model-backed paragraph editors retain the native delete/insert
-        // sequence. Ordinary editors now replace in one native operation.
-        editor.classList.add('ProseMirror'); editor.innerHTML = '<p>Original</p>';
+        editor.innerHTML = '<p>Original</p>';
+        editor.onbeforeinput = event => {
+          event.preventDefault(); editor.append(' page-handled');
+        };
       });
       await page.waitForTimeout(200);
       await page.evaluate(() => {
         feedback = []; const schedule = window.setTimeout;
         window.setTimeout = (callback, delay, ...args) => {
-          if (delay === 30) {
+          if (delay === SET_FIELD_VERIFY_DELAY_MS) {
             window.editPaused = true;
             window.resumeEdit = () => { window.setTimeout = schedule; schedule(callback, 0, ...args); };
             return 0;
@@ -2154,8 +2157,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await page.waitForFunction(() => feedback.some(event => event.source === 'user'));
       const result = await page.evaluate(async () => { resumeEdit(); return await editResult; });
       assert.equal(result.success, false, JSON.stringify(result));
-      assert.equal(result.dispatched, true, 'The completed deletion retains its dispatched outcome');
-      assert.equal(await page.locator('#rich-editor').textContent(), '');
+      assert.equal(result.dispatched, true, 'The page-handled edit retains its dispatched outcome');
+      assert.equal(result.mutationMayHaveOccurred, true);
+      assert.equal(await page.locator('#rich-editor').textContent(), 'Original page-handled');
       assert.equal(await page.locator('#field').inputValue(), 'Human intervention');
     } finally { await browser.close(); }
   });
