@@ -1187,10 +1187,10 @@ const { repairDoubleEscapedAssistantText: repairDoubleEscapedAssistantTextCh } =
 const { repairDoubleEscapedAssistantText: repairDoubleEscapedAssistantTextFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/text-sanitize.js').replace(/\\/g, '/')
 );
-const { repairAssistantDisplayText: repairAssistantDisplayTextCh } = await import(
+const { repairAssistantDisplayText: repairAssistantDisplayTextCh, repairClarifyText: repairClarifyTextCh } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/text-sanitize.js').replace(/\\/g, '/')
 );
-const { repairAssistantDisplayText: repairAssistantDisplayTextFx } = await import(
+const { repairAssistantDisplayText: repairAssistantDisplayTextFx, repairClarifyText: repairClarifyTextFx } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/text-sanitize.js').replace(/\\/g, '/')
 );
 const userMemoryCh = await import(
@@ -71834,6 +71834,33 @@ test('assistant display repair rejects page-title layout and control characters'
       assert.equal(repair(malformed), malformed, `${label}: unsafe title layout should remain escaped`);
     }
   }
+});
+
+test('clarify repair strips JSON over-escaping but preserves UNC and lone backslashes', () => {
+  const cases = [
+    // Reported bug: model copies JSON-escaped post body into clarify text.
+    ['Do you want to publish this post: "Just finished \\"The Last Economy\\" by @EMostaque?"',
+      'Do you want to publish this post: "Just finished "The Last Economy" by @EMostaque?"'],
+    ['Publish: "Just finished \\"The Last Economy\\" by @EMostaque"',
+      'Publish: "Just finished "The Last Economy" by @EMostaque"'],
+    ["it's", "it's"],
+    ['plain question?', 'plain question?'],
+    ['tab\\tx', 'tab\\tx'],
+    // Over-escaped backslash collapses once ...
+    ['C:\\\\Users\\\\name', 'C:\\Users\\name'],
+    // ... except a UNC leading `\\` is preserved.
+    ['\\\\server\\share', '\\\\server\\share'],
+    ['see \\\\server\\share', 'see \\\\server\\share'],
+    // Non-string / empty edge cases.
+    [null, ''],
+    ['', ''],
+  ];
+  for (const [label, repair] of [['chrome', repairClarifyTextCh], ['firefox', repairClarifyTextFx]]) {
+    for (const [input, expected] of cases) {
+      assert.equal(repair(input), expected, `${label}: repairClarifyText(${JSON.stringify(input)})`);
+    }
+  }
+  assert.equal(repairClarifyTextCh.toString(), repairClarifyTextFx.toString(), 'chrome/firefox repairClarifyText stay mirrored');
 });
 
 test('provider response path preserves raw assistant content and metadata', async () => {

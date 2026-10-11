@@ -149,7 +149,7 @@ import { resolveMaxOutputTokens } from '../providers/context-windows.js';
 import { generateImage, readMediaConfig } from './generative-media.js';
 import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
-import { repairAssistantDisplayText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
+import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpRedactRefs, otpServiceDisplay, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
@@ -34704,18 +34704,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // helpers and never time out.
     if (name === 'clarify') {
       const clarificationGuard = this._planExecutionGuards.get(tabId);
-      const question = String(args?.question || '').trim();
+      // Models sometimes copy a JSON-escaped post body into clarify text,
+      // leaving literal `\"` after the tool-call JSON is parsed. The card
+      // renders via textContent, so repair before display/storage.
+      const question = repairClarifyText(String(args?.question || '').trim()).slice(0, 600);
       if (!question) {
         return { success: false, error: 'clarify: `question` is required (a single sentence asking the user something specific).' };
       }
       const rawOptions = Array.isArray(args?.options) ? args.options.slice(0, 4) : [];
-      const normalizedOptions = rawOptions.map(s => String(s).trim().slice(0, 200));
+      const normalizedOptions = rawOptions.map(s => repairClarifyText(String(s).trim()).slice(0, 200));
       const hasVisibleOptionContent = option => /[\p{L}\p{N}\p{P}\p{S}]/u.test(option.replace(/[\p{Default_Ignorable_Code_Point}\u2800]/gu, ''));
       const options = normalizedOptions.every(hasVisibleOptionContent)
         ? normalizedOptions
         : [];
       const safeFirst = args?.safe_first === true && options.length > 0;
-      const reason = args?.reason ? String(args.reason).slice(0, 300) : null;
+      const reason = args?.reason ? repairClarifyText(String(args.reason)).slice(0, 300) : null;
       const purpose = args?.purpose === 'research_escalation'
         ? 'research_escalation'
         : (args?.purpose === 'recipient_change'
@@ -34742,8 +34745,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const isResearchEscalation = purpose === 'research_escalation';
       const requireExplicitAnswer = isResearchEscalation || args?.require_explicit_answer === true;
-      const researchRequest = isResearchEscalation ? normalizeResearchRequest(args?.research_request) : '';
-      const approveOption = isResearchEscalation ? String(args?.approve_option || '').trim().slice(0, 200) : '';
+      const researchRequest = isResearchEscalation ? repairClarifyText(normalizeResearchRequest(args?.research_request)) : '';
+      const approveOption = isResearchEscalation ? repairClarifyText(String(args?.approve_option || '').trim()).slice(0, 200) : '';
       if (isResearchEscalation) {
         if (!this.researchEscalationEnabled) {
           return { success: false, error: 'Research escalation is disabled in Settings. Continue the research locally.' };

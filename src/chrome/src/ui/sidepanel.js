@@ -10935,6 +10935,29 @@ function workflowHealingTargetLabel(target) {
 
 function renderClarifyCard(data) {
   // A clarification / permission card needs the user's attention right now.
+  // Repair display-side too so cards persisted before the agent-side fix (or
+  // arriving via an older background) no longer show literal `\"`. Inlined
+  // (no external helper) so function-extraction test harnesses keep working.
+  if (data && typeof data === 'object') {
+    // Mirrors repairClarifyText agent-side, inlined so function-extraction
+    // test harnesses keep working. Preserves UNC leading `\\`.
+    const cleanClarify = v => {
+      if (typeof v !== 'string' || !v.includes('\\')) return v;
+      const stripped = v.replace(/\\+(?=["'])/g, '');
+      return stripped.replace(/\\\\/g, (m, offset, str) => {
+        const before = offset === 0 ? '' : str[offset - 1];
+        const after = str[offset + 2] || '';
+        if ((offset === 0 || /[\s"'(\[{]/.test(before)) && /[A-Za-z0-9]/.test(after)) return m;
+        return '\\';
+      });
+    };
+    if (typeof data.question === 'string') data = { ...data, question: cleanClarify(data.question) };
+    if (typeof data.reason === 'string') data = { ...data, reason: cleanClarify(data.reason) };
+    if (Array.isArray(data.options)) data = { ...data, options: data.options.map(opt => typeof opt === 'string' ? cleanClarify(opt) : opt) };
+    if (data.researchEscalation && typeof data.researchEscalation.request === 'string') {
+      data = { ...data, researchEscalation: { ...data.researchEscalation, request: cleanClarify(data.researchEscalation.request) } };
+    }
+  }
   const tabId = data?.scheduledTabId ?? data?.tabId ?? currentTabId;
   if (tabId == null) return;
   const scheduledJobId = data?.scheduledJobId ? String(data.scheduledJobId) : '';
