@@ -81826,7 +81826,7 @@ test('Chrome controlled-field fallback is ref-bound, trusted, verified, and subm
       ? content.indexOf("'set_field': async () => {", branchStart)
       : content.indexOf("'ax_prepare_field_for_trusted_type':", branchStart);
     const branch = content.slice(branchStart, branchEnd);
-    assert.match(branch, /el\.isContentEditable[\s\S]*readProseMirrorText\(el\) === null[\s\S]*_insertContentEditableText[\s\S]*trustedTypeRequired: true[\s\S]*_expectedValue/, `chrome: ${toolName} ordinary editors use native literal insertion while model-backed editors retain trusted typing`);
+    assert.match(branch, /el\.isContentEditable[\s\S]*!isModelManagedEditor\(el\)[\s\S]*_insertContentEditableText[\s\S]*trustedTypeRequired: true[\s\S]*_expectedValue/, `chrome: ${toolName} ordinary editors use native literal insertion while model-backed editors retain trusted typing`);
     assert.doesNotMatch(branch, /document\.execCommand\('insertText'/, `chrome: ${toolName} must not accept synthetic contenteditable DOM text as verified input`);
   }
 });

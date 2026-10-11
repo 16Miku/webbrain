@@ -61,10 +61,123 @@ function readEmptyCaretText(el) {
     && el.innerText === '' && el.textContent === '' ? '' : null;
 }
 
+async function pasteDraftJsText(el, text, clear, readDocument, options = {}) {
+  const doc = el?.ownerDocument, view = doc?.defaultView, root = el?.getRootNode(), url = doc?.URL;
+  let dispatched = false;
+  const failure = (error, extra = {}) => ({
+    success: false, verified: false, dispatched,
+    ...(dispatched
+      ? { mutationMayHaveOccurred: true, outcomeUnknown: true, retryable: false, recoveryRequired: 'verify_or_restore_field' }
+      : { noDispatch: true, outcomeUnknown: false, retryable: false }),
+    error, ...extra,
+  });
+  const expired = () => options.deadlineExpired?.() === true;
+  const deadlineFailure = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
+  const current = () => !!el?.isConnected && el.ownerDocument === doc && doc.defaultView === view
+    && view.document === doc && el.getRootNode() === root && doc.URL === url;
+  const active = () => {
+    let target = root?.activeElement || doc?.activeElement;
+    while (target?.shadowRoot?.activeElement) target = target.shadowRoot.activeElement;
+    return target;
+  };
+  const selection = () => root?.getSelection?.() || view?.getSelection();
+  const range = () => { const selected = selection(); return selected?.rangeCount === 1 ? selected.getRangeAt(0) : null; };
+  const within = selected => !!selected && el.contains(selected.startContainer) && el.contains(selected.endContainer);
+  const wait = () => new Promise(resolve => view.setTimeout(resolve, 30));
+  const fence = phase => {
+    if (options.beforeDispatch?.(phase) === false) {
+      throw Object.assign(new Error('Browser changed during action preparation. Re-observe before acting.'), { code: 'page_feedback_pending' });
+    }
+  };
+  try {
+    if (expired()) return deadlineFailure();
+    if (!current() || !el.isContentEditable || typeof readDocument !== 'function') return failure('The editable target is no longer available.');
+    text = String(text).replace(/\r\n?/g, '\n');
+    const previous = readDocument(el), htmlBefore = el.innerHTML;
+    if (typeof previous !== 'string') return failure('The DraftJS document could not be read completely.', { recoveryRequired: 'fresh_tree' });
+    if (!text.includes('\n')) return failure('This page-handled path requires multiline DraftJS text.');
+    fence('focus');
+    if (expired()) return deadlineFailure();
+    el.focus({ preventScroll: true });
+    await wait();
+    if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+      dispatched = true;
+      return failure('The editor changed while preparing plain-text paste. No paste was sent.');
+    }
+    if (expired()) return deadlineFailure();
+    if (active() !== el) return failure('The editor focus changed before plain-text paste.');
+    // DraftJS maps marked text leaves to its public DOM selection. Selecting
+    // the root or replacing its nodes can leave the model selection stale.
+    const leaves = Array.from(el.querySelectorAll('[data-text="true"]'));
+    const first = leaves[0], last = leaves[leaves.length - 1], selected = doc.createRange();
+    if (!first || !last) return failure('The DraftJS text selection could not be established.');
+    if (first.tagName === 'BR') selected.setStartBefore(first);
+    else if (first.firstChild?.nodeType === 3) selected.setStart(first.firstChild, 0);
+    else return failure('The DraftJS text selection could not be established.');
+    if (last.tagName === 'BR') selected.setEndBefore(last);
+    else if (last.lastChild?.nodeType === 3) selected.setEnd(last.lastChild, last.lastChild.nodeValue.length);
+    else return failure('The DraftJS text selection could not be established.');
+    if (!clear) selected.collapse(false);
+    const selectedText = selection();
+    if (!selectedText) return failure('The text selection is unavailable.');
+    selectedText.removeAllRanges(); selectedText.addRange(selected);
+    const prepared = range()?.cloneRange();
+    await wait();
+    if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+      dispatched = true;
+      return failure('The editor changed while preparing plain-text paste. No paste was sent.');
+    }
+    if (expired()) return deadlineFailure();
+    const liveRange = range();
+    if (active() !== el || !within(liveRange) || !prepared
+        || liveRange.startContainer !== prepared.startContainer || liveRange.startOffset !== prepared.startOffset
+        || liveRange.endContainer !== prepared.endContainer || liveRange.endOffset !== prepared.endOffset) {
+      return failure('The editor focus or selection changed before plain-text paste.');
+    }
+    const transfer = new view.DataTransfer();
+    transfer.setData('text/plain', text);
+    const event = new view.ClipboardEvent('paste', { bubbles: true, composed: true, cancelable: true, clipboardData: transfer });
+    // Firefox drops ClipboardEventInit.clipboardData. This event-local payload
+    // is plain text only and never reads or writes the system clipboard.
+    if (event.clipboardData?.getData('text/plain') !== text) Object.defineProperty(event, 'clipboardData', { value: transfer });
+    if (event.clipboardData?.getData('text/plain') !== text) return failure('The plain-text paste payload could not be established.');
+    fence('input');
+    if (expired()) return deadlineFailure();
+    const fencedRange = range();
+    if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+      dispatched = true;
+      return failure('The editor changed during the paste dispatch fence. No paste was sent.');
+    }
+    if (active() !== el || !within(fencedRange)
+        || fencedRange.startContainer !== prepared.startContainer || fencedRange.startOffset !== prepared.startOffset
+        || fencedRange.endContainer !== prepared.endContainer || fencedRange.endOffset !== prepared.endOffset) {
+      return failure('The editor focus or selection changed at the paste dispatch fence.');
+    }
+    const invoke = () => { dispatched = true; return el.dispatchEvent(event); };
+    const accepted = options.dispatch ? options.dispatch(invoke) : invoke();
+    await wait(); await wait();
+    if (expired()) return deadlineFailure();
+    if (!current() || active() !== el || !within(range())) return failure('The editor scope changed during plain-text paste.');
+    const value = readDocument(el), expected = (clear ? '' : previous) + text;
+    if (accepted || typeof value !== 'string' || value !== expected) {
+      return failure('The complete settled DraftJS value could not be verified after plain-text paste. No additional text was sent.');
+    }
+    return { success: true, verified: true, dispatched: true, outcomeUnknown: false,
+      pageHandledPaste: true, method: 'contenteditable-page-handled-paste', value: value.slice(0, 100) };
+  } catch (error) {
+    return failure(error?.message || String(error), error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {});
+  }
+}
+
 // This private object exists only around one native SelectAll/Delete operation.
 // A caret BR without this exact event/node history remains an authored LF.
 function nativeTextClearReceipt(el) {
   if (!el?.isConnected || !el.isContentEditable) return null;
+  // Semantic document readers prove these editors empty. Their framework
+  // legitimately rerenders text/caret nodes after deletion, whereas this
+  // receipt only certifies an ordinary browser-created, unmarked caret BR.
+  if (el.classList?.contains('public-DraftEditor-content') || el.classList?.contains('ProseMirror')
+      || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true')) return null;
   const doc = el.ownerDocument, view = doc.defaultView, root = el.getRootNode(), url = doc.URL;
   const parent = node => node.parentNode || (node.nodeType === 11 ? node.host : null);
   const ancestors = []; for (let node = parent(el); node; node = parent(node)) ancestors.push(node);
@@ -5394,21 +5507,117 @@ export class CDPClient {
     } catch {}
   }
 
+  // Multiline DraftJS input must pass through its public paste handler. A
+  // single native multiline insertion can duplicate the framework's DOM.
+  async _pasteDraftJsText(tabId, selector, info, text, clear, options = {}) {
+    let objectId = null, objectGroup = null, originalSnapshotId = null, attempted = false;
+    const failure = error => ({ success: false, verified: false, dispatched: attempted,
+      ...(attempted ? { outcomeUnknown: true, mutationMayHaveOccurred: true, recoveryRequired: 'verify_or_restore_field' } : { noDispatch: true }),
+      retryable: false, error });
+    try {
+      if (info.nodeId) objectId = (await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId: info.nodeId }))?.object?.objectId;
+      else {
+        const found = await this.querySelectorPierce(tabId, selector);
+        objectGroup = found?.objectGroup;
+        if (found?.objectIds?.length === 1) objectId = found.objectIds[0];
+      }
+      if (!objectId) return failure('The original rich-text target could not be preserved.');
+      const draft = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId, returnByValue: true,
+        functionDeclaration: `function () { return !!this.isContentEditable && (this.classList.contains('public-DraftEditor-content')
+          || Array.from(this.children).some(child => child.getAttribute('data-contents') === 'true')); }`,
+      });
+      if (draft?.result?.value !== true) return null;
+      if (options.abortSignal?.aborted) return failure('Text entry was aborted before plain-text paste.');
+      // Keep DOM object identities in the renderer across the separate focus
+      // and input fences. A focus handler cannot become a new append baseline.
+      const snapshot = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId,
+        functionDeclaration: `function () {
+          return { element: this, doc: this.ownerDocument, view: this.ownerDocument.defaultView,
+            root: this.getRootNode(), url: this.ownerDocument.URL,
+            value: (${readDraftJsText.toString()})(this), html: this.innerHTML };
+        }`,
+      });
+      originalSnapshotId = snapshot?.result?.objectId || null;
+      if (!originalSnapshotId || snapshot.exceptionDetails) return failure('The original DraftJS document could not be preserved.');
+      const target = hasPageAgentDispatchOwner(tabId) ? await this._pageAgentObjectTarget(tabId, objectId) : {};
+      const focusGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, {
+        kind: 'click', tool: 'type_text', eventTypes: ['focus', 'focusin', 'blur', 'focusout'],
+        navigationCandidate: false, fenceOnly: true, prepareMonitor: true, ...target,
+      });
+      if (options.abortSignal?.aborted) return failure('Text entry was aborted before plain-text paste.');
+      if (typeof options.beforeDispatch === 'function') options.beforeDispatch();
+      attempted = true;
+      const focused = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId, returnByValue: true, userGesture: true,
+        functionDeclaration: `function (deadlineAt, targetToken, focusGuard, original) {
+          ${PAGE_AGENT_DOM_ACTION_SOURCE}
+          if (deadlineAt > 0 && Date.now() >= deadlineAt) return { success: false, noDispatch: true, dispatched: false, deadlineExpired: true };
+          if (!this.isConnected || original.element !== this || this.ownerDocument !== original.doc
+              || original.doc.defaultView !== original.view || original.view.document !== original.doc
+              || this.getRootNode() !== original.root || original.doc.URL !== original.url
+              || typeof original.value !== 'string' || (${readDraftJsText.toString()})(this) !== original.value || this.innerHTML !== original.html
+              || (targetToken && this[Symbol.for('webbrain.dispatchBinding')] !== targetToken)
+              || !beforePageAgentDomAction(focusGuard, 'focus', this))
+            return { success: false, noDispatch: true, dispatched: false, pageFeedbackPending: true };
+          this.focus({ preventScroll: true });
+          return { success: true };
+        }`,
+        arguments: [...[Number(options.deadlineAt) || 0, String(options.dispatchBindingToken || ''), focusGuard || null].map(value => ({ value })), { objectId: originalSnapshotId }],
+      });
+      if (focused?.exceptionDetails || !focused?.result?.value) return failure('The editor focus response became unavailable. No paste was sent.');
+      if (focused.result.value.success !== true) return { ...focused.result.value, verified: false, retryable: false, error: 'The editor could not be focused before plain-text paste.' };
+      const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, {
+        kind: 'input', tool: 'type_text', eventTypes: ['paste', 'beforeinput', 'input', 'change'], fenceOnly: true, prepareMonitor: true, ...target,
+      });
+      if (options.abortSignal?.aborted) return failure('Text entry was aborted before plain-text paste.');
+      if (typeof options.beforeDispatch === 'function') options.beforeDispatch();
+      attempted = true;
+      const pasted = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
+        objectId, returnByValue: true, awaitPromise: true, userGesture: true,
+        functionDeclaration: `async function (text, clear, deadlineAt, targetToken, pageGuard, original) {
+          ${PAGE_AGENT_DOM_ACTION_SOURCE}
+          const el = this;
+          const originalScope = () => el.isConnected && original.element === el && el.ownerDocument === original.doc
+            && original.doc.defaultView === original.view && original.view.document === original.doc
+            && el.getRootNode() === original.root && original.doc.URL === original.url;
+          const originalFocused = () => {
+            let active = original.root.activeElement || original.doc.activeElement;
+            while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+            return active === el;
+          };
+          if (!originalScope() || !originalFocused() || typeof original.value !== 'string'
+              || (${readDraftJsText.toString()})(el) !== original.value || el.innerHTML !== original.html)
+            return { success: false, verified: false, dispatched: true, mutationMayHaveOccurred: true,
+              outcomeUnknown: true, retryable: false, recoveryRequired: 'verify_or_restore_field',
+              error: 'The original editor changed during focus preparation. No paste was sent.' };
+          return await (${pasteDraftJsText.toString()})(el, text, clear, (${readDraftJsText.toString()}), {
+            deadlineExpired: () => deadlineAt > 0 && Date.now() >= deadlineAt,
+            beforeDispatch: phase => originalScope() && originalFocused()
+              && (!targetToken || el[Symbol.for('webbrain.dispatchBinding')] === targetToken)
+              && (phase === 'focus' || beforePageAgentDomAction(pageGuard, phase, el)),
+          });
+        }`,
+        arguments: [...[text, clear, Number(options.deadlineAt) || 0, String(options.dispatchBindingToken || ''), pageGuard || null].map(value => ({ value })), { objectId: originalSnapshotId }],
+      });
+      const result = pasted?.result?.value;
+      if (!result || pasted.exceptionDetails) return failure('The plain-text paste response became unavailable. No additional text was sent.');
+      return { ...result, tag: info.tag, rect: { x: Math.round(info.x - (info.width || 1) / 2),
+        y: Math.round(info.y - (info.height || 1) / 2), w: Math.round(info.width || 1), h: Math.round(info.height || 1) } };
+    } catch (error) {
+      return { ...failure(error?.message || String(error)), ...(error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}) };
+    } finally {
+      if (originalSnapshotId) this.releaseObject(tabId, originalSnapshotId);
+      if (objectGroup) await this.releaseObjectGroup(tabId, objectGroup);
+      else if (objectId) this.releaseObject(tabId, objectId);
+    }
+  }
+
   /**
-   * Type text into an element.
-   *
-   * Robust path:
-   *   1. Resolve via shared shadow-piercing resolver (open + closed roots).
-   *   2. Focus via real mouse click at the element's coordinates so the page
-   *      sees a trusted focus event (matters for contenteditable, rich editors,
-   *      and Google-style search boxes).
-   *   3. Optionally clear existing value.
-   *   4. Type via Input.insertText — this generates an actual `beforeinput` /
-   *      `input` event that frameworks accept, and works for both <input>,
-   *      <textarea>, and contenteditable.
-   *   5. Falls back to a JS-level value setter if Input.insertText is rejected
-   *      (e.g. element isn't focusable through CDP because it's in a closed
-   *      shadow root with no usable hit point).
+   * Resolve and verify the original target before text entry. DraftJS multiline
+   * text uses the page's plain-text paste handler; other text uses trusted
+   * Input.insertText after focus and optional native selection/deletion.
    */
   async typeText(tabId, selector, text, clear = false, expectedBackendNodeId = null, resolveOptions = {}) {
     const abortSignal = resolveOptions?.abortSignal || null;
@@ -5582,6 +5791,11 @@ export class CDPClient {
     if (!info) return { success: false, dispatched: false, noDispatch: true, error: 'Element not found' };
     if (info.error) return { success: false, dispatched: false, noDispatch: true, error: info.error };
     const dispatchBindingToken = String(resolveOptions?.dispatchBindingToken || '');
+    if (/[\r\n]/.test(String(text ?? ''))) {
+      const pasted = await this._pasteDraftJsText(tabId, selector, info, text, clear, resolveOptions);
+      if (pasted) return pasted;
+      throwIfAborted();
+    }
 
     // Empty appends mutate nothing on text-entry controls: inserting zero
     // characters cannot change any value, so report a proven no-op without

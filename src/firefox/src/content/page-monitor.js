@@ -2506,6 +2506,9 @@
     'hover', 'drag_drop', 'patch_element', 'revert_patch', 'highlight_element', 'execute_js',
     'ax_prepare_field_for_trusted_type', 'ax_resolve_two_rects', 'ax_resolve_rect']);
   function beginContentAction(action, params = {}) {
+    // Internal DraftJS paste is the same ref-bound input operation as type_ax.
+    // Keep its focus and synchronous editor changes inside the normal input owner.
+    if (action === 'ax_paste_draft') action = 'type_ax';
     if (!active || !localMutations.has(action)
         || (action === 'ax_resolve_rect' && params.observeOnly === true && params.forClickFallback === true)) return () => {};
     const operationId = `local-${randomToken()}`;

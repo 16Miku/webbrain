@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 
 for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
-  test(`${kind}: legacy nested iframe preparation keeps focus inert and respects the final dispatch fence`, async () => {
+  test(`${kind}: legacy nested iframe preparation keeps focus inert and respects the final dispatch fence`, async t => {
     const browser = await engine.launch({ headless: true });
     const originalChrome = globalThis.chrome, originalBrowser = globalThis.browser;
     try {
@@ -59,6 +59,24 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       } });
       assert.equal(replaced.success, false); assert.equal(replaced.noDispatch, true);
       assert.equal(await editor.locator('input').inputValue(), '', 'A replacement document never inherits the old marker binding.');
+      for (const marker of [
+        ['class', 'public-DraftEditor-content'], ['class', 'ProseMirror'], ['class', 'ql-editor'],
+        ['class', 'cke_editable'], ['class', 'mce-content-body'], ['class', 'cm-content'],
+        ['data-slate-editor', 'true'], ['data-lexical-editor', 'true'],
+      ]) await t.test(`${marker.join('=')}: legacy typing preserves the model-owned document`, async () => {
+        await editor.evaluate(([attribute, value]) => {
+          document.body.innerHTML = '<div id="rich" contenteditable="true">Original <strong>format</strong></div>';
+          const el = document.querySelector('#rich'); el.setAttribute(attribute, value);
+          window.editorEvents = [];
+          for (const name of ['focus', 'beforeinput', 'input']) el.addEventListener(name, () => editorEvents.push(name));
+        }, marker);
+        const refused = await probe.legacyIframeTypeAllFrames(1, { ...args, selector: '#rich', text: 'Replacement' });
+        assert.equal(refused.success, false); assert.equal(refused.noDispatch, true);
+        assert.equal(refused.dispatched, false); assert.equal(refused.trustedTypeRequired, true);
+        assert.equal(refused.retryable, false);
+        assert.equal(await editor.locator('#rich').innerHTML(), 'Original <strong>format</strong>');
+        assert.deepEqual(await editor.evaluate(() => editorEvents), []);
+      });
     } finally {
       globalThis.chrome = originalChrome; globalThis.browser = originalBrowser;
       await browser.close();

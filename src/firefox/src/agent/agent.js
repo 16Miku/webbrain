@@ -38462,7 +38462,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         dispatched = true;
         markContentPipelineDispatched();
         try {
-          const response = await browser.tabs.sendMessage(tabId, {
+          const response = await firefoxBidi.sendContent(tabId, {
             target: 'content',
             action: 'type',
             params: {

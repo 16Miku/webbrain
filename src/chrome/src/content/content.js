@@ -2301,7 +2301,123 @@
     return callback();
   }
 
+  async function pasteDraftJsText(el, text, clear, readDocument, options = {}) {
+    const doc = el?.ownerDocument, view = doc?.defaultView, root = el?.getRootNode(), url = doc?.URL;
+    let dispatched = false;
+    const failure = (error, extra = {}) => ({
+      success: false, verified: false, dispatched,
+      ...(dispatched
+        ? { mutationMayHaveOccurred: true, outcomeUnknown: true, retryable: false, recoveryRequired: 'verify_or_restore_field' }
+        : { noDispatch: true, outcomeUnknown: false, retryable: false }),
+      error, ...extra,
+    });
+    const expired = () => options.deadlineExpired?.() === true;
+    const deadlineFailure = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
+    const current = () => !!el?.isConnected && el.ownerDocument === doc && doc.defaultView === view
+      && view.document === doc && el.getRootNode() === root && doc.URL === url;
+    const active = () => {
+      let target = root?.activeElement || doc?.activeElement;
+      while (target?.shadowRoot?.activeElement) target = target.shadowRoot.activeElement;
+      return target;
+    };
+    const selection = () => root?.getSelection?.() || view?.getSelection();
+    const range = () => { const selected = selection(); return selected?.rangeCount === 1 ? selected.getRangeAt(0) : null; };
+    const within = selected => !!selected && el.contains(selected.startContainer) && el.contains(selected.endContainer);
+    const wait = () => new Promise(resolve => view.setTimeout(resolve, 30));
+    const fence = phase => {
+      if (options.beforeDispatch?.(phase) === false) {
+        throw Object.assign(new Error('Browser changed during action preparation. Re-observe before acting.'), { code: 'page_feedback_pending' });
+      }
+    };
+    try {
+      if (expired()) return deadlineFailure();
+      if (!current() || !el.isContentEditable || typeof readDocument !== 'function') return failure('The editable target is no longer available.');
+      text = String(text).replace(/\r\n?/g, '\n');
+      const previous = readDocument(el), htmlBefore = el.innerHTML;
+      if (typeof previous !== 'string') return failure('The DraftJS document could not be read completely.', { recoveryRequired: 'fresh_tree' });
+      if (!text.includes('\n')) return failure('This page-handled path requires multiline DraftJS text.');
+      fence('focus');
+      if (expired()) return deadlineFailure();
+      el.focus({ preventScroll: true });
+      await wait();
+      if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+        dispatched = true;
+        return failure('The editor changed while preparing plain-text paste. No paste was sent.');
+      }
+      if (expired()) return deadlineFailure();
+      if (active() !== el) return failure('The editor focus changed before plain-text paste.');
+      // DraftJS maps marked text leaves to its public DOM selection. Selecting
+      // the root or replacing its nodes can leave the model selection stale.
+      const leaves = Array.from(el.querySelectorAll('[data-text="true"]'));
+      const first = leaves[0], last = leaves[leaves.length - 1], selected = doc.createRange();
+      if (!first || !last) return failure('The DraftJS text selection could not be established.');
+      if (first.tagName === 'BR') selected.setStartBefore(first);
+      else if (first.firstChild?.nodeType === 3) selected.setStart(first.firstChild, 0);
+      else return failure('The DraftJS text selection could not be established.');
+      if (last.tagName === 'BR') selected.setEndBefore(last);
+      else if (last.lastChild?.nodeType === 3) selected.setEnd(last.lastChild, last.lastChild.nodeValue.length);
+      else return failure('The DraftJS text selection could not be established.');
+      if (!clear) selected.collapse(false);
+      const selectedText = selection();
+      if (!selectedText) return failure('The text selection is unavailable.');
+      selectedText.removeAllRanges(); selectedText.addRange(selected);
+      const prepared = range()?.cloneRange();
+      await wait();
+      if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+        dispatched = true;
+        return failure('The editor changed while preparing plain-text paste. No paste was sent.');
+      }
+      if (expired()) return deadlineFailure();
+      const liveRange = range();
+      if (active() !== el || !within(liveRange) || !prepared
+          || liveRange.startContainer !== prepared.startContainer || liveRange.startOffset !== prepared.startOffset
+          || liveRange.endContainer !== prepared.endContainer || liveRange.endOffset !== prepared.endOffset) {
+        return failure('The editor focus or selection changed before plain-text paste.');
+      }
+      const transfer = new view.DataTransfer();
+      transfer.setData('text/plain', text);
+      const event = new view.ClipboardEvent('paste', { bubbles: true, composed: true, cancelable: true, clipboardData: transfer });
+      // Firefox drops ClipboardEventInit.clipboardData. This event-local payload
+      // is plain text only and never reads or writes the system clipboard.
+      if (event.clipboardData?.getData('text/plain') !== text) Object.defineProperty(event, 'clipboardData', { value: transfer });
+      if (event.clipboardData?.getData('text/plain') !== text) return failure('The plain-text paste payload could not be established.');
+      fence('input');
+      if (expired()) return deadlineFailure();
+      const fencedRange = range();
+      if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+        dispatched = true;
+        return failure('The editor changed during the paste dispatch fence. No paste was sent.');
+      }
+      if (active() !== el || !within(fencedRange)
+          || fencedRange.startContainer !== prepared.startContainer || fencedRange.startOffset !== prepared.startOffset
+          || fencedRange.endContainer !== prepared.endContainer || fencedRange.endOffset !== prepared.endOffset) {
+        return failure('The editor focus or selection changed at the paste dispatch fence.');
+      }
+      const invoke = () => { dispatched = true; return el.dispatchEvent(event); };
+      const accepted = options.dispatch ? options.dispatch(invoke) : invoke();
+      await wait(); await wait();
+      if (expired()) return deadlineFailure();
+      if (!current() || active() !== el || !within(range())) return failure('The editor scope changed during plain-text paste.');
+      const value = readDocument(el), expected = (clear ? '' : previous) + text;
+      if (accepted || typeof value !== 'string' || value !== expected) {
+        return failure('The complete settled DraftJS value could not be verified after plain-text paste. No additional text was sent.');
+      }
+      return { success: true, verified: true, dispatched: true, outcomeUnknown: false,
+        pageHandledPaste: true, method: 'contenteditable-page-handled-paste', value: value.slice(0, 100) };
+    } catch (error) {
+      return failure(error?.message || String(error), error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {});
+    }
+  }
+
   async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false, ownInputScope = null) {
+    if (isDraftJsEditor(el) && /[\r\n]/.test(text)) {
+      const result = await pasteDraftJsText(el, text, clear, readDraftJsText, {
+        deadlineExpired: actionDeadlineExpired,
+        beforeDispatch: phase => window.__wbPageMonitor?.beforeLocalDispatch({ preparation: phase === 'focus', kind: 'input', target: el }),
+        dispatch: callback => withLocalPageDispatch(callback),
+      });
+      return { ...result, fieldMeta: _fieldMeta(el) };
+    }
     const doc = el.ownerDocument;
     let dispatched = false;
     const failure = (error, extra = {}) => ({
@@ -2316,6 +2432,19 @@
     });
     const expired = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
     if (actionDeadlineExpired()) return expired();
+    if (isModelManagedEditor(el)) {
+      if (isDraftJsEditor(el) && readDraftJsText(el) === null) {
+        return failure('The editor document could not be read completely. Refresh the page observation before typing.',
+          { recoveryRequired: 'fresh_tree', retryable: false });
+      }
+      // These editors own their DOM. Even plain execCommand insertion can
+      // replace framework-owned nodes; never attempt it before trusted input.
+      const ref_id = window.__wb_ax_ref?.(el);
+      return failure('This rich-text editor requires trusted browser typing.', {
+        trustedTypeRequired: true, ref_id, fieldMeta: _fieldMeta(el),
+        _expectedValue: (clear ? '' : _editableTextValue(el)) + text,
+      });
+    }
     if (typeof doc.execCommand !== 'function') {
       return failure('This editor has no supported native text insertion path. No content was changed.');
     }
@@ -4786,6 +4915,14 @@
   function isDraftJsEditor(el) {
     return !!el?.isContentEditable && (el.classList?.contains('public-DraftEditor-content')
       || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true'));
+  }
+
+  function isModelManagedEditor(el) {
+    return !!el?.isContentEditable && (isDraftJsEditor(el)
+      || ['ProseMirror', 'ql-editor', 'cke_editable', 'mce-content-body', 'cm-content']
+        .some(name => el.classList?.contains(name))
+      || el.getAttribute('data-slate-editor') === 'true'
+      || el.getAttribute('data-lexical-editor') === 'true');
   }
 
   function readDraftJsText(el) {
@@ -8804,7 +8941,7 @@
           let selectExpected = null;
           if (el.isContentEditable) {
             previous = _editableTextValue(el);
-            if (readProseMirrorText(el) === null) {
+            if (!isModelManagedEditor(el) || (isDraftJsEditor(el) && /[\r\n]/.test(text))) {
               const native = await _insertContentEditableText(el, text, !!clear, actionDeadlineExpired);
               return { ...native, ref_id, rect: typeRect, fieldMeta };
             }
@@ -9033,15 +9170,17 @@
           );
           let prevValue = '';
           let pageHandledBeforeInput = false;
+          let pageHandledPaste = false;
           if (recoveringDraft) {
             prevValue = _editableTextValue(el);
           } else if (el.isContentEditable) {
             prevValue = _editableTextValue(el);
-            if (readProseMirrorText(el) === null) {
+            if (!isModelManagedEditor(el) || (isDraftJsEditor(el) && /[\r\n]/.test(text))) {
               const native = await _insertContentEditableText(el, text, clear, actionDeadlineExpired, originalRecipient?.nativeDraftOwnInputs);
               if (!native.success) return { ...native, ref_id, rect, fieldMeta };
               dispatched = native.dispatched === true;
               pageHandledBeforeInput = native.pageHandledBeforeInput === true;
+              pageHandledPaste = native.pageHandledPaste === true;
             } else {
             return failure(
               'Contenteditable fields require trusted browser typing. Attempting one ref-bound Chrome typing pass.',
@@ -9270,6 +9409,7 @@
             dispatched,
             method: 'set_field',
             ...(pageHandledBeforeInput ? { dispatched: true, pageHandledBeforeInput: true, nativeBeforeInputCancelled: true } : {}),
+            ...(pageHandledPaste ? { pageHandledPaste: true } : {}),
             ref_id,
             rect,
             verified: true,
@@ -9289,6 +9429,15 @@
       // Internal Chrome recovery helpers. The background resolves the exact
       // ref again, prepares either replacement or append selection, sends
       // trusted CDP text, then asks this content script for settled readback.
+      'ax_paste_draft': async () => {
+        const { ref_id, text, clear = true } = msg.params || {};
+        const el = typeof ref_id === 'string' && window.__wb_ax_lookup?.(ref_id);
+        if (!el?.isConnected || !isDraftJsEditor(el) || typeof text !== 'string' || !/[\r\n]/.test(text)) {
+          return { success: false, verified: false, dispatched: false, noDispatch: true, retryable: false,
+            error: 'The original DraftJS editor or multiline text is unavailable.' };
+        }
+        return { ...await _insertContentEditableText(el, text, clear, actionDeadlineExpired), ref_id };
+      },
       'ax_prepare_field_for_trusted_type': () => {
         try {
           const { ref_id, selectionMode = 'all' } = msg.params || {};
@@ -9324,6 +9473,7 @@
             fieldMeta: _fieldMeta(el),
             isCombobox,
             contentEditable: !!el.isContentEditable,
+            ...(isDraftJsEditor(el) ? { editorKind: 'draftjs' } : {}),
             selectionMode: el.isContentEditable && selectionMode === 'end' ? 'end' : 'all',
             rect: {
               x: Math.round(rect.x),
