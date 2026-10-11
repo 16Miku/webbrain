@@ -241,7 +241,7 @@
       "name": "質問が多すぎます。無効にできますか？",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "これらの承認プロンプトは安全のためにあります。信頼しているサイトであっても、悪意ある第三者が LLM の指示をまねたり、コンテンツを注入したりして、あなたが承認しない操作をエージェントに代行させようとする可能性があります。そのため WebBrain は、重大な結果につながる操作の前に承認を求めます。それでもこれらのプロンプトを省略したい場合は無効にできます。サイドプラグインを開き、ヘッダーの歯車アイコンをクリックし、settings.html の Permissions タブに移動して、Ask before consequential actions をオフにしてください。"
+        "text": "これらの承認プロンプトは安全のためにあります。信頼しているサイトであっても、悪意ある第三者が LLM の指示をまねたり、コンテンツを注入したりして、あなたが承認しない操作をエージェントに代行させようとする可能性があります。そのため WebBrain は、重大な結果につながる操作の前に承認を求めます。それでもこれらのプロンプトを省略したい場合は、サイドパネルに /dangerously-skip-permissions と入力するか、無効にできます。サイドプラグインを開き、ヘッダーの歯車アイコンをクリックし、settings.html の Permissions タブに移動して、Ask before consequential actions をオフにしてください。"
       }
     },
     {
@@ -3638,7 +3638,7 @@
 <aside class="top-announcement-banner">
   <a href="#mcp" class="top-announcement-link">
     <span class="top-announcement-pill">New</span>
-    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-text">新登場：Claude Code・Codex・Cursor用MCPサーバー</span>
     <span class="top-announcement-arrow" aria-hidden="true">→</span>
   </a>
 </aside>
@@ -3709,7 +3709,7 @@
 <!-- HERO -->
 <section class="hero">
   <h1>オープンソースの AI <span class="gradient">ブラウザエージェント</span></h1>
-  <p>WebBrain は無料・オープンソースのブラウザ拡張で、お使いのブラウザに AI エージェント機能を持ち込みます。ページの読み取り、データの抽出、Web タスクの自動化を、あなたが選んだ LLM で。プロプライエタリなブラウザ AI プラグインに代わる、セルフホスト可能な選択肢です。</p>
+  <p>ChromeにおけるClaudeの無料・オープンソースな代替手段。ローカルモデルを含むあらゆるモデルを使え、ページがお使いのマシンから外部に出ることはありません。</p>
   <div class="hero-actions">
     <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4450,7 +4450,7 @@
   </div>
 
   <div class="faq-inline-cta-wrap">
-    <a class="faq-bridge" href="/docs/ja/faq/">
+    <a class="faq-bridge" id="faq" href="/docs/ja/faq/">
       <span class="faq-bridge-mark" aria-hidden="true">?</span>
       <strong>FAQ</strong>
       <span class="faq-bridge-cta">FAQ (30+ questions) <span aria-hidden="true">→</span></span>
@@ -4591,7 +4591,7 @@
 </section>
 
 <!-- 10. APOCALYPSE MODE (Compact Banner) -->
-<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">
   <div class="apocalypse-compact-card">
     <div class="apocalypse-compact-info">
       <div class="apocalypse-compact-kicker">

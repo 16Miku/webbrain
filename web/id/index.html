@@ -241,7 +241,7 @@
       "name": "Pertanyaannya terlalu banyak. Bisakah saya menonaktifkannya?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Prompt persetujuan itu ada demi keselamatan Anda. Bahkan di situs yang Anda percayai, pelaku jahat dapat meniru instruksi LLM atau menyisipkan konten yang mencoba membuat agen melakukan hal-hal atas nama Anda yang tidak akan Anda setujui. Karena itu WebBrain meminta persetujuan sebelum tindakan yang berdampak. Jika Anda tetap tidak ingin melalui prompt tersebut, Anda dapat menonaktifkannya: buka plugin samping, klik ikon roda gigi di header, buka tab Permissions di settings.html, lalu matikan opsi Ask before consequential actions."
+        "text": "Prompt persetujuan itu ada demi keselamatan Anda. Bahkan di situs yang Anda percayai, pelaku jahat dapat meniru instruksi LLM atau menyisipkan konten yang mencoba membuat agen melakukan hal-hal atas nama Anda yang tidak akan Anda setujui. Karena itu WebBrain meminta persetujuan sebelum tindakan yang berdampak. Jika Anda tetap tidak ingin melalui prompt tersebut, ketik /dangerously-skip-permissions di panel samping atau nonaktifkan: buka plugin samping, klik ikon roda gigi di header, buka tab Permissions di settings.html, lalu matikan opsi Ask before consequential actions."
       }
     },
     {
@@ -321,7 +321,7 @@
       "name": "Apakah WebBrain mengirim seluruh DOM ke model AI?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. WebBrain memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan. Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev."
+        "text": "Tidak. Secara default, WebBrain tidak mengirim HTML mentah atau salinan mentah DOM. Ia memulai dengan URL dan judul halaman, panduan situs yang sesuai, serta tangkapan layar viewport opsional saat fitur visi diaktifkan. Ketika suatu tugas membutuhkan konten halaman, WebBrain membacanya sesuai kebutuhan sebagai pohon aksesibilitas semantik yang diringkas atau teks yang diekstrak. Pembacaan difilter berdasarkan visibilitas bila sesuai, dibatasi jumlah karakternya, dan dibagi menjadi beberapa halaman. Akses ke sumber halaman mentah hanya tersedia dalam mode Dev."
       }
     },
     {
@@ -3638,7 +3638,7 @@
 <aside class="top-announcement-banner">
   <a href="#mcp" class="top-announcement-link">
     <span class="top-announcement-pill">New</span>
-    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-text">Baru: server MCP untuk Claude Code, Codex, dan Cursor</span>
     <span class="top-announcement-arrow" aria-hidden="true">→</span>
   </a>
 </aside>
@@ -3709,7 +3709,7 @@
 <!-- HERO -->
 <section class="hero">
   <h1>Agen Peramban <span class="gradient">AI Open-Source</span></h1>
-  <p>WebBrain adalah ekstensi peramban gratis dan open-source yang membawa kapabilitas agen AI ke browser Anda. Baca halaman, ekstrak data, dan otomatiskan tugas web — ditenagai LLM pilihan Anda. Alternatif yang bisa di-host sendiri untuk plugin AI peramban berpemilik.</p>
+  <p>Alternatif Claude yang gratis dan open-source di Chrome. Gunakan model apa pun, termasuk model lokal, agar halaman Anda tidak pernah meninggalkan mesin Anda.</p>
   <div class="hero-actions">
     <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4450,7 +4450,7 @@
   </div>
 
   <div class="faq-inline-cta-wrap">
-    <a class="faq-bridge" href="/docs/id/faq/">
+    <a class="faq-bridge" id="faq" href="/docs/id/faq/">
       <span class="faq-bridge-mark" aria-hidden="true">?</span>
       <strong>FAQ</strong>
       <span class="faq-bridge-cta">FAQ (30+ questions) <span aria-hidden="true">→</span></span>
@@ -4591,7 +4591,7 @@
 </section>
 
 <!-- 10. APOCALYPSE MODE (Compact Banner) -->
-<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">
   <div class="apocalypse-compact-card">
     <div class="apocalypse-compact-info">
       <div class="apocalypse-compact-kicker">

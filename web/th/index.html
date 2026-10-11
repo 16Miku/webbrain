@@ -241,7 +241,7 @@
       "name": "มันถามฉันเยอะเกินไป ปิดได้ไหม?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "ข้อความขออนุมัติเหล่านี้มีไว้เพื่อความปลอดภัยของคุณ แม้แต่ในเว็บไซต์ที่คุณไว้วางใจ ผู้ไม่หวังดีอาจเลียนแบบคำสั่งของ LLM หรือแทรกเนื้อหาที่พยายามทำให้เอเจนต์ทำสิ่งต่าง ๆ ในนามของคุณที่คุณจะไม่อนุมัติ นั่นคือเหตุผลที่ WebBrain ต้องขออนุมัติก่อนการกระทำที่มีผลตามมา หากคุณยังไม่ต้องการผ่านข้อความเหล่านี้ คุณสามารถปิดได้: เปิดปลั๊กอินด้านข้าง คลิกไอคอนรูปวงล้อในส่วนหัว ไปที่แท็บ Permissions ใน settings.html แล้วปิดตัวเลือก Ask before consequential actions."
+        "text": "ข้อความขออนุมัติเหล่านี้มีไว้เพื่อความปลอดภัยของคุณ แม้แต่ในเว็บไซต์ที่คุณไว้วางใจ ผู้ไม่หวังดีอาจเลียนแบบคำสั่งของ LLM หรือแทรกเนื้อหาที่พยายามทำให้เอเจนต์ทำสิ่งต่าง ๆ ในนามของคุณที่คุณจะไม่อนุมัติ นั่นคือเหตุผลที่ WebBrain ต้องขออนุมัติก่อนการกระทำที่มีผลตามมา หากคุณยังไม่ต้องการผ่านข้อความเหล่านี้ ให้พิมพ์ /dangerously-skip-permissions ในแผงด้านข้าง หรือปิดได้: เปิดปลั๊กอินด้านข้าง คลิกไอคอนรูปวงล้อในส่วนหัว ไปที่แท็บ Permissions ใน settings.html แล้วปิดตัวเลือก Ask before consequential actions."
       }
     },
     {
@@ -3638,7 +3638,7 @@
 <aside class="top-announcement-banner">
   <a href="#mcp" class="top-announcement-link">
     <span class="top-announcement-pill">New</span>
-    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-text">ใหม่: เซิร์ฟเวอร์ MCP สำหรับ Claude Code, Codex และ Cursor</span>
     <span class="top-announcement-arrow" aria-hidden="true">→</span>
   </a>
 </aside>
@@ -3709,7 +3709,7 @@
 <!-- HERO -->
 <section class="hero">
   <h1>AI <span class="gradient">Browser Agent</span> โอเพนซอร์ส</h1>
-  <p>WebBrain เป็นส่วนขยายเบราว์เซอร์ฟรีและโอเพนซอร์สที่นำความสามารถของ AI agent มาสู่เบราว์เซอร์ของคุณ อ่านหน้า สกัดข้อมูล และทำให้งานบนเว็บเป็นอัตโนมัติ — ขับเคลื่อนด้วย LLM ที่คุณเลือก เป็นทางเลือกที่โฮสต์เองได้ของปลั๊กอิน AI เบราว์เซอร์ที่เป็นกรรมสิทธิ์</p>
+  <p>ทางเลือกแทน Claude ที่ฟรีและโอเพนซอร์สใน Chrome ใช้โมเดลใดก็ได้รวมถึงโมเดลในเครื่อง เพื่อให้เพจของคุณไม่เคยออกจากเครื่องของคุณ</p>
   <div class="hero-actions">
     <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4450,7 +4450,7 @@
   </div>
 
   <div class="faq-inline-cta-wrap">
-    <a class="faq-bridge" href="/docs/th/faq/">
+    <a class="faq-bridge" id="faq" href="/docs/th/faq/">
       <span class="faq-bridge-mark" aria-hidden="true">?</span>
       <strong>คำถามที่พบบ่อย</strong>
       <span class="faq-bridge-cta">คำถามที่พบบ่อย (30+ questions) <span aria-hidden="true">→</span></span>
@@ -4591,7 +4591,7 @@
 </section>
 
 <!-- 10. APOCALYPSE MODE (Compact Banner) -->
-<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">
   <div class="apocalypse-compact-card">
     <div class="apocalypse-compact-info">
       <div class="apocalypse-compact-kicker">

@@ -43084,7 +43084,7 @@ test('web provider constellation reuses the Settings brand icon set', () => {
   );
 });
 
-test('web hero social proof uses recognizable brand and users icons', () => {
+test('web hero social proof uses recognizable brand icons', () => {
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
 
@@ -43101,8 +43101,13 @@ test('web hero social proof uses recognizable brand and users icons', () => {
     );
     assert.match(
       html,
-      /hero-proof-users[\s\S]*?<svg class="hero-proof-icon"[\s\S]*?<circle cx="9" cy="7" r="4"\/>/,
-      `${label}: user-count proof should include a decorative users icon`,
+      /hero-proof-press[\s\S]*?<img class="hero-proof-icon" src="\/assets\/marktechpost\.svg" alt="" aria-hidden="true"/,
+      `${label}: MarkTechPost proof should use its bundled favicon`,
+    );
+    assert.doesNotMatch(
+      html,
+      /class="hero-proof-cell hero-proof-users"/,
+      `${label}: the retired user-count cell should stay out of the three-proof row`,
     );
     assert.doesNotMatch(
       html,
@@ -43110,24 +43115,19 @@ test('web hero social proof uses recognizable brand and users icons', () => {
       `${label}: generic featured checkmark should not remain`,
     );
 
-    const productHuntIndex = html.indexOf('href="https://www.producthunt.com/products/webbrain"');
-    const markTechPostIndex = html.indexOf('href="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/"');
-    const usersIndex = html.indexOf('class="hero-proof-cell hero-proof-users"');
+    const featuredIndex = html.indexOf('href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb"');
+    const huntIndex = html.indexOf('href="https://www.producthunt.com/products/webbrain"');
+    const pressIndex = html.indexOf('href="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/"');
     assert.ok(
-      productHuntIndex >= 0 && markTechPostIndex > productHuntIndex && usersIndex > markTechPostIndex,
-      `${label}: MarkTechPost article should be the third proof, immediately after Product Hunt`,
-    );
-    assert.match(
-      html,
-      /hero-proof-press[\s\S]*?<img class="hero-proof-icon" src="\/assets\/marktechpost\.svg" alt="" aria-hidden="true"/,
-      `${label}: MarkTechPost proof should use its bundled favicon`,
+      featuredIndex >= 0 && huntIndex > featuredIndex && pressIndex > huntIndex,
+      `${label}: Chrome Web Store, Product Hunt, and MarkTechPost proofs should appear in that order`,
     );
   }
 
   assert.match(
     template,
     /\.hero-proof \{[\s\S]*?max-width: 900px;/,
-    'web: four social-proof items should keep enough room to share one desktop line',
+    'web: three social-proof items should keep enough room to share one desktop line',
   );
   assert.ok(
     fs.existsSync(path.join(ROOT, 'web/assets/marktechpost.svg')),
@@ -43140,43 +43140,31 @@ test('web hero social proof uses recognizable brand and users icons', () => {
   );
 });
 
-test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stack', () => {
+test('webbrain.one homepage showcases a localized Apocalypse Mode readiness banner', () => {
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const generated = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
-  const featuresIndex = template.indexOf('<!-- FEATURES -->');
-  const providersIndex = template.indexOf('<!-- PROVIDERS -->');
-  const apocalypseIndex = template.indexOf('<!-- APOCALYPSE MODE -->');
-  const mcpIndex = template.indexOf('<!-- MCP SERVER -->');
-  const compareIndex = template.indexOf('<!-- COMPARISON TABLE -->');
-  const downloadIndex = template.indexOf('<!-- DOWNLOAD -->');
+  const providersIndex = template.indexOf('<section class="section" id="providers"');
+  const featuresIndex = template.indexOf('<!-- 5. FEATURES');
+  const compareIndex = template.indexOf('<!-- 6. COMPARE');
+  const downloadIndex = template.indexOf('<!-- 8. DOWNLOAD -->');
+  const mcpIndex = template.indexOf('<!-- 9. FOR DEVELOPERS');
+  const apocalypseIndex = template.indexOf('<!-- 10. APOCALYPSE MODE');
   const shareIndex = template.indexOf('<!-- SPREAD THE WORD / OPEN SOURCE -->');
 
-  assert.ok(featuresIndex >= 0
-    && providersIndex > featuresIndex
-    && apocalypseIndex > providersIndex
-    && mcpIndex > apocalypseIndex
-    && compareIndex > mcpIndex
+  assert.ok(providersIndex >= 0
+    && featuresIndex > providersIndex
+    && compareIndex > featuresIndex
     && downloadIndex > compareIndex
-    && shareIndex > downloadIndex,
-    'web: homepage should flow from provider choice through offline, WebMCP, comparison, download, and sharing');
-  assert.match(template, /<section class="section apocalypse-section" id="apocalypse" aria-labelledby="apocalypse-title">/,
-    'web: Apocalypse Mode should be a named homepage section');
-  assert.match(template, /\{\{t:apocalypse\.label\}\}[\s\S]*?id="apocalypse-title">\{\{t:apocalypse\.title\}\}[\s\S]*?\{\{t:apocalypse\.heading\}\}[\s\S]*?\{\{t:apocalypse\.description\}\}/,
+    && mcpIndex > downloadIndex
+    && apocalypseIndex > mcpIndex
+    && shareIndex > apocalypseIndex,
+    'web: homepage should flow from provider choice through comparison and download to the offline banner and sharing');
+  assert.match(template, /<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">/,
+    'web: Apocalypse Mode should be a named homepage section with a matching title reference');
+  assert.match(template, /\{\{t:apocalypse\.label\}\}[\s\S]*?id="apocalypse-banner-title"[^>]*>\{\{t:apocalypse\.title\}\}[\s\S]*?\{\{t:apocalypse\.heading\}\}[\s\S]*?\{\{t:apocalypse\.description\}\}/,
     'web: Apocalypse Mode marketing copy should come from locale sources');
-  assert.match(template, /WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Vision Model[\s\S]*?Wikipedia[\s\S]*?First Aid — U\.S\. Army Field Manual[\s\S]*?EMERGENCY BOX · PDF/,
-    'web: the offline readiness stack should show text, vision, Wikipedia, and first-aid layers');
   assert.doesNotMatch(template, /LFM2\.5 2\.6B|TEXT · WEBGPU · Q4F16/,
     'web: homepage readiness copy should describe the capability without model-build jargon');
-  assert.match(template, /\.apocalypse-shell \{[\s\S]*?grid-template-columns:[\s\S]*?\.apocalypse-module\.is-vision[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-knowledge[\s\S]*?margin-inline-start:[\s\S]*?\.apocalypse-module\.is-first-aid[\s\S]*?margin-inline-start:/,
-    'web: the readiness stack should keep its asymmetric stepped composition');
-  assert.match(template, /\[dir="rtl"\] \.apocalypse-copy[\s\S]*?\[dir="rtl"\] \.apocalypse-module::before/,
-    'web: Apocalypse Mode spacing and accents should adapt to RTL locales');
-  assert.match(template, /@media \(max-width: 600px\) \{[\s\S]*?\.apocalypse-module-status \{ display: none; \}/,
-    'web: the Apocalypse stack should simplify on small screens');
-  assert.match(template, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.apocalypse-kicker-mark \{ animation: none; \}/,
-    'web: the Apocalypse status signal should honor reduced motion');
-  assert.doesNotMatch(template.match(/\/\* ={64}\n       APOCALYPSE MODE[\s\S]*?\/\* ={64}\n       PROVIDERS/)?.[0] || '', /(?:linear|radial)-gradient\(/,
-    'web: the Apocalypse showcase should use solid surfaces rather than decorative gradients');
 
   const localeFiles = fs.readdirSync(path.join(ROOT, 'web/build/locales')).filter(file => file.endsWith('.json'));
   for (const file of localeFiles) {
@@ -43187,8 +43175,10 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
     }
   }
   assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'))['apocalypse.video.cta'], 'Watch our video');
-  assert.match(template, /<a class="apocalypse-cta" href="#download">\{\{t:download\.title\}\}[\s\S]*?<button[\s\S]*?class="apocalypse-video-link"[\s\S]*?id="apocalypse-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="apocalypse-video-dialog"[\s\S]*?>\{\{t:apocalypse\.video\.cta\}\}<\/button>/,
-    'web: Install WebBrain should keep a Watch our video modal trigger underneath');
+  assert.match(template, /<button[\s\S]*?id="apocalypse-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="apocalypse-video-dialog"[\s\S]*?\{\{t:apocalypse\.video\.cta\}\}[\s\S]*?<\/button>/,
+    'web: the compact banner should keep a Watch our video modal trigger');
+  assert.match(template, /<a class="apocalypse-docs-link" href="\/docs\/apocalypse-mode\/">/,
+    'web: the compact banner should link to the Apocalypse Mode guide');
   assert.match(template, /<dialog[\s\S]*?id="apocalypse-video-dialog"[\s\S]*?<video id="apocalypse-video"[^>]*data-desktop-src="\/assets\/apocalypse-mode\.mp4"[^>]*data-mobile-src="\/assets\/apocalypse-mode\.mp4"/,
     'web: Apocalypse Mode should open the same video dialog pattern as the other homepage players');
   assert.match(template, /function openApocalypseVideo\(\)[\s\S]*?dialog\.showModal\(\)[\s\S]*?video\.play\(\)[\s\S]*?dialog\.addEventListener\('close'[\s\S]*?video\.pause\(\)/,
@@ -43201,8 +43191,8 @@ test('webbrain.one homepage showcases a localized Apocalypse Mode readiness stac
     fs.statSync(path.join(ROOT, 'web/assets/apocalypse-mode.mp4')).size > 100_000,
     'web assets: the Apocalypse Mode video should not be empty',
   );
-  assert.match(generated, /<section class="section apocalypse-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?Watch our video[\s\S]*?WebGPU powered local LLM[\s\S]*?TEXT MODEL · ON DEVICE[\s\S]*?Wikipedia[\s\S]*?First Aid — U\.S\. Army Field Manual/,
-    'web build: generated English homepage should contain the complete Apocalypse Mode showcase');
+  assert.match(generated, /<section class="section apocalypse-banner-section" id="apocalypse"[\s\S]*?WebBrain, ready when the internet isn’t\.[\s\S]*?Offline knowledge, under your control[\s\S]*?Watch our video/,
+    'web build: generated English homepage should contain the complete Apocalypse Mode banner');
 });
 
 test('public Apocalypse Mode guide and launch essay document the offline boundary', () => {
@@ -43275,68 +43265,45 @@ test('homepage does not promote the unmerged Ollama launch handoff', () => {
   );
 });
 
-test('trust rail follows the demo with all four safeguards', () => {
+test('demo proof cards carry the security safeguards beside the comparison', () => {
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
   const turkish = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/tr.json'), 'utf8'));
-  const heroVisualIndex = template.indexOf('<div class="hero-visual">');
-  const trustRailIndex = template.indexOf('<div class="hero-trust">');
+  const demoSectionIndex = template.indexOf('<section class="section" id="demo"');
   const demoVideoIndex = template.indexOf('<video id="demo-video"');
-  const featuresIndex = template.indexOf('<!-- FEATURES -->');
+  const duoCardsIndex = template.indexOf('<div class="demo-duo-cards">');
+  const securityCardIndex = template.indexOf('<div class="demo-duo-card demo-duo-security">');
+  const compareCardIndex = template.indexOf('<div class="demo-duo-card demo-duo-compare">');
+  const voicesIndex = template.indexOf('<section class="section voices-section" id="voices"');
 
-  assert.ok(heroVisualIndex >= 0, 'web: animated hero visual should exist');
+  assert.ok(demoSectionIndex >= 0, 'web: demo section should exist');
   // Objection handling belongs after the visitor has seen what the agent does,
-  // so the rail now closes the demo section instead of sitting in the hero.
+  // so the safeguards now ride the demo proof cards instead of the hero.
   assert.ok(
-    trustRailIndex > demoVideoIndex && trustRailIndex < featuresIndex,
-    'web: trust rail should follow the demo video and close the demo section',
+    demoVideoIndex > demoSectionIndex && duoCardsIndex > demoVideoIndex
+      && securityCardIndex > duoCardsIndex && compareCardIndex > securityCardIndex
+      && voicesIndex > compareCardIndex,
+    'web: security and comparison proof cards should follow the demo video inside the demo section',
   );
   assert.match(
     template,
-    /<video id="demo-video"[\s\S]*?<\/div>\s*<\/div>\s*<!-- Objection handling sits directly after the demo[\s\S]*?<div class="hero-trust">/,
-    'web: trust rail should sit directly after the demo video showcase',
+    /<ul class="demo-duo-list">\s*<li>\{\{t:hero\.trust\.b1\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b2\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b3\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b4\}\}<\/li>\s*<\/ul>/,
+    'web: security card should contain all four safeguards',
   );
   assert.match(
     template,
-    /<ul class="hero-trust-list">\s*<li>\{\{t:hero\.trust\.b1\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b2\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b3\}\}<\/li>\s*<li>\{\{t:hero\.trust\.b4\}\}<\/li>\s*<\/ul>/,
-    'web: trust rail should contain all four safeguards',
+    /<div class="demo-duo-card demo-duo-security">[\s\S]*?<h3 class="demo-duo-title" id="hero-trust-title">\{\{t:security\.title\}\}<\/h3>/,
+    'web: security card should keep its titled safeguard list',
   );
   assert.match(
     template,
-    /\.hero-trust-list \{[\s\S]*?grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/,
-    'web: the four safeguards should share one row on desktop',
+    /<button[\s\S]*?class="demo-duo-trigger"[\s\S]*?id="security-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="security-video-dialog"/,
+    'web: the security card should be one accessible security-video trigger',
   );
   assert.match(
     template,
-    /\.hero-trust \{[\s\S]*?max-width: 940px;[\s\S]*?grid-template-columns:[\s\S]*?box-shadow:/,
-    'web: trust rail should be wide enough to carry four promises',
-  );
-  assert.match(
-    template,
-    /@media \(max-width: 768px\) \{[\s\S]*?\.hero-trust-list \{[\s\S]*?grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
-    'web: trust promises should fall to two columns on tablets',
-  );
-  assert.match(
-    template,
-    /@media \(max-width: 560px\) \{[\s\S]*?\.hero-trust-list \{[\s\S]*?grid-template-columns: 1fr;/,
-    'web: trust promises should stack on small phones',
-  );
-  // The ✓ badge is placed with inset-inline-start, so the text gutter has to be
-  // logical too or it lands under the badge in RTL locales.
-  assert.match(
-    template,
-    /\.hero-trust-list li \{[\s\S]*?padding-inline: 35px 9px;/,
-    'web: trust promise text gutter should be direction-aware',
-  );
-  assert.match(
-    template,
-    /<div class="hero-trust">[\s\S]*?<button[\s\S]*?class="hero-trust-trigger"[\s\S]*?id="security-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="security-video-dialog"/,
-    'web: the complete trust rail should be one accessible security-video trigger',
-  );
-  assert.match(
-    template,
-    /class="hero-trust-media"[\s\S]*?<img class="hero-trust-thumbnail" src="\/assets\/security-speaker-thumbnail\.jpg"[\s\S]*?class="hero-trust-play"[\s\S]*?security\.video\.open_aria/,
-    'web: the trust rail should use a real speaker thumbnail and explicit video treatment',
+    /class="demo-duo-media"[\s\S]*?<img class="demo-duo-thumbnail" src="\/assets\/security-speaker-thumbnail\.jpg"[\s\S]*?<span class="demo-duo-play">/,
+    'web: the security card should use the real speaker thumbnail with explicit play treatment',
   );
   assert.ok(
     fs.existsSync(path.join(ROOT, 'web/assets/security-speaker-thumbnail.jpg')),
@@ -43344,8 +43311,8 @@ test('trust rail follows the demo with all four safeguards', () => {
   );
   assert.match(
     template,
-    /\.hero-trust \{[\s\S]*?margin: 58px auto 0;[\s\S]*?\.hero-trust-media \{[\s\S]*?min-height: 150px;/,
-    'web: the video chapter should be separated from the animation and give its thumbnail presence',
+    /\.demo-duo-cards \{[\s\S]*?grid-template-columns: repeat\(2, 1fr\);[\s\S]*?max-width: 1100px;/,
+    'web: the two proof cards should share one desktop row',
   );
 
   assert.equal(english['security.title'], 'How WebBrain keeps you in control');
@@ -43402,9 +43369,11 @@ test('landing demo uses the new captioned videos and keeps the old comparison in
   const template = fs.readFileSync(path.join(ROOT, 'web/build/template.html'), 'utf8');
   const english = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/en.json'), 'utf8'));
   const turkish = JSON.parse(fs.readFileSync(path.join(ROOT, 'web/build/locales/tr.json'), 'utf8'));
+  const demoSectionIndex = template.indexOf('<section class="section" id="demo"');
+  const demoVideoIndex = template.indexOf('<video id="demo-video"');
+  const compareTriggerIndex = template.indexOf('id="comparison-video-open"');
   const compareSectionIndex = template.indexOf('<section class="section" id="compare">');
-  const compareVideoIndex = template.indexOf('id="comparison-video-open"');
-  const frameworkComparisonIndex = template.indexOf('<!-- vs Agent Frameworks -->');
+  const frameworkComparisonIndex = template.indexOf('class="developer-frameworks-heading"');
   const comparisonDialogIndex = template.indexOf('id="comparison-video-dialog"');
 
   for (const asset of [
@@ -43442,8 +43411,10 @@ test('landing demo uses the new captioned videos and keeps the old comparison in
     'web demo: desktop and mobile frames should preserve the new assets’ native aspect ratios',
   );
   assert.ok(
-    compareVideoIndex > compareSectionIndex && compareVideoIndex < frameworkComparisonIndex,
-    'web comparison: local-vs-Claude video add-on should follow the browser-plugin table',
+    demoVideoIndex > demoSectionIndex && compareTriggerIndex > demoVideoIndex
+      && compareSectionIndex > compareTriggerIndex && comparisonDialogIndex > compareSectionIndex
+      && frameworkComparisonIndex > compareSectionIndex,
+    'web comparison: speed proof card should follow the demo video with the frameworks table and dialog outside the plugin-table flow',
   );
   assert.ok(
     comparisonDialogIndex > frameworkComparisonIndex,
@@ -43451,7 +43422,7 @@ test('landing demo uses the new captioned videos and keeps the old comparison in
   );
   assert.match(
     template,
-    /<button[\s\S]*?class="compare-video-card"[\s\S]*?id="comparison-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="comparison-video-dialog"/,
+    /<button[\s\S]*?class="demo-duo-trigger"[\s\S]*?id="comparison-video-open"[\s\S]*?aria-haspopup="dialog"[\s\S]*?aria-controls="comparison-video-dialog"/,
     'web comparison: speed proof should be an accessible whole-card modal trigger',
   );
   assert.match(

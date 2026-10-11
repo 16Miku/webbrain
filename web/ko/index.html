@@ -241,7 +241,7 @@
       "name": "질문을 너무 많이 합니다. 비활성화할 수 있나요?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "이 승인 프롬프트는 사용자의 안전을 위한 것입니다. 신뢰하는 사이트에서도 악의적인 행위자가 LLM 지시를 흉내 내거나 콘텐츠를 삽입해, 사용자가 승인하지 않을 일을 에이전트가 대신 하도록 유도할 수 있습니다. 그래서 WebBrain은 중대한 결과가 따르는 작업 전에 항상 승인을 요청합니다. 그래도 이러한 프롬프트를 거치고 싶지 않다면 비활성화할 수 있습니다. 사이드 플러그인을 열고 헤더의 톱니바퀴 아이콘을 클릭한 다음 settings.html의 Permissions 탭으로 이동하여 Ask before consequential actions 옵션을 끄세요."
+        "text": "이 승인 프롬프트는 사용자의 안전을 위한 것입니다. 신뢰하는 사이트에서도 악의적인 행위자가 LLM 지시를 흉내 내거나 콘텐츠를 삽입해, 사용자가 승인하지 않을 일을 에이전트가 대신 하도록 유도할 수 있습니다. 그래서 WebBrain은 중대한 결과가 따르는 작업 전에 항상 승인을 요청합니다. 그래도 이러한 프롬프트를 거치고 싶지 않다면 사이드 패널에 /dangerously-skip-permissions을 입력하거나 비활성화할 수 있습니다. 사이드 플러그인을 열고 헤더의 톱니바퀴 아이콘을 클릭한 다음 settings.html의 Permissions 탭으로 이동하여 Ask before consequential actions 옵션을 끄세요."
       }
     },
     {
@@ -3638,7 +3638,7 @@
 <aside class="top-announcement-banner">
   <a href="#mcp" class="top-announcement-link">
     <span class="top-announcement-pill">New</span>
-    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-text">신규: Claude Code, Codex 및 Cursor용 MCP 서버</span>
     <span class="top-announcement-arrow" aria-hidden="true">→</span>
   </a>
 </aside>
@@ -3709,7 +3709,7 @@
 <!-- HERO -->
 <section class="hero">
   <h1>오픈소스 AI <span class="gradient">브라우저 에이전트</span></h1>
-  <p>WebBrain은 브라우저에 AI 에이전트 기능을 가져오는 무료 오픈소스 브라우저 확장입니다. 페이지를 읽고, 데이터를 추출하고, 웹 작업을 자동화합니다 — 원하는 LLM으로. 독점 브라우저 AI 플러그인의 셀프 호스팅 가능한 대안입니다.</p>
+  <p>Chrome에서 Claude를 대체하는 무료 오픈소스. 로컬 모델을 포함한 어떤 모델이든 사용하세요. 페이지가 사용자의 기기를 벗어나지 않습니다.</p>
   <div class="hero-actions">
     <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4450,7 +4450,7 @@
   </div>
 
   <div class="faq-inline-cta-wrap">
-    <a class="faq-bridge" href="/docs/ko/faq/">
+    <a class="faq-bridge" id="faq" href="/docs/ko/faq/">
       <span class="faq-bridge-mark" aria-hidden="true">?</span>
       <strong>FAQ</strong>
       <span class="faq-bridge-cta">FAQ (30+ questions) <span aria-hidden="true">→</span></span>
@@ -4591,7 +4591,7 @@
 </section>
 
 <!-- 10. APOCALYPSE MODE (Compact Banner) -->
-<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">
   <div class="apocalypse-compact-card">
     <div class="apocalypse-compact-info">
       <div class="apocalypse-compact-kicker">

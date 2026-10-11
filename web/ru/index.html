@@ -241,7 +241,7 @@
       "name": "Он задаёт мне слишком много вопросов. Можно это отключить?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Эти запросы подтверждения нужны для вашей безопасности. Даже на сайтах, которым вы доверяете, злоумышленники могут имитировать инструкции LLM или внедрять контент, пытаясь заставить агента выполнить от вашего имени действия, которые вы бы не одобрили. Поэтому WebBrain просит подтверждение перед значимыми действиями. Если вы всё равно не хотите проходить через эти запросы, их можно отключить: откройте боковой плагин, нажмите значок шестерёнки в заголовке, перейдите на вкладку Permissions в settings.html и выключите параметр Ask before consequential actions."
+        "text": "Эти запросы подтверждения нужны для вашей безопасности. Даже на сайтах, которым вы доверяете, злоумышленники могут имитировать инструкции LLM или внедрять контент, пытаясь заставить агента выполнить от вашего имени действия, которые вы бы не одобрили. Поэтому WebBrain просит подтверждение перед значимыми действиями. Если вы всё равно не хотите проходить через эти запросы, введите /dangerously-skip-permissions в боковой панели или отключите их: откройте боковой плагин, нажмите значок шестерёнки в заголовке, перейдите на вкладку Permissions в settings.html и выключите параметр Ask before consequential actions."
       }
     },
     {
@@ -3638,7 +3638,7 @@
 <aside class="top-announcement-banner">
   <a href="#mcp" class="top-announcement-link">
     <span class="top-announcement-pill">New</span>
-    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-text">Новое: MCP-сервер для Claude Code, Codex и Cursor</span>
     <span class="top-announcement-arrow" aria-hidden="true">→</span>
   </a>
 </aside>
@@ -3709,7 +3709,7 @@
 <!-- HERO -->
 <section class="hero">
   <h1>Open-source AI-<span class="gradient">агент для браузера</span></h1>
-  <p>WebBrain — бесплатное open-source расширение, которое добавляет возможности AI-агента в ваш браузер. Читает страницы, извлекает данные и автоматизирует веб-задачи — на любом LLM по вашему выбору. Self-hosted альтернатива проприетарным браузерным AI-плагинам.</p>
+  <p>Бесплатная open-source альтернатива Claude в Chrome. Используйте любую модель, включая локальные, — ваши страницы никогда не покинут ваш компьютер.</p>
   <div class="hero-actions">
     <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4450,7 +4450,7 @@
   </div>
 
   <div class="faq-inline-cta-wrap">
-    <a class="faq-bridge" href="/docs/ru/faq/">
+    <a class="faq-bridge" id="faq" href="/docs/ru/faq/">
       <span class="faq-bridge-mark" aria-hidden="true">?</span>
       <strong>FAQ</strong>
       <span class="faq-bridge-cta">FAQ (30+ questions) <span aria-hidden="true">→</span></span>
@@ -4591,7 +4591,7 @@
 </section>
 
 <!-- 10. APOCALYPSE MODE (Compact Banner) -->
-<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">
   <div class="apocalypse-compact-card">
     <div class="apocalypse-compact-info">
       <div class="apocalypse-compact-kicker">

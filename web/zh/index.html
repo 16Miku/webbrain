@@ -241,7 +241,7 @@
       "name": "它问我的问题太多了。可以关闭吗？",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "这些批准提示是为了保护你的安全。即使在你信任的网站上，恶意行为者也可能伪造 LLM 指令或注入内容，试图让代理代表你执行你不会同意的操作。因此，WebBrain 在执行有后果的操作之前始终需要你的批准。如果你仍然不想经过这些提示，也可以关闭它们：打开侧边插件，点击标题栏中的齿轮图标，进入 settings.html 的 Permissions 标签页，然后关闭 Ask before consequential actions 选项。"
+        "text": "这些批准提示是为了保护你的安全。即使在你信任的网站上，恶意行为者也可能伪造 LLM 指令或注入内容，试图让代理代表你执行你不会同意的操作。因此，WebBrain 在执行有后果的操作之前始终需要你的批准。如果你仍然不想经过这些提示，可以在侧边面板输入 /dangerously-skip-permissions，或者关闭它们：打开侧边插件，点击标题栏中的齿轮图标，进入 settings.html 的 Permissions 标签页，然后关闭 Ask before consequential actions 选项。"
       }
     },
     {
@@ -3638,7 +3638,7 @@
 <aside class="top-announcement-banner">
   <a href="#mcp" class="top-announcement-link">
     <span class="top-announcement-pill">New</span>
-    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-text">新增：适用于 Claude Code、Codex 和 Cursor 的 MCP 服务器</span>
     <span class="top-announcement-arrow" aria-hidden="true">→</span>
   </a>
 </aside>
@@ -3709,7 +3709,7 @@
 <!-- HERO -->
 <section class="hero">
   <h1>开源 <span class="gradient">AI 浏览器代理</span></h1>
-  <p>WebBrain 是一款免费的开源浏览器扩展,为你的浏览器带来 AI 代理能力。阅读页面、提取数据、自动化网页任务 —— 使用你选择的 LLM。专有浏览器 AI 插件的可自托管替代品。</p>
+  <p>Chrome 中 Claude 的免费开源替代方案。使用任何模型（包括本地模型），让您的页面永远不会离开您的机器。</p>
   <div class="hero-actions">
     <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4450,7 +4450,7 @@
   </div>
 
   <div class="faq-inline-cta-wrap">
-    <a class="faq-bridge" href="/docs/zh/faq/">
+    <a class="faq-bridge" id="faq" href="/docs/zh/faq/">
       <span class="faq-bridge-mark" aria-hidden="true">?</span>
       <strong>常见问题</strong>
       <span class="faq-bridge-cta">常见问题 (30+ questions) <span aria-hidden="true">→</span></span>
@@ -4591,7 +4591,7 @@
 </section>
 
 <!-- 10. APOCALYPSE MODE (Compact Banner) -->
-<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-banner-title">
   <div class="apocalypse-compact-card">
     <div class="apocalypse-compact-info">
       <div class="apocalypse-compact-kicker">
