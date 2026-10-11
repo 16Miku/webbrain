@@ -2,20 +2,42 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
 
-// Keep these document readers equivalent to the content/CDP readers. A rendered
-// prefix cannot certify an unsupported DraftJS document, and paragraph spacing
+// A rendered prefix cannot certify an unsupported rich-text document, and paragraph spacing
 // in innerText is not the document's authored line breaks.
 function readProseMirrorText(el) {
   if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
-  const read = node => {
+  let visited = 0;
+  const supported = node => {
+    if (++visited > 4096 || node.shadowRoot || node.hidden
+        || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
+        || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return false;
+    const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+    return !!style && style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility)
+      && style.opacity !== '0' && style.contentVisibility !== 'hidden';
+  };
+  if (!supported(el)) return null;
+  const read = (node, depth = 0) => {
+    if (depth > 32) return null;
     if (node.nodeType === 3) return node.nodeValue || '';
-    if (node.nodeType !== 1) return '';
-    if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
-    return Array.from(node.childNodes).map(read).join('');
+    if (node.nodeType !== 1 || !supported(node)) return null;
+    if (node.tagName === 'BR') {
+      if (node.childNodes.length) return null;
+      if (!node.classList.contains('ProseMirror-trailingBreak')) return '\n';
+      return node.parentNode?.tagName === 'P' && !node.nextSibling ? '' : null;
+    }
+    // Text marks may wrap authored text. Embedded/node-view content has no
+    // complete plain-text receipt, so it must never collapse to a visible prefix.
+    if (!['SPAN', 'STRONG', 'EM', 'B', 'I', 'U', 'S', 'DEL', 'CODE', 'A'].includes(node.tagName)) return null;
+    const values = Array.from(node.childNodes).map(child => read(child, depth + 1));
+    return values.some(value => value === null) ? null : values.join('');
   };
   const children = Array.from(el.childNodes);
-  if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
-  return children.map(read).join('\n');
+  if (!children.length || !children.every(node => node.nodeType === 1 && node.tagName === 'P' && supported(node))) return null;
+  const paragraphs = children.map(node => {
+    const values = Array.from(node.childNodes).map(child => read(child));
+    return values.some(value => value === null) ? null : values.join('');
+  });
+  return paragraphs.some(value => value === null) ? null : paragraphs.join('\n');
 }
 
 function isDraftJsEditor(el) {
@@ -74,9 +96,24 @@ function readDraftJsText(el) {
 function readRichTextFieldValue(el, semanticKind = '') {
   if (!el?.isConnected) return null;
   const draftJs = semanticKind === 'draftjs' || isDraftJsEditor(el);
+  const proseMirror = semanticKind === 'prosemirror' || el.classList?.contains('ProseMirror');
   const semantic = draftJs ? readDraftJsText(el) : readProseMirrorText(el);
-  if ((draftJs || semanticKind === 'prosemirror') && semantic === null) return null;
+  if ((draftJs || proseMirror) && semantic === null) return null;
   return semantic !== null ? semantic : (el.isContentEditable ? el.innerText : el.value);
+}
+
+function proseMirrorSelectionMatches(el, bound) {
+  if (!bound || el !== bound.editor || !el.isConnected || el.disabled
+      || el.ownerDocument !== bound.document || el.getRootNode() !== bound.root
+      || bound.root.activeElement !== el || readProseMirrorText(el) !== bound.before
+      || el.childNodes.length !== bound.paragraphs.length
+      || bound.paragraphs.some((node, index) => el.childNodes[index] !== node)
+      || !el.contains(bound.startNode) || !el.contains(bound.endNode)) return false;
+  const selection = bound.document.defaultView.getSelection();
+  if (!selection || selection.rangeCount !== 1) return false;
+  const range = selection.getRangeAt(0);
+  return range.startContainer === bound.startNode && range.startOffset === bound.startOffset
+    && range.endContainer === bound.endNode && range.endOffset === bound.endOffset;
 }
 
 const FIELD_TEXT_READBACK_SOURCE = [readProseMirrorText, isDraftJsEditor, readDraftJsText, readRichTextFieldValue]
@@ -268,9 +305,10 @@ export class BidiSession {
       await this.call(match, '(el, token) => { if (el.getAttribute("data-webbrain-bidi") === token) el.removeAttribute("data-webbrain-bidi"); }', [{ type: 'string', value: token }]).catch(() => {});
     }
   }
-  call(match, functionDeclaration, args = []) {
+  call(match, functionDeclaration, args = [], resultOwnership = null) {
     return this.send('script.callFunction', { target: { context: match.context }, functionDeclaration,
-      arguments: [{ sharedId: match.node.sharedId }, ...args], awaitPromise: true });
+      arguments: [{ sharedId: match.node.sharedId }, ...args], awaitPromise: true,
+      ...(resultOwnership ? { resultOwnership } : {}) });
   }
   async _waitForCheckableState(match, desiredChecked, timeoutMs = 80) {
     const result = await this.call(match, `async (el, desired, timeout) => {
@@ -326,13 +364,17 @@ export class BidiSession {
     return {};
   }
   async perform(id, action, payload, validatePageDispatch = null) {
-    const dispatch = { started: false };
+    const dispatch = { started: false, ownedHandles: [] };
     try { return await this.performAction(id, action, payload, dispatch, validatePageDispatch); }
     catch (error) {
       error.dispatchState = { dispatched: dispatch.started, noDispatch: !dispatch.started,
         outcomeUnknown: dispatch.started, retryable: !dispatch.started,
         ...(error.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}) };
       throw error;
+    }
+    finally {
+      for (const { context, handle } of dispatch.ownedHandles)
+        await this.send('script.disown', { target: { context }, handles: [handle] }).catch(() => {});
     }
   }
   async performAction(id, action, payload, dispatch, validatePageDispatch = null) {
@@ -501,6 +543,7 @@ export class BidiSession {
     const beforeReadback = typing ? unpackRemoteObjectValue(before.result?.type ? before.result : before.result?.value) : null;
     const beforeSnapshot = beforeReadback && typeof beforeReadback === 'object' && Object.hasOwn(beforeReadback, 'value')
       ? beforeReadback : { value: before?.result?.value, semanticKind: '' };
+    let proseMirrorBinding = null;
     const assertFocus = async () => {
       assertLive();
       const focused = await this.call(match, '(el) => el.isConnected && !el.disabled && el.getRootNode().activeElement === el');
@@ -585,103 +628,179 @@ export class BidiSession {
         const multiline = await this.call(match, '(el) => el.tagName === "TEXTAREA" || el.isContentEditable');
         if (multiline.result?.value !== true) throw new Error('Newlines require a multiline editor; no text sent');
       }
-      if (clear) {
-        const platform = await this.call(match, '() => navigator.platform');
-        await press('a', /Mac/.test(platform.result?.value || '') ? '\uE03D' : '\uE009');
-        await press('\uE003');
-        if (beforeSnapshot.semanticKind === 'draftjs') {
-          const cleared = await this.call(match, `(el) => {
-            ${FIELD_TEXT_READBACK_SOURCE}
-            return readRichTextFieldValue(el, 'draftjs') === '';
-          }`);
-          if (cleared.result?.value !== true) throw new Error('DraftJS clearing did not establish an empty document; no further text sent');
-        }
-      } else {
-        const positioned = await this.call(match, `(el) => {
-          if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
-          if (el.isContentEditable) {
-            const selection = getSelection(); const range = document.createRange();
-            let container = el;
-            while (container.lastChild?.nodeType === 1 && container.lastChild.isContentEditable
-                && container.lastChild.nodeName !== 'BR') container = container.lastChild;
-            range.selectNodeContents(container); range.collapse(false);
-            selection.removeAllRanges(); selection.addRange(range);
-          } else if (typeof el.setSelectionRange === 'function') {
-            const end = el.value.length; el.setSelectionRange(end, end);
-          } else return false;
-          return true;
-        }`);
-        if (positioned.result?.value !== true) throw new Error('Could not position caret for append; no text sent');
-      }
-      if (beforeSnapshot.semanticKind === 'draftjs' && /[\r\n]/.test(payload.text)) {
-        // DraftJS treats literal LF editing commands inconsistently. Its public paste
-        // handler accepts a whole plain-text document without using a submit shortcut.
-        const positioned = await this.call(match, `(el, clear) => {
-          if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
-          const leaves = el.querySelectorAll('[data-text="true"]');
-          const leaf = leaves[clear ? 0 : leaves.length - 1];
-          if (!leaf) return false;
-          const range = el.ownerDocument.createRange();
-          if (leaf.nodeName === 'BR') range.setStartBefore(leaf);
-          else {
-            const text = clear ? leaf.firstChild : leaf.lastChild;
-            if (text?.nodeType !== 3) return false;
-            range.setStart(text, clear ? 0 : text.nodeValue.length);
-          }
-          range.collapse(true);
-          const selection = el.ownerDocument.defaultView.getSelection();
+      if (beforeSnapshot.semanticKind === 'prosemirror') {
+        // A whole public paste avoids intermediate deletion/character updates to
+        // composer peers, and preserves literal LFs through the editor's parser.
+        // Remote ownership keeps these DOM identities private to this operation.
+        const positioned = await this.call(match, `(el, clear, before) => {
+          ${FIELD_TEXT_READBACK_SOURCE}
+          if (!el.isConnected || el.getRootNode().activeElement !== el
+              || readProseMirrorText(el) !== before) return null;
+          const document = el.ownerDocument;
+          const paragraphs = Array.from(el.childNodes);
+          const edge = (paragraph, end) => {
+            let node = end ? paragraph.lastChild : paragraph.firstChild;
+            if (end && node?.nodeName === 'BR' && node.classList.contains('ProseMirror-trailingBreak')) node = node.previousSibling;
+            if (!node) return [paragraph, 0];
+            while (node.nodeType === 1 && node.nodeName !== 'BR' && node.childNodes.length)
+              node = end ? node.lastChild : node.firstChild;
+            if (node.nodeType === 3) return [node, end ? node.nodeValue.length : 0];
+            if (node.nodeName === 'BR') return [node.parentNode, Array.from(node.parentNode.childNodes).indexOf(node) + (end ? 1 : 0)];
+            return [node, 0];
+          };
+          const [endNode, endOffset] = edge(paragraphs[paragraphs.length - 1], true);
+          const [startNode, startOffset] = clear ? edge(paragraphs[0], false) : [endNode, endOffset];
+          const range = document.createRange();
+          range.setStart(startNode, startOffset); range.setEnd(endNode, endOffset);
+          const selection = document.defaultView.getSelection();
           selection.removeAllRanges(); selection.addRange(range);
-          return true;
-        }`, [{ type: 'boolean', value: clear }]);
-        if (positioned.result?.value !== true) throw new Error('Could not position the DraftJS caret; no further text sent');
-        // Let the browser's selectionchange reach the framework before the paste.
+          return { editor: el, document, root: el.getRootNode(), paragraphs, before,
+            startNode, startOffset, endNode, endOffset };
+        }`, [{ type: 'boolean', value: clear }, { type: 'string', value: String(beforeSnapshot.value || '') }], 'root');
+        const binding = positioned.result?.handle;
+        if (!binding) throw new Error('Could not position the ProseMirror selection; no text sent');
+        proseMirrorBinding = binding;
+        (dispatch.ownedHandles ||= []).push({ context: match.context, handle: binding });
+        // Public selectionchange must reach the framework before it reads paste.
         await new Promise(resolve => setTimeout(resolve, 30));
         await assertFocus();
-        const marker = await markNativeDispatch('input', { domDispatch: true });
-        try {
-          dispatch.started = true;
-          const pasted = await this.call(match, `(el, text, guardJson) => {
-            ${FIELD_TEXT_READBACK_SOURCE}
-            if (!el.isConnected || el.getRootNode().activeElement !== el || readDraftJsText(el) === null) return false;
-            const view = el.ownerDocument.defaultView;
-            const data = new view.DataTransfer(); data.setData('text/plain', text);
-            const event = new view.ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true, clipboardData: data });
-            // Firefox drops the constructor's clipboardData. Preserve the public
-            // plain-text payload without reading or writing the OS clipboard.
-            if (event.clipboardData?.getData('text/plain') !== text)
-              Object.defineProperty(event, 'clipboardData', { value: data });
-            const guard = JSON.parse(guardJson);
-            if (guard && !el.dispatchEvent(new view.CustomEvent('webbrain-agent-dom-dispatch', {
-              detail: JSON.stringify({ ...guard, dispatchPhase: 'input' }), bubbles: true, composed: true, cancelable: true,
-            }))) return false;
-            el.dispatchEvent(event);
-            // Cancellation can mean the framework consumed the paste. Only the
-            // settled exact document readback below establishes its outcome.
-            return true;
-          }`, [{ type: 'string', value: payload.text.replace(/\r\n?/g, '\n') },
-            { type: 'string', value: JSON.stringify(payload.pageFeedbackGuard || null) }]);
-          if (pasted.result?.value !== true) throw new Error('DraftJS paste dispatch could not be established; inspect before another write');
-        } finally { await clearNativeDispatch(marker); }
-        assertLive();
+        const selected = await this.call(match, `(el, bound) => {
+          ${FIELD_TEXT_READBACK_SOURCE}
+          ${proseMirrorSelectionMatches.toString()}
+          return proseMirrorSelectionMatches(el, bound);
+        }`, [{ handle: binding }]);
+        if (selected.result?.value !== true) throw new Error('The ProseMirror document or selection changed; no text sent');
+        if (payload.text === '') {
+          // ProseMirror does not consume an empty clipboard. A single native
+          // deletion of the pinned whole-document selection needs no follow-up edit.
+          if (clear && beforeSnapshot.value !== '') await press('\uE003');
+        } else {
+          const marker = await markNativeDispatch('input', { domDispatch: true });
+          try {
+            dispatch.started = true;
+            const pasted = await this.call(match, `(el, bound, text, guardJson) => {
+              ${FIELD_TEXT_READBACK_SOURCE}
+              ${proseMirrorSelectionMatches.toString()}
+              if (!proseMirrorSelectionMatches(el, bound)) return false;
+              const view = bound.document.defaultView;
+              const data = new view.DataTransfer(); data.setData('text/plain', text);
+              const event = new view.ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true, clipboardData: data });
+              if (event.clipboardData?.getData('text/plain') !== text)
+                Object.defineProperty(event, 'clipboardData', { value: data });
+              const guard = JSON.parse(guardJson);
+              if (guard && !el.dispatchEvent(new view.CustomEvent('webbrain-agent-dom-dispatch', {
+                detail: JSON.stringify({ ...guard, dispatchPhase: 'input' }), bubbles: true, composed: true, cancelable: true,
+              }))) return false;
+              // The phase event can run page listeners; recheck the exact
+              // editor and range before sending any clipboard content.
+              if (!proseMirrorSelectionMatches(el, bound)) return false;
+              el.dispatchEvent(event);
+              return true;
+            }`, [{ handle: binding }, { type: 'string', value: payload.text.replace(/\r\n?/g, '\n') },
+              { type: 'string', value: JSON.stringify(payload.pageFeedbackGuard || null) }]);
+            if (pasted.result?.value !== true) throw new Error('ProseMirror paste dispatch could not be established; inspect before another write');
+          } finally { await clearNativeDispatch(marker); }
+          assertLive();
+        }
       } else {
-        // One character per dispatch bounds work after Stop and catches focus changes between keys.
-        for (const char of payload.text.replace(/\r\n?/g, '\n')) {
-          if (char === '\n' || char === '\r') {
-            await assertFocus();
-            // Enter is a submit shortcut on many editors, even with Shift. Insert a literal
-            // newline through the editing command instead; never synthesize a submit key.
-            const marker = await markNativeDispatch('input');
-            let inserted;
-            try {
-              dispatch.started = true;
-              inserted = await this.call(match, `(el, text) => {
-                if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
-                return document.execCommand('insertText', false, text);
-              }`, [{ type: 'string', value: char }]);
-            } finally { await clearNativeDispatch(marker); }
-            if (inserted.result?.value !== true) throw new Error('Editor rejected literal newline insertion');
-            assertLive();
-          } else await press(char);
+        if (clear) {
+          const platform = await this.call(match, '() => navigator.platform');
+          await press('a', /Mac/.test(platform.result?.value || '') ? '\uE03D' : '\uE009');
+          await press('\uE003');
+          if (beforeSnapshot.semanticKind === 'draftjs') {
+            const cleared = await this.call(match, `(el) => {
+              ${FIELD_TEXT_READBACK_SOURCE}
+              return readRichTextFieldValue(el, 'draftjs') === '';
+            }`);
+            if (cleared.result?.value !== true) throw new Error('DraftJS clearing did not establish an empty document; no further text sent');
+          }
+        } else {
+          const positioned = await this.call(match, `(el) => {
+            if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
+            if (el.isContentEditable) {
+              const selection = getSelection(); const range = document.createRange();
+              let container = el;
+              while (container.lastChild?.nodeType === 1 && container.lastChild.isContentEditable
+                  && container.lastChild.nodeName !== 'BR') container = container.lastChild;
+              range.selectNodeContents(container); range.collapse(false);
+              selection.removeAllRanges(); selection.addRange(range);
+            } else if (typeof el.setSelectionRange === 'function') {
+              const end = el.value.length; el.setSelectionRange(end, end);
+            } else return false;
+            return true;
+          }`);
+          if (positioned.result?.value !== true) throw new Error('Could not position caret for append; no text sent');
+        }
+        if (beforeSnapshot.semanticKind === 'draftjs' && /[\r\n]/.test(payload.text)) {
+          // DraftJS treats literal LF editing commands inconsistently. Its public paste
+          // handler accepts a whole plain-text document without using a submit shortcut.
+          const positioned = await this.call(match, `(el, clear) => {
+            if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
+            const leaves = el.querySelectorAll('[data-text="true"]');
+            const leaf = leaves[clear ? 0 : leaves.length - 1];
+            if (!leaf) return false;
+            const range = el.ownerDocument.createRange();
+            if (leaf.nodeName === 'BR') range.setStartBefore(leaf);
+            else {
+              const text = clear ? leaf.firstChild : leaf.lastChild;
+              if (text?.nodeType !== 3) return false;
+              range.setStart(text, clear ? 0 : text.nodeValue.length);
+            }
+            range.collapse(true);
+            const selection = el.ownerDocument.defaultView.getSelection();
+            selection.removeAllRanges(); selection.addRange(range);
+            return true;
+          }`, [{ type: 'boolean', value: clear }]);
+          if (positioned.result?.value !== true) throw new Error('Could not position the DraftJS caret; no further text sent');
+          // Let the browser's selectionchange reach the framework before the paste.
+          await new Promise(resolve => setTimeout(resolve, 30));
+          await assertFocus();
+          const marker = await markNativeDispatch('input', { domDispatch: true });
+          try {
+            dispatch.started = true;
+            const pasted = await this.call(match, `(el, text, guardJson) => {
+              ${FIELD_TEXT_READBACK_SOURCE}
+              if (!el.isConnected || el.getRootNode().activeElement !== el || readDraftJsText(el) === null) return false;
+              const view = el.ownerDocument.defaultView;
+              const data = new view.DataTransfer(); data.setData('text/plain', text);
+              const event = new view.ClipboardEvent('paste', { bubbles: true, cancelable: true, composed: true, clipboardData: data });
+              // Firefox drops the constructor's clipboardData. Preserve the public
+              // plain-text payload without reading or writing the OS clipboard.
+              if (event.clipboardData?.getData('text/plain') !== text)
+                Object.defineProperty(event, 'clipboardData', { value: data });
+              const guard = JSON.parse(guardJson);
+              if (guard && !el.dispatchEvent(new view.CustomEvent('webbrain-agent-dom-dispatch', {
+                detail: JSON.stringify({ ...guard, dispatchPhase: 'input' }), bubbles: true, composed: true, cancelable: true,
+              }))) return false;
+              el.dispatchEvent(event);
+              // Cancellation can mean the framework consumed the paste. Only the
+              // settled exact document readback below establishes its outcome.
+              return true;
+            }`, [{ type: 'string', value: payload.text.replace(/\r\n?/g, '\n') },
+              { type: 'string', value: JSON.stringify(payload.pageFeedbackGuard || null) }]);
+            if (pasted.result?.value !== true) throw new Error('DraftJS paste dispatch could not be established; inspect before another write');
+          } finally { await clearNativeDispatch(marker); }
+          assertLive();
+        } else {
+          // One character per dispatch bounds work after Stop and catches focus changes between keys.
+          for (const char of payload.text.replace(/\r\n?/g, '\n')) {
+            if (char === '\n' || char === '\r') {
+              await assertFocus();
+              // Enter is a submit shortcut on many editors, even with Shift. Insert a literal
+              // newline through the editing command instead; never synthesize a submit key.
+              const marker = await markNativeDispatch('input');
+              let inserted;
+              try {
+                dispatch.started = true;
+                inserted = await this.call(match, `(el, text) => {
+                  if (!el.isConnected || el.getRootNode().activeElement !== el) return false;
+                  return document.execCommand('insertText', false, text);
+                }`, [{ type: 'string', value: char }]);
+              } finally { await clearNativeDispatch(marker); }
+              if (inserted.result?.value !== true) throw new Error('Editor rejected literal newline insertion');
+              assertLive();
+            } else await press(char);
+          }
         }
       }
     } else if (action === 'key') {
@@ -696,14 +815,16 @@ export class BidiSession {
       await new Promise(resolve => setTimeout(resolve, 100));
       assertLive();
       const expected = clear ? payload.text : String(beforeSnapshot.value || '') + payload.text;
-      const verified = await this.call(match, `(el, expected, semanticKind) => {
+      const verified = await this.call(match, `(el, expected, semanticKind, bound) => {
         ${FIELD_TEXT_READBACK_SOURCE}
+        if (bound && (el !== bound.editor || el.ownerDocument !== bound.document || el.getRootNode() !== bound.root)) return false;
         const actual = readRichTextFieldValue(el, semanticKind);
         if (actual === null) return false;
         if (!el.isContentEditable) return actual === expected;
         const normalize = value => String(value).replace(/\\r\\n?/g, '\\n');
         return normalize(actual) === normalize(expected);
-      }`, [{ type: 'string', value: expected }, { type: 'string', value: beforeSnapshot.semanticKind || '' }]);
+      }`, [{ type: 'string', value: expected }, { type: 'string', value: beforeSnapshot.semanticKind || '' },
+        proseMirrorBinding ? { handle: proseMirrorBinding } : { type: 'null' }]);
       if (verified.result?.value !== true) return { success: false, dispatched: true, verified: false, submitted: false, outcomeUnknown: true, retryable: false, error: 'Trusted typing did not match the requested value; inspect before another write.' };
       if (action === 'field' && payload.submit === true) {
         assertLive();

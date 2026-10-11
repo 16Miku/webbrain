@@ -211,6 +211,7 @@ for (const build of ['chrome', 'firefox']) {
           return call('context-' + requests, 'click_ax', { ref_id: 'ref_standalone' });
         };
         agent = makeAgent(Agent, next); agent.maxSteps = Infinity;
+        agent._grantSocialPublicationAuditRetry = () => assert.fail('Context recovery must not bypass publication checks.');
         agent._endTraceRun = async (_tab, _run, status) => { terminalStatus = status; };
         agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { send = bind(agent, tab); return { role: 'user', content }; };
         agent.executeTool = async (_id, name, args) => {
@@ -228,16 +229,26 @@ for (const build of ['chrome', 'firefox']) {
           } else {
             assert.equal(requests, 5); assert.equal(validations, 5); assert.equal(dispatched, 0);
             if (condition === 'unsupported') {
-              assert.match(result, /could not be bound to a verified action context/);
+              assert.match(result, /could not confirm which part of the page the control belongs to/);
               assert.doesNotMatch(result, /page kept changing/);
               assert.equal(terminalStatus, 'action_context_unverified');
-              assert.ok(updates.some(u => u.type === 'warning' && /verified action context/.test(u.data.message)));
+              assert.ok(updates.some(u => u.type === 'warning' && /could not confirm/.test(u.data.message)));
               assert.ok(modelMessages[1].some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m))));
             } else {
               assert.match(result, /page kept changing/);
               assert.equal(modelMessages.some(messages => messages.some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m)))), false);
               assert.equal(captures.some(c => c.actionTarget), false);
             }
+            const offer = updates.find(u => u.type === 'failure_recovery')?.data;
+            assert.equal(offer?.stage, 'action_preparation');
+            assert.equal(offer.code, condition === 'unsupported' ? 'action_context_unverified' : 'page_unstable');
+            assert.equal(offer.retryMode, 'resume');
+            assert.equal(offer.message, result);
+            assert.match(result, /choose Retry/);
+            assert.equal(agent._pendingFailureRecoveryForUi(tab).recoveryId, offer.recoveryId);
+            assert.deepEqual(agent.requestFailureRecovery(tab, offer.recoveryId, streaming ? 'retry' : 'give_up'),
+              { ok: true, continue: streaming, retryMode: 'resume' });
+            assert.equal(agent._pendingFailureRecoveryForUi(tab), null);
           }
           assert.equal(agent._pageFeedbackRuns.size, 0);
         } finally { api.tabs.sendMessage = oldSend; documents.delete(tab); }

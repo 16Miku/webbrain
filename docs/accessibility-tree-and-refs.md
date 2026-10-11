@@ -155,10 +155,13 @@ No finite observation window can prove application-internal state that produces 
 
 ### `type_ax({ref_id, text, clear})`
 
-1. Resolves `ref_id`
-2. Uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value)` to bypass React/Vue controlled-component wrappers
-3. Dispatches `input` + `change` events
-4. For contenteditable: sets `textContent` + dispatches `beforeinput` + `input`
+The handler resolves the original `ref_id`, prepares that exact editor and verifies
+the resulting text. Native input fields use the prototype value setter plus input
+events where supported. Model-managed rich-text editors use their supported input
+transport instead of replacing their rendered DOM; Chrome uses trusted browser
+input and Firefox uses trusted automation when enabled. DraftJS multiline input
+uses a single public plain-text paste. See [rich-text input](rich-text-input.md)
+for editor detection, frame ownership and exact full-document readback.
 
 Rejects non-typeable input types (checkbox, radio, submit, file) with a clear error.
 

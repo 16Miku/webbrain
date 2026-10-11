@@ -7,6 +7,41 @@ import { createHash } from 'node:crypto';
 
 // Native Chromium keyboard events and the actual public CDP/Agent entry paths.
 // Everything is served by the owned fixture; no external account or network.
+test('native textarea replacement and append canonicalize Windows document separators once', async () => {
+  const browser = await chromium.launch({ headless: true });
+  const originals = { attach: cdpClient.attach, sendCommand: cdpClient.sendCommand };
+  try {
+    const page = await browser.newPage();
+    const session = await page.context().newCDPSession(page);
+    const insertions = [];
+    cdpClient.attach = async () => ({ attached: true });
+    cdpClient.sendCommand = async (_tab, method, params) => {
+      if (method === 'Input.insertText') insertions.push(params.text);
+      return session.send(method, params);
+    };
+    for (const route of ['selector', 'focused']) for (const clear of [true, false]) {
+      await page.setContent('<textarea id="editor" style="width:800px">Existing draft</textarea>');
+      await page.locator('#editor').focus();
+      await page.evaluate(() => {
+        const el = document.getElementById('editor'); el.setSelectionRange(el.value.length, el.value.length);
+      });
+      insertions.length = 0;
+      const agent = new Agent({}); agent._showAgentTarget = () => {};
+      const result = route === 'selector'
+        ? await cdpClient.typeText(10, '#editor', 'First\r\n\r\nLast\r', clear)
+        : await agent.executeTool(10, 'type_text', { text: 'First\r\n\r\nLast\r', clear });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.equal(result.verified, true);
+      assert.deepEqual(insertions, ['First\n\nLast\n']);
+      assert.equal(await page.locator('#editor').inputValue(), (clear ? '' : 'Existing draft') + 'First\n\nLast\n');
+    }
+    await session.detach();
+  } finally {
+    Object.assign(cdpClient, originals);
+    await browser.close();
+  }
+});
+
 test('native generic editor clear receipts preserve literal breaks and reject intervention', async () => {
   const browser = await chromium.launch({ headless: true });
   const originals = { attach: cdpClient.attach, sendCommand: cdpClient.sendCommand, captureTextClearReceipt: cdpClient.captureTextClearReceipt };

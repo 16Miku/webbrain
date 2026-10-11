@@ -14,7 +14,8 @@ for (const browser of ['chrome', 'firefox']) {
     }));
     assert.match(attempts[PAGE_FEEDBACK_NUDGE_AT - 1].message, /ACTION CONTEXT UNVERIFIED/);
     assert.equal(attempts.at(-1).code, 'action_context_unverified');
-    assert.match(attempts.at(-1).message, /could not be bound to a verified action context/);
+    assert.match(attempts.at(-1).message, /could not confirm which part of the page the control belongs to/);
+    assert.match(attempts.at(-1).message, /Open or focus the intended area, then choose Retry/);
     assert.doesNotMatch(attempts.at(-1).message, /page kept changing/);
     assert.deepEqual(attempts.at(-1).metadata, { stage: 'response', streak: PAGE_FEEDBACK_STOP_AT,
       toolNames: ['click_ax'], reason: 'target_context_unverified' });

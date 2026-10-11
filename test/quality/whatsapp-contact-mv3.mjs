@@ -59,7 +59,7 @@ const fixture = `<!doctype html><html><head><title>Owned native WhatsApp contact
 <div id="main" data-testid="conversation-panel-wrapper"><header data-testid="conversation-header"><div style="display:flex;align-items:center;flex:1"><div role="button" tabindex="0" aria-label="Avatar QA" data-qa-forbidden="true"><span>Avatar</span></div><div role="button" tabindex="0" data-testid="conversation-info-header" data-tab="6"><div><div><div data-testid="conversation-info-header-chat-title-name"><div><div><span data-testid="conversation-info-header-chat-title" dir="auto">${peer}</span></div></div></div></div></div></div></div><div style="display:flex">${['Voice call', 'Video call', 'Search', 'Menu'].map(label => `<button type="button" aria-label="${label}" data-qa-forbidden="true"><span>${label}</span></button>`).join('')}</div></header>
 <div data-testid="conversation-panel-body"><div data-testid="conversation-panel-messages"></div></div><footer><div data-testid="conversation-compose-box-input" contenteditable="true" role="textbox" aria-placeholder="Type a message" data-tab="10" data-lexical-editor="true"></div><div id="qa-action-wrap"><button aria-label="${scenario === 'postwrite_debt' ? 'Voice message' : 'Send'}">${scenario === 'postwrite_debt' ? 'Voice' : 'Send'}</button></div></footer></div>
 <script>
-window.qaReplies=JSON.parse(sessionStorage.getItem('owned-qa-replies')||'[]');window.qaDrawer={opened:0,closed:0,avatarUpdates:0,hoverEvents:0,focusEvents:0,pressEvents:0,identityStable:true};window.qaDeliveryDelay=120;window.qaRemoveFloor=false;window.qaUnrelatedClicks=0;window.qaForbiddenClicks=0;window.qaEditor={handled:0,rerenders:0,enter:0,sendClicks:0};
+window.qaReplies=JSON.parse(sessionStorage.getItem('owned-qa-replies')||'[]');window.qaDrawer={opened:0,closed:0,avatarUpdates:0,hoverEvents:0,focusEvents:0,pressEvents:0,identityStable:true};window.qaDeliveryDelay=120;window.qaRemoveFloor=false;window.qaUnrelatedClicks=0;window.qaForbiddenClicks=0;window.qaEditor={handled:0,rerenders:0,enter:0,sendClicks:0};window.qaNativeInputs=[];
 const transcript=document.querySelector('[data-testid="conversation-panel-messages"]'),composer=document.querySelector('[contenteditable]');
 window.qaRow=(id,text,direction,tail=true)=>{const outer=document.createElement('div');outer.setAttribute('role','row');const row=document.createElement('div');row.dataset.id=id;row.dataset.testid='conv-msg-'+id;const container=document.createElement('div');container.dataset.testid='msg-container';const authored=document.createElement('div');authored.setAttribute('data-pre-plain-text','[10:00, 10/8/2026] '+(direction==='incoming'?'${peer}':'Owned QA')+': ');const body=document.createElement('span');body.dataset.testid='selectable-text';body.textContent=text;authored.append(body);container.append(authored);if(tail){const icon=document.createElement('span');icon.dataset.icon=direction==='incoming'?'tail-in':'tail-out';container.append(icon);}const meta=document.createElement('div');meta.dataset.testid='msg-meta';if(direction==='outgoing'){const delivered=document.createElement('span');delivered.setAttribute('aria-label','Delivered');delivered.textContent='✓✓';meta.append(delivered);}container.append(meta);row.append(container);outer.append(row);return outer;};
 ${latestCase ? "for(let index=0;index<46;index++)transcript.append(qaRow('QA'+String(index).padStart(18,'0'),'Earlier owned QA note '+index,'outgoing'));" : ''}
@@ -71,7 +71,7 @@ document.querySelector('#qa-unrelated')?.addEventListener('click',()=>qaUnrelate
 document.querySelectorAll('[data-qa-forbidden]').forEach(node=>node.addEventListener('click',()=>qaForbiddenClicks++));
 window.qaSend=()=>{const text=composer.innerText.trim();if(!text)return;qaReplies.push(text);sessionStorage.setItem('owned-qa-replies',JSON.stringify(qaReplies));composer.replaceChildren();composer.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'}));if(qaRemoveFloor)transcript.replaceChildren(qaRow('opaque_history_Q',text,'outgoing'));setTimeout(()=>{transcript.append(qaRow('opaque_new_B_'+qaReplies.length,text,'outgoing'));transcript.scrollTop=transcript.scrollHeight;setTimeout(()=>{transcript.append(qaRow('opaque_terminal_C','QA dialogue complete: the generated reply was recorded.','incoming'));transcript.scrollTop=transcript.scrollHeight;},140);},qaDeliveryDelay);};
 composer.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){qaEditor.enter++;e.preventDefault();qaSend();}});document.querySelector('#qa-action-wrap').onclick=e=>{if(e.target.closest('button')?.getAttribute('aria-label')==='Send'){qaEditor.sendClicks++;qaSend();}};
-${scenario === 'postwrite_debt' ? `composer.addEventListener('beforeinput',e=>{if(e.inputType!=='insertText'||qaEditor.handled)return;e.preventDefault();qaEditor.handled++;composer.textContent=e.data;setTimeout(()=>{qaEditor.rerenders++;document.querySelector('#qa-action-wrap').innerHTML='<button aria-label="Send">Send</button>';},15);});` : ''}
+${scenario === 'postwrite_debt' ? `composer.addEventListener('beforeinput',e=>{qaNativeInputs.push({trusted:e.isTrusted,inputType:e.inputType,data:e.data});if(e.inputType!=='insertText'||qaEditor.handled)return;e.preventDefault();qaEditor.handled++;composer.textContent=e.data;setTimeout(()=>{qaEditor.rerenders++;document.querySelector('#qa-action-wrap').innerHTML='<button aria-label="Send">Send</button>';},15);});` : ''}
 </script></body></html>`;
 const intent = { request_kind: 'execute', scope_relation: 'new', requires_state_change: true, requires_submission: true,
   messaging: { target_kind: 'named', recipients: [peer] }, deliverables: ['One generated reply answering both QA questions and independently verified delivery.'],
@@ -380,12 +380,22 @@ const server = http.createServer(async (request, response) => {
         stage = 'bound'; name = 'chat_observe';
       } else if (stage === 'sent') {
         if (scenario === 'postwrite_debt' && !metrics.postwriteAttempt) {
-          const native = await page.evaluate(() => ({ editor: qaEditor, replies: qaReplies.length, draft: composer.innerText }));
+          const native = await page.evaluate(() => ({ editor: qaEditor, replies: qaReplies.length, draft: composer.innerText, inputs: qaNativeInputs }));
           assert.equal(native.editor.handled, 1); assert.equal(native.editor.rerenders, 1);
           assert.equal(native.editor.enter, 0); assert.equal(native.editor.sendClicks, 0); assert.equal(native.replies, 0);
           assert.equal(native.draft, reply, 'A readonly certificate must preserve the exact page-owned native draft.');
           assert.equal(last.name, 'chat_send'); assert.equal(last.result?.dispatch?.verified, true, last.content);
-          assert.equal(last.result?.dispatch?.pageHandledBeforeInput, true, last.content);
+          assert.deepEqual(native.inputs, [{ trusted: true, inputType: 'insertText', data: reply }],
+            'The controlled editor must receive one real browser input, without synthetic transport provenance.');
+          assert.equal(last.result?.dispatch?.trusted, true, last.content);
+          assert.equal(last.result?.dispatch?.method, 'set_field_cdp_fallback', last.content);
+          assert.equal(last.result?.dispatch?.pageHandledBeforeInput, undefined, last.content);
+          assert.equal(last.result?.dispatch?.submitted, false, last.content);
+          assert.equal(last.result?.dispatch?.submissionDispatched, false, last.content);
+          assert.equal(last.result?.dispatch?.submissionBlockedBeforeDispatch, true, last.content);
+          assert.equal(last.result?.dispatch?.submissionOutcomeUnknown, false, last.content);
+          assert.equal(last.result?.dispatch?.outcomeUnknown, true, last.content);
+          assert.equal(last.result?.dispatch?.retryable, false, last.content);
           assert.equal(last.result?.chatWorkflow?.pendingOutbound, true, last.content);
           metrics.postwriteAttempt = { verifiedDraft: true, entered: false, clicked: false, pending: true };
           stage = 'postwrite_read'; name = 'get_accessibility_tree'; args = { filter: 'visible' };
@@ -476,6 +486,8 @@ try {
   metrics.sourceSha256 = Object.fromEntries(await Promise.all(['agent/agent.js', 'agent/completion-invariant.js', 'content/chat-observation.js', 'content/content.js'].map(async name =>
     [name, createHash('sha256').update(await fs.readFile(path.join(extension, 'src', name))).digest('hex')])));
   await fs.appendFile(path.join(extension, 'src/background.js'), '\nglobalThis.__ownedWhatsAppBoot = crypto.randomUUID();\n');
+  if (scenario === 'postwrite_debt') await fs.appendFile(path.join(extension, 'src/background.js'),
+    '\nimport { cdpClient as ownedClearCdp } from "./cdp/cdp-client.js"; globalThis.__ownedClearCdp = ownedClearCdp;\n');
   if (scenario === 'postwrite_debt') await fs.appendFile(path.join(extension, 'src/ui/sidepanel.js'), `
 // Owned installed test access to the shipped module's actual card renderer.
 globalThis.__ownedWhatsAppRenderPending = async (tabId, prompt) => {
@@ -547,6 +559,26 @@ for (const [object, name, doneOnly] of [[agent, '_executeToolImpl', true], [agen
     const url = new URL(typeof input === 'string' ? input : input.url);
     return url.hostname === '127.0.0.1' || ['chrome-extension:', 'data:', 'blob:'].includes(url.protocol)
       ? native(input, options) : Promise.reject(new Error('Owned lab blocks external worker requests.')); }; });
+  if (scenario === 'postwrite_debt') await worker.evaluate(async () => {
+    globalThis.__ownedClearTransport = [];
+    const send = chrome.tabs.sendMessage.bind(chrome.tabs);
+    chrome.tabs.sendMessage = async (...args) => {
+      const result = await send(...args), action = args[1]?.action;
+      if (['ax_prepare_native_chat_clear', 'ax_verify_native_chat_clear', 'ax_release_native_chat_clear'].includes(action))
+        __ownedClearTransport.push({ action, success: result?.success, hasToken: !!result?.token });
+      return result;
+    };
+    const cdpClient = __ownedClearCdp;
+    const capture = cdpClient.captureTextClearReceipt.bind(cdpClient);
+    cdpClient.captureTextClearReceipt = async (...args) => {
+      const receipt = await capture(...args);
+      __ownedClearTransport.push({ action: 'captureTextClearReceipt', captured: !!receipt });
+      return receipt && { ...receipt, async verify() {
+        const verified = await receipt.verify();
+        __ownedClearTransport.push({ action: 'verifyTextClearReceipt', verified }); return verified;
+      } };
+    };
+  });
   if (latestCase) await worker.evaluate(() => {
     globalThis.__ownedLatestTransport = { records: [] };
     let owner = '', monitorDocument = '', axDocument = '', runToken = '';
@@ -760,6 +792,7 @@ for (const [object, name, doneOnly] of [[agent, '_executeToolImpl', true], [agen
   if (process.env.WEBBRAIN_QUALITY_WA_DIAGNOSTIC === '1') metrics.diagnostics = await worker.evaluate(tabId => ({
     events: globalThis.__ownedWhatsAppDiagnostics || [], final: globalThis.__ownedWhatsAppSnapshot?.(tabId) || null,
   }), tabId);
+  if (scenario === 'postwrite_debt') metrics.clearTransport = await worker.evaluate(() => __ownedClearTransport);
   if (latestCase) {
     metrics.latestTransport = await worker.evaluate(() => __ownedLatestTransport);
     metrics.nativeLatestDocumentAfter = await page.evaluate(() => ({ url: location.href, timeOrigin: performance.timeOrigin,
@@ -799,6 +832,13 @@ for (const [object, name, doneOnly] of [[agent, '_executeToolImpl', true], [agen
       assert.deepEqual(metrics.postwriteAttempt, { verifiedDraft: true, entered: false, clicked: false, pending: true,
         freshSendBlocked: true, manualCardClicked: true, manuallyReconciled: true });
       assert.deepEqual(native.editor, { handled: 1, rerenders: 1, enter: 1, sendClicks: 0 });
+      assert.deepEqual(metrics.clearTransport, [
+        { action: 'ax_prepare_native_chat_clear', success: true, hasToken: true },
+        { action: 'captureTextClearReceipt', captured: true },
+        { action: 'verifyTextClearReceipt', verified: true },
+        { action: 'ax_verify_native_chat_clear', success: true, hasToken: false },
+        { action: 'ax_release_native_chat_clear', success: true, hasToken: false },
+      ], 'One genuine native clear must pass both the CDP event receipt and the same-conversation private proof.');
       assert.equal(durableChat.pendingOutbound, null);
     }
     if (scenario === 'bootstrap_native') {

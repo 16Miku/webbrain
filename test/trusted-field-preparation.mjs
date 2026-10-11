@@ -72,6 +72,9 @@ async function scenario({ before = unchanged, after = unchanged, failure = 'rese
     if (message.action === 'ax_verify_field_value') {
       return { success: true, verified: failure !== 'verification', fieldMeta: unchanged.fieldMeta };
     }
+    if (message.action === 'ax_prepare_native_chat_clear') {
+      return { success: false, error: 'This generic editor has no native conversation context.' };
+    }
     throw new Error(`Unexpected message ${message.action}`);
   };
   cdpClient.attach = async () => ({});

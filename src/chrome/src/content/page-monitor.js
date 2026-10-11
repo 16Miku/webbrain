@@ -651,7 +651,7 @@
     'aria-valuenow', 'aria-valuetext', 'aria-hidden', 'contenteditable', 'tabindex', 'name', 'placeholder', 'title', 'alt',
     'for', 'form', 'type', 'href', 'target', 'download', 'action', 'method', 'enctype', 'accept', 'multiple',
     'formaction', 'formmethod', 'formenctype', 'formtarget', 'novalidate', 'formnovalidate', 'required', 'readonly',
-    'disabled', 'open', 'inert', 'popover', 'onclick', 'data-selected'];
+    'disabled', 'open', 'inert', 'popover', 'onclick', 'data-selected', 'src', 'srcset', 'sizes', 'media'];
   const modelIdentityDataAttributePattern = /^data-(?:(?:recipient|conversation|thread|chat|channel|resource|entity|record|post|item|message|user|account)(?:-(?:id|key|name|type))?|id|key|uuid|target|action|command|operation|selected|active|current|state|status|testid)$/;
   function plainDescriptionTypeIsInert(node) {
     const type = node.getAttribute('type');
@@ -795,7 +795,8 @@
       text && !nameOnly ? buttonTextWithoutDescription(el, redundantDescription?.node) : directText ? [...el.childNodes].filter(node => node.nodeType === 3).map(node => node.data) : null,
       accessibleName, control ? controlState(el) : null,
       control && /^(INPUT|TEXTAREA|SELECT|OPTION)$/.test(el.tagName) ? el.value : null,
-      control && el.isContentEditable ? el.innerHTML : null]);
+      control && el.isContentEditable ? el.innerHTML : null,
+      el instanceof HTMLImageElement ? el.currentSrc : null]);
   }
   function modelLabels(el) {
     const labels = new Set(el.labels || []);
@@ -876,7 +877,17 @@
       && ![...current.attributes].some(attribute => /^on/i.test(attribute.name))
       && !hasDecorativeEventHandler(current));
   }
-  function dialogTextIsCovered(owner, boundTextNodes, addNode, identities, form, namedNavigationControls = null) {
+  function bindCollateralImage(node, addNode, visualImages) {
+    const named = ['aria-label', 'aria-labelledby', 'aria-describedby', 'title', 'alt']
+      .some(attribute => (attribute !== 'aria-describedby' || !redundantDescriptionBinding(node))
+        && node.getAttribute(attribute)?.trim());
+    if (!addNode(node, { text: named, fullTextRequired: named })) return false;
+    const sources = node.parentElement?.tagName === 'PICTURE' ? [...node.parentElement.querySelectorAll('source')] : [];
+    if (sources.length > 8 || sources.some(source => !addNode(source))) return false;
+    if (!named && visible(node) && !node.closest('[aria-hidden="true"]')) visualImages?.add(node);
+    return true;
+  }
+  function dialogTextIsCovered(owner, boundTextNodes, addNode, identities, form, namedNavigationControls = null, visualImages = null) {
     const authoredLabel = node => ['aria-label', 'aria-labelledby', 'aria-describedby', 'title', 'alt']
       .some(attribute => (attribute !== 'aria-describedby' || !redundantDescriptionBinding(node))
         && node.getAttribute(attribute)?.trim());
@@ -938,6 +949,10 @@
       // Bind the same plain wrapper before any tooltip appears. Normalizing
       // duplicate text never exempts its original type, identity or focus/state.
       if (ownedNativeButtonWrapper(node) && !addNode(node)) return false;
+      // Some composers expose the current account only through its avatar.
+      // Bind its original node and selected resource without inventing a name
+      // or allowing an image to establish the action's semantic owner.
+      if (node instanceof HTMLImageElement && !bindCollateralImage(node, addNode, visualImages)) return false;
       if (authoredLabel(node)) {
         // Account avatars and other authored labels are meaningful context.
         // Bind their complete subtree and expose the current rendered identity
@@ -1013,6 +1028,59 @@
     try { return window.__wb_readonly_identity_preparation_matches?.(snapshot) === true; }
     catch { return false; }
   }
+  function nativeInlinePostOwner(action) {
+    // X's home composer has no form, dialog or page-purpose heading. Its
+    // native editor/publish pair and matching local/navigation account links
+    // establish a bounded owner; the live timeline never becomes its context.
+    if (!['x.com', 'www.x.com', 'twitter.com', 'www.twitter.com'].includes(location.hostname)
+        || !/^\/home\/?$/.test(location.pathname)
+        || action.closest('form,[role="form"],'+entityOwnerSelector)) return null;
+    const main = action.closest('main,[role="main"]');
+    if (!main || [...document.querySelectorAll('main,[role="main"]')].filter(visible).length !== 1) return null;
+    const rendered = node => {
+      if (!visible(node)) return false;
+      for (let current = node; current; current = bindingParent(current)) {
+        const style = getComputedStyle(current);
+        if (current.inert || current.hasAttribute('hidden') || current.getAttribute('aria-hidden') === 'true'
+            || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+            || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+      }
+      return true;
+    };
+    const accountKey = link => {
+      if (!(link instanceof HTMLAnchorElement) || !rendered(link)) return '';
+      try {
+        const url = new URL(link.getAttribute('href') || '', location.href);
+        const handle = url.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/?$/)?.[1] || '';
+        return url.origin === location.origin && !url.search && !url.hash && !url.username && !url.password
+          && handle && !/^(home|explore|notifications|messages|search|settings|compose|i)$/i.test(handle)
+          ? handle.toLowerCase() : '';
+      } catch { return ''; }
+    };
+    const navigationLinks = [...document.querySelectorAll('a[data-testid="AppTabBar_Profile_Link"][href]')]
+      .filter(link => rendered(link) && link.closest('nav,[role="navigation"]'));
+    if (navigationLinks.length !== 1 || !accountKey(navigationLinks[0])) return null;
+    for (let owner = bindingParent(action), depth = 0; owner && owner !== main && depth < 32;
+      owner = bindingParent(owner), depth++) {
+      if (owner === document.body || owner === document.documentElement || owner.shadowRoot
+          || owner.matches('form,[role="form"],'+entityOwnerSelector)) return null;
+      const descendants = owner.querySelectorAll('*');
+      if (descendants.length > 256 || owner.querySelectorAll(modelControlSelector).length > 64) return null;
+      const editors = [...owner.querySelectorAll('[contenteditable]:not([contenteditable="false"]),input:not([type="hidden"]):not([type="file"]),textarea')];
+      const publishers = [...owner.querySelectorAll('[data-testid="tweetButtonInline"]')];
+      if (!editors.length || !publishers.length) continue;
+      const editor = editors[0], publisher = publishers[0];
+      if (editors.length !== 1 || publishers.length !== 1 || !editor.isContentEditable
+          || editor.getAttribute('role') !== 'textbox' || editor.getAttribute('data-testid') !== 'tweetTextarea_0'
+          || publisher.tagName !== 'BUTTON' || publisher.type !== 'button' || publisher.form
+          || !rendered(editor) || !rendered(publisher)) return null;
+      const accountLinks = [...owner.querySelectorAll('a[href]')].filter(link => accountKey(link));
+      if (!accountLinks.length) continue;
+      if (accountLinks.length !== 1 || accountKey(accountLinks[0]) !== accountKey(navigationLinks[0])) return null;
+      return { owner, editor, publisher, accountLinks: [accountLinks[0], navigationLinks[0]] };
+    }
+    return null;
+  }
   function mainActionOwner(action) {
     const main = action.closest('main,[role="main"]');
     if (!main || main === action || main === document.body || main === document.documentElement || !visible(main)) return null;
@@ -1043,13 +1111,18 @@
       && activeNode(node, node.matches('input[type="file"]')));
     const identities = nodes.filter(node => local(node) && visible(node) && activeNode(node) && node.matches(modelEntityIdentitySelector));
     const owners = nodes.filter(node => local(node) && activeNode(node) && node.matches(entityOwnerSelector + ',form,[role="form"]'));
+    // A main heading already supplies ownership. Its own account imagery is
+    // still material collateral; another entity, feed item, form or navigation
+    // must not turn all page imagery into the action's current account proof.
+    const images = nodes.filter(node => node instanceof HTMLImageElement && local(node) && activeNode(node)
+      && !node.closest(entityOwnerSelector + ',form,[role="form"],input,textarea,[contenteditable]:not([contenteditable="false"])'));
     const ownedHeadings = headings.filter(node => !action.contains(node)
       && !node.closest(entityOwnerSelector + ',form,[role="form"]'));
     const primary = ownedHeadings.filter(node => node.matches('h1,[role="heading"][aria-level="1"]'));
     const purpose = primary.length ? primary : ownedHeadings;
     if (purpose.length !== 1 || !purpose[0].textContent.trim() || headings.length > 32
-        || controls.length > 64 || identities.length > 64 || owners.length > 64) return null;
-    return { main, headings, controls, identities, owners };
+        || controls.length > 64 || identities.length > 64 || owners.length > 64 || images.length > 64) return null;
+    return { main, headings, controls, identities, owners, images };
   }
   function actionFootprint(target, readonlyPreparation = null) {
     if (readonlyPreparation && !readonlyPreparationMatches(readonlyPreparation, target)) return null;
@@ -1067,9 +1140,30 @@
     const conversation = currentConversationContext(target);
     if (conversation && form && !conversation.footer.contains(form)) return null;
     let owner = readonlyPreparation?.scope || conversation?.pane || (ownerBase.matches(entityOwnerSelector) ? ownerBase : ownerBase.closest(entityOwnerSelector));
+    const namedSemanticScope = node => {
+      if (!(node instanceof Element) || node === action || node.matches(modelControlSelector)
+          || !node.matches('form,[role="form"],section,[role="region"]')) return false;
+      if (String(node.getAttribute('aria-label') || '').trim()) return true;
+      const ids = (node.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
+      const labels = ids.length ? modelLabels(node) : null;
+      // A dangling reference must not borrow a name from contained draft or
+      // button text. Exact, complete current associated labels are observed
+      // separately before this semantic scope can certify an action.
+      return !!labels && ids.every(id => labels.some(label => label.node.id === id))
+        && labels.some(label => ids.includes(label.node.id) && String(window.__wb_ax_name?.(label.node) || label.node.textContent || '').trim());
+    };
+    if (!owner && !conversation && !readonlyPreparation) {
+      const semanticScope = form || action.closest('section,[role="form"]');
+      if (namedSemanticScope(semanticScope)) owner = semanticScope;
+    }
     let navigationOwner = false;
     let nativeFileSection = null;
     let mainOwner = null;
+    let inlinePostOwner = null;
+    if (!owner && !form && !conversation && !structuralFile) {
+      inlinePostOwner = nativeInlinePostOwner(action);
+      if (inlinePostOwner) owner = inlinePostOwner.owner;
+    }
     if (!owner && !form && !conversation) {
       const section = action.closest('section'), purpose = window.__wb_ax_section_purpose?.(section);
       if (section && purpose && section.querySelectorAll('*').length <= 256
@@ -1124,7 +1218,7 @@
       // below, instead of including unrelated body counters in its owner.
       owner = form; unstructuredOwner = true; meaningfulOwner = true;
     }
-    const nodes = [], ancestors = [], boundTextNodes = new Set(), dialogIdentities = new Set(), namedNavigationControls = new Set();
+    const nodes = [], ancestors = [], boundTextNodes = new Set(), dialogIdentities = new Set(), namedNavigationControls = new Set(), visualImages = new Set();
     let uncoveredLabel = false;
     const addNode = (node, options = {}) => {
       const previous = nodes.find(item => item.node === node);
@@ -1136,6 +1230,8 @@
         return !options.fullTextRequired || boundTextNodes.has(node);
       }
       if (nodes.length >= 256 || (node.tagName === 'INPUT' && node.type === 'file' && node.files?.length > 32)) return false;
+      if (node instanceof HTMLImageElement && [node.currentSrc, node.getAttribute('src'), node.getAttribute('srcset'), node.getAttribute('sizes')]
+        .some(value => String(value || '').length > 8192)) return false;
       const labels = modelLabels(node);
       if (!labels) return false;
       nodes.push({ node, value: modelSemantic(node, options),
@@ -1193,6 +1289,13 @@
       for (const node of mainOwner.headings) if (!addNode(node, { text: true })) return null;
       for (const node of mainOwner.identities) if (!addNode(node, { text: true, control: true })) return null;
       for (const node of mainOwner.controls) if (!addNode(node, { text: true, control: true })) return null;
+      for (const image of mainOwner.images) {
+        if (!bindCollateralImage(image, addNode, visualImages)) return null;
+        if (boundTextNodes.has(image)) {
+          dialogIdentities.add(image);
+          for (const label of modelLabels(image) || []) dialogIdentities.add(label.node);
+        }
+      }
       meaningfulOwner = !uncoveredLabel;
     } else if (owner) {
       if (!addNode(owner, { directText: true })) return null;
@@ -1205,7 +1308,7 @@
         const relatedForm = node.closest('form,[role="form"]');
         return (!closest || closest === owner || closest.contains(owner))
           && (!relatedForm || relatedForm === form)
-          && !node.closest(allowNavigation === true ? 'aside,[role="complementary"]'
+          && !node.closest(allowNavigation === true || inlinePostOwner ? 'aside,[role="complementary"]'
             : 'aside,nav,[role="navigation"],[role="complementary"]');
       };
       const headings = [...owner.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],[aria-current]')]
@@ -1216,11 +1319,25 @@
       if (identities.length > 64) return null;
       for (const identity of identities) if (!addNode(identity, { text: true, control: true })) return null;
       meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector);
+      if (meaningfulOwner) {
+        const images = [...owner.querySelectorAll('img')].filter(node => belongs(node, navigationOwner)
+          && !node.closest('input,textarea,[contenteditable]:not([contenteditable="false"])')
+          && visible(node));
+        if (images.length > 64) return null;
+        for (const image of images) {
+          if (!bindCollateralImage(image, addNode, visualImages)) return null;
+          if (boundTextNodes.has(image)) {
+            dialogIdentities.add(image);
+            for (const label of modelLabels(image) || []) dialogIdentities.add(label.node);
+          }
+        }
+      }
       // Recipients and attachment/caption editors may live next to the form.
       // Bind every local control, excluding a separate entity, form or sidebar.
       const headingFreeDialog = !meaningfulOwner && owner.matches('dialog,[role="dialog"],[role="alertdialog"]');
+      const headingFreeNamedScope = !meaningfulOwner && namedSemanticScope(owner);
       for (const control of owner.querySelectorAll(modelControlSelector)) {
-        if (!belongs(control, headingFreeDialog || navigationOwner)) continue;
+        if (!belongs(control, headingFreeDialog || headingFreeNamedScope || navigationOwner)) continue;
         // Other authored navigation names stay bound exactly as observed.
         // Their non-name badge/icon text does not become account identity.
         // The target, selected items, fields and declared entities retain
@@ -1234,9 +1351,19 @@
       }
       // A heading-free dialog can supply a boundary when all local labels,
       // text and controls are bound and identities are completely observed.
-      if (navigationOwner) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, namedNavigationControls) && !uncoveredLabel;
-      else if (nativeFileSection) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form) && !uncoveredLabel;
-      else meaningfulOwner ||= headingFreeDialog && dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form) && !uncoveredLabel;
+      if (headingFreeNamedScope) {
+        dialogIdentities.add(owner);
+        for (const label of modelLabels(owner) || []) dialogIdentities.add(label.node);
+      }
+      if (inlinePostOwner) {
+        meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
+        // Bind the external signed-in identity only after the complete local
+        // coverage check; unrelated navigation controls are not composer data.
+        for (const link of inlinePostOwner.accountLinks) if (!addNode(link, { text: true, control: true })) return null;
+      } else if (navigationOwner) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, namedNavigationControls, visualImages) && !uncoveredLabel;
+      else if (nativeFileSection) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
+      else meaningfulOwner ||= (headingFreeDialog || headingFreeNamedScope)
+        && dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
     }
     // An arbitrary container/toolbar with no entity anchor cannot establish
     // the recipient or item. Such targets retain strict legacy dispatch only.
@@ -1255,6 +1382,8 @@
     const hit = structuralFile ? null : modelHit(target, action, rawHit);
     return { model: true, structuralFile, target, scope: owner || form || action, ancestors, nodes, hit,
       dialogIdentities,
+      visualImages,
+      ...(inlinePostOwner ? { observedAccountLinks: inlinePostOwner.accountLinks } : {}),
       ...(mainOwner ? { observedMainControls: mainOwner.controls.filter(node => visible(node)) } : {}),
       ...(conversation ? { conversationCarrier: conversation.carrier, conversationComposer: conversation.composer } : {}),
       context: JSON.stringify([location.href, document.baseURI, currentViewport(), window.scrollX, window.scrollY,
@@ -1445,8 +1574,8 @@
     const exposedCompleteLabels = new WeakSet();
     const collateralMainControls = new WeakSet();
     let collateralHeaderExposed = false;
-    const exposeIdentity = (node, { authoredEditableName = false, completeLabel = false } = {}) => {
-      if (publicNodes.has(node) && !authoredEditableName && !completeLabel) return true;
+    const exposeIdentity = (node, { authoredEditableName = false, completeLabel = false, accountLink = false } = {}) => {
+      if (publicNodes.has(node) && !authoredEditableName && !completeLabel && !accountLink) return true;
       if (completeLabel && exposedCompleteLabels.has(node)) return true;
       // Emit only current rendered page labels. Editable contents, input
       // values, data identities and private control/file state stay private.
@@ -1473,7 +1602,7 @@
       // labels are exposed separately before the footprint is certified.
       const referencedName = completeLabel && node.getAttribute('aria-labelledby')
         ? String(window.__wb_ax_name?.(node) || '').replace(/\s+/g, ' ').trim() : '';
-      const name = authored || rendered || referencedName;
+      const name = accountLink ? new URL(node.getAttribute('href'), location.href).href : authored || rendered || referencedName;
       if (!name || authored.length > 512) return false;
       if (authoredEditableName && exposedEditableNames.get(node) === authored) return true;
       const ref = window.__wb_ax_ref?.(node);
@@ -1517,6 +1646,19 @@
       // direct action or acquire an uncertified fallback during the scan.
       return true;
     };
+    const exposeVisualImage = node => {
+      if (!visible(node) || node.closest('[aria-hidden="true"]')) return false;
+      const ref = window.__wb_ax_ref?.(node);
+      if (!ref || window.__wb_ax_lookup?.(ref) !== node) return false;
+      const header = evidenceLength ? '' : '\n\n[CURRENT VISIBLE ACTION IDENTITY]\n';
+      const line = header + `visible image name-unavailable=true direct-action=false [${ref}] resource-values-omitted\n`;
+      if (exposedCompleteLabels.has(node)) return true;
+      if (evidenceLength + line.length > MODEL_EVIDENCE_MAX || page.pageContent.length + line.length > MODEL_PUBLIC_MAX
+          || JSON.stringify({ ...page, pageContent: page.pageContent + line }).length > 16000) return false;
+      page.pageContent += line; evidenceLength += line.length; exposedCompleteLabels.add(node);
+      refs.set(ref, node);
+      return true;
+    };
     const observedFootprint = footprint => {
       if (!page) return true;
       if (!footprint.structuralFile && !publicNodes.has(footprint.target)) return false;
@@ -1532,6 +1674,8 @@
         } else if (!publicNodes.has(composer)) return false;
       }
       if (footprint.observedMainControls?.some(node => !exposeMainControl(node))) return false;
+      if (footprint.observedAccountLinks?.some(node => !exposeIdentity(node, { completeLabel: true, accountLink: true }))) return false;
+      if ([...footprint.visualImages || []].some(node => !exposeVisualImage(node))) return false;
       const evidence = footprint.nodes.filter(item => item.node !== footprint.target
         && (item.node === footprint.conversationCarrier
           || footprint.dialogIdentities?.has(item.node)

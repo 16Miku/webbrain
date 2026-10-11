@@ -193,6 +193,26 @@ function nativeTextClearReceipt(el) {
   const sameRange = (a, b) => !!a && !!b && a.startContainer === b.startContainer && a.startOffset === b.startOffset
     && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
   const within = value => !!value && el.contains(value.startContainer) && el.contains(value.endContainer);
+  const originalBreaks = new Set(el.querySelectorAll('br'));
+  const originalNodes = new Set([el]), originalText = new Map(), deletedTextNodes = new Set();
+  const originalWalker = doc.createTreeWalker(el, view.NodeFilter.SHOW_ALL);
+  for (let node = originalWalker.nextNode(); node; node = originalWalker.nextNode()) {
+    originalNodes.add(node); if (node.nodeType === 3) originalText.set(node, node.nodeValue);
+  }
+  const fullySelected = () => {
+    const value = range();
+    if (!within(value) || value.collapsed) return false;
+    const walker = doc.createTreeWalker(el, view.NodeFilter.SHOW_ELEMENT | view.NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === 3) {
+        if (value.comparePoint(node, 0) !== 0 || value.comparePoint(node, node.length) !== 0) return false;
+      } else if (!node.childNodes.length) {
+        const offset = Array.prototype.indexOf.call(node.parentNode.childNodes, node);
+        if (value.comparePoint(node.parentNode, offset) !== 0 || value.comparePoint(node.parentNode, offset + 1) !== 0) return false;
+      }
+    }
+    return true;
+  };
   const originalRange = range()?.cloneRange();
   let invalid = false, closed = false, selected = 0, deleted = 0, released = 0, before = 0, inputs = 0, caret = null, settledRange = null;
   const current = () => {
@@ -207,20 +227,45 @@ function nativeTextClearReceipt(el) {
   // All other editor/identity mutations remain part of the receipt's fence.
   const relevant = record => !(record.type === 'attributes'
       && ['data-webbrain-native-target', 'data-webbrain-page-revision'].includes(record.attributeName))
-    && (record.target === el || el.contains(record.target)
+    && (originalNodes.has(record.target) || record.target === el || el.contains(record.target)
     || (record.type === 'childList' && [...record.addedNodes, ...record.removedNodes]
       .some(node => node === el || node.contains?.(el) || ancestors.some(ancestor => node === ancestor || node.contains?.(ancestor))))
     || (record.type === 'attributes' && ancestors.includes(record.target)
       && /^(?:id|role|aria-label|contenteditable|disabled|readonly|inert|hidden|data-)/.test(record.attributeName || '')));
-  const observer = new view.MutationObserver(records => { if (records.some(relevant)) invalid = true; });
-  observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  let pendingDeleteRecords = [];
+  const nativeDeleteMutation = record => ['childList', 'characterData'].includes(record.type)
+    && (originalNodes.has(record.target) || record.target === el || el.contains(record.target));
+  const observer = new view.MutationObserver(records => {
+    const changes = records.filter(relevant);
+    if (!changes.length) return;
+    // Another capture listener can yield a mutation checkpoint before this
+    // receipt sees input. Hold only the expected native deletion's records;
+    // the one matching trusted input must consume them before any proof.
+    if (deleted === 1 && before === 1 && inputs === 0 && current()
+        && changes.every(nativeDeleteMutation) && pendingDeleteRecords.length + changes.length <= 128) {
+      pendingDeleteRecords.push(...changes);
+    } else invalid = true;
+  });
+  observer.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, characterDataOldValue: true, attributes: true });
   for (const [scope] of activeBindings) if (scope !== doc) {
-    observer.observe(scope, { subtree: true, childList: true, characterData: true, attributes: true });
+    observer.observe(scope, { subtree: true, childList: true, characterData: true, characterDataOldValue: true, attributes: true });
   }
-  const drain = () => { if (observer.takeRecords().some(relevant)) invalid = true; };
+  const drain = () => {
+    if (pendingDeleteRecords.length || observer.takeRecords().some(relevant)) invalid = true;
+  };
   const drainNativeDelete = () => {
-    if (observer.takeRecords().some(record => relevant(record)
-      && !(['childList', 'characterData'].includes(record.type) && (record.target === el || el.contains(record.target))))) invalid = true;
+    const changes = [...pendingDeleteRecords, ...observer.takeRecords()]; pendingDeleteRecords = [];
+    for (const record of changes.filter(relevant)) {
+      if (!nativeDeleteMutation(record)) { invalid = true; continue; }
+      if (record.type === 'characterData') {
+        if (!originalText.has(record.target) || record.oldValue !== originalText.get(record.target)
+            || record.target.nodeValue !== '' || deletedTextNodes.has(record.target)) invalid = true;
+        deletedTextNodes.add(record.target);
+      } else if (!originalNodes.has(record.target)
+          || [...record.removedNodes].some(node => !originalNodes.has(node))
+          || [...record.addedNodes].some(node => node !== el.firstChild || node.nodeName !== 'BR'
+            || node.attributes.length !== 0 || originalBreaks.has(node))) invalid = true;
+    }
   };
   let retargetedInput = null;
   const handlers = {
@@ -229,7 +274,7 @@ function nativeTextClearReceipt(el) {
       if (event.code === 'KeyA' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
           && selected === 0 && deleted === 0) { selected++; return; }
       if (event.code === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
-          && selected === 1 && deleted === 0) { deleted++; return; }
+          && selected === 1 && deleted === 0 && fullySelected()) { deleted++; return; }
       invalid = true;
     },
     keyup(event) {
@@ -242,6 +287,7 @@ function nativeTextClearReceipt(el) {
       drain();
       if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
           || selected !== 1 || deleted !== 1 || before !== 0 || !current()) { invalid = true; return; }
+      if (!fullySelected()) { invalid = true; return; }
       before++;
     },
     input(event) {
@@ -251,7 +297,7 @@ function nativeTextClearReceipt(el) {
       // changes, including a change followed by restoration, invalidate proof.
       drainNativeDelete(); inputs++;
       caret = el.isContentEditable && el.childNodes.length === 1 && el.firstChild?.nodeName === 'BR'
-        && el.firstChild.attributes.length === 0 && el.textContent === '' ? el.firstChild : null;
+        && !originalBreaks.has(el.firstChild) && el.firstChild.attributes.length === 0 && el.textContent === '' ? el.firstChild : null;
       settledRange = range()?.cloneRange();
     },
     selectionchange() {
@@ -270,7 +316,9 @@ function nativeTextClearReceipt(el) {
   for (const [name, handler] of Object.entries(handlers)) {
     // Native events are retargeted to the host at document listeners. Count the
     // exact keyboard/input sequence once, in the original editable's own root.
-    listen(root, name, handler);
+    // For a document editor, observe input before document-capture handlers
+    // in the installed content scripts create a mutation microtask checkpoint.
+    listen(root === doc ? view : root, name, handler);
     if (root !== doc) listen(doc, name, event => {
       if (name === 'selectionchange' || ['focusout', 'blur', 'pointerdown', 'wheel', 'paste', 'drop'].includes(name)) handler(event);
       else if (!event.isTrusted || !event.composed || event.target !== activeBindings.at(-1)[1]) invalid = true;
@@ -5927,6 +5975,11 @@ export class CDPClient {
       };
     }
 
+    // HTML text entry uses LF document separators. Sending raw CRLF through
+    // Input.insertText can insert an extra space for each CR in ProseMirror.
+    // Normalize the payload before the single native write and verify that
+    // exact payload; the native select matching path above stays separate.
+    const insertionText = String(text ?? '').replace(/\r\n?/g, '\n');
     const beforeSignature = await this.textEntrySignature(tabId, {
       selector,
       nodeId: info.nodeId,
@@ -6156,7 +6209,7 @@ export class CDPClient {
       try {
         dispatched = true;
         markDispatch();
-        await this.sendCommand(tabId, 'Input.insertText', { text });
+        await this.sendCommand(tabId, 'Input.insertText', { text: insertionText });
         throwIfAborted();
       } catch (e) {
         if (e?.code === 'page_feedback_pending') throw e;
@@ -6173,7 +6226,7 @@ export class CDPClient {
       const verified = await this.verifyTextEntry(tabId, {
         selector,
         nodeId: info.nodeId,
-        text,
+        text: insertionText,
         clear,
         beforeSignature,
       });

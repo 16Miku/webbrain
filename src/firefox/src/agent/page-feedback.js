@@ -796,6 +796,10 @@ export const pageFeedbackMethods = {
     this._flushPageFeedbackMessages(tabId, messages);
     const recovery = run?.recoveryResult;
     if (!recovery) return null;
+    // Retry observes the current page through the normal gates. A context
+    // failure never grants the publication-audit bypass reserved for that audit.
+    this._offerFailureRecovery?.(tabId, { stage: 'action_preparation', code: recovery.code,
+      message: recovery.message }, onUpdate);
     onUpdate('warning', { message: recovery.message });
     return { action: 'return', value: recovery.message, status: recovery.code };
   },

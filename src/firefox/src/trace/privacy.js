@@ -70,7 +70,7 @@ const PUBLICATION_CONTRACT_CODES = new Set([...PUBLICATION_CONTRACT_FAILURES]
 const EMPTY_OUTPUT_REASONS = new Set(['output_limit', 'reasoning_only', 'content_filter', 'provider_empty']);
 const RECOVERY_STAGES = new Set([
   'model', 'inference', 'planning', 'plan_alignment', 'publication_audit',
-  'completion_verification', 'verification',
+  'completion_verification', 'verification', 'action_preparation',
   'response_generation', 'browser_interaction',
 ]);
 const RECOVERY_RETRY_MODES = new Set(['resume', 'publication_without_audit', 'publication_audit_bypass']);

@@ -4237,6 +4237,166 @@
     return texts.join('\n');
   }
 
+  const _nativeChatClearPreparations = new Map();
+
+  function _releaseNativeChatClear(token) {
+    const record = _nativeChatClearPreparations.get(token);
+    if (!record) return;
+    _nativeChatClearPreparations.delete(token);
+    clearTimeout(record.timer);
+    record.observer.disconnect();
+    for (const [name, listener] of record.listeners) record.view.removeEventListener(name, listener, true);
+  }
+
+  function _prepareNativeChatClear(ref) {
+    const el = window.__wb_ax_lookup?.(ref), context = _nativeChatCaretContext(el);
+    if (!el?.isContentEditable || !el.isConnected || !context || !el.textContent) return { success: false };
+    const doc = el.ownerDocument, root = el.getRootNode(), view = doc.defaultView;
+    const url = doc.URL, documentToken = _axDocumentToken();
+    const ancestors = []; for (let node = el.parentElement; node; node = node.parentElement) ancestors.push(node);
+    const identityNodes = [context.header, context.carrier, context.title, context.selfMarker, context.owner]
+      .filter(node => node?.nodeType === 1);
+    const selection = () => root.getSelection?.() || view.getSelection();
+    const rangeNow = () => { const value = selection(); return value?.rangeCount === 1 ? value.getRangeAt(0) : null; };
+    const sameRange = (a, b) => !!a && !!b && a.startContainer === b.startContainer && a.startOffset === b.startOffset
+      && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+    const originalBreaks = new Set(el.querySelectorAll('br'));
+    const originalNodes = new Set([el]), originalText = new Map(), deletedTextNodes = new Set();
+    const originalWalker = doc.createTreeWalker(el, view.NodeFilter.SHOW_ALL);
+    for (let node = originalWalker.nextNode(); node; node = originalWalker.nextNode()) {
+      originalNodes.add(node); if (node.nodeType === 3) originalText.set(node, node.nodeValue);
+    }
+    const fullySelected = () => {
+      const value = rangeNow();
+      if (!value || value.collapsed || !el.contains(value.startContainer) || !el.contains(value.endContainer)) return false;
+      const walker = doc.createTreeWalker(el, view.NodeFilter.SHOW_ELEMENT | view.NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.nodeType === 3) {
+          if (value.comparePoint(node, 0) !== 0 || value.comparePoint(node, node.length) !== 0) return false;
+        } else if (!node.childNodes.length) {
+          const offset = Array.prototype.indexOf.call(node.parentNode.childNodes, node);
+          if (value.comparePoint(node.parentNode, offset) !== 0 || value.comparePoint(node.parentNode, offset + 1) !== 0) return false;
+        }
+      }
+      return true;
+    };
+    const focused = () => (root.activeElement || doc.activeElement) === el;
+    const current = () => el.isConnected && el.ownerDocument === doc && doc.defaultView === view
+      && view.document === doc && el.getRootNode() === root && doc.URL === url
+      && _axDocumentToken() === documentToken && window.__wb_ax_lookup?.(ref) === el && focused()
+      && _sameNativeChatCaretContext(context, _nativeChatCaretContext(el));
+    const selected = selection();
+    if (!current() || selected?.rangeCount !== 1) return { success: false };
+    const range = selected.getRangeAt(0);
+    if (!fullySelected() || !el.contains(range.startContainer) || !el.contains(range.endContainer)
+        || range.cloneContents().textContent !== el.textContent) return { success: false };
+    const token = crypto.randomUUID();
+    const record = { el, doc, view, context, current, listeners: [], selected: 0, deleted: 0, before: 0,
+      inputs: 0, released: 0, invalid: false, caret: null, settledRange: null, pendingDeleteRecords: [] };
+    const originalRange = range.cloneRange();
+    record.selectionCurrent = () => sameRange(rangeNow(), record.settledRange);
+    const relevant = mutation => !(mutation.type === 'attributes'
+      && ['data-webbrain-native-target', 'data-webbrain-page-revision'].includes(mutation.attributeName))
+      && (originalNodes.has(mutation.target) || mutation.target === el || el.contains(mutation.target)
+        || (mutation.type === 'attributes' && ancestors.includes(mutation.target))
+        || identityNodes.some(node => mutation.target === node
+          || (node !== context.owner && node.contains(mutation.target)))
+        || (mutation.type === 'childList' && [...mutation.addedNodes, ...mutation.removedNodes]
+          .some(node => node === el || node.contains?.(el) || identityNodes.includes(node))));
+    const nativeDeleteMutation = mutation => ['childList', 'characterData'].includes(mutation.type)
+      && (originalNodes.has(mutation.target) || mutation.target === el || el.contains(mutation.target));
+    record.observer = new view.MutationObserver(records => {
+      const changes = records.filter(relevant);
+      if (!changes.length) return;
+      // Capture listeners in another world can yield before our trusted input
+      // callback. Only that exact pending native Delete may consume this buffer.
+      if (record.deleted === 1 && record.before === 1 && record.inputs === 0 && current()
+          && changes.every(nativeDeleteMutation) && record.pendingDeleteRecords.length + changes.length <= 128) {
+        record.pendingDeleteRecords.push(...changes);
+      } else record.invalid = true;
+    });
+    record.observer.observe(doc.documentElement, { subtree: true, attributes: true, childList: true, characterData: true, characterDataOldValue: true });
+    const drain = nativeDelete => {
+      const changes = [...record.pendingDeleteRecords, ...record.observer.takeRecords()]; record.pendingDeleteRecords = [];
+      for (const mutation of changes.filter(relevant)) {
+        if (!nativeDelete || !nativeDeleteMutation(mutation)) { record.invalid = true; continue; }
+        if (mutation.type === 'characterData') {
+          if (!originalText.has(mutation.target) || mutation.oldValue !== originalText.get(mutation.target)
+              || mutation.target.nodeValue !== '' || deletedTextNodes.has(mutation.target)) record.invalid = true;
+          deletedTextNodes.add(mutation.target);
+        } else if (!originalNodes.has(mutation.target)
+            || [...mutation.removedNodes].some(node => !originalNodes.has(node))
+            || [...mutation.addedNodes].some(node => node !== el.firstChild || node.nodeName !== 'BR'
+              || node.attributes.length !== 0 || originalBreaks.has(node))) record.invalid = true;
+      }
+    };
+    record.drain = drain;
+    const handlers = {
+      keydown(event) {
+        if (!event.isTrusted || event.target !== el || !current()) { record.invalid = true; return; }
+        if (/^(?:Control|Meta)(?:Left|Right)$/.test(event.code) && !record.selected && !record.deleted
+            && !record.modifierCode && !event.altKey && !event.shiftKey) { record.modifierCode = event.code; return; }
+        if (event.code === 'KeyA' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+            && !record.selected && !record.deleted) { record.selected++; return; }
+        if (event.code === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+            && record.selected === 1 && !record.deleted && fullySelected()) { record.deleted++; return; }
+        record.invalid = true;
+      },
+      keyup(event) {
+        if (!event.isTrusted || event.target !== el) { record.invalid = true; return; }
+        if (event.code === record.modifierCode && record.selected === 1 && !record.deleted
+            && !record.modifierReleased) { record.modifierReleased = true; return; }
+        if (event.code === 'KeyA' && record.selected === 1 && !record.deleted) return;
+        if (event.code === 'Delete' && record.deleted === 1 && !record.released) { record.released++; return; }
+        record.invalid = true;
+      },
+      beforeinput(event) {
+        drain(false);
+        if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+            || record.selected !== 1 || record.deleted !== 1 || record.before || !current() || !fullySelected()) record.invalid = true;
+        else record.before++;
+      },
+      input(event) {
+        if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+            || record.before !== 1 || record.inputs || !current()) { record.invalid = true; return; }
+        drain(true); record.inputs++;
+        const caret = _singleEditableCaretBreak(el); record.caret = originalBreaks.has(caret) ? null : caret;
+        record.settledRange = rangeNow()?.cloneRange();
+      },
+      selectionchange() {
+        const value = rangeNow();
+        if (record.inputs ? !sameRange(value, record.settledRange)
+          : (!record.selected && !sameRange(value, originalRange))
+            || !value || !el.contains(value.startContainer) || !el.contains(value.endContainer)) record.invalid = true;
+      },
+      focusin(event) { if (event.target !== el) record.invalid = true; },
+      focusout() { record.invalid = true; }, pointerdown() { record.invalid = true; },
+      wheel() { record.invalid = true; }, paste() { record.invalid = true; }, drop() { record.invalid = true; },
+    };
+    for (const [name, listener] of Object.entries(handlers)) {
+      // Capture above existing document listeners: their callback checkpoint
+      // must not deliver this exact native deletion as an unrelated mutation.
+      view.addEventListener(name, listener, true); record.listeners.push([name, listener]);
+    }
+    while (_nativeChatClearPreparations.size >= 8) _releaseNativeChatClear(_nativeChatClearPreparations.keys().next().value);
+    record.timer = setTimeout(() => _releaseNativeChatClear(token), 5000);
+    _nativeChatClearPreparations.set(token, record);
+    return { success: true, token };
+  }
+
+  function _verifyNativeChatClear(ref, token) {
+    const record = _nativeChatClearPreparations.get(token);
+    if (!record) return { success: false };
+    record.drain(false);
+    const valid = !record.invalid && record.current() && window.__wb_ax_lookup?.(ref) === record.el
+      && record.selected === 1 && record.deleted === 1 && record.before === 1 && record.inputs === 1
+      && record.released === 1 && record.selectionCurrent() && record.caret && record.caret === _singleEditableCaretBreak(record.el);
+    _releaseNativeChatClear(token);
+    if (!valid) return { success: false };
+    _rememberNativeChatEmptyCaret(record.el, record.context);
+    return { success: _nativeChatCaretValueIsEmpty(record.el) };
+  }
+
   function _rememberNativeChatEmptyCaret(el, context) {
     const br = _singleEditableCaretBreak(el);
     if (br && _sameNativeChatCaretContext(context, _nativeChatCaretContext(el))) {
@@ -8416,6 +8576,10 @@
           return failure(e && e.message || String(e));
         }
       },
+      // Private native-clear receipts do not authorize another input command.
+      'ax_prepare_native_chat_clear': () => _prepareNativeChatClear(msg.params?.ref_id),
+      'ax_verify_native_chat_clear': () => _verifyNativeChatClear(msg.params?.ref_id, msg.params?.token),
+      'ax_release_native_chat_clear': () => { _releaseNativeChatClear(msg.params?.token); return { success: true }; },
       'ax_verify_field_value': () => {
         try {
           const { ref_id, expected, appendText } = msg.params || {};

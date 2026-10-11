@@ -43647,10 +43647,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               }
               dispatched = true;
               markEarlyCdpDispatched();
-              await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+              const nativeText = String(args.text ?? '').replace(/\r\n?/g, '\n');
+              await cdpClient.sendCommand(tabId, 'Input.insertText', { text: nativeText });
               throwIfEarlyCdpAborted();
               const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
-                text: args.text || '',
+                text: nativeText,
                 clear: !!args.clear,
                 beforeSignature: prepared.beforeSignature || '',
               });
@@ -43950,11 +43951,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             }
             dispatched = true;
             markEarlyCdpDispatched();
-            await cdpClient.sendCommand(tabId, 'Input.insertText', { text: args.text || '' });
+            const nativeText = String(args.text ?? '').replace(/\r\n?/g, '\n');
+            await cdpClient.sendCommand(tabId, 'Input.insertText', { text: nativeText });
             throwIfEarlyCdpAborted();
             const verified = await cdpClient.verifyTextEntry(tabId, {
               focused: true,
-              text: args.text || '',
+              text: nativeText,
               clear: !!args.clear,
               beforeSignature,
             });
@@ -45241,6 +45243,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     };
     let trustedDispatched = false;
     let trustedTextAttempted = false;
+    let nativeClearReceipt = null;
+    let nativeChatClearToken = null;
     let beforePreparation = null;
     const digestTarget = { locatorType: 'ax', refId: args.ref_id, frameId };
     const actionDeadlineAt = Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0;
@@ -45328,9 +45332,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
       trustedDispatched = true;
       const appendingContentEditable = prepared.contentEditable && !clearsExisting;
-      const trustedText = appendingContentEditable
+      // Canonicalize before native insertion as well as readback: raw CRLF
+      // becomes CR spaces plus LF paragraphs in browser-managed editors.
+      const trustedText = (appendingContentEditable
         ? (typeof args?.text === 'string' ? args.text : '')
-        : expected;
+        : expected).replace(/\r\n?/g, '\n');
       this._throwIfAborted(abortSignal);
       // A lost response can precede a delayed applied write. After this
       // boundary an unchanged sample cannot make the text command retry-safe.
@@ -45351,6 +45357,29 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         if (trustedText || appendingContentEditable) {
           await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
         } else {
+          // Native chat knows that an explicitly deleted caret is an empty
+          // message. Keep that proof private and scoped; generic BRs stay LF.
+          if (prepared.contentEditable && frameId === 0) {
+            const clearPreparation = await sendContent({ target: 'content', action: 'ax_prepare_native_chat_clear',
+              params: { ref_id: args.ref_id } });
+            this._throwIfAborted(abortSignal);
+            if (clearPreparation?.success === true && typeof clearPreparation.token === 'string') {
+              nativeChatClearToken = clearPreparation.token;
+              nativeClearReceipt = await cdpClient.captureTextClearReceipt(tabId, { focused: true });
+              this._throwIfAborted(abortSignal);
+              if (nativeClearReceipt) {
+                const modifiers = await cdpClient.selectAllModifier(tabId);
+                this._throwIfAborted(abortSignal);
+                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                  type: 'keyDown', key: 'a', code: 'KeyA', modifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
+                });
+                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                  type: 'keyUp', key: 'a', code: 'KeyA', modifiers, windowsVirtualKeyCode: 65,
+                });
+              }
+            }
+          }
+          this._throwIfAborted(abortSignal);
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
           });
@@ -45361,12 +45390,18 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         this._throwIfAborted(abortSignal);
         await new Promise(resolve => setTimeout(resolve, 120));
         this._throwIfAborted(abortSignal);
+        if (nativeChatClearToken && await nativeClearReceipt?.verify() === true) {
+          this._throwIfAborted(abortSignal);
+          await sendContent({ target: 'content', action: 'ax_verify_native_chat_clear',
+            params: { ref_id: args.ref_id, token: nativeChatClearToken } });
+          this._throwIfAborted(abortSignal);
+        }
         verification = await sendContent({
           target: 'content',
           action: 'ax_verify_field_value',
           params: {
             ref_id: args.ref_id,
-            expected,
+            expected: expected.replace(/\r\n?/g, '\n'),
             ...(appendingContentEditable ? { appendText: trustedText } : {}),
           },
         });
@@ -45444,12 +45479,39 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           }
         }
         this._throwIfAborted(abortSignal);
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
-        });
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
-        });
+        let enterDispatched = false;
+        try {
+          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
+          });
+          enterDispatched = true;
+          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+            type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
+          });
+        } catch (error) {
+          if (error?.code !== 'page_feedback_pending' || enterDispatched) throw error;
+          // The native-input transport rejected Enter before dispatch. Keep
+          // the exact settled draft proof, but retain uncertainty from typing:
+          // a page-owned beforeinput handler may already have acted on it.
+          return {
+            ...recovered,
+            success: false,
+            submitted: false,
+            messageDispatched: false,
+            draftMutationDispatched: true,
+            submissionDispatched: false,
+            submissionBlockedBeforeDispatch: true,
+            submissionBlockReason: 'page_feedback_pending',
+            submissionOutcomeUnknown: false,
+            outcomeUnknown: true,
+            mutationMayHaveOccurred: true,
+            repeatBlocked: true,
+            retryable: false,
+            pageFeedbackPending: true,
+            recoveryRequired: 'verify_or_restore_field',
+            error: 'The exact draft was verified, but the browser changed before Enter could be dispatched. Observe the conversation and reconcile any pending send before another mutation; no automatic retry occurred.',
+          };
+        }
         recovered.submitted = true;
       }
       return recovered;
@@ -45461,6 +45523,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         ...(error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}),
         error: `${response.error || 'Field verification failed'} Trusted Chrome retry failed: ${error?.message || String(error)}`,
       });
+    } finally {
+      await nativeClearReceipt?.dispose();
+      if (nativeChatClearToken) {
+        try { await sendContent({ target: 'content', action: 'ax_release_native_chat_clear',
+          params: { token: nativeChatClearToken } }); } catch { /* short private expiry is the backup cleanup */ }
+      }
     }
   }
 

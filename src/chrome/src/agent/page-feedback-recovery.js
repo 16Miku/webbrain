@@ -6,15 +6,15 @@ export const PAGE_FEEDBACK_STOP_AT = 5;
 export const PAGE_FEEDBACK_STOP_CODE = 'page_unstable';
 
 const STOP_MESSAGE = 'Stopped because the page kept changing before the next action could be safely dispatched. '
-  + 'The task is incomplete; no stale action was dispatched.';
+  + 'The task is incomplete; no stale action was dispatched. Wait for the page to settle, then choose Retry.';
 const NUDGE_MESSAGE = '[PAGE KEEPS CHANGING: Browser updates repeatedly prevented the next action from being dispatched. '
   + 'Use the fresh observation to choose an action whose intended target can be verified. '
   + 'Do not repeat stale targets or coordinates.]';
 const UNVERIFIED_NUDGE = '[ACTION CONTEXT UNVERIFIED: The requested control had no verified original action context. '
   + 'No action was dispatched. Inspect the fresh bounded target observation and its intended owner before choosing another action; '
   + 'do not repeatedly attempt a control whose context remains unverified.]';
-const UNVERIFIED_STOP = 'Stopped because the requested control could not be bound to a verified action context. '
-  + 'The task is incomplete; no unverified action was dispatched.';
+const UNVERIFIED_STOP = 'Stopped before the next action because WebBrain could not confirm which part of the page the control belongs to. '
+  + 'The task is incomplete. Open or focus the intended area, then choose Retry.';
 
 function boundedStreak(value) {
   return Number.isSafeInteger(value) && value > 0 ? Math.min(value, PAGE_FEEDBACK_STOP_AT) : 0;
