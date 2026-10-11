@@ -11,6 +11,7 @@ const builds = await Promise.all(['chrome', 'firefox'].map(async build => ({
   journalModule: await import(`../src/${build}/src/run-ui-journal.js`),
   source: await fs.readFile(new URL(`../src/${build}/src/ui/sidepanel.js`, import.meta.url), 'utf8'),
   background: await fs.readFile(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8'),
+  recoveryUi: await fs.readFile(new URL(`../src/${build}/src/ui/failure-recovery.js`, import.meta.url), 'utf8'),
 })));
 function extract(source, name) {
   source = source.replace(/\r\n/g, '\n');
@@ -85,14 +86,16 @@ async function panel(f, options = {}) {
   });
   const names = ['applyActiveRunState', 'handleAgentUpdateMessage', 'ensureCurrentRunAssistant', 'isTerminalRunUiStatus',
     'renderClarifyCard', 'addRunProgressReplayGapNote', 'clarificationSubmissionKey', 'invalidateUnresolvedClarifyCards',
-    'restorePendingCurrentClarification', 'submitClarify', 'restoreActiveRunState', 'placeAnsweredClarifyCardInTimeline', 'workflowHealingTargetLabel'];
+    'restorePendingCurrentClarification', 'submitClarify', 'restoreActiveRunState', 'placeAnsweredClarifyCardInTimeline', 'workflowHealingTargetLabel',
+    'syncFailureRecoveryButtons', 'bindFailureRecoveryCard', 'renderFailureRecoveryCard', 'reconcileFailureRecoveryCards'];
   const functions = names.map(name => extract(f.source, name)).join('\n');
-  const helpers = `${f.journalModule.runUiDiscardedBeforeSeq.toString()}\n${f.journalModule.runUiUnavailableBeforeSeq.toString()}`;
+  const helpers = `${f.journalModule.runUiDiscardedBeforeSeq.toString()}\n${f.journalModule.runUiUnavailableBeforeSeq.toString()}\n${f.recoveryUi.replaceAll('export function ', 'function ')}`;
   await page.evaluate(({ functions, helpers, tab, options }) => {
     document.body.innerHTML = '<div id="messages"><div class="message assistant"><div class="message-content"><div class="message-text"></div></div></div></div>';
     const noop = () => {};
     Object.assign(window, { messagesEl: document.querySelector('#messages'), currentTabId: tab, renderedTabId: tab,
       currentAssistantEl: document.querySelector('.assistant'), localRunRequestIds: new Map(options.staleLocalOwner ? [[tab, 'newer-local-request']] : []),
+      processingTabs: new Set(), agentMode: 'act', isProcessing: false,
       submittedClarificationIds: new Set(), clearedConversationRunRequestIds: new Set(), cancelledRunRecoveryRequestIds: new Set(),
       streamedAssistantTextByEl: new WeakMap(), failedConversationClearRecoveryTabs: new Set(), soundCount: 0,
       CAPABILITY_LABEL: { click: 'click' }, t: x => x, sameTabId: (a,b) => Number(a) === Number(b), normalizePlanReviewTabId: Number,

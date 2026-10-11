@@ -1165,4 +1165,8 @@ export default {
   "st.sync.consent.denied": "Izin sinkronisasi terenkripsi tidak diberikan.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "Halaman berubah saat tugas berjalan ({before} → {after}). Tugas dilanjutkan.",
+  'sp.activity.generating_answer': "Membuat jawaban…",
+  'sp.activity.retrying_response': "Mencoba ulang jawaban…",
+  'sp.response.incomplete_retrying': "Jawaban belum lengkap · mencoba ulang…",
+  'sp.response.incomplete': "Jawaban belum lengkap",
 };

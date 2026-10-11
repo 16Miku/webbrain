@@ -1217,4 +1217,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "Сторінка змінилася під час виконання завдання ({before} → {after}). Завдання продовжується.",
+  'sp.activity.generating_answer': "Формування відповіді…",
+  'sp.activity.retrying_response': "Повторна спроба відповіді…",
+  'sp.response.incomplete_retrying': "Неповна відповідь · повторна спроба…",
+  'sp.response.incomplete': "Неповна відповідь",
 };

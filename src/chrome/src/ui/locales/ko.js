@@ -1217,4 +1217,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "작업 실행 중 페이지가 변경되었습니다({before} → {after}). 작업을 계속합니다.",
+  'sp.activity.generating_answer': "답변 생성 중…",
+  'sp.activity.retrying_response': "답변 다시 시도 중…",
+  'sp.response.incomplete_retrying': "미완성 답변 · 다시 시도 중…",
+  'sp.response.incomplete': "미완성 답변",
 };

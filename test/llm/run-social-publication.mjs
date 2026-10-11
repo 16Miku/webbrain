@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { Agent } from '../../src/chrome/src/agent/agent.js';
 import { OpenAICompatibleProvider } from '../../src/chrome/src/providers/openai.js';
-import { normalizePublicationContract, publicationProgress, publicationAuditMessages, publicationAuditAccepted } from '../../src/chrome/src/agent/social-publish-contract.js';
+import { normalizePublicationContract, publicationProgress, publicationAuditMessages, publicationAuditValidation, parsePublicationJson } from '../../src/chrome/src/agent/social-publish-contract.js';
 import { curated, auditChallenges } from './social-publication-cases.mjs';
 import { scoreContract, snapshotFor, distribution } from './lib/social-publication-score.mjs';
 
@@ -61,7 +61,8 @@ const manifest = { startedAt: new Date().toISOString(), commit: execFileSync('gi
   suite: args.suite, repeat, timeoutMs: timeout, concurrency: 1,
   promptSha256: hash(fs.readFileSync('src/chrome/src/agent/social-publish-contract.js')),
   fixtureSha256: hash(fs.readFileSync('test/llm/social-publication-cases.mjs')),
-  limits: { compilerMaxTokens: 4096, compilerAttempts: 2, auditMaxTokens: 800, auditAttempts: 1 },
+  limits: { compilerMaxTokens: 2048, compilerRepairMaxTokens: 4096, compilerAttempts: 2,
+    auditMaxTokens: 2048, auditRepairMaxTokens: 4096, auditAttempts: 2 },
   notes: ['Sequential calls measure client-observed latency; provider cold-start/cache state is unknown.', 'No browser actions or live publication. Provider credentials and hidden reasoning are not stored.', 'Media grading uses a finite witness set; legacy destination labels are exploratory, not accuracy ground truth.'] };
 fs.writeFileSync(path.join(output, 'manifest.json'), JSON.stringify(manifest, null, 2));
 const rows = [];
@@ -101,7 +102,7 @@ async function compile(fixture, run, suite = 'curated') {
   try { result = await agent._ensureSocialPublicationContract(tabId, provider); } catch (e) { error = redact(e.message); }
   const actual = result?.contract || null;
   let firstValid = false;
-  try { firstValid = !!normalizePublicationContract(Agent._extractFirstJsonObject(calls[0]?.output || ''), fixture.sources); } catch {}
+  try { firstValid = !!normalizePublicationContract(parsePublicationJson(calls[0]?.output), fixture.sources); } catch {}
   const score = suite === 'curated' ? scoreContract(actual, golden.get(fixture.id)) : {};
   const row = { suite, id: fixture.id, category: fixture.category, run, ms: Math.round(performance.now() - started), firstValid,
     valid: !!actual, repaired: calls.length > 1, status: actual?.status || 'invalid', expectedStatus: golden.get(fixture.id)?.status || null, ...score,
@@ -117,13 +118,20 @@ async function compile(fixture, run, suite = 'curated') {
 async function audit({ id, sources, proposed, action, snapshot, expected, category, run }) {
   const key = hash(JSON.stringify({ id, sources, proposed, action, snapshot }));
   const calls = [], started = performance.now();
-  let accepted = false, valid = false, raw = null;
-  try {
-    const response = await chat(publicationAuditMessages(sources, proposed, action, snapshot, key), { temperature: 0, maxTokens: 800 }, 'social_publication_authorization', calls);
-    raw = Agent._extractFirstJsonObject(response.content || '');
-    valid = !!raw && Object.keys(raw).length === 4 && raw.key === key && raw.actionId === action.id && typeof raw.authorized === 'boolean' && typeof raw.reason === 'string' && raw.reason.length <= 600;
-    accepted = publicationAuditAccepted(raw, key, action.id);
-  } catch {}
+  let accepted = false, valid = false, portable = false;
+  const agent = new Agent({ getActive: () => provider });
+  const messages = publicationAuditMessages(sources, proposed, action, snapshot, key);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const options = agent._socialPublicationChatOptions(provider, attempt > 0, portable, true);
+      const response = await chat(attempt ? agent._socialPublicationRepairMessages(messages) : messages,
+        options, 'social_publication_authorization', calls);
+      const verdict = publicationAuditValidation(agent._socialPublicationResponseObject(response, options), key, action.id);
+      if (!verdict.valid) throw new Error(verdict.failure);
+      valid = true; accepted = verdict.authorized;
+      break;
+    } catch (error) { if (agent._socialPublicationOptionsRejected(error)) portable = true; }
+  }
   const row = { suite: 'audit', id, category, run, expected, accepted, valid, pass: valid && accepted === expected,
     ms: Math.round(performance.now() - started), sources, proposed, actionId: action.id, snapshot, calls };
   save(row); return row;

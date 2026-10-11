@@ -1118,4 +1118,8 @@ export default {
   "st.sync.consent.denied": "הרשאת סנכרון מוצפן לא ניתנה.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "הדף השתנה בזמן שהמשימה פעלה ({before} → {after}). ממשיכים במשימה.",
+  'sp.activity.generating_answer': "יוצר תשובה…",
+  'sp.activity.retrying_response': "מנסה שוב להשיב…",
+  'sp.response.incomplete_retrying': "תשובה חלקית · מנסה שוב…",
+  'sp.response.incomplete': "תשובה חלקית",
 };

@@ -257,6 +257,10 @@ export default {
   'sp.activity.toggle_history': 'İşlem geçmişini göster veya gizle',
   'sp.activity.continuing': 'Devam ediyor...',
   'sp.activity.stopping': 'Durduruluyor...',
+  'sp.activity.generating_answer': 'Yanıt oluşturuluyor…',
+  'sp.activity.retrying_response': 'Yanıt yeniden deneniyor…',
+  'sp.response.incomplete_retrying': 'Tamamlanmamış yanıt · yeniden deneniyor…',
+  'sp.response.incomplete': 'Tamamlanmamış yanıt',
 
   'sp.copy': 'Kopyala',
   'sp.copied': 'Kopyalandı!',

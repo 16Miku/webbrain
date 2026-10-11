@@ -1186,4 +1186,8 @@ export default {
   "st.sync.consent.denied": "এনক্রিপ্ট করা সিঙ্ক অনুমতি দেওয়া হয়নি।",
   'st.providers.webgpu_note.body': '{modelLink} কোনো API এন্ডপয়েন্ট ছাড়াই সম্পূর্ণভাবে Chrome-এ চলে। এটি Settings > Providers > WebGPU বা Apocalypse Mode থেকে ডাউনলোড করুন, তারপর standalone chat-এ nuclear control ব্যবহার করুন।',
   'sp.monitor.navigation': "কাজ চলার সময় পৃষ্ঠা বদলেছে ({before} → {after})। কাজ চলতে থাকবে।",
+  'sp.activity.generating_answer': "উত্তর তৈরি হচ্ছে…",
+  'sp.activity.retrying_response': "উত্তর আবার চেষ্টা করা হচ্ছে…",
+  'sp.response.incomplete_retrying': "অসম্পূর্ণ উত্তর · আবার চেষ্টা করা হচ্ছে…",
+  'sp.response.incomplete': "অসম্পূর্ণ উত্তর",
 };

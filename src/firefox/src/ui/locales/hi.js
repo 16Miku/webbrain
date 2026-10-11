@@ -1186,4 +1186,8 @@ export default {
   "st.sync.consent.denied": "एन्क्रिप्टेड सिंक अनुमति नहीं दी गई थी.",
   'st.providers.webgpu_note.body': '{modelLink} बिना किसी API एंडपॉइंट के पूरी तरह Chrome में चलता है। इसे Settings > Providers > WebGPU या Apocalypse Mode में डाउनलोड करें, फिर standalone chat में nuclear control का उपयोग करें।',
   'sp.monitor.navigation': "काम चलने के दौरान पेज बदल गया ({before} → {after})। काम जारी है।",
+  'sp.activity.generating_answer': "उत्तर तैयार हो रहा है…",
+  'sp.activity.retrying_response': "उत्तर के लिए फिर प्रयास हो रहा है…",
+  'sp.response.incomplete_retrying': "अधूरा उत्तर · फिर प्रयास हो रहा है…",
+  'sp.response.incomplete': "अधूरा उत्तर",
 };

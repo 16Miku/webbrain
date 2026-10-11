@@ -1217,4 +1217,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "تغيّرت الصفحة أثناء تنفيذ المهمة ({before} → {after}). جارٍ متابعة المهمة.",
+  'sp.activity.generating_answer': "جارٍ إنشاء الإجابة…",
+  'sp.activity.retrying_response': "جارٍ إعادة محاولة الإجابة…",
+  'sp.response.incomplete_retrying': "إجابة غير مكتملة · جارٍ إعادة المحاولة…",
+  'sp.response.incomplete': "إجابة غير مكتملة",
 };

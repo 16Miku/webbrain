@@ -1217,4 +1217,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "หน้าเว็บเปลี่ยนระหว่างที่งานกำลังทำงาน ({before} → {after}) งานจะดำเนินต่อ",
+  'sp.activity.generating_answer': "กำลังสร้างคำตอบ…",
+  'sp.activity.retrying_response': "กำลังลองตอบอีกครั้ง…",
+  'sp.response.incomplete_retrying': "คำตอบยังไม่สมบูรณ์ · กำลังลองอีกครั้ง…",
+  'sp.response.incomplete': "คำตอบยังไม่สมบูรณ์",
 };

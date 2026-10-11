@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "npm run test:shard:quick && npm run test:shard:runtime-unit && npm run test:shard:browser-a && npm run test:shard:browser-b1 && npm run test:shard:browser-b2 && npm run test:shard:browser-c && npm run test:shard:tail",
+    "test": "npm run test:failure-recovery && npm run test:shard:quick && npm run test:shard:runtime-unit && npm run test:shard:browser-a && npm run test:shard:browser-b1 && npm run test:shard:browser-b2 && npm run test:shard:browser-c && npm run test:shard:tail",
+    "test:failure-recovery": "node --test test/failure-recovery.mjs test/failure-recovery-ui.mjs test/post-submit-model-recovery.mjs test/run-ui-response-retry.mjs test/ask-stream-retry-ui.mjs",
     "test:captcha:ui": "node test/captcha-settings-ui.mjs && node test/captcha-application-ui.mjs",
     "test:captcha:bridge:ui": "node test/captcha-callback-bridge-ui.mjs",
     "test:billing-notice": "node test/billing-payment-notice.mjs",

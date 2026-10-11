@@ -144,6 +144,7 @@ for (const browser of ['chrome', 'firefox']) {
       return {content:JSON.stringify(raw)};
     };
     const detected = {isSubmit:true,publicationControl:true,publicationResourceUrls:[],publicationResourceUrlsComplete:true,
+      frameDocumentIdentity:'https://x.com/compose/post|fixture-document-1',
       publicationAccountIdentity:'twitter:alice',publicationAccountIdentityComplete:true,publicationSnapshot:snapshot()};
     agent._detectLikelySubmitAction = async () => structuredClone(detected);
     return {agent,tabId,guard,provider,calls,detected};
@@ -625,14 +626,13 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: malformed audit replies are distinguished from semantic denials`, async () => {
-    for (const mode of ['wrong_key', 'extra_field', 'missing_reason']) {
+    for (const mode of ['wrong_key', 'missing_reason']) {
       const f = setup();
       await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
       f.agent._chatWithCostAllowance = async (_provider, messages) => {
         const input = JSON.parse(messages[1].content);
         const response = { key: input.key, actionId: input.action.id, authorized: false, reason: 'Unvalidated reason' };
         if (mode === 'wrong_key') response.key = 'wrong';
-        if (mode === 'extra_field') response.extra = true;
         if (mode === 'missing_reason') delete response.reason;
         return { content: JSON.stringify(response) };
       };
@@ -657,6 +657,323 @@ for (const browser of ['chrome', 'firefox']) {
     const state = await visit.agent._ensureSocialPublicationContract(visit.tabId, visit.provider);
     assert.equal(state.contract.status, 'none');
     assert.deepEqual(api.publicationProgress(state.contract).eligible, []);
+  });
+
+  test(`${browser}: audit parsing tolerates fences and metadata but rejects conflicting verdicts`, () => {
+    const verdict = { key: 'bound', actionId: 'p1', authorized: true, reason: 'x'.repeat(900), metadata: { model: 'chosen' } };
+    const raw = api.parsePublicationJson('  ```json\n' + JSON.stringify(verdict) + '\n```  ');
+    assert.equal(api.publicationAuditAccepted(raw, 'bound', 'p1'), true);
+    assert.equal(api.publicationAuditValidation(raw, 'bound', 'p1').reason.length, 600);
+    for (const content of [null, '', '{}\n{}', 'Verdict: {}', '[]',
+      '{"key":"bound","actionId":"p1","authorized":false,"authorized":true,"reason":"Matches."}',
+      JSON.stringify(verdict) + JSON.stringify({ ...verdict, authorized: false })]) {
+      assert.throws(() => api.parsePublicationJson(content));
+    }
+    for (const mutation of [x => { x.key = 'stale'; }, x => { x.actionId = 'p2'; },
+      x => { x.authorized = 'true'; }, x => { delete x.reason; }, x => { x.reason = null; }]) {
+      const copy = structuredClone(verdict); mutation(copy);
+      assert.equal(api.publicationAuditValidation(copy, 'bound', 'p1').valid, false);
+    }
+    assert.throws(() => api.parsePublicationJson('{"private metadata":1,"private metadata":2}'),
+      error => error.message === 'duplicate_extra_field');
+  });
+
+  test(`${browser}: empty or malformed audits repair once with the same frozen request and larger output budget`, async () => {
+    for (const first of [null, '{}', '{"authorized":true', '{}\n{}']) {
+      const f = setup();
+      await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+      const attempts = [];
+      f.agent._chatWithCostAllowance = async (_provider, messages, options) => {
+        attempts.push({ messages, options });
+        const input = JSON.parse(messages[1].content);
+        if (attempts.length === 1) return { content: first, finishReason: 'length', usage: { outputTokens: 2048, reasoningTokens: 2048 } };
+        return { content: JSON.stringify({ key: input.key, actionId: input.action.id, authorized: true, reason: 'Matches.', providerMetadata: true }) };
+      };
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+      assert.deepEqual(attempts.map(a => a.options.maxTokens), [2048, 4096]);
+      assert.equal(attempts[0].messages[1].content, attempts[1].messages[1].content);
+      assert.match(attempts[1].messages[0].content, /format repair/);
+      assert.equal(attempts[1].messages.length, 2, 'repair cannot become a new user instruction');
+    }
+  });
+
+  test(`${browser}: publication controls fall back to portable requests only after explicit option rejection`, async () => {
+    const f = setup();
+    f.provider.name = 'openai';
+    await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+    const attempts = [];
+    f.agent._chatWithCostAllowance = async (_provider, messages, options) => {
+      attempts.push(options);
+      if (attempts.length === 1) throw new Error('HTTP 400: unsupported parameter response_format');
+      const input = JSON.parse(messages[1].content);
+      return { content: JSON.stringify({ key: input.key, actionId: input.action.id, authorized: true, reason: 'Matches.' }) };
+    };
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    assert.equal(attempts[0].extraBody.response_format.type, 'json_schema');
+    assert.equal(attempts[1].extraBody, undefined);
+    assert.equal(f.agent._socialPublicationOptionsRejected(new Error('HTTP 500: request failed')), false);
+  });
+
+  test(`${browser}: truncated audit objects retry before approval and respect the provider output ceiling`, async () => {
+    const f = setup();
+    await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+    f.agent._providerMaxOutputTokens = () => 512;
+    const budgets = [];
+    f.agent._chatWithCostAllowance = async (_provider, messages, options) => {
+      budgets.push(options.maxTokens);
+      const input = JSON.parse(messages[1].content);
+      return { content: JSON.stringify({ key: input.key, actionId: input.action.id, authorized: true, reason: 'Matches.' }),
+        finishReason: budgets.length === 1 ? 'length' : 'stop' };
+    };
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    assert.deepEqual(budgets, [512, 512]);
+  });
+
+  async function failedAuditFixture(mode = 'malformed') {
+    const f = setup();
+    await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+    f.auditCalls = 0;
+    f.agent._chatWithCostAllowance = async (_provider, messages) => {
+      f.auditCalls++;
+      const input = JSON.parse(messages[1].content);
+      if (mode === 'transport') throw new Error('Connection reset');
+      return { content: mode === 'denied' ? JSON.stringify({
+        key: input.key, actionId: input.action.id, authorized: false, reason: 'Cannot confirm the intended account.',
+      }) : '{"authorized":true}' };
+    };
+    f.failure = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+    return f;
+  }
+
+  test(`${browser}: persistent checker failure offers recovery without asking for permission or retrying click strategies`, async () => {
+    for (const mode of ['malformed', 'denied', 'transport']) {
+      const f = await failedAuditFixture(mode);
+      assert.equal(f.failure.noDispatch, true);
+      assert.equal(f.failure.failureRecovery.stage, 'publication_audit');
+      assert.equal(f.failure.failureRecovery.retryMode, 'publication_audit_bypass');
+      assert.match(f.failure.error, /Failed during the publication check/);
+      assert(!/clarify|permission|another click/i.test(f.failure.error));
+      assert.equal(f.auditCalls, mode === 'denied' ? 1 : 2);
+      const repeated = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click', { skipPublicationAudit: true }, f.detected, f.provider);
+      assert.equal(repeated.failureRecovery.publicationKey, f.failure.failureRecovery.publicationKey);
+      assert.equal(f.auditCalls, mode === 'denied' ? 1 : 2);
+      assert.equal(f.guard.socialPublication.retryBypass, undefined, 'model tool arguments cannot grant Retry');
+    }
+  });
+
+  test(`${browser}: a trusted publication Retry skips one audit and cannot be replayed after its dispatch attempt`, async () => {
+    for (const mode of ['malformed', 'denied', 'transport']) {
+      const f = await failedAuditFixture(mode);
+      const binding = f.failure.failureRecovery;
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, { ...binding, publicationKey: 'forged' }), false);
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, binding), true);
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, binding), false);
+      for (const name of ['click_ax', 'click']) {
+        assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, name, {}, f.detected, f.provider), null);
+      }
+      assert.equal(f.guard.socialPublication.dispatch.auditBypassed, true);
+      assert.equal(f.auditCalls, mode === 'denied' ? 1 : 2, 'all guarded preflights of one attempt reuse the user grant');
+      f.agent._consumeSocialPublicationAuditRetry(f.tabId);
+      const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+      assert.equal(blocked.noDispatch, true);
+      assert.match(blocked.error, /Retry was already used/);
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, binding), false);
+      assert.equal(f.auditCalls, mode === 'denied' ? 1 : 2);
+    }
+  });
+
+  test(`${browser}: publication Retry cannot inherit a changed draft, account, page, or document`, async () => {
+    for (const change of ['body', 'account', 'page', 'document', 'frame', 'baseline']) {
+      const f = await failedAuditFixture();
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, f.failure.failureRecovery), true);
+      if (change === 'body') f.detected.publicationSnapshot.posts[0].bodyText = 'Changed';
+      if (change === 'account') f.detected.publicationSnapshot.account = 'twitter:bob';
+      if (change === 'page') f.agent._currentUrl = async () => 'https://x.com/home';
+      if (change === 'document') f.detected.frameDocumentIdentity = 'https://x.com/compose/post|new-document';
+      if (change === 'frame') f.detected.frameId = 7;
+      if (change === 'baseline') f.detected.publicationResourceUrlsComplete = false;
+      const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+      assert.equal(blocked.noDispatch, true, change);
+      assert.equal(f.guard.socialPublication.dispatch, null, change);
+      assert.equal(f.auditCalls, 2, 'changed state cannot silently skip or replay the audit');
+    }
+  });
+
+  test(`${browser}: the final publication Retry recheck catches changes after preflight`, async () => {
+    const f = await failedAuditFixture();
+    assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, f.failure.failureRecovery), true);
+    f.agent._detectLikelySubmitAction = async () => {
+      const fresh = structuredClone(f.detected);
+      fresh.publicationSnapshot.account = 'twitter:bob';
+      return fresh;
+    };
+    const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+    assert.equal(blocked.noDispatch, true);
+    assert.equal(f.guard.socialPublication.dispatch, null);
+    assert.equal(f.guard.socialPublication.retryBypass, null);
+  });
+
+  test(`${browser}: pending outcomes and steering invalidate publication recovery grants`, async () => {
+    for (const change of ['pending', 'verified', 'steering', 'replacement_guard']) {
+      const f = await failedAuditFixture();
+      if (change === 'pending' || change === 'verified') f.guard.socialPublication.outcomes.p1 = { status: change };
+      if (change === 'steering') applySteering(f, 'Do not publish');
+      if (change === 'replacement_guard') f.agent._startPlanExecutionGuard(f.tabId, 'act', { requestKind: 'execute' });
+      assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, f.failure.failureRecovery), false, change);
+    }
+  });
+
+  test(`${browser}: Retry granted after run completion survives Continue without fabricating execution evidence`, async () => {
+    const f = await failedAuditFixture();
+    assert.equal(f.guard.successfulTaskToolCalls, 0);
+    f.agent._storeContinuationExecutionEvidence(f.tabId);
+    const before = f.agent._continuationExecutionEvidence.get(f.tabId);
+    assert.equal(before.socialPublication.retryBypass, undefined);
+    assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, f.failure.failureRecovery), true);
+    assert.equal(f.agent._continuationExecutionEvidence.get(f.tabId).socialPublication.retryBypass.key,
+      f.failure.failureRecovery.publicationKey, 'the trusted click refreshes the already-stored run snapshot');
+    const next = f.agent._startPlanExecutionGuard(f.tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: f.guard.siteWorkflow,
+    }, { trustedContinuation: true });
+    assert.equal(next.socialPublication.deniedAuditKey, f.failure.failureRecovery.publicationKey);
+    assert.equal(next.socialPublication.retryBypass.key, f.failure.failureRecovery.publicationKey);
+    assert.equal(next.successfulTaskToolCalls, 0);
+    assert.equal(next.successfulConsequentialToolCalls, 0);
+    assert.equal(next.verifiedSubmissionEvidence, false);
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    assert.equal(f.auditCalls, 2);
+  });
+
+  test(`${browser}: a settled run's stored publication binding accepts Retry after releasing its live guard`, async () => {
+    const f = await failedAuditFixture();
+    f.agent._storeContinuationExecutionEvidence(f.tabId);
+    f.agent._planExecutionGuards.delete(f.tabId);
+    assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, f.failure.failureRecovery), true);
+    assert(f.agent._continuationExecutionEvidence.get(f.tabId).socialPublication.retryBypass);
+    const next = f.agent._startPlanExecutionGuard(f.tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: f.guard.siteWorkflow,
+    }, { trustedContinuation: true });
+    assert(next.socialPublication.retryBypass);
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    assert.equal(f.auditCalls, 2);
+  });
+
+  test(`${browser}: Give up revokes unconsumed audit grants in live and stored state without erasing delivery evidence`, async () => {
+    const f = await failedAuditFixture();
+    assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, f.failure.failureRecovery), true);
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    f.agent._storeContinuationExecutionEvidence(f.tabId);
+    const contractKey = f.guard.socialPublication.key;
+    const deniedKey = f.guard.socialPublication.deniedAuditKey;
+    assert.equal(f.agent._revokeSocialPublicationAuditRetry(f.tabId), true);
+    for (const social of [f.guard.socialPublication, f.agent._continuationExecutionEvidence.get(f.tabId).socialPublication]) {
+      assert.equal(social.retryBypass, null);
+      assert.equal(social.retryAuthorizationTaskKey, undefined);
+      assert.equal(social.retryAuthorizationTaskSignature, undefined);
+      assert.equal(social.dispatch, null);
+      assert.equal(social.key, contractKey);
+      assert.equal(social.deniedAuditKey, deniedKey);
+      assert.deepEqual(social.outcomes, {});
+    }
+    const next = f.agent._startPlanExecutionGuard(f.tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: f.guard.siteWorkflow,
+    }, { trustedContinuation: true });
+    assert.equal(next.socialPublication.retryBypass, null);
+    const repeated = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+    assert.equal(repeated.noDispatch, true);
+    assert.equal(f.auditCalls, 4, 'Continue runs a fresh check after the user revoked the exemption');
+    next.socialPublication.retryBypass = { key: 'used', consumed: true };
+    next.socialPublication.retryBypassUsed = { used: true };
+    next.socialPublication.outcomes.p1 = { status: 'pending' };
+    const before = structuredClone(next.socialPublication);
+    assert.equal(f.agent._revokeSocialPublicationAuditRetry(f.tabId), false);
+    assert.deepEqual(next.socialPublication, before, 'consumed attempts and delivery uncertainty are preserved');
+  });
+
+  test(`${browser}: ordinary Continue can recheck a technical outage but retains semantic denials`, async () => {
+    for (const mode of ['malformed', 'denied']) {
+      const f = await failedAuditFixture(mode);
+      f.agent._storeContinuationExecutionEvidence(f.tabId);
+      const next = f.agent._startPlanExecutionGuard(f.tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: f.guard.siteWorkflow,
+      }, { trustedContinuation: true });
+      assert.equal(next.socialPublication.retryBypass, undefined);
+      if (mode === 'malformed') {
+        assert.equal(next.socialPublication.deniedAuditKey, undefined);
+        f.agent._chatWithCostAllowance = async (_provider, messages) => {
+          f.auditCalls++;
+          const input = JSON.parse(messages[1].content);
+          return { content: JSON.stringify({ key: input.key, actionId: input.action.id, authorized: true, reason: 'Matches.' }) };
+        };
+        assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+        assert.equal(f.auditCalls, 3);
+      } else {
+        assert.equal(next.socialPublication.deniedAuditKey, f.failure.failureRecovery.publicationKey);
+        assert((await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider)).noDispatch);
+        assert.equal(f.auditCalls, 1);
+      }
+    }
+  });
+
+  test(`${browser}: steering then explicit Retry carries the corrected authorization through Continue`, async () => {
+    const f = setup('Post Monday on X', rawContract([rawAction('p1', 'twitter', 'Monday')]));
+    const initiatingTaskKey = f.guard.taskKey;
+    await f.agent._adoptLiveSocialPublishWorkflow(f.tabId, f.provider, f.detected);
+    applySteering(f, 'Use Tuesday instead');
+    f.detected.publicationSnapshot = snapshot('Tuesday');
+    let audits = 0;
+    f.agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
+      if (meta.generationName === 'social_publication_authorization') {
+        audits++;
+        return { content: '{}' };
+      }
+      const raw = rawContract([rawAction('revised', 'twitter', 'Tuesday')], 'revised');
+      raw.actions[0].posts[0].body.source = ref('Tuesday', 'steering_message0');
+      return { content: JSON.stringify(raw) };
+    };
+    const failed = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider);
+    assert.equal(failed.failureRecovery.stage, 'publication_audit');
+    const correctedTaskKey = f.agent._progressTaskKeyHash(f.tabId);
+    assert.notEqual(correctedTaskKey, initiatingTaskKey);
+    assert.equal(f.agent._grantSocialPublicationAuditRetry(f.tabId, failed.failureRecovery), true);
+    const next = f.agent._startPlanExecutionGuard(f.tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: f.guard.siteWorkflow,
+    }, { trustedContinuation: true });
+    assert.equal(next.taskKey, correctedTaskKey);
+    assert.equal(next.socialPublication.retryBypass.taskKey, correctedTaskKey);
+    assert.equal(next.socialPublication.deniedAuditKey, failed.failureRecovery.publicationKey);
+    assert.equal(next.socialPublication.contract.actions[0].posts[0].body.value, 'Tuesday');
+    assert.equal(next.successfulTaskToolCalls, 0);
+    assert.equal(next.successfulConsequentialToolCalls, 0);
+    assert.equal(next.verifiedSubmissionEvidence, false);
+    assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', {}, f.detected, f.provider), null);
+    assert.equal(audits, 2);
+  });
+
+  test(`${browser}: corrected Retry authorization cannot carry across a changed signature or delivery outcome`, () => {
+    for (const change of ['signature', 'outcome', 'conversation', 'scope']) {
+      const f = setup();
+      const currentTaskKey = f.agent._progressTaskKeyHash(f.tabId);
+      const contract = normalize(rawContract());
+      const social = { key: 'contract', contract, actionId: 'p1', outcomes: {},
+        deniedAuditKey: 'publication', retryAuthorizationTaskKey: currentTaskKey,
+        retryAuthorizationTaskSignature: f.agent._sha256TextSync(f.agent._progressTaskAnchorText(f.tabId)),
+        retryBypass: { key: 'publication', taskKey: 'initiating-task', contractKey: 'contract', actionId: 'p1', consumed: false } };
+      f.guard.taskKey = 'initiating-task';
+      f.guard.socialPublication = social;
+      f.agent._storeContinuationExecutionEvidence(f.tabId);
+      const carried = f.agent._continuationExecutionEvidence.get(f.tabId);
+      if (change === 'signature') carried.socialPublication.retryAuthorizationTaskSignature = 'changed-exact-task';
+      if (change === 'outcome') carried.socialPublication.outcomes.p1 = { status: 'pending' };
+      if (change === 'conversation') carried.conversationId = 'changed-conversation';
+      const next = f.agent._startPlanExecutionGuard(f.tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: true, requiresSubmission: change !== 'scope',
+      }, { trustedContinuation: true });
+      assert.equal(next.socialPublication, null, change);
+      assert.equal(next.successfulTaskToolCalls, 0);
+      assert.equal(next.successfulConsequentialToolCalls, 0);
+      assert.equal(next.verifiedSubmissionEvidence, false);
+    }
   });
 
   test(`${browser}: clarification during an in-flight audit invalidates the older approval`, async () => {

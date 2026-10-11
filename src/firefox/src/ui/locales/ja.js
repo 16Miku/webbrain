@@ -1165,4 +1165,8 @@ export default {
   "st.sync.consent.denied": "暗号化された同期権限が付与されませんでした。",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "タスク実行中にページが変わりました（{before} → {after}）。タスクを続行します。",
+  'sp.activity.generating_answer': "回答を生成中…",
+  'sp.activity.retrying_response': "回答を再試行中…",
+  'sp.response.incomplete_retrying': "未完の回答 · 再試行中…",
+  'sp.response.incomplete': "未完の回答",
 };

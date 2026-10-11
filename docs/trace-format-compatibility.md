@@ -14,6 +14,10 @@ WebBrain's trace data has three independent version layers:
 
 ## Reader obligations
 
+Planner alignment and publication checks record their auxiliary model requests and responses, including `requestedMaxTokens`, `candidateAttempt`, finish/token diagnostics, and a finite `validationFailure` code. Technical repairs keep the candidate binding fixed and are distinct from a replacement plan after a valid semantic rejection. Metadata-only traces retain those diagnostics without prompts, replies, arbitrary JSON property names, or checker explanations; content-enabled traces follow the existing recording policy.
+
+Recoverable failures may include a `failure_recovery_offered` note with the failed stage and retry mode. Chat controls use an opaque runtime recovery ID bound to the exact task and conversation. Starting another run, changing the task, stopping, or choosing Give up expires the offer. Model, response-generation, context, and interaction failures resume through normal continuation checks; publication Retry is the separately bound, one-use audit exemption described in the publication contract.
+
 Tool events may include an optional `data.outcome` summary containing bounded dispatch, application, provider, error, and CAPTCHA-gate diagnostics. In lossless recordings, this summary survives the content-budget marker, while answer tokens, cookies, provider keys, and form inputs are excluded from the summary. Readers should still honor `_truncated` and `losslessBudgetOmitted`; the summary does not reconstruct discarded content.
 
 `/export --traces --full` exports the stored conversation through the existing `webbrain-trace/1` session envelope, including stored screenshots. It adds no Markdown preview or turn-count truncation. Recording-time omissions and privacy projections remain explicit. The side panel reads the shared trace database and assembles the download locally; only the session identity crosses runtime messaging, so screenshot-heavy exports do not hit the browser message-size limit.

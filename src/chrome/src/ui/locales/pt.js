@@ -1216,4 +1216,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "A página mudou enquanto a tarefa estava em execução ({before} → {after}). A tarefa continua.",
+  'sp.activity.generating_answer': "Gerando resposta…",
+  'sp.activity.retrying_response': "Tentando novamente a resposta…",
+  'sp.response.incomplete_retrying': "Resposta incompleta · tentando novamente…",
+  'sp.response.incomplete': "Resposta incompleta",
 };

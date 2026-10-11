@@ -75,6 +75,6 @@ test('runner exercises actual provider transport, repair loop and audits against
     assert.equal(summary.compiler.firstValid, 2); assert.equal(summary.compiler.repairs, 1);
     assert.equal(summary.audit.positive, 2); assert.equal(summary.audit.negative, 1); assert.equal(summary.audit.falseAllows, 0);
     assert.equal(requests.length, 7); assert(requests.every(r => r.model === 'fixture-model' && !r.tools));
-    assert(requests.every(r => [4096, 800].includes(r.max_tokens)));
+    assert(requests.every(r => [2048, 4096].includes(r.max_tokens)));
   } finally { await new Promise(resolve => server.close(resolve)); fs.rmSync(output, { recursive: true, force: true }); }
 });

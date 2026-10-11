@@ -1139,4 +1139,8 @@ export default {
   "st.sync.consent.denied": "Er is geen versleutelde synchronisatietoestemming verleend.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "De pagina is gewijzigd terwijl de taak actief was ({before} → {after}). De taak wordt voortgezet.",
+  'sp.activity.generating_answer': "Antwoord wordt gegenereerd…",
+  'sp.activity.retrying_response': "Antwoord opnieuw proberen…",
+  'sp.response.incomplete_retrying': "Onvolledig antwoord · opnieuw proberen…",
+  'sp.response.incomplete': "Onvolledig antwoord",
 };

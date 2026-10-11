@@ -1159,4 +1159,8 @@ export default {
   "st.sync.consent.denied": "Die Berechtigung zur verschlüsselten Synchronisierung wurde nicht erteilt.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "Die Seite hat sich während der Aufgabe geändert ({before} → {after}). Die Aufgabe wird fortgesetzt.",
+  'sp.activity.generating_answer': "Antwort wird erstellt…",
+  'sp.activity.retrying_response': "Antwort wird erneut versucht…",
+  'sp.response.incomplete_retrying': "Unvollständige Antwort · erneuter Versuch…",
+  'sp.response.incomplete': "Unvollständige Antwort",
 };

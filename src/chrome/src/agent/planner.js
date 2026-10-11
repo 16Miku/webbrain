@@ -890,18 +890,27 @@ export function buildPlannerAlignmentMessages(authenticTaskText, plan, opts = {}
 }
 
 export function parsePlannerAlignmentFromContent(content, expectedTaskBinding) {
+  return inspectPlannerAlignmentContent(content, expectedTaskBinding).verdict;
+}
+
+export function inspectPlannerAlignmentContent(content, expectedTaskBinding) {
+  if (typeof content !== 'string' || !content.trim()) return { verdict: null, failure: 'empty_response' };
   const verdict = extractFirstJsonObject(content);
-  if (!verdict || typeof verdict !== 'object' || Array.isArray(verdict)
-      || typeof expectedTaskBinding !== 'string' || !expectedTaskBinding
-      || verdict.task_binding !== expectedTaskBinding
-      || typeof verdict.aligned !== 'boolean'
-      || typeof verdict.reason !== 'string' || !verdict.reason.trim()
-      || Object.keys(verdict).some(key => !['task_binding', 'aligned', 'reason'].includes(key))) return null;
-  return {
+  if (!verdict || typeof verdict !== 'object' || Array.isArray(verdict)) {
+    return { verdict: null, failure: 'invalid_json' };
+  }
+  if (typeof expectedTaskBinding !== 'string' || !expectedTaskBinding
+      || verdict.task_binding !== expectedTaskBinding) return { verdict: null, failure: 'binding_mismatch' };
+  if (typeof verdict.aligned !== 'boolean') return { verdict: null, failure: 'invalid_aligned' };
+  if (typeof verdict.reason !== 'string' || !verdict.reason.trim()) return { verdict: null, failure: 'invalid_reason' };
+  if (Object.keys(verdict).some(key => !['task_binding', 'aligned', 'reason'].includes(key))) {
+    return { verdict: null, failure: 'unexpected_fields' };
+  }
+  return { verdict: {
     task_binding: verdict.task_binding,
     aligned: verdict.aligned,
     reason: sanitizeText(verdict.reason, 500),
-  };
+  }, failure: null };
 }
 
 export function buildPlannerAlignmentRepairMessages(messages) {

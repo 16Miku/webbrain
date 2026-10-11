@@ -1216,4 +1216,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "Trang đã thay đổi khi tác vụ đang chạy ({before} → {after}). Tiếp tục tác vụ.",
+  'sp.activity.generating_answer': "Đang tạo câu trả lời…",
+  'sp.activity.retrying_response': "Đang thử lại câu trả lời…",
+  'sp.response.incomplete_retrying': "Câu trả lời chưa hoàn chỉnh · đang thử lại…",
+  'sp.response.incomplete': "Câu trả lời chưa hoàn chỉnh",
 };

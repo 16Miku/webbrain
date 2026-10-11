@@ -1217,4 +1217,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "Halaman berubah semasa tugas berjalan ({before} → {after}). Tugas diteruskan.",
+  'sp.activity.generating_answer': "Menjana jawapan…",
+  'sp.activity.retrying_response': "Mencuba semula jawapan…",
+  'sp.response.incomplete_retrying': "Jawapan tidak lengkap · mencuba semula…",
+  'sp.response.incomplete': "Jawapan tidak lengkap",
 };

@@ -272,6 +272,10 @@ export class RunUiJournal {
       streamedTextStartSeq: 0,
       streamedTextSeq: 0,
       streamedTextTruncated: false,
+      // Display-only state survives acknowledged events; incomplete prose
+      // never contributes to completion evidence or success classification.
+      responseRetry: null,
+      responseIncomplete: false,
       startedAt: Date.now(),
       endedAt: null,
     };
@@ -300,6 +304,8 @@ export class RunUiJournal {
     snapshot.successfulDone = false;
     snapshot.runSucceeded = false;
     snapshot.endedAt = null;
+    snapshot.responseRetry = null;
+    snapshot.responseIncomplete = false;
     return this._changed(tabId, snapshot);
   }
 
@@ -316,6 +322,11 @@ export class RunUiJournal {
     snapshot.events.push(event);
     if (data?.quota) snapshot.quota = structuredClone(data.quota);
     if (type === 'text_delta') {
+      if (snapshot.responseRetry || snapshot.responseIncomplete) {
+        snapshot.streamedText = '';
+        snapshot.streamedTextStartSeq = 0;
+        snapshot.streamedTextTruncated = false;
+      }
       const chunk = String(event.data?.content || '');
       if (!snapshot.streamedText && !snapshot.streamedTextTruncated) {
         snapshot.streamedTextStartSeq = event.seq;
@@ -337,6 +348,23 @@ export class RunUiJournal {
       snapshot.streamedTextSeq = 0;
       snapshot.streamedTextTruncated = false;
     }
+    if (type === 'response_retry') {
+      snapshot.responseRetry = {
+        reason: 'stream_interrupted',
+        retainPartial: data?.retainPartial === true,
+        seq: event.seq,
+      };
+      snapshot.responseIncomplete = snapshot.responseRetry.retainPartial && !!snapshot.streamedText;
+      if (!snapshot.responseRetry.retainPartial) {
+        snapshot.streamedText = '';
+        snapshot.streamedTextStartSeq = 0;
+        snapshot.streamedTextSeq = 0;
+        snapshot.streamedTextTruncated = false;
+      }
+    } else if (['text', 'text_delta', 'tool_call', 'error', 'failure_recovery', 'run_complete', 'steering_applied'].includes(type)) {
+      snapshot.responseRetry = null;
+    }
+    if (['text', 'text_delta', 'tool_call', 'steering_applied'].includes(type)) snapshot.responseIncomplete = false;
     while (snapshot.events.length > this.eventLimit) {
       const removed = snapshot.events.shift();
       const removedSeq = Number(removed?.seq || 0);
@@ -409,6 +437,8 @@ export class RunUiJournal {
     snapshot.pendingPlanId = null;
     snapshot.pendingToolCall = null;
     snapshot.finalContent = String(finalContent || '').slice(0, 30000);
+    snapshot.responseRetry = null;
+    if (status === 'completed' && snapshot.finalContent) snapshot.responseIncomplete = false;
     snapshot.endedAt = Date.now();
     const event = {
       seq: ++snapshot.seq,
@@ -483,6 +513,15 @@ export class RunUiJournal {
     const restoredStreamSeq = Number(snapshot.streamedTextSeq || 0);
     snapshot.streamedTextStartSeq = Number.isFinite(restoredStreamStartSeq) ? Math.max(0, restoredStreamStartSeq) : 0;
     snapshot.streamedTextSeq = Number.isFinite(restoredStreamSeq) ? Math.max(0, restoredStreamSeq) : 0;
+    const restoredRetrySeq = Number(snapshot.responseRetry?.seq);
+    snapshot.responseRetry = snapshot.status === 'running'
+      && snapshot.responseRetry?.reason === 'stream_interrupted'
+      && Number.isSafeInteger(restoredRetrySeq) && restoredRetrySeq > 0
+      && restoredRetrySeq <= Number(snapshot.seq || 0)
+      ? { reason: 'stream_interrupted', retainPartial: snapshot.responseRetry.retainPartial === true, seq: restoredRetrySeq }
+      : null;
+    snapshot.responseIncomplete = snapshot.responseIncomplete === true && !!snapshot.streamedText
+      && !(snapshot.status === 'completed' && snapshot.finalContent);
     if (!snapshot.lastPlanResolution || typeof snapshot.lastPlanResolution !== 'object') {
       snapshot.lastPlanResolution = null;
     }

@@ -1169,4 +1169,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "De pagina is gewijzigd terwijl de taak actief was ({before} → {after}). De taak wordt voortgezet.",
+  'sp.activity.generating_answer': "Antwoord wordt gegenereerd…",
+  'sp.activity.retrying_response': "Antwoord opnieuw proberen…",
+  'sp.response.incomplete_retrying': "Onvolledig antwoord · opnieuw proberen…",
+  'sp.response.incomplete': "Onvolledig antwoord",
 };

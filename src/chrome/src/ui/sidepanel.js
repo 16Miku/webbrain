@@ -39,6 +39,7 @@ import {
 } from './chat-history-store.js';
 import { historyTextFromElement } from './history-text.js';
 import { claimRunError } from './run-error-dedupe.js';
+import { createFailureRecoveryCard } from './failure-recovery.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq, runUiUpdatesForCurrentTask } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
@@ -1352,6 +1353,7 @@ function setTabProcessing(tabId, processing) {
   if (sameTabId(currentTabId, numericTabId)) {
     isProcessing = effectiveProcessing;
     syncSelectionScopeRestoreAvailability();
+    if (typeof syncFailureRecoveryButtons === 'function') syncFailureRecoveryButtons();
   }
 }
 
@@ -3042,7 +3044,9 @@ function roleFromMessageElement(el) {
 
 function extractChatHistoryMessages(root = messagesEl) {
   if (!root) return [];
-  return Array.from(root.querySelectorAll(':scope > .message')).map((msgEl, index) => {
+  return Array.from(root.querySelectorAll(':scope > .message')).filter((msgEl) => (
+    msgEl.querySelector('.message-text')?.dataset.responseIncomplete !== 'true'
+  )).map((msgEl, index) => {
     const clone = msgEl.cloneNode(true);
     clone.querySelectorAll('button, input, textarea, select, .msg-copy-btn, .code-copy-btn, .error-retry-btn')
       .forEach((el) => el.remove());
@@ -5682,6 +5686,13 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
         !isTerminalRunUiStatus(runUi.status)
         || lastRenderedSeq < Number(runUi.seq || 0)
       );
+    if (shouldRestoreStreamedText
+        && Object.prototype.hasOwnProperty.call(runUi, 'responseRetry')
+        && !runUi.responseRetry
+        && runUi.responseIncomplete !== true
+        && runAssistantEl.querySelector('.message-text')?.dataset.responseIncomplete === 'true') {
+      finishResponseRetry(runAssistantEl, { completed: true });
+    }
     const hasReplayableStreamStart = shouldRestoreStreamedText
       && streamedTextStartSeq > lastRenderedSeq
       && replayEvents.some((event) => (
@@ -5696,6 +5707,13 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
       streamedAssistantTextByEl.set(textEl, snapshotStreamedText);
       textEl.dataset.streamedAssistantActive = 'true';
       renderStreamedAssistantMarkdownNow(textEl);
+      if (!isTerminalRunUiStatus(runUi.status)) {
+        showActivity(t(runUi.responseRetry ? 'sp.activity.retrying_response' : 'sp.activity.generating_answer'));
+      }
+      if (runUi.responseIncomplete === true) {
+        markResponseIncomplete(runAssistantEl, { retrying: !!runUi.responseRetry && !isTerminalRunUiStatus(runUi.status) });
+        if (!runUi.responseRetry || isTerminalRunUiStatus(runUi.status)) finishResponseRetry(runAssistantEl);
+      }
       restoredSnapshotStream = true;
     };
     if (!hasReplayableStreamStart) restoreSnapshotStream();
@@ -5740,6 +5758,14 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
             }
           : event.data,
       });
+    }
+    const canApplyResponseRetrySnapshot = Number(runUi.seq || 0) >= Number(runAssistantEl.dataset.lastRenderedSeq || 0);
+    if (canApplyResponseRetrySnapshot && !isTerminalRunUiStatus(runUi.status)
+        && runUi.responseRetry) {
+      beginResponseRetry(runAssistantEl, runUi.responseRetry);
+    } else if (canApplyResponseRetrySnapshot && (runAssistantEl.dataset.responseRetrying === 'true'
+        || (shouldRestoreStreamedText && runUi.responseIncomplete === true))) {
+      finishResponseRetry(runAssistantEl);
     }
     reconcileRunMessageAttachmentState(
       numericTabId,
@@ -5844,6 +5870,9 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
     // destination tab's idle state authoritative even in that case.
     hideActivity();
     syncSendButtonState();
+  }
+  if (Object.prototype.hasOwnProperty.call(state || {}, 'pendingFailureRecovery')) {
+    reconcileFailureRecoveryCards(numericTabId, state.pendingFailureRecovery, currentAssistantEl, requestId);
   }
   return true;
 }
@@ -7364,6 +7393,25 @@ function bindPlannerProviderSettingsButton(btn) {
 function rebindPlannerRequestFailureControls() {
   document.querySelectorAll('.planner-request-failure-provider-btn')
     .forEach(bindPlannerProviderSettingsButton);
+  document.querySelectorAll('.planner-request-failure-giveup-btn')
+    .forEach(bindPlannerGiveUpButton);
+}
+
+function bindPlannerGiveUpButton(button) {
+  if (!button || button.dataset.bound) return;
+  button.dataset.bound = 'true';
+  button.addEventListener('click', () => {
+    const actions = button.closest('.planner-request-failure-actions');
+    if (!actions || actions.dataset.recoveryChosen === 'true') return;
+    actions.dataset.recoveryChosen = 'true';
+    actions.querySelectorAll('button').forEach(item => { item.disabled = true; });
+    const status = document.createElement('div');
+    status.className = 'failure-recovery-status';
+    status.setAttribute('role', 'status');
+    status.textContent = 'Stopped. No actions were started.';
+    actions.after(status);
+    schedulePersist();
+  });
 }
 
 function renderPlannerRequestFailure(assistantEl, data, retryPayload = null) {
@@ -7419,6 +7467,12 @@ function renderPlannerRequestFailure(assistantEl, data, retryPayload = null) {
   const visibleActions = orderedActions.filter(Boolean);
   visibleActions[0]?.classList.add('primary');
   visibleActions.forEach(btn => actions.appendChild(btn));
+  const giveUpButton = document.createElement('button');
+  giveUpButton.type = 'button';
+  giveUpButton.className = 'planner-request-failure-action planner-request-failure-giveup-btn';
+  giveUpButton.textContent = 'Give up';
+  bindPlannerGiveUpButton(giveUpButton);
+  actions.appendChild(giveUpButton);
 
   textEl.append(message, actions);
   addMessageCopyButton(assistantEl);
@@ -7458,6 +7512,10 @@ function scheduleActiveChatPayloadCleanup(tabId, state) {
 }
 
 function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', options = {}) {
+  const recoveryOwner = requestId && messagesEl.querySelector(`.message.assistant[data-run-request-id="${CSS.escape(String(requestId))}"]`);
+  const responseOwner = recoveryOwner || currentAssistantEl;
+  if (responseOwner?.dataset.responseRetrying === 'true') finishResponseRetry(responseOwner);
+  if (recoveryOwner?.querySelector('.failure-recovery-card')) return;
   const message = formatErrorMessage(data?.message ?? data?.error ?? data);
   // Allowance routing depends on terminal durable-turn proof. Live error
   // updates arrive before that proof, so the run_complete/direct response
@@ -7481,6 +7539,114 @@ function renderAgentErrorUpdate(data, tabId = currentTabId, requestId = '', opti
   }
 }
 
+function syncFailureRecoveryButtons() {
+  for (const card of messagesEl?.querySelectorAll?.('.failure-recovery-card') || []) {
+    const disabled = card.dataset.recoveryCurrent !== 'true'
+      || card.dataset.recoveryChosen === 'true'
+      || card.dataset.recoveryBusy === 'true'
+      || processingTabs.has(Number(card.dataset.tabId))
+      || isConversationClearInProgress(Number(card.dataset.tabId));
+    card.querySelectorAll('.failure-recovery-action').forEach(button => { button.disabled = disabled; });
+  }
+}
+
+function bindFailureRecoveryCard(card) {
+  for (const button of card.querySelectorAll('.failure-recovery-action')) {
+    if (button.dataset.bound) continue;
+    button.dataset.bound = 'true';
+    button.addEventListener('click', async () => {
+      if (button.disabled || card.dataset.recoveryBusy === 'true') return;
+      const tabId = Number(card.dataset.tabId);
+      if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId) || isProcessing) return;
+      const choice = button.dataset.recoveryChoice;
+      const recoveryId = String(card.dataset.recoveryId || '');
+      if (!recoveryId || !['retry', 'give_up'].includes(choice)) return;
+      card.dataset.recoveryBusy = 'true';
+      card.setAttribute('aria-busy', 'true');
+      const status = card.querySelector('.failure-recovery-status');
+      status.textContent = choice === 'retry' ? 'Retrying…' : 'Stopping…';
+      syncFailureRecoveryButtons();
+      try {
+        if (choice === 'retry') {
+          const accepted = await continueAgent({
+            failureRecoveryId: recoveryId,
+            mode: card.dataset.runMode,
+            foreground: card.dataset.foreground === 'true',
+            onFailureRecoveryAccepted: () => {
+              card.dataset.recoveryChosen = 'true';
+              card.removeAttribute('aria-busy');
+              status.textContent = 'Retry requested.';
+              schedulePersist();
+            },
+          });
+          if (!accepted) throw new Error('Retry could not start. Try again when the current task has stopped.');
+        } else {
+          const result = await sendToBackground('failure_recovery_response', { tabId, recoveryId, choice });
+          if (!result?.ok) throw new Error(result?.error || 'This recovery option is no longer available.');
+        }
+        card.dataset.recoveryChosen = 'true';
+        status.textContent = choice === 'retry' ? 'Retry requested.' : 'Stopped. Your prepared work was kept.';
+      } catch (error) {
+        status.textContent = formatErrorMessage(error);
+      } finally {
+        delete card.dataset.recoveryBusy;
+        card.removeAttribute('aria-busy');
+        syncFailureRecoveryButtons();
+        schedulePersist();
+      }
+    });
+  }
+}
+
+function renderFailureRecoveryCard(assistantEl, data, { tabId = currentTabId, requestId = '' } = {}) {
+  if (!assistantEl || !data?.recoveryId) return false;
+  const recoveryId = String(data.recoveryId);
+  const existing = assistantEl.querySelector(`.failure-recovery-card[data-recovery-id="${CSS.escape(recoveryId)}"]`);
+  if (existing) {
+    if (existing.dataset.recoveryChosen !== 'true') existing.dataset.recoveryCurrent = 'true';
+    bindFailureRecoveryCard(existing);
+    syncFailureRecoveryButtons();
+    return true;
+  }
+  const card = createFailureRecoveryCard(data, { retryLabel: t('sp.retry') });
+  if (!card) return false;
+  card.dataset.tabId = String(tabId);
+  card.dataset.runRequestId = String(requestId);
+  card.dataset.runMode = assistantEl.dataset.runMode || agentMode;
+  card.dataset.foreground = assistantEl.dataset.retryForeground || 'false';
+  card.dataset.recoveryCurrent = 'true';
+  assistantEl.querySelector('.message-content')?.appendChild(card);
+  bindFailureRecoveryCard(card);
+  syncFailureRecoveryButtons();
+  scrollToBottom();
+  schedulePersist();
+  return true;
+}
+
+function reconcileFailureRecoveryCards(tabId, pending, assistantEl = currentAssistantEl, requestId = '') {
+  const currentId = String(pending?.recoveryId || '');
+  for (const card of messagesEl?.querySelectorAll?.('.failure-recovery-card') || []) {
+    if (!sameTabId(card.dataset.tabId, tabId) || card.dataset.recoveryChosen === 'true') continue;
+    card.dataset.recoveryCurrent = card.dataset.recoveryId === currentId ? 'true' : 'false';
+    if (card.dataset.recoveryCurrent === 'false') {
+      card.querySelector('.failure-recovery-status').textContent = 'This recovery option is no longer available.';
+    }
+  }
+  if (currentId) renderFailureRecoveryCard(assistantEl, pending, { tabId, requestId });
+  syncFailureRecoveryButtons();
+}
+
+function rebindFailureRecoveryCards() {
+  for (const card of document.querySelectorAll('.failure-recovery-card')) {
+    // A restored offer is display data until the background validates it.
+    card.dataset.recoveryCurrent = 'unknown';
+    delete card.dataset.recoveryBusy;
+    card.removeAttribute('aria-busy');
+    bindFailureRecoveryCard(card);
+  }
+  syncFailureRecoveryButtons();
+}
+
 function rebindRestoredMessageControls() {
   void restoreGeneratedMedia(messagesEl, t);
   restoreStagedScreenshotAttachments();
@@ -7491,6 +7657,7 @@ function rebindRestoredMessageControls() {
   rebindRetryButtons();
   rebindPlanReviewRetryButtons();
   rebindPlannerRequestFailureControls();
+  rebindFailureRecoveryCards();
   rebindContinueButtons();
   rebindClarifyCards();
   rebindPlanReviewCards();
@@ -9770,7 +9937,8 @@ async function sendMessage(extraChatParams = {}) {
           });
         }
         addMessageCopyButton(assistantEl);
-      } else if (textEl && getStreamedAssistantText(textEl) === String(res.content)) {
+      } else if (textEl && (getStreamedAssistantText(textEl) === String(res.content)
+          || (textEl.dataset.responseIncomplete === 'true' && isSuccessfulAskCompletion(modeForSend, res)))) {
         renderAssistantTextUpdate(assistantEl, res.content);
       } else if (textEl && !textEl.textContent.trim()) {
         if (!renderCostAllowanceError(textEl, res.content, modeForSend, {
@@ -10378,6 +10546,9 @@ function handleAgentUpdateMessage(msg) {
     }
 
     case 'steering_applied': {
+      if ((eventAssistantEl || currentAssistantEl)?.dataset.responseRetrying === 'true') {
+        finishResponseRetry(eventAssistantEl || currentAssistantEl);
+      }
       const id = String(data?.id || '');
       if (id && !messagesEl.querySelector(`[data-steering-message-id="${CSS.escape(id)}"]`)) {
         const userEl = addMessage('user', data.text, { beforeCurrentAssistant: true });
@@ -10401,16 +10572,24 @@ function handleAgentUpdateMessage(msg) {
       // Empty content usually means "nothing new" — keep prior prose. Exception:
       // replace:true with empty content clears a rejected streamed terminal
       // (e.g. plan-only recovery) so the bubble is free for the real summary.
-      if (data?.content) showActivity(t('tool.done'));
+      if (data?.content) showActivity(t('sp.activity.generating_answer'));
       if (currentAssistantEl && (data.content || data.replace === true)) {
         renderAssistantTextUpdate(currentAssistantEl, data.content || '', { replace: data.replace === true });
       }
       break;
 
     case 'text_delta':
-      if (data?.content) showActivity(t('tool.done'));
+      if (data?.content) showActivity(t('sp.activity.generating_answer'));
       if (currentAssistantEl) {
         const textEl = currentAssistantEl.querySelector('.message-text');
+        if (data?.content && (textEl?.dataset.responseIncomplete === 'true'
+            || currentAssistantEl.dataset.responseRetrying === 'true')) {
+          // A replacement stream starts a fresh answer, never appending to
+          // the interrupted attempt retained for the user.
+          finishResponseRetry(currentAssistantEl, { completed: true });
+          textEl.textContent = '';
+          clearStreamedAssistantText(textEl);
+        }
         if (textEl && textEl.dataset.suppressToolCallStream !== 'true') {
           // Keep the raw Markdown separate from the rendered DOM. Reading back
           // textContent would discard markers such as ** and backticks after
@@ -10434,6 +10613,10 @@ function handleAgentUpdateMessage(msg) {
           }
         }
       }
+      break;
+
+    case 'response_retry':
+      beginResponseRetry(eventAssistantEl || currentAssistantEl, data);
       break;
 
     case 'tool_call':
@@ -10510,6 +10693,17 @@ function handleAgentUpdateMessage(msg) {
       renderAgentErrorUpdate(data, currentTabId, msg.requestId);
       break;
 
+    case 'failure_recovery':
+      hideActivity();
+      if ((eventAssistantEl || currentAssistantEl)?.dataset.responseRetrying === 'true') {
+        finishResponseRetry(eventAssistantEl || currentAssistantEl);
+      }
+      if (currentAssistantEl) markLastStepFailed();
+      renderFailureRecoveryCard(eventAssistantEl || currentAssistantEl, data, {
+        tabId: eventTabId, requestId: msg.requestId,
+      });
+      break;
+
     case 'max_steps_reached':
       hideActivity();
       // Don't gate on currentAssistantEl — this event sometimes arrives
@@ -10544,6 +10738,7 @@ function handleAgentUpdateMessage(msg) {
           addPlannerFallbackNote(message, scheduledAssistantEl || eventAssistantEl || currentAssistantEl);
         }
       } else if (data?.code === 'ask_stream_fallback') {
+        showActivity(t('sp.activity.retrying_response'));
         showComposerToast(t('sp.streaming.fallback'), { duration: 6000 });
       } else if (data?.code === 'persistence_degraded') {
         showComposerToast(t('sp.persistence.unavailable'), { duration: 10000 });
@@ -10564,6 +10759,10 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'run_complete':
+      if ((eventAssistantEl || currentAssistantEl)?.dataset.responseRetrying === 'true'
+          && (data?.status !== 'completed' || !data?.finalContent)) {
+        finishResponseRetry(eventAssistantEl || currentAssistantEl);
+      }
       if (data?.quota) {
         const target = eventAssistantEl || currentAssistantEl;
         const text = target?.querySelector('.message-text');
@@ -10607,7 +10806,8 @@ function handleAgentUpdateMessage(msg) {
             });
           }
           addMessageCopyButton(currentAssistantEl);
-        } else if (textEl && hasStreamedText) {
+        } else if (textEl && (hasStreamedText
+            || (data.status === 'completed' && textEl.dataset.responseIncomplete === 'true'))) {
           // Background/restored runs do not necessarily reach the local
           // sendRunWithReconnect response handler. Finalize their lightweight
           // live Markdown here, cancelling any queued frame and enabling the
@@ -11857,7 +12057,55 @@ function flushPendingStreamedAssistantMarkdownRenders(root = messagesEl) {
   });
 }
 
+function markResponseIncomplete(assistantEl, { retrying = false } = {}) {
+  const textEl = assistantEl.querySelector('.message-text');
+  if (!textEl) return;
+  renderStreamedAssistantMarkdownNow(textEl);
+  const partialText = getStreamedAssistantText(textEl);
+  if (partialText || textEl.textContent.trim()) {
+    textEl.dataset.responseIncomplete = 'true';
+    // Only retained retries need raw text in persisted markup. The journal
+    // remains authoritative; this also keeps a restored partial readable
+    // when its original deltas have already been acknowledged.
+    if (partialText) textEl.dataset.streamedAssistantText = partialText;
+    let note = assistantEl.querySelector('.response-incomplete-note');
+    if (!note) {
+      note = document.createElement('div');
+      note.className = 'response-incomplete-note';
+      note.setAttribute('role', 'status');
+      textEl.after(note);
+    }
+    note.textContent = t(retrying ? 'sp.response.incomplete_retrying' : 'sp.response.incomplete');
+  }
+}
+
+function beginResponseRetry(assistantEl, data = {}) {
+  if (!assistantEl || data.reason !== 'stream_interrupted') return;
+  assistantEl.dataset.responseRetrying = 'true';
+  if (data.retainPartial === true) markResponseIncomplete(assistantEl, { retrying: true });
+  showActivity(t('sp.activity.retrying_response'));
+  schedulePersist();
+}
+
+function finishResponseRetry(assistantEl, { completed = false } = {}) {
+  if (!assistantEl) return;
+  delete assistantEl.dataset.responseRetrying;
+  const textEl = assistantEl.querySelector('.message-text');
+  const note = assistantEl.querySelector('.response-incomplete-note');
+  if (completed) {
+    if (textEl) delete textEl.dataset.responseIncomplete;
+    note?.remove();
+  } else {
+    // Failed/cancelled retries may retain useful prose, but it remains
+    // explicitly incomplete and excluded from saved conversation messages.
+    if (note) note.textContent = t('sp.response.incomplete');
+    if (textEl?.dataset.responseIncomplete === 'true') clearStreamedAssistantText(textEl);
+  }
+  schedulePersist();
+}
+
 function clearAssistantTextStreamState(assistantEl) {
+  if (assistantEl?.dataset.responseRetrying === 'true') finishResponseRetry(assistantEl);
   const textEl = assistantEl?.querySelector('.message-text');
   if (!textEl) return;
   clearStreamedAssistantText(textEl);
@@ -11867,13 +12115,22 @@ function clearAssistantTextStreamState(assistantEl) {
 function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   const textEl = assistantEl.querySelector('.message-text');
   if (!textEl) return;
+  const replacesIncompleteResponse = textEl.dataset.responseIncomplete === 'true';
 
   if (isStoppedByUserStatus(content)) {
+    if (replacesIncompleteResponse) {
+      finishResponseRetry(assistantEl);
+      return;
+    }
     textEl.innerHTML = t('sp.stopped_by_user_html');
     clearStreamedAssistantText(textEl);
     delete textEl.dataset.suppressToolCallStream;
     if (!assistantEl.querySelector('.msg-copy-btn')) addMessageCopyButton(assistantEl);
     return;
+  }
+
+  if (replacesIncompleteResponse || assistantEl.dataset.responseRetrying === 'true') {
+    finishResponseRetry(assistantEl, { completed: true });
   }
 
   // Cost-limit text can stream before the terminal snapshot tells us whether
@@ -11899,7 +12156,7 @@ function renderAssistantTextUpdate(assistantEl, content, options = {}) {
   // Final text must keep the same Markdown fence structure shown during streaming.
   const renderedContent = formatMarkdown(content, { recoverNestedMarkdown: true });
 
-  if (options.replace === true || restoredStreamNeedsReplacement) {
+  if (options.replace === true || restoredStreamNeedsReplacement || replacesIncompleteResponse) {
     // A rejected streamed terminal must replace its already-rendered deltas
     // even in Verbose mode; appending would leave the invalid plan visible.
     // Empty content clears the bubble (plan-only retry before recovery tools).
@@ -11943,6 +12200,10 @@ function isStoppedByUserStatus(content) {
 
 function clearTransientAssistantTextForToolCall() {
   if (!currentAssistantEl) return;
+  if (currentAssistantEl.dataset.responseRetrying === 'true'
+      || currentAssistantEl.querySelector('.message-text')?.dataset.responseIncomplete === 'true') {
+    finishResponseRetry(currentAssistantEl, { completed: true });
+  }
   const textEl = currentAssistantEl.querySelector('.message-text');
   if (!textEl) return;
   const text = textEl.textContent || '';
@@ -12923,18 +13184,21 @@ function showContinueButton(options = {}) {
 
 async function continueAgent(options = {}) {
   if (isStandaloneWindow) options = { ...options, mode: 'ask' };
+  if (isProcessing) return false;
   const tabId = currentTabId;
   const modeForSend = ['ask', 'act', 'dev'].includes(options?.mode) ? options.mode : agentMode;
   if (rejectSelectionScopedMode(modeForSend, tabId)) return false;
   const requestId = createRunRequestId(tabId);
   const foregroundForSend = options?.foreground === true;
   clearActiveChatPayloadForTab(tabId);
+  localRunRequestIds.set(tabId, requestId);
 
   setTabProcessing(tabId, true);
   setTabAbortRequested(tabId, false);
   syncSendButtonState();
 
   let assistantEl = null;
+  let runAccepted = false;
 
   try {
     await prepareChatHistoryForTurn(tabId, modeForSend);
@@ -12956,16 +13220,24 @@ async function continueAgent(options = {}) {
       scrollChatToQuestion({ smooth: false });
     }
     showActivity(t('sp.activity.continuing'));
-    localRunRequestIds.set(tabId, requestId);
 
-    const res = await sendRunWithReconnect('continue_start', {
+    const res = await sendRunWithReconnect(options.failureRecoveryId ? 'failure_recovery_response' : 'continue_start', {
       tabId,
       requestId,
       mode: modeForSend,
       foreground: foregroundForSend,
+      ...(options.failureRecoveryId ? { recoveryId: options.failureRecoveryId, choice: 'retry' } : {}),
       ...(isStandaloneWindow ? { standaloneChat: true } : {}),
       ...standaloneWebgpuRunPayload(),
+    }, {
+      onStateObserved: state => {
+        if (!runAccepted && (state?.runUi?.requestId === requestId || state?.startingRequestId === requestId)) {
+          runAccepted = true;
+          options.onFailureRecoveryAccepted?.();
+        }
+      },
     });
+    runAccepted = true;
     if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     applyConversationScopeState(tabId, res);
     if (res?.conversationId) {
@@ -12995,12 +13267,13 @@ async function continueAgent(options = {}) {
       }
     }
   } catch (e) {
+    if (options.failureRecoveryId && !runAccepted) throw e;
     if (currentTabId === tabId
         && assistantEl
         && !isTabAbortRequested(tabId)
         && !clearedConversationRunRequestIds.has(requestId)
         && !conversationClearFollowerCancellationRequestIds.has(requestId)) {
-      addMessage('error', t('sp.error_prefix', { msg: e.message }));
+      renderAgentErrorUpdate({ message: e.message, quota: e.quota }, tabId, requestId);
     }
   } finally {
     const ownsRunState = localRunRequestIds.get(tabId) === requestId;
@@ -13022,6 +13295,7 @@ async function continueAgent(options = {}) {
     if (currentTabId === tabId && renderedTabId === tabId) await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
     await drainQueuedPromptsAfterRunSettles(tabId);
   }
+  return runAccepted;
 }
 
 // Track max steps for display in continue bar
@@ -13752,6 +14026,7 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
     isConnectionError: isBackgroundConnectionError,
     onState: state => {
       if (!shouldContinueRunRecovery()) return;
+      recoveryOptions.onStateObserved?.(state);
       applyConversationScopeState(tabId, state);
       return applyActiveRunState(tabId, state, { shouldContinue: shouldContinueRunRecovery });
     },

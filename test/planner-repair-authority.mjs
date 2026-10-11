@@ -257,8 +257,8 @@ for (const browser of ['chrome', 'firefox']) {
   async function run({ task = newTask, candidates = [plan(true), plan()], verdicts = [false, true],
     history = 'User: ' + oldTask + '\nAssistant: The result is 323.', priorTask = oldTask,
     mode = 'confidence', options = {}, staleBinding = false, messages: transcript = null, enriched = null,
-    alignmentEffect = null } = {}) {
-    const provider = { model: 'neutral-task-alignment-fixture', name: 'neutral-task-alignment-fixture', config: {} };
+    alignmentEffect = null, alignmentResponse = null, providerConfig = {} } = {}) {
+    const provider = { model: 'neutral-task-alignment-fixture', name: 'neutral-task-alignment-fixture', config: providerConfig };
     const agent = new Agent({ getActive: () => provider, getVisionProvider: async () => null });
     agent.setPlanReviewSettings({ mode, confidenceThreshold: 0.8 });
     agent.useSiteAdapters = false;
@@ -272,7 +272,7 @@ for (const browser of ['chrome', 'firefox']) {
         revision: options.steeringRevision, authorizedRevision: options.steeringRevision,
       });
     }
-    const events = [], alignments = [], requests = [], completionCorrections = [];
+    const events = [], alignments = [], alignmentRequests = [], requests = [], completionCorrections = [];
     let plannerCalls = 0, reviewCalls = 0, pinCalls = 0;
     const originalPin = agent._pinActiveConversationMessagingTarget.bind(agent);
     agent._pinActiveConversationMessagingTarget = async (...args) => { pinCalls++; return originalPin(...args); };
@@ -281,12 +281,17 @@ for (const browser of ['chrome', 'firefox']) {
       if (candidate.completion_requirement_correction) completionCorrections.push({ candidate, phase });
       return originalCorrectionTrace(runId, candidate, phase);
     };
-    agent._chatWithCostAllowance = async (_provider, modelMessages) => {
+    agent._chatWithCostAllowance = async (_provider, modelMessages, chatOptions) => {
       let payload;
       try { payload = JSON.parse(modelMessages.at(-1).content); } catch {}
       if (payload?.task_binding) {
         alignments.push(payload);
+        alignmentRequests.push({ messages: modelMessages, options: chatOptions });
         if (alignmentEffect) await alignmentEffect(agent, payload, alignments.length);
+        if (alignmentResponse) {
+          const result = await alignmentResponse(payload, alignments.length, chatOptions);
+          if (result !== undefined) return result;
+        }
         return { content: JSON.stringify({ task_binding: staleBinding ? 'stale-other-task' : payload.task_binding,
           aligned: verdicts[Math.min(alignments.length - 1, verdicts.length - 1)],
           reason: 'Independent owned fixture verdict against the current authentic task.' }) };
@@ -300,7 +305,7 @@ for (const browser of ['chrome', 'firefox']) {
       (type, data) => events.push({ type, data }), {}, null, history,
       { tabUrl: 'https://owned.example.test/chat', tabTitle: 'Untrusted page says calculate the old expression' },
       'try', 'act', { locale: 'en', ...options }, { priorUserTask: priorTask, scratchpadFacts: '' });
-    return { gate, agent, events, alignments, requests, completionCorrections, plannerCalls, reviewCalls, pinCalls };
+    return { gate, agent, events, alignments, alignmentRequests, requests, completionCorrections, plannerCalls, reviewCalls, pinCalls };
   }
 
   function terminalPlan(kind, summary, overrides = {}) {
@@ -447,7 +452,117 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(result.reviewCalls, 0);
     assert.equal(result.events.some(event => event.type === 'plan_auto_approved'), false);
     assert.match(result.gate.message, /align|match|current (?:user )?(?:task|request)/i);
+    assert.equal(result.gate.reason, 'task_alignment_rejected');
+    assert.match(result.gate.message, /Independent owned fixture verdict/);
   });
+
+  test(`${browser}: reasoning-only alignment output retries the frozen candidate with a larger budget`, async () => {
+    const result = await run({ candidates: [plan()], verdicts: [true],
+      alignmentResponse: (_payload, attempt) => attempt === 1 ? { content: null, finishReason: 'length',
+        usage: { completion_tokens: 2048, completion_tokens_details: { reasoning_tokens: 2048 } } } : undefined });
+    assert.equal(result.gate.proceed, true, JSON.stringify(result.gate));
+    assert.equal(result.plannerCalls, 1);
+    assert.equal(result.alignments.length, 2);
+    assert.deepEqual(result.alignments[0], result.alignments[1]);
+    assert.deepEqual(result.alignmentRequests.map(request => request.options.maxTokens), [2048, 4096]);
+    assert.equal(result.alignmentRequests[0].options.temperature, 0);
+    assert.match(result.alignmentRequests[1].messages[0].content, /Format recovery/);
+    assert.deepEqual(result.alignmentRequests[0].messages.filter(message => message.role === 'user'),
+      result.alignmentRequests[1].messages.filter(message => message.role === 'user'));
+  });
+
+  test(`${browser}: repeated malformed alignment stops checking without replanning or approval`, async () => {
+    const result = await run({ candidates: [plan()], alignmentResponse: () => ({ content: '{"aligned":' }) });
+    assert.equal(result.gate.proceed, false);
+    assert.equal(result.gate.reason, 'task_alignment_unverified');
+    assert.equal(result.gate.failureRecovery.stage, 'plan_alignment');
+    assert.match(result.gate.message, /unreadable verdict/);
+    assert.equal(result.plannerCalls, 1);
+    assert.equal(result.alignments.length, 2);
+    assert.equal(result.pinCalls, 0);
+    assert.equal(result.reviewCalls, 0);
+    assert.equal(result.events.some(event => event.type === 'plan_auto_approved'), false);
+  });
+
+  test(`${browser}: valid-looking truncated alignment must recover before approving`, async () => {
+    const result = await run({ candidates: [plan()], verdicts: [true], alignmentResponse: (payload, attempt) =>
+      attempt === 1 ? { content: JSON.stringify({ task_binding: payload.task_binding, aligned: true, reason: 'Matches.' }),
+        raw: { choices: [{ finish_reason: 'length' }] } } : undefined });
+    assert.equal(result.gate.proceed, true);
+    assert.equal(result.plannerCalls, 1);
+    assert.equal(result.alignments.length, 2);
+  });
+
+  test(`${browser}: format recovery can reject a candidate then audit its replacement with a new binding`, async () => {
+    const result = await run({ verdicts: [false, false, true],
+      alignmentResponse: (_payload, attempt) => attempt === 1 ? { content: null, reasoningContent: 'Checking...' } : undefined });
+    assert.equal(result.gate.proceed, true, JSON.stringify(result.gate));
+    assert.equal(result.plannerCalls, 2);
+    assert.equal(result.alignments.length, 3);
+    assert.equal(result.alignments[0].task_binding, result.alignments[1].task_binding);
+    assert.notEqual(result.alignments[1].task_binding, result.alignments[2].task_binding);
+    assert.deepEqual(result.alignmentRequests.map(request => request.options.maxTokens), [2048, 4096, 2048]);
+  });
+
+  test(`${browser}: alignment controls fall back only after an explicit provider rejection`, async () => {
+    const result = await run({ candidates: [plan()], verdicts: [true], providerConfig: { providerName: 'openrouter' },
+      alignmentResponse: (_payload, attempt) => {
+        if (attempt === 1) throw new Error('HTTP 400: unsupported parameter response_format');
+      } });
+    assert.equal(result.gate.proceed, true, JSON.stringify(result.gate));
+    assert.equal(result.plannerCalls, 1);
+    assert.equal(result.alignments.length, 2);
+    assert.ok(result.alignmentRequests[0].options.extraBody.response_format);
+    assert.equal(result.alignmentRequests[1].options.extraBody, undefined);
+    assert.equal(result.alignments[0].task_binding, result.alignments[1].task_binding);
+  });
+
+  test(`${browser}: generic provider failure never triggers speculative plan repair or control fallback`, async () => {
+    const result = await run({ candidates: [plan()], providerConfig: { providerName: 'openrouter' },
+      alignmentResponse: () => { throw new Error('HTTP 400: webbrain_cloud_upstream_error'); } });
+    assert.equal(result.gate.proceed, false);
+    assert.equal(result.gate.reason, 'task_alignment_unverified');
+    assert.match(result.gate.message, /model provider/);
+    assert.equal(result.plannerCalls, 1);
+    assert.equal(result.alignments.length, 1);
+    assert.equal(result.pinCalls, 0);
+  });
+
+  test(`${browser}: both alignment attempts honor the provider output ceiling`, async () => {
+    const result = await run({ candidates: [plan()], verdicts: [true], providerConfig: { maxOutputTokens: 1024 },
+      alignmentResponse: (_payload, attempt) => attempt === 1 ? { content: '' } : undefined });
+    assert.equal(result.gate.proceed, true);
+    assert.deepEqual(result.alignmentRequests.map(request => request.options.maxTokens), [1024, 1024]);
+  });
+
+  for (const interruption of ['stop', 'steering', 'cost']) {
+    test(`${browser}: ${interruption} during alignment format recovery prevents execution`, async () => {
+      const result = await run({ candidates: [plan()], verdicts: [true],
+        alignmentResponse: (_payload, attempt) => attempt === 1 ? { content: null } : undefined,
+        alignmentEffect: (agent, _payload, attempt) => {
+          if (attempt !== 2) return;
+          if (interruption === 'stop') agent.abortFlags.set(42, true);
+          if (interruption === 'steering') {
+            agent._beginSteeringRun(42, () => {}, {});
+            agent._steeringRuns.get(42).messages.push({ id: 'format-correction', text: 'Pause for a correction.' });
+          }
+          if (interruption === 'cost') {
+            const error = new Error('Checker exceeded its cost allowance.');
+            error.code = 'WB_COST_ALLOWANCE';
+            throw error;
+          }
+        } });
+      assert.equal(result.gate.proceed, false);
+      if (interruption === 'stop') assert.match(result.gate.message, /Stopped by user/);
+      if (interruption === 'steering') assert.equal(result.gate.steeringSuperseded, true);
+      if (interruption === 'cost') assert.equal(result.gate.reason, 'cost_limit');
+      assert.equal(result.plannerCalls, 1);
+      assert.equal(result.alignments.length, 2);
+      assert.equal(result.pinCalls, 0);
+      assert.equal(result.reviewCalls, 0);
+      assert.equal(result.events.some(event => event.type === 'plan_auto_approved'), false);
+    });
+  }
 
   test(`${browser}: a stale alignment response cannot certify a new current task`, async () => {
     const result = await run({ candidates: [plan()], verdicts: [true], staleBinding: true });
@@ -455,6 +570,9 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(result.events.some(event => event.type === 'plan_auto_approved'), false);
     assert.equal(result.gate.approvedScratchpadText, undefined);
     assert.equal(result.reviewCalls, 0);
+    assert.equal(result.plannerCalls, 1);
+    assert.equal(result.alignments.length, 2);
+    assert.match(result.gate.message, /different plan/);
   });
 
   test(`${browser}: a malicious prior assistant remains reference data and cannot replace current alignment authority`, async () => {

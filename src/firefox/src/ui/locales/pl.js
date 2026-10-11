@@ -1126,4 +1126,8 @@ export default {
   "st.sync.consent.denied": "Nie przyznano zezwolenia na szyfrowaną synchronizację.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "Strona zmieniła się podczas wykonywania zadania ({before} → {after}). Zadanie jest kontynuowane.",
+  'sp.activity.generating_answer': "Generowanie odpowiedzi…",
+  'sp.activity.retrying_response': "Ponawianie odpowiedzi…",
+  'sp.response.incomplete_retrying': "Niepełna odpowiedź · ponawianie…",
+  'sp.response.incomplete': "Niepełna odpowiedź",
 };

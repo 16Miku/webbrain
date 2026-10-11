@@ -2178,11 +2178,17 @@ function isPersistenceDegradedRunUpdate(update) {
     && update?.data?.status === 'persistence_degraded';
 }
 
+function isPublicationAuditFailureUpdate(update) {
+  return (update?.type === 'run_status' && update?.data?.status === 'publication_audit_failed')
+    || (update?.type === 'failure_recovery' && update?.data?.stage === 'publication_audit');
+}
+
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
     update?.type === 'error' || update?.type === 'quota'
     || isClarificationRequiredRunUpdate(update)
     || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
     || isPlannerRequestFailureUpdate(update)
   ));
 }
@@ -2195,6 +2201,7 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
   if (updates.some(update => update?.type === 'error'
     || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
     || update?.type === 'quota')) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
@@ -2217,6 +2224,7 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (updates.some(update => (
     update?.type === 'error' || update?.type === 'quota'
     || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -2574,7 +2582,35 @@ function assertChatRequestInput(msg) {
   throw error;
 }
 
+async function handleFailureRecoveryResponse(msg, sender) {
+  if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('src/ui/sidepanel.html')) {
+    return { ok: false, error: 'Recovery choices are available from the chat panel only.' };
+  }
+  const tabId = Number(msg.tabId);
+  const recoveryId = typeof msg.recoveryId === 'string' ? msg.recoveryId : '';
+  const choice = msg.choice;
+  if (!Number.isSafeInteger(tabId) || tabId <= 0 || !recoveryId || !['retry', 'give_up'].includes(choice)) {
+    return { ok: false, error: 'Invalid recovery choice.' };
+  }
+  if (choice === 'retry' && typeof msg.requestId === 'string' && msg.requestId) {
+    // An acknowledgement may be lost while its run already started. Repeated
+    // delivery follows that same request rather than consuming a second offer.
+    if (detachedRunStarts.get(tabId)?.requestId === msg.requestId) {
+      return { ok: true, accepted: true, requestId: msg.requestId };
+    }
+    const snapshot = await getRunUiSnapshot(tabId);
+    if (snapshot?.requestId === msg.requestId && snapshot.kind === 'continue') {
+      return { ok: true, accepted: true, requestId: msg.requestId };
+    }
+  }
+  assertNoActiveTabRun(tabId);
+  const result = agent.requestFailureRecovery(tabId, recoveryId, choice);
+  if (!result?.ok || choice === 'give_up' || result.continue !== true) return result;
+  return launchDetachedRun('continue', msg, sender);
+}
+
 async function handleMessage(msg, sender) {
+  if (msg.action === 'failure_recovery_response') return handleFailureRecoveryResponse(msg, sender);
   if (['chat_start', 'chat', 'chat_stream'].includes(msg.action)) assertChatRequestInput(msg);
   if (msg.action === 'get_page_monitor_state') return agent.pageMonitorState(sender, msg.documentToken, msg.frameName);
   if (msg.action === 'page_feedback') return agent.observePageFeedback(sender, msg.feedback);
@@ -3288,6 +3324,7 @@ async function handleMessage(msg, sender) {
           : false);
       const conversationState = await agent.getConversationState(tabId);
       const activeState = agent.activeRunState(tabId);
+      const pendingFailureRecovery = agent._pendingFailureRecoveryForUi?.(tabId) || null;
       const pendingClarification = activeState.pendingCurrentClarification;
       const currentRunUi = runUiJournal.get(tabId);
       if (pendingClarification && (!activeState.running || currentRunUi !== runUiSnapshot
@@ -3303,6 +3340,7 @@ async function handleMessage(msg, sender) {
         ok: true,
         ...conversationState,
         ...activeState,
+        pendingFailureRecovery,
         starting: !!starting,
         startingRequestId: starting?.requestId || null,
         submittedTurnDurable,

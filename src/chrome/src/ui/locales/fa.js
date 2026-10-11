@@ -1216,4 +1216,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "صفحه هنگام اجرای کار تغییر کرد ({before} → {after}). کار ادامه می‌یابد.",
+  'sp.activity.generating_answer': "در حال تولید پاسخ…",
+  'sp.activity.retrying_response': "در حال تلاش دوباره برای پاسخ…",
+  'sp.response.incomplete_retrying': "پاسخ ناقص · تلاش دوباره…",
+  'sp.response.incomplete': "پاسخ ناقص",
 };

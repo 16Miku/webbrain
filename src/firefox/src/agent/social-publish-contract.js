@@ -258,7 +258,45 @@ export function publicationAuditMessages(sources, contract, action, snapshot, ke
   { role: 'user', content: JSON.stringify({ sources, contract, action, snapshot, key, context }) }];
 }
 
+// Parse the complete response, rather than taking the first object out of
+// prose. A second/conflicting verdict must never be silently discarded.
+export function parsePublicationJson(content) {
+  if (typeof content !== 'string' || !content.trim()) throw new Error('empty_response');
+  const text = content.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?\s*```$/i, '$1').trim();
+  let raw;
+  try { raw = JSON.parse(text); } catch { throw new Error('malformed_or_multiple_json_objects'); }
+  if (!object(raw)) throw new Error('response_not_object');
+  const tokens = text.match(/"(?:\\.|[^"\\])*"|[{}\[\]:,]/g) || [];
+  const fields = new Set();
+  let depth = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token === '{' || token === '[') depth++;
+    else if (token === '}' || token === ']') depth--;
+    else if (depth === 1 && token.startsWith('"') && tokens[i + 1] === ':') {
+      const field = JSON.parse(token);
+      if (fields.has(field)) throw new Error(['key', 'actionId', 'authorized', 'reason'].includes(field)
+        ? 'duplicate_' + field : 'duplicate_extra_field');
+      fields.add(field);
+    }
+  }
+  return raw;
+}
+
+export function publicationAuditValidation(raw, key, actionId) {
+  if (!object(raw)) return { valid: false, failure: 'response_not_object' };
+  for (const field of ['key', 'actionId', 'authorized', 'reason']) {
+    if (!Object.hasOwn(raw, field)) return { valid: false, failure: 'missing_' + field };
+  }
+  if (raw.key !== key) return { valid: false, failure: 'key_mismatch' };
+  if (raw.actionId !== actionId) return { valid: false, failure: 'action_mismatch' };
+  if (typeof raw.authorized !== 'boolean') return { valid: false, failure: 'authorized_not_boolean' };
+  if (typeof raw.reason !== 'string') return { valid: false, failure: 'reason_not_string' };
+  // Extra metadata and long explanations do not invalidate a bound verdict.
+  return { valid: true, authorized: raw.authorized, reason: raw.reason.slice(0, 600) };
+}
+
 export function publicationAuditAccepted(raw, key, actionId) {
-  return object(raw) && Object.keys(raw).length === 4 && raw.key === key && raw.actionId === actionId
-    && raw.authorized === true && typeof raw.reason === 'string' && raw.reason.length <= 600;
+  const verdict = publicationAuditValidation(raw, key, actionId);
+  return verdict.valid && verdict.authorized;
 }

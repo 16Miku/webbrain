@@ -23,7 +23,8 @@ export async function retryModelCall(initialError, call, {
   },
 } = {}) {
   const rateLimited = initialError?.httpStatus === 429;
-  const delays = rateLimited ? [5000, 15000, 30000] : [2000];
+  const cloudUpstream = initialError?.code === 'webbrain_cloud_upstream_error';
+  const delays = rateLimited ? [5000, 15000, 30000] : cloudUpstream ? [2000, 5000] : [2000];
   let error = initialError, waited = 0;
   for (let i = 0; i < delays.length; i++) {
     cancelled(isAborted);
@@ -38,8 +39,52 @@ export async function retryModelCall(initialError, call, {
     try { return await call(); }
     catch (next) {
       error = next;
-      if (!rateLimited || error?.httpStatus !== 429) throw error;
+      if (rateLimited ? error?.httpStatus !== 429
+        : !cloudUpstream || error?.code !== 'webbrain_cloud_upstream_error') throw error;
     }
   }
   throw error;
+}
+
+/** Retry stream startup only; emitted text/tool events must never be replayed. */
+export async function* retryModelStream(createStream, options = {}) {
+  const isAborted = options.isAborted || (() => false);
+  let iterator = null;
+  const close = async () => {
+    const abandoned = iterator;
+    iterator = null;
+    try { await abandoned?.return?.(); } catch {}
+  };
+  const start = async () => {
+    try {
+      cancelled(isAborted);
+      const stream = await createStream();
+      iterator = stream[Symbol.asyncIterator]();
+      const first = await iterator.next();
+      cancelled(isAborted);
+      return first;
+    } catch (error) {
+      await close();
+      throw error;
+    }
+  };
+  try {
+    let first;
+    try { first = await start(); }
+    catch (error) {
+      if (error?.code !== 'webbrain_cloud_upstream_error' && error?.httpStatus !== 429) throw error;
+      first = await retryModelCall(error, start, options);
+    }
+    if (first.done) return;
+    yield first.value;
+    while (true) {
+      cancelled(isAborted);
+      const next = await iterator.next();
+      cancelled(isAborted);
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    await close();
+  }
 }

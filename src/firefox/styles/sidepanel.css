@@ -1393,6 +1393,12 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   display: none;
 }
 
+.response-incomplete-note {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .message-content {
   padding: 10px 14px;
   border-radius: var(--radius);
@@ -3896,6 +3902,40 @@ html[data-ui-scale="175"] .conversation-action-label {
 .cost-allowance-status:empty {
   display: none;
 }
+
+.failure-recovery-card {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.failure-recovery-message { color: var(--text-primary); }
+.failure-recovery-note, .failure-recovery-status {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.failure-recovery-status:empty { display: none; }
+.failure-recovery-actions { display: flex; gap: 8px; margin-top: 12px; }
+.failure-recovery-action {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+}
+.failure-recovery-action.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.failure-recovery-action:disabled { cursor: default; opacity: .55; }
+.failure-recovery-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.failure-recovery-details { margin-top: 8px; color: var(--text-secondary); font-size: 11px; }
+.failure-recovery-details summary { cursor: pointer; }
+.failure-recovery-details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Clarify card — agent paused to ask user a question */
 .clarify-card {

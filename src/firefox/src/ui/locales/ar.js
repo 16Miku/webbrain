@@ -1165,4 +1165,8 @@ export default {
   "st.sync.consent.denied": "لم يتم منح إذن المزامنة المشفرة.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "تغيّرت الصفحة أثناء تنفيذ المهمة ({before} → {after}). جارٍ متابعة المهمة.",
+  'sp.activity.generating_answer': "جارٍ إنشاء الإجابة…",
+  'sp.activity.retrying_response': "جارٍ إعادة محاولة الإجابة…",
+  'sp.response.incomplete_retrying': "إجابة غير مكتملة · جارٍ إعادة المحاولة…",
+  'sp.response.incomplete': "إجابة غير مكتملة",
 };

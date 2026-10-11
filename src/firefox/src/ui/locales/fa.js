@@ -1186,4 +1186,8 @@ export default {
   "st.sync.consent.denied": "مجوز همگام‌سازی رمزگذاری شده داده نشد.",
   'st.providers.webgpu_note.body': '{modelLink} بدون هیچ نقطهٔ پایانی API کاملاً در Chrome اجرا می‌شود. آن را در Settings > Providers > WebGPU یا حالت Apocalypse دانلود کنید، سپس از کنترل nuclear در standalone chat استفاده کنید.',
   'sp.monitor.navigation': "صفحه هنگام اجرای کار تغییر کرد ({before} → {after}). کار ادامه می‌یابد.",
+  'sp.activity.generating_answer': "در حال تولید پاسخ…",
+  'sp.activity.retrying_response': "در حال تلاش دوباره برای پاسخ…",
+  'sp.response.incomplete_retrying': "پاسخ ناقص · تلاش دوباره…",
+  'sp.response.incomplete': "پاسخ ناقص",
 };

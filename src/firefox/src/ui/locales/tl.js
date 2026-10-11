@@ -1165,4 +1165,8 @@ export default {
   "st.sync.consent.denied": "Hindi ibinigay ang naka-encrypt na pahintulot sa pag-sync.",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "Nagbago ang pahina habang tumatakbo ang gawain ({before} → {after}). Nagpapatuloy ang gawain.",
+  'sp.activity.generating_answer': "Bumubuo ng sagot…",
+  'sp.activity.retrying_response': "Sinusubukang muli ang sagot…",
+  'sp.response.incomplete_retrying': "Hindi kumpletong sagot · sinusubukang muli…",
+  'sp.response.incomplete': "Hindi kumpletong sagot",
 };

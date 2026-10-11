@@ -43769,7 +43769,7 @@ test('selected-text scope is a durable visible sidepanel state with a New conver
     assert.match(panel, /function resumeAfterSubscription\(btn\) \{[\s\S]*?if \(rejectSelectionScopedMode\(mode\)\) return;[\s\S]*?setMode\(mode\);[\s\S]*?continueAgent\(/, `${label}: subscription resume should reject restored Act or Dev mode before continuing`);
     assert.match(panel, /function bindErrorRetryButton\(btn\) \{[\s\S]*?rejectSelectionScopedMode\(payload\.mode, currentTabId, payload\.sourceGrounding\)[\s\S]*?setMode\(payload\.mode\);[\s\S]*?sendMessage\(/, `${label}: error retry should reject restored Act or Dev mode before resubmitting`);
     assert.match(panel, /const modeForSend = retryOptions\?\.mode \|\| modeOverride \|\| modeForMessageText\(text\);\s*if \(rejectSelectionScopedMode\(modeForSend, tabId, sourceGrounding\)\) return false;/, `${label}: chat start should enforce the selected-scope mode boundary centrally`);
-    assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\('continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
+    assert.match(panel, /async function continueAgent\(options = \{\}\) \{[\s\S]*?const modeForSend =[\s\S]*?if \(rejectSelectionScopedMode\(modeForSend, tabId\)\) return false;[\s\S]*?sendRunWithReconnect\(options\.failureRecoveryId \? 'failure_recovery_response' : 'continue_start'/, `${label}: Continue should enforce the selected-scope mode boundary centrally`);
     assert.match(panel, /async function startSavedWorkflowRun\(workflow, parameters, tabId = currentTabId\) \{[\s\S]*?if \(!\(await ensureActMode\(\)\)\) return false;[\s\S]*?return sendMessage\(/, `${label}: saved workflows should stop when selected-text scope rejects Act mode`);
     assert.match(panel, /command\.value === '\/screenshot'[\s\S]*?command\.value === '\/record' && action !== 'stop'[\s\S]*?command\.value === '\/print'[\s\S]*?isSelectionGroundedForTab\(tabId\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return '';[\s\S]*?command\.value === '\/screenshot' && action === 'viewport'/, `${label}: page and screen slash commands should stop before dispatch while /record --stop remains available`);
     assert.match(panel, /if \(!retryOptions\) \{[\s\S]*?sourceGrounding[\s\S]*?!\/\^\\s\*\\\/record\\s\+--stop[\s\S]*?\/\^\\s\*\\\/\(\?:screenshot\|record\|print\)[\s\S]*?sp\.selection_scope\.description[\s\S]*?return false;[\s\S]*?parseTrailingRunCaptureDirective\(text\);/, `${label}: newly selected-text sends should reject page commands without blocking /record --stop`);
@@ -44838,7 +44838,7 @@ test('/foreground is a run-scoped compatibility override in both local builds', 
       `${label}: max-step continuations should inherit foreground mode`);
     assert.match(panel, /function showContinueButton\(options = \{\}\)[\s\S]*?continueBtn\.dataset\.foreground[\s\S]*?continueAgent\(\{[\s\S]*?foreground:/,
       `${label}: persisted Continue buttons should retain foreground mode`);
-    assert.match(panel, /async function continueAgent\(options = \{\}\)[\s\S]*?const foregroundForSend = options\?\.foreground === true;[\s\S]*?dataset\.retryForeground = foregroundForSend[\s\S]*?sendRunWithReconnect\('continue_start',[\s\S]*?foreground: foregroundForSend,/,
+    assert.match(panel, /async function continueAgent\(options = \{\}\)[\s\S]*?const foregroundForSend = options\?\.foreground === true;[\s\S]*?dataset\.retryForeground = foregroundForSend[\s\S]*?sendRunWithReconnect\(options\.failureRecoveryId \? 'failure_recovery_response' : 'continue_start',[\s\S]*?foreground: foregroundForSend,/,
       `${label}: continuation runs should forward and retain foreground mode`);
     assert.match(panel, /async function adoptRestoredRunState\([\s\S]*?sendRunWithReconnect\('continue_start', \{[\s\S]*?foreground: runUi\.foreground === true,/,
       `${label}: remounted runs should recover foreground mode from the durable journal`);
@@ -46594,12 +46594,15 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
     assert.match(panel, /function formatMarkdown\(text, options = \{\}\)[\s\S]*?const enhance = options\.enhance !== false;[\s\S]*?const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);[\s\S]*?if \(enhance\) scheduleMathRender\(\);[\s\S]*?if \(enhance && codeBlocks\.length > 0\)/, `${label}: syntax highlighting and interactive Markdown enhancements should wait for the terminal render`);
-    assert.match(panel, /case 'run_complete':[\s\S]*?const streamedText = getStreamedAssistantText\(textEl\);[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const visibleStreamedText = streamedText[\s\S]*?\|\| \(hasStreamedText \? textEl\?\.innerText \|\| textEl\?\.textContent \|\| '' : ''\);[\s\S]*?else if \(textEl && hasStreamedText\)[\s\S]*?const terminalContent = data\.status === 'stopped' \|\| data\.status === 'cancelled'[\s\S]*?\? visibleStreamedText[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, terminalContent, \{[\s\S]*?replace: terminalContent !== streamedText,[\s\S]*?else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored/background streams should receive one enhanced authoritative terminal render while stopped runs preserve visible partial text`);
-    assert.doesNotMatch(panel, /dataset\.streamedAssistantText\s*=/, `${label}: streamed text must not be serialized as a data attribute`);
+    assert.match(panel, /case 'run_complete':[\s\S]*?const streamedText = getStreamedAssistantText\(textEl\);[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const visibleStreamedText = streamedText[\s\S]*?\|\| \(hasStreamedText \? textEl\?\.innerText \|\| textEl\?\.textContent \|\| '' : ''\);[\s\S]*?else if \(textEl && \(hasStreamedText\s*\|\| \(data\.status === 'completed' && textEl\.dataset\.responseIncomplete === 'true'\)\)\)[\s\S]*?const terminalContent = data\.status === 'stopped' \|\| data\.status === 'cancelled'[\s\S]*?\? visibleStreamedText[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, terminalContent, \{[\s\S]*?replace: terminalContent !== streamedText,[\s\S]*?else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored/background streams and incomplete completed replies should receive one enhanced authoritative terminal render while stopped runs preserve visible partial text`);
+    const liveStreamBody = panel.slice(panel.indexOf("case 'text_delta':"), panel.indexOf("case 'response_retry':"));
+    assert.doesNotMatch(liveStreamBody, /dataset\.streamedAssistantText\s*=/, `${label}: active stream chunks must not duplicate raw text into serialized attributes`);
+    assert.match(panel, /function markResponseIncomplete\(assistantEl, \{ retrying = false \} = \{\}\)[\s\S]*?textEl\.dataset\.responseIncomplete = 'true';[\s\S]*?if \(partialText\) textEl\.dataset\.streamedAssistantText = partialText;/, `${label}: only an explicitly incomplete retained response should persist its raw partial text for restoration`);
+    assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?delete textEl\.dataset\.streamedAssistantText;/, `${label}: finalization must clear persisted partial stream text`);
     assert.match(panel, /getStreamedAssistantText\(textEl\) === String\(res\.content\)[\s\S]*?renderAssistantTextUpdate\(assistantEl, res\.content\);/, `${label}: completed streams should format the visible final text in place`);
     assert.match(panel, /clearAssistantTextStreamState\(assistantEl\);/, `${label}: run completion should clear transient streamed-text state before persistence`);
     assert.match(panel, /case 'text':[\s\S]*?\(data\.content \|\| data\.replace === true\)[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, data\.content \|\| '', \{ replace: data\.replace === true \}\);/, `${label}: text updates should forward explicit replacement requests, including empty clears`);
-    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?if \(options\.replace === true \|\| restoredStreamNeedsReplacement\) \{[\s\S]*?if \(content\) \{[\s\S]*?textEl\.innerHTML = renderedContent;[\s\S]*?streamedAssistantTextByEl\.set\(textEl, String\(content\)\);[\s\S]*?\} else \{[\s\S]*?textEl\.textContent = '';[\s\S]*?clearStreamedAssistantText\(textEl\);[\s\S]*?\} else if \(verboseMode && !hasStreamedText\)/, `${label}: explicit and restored-stream replacements should preserve nested fences while overwriting or clearing verbose streamed text`);
+    assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const restoredStreamNeedsReplacement = hasStreamedText && !streamedText;[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?if \(options\.replace === true \|\| restoredStreamNeedsReplacement \|\| replacesIncompleteResponse\) \{[\s\S]*?if \(content\) \{[\s\S]*?textEl\.innerHTML = renderedContent;[\s\S]*?streamedAssistantTextByEl\.set\(textEl, String\(content\)\);[\s\S]*?\} else \{[\s\S]*?textEl\.textContent = '';[\s\S]*?clearStreamedAssistantText\(textEl\);[\s\S]*?\} else if \(verboseMode && !hasStreamedText\)/, `${label}: explicit, restored-stream, and incomplete-response replacements should preserve nested fences while overwriting or clearing verbose streamed text`);
     assert.match(panel, /function renderAssistantTextUpdate\(assistantEl, content, options = \{\}\) \{[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const renderedContent = formatMarkdown\(content, \{ recoverNestedMarkdown: true \}\);[\s\S]*?else if \(verboseMode && !hasStreamedText\)[\s\S]*?para\.innerHTML = renderedContent;[\s\S]*?else \{[\s\S]*?textEl\.innerHTML = renderedContent;/, `${label}: every streamed final should preserve nested fences in place even when terminal cleanup changed the raw text`);
     const start = panel.indexOf("case 'tool_call':");
     const end = panel.indexOf("case 'tool_result':", start);
@@ -46674,6 +46677,7 @@ test('verbose terminal rendering does not append a normalized streamed answer tw
     streamedTextEl.dataset.streamedAssistantActive = 'true';
     streamedTextByEl.set(streamedTextEl, rawStream);
     const streamedAssistantEl = {
+      dataset: {},
       querySelector: selector => selector === '.message-text' ? streamedTextEl : null,
     };
 
@@ -46685,6 +46689,7 @@ test('verbose terminal rendering does not append a normalized streamed answer tw
 
     const nonStreamedTextEl = makeTextEl('Prior verbose turn.');
     const nonStreamedAssistantEl = {
+      dataset: {},
       querySelector: selector => selector === '.message-text' ? nonStreamedTextEl : null,
     };
     renderAssistantTextUpdate(nonStreamedAssistantEl, 'New non-streamed turn.');
@@ -47905,7 +47910,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     assert.notEqual(sendDrainIdx, -1, `${label}: send completion should drain queued prompts`);
     assert.equal(sendFlushIdx < sendDrainIdx, true, `${label}: send completion must flush before draining queued prompts`);
 
-    const continueMatch = panel.match(/async function continueAgent\(options = \{\}\) \{[\s\S]*?finally \{([\s\S]*?)\n  \}\n\}/);
+    const continueMatch = panel.match(/async function continueAgent\(options = \{\}\) \{[\s\S]*?finally \{([\s\S]*?)\n  \}\n  return runAccepted;\n\}/);
     assert.ok(continueMatch, `${label}: continueAgent finally block missing`);
     const continueFinally = continueMatch[1];
     const continueFlushIdx = continueFinally.indexOf('flushRenderedTabChat()');
@@ -51450,9 +51455,9 @@ test('sidepanel continue runs use the initiating tab state', () => {
     const match = panel.match(/async function continueAgent\(options = \{\}\) \{[\s\S]*?\n\}/);
     assert.ok(match, `${label}: continueAgent missing`);
     const body = match[0];
-    assert.match(body, /const tabId = currentTabId;[\s\S]*?const modeForSend = \['ask', 'act', 'dev'\]\.includes\(options\?\.mode\) \? options\.mode : agentMode;[\s\S]*?sendRunWithReconnect\('continue_start', \{[\s\S]*?tabId,[\s\S]*?mode: modeForSend,/, `${label}: Continue should send with the tab and requested-or-current mode captured before awaiting`);
-    assert.doesNotMatch(body, /sendRunWithReconnect\('continue_start', \{[\s\S]*?tabId: currentTabId/, `${label}: Continue should not read currentTabId inside the async send payload`);
-    assert.doesNotMatch(body, /sendRunWithReconnect\('continue_start', \{[\s\S]*?mode: agentMode/, `${label}: Continue should not read agentMode inside the async send payload`);
+    assert.match(body, /const tabId = currentTabId;[\s\S]*?const modeForSend = \['ask', 'act', 'dev'\]\.includes\(options\?\.mode\) \? options\.mode : agentMode;[\s\S]*?sendRunWithReconnect\(options\.failureRecoveryId \? 'failure_recovery_response' : 'continue_start', \{[\s\S]*?tabId,[\s\S]*?mode: modeForSend,/, `${label}: Continue should send with the tab and requested-or-current mode captured before awaiting`);
+    assert.doesNotMatch(body, /sendRunWithReconnect\([^,]+, \{[\s\S]*?tabId: currentTabId/, `${label}: Continue should not read currentTabId inside the async send payload`);
+    assert.doesNotMatch(body, /sendRunWithReconnect\([^,]+, \{[\s\S]*?mode: agentMode/, `${label}: Continue should not read agentMode inside the async send payload`);
     assert.match(body, /await prepareChatHistoryForTurn\(tabId, modeForSend\);[\s\S]*?if \(isTabAbortRequested\(tabId\)\) return false;[\s\S]*?if \(!sameTabId\(currentTabId, tabId\) \|\| !sameTabId\(renderedTabId, tabId\)\) return false;[\s\S]*?assistantEl = addMessage\('assistant', ''\);/, `${label}: Continue should hydrate history, honor aborts, and re-check the initiating tab before rendering`);
     assert.match(body, /let assistantEl = null;[\s\S]*?assistantEl = addMessage\('assistant', ''\);[\s\S]*?currentAssistantEl = assistantEl;[\s\S]*?if \(currentTabId === tabId && res\?\.content && assistantEl\) \{[\s\S]*?addMessageCopyButton\(assistantEl\);/, `${label}: Continue should render only into its captured assistant bubble for the initiating tab`);
     assert.match(body, /if \(currentTabId === tabId && assistantEl\) finalizeSteps\(assistantEl\);[\s\S]*?if \(currentAssistantEl === assistantEl\) currentAssistantEl = null;/, `${label}: Continue should finalize and clear only its captured assistant bubble`);
@@ -51467,7 +51472,7 @@ test('sidepanel drains queued context-menu prompts on run completion', () => {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const completions = [
       ['sendMessage', /async function sendMessage\([^)]*\) \{[\s\S]*?finally \{([\s\S]*?)\n  \}\n  return accepted;/],
-      ['continueAgent', /async function continueAgent\(options = \{\}\) \{[\s\S]*?finally \{([\s\S]*?)\n  \}\n\}/],
+      ['continueAgent', /async function continueAgent\(options = \{\}\) \{[\s\S]*?finally \{([\s\S]*?)\n  \}\n  return runAccepted;\n\}/],
     ];
     for (const [fnName, pattern] of completions) {
       const match = panel.match(pattern);
@@ -54717,7 +54722,7 @@ test('status-strip clicks hide default compact history while verbose restores fu
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?#activity-text[\s\S]*?animation: none;/, `${label}: activity shimmer should respect reduced motion`);
     assert.match(
       panel,
-      /case 'text':[\s\S]*?showActivity\(t\('tool\.done'\)\)[\s\S]*?case 'text_delta':[\s\S]*?showActivity\(t\('tool\.done'\)\)[\s\S]*?case 'tool_call':[\s\S]*?showActivity\(friendlyToolLabel\(data\.name, data\.args\)\)/,
+      /case 'text':[\s\S]*?showActivity\(t\('sp\.activity\.generating_answer'\)\)[\s\S]*?case 'text_delta':[\s\S]*?showActivity\(t\('sp\.activity\.generating_answer'\)\)[\s\S]*?case 'tool_call':[\s\S]*?showActivity\(friendlyToolLabel\(data\.name, data\.args\)\)/,
       `${label}: response rendering and tool calls should replace the generic thinking state with concrete activity`,
     );
     assert.match(
@@ -74787,7 +74792,7 @@ test('interactive Ask streaming preserves attachments and persists only the comp
   }
 });
 
-test('Ask stream failure clears partial text and falls back once for the rest of the run', async () => {
+test('Ask stream failure retains partial text while falling back once for the rest of the run', async () => {
   for (const [index, [label, AgentClass]] of [['chrome', AgentCh], ['firefox', AgentFx]].entries()) {
     let streamCalls = 0;
     let chatCalls = 0;
@@ -74857,7 +74862,12 @@ test('Ask stream failure clears partial text and falls back once for the rest of
     assert.equal(streamCalls, 1, `${label}: stream circuit breaker should stay open for later model turns in the run`);
     assert.equal(chatCalls, 2, `${label}: failed generation and its tool follow-up should use provider.chat()`);
     assert.deepEqual(executed, ['read_page'], `${label}: pre-completion streamed tool call must never execute`);
-    assert.ok(updates.some(update => update.type === 'text' && update.data?.replace === true && update.data?.content === ''), `${label}: partial streamed text should be cleared`);
+    const retryIndex = updates.findIndex(update => update.type === 'response_retry');
+    const retryUpdate = updates[retryIndex];
+    assert.equal(retryUpdate?.data?.reason, 'stream_interrupted', `${label}: fallback should identify the interrupted response`);
+    assert.equal(retryUpdate?.data?.retainPartial, true, `${label}: fallback should retain useful partial text while regenerating`);
+    assert.ok(retryIndex > updates.findIndex(update => update.type === 'text_delta'), `${label}: retry notice should follow the partial response`);
+    assert.equal(updates.slice(0, retryIndex + 1).some(update => update.type === 'text' && update.data?.replace === true && update.data?.content === ''), false, `${label}: fallback must not erase useful partial text before a replacement is available`);
     assert.equal(
       updates.filter(update => update.type === 'warning' && update.data?.code === 'ask_stream_fallback').length,
       1,
@@ -74917,7 +74927,10 @@ test('Ask terminal stream errors clear partial text without retrying the generat
       { interactiveChat: true, askStreamingEnabled: true },
     );
 
-    assert.equal(final, 'Error communicating with LLM: policy blocked', `${label}: terminal error should be surfaced`);
+    assert.equal(final, 'Failed while requesting the model response. You can retry from the current state.', `${label}: terminal error should use friendly recovery copy`);
+    const recovery = updates.find(update => update.type === 'failure_recovery')?.data;
+    assert.equal(recovery?.retryMode, 'resume', `${label}: explicit Retry should use ordinary continuation checks`);
+    assert.equal(recovery?.diagnostics, 'policy blocked', `${label}: the original failure should remain in technical details`);
     assert.equal(streamCalls, 1, `${label}: terminal stream errors must not retry the generation`);
     assert.equal(chatCalls, 0, `${label}: terminal stream errors must not fall back to provider.chat()`);
     assert.ok(updates.some(update => update.type === 'text' && update.data?.replace === true && update.data?.content === ''), `${label}: partial streamed text should be cleared`);

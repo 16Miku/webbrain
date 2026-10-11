@@ -10,6 +10,7 @@ const builds = await Promise.all(['chrome', 'firefox'].map(async build => ({
   compactRunUiSnapshotForPersist: (await import(`../src/${build}/src/run-ui-journal.js`)).compactRunUiSnapshotForPersist,
   persistRetryBudget: (await import(`../src/${build}/src/run-ui-journal.js`)).RUN_UI_PERSIST_RETRY_BUDGET,
   runUiUpdatesForCurrentTask: (await import(`../src/${build}/src/run-ui-journal.js`)).runUiUpdatesForCurrentTask,
+  runDetachedWithReconnect: (await import(`../src/${build}/src/run-reconnect.js`)).runDetachedWithReconnect,
   scheduler: await import(`../src/${build}/src/agent/scheduler.js`),
   source: fs.readFileSync(new URL(`../src/${build}/src/background.js`, import.meta.url), 'utf8'),
   panelSource: fs.readFileSync(new URL(`../src/${build}/src/ui/sidepanel.js`, import.meta.url), 'utf8'),
@@ -555,6 +556,56 @@ for (const item of builds) {
     assert.equal(panel.classifyAct({ successfulDone: false, updates, content: 'Changed task failed.' }), false);
     assert.equal(panel.classifyAct({ successfulDone: false, updates: [old] }), false,
       'an explicit current server false overrides the legacy fallback');
+  });
+
+  test(`${item.build}: publication denials and checker exhaustion stay failed through memory classification and reconnect`, async () => {
+    for (const code of ['publication_audit_denied', 'publication_audit_unavailable']) {
+      const events = [
+        { type: 'failure_recovery', data: { stage: 'publication_audit', code,
+          recoveryId: 'owned-recovery', message: 'Failed during the publication check. The draft was not published.' } },
+        { type: 'run_status', data: { status: 'publication_audit_failed' } },
+      ];
+      for (const updates of [events, [events[0]], [events[1]]]) {
+        const h = backgroundHarness(item);
+        h.context.beginRunUiSnapshot(77, 'audit-failed', { mode: 'act', kind: 'continue' });
+        for (const event of updates) h.context.recordRunUiEvent(77, 'audit-failed', event.type, event.data);
+        const message = events[0].data.message;
+        const status = h.context.terminalRunUiStatus(message, updates);
+        assert.equal(status, 'failed', code);
+        assert.equal(h.context.runUpdatesSucceeded(updates), false, 'all three user-memory extraction call sites use this classifier');
+        assert.equal(h.context.askCompletionSucceededForBadge(message, updates), false);
+        const terminal = h.context.finishRunUiSnapshot(77, 'audit-failed', status, message);
+        assert.equal(terminal.runSucceeded, false);
+        await h.context.sendAgentRunComplete(77, terminal);
+        assert.equal(h.messages.at(-1).data.status, 'failed');
+        assert.equal(h.attention.at(-1).success, false);
+        const cold = backgroundHarness(item);
+        const restored = cold.journal.restore(77, JSON.parse(JSON.stringify(item.compactRunUiSnapshotForPersist(h.stored.get(77)))));
+        const replay = await item.runDetachedWithReconnect({
+          initialAction: 'continue_start', payload: { requestId: 'audit-failed' },
+          start: async () => ({ accepted: true, requestId: 'audit-failed' }),
+          probe: async () => ({ submittedTurnDurable: true, runUi: restored }),
+          wait: async () => {}, pollIntervalMs: 0,
+        });
+        assert.equal(replay.success, false);
+        assert.equal(replay.successfulDone, false);
+        assert.equal(restored.status, 'failed');
+        assert.equal(restored.runSucceeded, false);
+      }
+    }
+  });
+
+  test(`${item.build}: publication failure classification preserves fresh successful recovery and explicit Stop`, () => {
+    const h = backgroundHarness(item);
+    const failed = { type: 'failure_recovery', data: { stage: 'publication_audit', code: 'publication_audit_denied' } };
+    const successfulRetry = [{ type: 'tool_result', data: done }];
+    assert.equal(h.context.terminalRunUiStatus('Owned task completed.', successfulRetry), 'completed');
+    assert.equal(h.context.runUpdatesSucceeded(successfulRetry), true);
+    assert.equal(h.context.terminalRunUiStatus('Stopped by user.', [failed]), 'stopped');
+    assert.equal(h.context.terminalRunUiStatus('Stopped before executing requested tool calls.', [failed]), 'cancelled');
+    assert.equal(h.context.terminalRunUiStatus('Details unresolved.', [{ type: 'run_status', data: { status: 'clarification_required' } }]), 'clarification_required');
+    const revised = [failed, { type: 'steering_applied', data: { id: 'corrected-task' } }, ...successfulRetry];
+    assert.equal(h.context.terminalRunUiStatus('Owned task completed.', revised), 'completed');
   });
 
   test(`${item.build}: actual sidebar corrected Ask succeeds only without a current error, limit or Stop`, () => {

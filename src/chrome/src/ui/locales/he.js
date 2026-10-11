@@ -1176,4 +1176,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "הדף השתנה בזמן שהמשימה פעלה ({before} → {after}). ממשיכים במשימה.",
+  'sp.activity.generating_answer': "יוצר תשובה…",
+  'sp.activity.retrying_response': "מנסה שוב להשיב…",
+  'sp.response.incomplete_retrying': "תשובה חלקית · מנסה שוב…",
+  'sp.response.incomplete': "תשובה חלקית",
 };

@@ -1165,4 +1165,8 @@ export default {
   "st.sync.consent.denied": "ไม่ได้รับสิทธิ์การซิงค์ที่เข้ารหัส",
   'st.providers.webgpu_note.body': '{modelLink} runs entirely in Chrome with no API endpoint. Download it in Settings > Providers > WebGPU or Apocalypse Mode, then use the nuclear control in standalone chat.',
   'sp.monitor.navigation': "หน้าเว็บเปลี่ยนระหว่างที่งานกำลังทำงาน ({before} → {after}) งานจะดำเนินต่อ",
+  'sp.activity.generating_answer': "กำลังสร้างคำตอบ…",
+  'sp.activity.retrying_response': "กำลังลองตอบอีกครั้ง…",
+  'sp.response.incomplete_retrying': "คำตอบยังไม่สมบูรณ์ · กำลังลองอีกครั้ง…",
+  'sp.response.incomplete': "คำตอบยังไม่สมบูรณ์",
 };

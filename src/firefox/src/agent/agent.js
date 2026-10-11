@@ -11,17 +11,18 @@ import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confide
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { firefoxBidi } from '../bidi/client.js';
-import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, publicationAuditAccepted } from './social-publish-contract.js';
+import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX } from './tools.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
+import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
 import { calculateExpression, calculationResultInText } from './calculator.js';
 import { isLiteralCalculationTask, literalCalculationSummaryFormatMatches } from './page-feedback-policy.js';
 import { chatRecoveryDisplayText, terminalRecoveryFinalText } from './chat-recovery-text.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
 import { formatErrorMessage } from '../error-format.js';
-import { retryModelCall } from '../providers/model-retry.js';
+import { retryModelCall, retryModelStream } from '../providers/model-retry.js';
 import { isQwenConfig } from '../providers/provider-compatibility.js';
 import { aggregateMessageCompletion } from '../message-info.js';
 import { handleDoneJson } from './cloud-output.js';
@@ -118,7 +119,7 @@ import {
   buildPlannerMessages,
   buildPlannerAlignmentMessages,
   buildPlannerAlignmentRepairMessages,
-  parsePlannerAlignmentFromContent,
+  inspectPlannerAlignmentContent,
   PLANNER_ALIGNMENT_RESPONSE_JSON_SCHEMA,
   buildPlannerIntentMessages,
   buildReadScopeMessages,
@@ -994,6 +995,7 @@ export class Agent extends LoopDetector {
     // Pending clarify() tool calls awaiting user input — see Chrome
     // agent.js. Keyed by tabId → (clarifyId → {resolve, ts}).
     this._pendingClarifications = new Map();
+    this._failureRecovery = new FailureRecoveryRegistry();
     // Explicit, one-use, in-memory approvals for sharing one exact research
     // prompt with the configured engine.
     this._researchEscalationAuthorizations = new Map();
@@ -6234,6 +6236,7 @@ export class Agent extends LoopDetector {
     // Claim synchronously before awaiting the external guard so teacher-mode
     // startup cannot race a run whose persisted teacher-state check is pending.
     this._runningTabs.add(tabId);
+    this._failureRecovery.clear(tabId);
     this._jevSessions?.delete(tabId);
     for (const [id, pending] of this._jevPendingCalls || []) if (pending.tabId === tabId) this._jevPendingCalls.delete(id);
     this._systemOneGenerations ??= new Map();
@@ -6637,6 +6640,128 @@ export class Agent extends LoopDetector {
     return null;
   }
 
+  _failureRecoveryBinding(tabId) {
+    return { tabId, conversationId: this.conversationIds.get(tabId) || '',
+      taskKey: this._progressTaskKeyHash(tabId), taskSignature: this._sha256TextSync(this._progressTaskAnchorText(tabId)) };
+  }
+
+  _pendingFailureRecoveryForUi(tabId) {
+    return this._failureRecovery.current(this._failureRecoveryBinding(tabId))?.descriptor || null;
+  }
+
+  _offerFailureRecovery(tabId, details, onUpdate) {
+    if (this._checkAbort(tabId) || this._hasPendingSteering(tabId)) return null;
+    const binding = this._failureRecoveryBinding(tabId);
+    const recoveryId = 'recovery_' + secureRandomBase36Token(24);
+    const descriptor = { recoveryId, stage: details.stage || 'model',
+      code: details.code || 'request_failed', message: String(details.message || 'The task could not finish.').slice(0,2000),
+      retryMode: details.stage === 'publication_audit' ? 'publication_without_audit' : 'resume',
+      retryLabel: 'Retry', giveUpLabel: 'Give up',
+      ...(details.diagnostics ? { diagnostics: String(details.diagnostics).slice(0,6000) } : {}) };
+    this._failureRecovery.offer({ ...binding,
+      ...(details.publicationKey ? { publicationKey: details.publicationKey,
+        publicationTaskKey: details.taskKey } : {}) }, descriptor);
+    onUpdate?.('failure_recovery', descriptor);
+    const runId = this.currentRunId.get(tabId);
+    if (runId) trace.recordNote(runId, 0, 'failure_recovery_offered', {
+      stage: descriptor.stage, code: descriptor.code, retryMode: descriptor.retryMode });
+    return descriptor;
+  }
+
+  async _recoverPostActionModelFailure(tabId, messages, onUpdate, provider, step, runOptions = {}) {
+    const submit = this._completionSubmitStates.get(tabId);
+    const invariant = this.completionInvariants.get(tabId);
+    if (submit?.dispatched !== true || !invariant?.lastAction || !this._isActionMode(this._effectiveRunMode(tabId))
+        || this._checkAbort(tabId) || this._hasPendingSteering(tabId)) return null;
+    const binding = this._failureRecoveryBinding(tabId);
+    const actionSequence = invariant.lastAction.sequence;
+    const runToken = invariant.runToken;
+    const current = () => {
+      const latestBinding = this._failureRecoveryBinding(tabId);
+      return this.completionInvariants.get(tabId)?.runToken === runToken
+        && this.completionInvariants.get(tabId)?.lastAction?.sequence === actionSequence
+        && binding.taskKey === latestBinding.taskKey
+        && binding.taskSignature === latestBinding.taskSignature
+        && binding.conversationId === latestBinding.conversationId
+        && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId);
+    };
+    if (!current()) return null;
+    onUpdate?.('warning', { message: 'The model request failed after submission. Inspecting the result without repeating the action.' });
+    const frame = this._completionIframeBinding(tabId);
+    const readName = frame?.currentUrl ? 'verify_form' : 'get_accessibility_tree';
+    const readArgs = frame?.currentUrl ? { urlFilter: frame.currentUrl } : { filter: 'visible', maxChars: 6000 };
+    const runReadOnly = async (name, args) => {
+      const id = 'call_recovery_' + secureRandomBase36Token(24);
+      const call = { id, type: 'function', function: { name, arguments: JSON.stringify(args) } };
+      messages.push({ role: 'assistant', content: null, tool_calls: [call] });
+      return this._executeToolBatch(tabId, [call], messages, onUpdate, provider, null,
+        AGENT_TOOL_NAMES, step, runOptions);
+    };
+    try {
+      await runReadOnly(readName, readArgs);
+      if (!current() || this._completionDoneBlock(tabId, 'done', { outcome: 'success' })) return null;
+      const pageUrl = await this._currentUrl(tabId);
+      if (!current()) return null;
+      const summary = /^https:\/\/addons\.mozilla\.org\//i.test(pageUrl)
+        ? 'The AMO version was submitted for review and the submission confirmation was verified.'
+        : 'The requested submission completed and its result was verified.';
+      const result = await runReadOnly('done', { outcome: 'success', summary });
+      if (current() && result?.action === 'return' && !result.status
+          && this._completionVerdicts.get(tabId)?.outcome === 'succeeded') {
+        if (typeof runOptions.afterVerifiedCompletion === 'function') {
+          await this._settleVerifiedScheduledCompletion(tabId, messages, result, {
+            ...runOptions,
+            afterVerifiedCompletion: proof => runOptions.afterVerifiedCompletion({
+              ...proof,
+              isCurrent: () => current() && proof.isCurrent(),
+              refresh: async () => current() && await proof.refresh() && current(),
+            }),
+          });
+          this._throwIfAborted(this._runAbortSignal(tabId));
+          if (!current()) return null;
+        }
+        return { content: result.value, status: 'done' };
+      }
+    } catch (error) {
+      if (this._checkAbort(tabId) || error?.name === 'AbortError' || this._isCostAllowanceError(error)) throw error;
+      const runId = this.currentRunId.get(tabId);
+      if (runId) trace.recordError(runId, step, 'completion_recovery', formatErrorMessage(error), this._traceErrorCodeFor(error));
+    }
+    return null;
+  }
+
+  async _finalModelFailure(tabId, messages, onUpdate, provider, error, step, runOptions = {}) {
+    const runId = this.currentRunId.get(tabId);
+    if (runId) trace.recordError(runId, step, 'model', formatErrorMessage(error), this._traceErrorCodeFor(error));
+    const recovered = await this._recoverPostActionModelFailure(tabId, messages, onUpdate, provider, step, runOptions);
+    if (recovered) return recovered;
+    const postAction = this._completionSubmitStates.get(tabId)?.dispatched === true;
+    const details = modelFailureRecovery(error, { postAction });
+    this._offerFailureRecovery(tabId, details, onUpdate);
+    onUpdate?.('error', { message: details.message });
+    return { content: details.message, status: postAction ? 'partial' : 'error' };
+  }
+
+  requestFailureRecovery(tabId, recoveryId, choice) {
+    if (!['retry', 'give_up'].includes(choice)) return { ok: false, error: 'Invalid recovery choice.' };
+    if (this.isRunning(tabId)) return { ok: false, error: 'Wait for the current run to finish before choosing recovery.' };
+    const offer = this._failureRecovery.current(this._failureRecoveryBinding(tabId));
+    if (!offer || offer.descriptor.recoveryId !== recoveryId) {
+      return { ok: false, error: 'This retry has expired. Start or continue the current task.' };
+    }
+    if (choice === 'retry' && offer.descriptor.retryMode === 'publication_without_audit') {
+      const granted = this._grantSocialPublicationAuditRetry(tabId, { ...offer.binding,
+        taskKey: offer.binding.publicationTaskKey || offer.binding.taskKey });
+      if (granted !== true && granted?.ok !== true) {
+        this._failureRecovery.clear(tabId);
+        return { ok: false, error: granted?.error || 'The publication changed. Verify the current draft before retrying.' };
+      }
+    }
+    if (choice === 'give_up') this._revokeSocialPublicationAuditRetry(tabId);
+    this._failureRecovery.clear(tabId);
+    return { ok: true, continue: choice === 'retry', retryMode: offer.descriptor.retryMode };
+  }
+
   activeRunState(tabId) {
     const persistenceState = this.persistenceDegradedTabs.get(tabId) || null;
     const state = {
@@ -6644,6 +6769,7 @@ export class Agent extends LoopDetector {
       runId: this.currentRunId.get(tabId) || null,
       pendingPlan: null,
       pendingCurrentClarification: this._pendingCurrentClarificationForUi(tabId),
+      pendingFailureRecovery: this._pendingFailureRecoveryForUi(tabId),
       persistenceDegraded: !!persistenceState,
       persistenceDegradedReason: persistenceState?.reason || null,
       researchEscalationSourceTabId: this.researchEscalationSourceTab(tabId),
@@ -12534,6 +12660,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (runId) trace.recordToolCall(runId, step, {
           name: fnName, args: fnArgs, result: workflowPreSubmitBlock, latencyMs: 0,
         });
+        if (workflowPreSubmitBlock.failureRecovery?.stage === 'publication_audit') {
+          const offer = this._offerFailureRecovery(tabId, workflowPreSubmitBlock.failureRecovery, onUpdate);
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+            () => ({ success: false, skipped: true, noDispatch: true, error: 'Paused for a user recovery choice.' }));
+          this._persist(tabId);
+          return { action: 'return', value: offer?.message || workflowPreSubmitBlock.error, status: 'publication_audit_failed' };
+        }
         onUpdate('warning', { message: workflowPreSubmitBlock.error });
         if (workflowPreSubmitBlock.workflowRearmed || workflowPreSubmitBlock.conditionalMutationBlocked) {
           this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
@@ -13142,6 +13275,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               && (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate))) return { steered: true };
             const calculationDispatchBlock = this._pureCalculationToolBlock(tabId, fnName, fnArgs, calculationRequestScope);
             if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock && !calculationDispatchBlock) {
+              if (detectedSubmitAction?.isSubmit === true && detectedSubmitAction.publicationControl === true) {
+                this._consumeSocialPublicationAuditRetry(tabId);
+              }
               if (fnName === 'calculate') this._rememberPureCalculationAttempt(tabId, fnArgs, calculationRequestScope);
               callState.invoked = true;
             }
@@ -13805,6 +13941,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       await settleConsequentialTool();
       this._throwIfAborted(this._runAbortSignal(tabId));
+      if (toolResult?.failureRecovery?.stage === 'publication_audit') {
+        const offer = this._offerFailureRecovery(tabId, toolResult.failureRecovery, onUpdate);
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step,
+          () => ({ success: false, skipped: true, noDispatch: true, error: 'Paused for a user recovery choice.' }));
+        this._persist(tabId);
+        return { action: 'return', value: offer?.message || toolResult.error, status: 'publication_audit_failed' };
+      }
       if ((captchaGateDecision?.status === 'manual_required' || captchaSolveOutcome?.status === 'manual_required')
           && !this._canTryNativeCaptcha(tabId, captchaGateDecision || captchaSolveOutcome)) {
         this._appendSyntheticToolResults(
@@ -16335,6 +16478,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   abort(tabId) {
     for (const id of this._researchEscalationTabIds(tabId)) {
+      this._failureRecovery.clear(id);
+      this._revokeSocialPublicationAuditRetry(id);
       this._ownedNativeChatReadRepairs.delete(id);
       this.abortFlags.set(id, true);
       const controller = this._runAbortStates.get(id)?.controller;
@@ -18693,6 +18838,134 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
+  _socialPublicationChatOptions(provider, retry = false, portable = false, audit = false) {
+    const options = {
+      temperature: 0,
+      maxTokens: Math.min(retry ? 4096 : 2048, this._providerMaxOutputTokens(provider)),
+    };
+    if (!portable) {
+      const config = { ...(provider?.config || {}),
+        providerName: provider?.config?.providerName || provider?.name || '',
+        model: provider?.config?.model || provider?.model || '' };
+      const schema = audit ? { type: 'object', additionalProperties: false,
+        properties: { key: { type: 'string' }, actionId: { type: 'string' },
+          authorized: { type: 'boolean' }, reason: { type: 'string' } },
+        required: ['key', 'actionId', 'authorized', 'reason'] } : null;
+      const controls = plannerRequestBody(config, {
+        schema, schemaName: 'webbrain_social_publication_authorization', disableThinking: true,
+      });
+      if (['anthropic', 'anthropic-oauth', 'google-vertex-anthropic'].includes(provider?.name)) {
+        controls.thinking = { type: 'disabled' };
+      }
+      if (Object.keys(controls).length) options.extraBody = controls;
+    }
+    return options;
+  }
+
+  _socialPublicationOptionsRejected(error) {
+    const text = String(error?.message || error || '');
+    return /response_format|json_schema|reasoning(?:_effort)?|thinking|chat_template_kwargs/i.test(text)
+      && /unsupported|not supported|unknown|unrecognized|not allowed|unexpected|invalid.*(?:parameter|argument)/i.test(text);
+  }
+
+  _socialPublicationRepairMessages(messages) {
+    return this._plannerProtocolRepairMessages(messages,
+      '/no_think\nThe publication checker response was empty, truncated, or invalid. '
+      + 'Recheck the same unchanged authentic task and supplied binding. Return exactly one complete JSON object '
+      + 'matching the documented schema, with the supplied key and actionId when auditing. '
+      + 'No prose, tool calls, Markdown, or reasoning text. This is format repair, not new user permission.');
+  }
+
+  _socialPublicationResponseObject(response, options) {
+    const diagnostics = modelOutputDiagnostics(response, { requestedMaxTokens: options.maxTokens });
+    if (diagnostics.empty) throw new Error(diagnostics.emptyReason || 'empty_response');
+    if (/^(?:length|max_tokens|max_output_tokens|output_limit)$/i.test(diagnostics.finishReason || '')) {
+      throw new Error('truncated_response');
+    }
+    return parsePublicationJson(response?.content);
+  }
+
+  async _socialPublicationCheckerFailure(tabId, phase, attempt, error, validation = false) {
+    const runId = this.currentRunId.get(tabId);
+    if (!runId) return;
+    if (!validation) {
+      await this._tracePlannerAttemptFailure(runId, phase, attempt, error, 'publication_checker_failed');
+      return;
+    }
+    try {
+      await trace.recordNote(runId, 0, 'publication_checker_validation_failed', {
+        phase, attempt, validationFailure: String(error?.message || error).slice(0, 600),
+      });
+      await trace.recordError(runId, 0, 'publication_checker_invalid_response', String(error?.message || error).slice(0, 600));
+    } catch {}
+  }
+
+  _grantSocialPublicationAuditRetry(tabId, binding) {
+    const liveGuard = this._planExecutionGuards.get(tabId);
+    const carried = this._continuationExecutionEvidence.get(tabId);
+    // Settled runs release the live guard. The app-owned continuation snapshot
+    // retains the publication binding for the user's later recovery choice.
+    const guard = liveGuard || (carried?.requestKind === 'execute'
+      && carried.conversationId === (this.conversationIds.get(tabId) || null) ? carried : null);
+    const social = guard?.socialPublication;
+    const action = this._socialPublicationAction(guard);
+    if (!(liveGuard ? guard?.enabled : guard?.requestKind === 'execute') || guard.taskKey !== binding?.taskKey
+        || this._hasPendingSteering(tabId)
+        || !social || social.needsRecompile || !action || !binding?.publicationKey
+        || social.deniedAuditKey !== binding.publicationKey
+        || !publicationProgress(social.contract, social.outcomes).eligible.includes(action.id)
+        || social.retryBypassUsed?.[binding.publicationKey] || social.retryBypass) return false;
+    social.retryBypass = { key: binding.publicationKey, taskKey: guard.taskKey,
+      contractKey: social.key, actionId: action.id, consumed: false };
+    social.retryAuthorizationTaskKey = this._progressTaskKeyHash(tabId);
+    social.retryAuthorizationTaskSignature = this._sha256TextSync(this._progressTaskAnchorText(tabId));
+    if (liveGuard) this._storeContinuationExecutionEvidence(tabId);
+    return true;
+  }
+
+  _revokeSocialPublicationAuditRetry(tabId) {
+    let revoked = false;
+    const states = new Set([
+      this._planExecutionGuards.get(tabId)?.socialPublication,
+      this._continuationExecutionEvidence.get(tabId)?.socialPublication,
+    ]);
+    for (const social of states) {
+      if (!social?.retryBypass || social.retryBypass.consumed) continue;
+      const key = social.retryBypass.key;
+      social.retryBypass = null;
+      delete social.retryAuthorizationTaskKey;
+      delete social.retryAuthorizationTaskSignature;
+      if (social.dispatch?.auditBypassed && social.dispatch.key === key
+          && !social.outcomes?.[social.dispatch.actionId]) social.dispatch = null;
+      revoked = true;
+    }
+    return revoked;
+  }
+
+  _consumeSocialPublicationAuditRetry(tabId) {
+    const social = this._planExecutionGuards.get(tabId)?.socialPublication;
+    if (!social?.dispatch?.auditBypassed || !social.retryBypass
+        || social.retryBypass.key !== social.dispatch.key || social.retryBypass.consumed) return;
+    social.retryBypass.consumed = true;
+    (social.retryBypassUsed ||= {})[social.retryBypass.key] = true;
+  }
+
+  _continuedSocialPublicationState(social, retryTaskKey = null) {
+    if (!social) return null;
+    const next = structuredClone(social);
+    if (retryTaskKey && next.retryBypass && !next.retryBypass.consumed) {
+      next.retryBypass.taskKey = retryTaskKey;
+    }
+    // Ordinary trusted Continue can repair a technical outage on a new run.
+    // A semantic denial and an explicit one-use Retry grant keep their binding.
+    if (!next.retryBypass && !next.dispatch
+        && ['invalid_response', 'unavailable'].includes(next.deniedAudit?.status)) {
+      delete next.deniedAudit;
+      delete next.deniedAuditKey;
+    }
+    return next;
+  }
+
   async _ensureSocialPublicationContract(tabId, provider = this._activeProvider(tabId)) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled) return null;
@@ -18715,14 +18988,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return state;
     }
     const messages = publicationContractMessages(sources, context);
+    let portable = false;
     for (let attempt = 0; attempt < 2; attempt++) {
+      const requestMessages = attempt ? this._socialPublicationRepairMessages(messages) : messages;
+      const options = this._socialPublicationChatOptions(provider, attempt > 0, portable);
+      const runId = this.currentRunId.get(tabId);
+      const startedAt = Date.now();
+      let received = false;
       try {
-        const response = await this._chatWithCostAllowance(provider, messages, {
-          temperature: 0, maxTokens: Math.min(4096, this._providerMaxOutputTokens(provider)),
-        }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_contract' });
+        await this._tracePlannerAttemptRequest(runId, 0, provider, requestMessages,
+          'social_publication_contract', attempt + 1, this._effectiveRunMode(tabId), options);
+        const response = await this._chatWithCostAllowance(provider, requestMessages, options,
+          this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_contract' });
+        received = true;
+        await this._tracePlannerAttemptResponse(runId, 0, provider, response,
+          'social_publication_contract', attempt + 1, startedAt, options);
         if (this._planExecutionGuards.get(tabId) !== guard || this._checkAbort(tabId)) return null;
         if (guard.socialPublication !== state || state.needsRecompile) return this._ensureSocialPublicationContract(tabId, provider);
-        state.contract = normalizePublicationContract(Agent._extractFirstJsonObject(response?.content || ''), sources);
+        if (this._hasPendingSteering(tabId)) return null;
+        state.contract = normalizePublicationContract(this._socialPublicationResponseObject(response, options), sources);
         // A clarification invalidates authorization, not the uploads already
         // bound to an unchanged, unattempted action. Preserve its binding only
         // when all normalized action constraints match (IDs may be regenerated).
@@ -18736,8 +19020,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return state;
       } catch (error) {
         if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
-        state.error = 'Publication intent is incomplete or ambiguous. Clarify the request before publishing.';
-        if (attempt === 0) messages.push({ role: 'user', content: 'The contract failed strict validation. Return a complete valid object using only the documented schema and exact unique source anchors. If any requirement cannot be represented, return status=clarify with no actions. Do not guess.' });
+        await this._socialPublicationCheckerFailure(tabId, 'social_publication_contract', attempt + 1, error, received);
+        if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== state
+            || state.needsRecompile || this._hasPendingSteering(tabId)) return null;
+        state.error = 'Failed while reading the publication request. The checker could not return a complete result; the draft was not published.';
+        state.errorKind = 'technical';
+        if (this._socialPublicationOptionsRejected(error)) portable = true;
       }
     }
     return state;
@@ -18954,41 +19242,102 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           + '. Resolve publicationValidation before retrying. For body_mismatch, use the exact contract body; preserve every space and line break. A pending text write must first be verified or restored.'),
         publicationValidation: { issues } };
     }
-    const key = this._sha256TextSync(JSON.stringify({ contract: social.key, action, snapshot, pageUrl }));
-    if (social.deniedAuditKey === key) return blocked('This unchanged publication did not pass authorization. Use publicationAudit to resolve the stated issue through clarify; do not rewrite a matching draft or retry another click target.');
+    const documentIdentity = detected.frameDocumentIdentity || '';
+    const frameId = Number.isInteger(detected.frameId) ? detected.frameId : 0;
+    const taskKey = guard.taskKey;
+    const key = this._sha256TextSync(JSON.stringify({ contract: social.key, action, snapshot, pageUrl, documentIdentity, frameId }));
+    const auditBlocked = () => {
+      const denied = social.deniedAudit?.status === 'denied';
+      const message = denied
+        ? 'Failed during the publication check: ' + (social.deniedAudit.reason || 'The checker could not confirm this post matches your request.') + ' Your draft was not published.'
+        : 'Failed during the publication check. The checker could not return a valid result, so your draft was not published.';
+      return { ...blocked(message), failureRecovery: {
+        stage: 'publication_audit', code: denied ? 'publication_audit_denied' : 'publication_audit_unavailable',
+        taskKey: guard.taskKey, publicationKey: key, message,
+        retryMode: 'publication_audit_bypass', retryDescription: 'Retry this unchanged draft without the publication audit.',
+        diagnostics: social.deniedAudit?.validationFailure || social.deniedAudit?.reason || '',
+      } };
+    };
+    const bypass = social.retryBypass;
+    const bypassMatches = bypass?.key === key && bypass.taskKey === guard.taskKey
+      && bypass.contractKey === social.key && bypass.actionId === action.id;
+    if (bypass && !bypassMatches) {
+      social.retryBypass = null;
+      return blocked('The draft, account, or page changed after Retry. Read the current draft and run a new publication check.');
+    }
+    if (bypassMatches && (bypass.consumed || social.retryBypassUsed?.[key])) {
+      return blocked('This publication Retry was already used. Verify the previous attempt before trying to publish again.');
+    }
+    if (social.deniedAuditKey === key && !bypassMatches) return auditBlocked();
     if (social.dispatch?.key !== key) {
-      try {
-        const response = await this._chatWithCostAllowance(provider || this._activeProvider(tabId),
-          publicationAuditMessages(social.sources, social.contract, action, snapshot, key, social.context), {
-            temperature: 0, maxTokens: 800,
-          }, this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_authorization' });
-        if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
-            || social.needsRecompile || this._checkAbort(tabId)) {
-          return blocked('Publication context changed during authorization.');
+      if (!bypassMatches) {
+        const auditProvider = provider || this._activeProvider(tabId);
+        const messages = publicationAuditMessages(social.sources, social.contract, action, snapshot, key, social.context);
+        let portable = false;
+        let authorized = false;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const requestMessages = attempt ? this._socialPublicationRepairMessages(messages) : messages;
+          const options = this._socialPublicationChatOptions(auditProvider, attempt > 0, portable, true);
+          const runId = this.currentRunId.get(tabId);
+          const startedAt = Date.now();
+          let received = false;
+          try {
+            await this._tracePlannerAttemptRequest(runId, 0, auditProvider, requestMessages,
+              'social_publication_authorization', attempt + 1, this._effectiveRunMode(tabId), options);
+            const response = await this._chatWithCostAllowance(auditProvider, requestMessages, options,
+              this.currentCostState.get(tabId) || null, { tabId, generationName: 'social_publication_authorization' });
+            received = true;
+            await this._tracePlannerAttemptResponse(runId, 0, auditProvider, response,
+              'social_publication_authorization', attempt + 1, startedAt, options);
+            if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
+                || social.needsRecompile || this._checkAbort(tabId) || this._hasPendingSteering(tabId)
+                || guard.taskKey !== taskKey) {
+              return blocked('Publication context changed during authorization.');
+            }
+            const verdict = publicationAuditValidation(this._socialPublicationResponseObject(response, options), key, action.id);
+            if (!verdict.valid) throw new Error(verdict.failure);
+            if (!verdict.authorized) {
+              social.deniedAuditKey = key;
+              social.deniedAudit = { status: 'denied', reason: verdict.reason };
+              return auditBlocked();
+            }
+            authorized = true;
+            delete social.deniedAudit;
+            delete social.deniedAuditKey;
+            break;
+          } catch (error) {
+            if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+            await this._socialPublicationCheckerFailure(tabId, 'social_publication_authorization', attempt + 1, error, received);
+            if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social
+                || social.needsRecompile || this._hasPendingSteering(tabId)
+                || guard.taskKey !== taskKey) {
+              return blocked('Publication context changed during authorization.');
+            }
+            social.deniedAuditKey = key;
+            social.deniedAudit = { status: received ? 'invalid_response' : 'unavailable',
+              reason: received ? 'The publication checker returned an invalid or mismatched authorization response.'
+                : 'The selected provider could not complete the publication check.',
+              validationFailure: String(error?.message || error).slice(0, 600) };
+            if (this._socialPublicationOptionsRejected(error)) portable = true;
+          }
         }
-        const audit = Agent._extractFirstJsonObject(response?.content || '');
-        if (!publicationAuditAccepted(audit, key, action.id)) {
-          social.deniedAuditKey = key;
-          const validDenial = audit?.authorized === false && publicationAuditAccepted({ ...audit, authorized: true }, key, action.id);
-          social.deniedAudit = validDenial
-            ? { status: 'denied', reason: audit.reason }
-            : { status: 'invalid_response', reason: 'The publication checker returned an invalid or mismatched authorization response.' };
-          return blocked('The selected provider could not confirm this publication. Use publicationAudit to resolve the stated issue through clarify; do not rewrite a matching draft or retry another click target.');
-        }
-      } catch (error) {
-        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
-        return blocked('Publication authorization could not be verified with the selected provider.');
+        if (!authorized) return auditBlocked();
       }
-      social.dispatch = { key, actionId: action.id, snapshot: JSON.parse(JSON.stringify(snapshot)), pageUrl };
+      social.dispatch = { key, actionId: action.id, snapshot: JSON.parse(JSON.stringify(snapshot)), pageUrl,
+        documentIdentity, frameId, ...(bypassMatches ? { auditBypassed: true } : {}) };
     }
     // The semantic check can take time. Re-read the same target afterward;
     // neither a changed draft/account nor a navigated document inherits it.
     const fresh = await this._detectLikelySubmitAction(tabId, name, args);
     if (this._planExecutionGuards.get(tabId) !== guard || guard.socialPublication !== social || social.needsRecompile
+        || this._checkAbort(tabId) || this._hasPendingSteering(tabId) || guard.taskKey !== taskKey
         || fresh?.isSubmit !== true || fresh.publicationControl !== true || fresh.publicationResourceUrlsComplete !== true
+        || (fresh.frameDocumentIdentity || '') !== documentIdentity
+        || (Number.isInteger(fresh.frameId) ? fresh.frameId : 0) !== frameId
         || JSON.stringify(this._socialPublicationSnapshot(guard, fresh.publicationSnapshot)) !== JSON.stringify(snapshot)
         || this._normalizeUrl(await this._currentUrl(tabId)) !== this._normalizeUrl(pageUrl)) {
       social.dispatch = null;
+      if (bypassMatches) social.retryBypass = null;
       return blocked('The composer or publication target changed during verification. Read the current draft before trying again.');
     }
     Object.assign(detected, fresh);
@@ -20013,6 +20362,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     if (!gate.proceed) {
+      if (gate.failureRecovery || gate.requestKind === 'failed') {
+        this._offerFailureRecovery(tabId, gate.failureRecovery || {
+          stage: 'plan_alignment', code: gate.reason || 'planning_failed',
+          message: gate.message || 'Failed during planning. No actions were started.',
+        }, onUpdate);
+      }
       messages.push(this._plannerTerminalAssistantMessage(
         gate, tabInfo, this._progressTaskAnchorText(tabId), this._progressTaskKeyHash(tabId),
       ));
@@ -20098,13 +20453,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _plannerChatOptions(provider, retry = false, intentOnly = false, schemaKind = null, portable = false) {
-    const plannerBudget = intentOnly ? 2048 : 4096;
+    const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
+    const plannerBudget = kind === 'alignment' ? (retry ? 4096 : 2048) : (intentOnly ? 2048 : 4096);
     const opts = {
       temperature: retry ? 0.1 : 0.3,
       maxTokens: Math.min(this._providerMaxOutputTokens(provider), plannerBudget),
     };
     if (!portable) {
-      const kind = schemaKind || (intentOnly ? 'intent' : 'planner');
       const schema = kind === 'alignment'
         ? PLANNER_ALIGNMENT_RESPONSE_JSON_SCHEMA
         : kind === 'read_scope'
@@ -20120,7 +20475,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const extraBody = plannerRequestBody(plannerConfig, {
         schema,
         schemaName: `webbrain_${kind}`,
-        includeResponseFormat: !retry,
+        includeResponseFormat: kind === 'alignment' || !retry,
         disableThinking: true,
       });
       if (Object.keys(extraBody).length) opts.extraBody = extraBody;
@@ -20135,7 +20490,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return resolveMaxOutputTokens(config, fallback);
   }
 
-  async _tracePlannerAttemptRequest(runId, step, provider, messages, phase, attempt, runtimeMode) {
+  async _tracePlannerAttemptRequest(runId, step, provider, messages, phase, attempt, runtimeMode, chatOptions = {}) {
     if (!runId) return;
     try {
       await trace.recordLLMRequest(runId, step, {
@@ -20146,6 +20501,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...Agent._traceMediaCounts(messages),
         phase,
         attempt,
+        ...(Number.isFinite(chatOptions.maxTokens) ? { requestedMaxTokens: chatOptions.maxTokens } : {}),
+        ...(chatOptions.extraBody ? { requestControls: Object.keys(chatOptions.extraBody) } : {}),
         ...(attempt > 1 ? { repair: true } : {}),
       }, {
         messages,
@@ -20155,7 +20512,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch {}
   }
 
-  async _tracePlannerAttemptResponse(runId, step, provider, result, phase, attempt, startedAt) {
+  async _tracePlannerAttemptResponse(runId, step, provider, result, phase, attempt, startedAt, chatOptions = {}) {
     if (!runId) return;
     try {
       await trace.recordLLMResponse(runId, step, {
@@ -20166,12 +20523,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         model: provider?.model,
         phase,
         attempt,
+        ...modelOutputDiagnostics(result, { requestedMaxTokens: chatOptions.maxTokens, recoveryAttempt: attempt - 1 }),
         ...(attempt > 1 ? { repair: true } : {}),
       });
     } catch {}
   }
 
-  async _tracePlannerAttemptFailure(runId, phase, attempt, error) {
+  async _tracePlannerAttemptFailure(runId, phase, attempt, error, code = 'planner_request_failed') {
     if (!runId) return;
     try {
       const detail = sanitizePlannerText(
@@ -20183,7 +20541,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         phase,
         attempt,
         failureKind: plannerRequestFailureKind(detail),
+        detail,
+        code,
       });
+      await trace.recordError(runId, 0, phase, detail, code);
     } catch {}
   }
 
@@ -21264,12 +21625,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let alignmentReplanned = false;
       if (historyDigest || followUpContext.priorUserTask || followUpContext.scratchpadFacts) {
         let aligned = false;
+        let alignmentFailure = null;
+        let alignmentDenialReason = '';
+        let alignmentRequestAttempt = 0;
         try {
-          for (let alignmentAttempt = 1; alignmentAttempt <= 2; alignmentAttempt += 1) {
+          for (let candidateAttempt = 1; candidateAttempt <= 2; candidateAttempt += 1) {
             if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
             if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
               return { proceed: false, steeringSuperseded: true };
             }
+            // Freeze this candidate and its authority for format recovery. A
+            // checker protocol error never requests a different execution plan.
             const taskBinding = `plan_alignment_${secureRandomBase36Token(24)}`;
             const alignmentMessages = buildPlannerAlignmentMessages(followUpContext.authenticTaskText || this._plannerUserAuthoredText(enriched), plan, {
               taskBinding, historyDigest,
@@ -21277,42 +21643,97 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               scratchpadFacts: followUpContext.scratchpadFacts,
               independentTask: runOptions?.independentRun === true,
             });
-            await this._tracePlannerAttemptRequest(
-              runId, plannerStep, provider, alignmentMessages, 'planner_alignment', alignmentAttempt, runtimeMode,
-            );
-            const alignmentStartedAt = Date.now();
-            plannerRequestInFlight = true;
-            const alignmentResult = await this._chatWithCostAllowance(
-              provider, alignmentMessages,
-              { ...this._plannerChatOptions(provider, false, false, 'alignment'), temperature: 0,
-                maxTokens: Math.min(this._providerMaxOutputTokens(provider), 256) },
-              costState, { tabId, generationName: 'planner_alignment' },
-            );
-            plannerRequestInFlight = false;
-            await this._tracePlannerAttemptResponse(
-              runId, plannerStep, provider, alignmentResult, 'planner_alignment', alignmentAttempt, alignmentStartedAt,
-            );
-            if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
-            if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
-              return { proceed: false, steeringSuperseded: true };
+            let verdict = null;
+            let portable = false;
+            for (let checkerAttempt = 1; checkerAttempt <= 2; checkerAttempt += 1) {
+              if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+              if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+                return { proceed: false, steeringSuperseded: true };
+              }
+              const requestMessages = checkerAttempt === 1 ? alignmentMessages
+                : this._plannerProtocolRepairMessages(alignmentMessages,
+                  'Format recovery: the previous checker response did not contain a complete valid verdict. ' +
+                  'Check the unchanged current_request and proposed_plan below. Copy task_binding exactly. ' +
+                  'Return only one JSON object with task_binding, boolean aligned, and a brief nonempty reason. ' +
+                  'Do not output prose, tool calls, or reasoning text.');
+              const chatOptions = { ...this._plannerChatOptions(provider, checkerAttempt > 1, false, 'alignment', portable),
+                temperature: 0 };
+              alignmentRequestAttempt += 1;
+              await this._tracePlannerAttemptRequest(
+                runId, plannerStep, provider, requestMessages, 'planner_alignment', alignmentRequestAttempt, runtimeMode, chatOptions,
+              );
+              const alignmentStartedAt = Date.now();
+              let alignmentResult;
+              try {
+                plannerRequestInFlight = true;
+                alignmentResult = await this._chatWithCostAllowance(
+                  provider, requestMessages, chatOptions,
+                  costState, { tabId, generationName: 'planner_alignment' },
+                );
+              } catch (error) {
+                if (this._isCostAllowanceError(error)) throw error;
+                if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+                if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+                  return { proceed: false, steeringSuperseded: true };
+                }
+                await this._tracePlannerAttemptFailure(runId, 'planner_alignment', alignmentRequestAttempt, error);
+                alignmentFailure = 'request_failed';
+                const detail = formatErrorMessage(error, { fallback: '' });
+                const controlsRejected = chatOptions.extraBody && Object.keys(chatOptions.extraBody).length > 0
+                  && /unsupported|not supported|unrecognized|unknown|not allowed|invalid (?:parameter|argument)/i.test(detail)
+                  && /response_format|json_schema|reasoning|thinking|chat_template_kwargs/i.test(detail);
+                if (checkerAttempt === 1 && controlsRejected) {
+                  portable = true;
+                  continue;
+                }
+                break;
+              } finally {
+                plannerRequestInFlight = false;
+              }
+              await this._tracePlannerAttemptResponse(
+                runId, plannerStep, provider, alignmentResult, 'planner_alignment', alignmentRequestAttempt, alignmentStartedAt, chatOptions,
+              );
+              if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
+              if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
+                return { proceed: false, steeringSuperseded: true };
+              }
+              const inspection = inspectPlannerAlignmentContent(alignmentResult.content, taskBinding);
+              const diagnostics = modelOutputDiagnostics(alignmentResult, { requestedMaxTokens: chatOptions.maxTokens });
+              const truncated = /^(?:length|max_tokens|max_output_tokens|output_limit)$/i.test(diagnostics.finishReason || '');
+              verdict = truncated ? null : inspection.verdict;
+              alignmentFailure = verdict ? null : (diagnostics.emptyReason || (truncated ? 'truncated_response' : inspection.failure));
+              if (verdict) break;
+              try {
+                if (runId) await trace.recordNote(runId, plannerStep, 'planner_alignment_validation_failed', {
+                  attempt: alignmentRequestAttempt, candidateAttempt, validationFailure: alignmentFailure,
+                });
+              } catch {}
+              await this._tracePlannerAttemptFailure(runId, 'planner_alignment', alignmentRequestAttempt,
+                new Error(`Plan alignment checker returned an invalid verdict (${alignmentFailure}).`),
+                'planner_alignment_invalid_response');
+              if (checkerAttempt === 1) {
+                onUpdate('thinking', { step: plannerStep, note: 'Planning… retrying the plan check' });
+              }
             }
-            const verdict = parsePlannerAlignmentFromContent(alignmentResult.content, taskBinding);
+            if (!verdict) break;
             if (verdict?.aligned === true) { aligned = true; break; }
-            if (alignmentAttempt === 2) break;
+            alignmentDenialReason = verdict.reason;
+            if (candidateAttempt === 2) break;
             const alignmentRepairMessages = buildPlannerAlignmentRepairMessages(plannerMessages);
             onUpdate('thinking', { step: plannerStep, note: 'Planning… rechecking the current task' });
+            const repairOptions = this._plannerChatOptions(provider, true);
             await this._tracePlannerAttemptRequest(
-              runId, plannerStep, provider, alignmentRepairMessages, 'planner_alignment_repair', 1, runtimeMode,
+              runId, plannerStep, provider, alignmentRepairMessages, 'planner_alignment_repair', 1, runtimeMode, repairOptions,
             );
             const alignmentRepairStartedAt = Date.now();
             plannerRequestInFlight = true;
             const repaired = await this._chatWithCostAllowance(
-              provider, alignmentRepairMessages, this._plannerChatOptions(provider, true),
+              provider, alignmentRepairMessages, repairOptions,
               costState, { tabId, generationName: 'planner' },
             );
             plannerRequestInFlight = false;
             await this._tracePlannerAttemptResponse(
-              runId, plannerStep, provider, repaired, 'planner_alignment_repair', 1, alignmentRepairStartedAt,
+              runId, plannerStep, provider, repaired, 'planner_alignment_repair', 1, alignmentRepairStartedAt, repairOptions,
             );
             if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
             if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
@@ -21320,7 +21741,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             }
             plan = parsePlanFromContent(repaired.content, plannerParseOptions);
             if (!plan
-                || this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) break;
+                || this._plannerIntentUnresolvedConsistencyIssue(plan, consistencyRepairKind, followUpContext)) {
+              alignmentFailure = 'invalid_replacement_plan';
+              break;
+            }
             alignmentReplanned = true;
             // A validated correction can remove execution entirely. Preserve
             // its normal terminal route without pinning or approving a plan.
@@ -21331,15 +21755,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           plannerRequestInFlight = false;
           if (this._isCostAllowanceError(alignmentError)) throw alignmentError;
           if (this._checkAbort(tabId)) return { proceed: false, message: '[Stopped by user]' };
-          await this._tracePlannerAttemptFailure(runId, 'planner_alignment', 1, alignmentError);
+          alignmentFailure = 'request_failed';
+          await this._tracePlannerAttemptFailure(runId, 'planner_alignment', alignmentRequestAttempt || 1, alignmentError);
         }
         if (!aligned) {
           if (this._hasPendingSteering(tabId) || this._steeringGateSuperseded(tabId, runOptions)) {
             return { proceed: false, steeringSuperseded: true };
           }
-          const message = 'The proposed plan failed alignment with your current task. No actions were started; please retry the task.';
+          const failureDescription = alignmentFailure === 'reasoning_only'
+            ? 'the checker returned reasoning without a verdict.'
+            : (alignmentFailure === 'provider_empty' || alignmentFailure === 'empty_response')
+              ? 'the checker returned no verdict.'
+            : (alignmentFailure === 'output_limit' || alignmentFailure === 'truncated_response')
+              ? 'the checker ran out of response space before returning a verdict.'
+              : alignmentFailure === 'binding_mismatch'
+                ? 'the checker returned a verdict for a different plan.'
+                : alignmentFailure === 'request_failed'
+                  ? 'the checker could not complete its request to the model provider.'
+                  : 'the checker returned an unreadable verdict.';
+          const reason = alignmentFailure ? 'task_alignment_unverified' : 'task_alignment_rejected';
+          const message = alignmentFailure
+            ? `Failed while checking the plan against your task: ${failureDescription} No actions were started.`
+            : `Failed while checking the plan against your task: the proposed plan did not match your request. ${alignmentDenialReason} No actions were started.`;
           onUpdate('warning', { message });
-          return { proceed: false, message, reason: 'task_alignment_unverified', requestKind: 'failed' };
+          return { proceed: false, message, reason, requestKind: 'failed',
+            failureRecovery: { stage: 'plan_alignment', code: reason, message } };
         }
       }
       if (alignmentReplanned) {
@@ -21939,6 +22379,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let finalResponse = '';
     let status = 'done';
     let quotaFailure = false;
+    let recoveryDetails = null;
     try {
       finalResponse = await this._generateContextOnlyResponse(
         tabId, messages, provider, costState, runId,
@@ -21952,7 +22393,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       status = this._isCostAllowanceError(error) ? 'cost_limit' : 'error';
       finalResponse = this._isCostAllowanceError(error)
         ? error.message
-        : `I could not generate the requested response: ${formatErrorMessage(error)}`;
+        : (recoveryDetails = modelFailureRecovery(error, { phase: 'response_generation' })).message;
     }
     const stopped = this._consumeContextOnlyAbort(tabId, messages, onUpdate);
     if (stopped) return stopped;
@@ -21961,8 +22402,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._hasPendingSteering(tabId)) return { content: '', status: 'steering_superseded' };
     if (!finalResponse) {
       status = 'empty_output';
-      finalResponse = 'I could not generate a usable response from the existing conversation context.';
+      finalResponse = 'Failed while generating the response. The model returned no usable text. You can retry from the current state.';
+      recoveryDetails = { stage: 'response_generation', code: 'empty_response', message: finalResponse };
     }
+    if (recoveryDetails && !quotaFailure) this._offerFailureRecovery(tabId, recoveryDetails, onUpdate);
     messages.push({ role: 'assistant', content: finalResponse });
     onUpdate('text', { content: finalResponse, replace: true });
     if (status !== 'done' && !quotaFailure) onUpdate('error', { message: finalResponse });
@@ -22013,6 +22456,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : stopMessage;
     messages.push({ role: 'assistant', content: finalResponse });
     onUpdate('text', { content: finalResponse, replace: true });
+    if (runOptions?.cloudRun !== true) this._offerFailureRecovery(tabId, {
+      stage: 'browser_interaction', code: 'interaction_loop',
+      message: 'Failed during browser interaction because the same step kept repeating. Retry will continue from the current page.' }, onUpdate);
     onUpdate('error', {
       message: recovered
         ? 'Browser interaction stopped before completion; a recoverable partial result is shown above.'
@@ -24466,6 +24912,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tool: name,
           reason: String(detected.reason || 'likely form submission').slice(0, 200),
           validationSubmitEvidence: detected.validationSubmitEvidence === 'strong' ? 'strong' : 'heuristic',
+          frameDocumentIdentity: String(detected.frameDocumentIdentity || '').slice(0, 8192),
           ...(name === 'iframe_click' ? { frameId: detected.frameId,
             frameUrl: String(detected.url || '').slice(0, 8192),
             frameDocumentIdentity: sameFrameDocument ? frameBaseline.identity : '',
@@ -26726,6 +27173,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Clear conversation for a tab.
    */
   clearConversation(tabId) {
+    this._failureRecovery.clear(tabId);
     this._cancelClarifications(tabId, 'conversation cleared');
     this._cancelUploadPickers(tabId, 'conversation cleared');
     this._cancelPendingPlans(tabId, 'conversation cleared');
@@ -30298,7 +30746,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._continuationExecutionEvidence.get(tabId)
       : null;
     this._continuationExecutionEvidence.delete(tabId);
-    const carryScopeMatches = enabled
+    const carryScopeCompatible = enabled
       && carried?.requestKind === 'execute'
       && carried.requiresStateChange === requiresStateChange
       && carried.requiresSubmission === requiresSubmission
@@ -30310,8 +30758,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && carried.requiredSchedulingTool === requiredSchedulingTool
       && JSON.stringify(carried.siteWorkflow || null) === JSON.stringify(siteWorkflow || null)
       && JSON.stringify(carried.conditionalSiteWorkflow || null) === JSON.stringify(gateOutcome.conditionalSiteWorkflow || null)
-      && carried.taskKey === taskKey
       && carried.conversationId === (this.conversationIds.get(tabId) || null);
+    const carryScopeMatches = carryScopeCompatible && carried.taskKey === taskKey;
+    const carrySocialRetryAuthorization = carryScopeCompatible
+      && requiresSubmission === true && requiresStateChange === true
+      && carried.socialPublication?.retryAuthorizationTaskKey === taskKey
+      && carried.socialPublication.retryAuthorizationTaskSignature === this._sha256TextSync(this._progressTaskAnchorText(tabId))
+      && carried.socialPublication.retryBypass?.consumed === false
+      && !Object.keys(carried.socialPublication.outcomes || {}).length;
     const carryMatches = carryScopeMatches && carried.evidenceTaskKey === taskKey;
     // Human recipient grants are task authorization, not execution evidence.
     // They can survive Continue even when the last step only approved a send.
@@ -30370,10 +30824,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? (carried.successfulRequiredSchedulingToolCalls || 0)
         : 0,
       verifiedSubmissionEvidence: carryMatches && carried.verifiedSubmissionEvidence === true,
-      socialPublication: carryMatches && carried.socialPublication ? structuredClone(carried.socialPublication) : null,
-      socialPublicationClarifications: carryMatches && carried.socialPublicationClarifications
+      // Frozen publication intent and human Retry grants are authorization,
+      // independent of whether this run produced successful execution evidence.
+      socialPublication: carryScopeMatches || carrySocialRetryAuthorization
+        ? this._continuedSocialPublicationState(carried.socialPublication, carrySocialRetryAuthorization ? taskKey : null) : null,
+      socialPublicationClarifications: (carryScopeMatches || carrySocialRetryAuthorization) && carried.socialPublicationClarifications
         ? structuredClone(carried.socialPublicationClarifications) : [],
-      socialPublicationSteering: carryMatches && carried.socialPublicationSteering
+      socialPublicationSteering: (carryScopeMatches || carrySocialRetryAuthorization) && carried.socialPublicationSteering
         ? structuredClone(carried.socialPublicationSteering) : null,
       socialPublishSatisfiedTargets: carryMatches && Array.isArray(carried.socialPublishSatisfiedTargets)
         ? [...carried.socialPublishSatisfiedTargets]
@@ -30819,6 +31276,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && (guard.messageRecipientApprovedAll === true || (guard.approvedRecipients || []).length > 0);
     if (guard?.enabled && !guard.taskDrifted && (
       hasRecipientAuthorization
+      || guard.socialPublication?.contract?.status === 'ready'
       || guard.successfulTaskToolCalls > 0
       || guard.successfulConsequentialToolCalls > 0
       || guard.pendingDownloadIds.length > 0
@@ -39271,9 +39729,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ...this._interactiveAskStreamingFailure(error),
         });
         if (this._isCostAllowanceError(error)) throw error;
-        if (emittedText) onUpdate('text', { content: '', replace: true });
-        if (!fallbackSafe) throw error;
+        if (!fallbackSafe) {
+          if (emittedText) onUpdate('text', { content: '', replace: true });
+          throw error;
+        }
         askStreamingDisabledForRun = true;
+        // A transport interruption does not invalidate already delivered
+        // prose. Keep it visibly incomplete while regenerating this same
+        // source-grounded turn; explicit invalid-response resets still clear.
+        onUpdate('response_retry', { reason: 'stream_interrupted', retainPartial: emittedText });
         onUpdate('warning', {
           code: 'ask_stream_fallback',
           message: 'Response streaming was interrupted; retrying this Ask turn without streaming.',
@@ -39569,8 +40033,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             traceFailureCode = retryCode;
             _traceStatus = 'error';
             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: retryCode });
-            onUpdate('error', { message: `Context still too large after trimming: ${e2.message}` });
             finalResponse = 'The conversation got too long. Please start a new conversation (click the + button).';
+            this._offerFailureRecovery(tabId, { stage: 'model', code: 'context_window_exceeded',
+              message: 'Failed while preparing the model context. The conversation is too large. Retry will use the current trimmed context.',
+              diagnostics: e2.message }, onUpdate);
+            onUpdate('error', { message: finalResponse });
             messages.push({ role: 'assistant', content: finalResponse });
             break;
           }
@@ -39579,8 +40046,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             traceFailureCode = this._traceErrorCodeFor(e);
             _traceStatus = 'error';
             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
-            onUpdate('error', { message: e.message });
-            finalResponse = `Error communicating with LLM: ${e.message}`;
+            const recovery = await this._finalModelFailure(tabId, messages, onUpdate, provider, e, steps, runOptions);
+            _traceStatus = recovery.status;
+            finalResponse = recovery.content;
             messages.push({ role: 'assistant', content: finalResponse });
             break;
           }
@@ -39619,8 +40087,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             traceFailureCode = this._traceErrorCodeFor(e2);
             _traceStatus = 'error';
             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
-            onUpdate('error', { message: e2.message });
-            finalResponse = `Error communicating with LLM: ${e2.message}`;
+            const recovery = await this._finalModelFailure(tabId, messages, onUpdate, provider, e2, steps, runOptions);
+            _traceStatus = recovery.status;
+            finalResponse = recovery.content;
             messages.push({ role: 'assistant', content: finalResponse });
             break;
           }
@@ -39847,6 +40316,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }));
         _traceStatus = 'empty_output';
         traceFailureCode = 'EMPTY_RESPONSE';
+        this._offerFailureRecovery(tabId, { stage: 'model', code: 'empty_response',
+          message: 'Failed while getting a usable model response. The model returned no answer after a recovery attempt.',
+          diagnostics: finalResponse }, onUpdate);
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -40633,7 +41105,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         let costStopMessage = '';
 
         this._throwIfAborted(streamOpts.signal);
-        for await (const chunk of (fastResult ? this._jevToolStream(fastResult) : provider.chatStream(prunedMessages, streamOpts))) {
+        let streamAttempt = 0;
+        const modelStream = fastResult ? this._jevToolStream(fastResult) : retryModelStream(async () => {
+          streamAttempt++;
+          if (streamAttempt > 1 && runId) await trace.recordLLMRequest(runId, steps, {
+            providerClass: provider.constructor.name, model: provider.model,
+            messageCount: prunedMessages.length, toolsCount: (streamOpts.tools || []).length,
+            requestedMaxTokens: streamOpts.maxTokens, recoveryAttempt: streamAttempt - 1,
+            ...Agent._traceMediaCounts(prunedMessages),
+          }, { messages: prunedMessages, tools: streamOpts.tools || [], runtimeMode: mode });
+          return provider.chatStream(prunedMessages, streamOpts);
+        }, {
+          isAborted: () => this._checkAbort(tabId),
+          onRetry: async ({ error, delayMs, attempt }) => {
+            onUpdate('thinking', { step: steps, note: `The model service could not start the response. Retrying (${attempt})…` });
+            if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
+          },
+        });
+        for await (const chunk of modelStream) {
           this._throwIfAborted(streamOpts.signal);
           if (chunk.type === 'text') {
             streamEmittedOutput = true;
@@ -40876,6 +41365,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             return finish(scheduledResume.message, 'scheduled_resume');
           }
           const failMsg = emptyOutputFailureMessage(outputDiagnostics);
+          this._offerFailureRecovery(tabId, { stage: 'model', code: 'empty_response',
+            message: 'Failed while getting a usable model response. The model returned no answer after a recovery attempt.',
+            diagnostics: failMsg }, onUpdate);
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
@@ -41098,12 +41590,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (runId) await trace.recordLLMRetry(runId, steps, { delayMs: 0, code: 'CONTEXT_WINDOW_EXCEEDED' });
           continue; // retry the loop with trimmed context
         }
-        onUpdate('error', { message: caughtMessage });
-        const errMsg = `Error: ${caughtMessage}`;
+        const recovery = await this._finalModelFailure(tabId, messages, onUpdate, provider, e, steps, runOptions);
+        const errMsg = recovery.content;
         messages.push({ role: 'assistant', content: errMsg });
         this._persist(tabId);
         traceFailureCode = stepErrorCode;
-        return finish(errMsg, 'error');
+        return finish(errMsg, recovery.status);
       }
     }
 

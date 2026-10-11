@@ -1216,4 +1216,8 @@ export default {
   'st.providers.webgpu_download.stop': 'Stop & remove',
   'st.providers.webgpu_download.activate_blocked': 'Download the selected model before choosing WebGPU for chat.',
   'sp.monitor.navigation': "काम चलने के दौरान पेज बदल गया ({before} → {after})। काम जारी है।",
+  'sp.activity.generating_answer': "उत्तर तैयार हो रहा है…",
+  'sp.activity.retrying_response': "उत्तर के लिए फिर प्रयास हो रहा है…",
+  'sp.response.incomplete_retrying': "अधूरा उत्तर · फिर प्रयास हो रहा है…",
+  'sp.response.incomplete': "अधूरा उत्तर",
 };

@@ -1186,4 +1186,8 @@ export default {
   "st.sync.consent.denied": "Quyền đồng bộ hóa được mã hóa không được cấp.",
   'st.providers.webgpu_note.body': '{modelLink} chạy hoàn toàn trong Chrome mà không cần điểm cuối API. Tải mô hình trong Settings > Providers > WebGPU hoặc Chế độ Apocalypse, rồi dùng nút nuclear trong standalone chat.',
   'sp.monitor.navigation': "Trang đã thay đổi khi tác vụ đang chạy ({before} → {after}). Tiếp tục tác vụ.",
+  'sp.activity.generating_answer': "Đang tạo câu trả lời…",
+  'sp.activity.retrying_response': "Đang thử lại câu trả lời…",
+  'sp.response.incomplete_retrying': "Câu trả lời chưa hoàn chỉnh · đang thử lại…",
+  'sp.response.incomplete': "Câu trả lời chưa hoàn chỉnh",
 };
