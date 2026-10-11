@@ -197,3 +197,5 @@ These are conscious trade-offs, not oversights.
   page or prompt text (that approach was tried and removed — it was English-only
   and leaky). The gate is deterministic capability×origin with the human as the
   trust anchor.
+
+  _Last update: 10/11/2026_
