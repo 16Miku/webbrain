@@ -78,6 +78,279 @@
   "screenshot": "https://webbrain.one/og-image.png"
 }
   </script>
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "inLanguage": "uk-UA",
+  "mainEntity": [
+    {
+      "@type": "Question",
+      "name": "WebBrain — це безкоштовна альтернатива браузерному плагіну Claude?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. WebBrain дає схожі можливості AI-агента в браузері — читає сторінки, видобуває дані, натискає кнопки, заповнює форми та автоматизує багатокрокові сценарії. На відміну від пропрієтарного плагіна Claude, що потребує підписки Claude Pro і працює лише з моделями Anthropic, WebBrain повністю безкоштовний, open-source (ліцензія GPL-3.0-or-later) і підтримує різних LLM-провайдерів, зокрема локальні моделі, що повністю працюють на вашій машині."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Скільки коштує підписка WebBrain Compass?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "WebBrain Compass зараз коштує 5 доларів на місяць за профіль пристрою, тобто поки значно дешевше за Claude Pro. Використання наразі безлімітне в межах політики добросовісного використання: звичайне особисте використання дозволене, але зловживання, автоматизоване навантаження, перепродаж або незвично великі обсяги не допускаються. Підписка прив’язана до ідентифікатора пристрою, який розширення створює для цього GUID браузера + ОС, а не до облікового запису користувача. Якщо цей ідентифікатор втрачено через скидання сховища розширення, видалення профілю браузера, перевстановлення браузера, зміну браузера/ОС або втрату пристрою, ми не можемо його відновити чи перенести і не повертаємо кошти за таку втрату."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Як керувати підпискою або скасувати її?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Керуйте оплатою на api.webbrain.one/account та ввійдіть за допомогою своєї електронної адреси."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Я вже оплатив WebBrain Compass, але розширення знову просить оплату. Чи потрібно платити двічі?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ні — повторно платити не потрібно. Підписка Compass прив'язана до ідентифікатора браузера/пристрою, який створює розширення, тож якщо цей ідентифікатор змінився (новий браузер або пристрій, перевстановлений браузер, видалений профіль браузера чи скинуте сховище розширення), розширення більше не розпізнає наявну підписку й просить оплату. Прив'яжіть наявну підписку до поточного браузера через портал самообслуговування api.webbrain.one/portal та дотримуйтеся інструкцій, щоб відновити доступ. Квитанції й інші зміни оплати — у керуванні оплатою api.webbrain.one/account, увійдіть за допомогою адреси електронної пошти."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Як працює зашифрована Cloud Sync?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cloud Sync — необов’язкова функція для активних підписників WebBrain Compass. Вона синхронізує ваші спогади WebBrain, текст автозаповнення профілю та підтримувану конфігурацію провайдерів, включно з API-ключами. Вона не синхронізує історію чату, історію браузера, знімки сторінок чи застарілі OAuth access- і refresh-токени. Браузер шифрує сховище синхронізації перед завантаженням паролем, який ви обираєте. WebBrain Compass зберігає лише зашифроване сховище; він не може прочитати ваші спогади, текст профілю, налаштування провайдерів чи API-ключі й не може відновити пароль синхронізації замість вас. Поле e-mail потрібне для magic-link автентифікації білінгу/підписки WebBrain Compass. Це не пароль облікового запису. Якщо інтерфейс пропонує змінити пароль у Cloud Sync, йдеться про пароль шифрування синхронізації, а не пароль облікового запису WebBrain. Якщо ви забудете пароль синхронізації, старе зашифроване хмарне сховище розшифрувати не можна. Ви можете скинути хмарне сховище й завантажити нову зашифровану копію з пристрою, де дані ще є локально."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чим WebBrain відрізняється від OpenClaw, Browser-Use та інших agent-фреймворків?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Це різні категорії інструментів. WebBrain — браузерне розширення: ставите його у Chrome або Firefox і спілкуєтеся з ним у бічній панелі, без коду. OpenClaw, Browser-Use і подібні фреймворки — SDK для розробників, щоб будувати автоматичні браузерні пайплайни на Python, зазвичай через headless-браузер і CDP. Іншими словами: WebBrain — для щоденного серфінгу з AI-помічником; agent-фреймворки — для скрейпінг-ботів та автотестів. Ними можна користуватися паралельно — вони доповнюють одне одного."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи можу я редагувати workflow WebBrain?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. Скористайтеся редактором workflow WebBrain, щоб переглядати, редагувати, перевіряти та експортувати JSON-файл workflow у браузері."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи можна користуватися WebBrain повністю офлайн?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. За замовчуванням WebBrain використовує llama.cpp, який запускає локальну AI-модель просто у вас на комп'ютері. API-ключі не потрібні, інтернету AI не потребує, дані не покидають машину. Завантажте GGUF-модель, запустіть llama-server — і у вас повністю приватний AI-агент у браузері. Також можна користуватися Ollama через його OpenAI-сумісний ендпоінт."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Що таке Аварійна скринька і як працює офлайн-RAG?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Аварійна скринька — це підібрана колекція з ~570 загальнодоступних довідкових документів (медицина, виживання, освіта, комунікація), які WebBrain може завантажити та проіндексувати локально. Після встановлення можна ставити фактичні запитання офлайн й отримувати відповіді на основі цих документів — без підключення до інтернету. Усередині WebBrain використовує SQLite FTS5 для швидкого пошуку за ключовими словами як в Аварійній скриньці, так і у встановлених архівах Вікіпедії, а також опційний шар семантичного пошуку на локально завантаженій багатомовній моделі E5 (~140 МБ). Результати обох методів об'єднуються й урізноманітнюються, а кожна відповідь цитує точний вихідний уривок. Цитати відкриваються в локальній читалці, яка перевіряє цілісність документа перед показом, — вони ніколи не ведуть на живу веб-сторінку. Для ширшої офлайн-бази знань можна встановити архіви Вікіпедії через режим апокаліпсису. Фільтри джерел і мов дають змогу обирати, в яких колекціях шукати."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Які AI-моделі підтримує WebBrain?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "WebBrain підтримує чотири типи провайдерів: llama.cpp (будь-яка локальна GGUF-модель), OpenAI (GPT-4o, GPT-4 тощо), Claude (Claude Opus, Sonnet, Haiku через нативний API) та OpenRouter (доступ до 100+ моделей від різних провайдерів). Підходить будь-який OpenAI-сумісний ендпоінт, тож можна використовувати Together AI, Groq, Mistral або будь-який локальний сервер з OpenAI-сумісним інтерфейсом."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Яка модель найбільш рекомендована?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Станом на 21 квітня 2026 головна рекомендація — Qwen 3.6 35B. Чому: у нашому vision-бенчмарку (vision-model-shootout) вона обігнала Gemma 4 на розумінні скриншотів, залишаючись практичною для локального інференсу. Для споживчих GPU ідеальний RTX 5090, а RTX 4090 зазвичай придатний з INT4 AutoRound-квантуванням через Intel/Qwen3.6-35B-A3B-int4-AutoRound. Для максимальної швидкості рекомендуємо обслуговувати через vLLM. Приклад команди: python -u -m vllm.entrypoints.openai.api_server --model Intel/Qwen3.6-35B-A3B-int4-AutoRound --served-model-name qwen3.6-35b --quantization auto --dtype bfloat16 --max-model-len 65536 --max-num-batched-tokens 32768 --max-num-seqs 4 --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.92 --enable-prefix-caching --enable-chunked-prefill --limit-mm-per-prompt '{\"image\": 4, \"video\": 1}' --mm-processor-cache-type shm --reasoning-parser qwen3 --enable-auto-tool-choice --tool-call-parser qwen3_coder --trust-remote-code --allowed-origins '[\"*\"]' --speculative-config '{\"method\": \"dflash\", \"model\": \"z-lab/Qwen3.6-35B-A3B-DFlash\", \"num_speculative_tokens\": 15}' --attention-backend flash_attn DFlash speculative decoding — опційно."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чому WebGPU доступний лише в режимі апокаліпсису?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ми поки не вважаємо текстове виведення через WebGPU у браузері достатньо якісним для більшості користувачів і не хочемо, щоб вам доводилося миритися з поганим досвідом. Якщо ви хочете локально використовувати ту саму модель LFM2.5 2.6B, запустіть виведення на своєму комп'ютері через llama.cpp або Ollama і підключіть WebBrain до цієї локальної кінцевої точки замість використання WebGPU. Резервний механізм комп'ютерного зору через WebGPU залишається доступним, оскільки його модель значно менша й використовується лише зрідка."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Отримую «Failed to fetch» при підключенні до локального LLM-сервера (vLLM, Ollama, llama.cpp) у моїй мережі",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Якщо LLM-сервер запущено на іншій машині в локальній мережі (наприклад, http://192.168.1.x:8000), Chrome блокує запит, поки сервер не віддасть CORS-заголовки. Розв'язання залежить від сервера: vLLM: запускайте з --allowed-origins '[\"*\"]' (значення обов'язково — JSON-список). Ollama: перед стартом установіть змінну середовища OLLAMA_ORIGINS=*. llama.cpp: CORS увімкнено за замовчуванням — змінювати нічого не треба. Якщо сервер працює на localhost (на тій самій машині, що й браузер), CORS зазвичай не потрібен. Проблема виникає тільки при зверненні до іншої машини в локальній мережі. Переконайтеся, що Base URL у налаштуваннях WebBrain закінчується на /v1 (наприклад, http://192.168.1.47:8000/v1). Виняток: Ollama з браузерного розширення все одно може потребувати OLLAMA_ORIGINS; див. FAQ про Ollama нижче."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чому Ollama на localhost повертає 403 з розширення WebBrain?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Нові версії Ollama можуть відхиляти запити з origin браузерних розширень, навіть якщо Ollama працює на тій самій машині. Розширення надсилає Origin на кшталт chrome-extension://... або moz-extension://..., і Ollama може відповісти 403, якщо такі origin не дозволені. Закрийте настільний застосунок Ollama, якщо він уже займає порт 11434, а потім запустіть Ollama однією з команд: OLLAMA_ORIGINS=\"*\" ollama serve OLLAMA_ORIGINS=\"chrome-extension://*,moz-extension://*\" ollama serve Залиште базову URL-адресу Ollama у WebBrain як http://localhost:11434/v1. Перевірки через curl у терміналі можуть працювати й без цього параметра, бо вони не надсилають origin браузерного розширення."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain працює у Firefox?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. WebBrain постачається у двох версіях: для Chrome (Manifest V3, використовує sidePanel API) та для Firefox (Manifest V2, використовує sidebar_action). Функціональність однакова. Firefox-версію можна завантажити як тимчасове розширення для розробки або опублікувати на addons.mozilla.org для постійного встановлення."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи можна пересунути бічну панель Firefox з лівого боку на правий, як у Chrome?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так — у Firefox бічна панель за замовчуванням ліворуч, але її можна перемістити. Клікніть правою кнопкою по заголовку панелі й виберіть «Перемістити бічну панель праворуч» (або через меню «Перегляд → Бічна панель → Перемістити бічну панель праворуч»). Розташування зберігається між перезапусками. Панель sidePanel у Chrome за замовчуванням праворуч і не пересувається з самої панелі."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи є обмеження під час використання WebBrain у веб-панелі Vivaldi?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. Веб-панелі Vivaldi блокують нативні діалоги JavaScript, як-от confirm(), alert() і prompt(). Перемикання режимів Ask, Act і Dev у WebBrain більше від них не залежить, але деякі другорядні дії все ще їх використовують. Запис: Поки що не використовуйте /record у Vivaldi. Якщо запис завершиться помилкою, Vivaldi може приховати попередження й не показати пояснення. Налаштування, Історія, Траси та передача в Ollama: Ці сторінки також містять нативні діалоги, але WebBrain зазвичай відкриває їх у звичайних вкладках, де вони працюють. Якщо ви вручну додали таку сторінку до веб-панелі, відкрийте її у звичайній вкладці перед використанням дій, що залежать від діалогів."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain безпечний? Чи може він змінювати веб-сторінки?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "У WebBrain три режими. Режим «Запитати» (за замовчуванням) працює лише на читання і нічого не змінює на сторінці. Режим «Діяти» дає змогу клікати, друкувати й переходити, а режим Dev додає інструменти налагодження сторінок. Дії з наслідками за замовчуванням потребують схвалення; якщо вимкнути цей шлюз дозволів, WebBrain показує помітний банер-попередження. Агента можна зупинити будь-коли кнопкою «Стоп». Сирці розширення повністю відкриті на GitHub для аудиту."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Що це за банер «WebBrain started debugging this browser»? Чому WebBrain використовує CDP?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Щоб надійно діяти на сторінці, WebBrain використовує Chrome DevTools Protocol (CDP) через стандартний API розширень chrome.debugger — саме це спричиняє банер Chrome «WebBrain started debugging this browser». CDP дає змогу агенту клікати й вводити текст довіреними подіями введення, які сучасні сайти справді приймають; синтетичні події з content script відхиляються багатьма сайтами, Web Components і полями, керованими фреймворками. Також завдяки йому WebBrain робить піксельно точні знімки екрана для візуального резерву й отримує доступ до крос-доменних iframe та shadow DOM, яких content script не бачить. Режим «Запитати», лише для читання, не потребує CDP: читання сторінки й дерева доступності відбувається через звичайні content script. CDP потрібен для надійності режиму «Діяти» та роботи між джерелами, а в розширенні Manifest V3 немає API без зневаджувача для довіреного введення. WebBrain під'єднує зневаджувач лише коли цього потребує дія, для кожної вкладки, і все розширення з відкритим кодом, тож ви можете перевірити, що саме робить сесія. CDP потужний, тому ми обмежуємо його присутність (під'єднувати за потреби, не використовувати для читання), а подальше посилення входить до нашої дорожньої карти безпеки."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Він ставить мені забагато запитань. Чи можна це вимкнути?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ці запити підтвердження потрібні для вашої безпеки. Навіть на сайтах, яким ви довіряєте, зловмисники можуть імітувати інструкції LLM або вставляти вміст, що намагається змусити агента виконати від вашого імені дії, які ви б не схвалили. Тому WebBrain просить підтвердження перед діями з наслідками. Якщо ви все одно не хочете проходити через ці запити, їх можна вимкнути: відкрийте бічний плагін, натисніть значок коліщатка в заголовку, перейдіть на вкладку Permissions у settings.html і вимкніть параметр Ask before consequential actions."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Як використовувати WebBrain для веб-скрейпінгу й видобутку даних?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Просто відкрийте будь-яку сторінку, розгорніть бічну панель WebBrain і сформулюйте задачу природною мовою: «Видобудь усі назви товарів і ціни з цієї сторінки», «Знайди всі email-адреси на сторінці» або «Зроби тезове резюме статті». AI-агент читає вміст сторінки, розуміє структуру і повертає видобуті дані. Для складнішого скрейпінгу перемкніть у режим «Діяти» — агент може переходити між сторінками, натискати кнопки пагінації та збирати дані одразу з кількох."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "WebBrain викликає API напряму чи завжди клацає через інтерфейс?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "За замовчуванням для будь-якої дії, що створює, змінює, видаляє, надсилає, публікує, постить чи купує, WebBrain завжди йде через видимий інтерфейс. Він переходить на сторінку, заповнює форму і натискає кнопку — точно так, як зробили б ви. Прямі виклики REST/GraphQL-ендпоінтів через фоновий fetch() для мутацій він не робить. Це навмисно: API-дії невидимі (ви не бачите, що відправляється), часто потребують окремих токенів, які ви могли не налаштувати, і мають набагато більший радіус наслідків, ніж один видимий промах. UI-first означає, що все відбувається на екрані, у звичайній браузерній сесії — і будь-коли це можна зупинити. Для читання даних — забрати README, переглянути issue, порівняти ціни між сайтами, заглянути на сторінку статусу — WebBrain вільно користується фоновими HTTP-запитами через інструменти fetch_url та research_url. Читання — не дія; воно нічого не змінює на віддаленому сервісі, тож ті самі побоювання тут не діють. Якщо конкретно для одної задачі ви хочете дозволити API-мутації, на початку повідомлення наберіть /allow-api (можна з коротким описом задачі). Цей перемикач у межах одного діалогу дає WebBrain у разі реальної несправності чи недоступності UI відкочуватись до API-ендпоінтів, проте поки UI працює — пріоритет за ним. Поки перемикач активний, над полем вводу висить липкий бейдж; він скидається при скиданні діалогу."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "А в LM Studio це можна використовувати?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. Read-only мережеві інструменти WebBrain — fetch_url і research_url — також постачаються як окремий плагін для LM Studio за адресою webbrain/web-tools. Встановіть командою lms clone webbrain/web-tools й увімкніть у будь-якому чаті LM Studio — будь-яка модель із підтримкою tool-викликів зможе викликати ці два інструменти, і браузерне розширення ставити не обов'язково. Чистий Node, без headless-браузера. Сирці: lmstudio-plugin/."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи можна прокручувати сторінку вгору або вниз, поки WebBrain працює в моїй вкладці?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Здебільшого так — особливо в режимі Ask для запитів лише на читання, як-от «Підсумуй цю сторінку». Поки WebBrain працює, сторінку можна й далі прокручувати. Коли краще цього не робити? Автоматичні знімки екрана відображають поточну видиму область вкладки. Коли WebBrain активно перевіряє видимий вміст або взаємодіє з ним у режимі Act чи Dev, прокручування може змістити ціль або змінити те, що бачить модель. Дочекайтеся завершення цього кроку, перш ніж прокручувати сторінку; в інший час нею можна користуватися як завжди."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи можна перейти на іншу вкладку, поки WebBrain працює над сторінкою?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Так. Починаючи з версії 27.0.0, WebBrain не перехоплює фокус ані в браузерах на основі Chromium, ані у Firefox, якщо доступ до переднього плану не є строго необхідним. Виконання залишається прив'язаним до вкладки, де воно почалося, тому в іншій вкладці можна безпечно продовжувати роботу. Якщо рідкісному кроку знадобиться вивести початкову вкладку на передній план, WebBrain може ненадовго перевести на неї фокус. Не натискайте й не вводьте текст у тій самій вкладці, поки WebBrain активно виконує в ній дії."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Як працює автозаповнення профілю і чи це безпечно?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Автозаповнення профілю — опціональна функція в Налаштування → Профіль. Ви пишете коротке біо — ім'я, робочий email, компанію та одноразовий пароль для маловажливих реєстрацій — і вмикаєте її. Коли її увімкнено, WebBrain додає цей текст до системного prompt агента, щоб той заповнював форми реєстрації, не запитуючи щоразу. Текст зберігається у відкритому вигляді в локальному сховищі браузера. Він не надсилається в проєкт WebBrain, але надсилається тому LLM-провайдеру, якого ви налаштували, на кожному ходу як частина системного prompt. За замовчуванням вимкнено. Не вводьте сюди паролі важливих акаунтів (Google, Apple, iCloud, банк, корпоративний SSO, основна пошта). Ці акаунти мають бути з 2FA, і їх у будь-якому разі не варто віддавати агенту. Одноразовий пароль, який ви повторно використовуєте для розсилок і безкоштовних триалів, — те, що треба."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи гарантує налаштування редагування знімків екрана, що мої приватні дані ніколи не потраплять до хмарної моделі зору?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ні — воно зменшує ризик, але не є гарантією. Після ввімкнення (Налаштування → Допоміжні моделі → Зір → Редагування знімків екрана, за замовчуванням вимкнено) WebBrain пікселізує поля форм і текст, схожий на email-адресу чи номер телефону, на кожному знімку екрана перед надсиланням його моделі зору. Виявлення виконується повністю на вашому пристрої за допомогою евристик DOM; нічого зайвого не передається. Це робота за принципом «найкращих зусиль» і fail-open. Якщо детектор не може спрацювати на сторінці — наприклад, одразу після переходу, у переглядачах PDF або на обмежених сторінках браузера — знімок екрана все одно надсилається невідредагованим, замість того щоб перервати ваше завдання. Вміст, який евристики DOM не бачать (текст, намальований на canvas, персональні дані всередині зображень, незвичні віджети), теж може прослизнути. І налаштування стосується лише знімків екрана: текст сторінки, що надсилається моделі, ним не редагується. Для повної приватності зору використовуйте локальну модель. З офлайн-провайдером на кшталт llama.cpp чи Ollama знімки екрана і текст сторінки ніколи не покидають ваш пристрій, тож редагувати попросту нічого — це єдина конфігурація, де приватність гарантована. Див. «Чи можна користуватися WebBrain повністю офлайн?» вище. Немає потужного пристрою для локальної моделі з підтримкою зору? Гарний компроміс — невелика локальна модель для планування та викликів інструментів (достатньо легка для скромного CPU/GPU) у парі з хмарним провайдером для підзапитів зору, з увімкненим редагуванням знімків екрана. Ваша розмова і текст сторінки залишаються на пристрої, а кожен знімок, що йде до хмарного зору, вже має розмиті поля форм і виявлені email/телефони — менший ризик у хмарі без потреби в апаратному забезпеченні для повноцінної локальної моделі зору. Налаштуйте цей розподіл у Налаштування → Допоміжні моделі → Зір (див. «Як WebBrain тримає рахунки за хмарні LLM під контролем?» вище)."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Що WebBrain робить з cookie-банерами та paywall'ами?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Cookie-банери: WebBrain розпізнає банери згоди популярних фреймворків (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) і закриває їх, перш ніж починати міркувати про сторінку. Пріоритет — «Відхилити все» / «Відхилити необов'язкові» / «Лише необхідні», якщо вони видимі; інакше погоджується на «Прийняти все», аби не тонути в лабіринті «Керування налаштуваннями». Paywall: WebBrain чесно повідомляє про paywall і розповідає, що реально зміг побачити (заголовок, підзаголовок, перші абзаци). Він не намагається обійти paywall — жодних archine.today, 12ft.io, чистки cookie, вимкнення JS чи трюків з reader-mode. Потрібна вся стаття — увійдіть за підпискою або попросіть WebBrain пошукати безкоштовне висвітлення тієї самої історії."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи підтримує WebBrain режим dry-run?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Станом на 7.0.0 — ще ні. Режим dry-run заплановано й уже в дорожній карті."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи надсилає WebBrain увесь DOM моделі ШІ?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ні. За замовчуванням WebBrain не надсилає необроблений HTML або повний дамп DOM. Спочатку використовуються URL і заголовок сторінки, відповідні підказки для сайту та, якщо ввімкнено зір, необов’язковий знімок видимої області. Коли завданню потрібен вміст сторінки, WebBrain зчитує його за потреби як скорочене семантичне дерево доступності або вилучений текст. Читання за потреби фільтруються за видимістю, обмежуються кількістю символів і розбиваються на сторінки. Доступ до необробленого вихідного коду сторінки доступний лише в режимі Dev."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чому WebBrain 33.0.0 і новіші версії поширюються під ліцензією GPL?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "WebBrain 33.0.0 і новіші версії поширюються під GPL-3.0-or-later, оскільки розширення вбудовує GPL-сумісне WebAssembly-середовище Xapian/libzim для повнотекстового пошуку в ZIM-архівах Вікіпедії. Пакунки розширення містять відповідні повідомлення GPL, а повний відповідний вихідний код вбудованого середовища публікується разом із кожним випуском. Випуски до 33.0.0 залишаються під ліцензією MIT, а незалежно опубліковані підпроєкти й сторонні компоненти зберігають заявлені ліцензії. Подробиці — у записі про ліцензійне рішення."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Як WebBrain тримає рахунки за хмарні LLM під контролем?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Три незалежні шари: Скриншоти з турботою про токени. Перш ніж будь-яке зображення покине вашу машину, WebBrain зменшує його (коротка сторона обмежена, пропорції зберігаються) та ітеративно стискає в JPEG, доки воно не вмiститься в бюджет image-токенів на хід. Скриншот 2000×1200, який на GPT-4o обійшовся б приблизно у 1500 вхідних токенів, стискається до ~300–500 токенів без реальної втрати для задач читання сторінок. Реалізовано у _fitImageDimensions, є юніт-тести на розрахунок бюджету. Розумне підрізання контексту. Історія діалогу, виводи інструментів і вбудовані дампи DOM обмежені на хід і підрізаються від найстаршого, коли контекстне вікно активної моделі наближається до повного. Ви не побачите, як сесія тихо роздувається з 10k токенів до 100k через те, що read_page повернув статтю завдовжки з роман. Окрема vision-модель. Пара: дешева текстова модель (наприклад, GPT-4o-mini) для планування і tool-викликів плюс окрема vision-модель (наприклад, GPT-4o) лише для скриншотів — і ви не платите ціну мультимодальної моделі на кожному ходу. Налаштовується в Налаштування → Допоміжні моделі → Зір. Підсумок: довгі сесії з хмарними провайдерами лишаються передбачуваними. Для повного контролю — підіймайте llama.cpp локально, ціна за токен нульова."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Чи можу я долучитися до WebBrain?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Звісно! WebBrain під ліцензією GPL-3.0-or-later і вітає внески. Зазирніть у репозиторій на GitHub — там issue, запити фіч та правила контрибуції."
+      }
+    }
+  ]
+}
+  </script>
   <style>
     /* ================================================================
        RESET & BASE
@@ -199,6 +472,53 @@
       bottom: 10%; inset-inline-end: -100px;
       background: radial-gradient(circle, rgba(167,139,250,0.12) 0%, transparent 70%);
       filter: blur(60px);
+    }
+
+    /* ================================================================
+       TOP ANNOUNCEMENT BANNER
+       ================================================================ */
+    .top-announcement-banner {
+      background: linear-gradient(90deg, rgba(167, 139, 250, 0.14), rgba(240, 167, 47, 0.14));
+      border-bottom: 1px solid var(--border);
+      text-align: center;
+      font-size: 13px;
+      line-height: 1.4;
+      padding: 7px 16px;
+      position: relative;
+      z-index: 101;
+    }
+    .top-announcement-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 500;
+      transition: color 0.15s ease;
+    }
+    .top-announcement-link:hover {
+      color: var(--accent2);
+      text-decoration: none;
+    }
+    .top-announcement-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 1px 7px;
+      font-size: 10px;
+      font-weight: 750;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 999px;
+    }
+    .top-announcement-arrow {
+      display: inline-block;
+      transition: transform 0.15s ease;
+    }
+    .top-announcement-link:hover .top-announcement-arrow {
+      transform: translateX(3px);
     }
 
     /* ================================================================
@@ -1991,251 +2311,471 @@
     }
 
     /* ================================================================
-       APOCALYPSE MODE — a compact offline readiness stack
+       WORD ON THE WEB — compact quote strip
        ================================================================ */
-    .voices-section { max-width: 1240px; padding-bottom: 24px; }
-    .voices-section h2 { margin-bottom: 42px; text-align: center; font-size: clamp(28px, 4vw, 40px); letter-spacing: -1px; }
-    .voices-grid { display: grid; grid-template-columns: 1fr 1.2fr 1fr; align-items: start; }
-    .voice { margin: 0; padding: 12px 30px 24px; text-align: center; }
-    .voice + .voice { border-left: 1px solid var(--border); }
-    .voice-portrait { display: block; width: 136px; height: 136px; margin: 0 auto 24px; border-radius: 50%; object-fit: cover; mix-blend-mode: multiply; }
-    :root:not([data-theme="light"]) .voice-portrait { mix-blend-mode: normal; background: #fff; filter: brightness(.82); }
-    .voice blockquote { margin: 0 0 24px; font: 400 23px/1.45 Georgia, 'Times New Roman', serif; text-wrap: pretty; }
-    .voice-featured .voice-portrait { width: 160px; height: 160px; margin-top: -12px; }
-    .voice-featured blockquote { font-size: clamp(34px, 3.6vw, 44px); line-height: 1.18; }
-    .voice-name { display: block; font-size: 16px; font-weight: 700; }
-    .voice-source { display: inline-block; margin-top: 14px; color: var(--accent2); font-size: 13px; text-decoration: underline; text-underline-offset: 4px; }
+    .voices-section { max-width: 1180px; padding-top: 44px; padding-bottom: 28px; margin-inline: auto; }
+    .voices-section h2 {
+      margin-bottom: 24px;
+      font-size: 13px; font-weight: 700; letter-spacing: .12em;
+      text-transform: uppercase; color: var(--text-dim);
+      text-align: center;
+    }
+    .voices-grid { display: grid; grid-template-columns: repeat(3, 1fr); align-items: center; gap: 0; }
+    .voice {
+      display: grid; grid-template-columns: auto 1fr; gap: 16px;
+      align-items: center; padding: 10px 24px; text-align: start;
+      margin: 0;
+    }
+    .voice + .voice { border-inline-start: 1px solid var(--border); }
+    .voice-portrait { width: 76px; height: 76px; margin: 0; grid-row: span 2; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
+    :root:not([data-theme="light"]) .voice-portrait { mix-blend-mode: normal; background: #fff; filter: brightness(.88); }
+    .voice blockquote { margin: 0 0 6px; font: 400 15px/1.45 Georgia, 'Times New Roman', serif; text-wrap: pretty; color: var(--text); }
+    .voice-featured .voice-portrait { width: 90px; height: 90px; margin-top: 0; }
+    .voice-featured blockquote { font-size: 19px; line-height: 1.35; font-weight: 500; }
+    .voice-name { display: inline; font-size: 13px; font-weight: 700; color: var(--text); }
+    .voice-source { margin: 0 0 0 6px; font-size: 12px; color: var(--accent2); text-decoration: underline; text-underline-offset: 4px; }
     .voice-source:hover { color: var(--text); }
-    .voice-source:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: 2px; }
-    @media (max-width: 760px) {
-      .voices-grid { grid-template-columns: 1fr; max-width: 480px; margin-inline: auto; }
-      .voices-section h2 { margin-bottom: 20px; }
-      .voice { padding: 28px 16px; }
-      .voice + .voice { border-left: 0; border-top: 1px solid var(--border); }
-      .voice-featured .voice-portrait { margin-top: 0; }
+    .voice-source:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+    @media (max-width: 860px) {
+      .voices-grid { grid-template-columns: 1fr; gap: 18px; max-width: 540px; margin-inline: auto; }
+      .voice { padding: 14px 16px; }
+      .voice + .voice { border-inline-start: 0; border-top: 1px solid var(--border); }
+      .voice-portrait { width: 68px; height: 68px; }
+      .voice-featured .voice-portrait { width: 76px; height: 76px; }
     }
 
-    .apocalypse-section { max-width: 1240px; padding-top: 48px; padding-bottom: 72px; }
-    .apocalypse-shell {
+    /* ================================================================
+       DEMO DUO CARDS — Security & vs Claude in Chrome
+       ================================================================ */
+    .demo-duo-cards {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      max-width: 1100px;
+      margin: 44px auto 0;
+      align-items: stretch;
+    }
+    .demo-duo-card {
       position: relative;
       display: grid;
-      grid-template-columns: minmax(0, .9fr) minmax(420px, 1.1fr);
+      grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
+      gap: 18px;
+      padding: 14px;
       overflow: hidden;
-      color: #f5f2e9;
-      border: 1px solid #34302a;
-      border-radius: 26px;
-      background: #11100e;
-      box-shadow: 0 24px 70px rgba(9, 8, 6, .24);
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      box-shadow: 0 18px 48px var(--shadow-card);
+      text-align: start;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .demo-duo-card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      box-shadow: 0 22px 58px var(--shadow-strong);
+    }
+    .demo-duo-card:focus-within {
+      outline: 2px solid var(--accent2);
+      outline-offset: 4px;
+    }
+    .demo-duo-media {
+      position: relative;
+      min-height: 140px;
+      height: 100%;
+      overflow: hidden;
+      background: #090b11;
+      border: 1px solid var(--border);
+      border-radius: 12px;
       isolation: isolate;
     }
-    .apocalypse-shell::before {
+    .demo-duo-media::after {
+      content: '';
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      background: linear-gradient(180deg, transparent 40%, rgba(3, 5, 10, 0.78));
+      pointer-events: none;
+    }
+    .demo-duo-thumbnail {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transition: transform 400ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .demo-duo-card:hover .demo-duo-thumbnail {
+      transform: scale(1.04);
+    }
+    .demo-duo-play {
+      position: absolute;
+      z-index: 2;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(167, 139, 250, 0.9);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+      transition: transform 0.2s ease, background 0.2s ease;
+    }
+    .demo-duo-play svg {
+      width: 14px;
+      height: 14px;
+      margin-inline-start: 2px;
+    }
+    .demo-duo-card:hover .demo-duo-play {
+      transform: translate(-50%, -50%) scale(1.1);
+      background: var(--accent);
+    }
+    .demo-duo-watch {
+      position: absolute;
+      z-index: 2;
+      bottom: 8px;
+      left: 8px;
+      right: 8px;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-align: center;
+      text-transform: uppercase;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    }
+    .demo-duo-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 4px 6px 4px 0;
+    }
+    [dir="rtl"] .demo-duo-copy {
+      padding: 4px 0 4px 6px;
+    }
+    .demo-duo-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .demo-duo-badge-icon {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--tint-soft-2);
+      color: var(--accent2);
+    }
+    .demo-duo-badge-icon.demo-duo-vs {
+      color: var(--warning);
+    }
+    .demo-duo-badge-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+    .demo-duo-kicker {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+    }
+    .demo-duo-title {
+      margin: 2px 0 0;
+      font-size: 16px;
+      font-weight: 750;
+      line-height: 1.3;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+    .demo-duo-list {
+      margin: 6px 0 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 4px;
+    }
+    .demo-duo-list li {
+      position: relative;
+      padding-inline-start: 18px;
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--text-dim);
+    }
+    .demo-duo-list li::before {
+      content: '✓';
+      position: absolute;
+      inset-inline-start: 0;
+      color: var(--success);
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .demo-duo-desc {
+      margin: 6px 0 0;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--text-dim);
+    }
+    .demo-duo-callout {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .demo-duo-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      font-size: 10px;
+      font-weight: 650;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .demo-duo-trigger {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      cursor: pointer;
+      border: 0;
+      background: transparent;
+    }
+    @media (max-width: 900px) {
+      .demo-duo-cards {
+        grid-template-columns: 1fr;
+        max-width: 560px;
+      }
+    }
+    @media (max-width: 520px) {
+      .demo-duo-card {
+        grid-template-columns: 1fr;
+      }
+      .demo-duo-media {
+        min-height: 180px;
+        height: 180px;
+      }
+    }
+
+    /* ================================================================
+       INLINE FAQ
+       ================================================================ */
+    .faq-inline-section {
+      max-width: 860px;
+      margin-inline: auto;
+    }
+    .faq-inline-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 36px;
+    }
+    .faq-inline-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .faq-inline-item:hover {
+      border-color: var(--accent);
+    }
+    .faq-inline-item[open] {
+      border-color: var(--accent);
+      box-shadow: 0 8px 24px var(--shadow-card);
+    }
+    .faq-inline-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+      font-size: 16px;
+      font-weight: 650;
+      color: var(--text);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .faq-inline-summary::-webkit-details-marker {
+      display: none;
+    }
+    .faq-inline-chevron {
+      flex-shrink: 0;
+      width: 18px;
+      height: 18px;
+      color: var(--text-dim);
+      transition: transform 0.2s ease, color 0.2s ease;
+    }
+    .faq-inline-item[open] .faq-inline-chevron {
+      transform: rotate(180deg);
+      color: var(--accent);
+    }
+    .faq-inline-answer {
+      padding: 0 22px 20px;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .faq-inline-answer p {
+      margin: 0 0 10px;
+    }
+    .faq-inline-answer p:last-child {
+      margin-bottom: 0;
+    }
+    .faq-inline-answer a {
+      color: var(--accent2);
+      text-decoration: underline;
+    }
+    .faq-inline-cta-wrap {
+      margin-top: 32px;
+      display: flex;
+      justify-content: center;
+    }
+
+    /* ================================================================
+       DEVELOPER FRAMEWORKS WRAP (in MCP Section)
+       ================================================================ */
+    .developer-frameworks-wrap {
+      margin-top: 56px;
+      padding-top: 40px;
+      border-top: 1px solid var(--border);
+    }
+    .developer-frameworks-heading {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text-dim);
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    /* ================================================================
+       APOCALYPSE MODE — compact banner
+       ================================================================ */
+    .apocalypse-banner-section {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding-top: 24px;
+      padding-bottom: 24px;
+    }
+    .apocalypse-compact-card {
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 28px;
+      padding: 24px 30px;
+      background: #11100e;
+      color: #f5f2e9;
+      border: 1px solid #34302a;
+      border-radius: 18px;
+      box-shadow: 0 16px 40px rgba(9, 8, 6, .24);
+      overflow: hidden;
+    }
+    .apocalypse-compact-card::before {
       content: '';
       position: absolute;
       inset-block: 0;
       inset-inline-start: 0;
-      width: 5px;
+      width: 4px;
       background: #f0a72f;
     }
-    .apocalypse-copy {
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      padding: 58px 54px 58px 60px;
-    }
-    [dir="rtl"] .apocalypse-copy { padding: 58px 60px 58px 54px; }
-    .apocalypse-kicker {
-      display: inline-flex;
-      align-items: center;
-      align-self: flex-start;
-      gap: 9px;
-      margin-bottom: 22px;
-      color: #f7bd5f;
-      font: 750 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-transform: uppercase;
-      letter-spacing: .16em;
-    }
-    .apocalypse-kicker-mark {
-      display: inline-block;
-      font-size: 26px;
-      line-height: 1;
-      font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
-      vertical-align: -3px;
-    }
-    @keyframes apocalypseSignal {
-      0%, 100% { box-shadow: 0 0 0 4px rgba(240, 167, 47, .13); }
-      50% { box-shadow: 0 0 0 8px rgba(240, 167, 47, .04); }
-    }
-    .apocalypse-copy h2 {
-      max-width: 570px;
-      margin: 0;
-      color: #fffdf7;
-      font-size: clamp(32px, 4.5vw, 56px);
-      line-height: 1.02;
-      letter-spacing: -.045em;
-    }
-    .apocalypse-lead {
-      max-width: 540px;
-      margin: 22px 0 0;
-      color: #bcb6aa;
-      font-size: 16px;
-      line-height: 1.7;
-    }
-    .apocalypse-lead strong { display: block; margin-bottom: 6px; color: #f5f2e9; font-weight: 650; }
-    .apocalypse-actions {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 14px;
-      margin-top: 30px;
-    }
-    .apocalypse-cta {
-      display: inline-flex;
-      align-items: center;
-      align-self: flex-start;
-      gap: 10px;
-      padding: 11px 16px;
-      color: #17120a;
-      border: 1px solid #f7bd5f;
-      border-radius: 9px;
-      background: #f7bd5f;
-      font-size: 14px;
-      font-weight: 750;
-      text-decoration: none;
-      transition: background .2s, border-color .2s, transform .2s;
-    }
-    .apocalypse-cta:hover { border-color: #ffd590; background: #ffd590; transform: translateY(-2px); }
-    .apocalypse-cta:focus-visible { outline: 3px solid rgba(247, 189, 95, .45); outline-offset: 3px; }
-    .apocalypse-video-link {
-      appearance: none;
-      border: 0;
-      padding: 0;
-      background: none;
-      color: #f7bd5f;
-      font: inherit;
-      font-size: 14px;
-      font-weight: 650;
-      text-decoration: underline;
-      text-underline-offset: 3px;
-      cursor: pointer;
-    }
-    .apocalypse-video-link:hover { color: #ffd590; }
-    .apocalypse-video-link:focus-visible { outline: 3px solid rgba(247, 189, 95, .45); outline-offset: 3px; }
-    .apocalypse-video-dialog .security-video-dialog-kicker { color: #f7bd5f; }
-    .apocalypse-stack {
-      position: relative;
-      display: grid;
-      align-content: center;
-      gap: 12px;
+    .apocalypse-compact-info {
       min-width: 0;
-      padding: 42px;
-      border-inline-start: 1px solid #34302a;
-      background: #090a0c;
-    }
-    .apocalypse-stack-head {
       display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .apocalypse-compact-kicker {
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 18px;
-      margin-bottom: 4px;
-      color: #817d75;
-      font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      gap: 7px;
+      color: #f7bd5f;
+      font: 750 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       text-transform: uppercase;
       letter-spacing: .14em;
     }
-    .apocalypse-stack-ready { display: inline-flex; align-items: center; gap: 7px; color: #85d4a0; }
-    .apocalypse-stack-ready::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: #57c97d; }
-    .apocalypse-module {
-      position: relative;
-      display: grid;
-      grid-template-columns: 44px minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 16px;
-      min-width: 0;
-      padding: 18px 18px 18px 20px;
-      border: 1px solid #2a2927;
-      border-radius: 12px;
-      background: #131418;
+    .apocalypse-compact-kicker .apocalypse-kicker-mark {
+      font-size: 16px;
     }
-    [dir="rtl"] .apocalypse-module { padding: 18px 20px 18px 18px; }
-    .apocalypse-module::before {
-      content: '';
-      position: absolute;
-      inset-block: 13px;
-      inset-inline-start: 0;
-      width: 3px;
-      border-radius: 0 3px 3px 0;
-      background: var(--module-color, #f0a72f);
+    .apocalypse-compact-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+      color: #fffdf7;
+      letter-spacing: -0.02em;
     }
-    [dir="rtl"] .apocalypse-module::before { border-radius: 3px 0 0 3px; }
-    .apocalypse-module-icon {
-      width: 44px;
-      height: 44px;
-      display: grid;
-      place-items: center;
-      color: var(--module-color, #f0a72f);
-      border: 1px solid #34322e;
-      border-radius: 10px;
-      background: #0c0d0f;
-    }
-    .apocalypse-module-icon svg { width: 22px; height: 22px; }
-    .apocalypse-module-copy { min-width: 0; }
-    .apocalypse-module-copy strong {
-      display: block;
-      overflow: hidden;
-      color: #f5f2e9;
+    .apocalypse-compact-lead {
+      margin: 0;
+      color: #bcb6aa;
       font-size: 14px;
-      line-height: 1.3;
-      text-overflow: ellipsis;
+      line-height: 1.5;
+    }
+    .apocalypse-compact-lead strong {
+      color: #f5f2e9;
+    }
+    .apocalypse-compact-actions {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-shrink: 0;
+    }
+    .apocalypse-video-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      font-size: 13px;
+      border-radius: 8px;
+      background: #201e1a;
+      color: #f7bd5f;
+      border: 1px solid #453e34;
+      cursor: pointer;
+      font-weight: 650;
+      transition: all 0.2s ease;
+    }
+    .apocalypse-video-btn:hover {
+      background: #2a2722;
+      border-color: #f7bd5f;
+      color: #ffd590;
+    }
+    .apocalypse-video-btn:focus-visible {
+      outline: 2px solid #f7bd5f;
+      outline-offset: 3px;
+    }
+    .apocalypse-docs-link {
+      color: #f7bd5f;
+      font-size: 13px;
+      font-weight: 650;
+      text-decoration: underline;
+      text-underline-offset: 3px;
       white-space: nowrap;
     }
-    .apocalypse-module-copy span {
-      display: block;
-      margin-top: 4px;
-      overflow: hidden;
-      color: #817d75;
-      font: 600 10px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    .apocalypse-docs-link:hover {
+      color: #ffd590;
     }
-    .apocalypse-module-status {
-      padding: 5px 8px;
-      color: #9fe1b5;
-      border: 1px solid rgba(87, 201, 125, .25);
-      border-radius: 999px;
-      background: rgba(87, 201, 125, .08);
-      font: 750 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-transform: uppercase;
-      letter-spacing: .08em;
-    }
-    .apocalypse-module.is-vision { --module-color: #8f88ff; margin-inline-start: 26px; }
-    .apocalypse-module.is-knowledge { --module-color: #55b9d5; margin-inline-start: 52px; }
-    .apocalypse-module.is-first-aid { --module-color: #ef7769; margin-inline-start: 78px; }
-    .apocalypse-module.is-first-aid .apocalypse-module-copy strong { white-space: normal; }
-    @media (max-width: 900px) {
-      .apocalypse-shell { grid-template-columns: 1fr; }
-      .apocalypse-copy { padding: 46px 42px; }
-      [dir="rtl"] .apocalypse-copy { padding: 46px 42px; }
-      .apocalypse-stack { padding: 36px 42px 42px; border-block-start: 1px solid #34302a; border-inline-start: 0; }
-    }
-    @media (max-width: 600px) {
-      .apocalypse-section { padding-inline: 16px; }
-      .apocalypse-shell { border-radius: 20px; }
-      .apocalypse-copy { padding: 38px 28px 36px 32px; }
-      [dir="rtl"] .apocalypse-copy { padding: 38px 32px 36px 28px; }
-      .apocalypse-stack { padding: 28px 22px 30px; }
-      .apocalypse-module { grid-template-columns: 40px minmax(0, 1fr); gap: 13px; padding: 15px 14px 15px 17px; }
-      [dir="rtl"] .apocalypse-module { padding: 15px 17px 15px 14px; }
-      .apocalypse-module-icon { width: 40px; height: 40px; }
-      .apocalypse-module-status { display: none; }
-      .apocalypse-module.is-vision { margin-inline-start: 10px; }
-      .apocalypse-module.is-knowledge { margin-inline-start: 20px; }
-      .apocalypse-module.is-first-aid { margin-inline-start: 30px; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .apocalypse-kicker-mark { animation: none; }
-      .apocalypse-cta { transition: none; }
-      .apocalypse-cta:hover { transform: none; }
-      .apocalypse-video-link { transition: none; }
+    @media (max-width: 820px) {
+      .apocalypse-compact-card {
+        flex-direction: column;
+        align-items: flex-start;
+        padding: 22px 20px;
+        gap: 18px;
+      }
+      .apocalypse-compact-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
     }
 
     /* ================================================================
@@ -2397,33 +2937,7 @@
       .cc-ring, .cc-ring-2 { animation: none; }
     }
 
-    /* ================================================================
-       MODES
-       ================================================================ */
-    .modes-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 24px;
-      max-width: 760px;
-      margin: 0 auto;
-    }
-    .mode-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 32px;
-      text-align: center;
-      transition: all 0.25s;
-    }
-    .mode-card:hover {
-      transform: translateY(-4px);
-      box-shadow: 0 12px 40px var(--shadow-card);
-    }
-    .mode-card.ask { border-top: 3px solid var(--accent); }
-    .mode-card.act { border-top: 3px solid var(--warning); }
-    .mode-card .mode-icon { font-size: 36px; margin-bottom: 16px; }
-    .mode-card h3 { font-size: 20px; margin-bottom: 8px; }
-    .mode-card p { color: var(--text-dim); font-size: 14px; }
+
 
     /* ================================================================
        DOWNLOAD / INSTALL
@@ -2569,219 +3083,6 @@
       max-width: 380px;
     }
 
-    /* A deliberate handoff from installing WebBrain.one to discovering the
-       hosted browser. It sits in normal document flow so it can be generous
-       without competing with page content or covering the comparison below. */
-    .cloud-section {
-      max-width: var(--max-w);
-      margin: 0 auto;
-      padding: 8px 24px 24px;
-    }
-    .cloud-section-card {
-      min-height: 220px;
-      position: relative;
-      isolation: isolate;
-      overflow: hidden;
-      display: grid;
-      grid-template-columns: 190px minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 36px;
-      padding: 34px 38px;
-      background:
-        radial-gradient(circle at 12% 30%, rgba(108,99,255,0.24), transparent 34%),
-        radial-gradient(circle at 88% 70%, rgba(168,85,247,0.16), transparent 38%),
-        var(--bg-card);
-      border: 1px solid rgba(108,99,255,0.32);
-      border-radius: 24px;
-      box-shadow: 0 28px 80px var(--shadow-card);
-    }
-    .cloud-section-card::after {
-      content: '';
-      position: absolute;
-      z-index: -1;
-      width: 320px;
-      height: 320px;
-      inset-inline-end: -150px;
-      inset-block-start: -210px;
-      border: 1px solid rgba(168,85,247,0.22);
-      border-radius: 50%;
-      box-shadow:
-        0 0 0 34px rgba(108,99,255,0.04),
-        0 0 0 68px rgba(168,85,247,0.025);
-      pointer-events: none;
-    }
-    .cloud-section-browser {
-      width: 190px;
-      height: 132px;
-      direction: ltr;
-      overflow: hidden;
-      background: var(--surface);
-      border: 1px solid rgba(108,99,255,0.38);
-      border-radius: 14px;
-      box-shadow: 0 18px 42px var(--shadow-strong);
-      transform: rotate(-2deg);
-      transition: transform 0.25s ease;
-    }
-    .cloud-section-card:hover .cloud-section-browser { transform: rotate(0) translateY(-3px); }
-    .cloud-section-browser-bar {
-      height: 32px;
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
-      align-items: center;
-      gap: 9px;
-      padding: 0 10px;
-      background: var(--bg-card-hover);
-      border-bottom: 1px solid var(--border);
-    }
-    .cloud-section-browser-dots { display: flex; gap: 4px; }
-    .cloud-section-browser-dots i {
-      width: 6px;
-      height: 6px;
-      display: block;
-      border-radius: 50%;
-      background: var(--text-dim);
-      opacity: 0.55;
-    }
-    .cloud-section-browser-dots i:first-child { background: #ff5f57; opacity: 1; }
-    .cloud-section-browser-dots i:nth-child(2) { background: #ffbd2e; opacity: 1; }
-    .cloud-section-browser-dots i:last-child { background: #28c840; opacity: 1; }
-    .cloud-section-browser-url {
-      overflow: hidden;
-      color: var(--text-dim);
-      font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .cloud-section-browser-body {
-      height: 100px;
-      position: relative;
-      display: grid;
-      place-items: center;
-      background:
-        linear-gradient(135deg, transparent 45%, rgba(108,99,255,0.10)),
-        var(--surface);
-    }
-    .cloud-section-browser-logo {
-      width: 42px;
-      height: 42px;
-      border-radius: 12px;
-      box-shadow: 0 10px 24px rgba(0,0,0,0.24);
-    }
-    .cloud-section-agent-chip {
-      position: absolute;
-      inset-inline-end: 15px;
-      inset-block-end: 12px;
-      padding: 4px 7px;
-      color: #fff;
-      background: var(--accent);
-      border-radius: 999px;
-      font: 800 9px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      box-shadow: 0 5px 16px var(--accent-glow);
-    }
-    .cloud-section-copy { min-width: 0; text-align: start; }
-    .cloud-section-kicker {
-      display: flex;
-      align-items: center;
-      gap: 9px;
-      margin-bottom: 12px;
-      color: var(--text-dim);
-      font: 800 11px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-    [dir="rtl"] .cloud-section-kicker {
-      font-family: inherit;
-      letter-spacing: 0;
-      text-transform: none;
-    }
-    .cloud-section-badge {
-      padding: 5px 8px;
-      color: var(--success);
-      background: rgba(52,211,153,0.09);
-      border: 1px solid rgba(52,211,153,0.28);
-      border-radius: 999px;
-    }
-    .cloud-section-title {
-      display: block;
-      margin-bottom: 10px;
-      font: 800 clamp(28px, 4vw, 40px)/1.05 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      letter-spacing: -0.06em;
-      direction: ltr;
-      unicode-bidi: isolate;
-      text-align: start;
-    }
-    .cloud-section-title span { color: var(--accent2); }
-    .cloud-section-description {
-      max-width: 560px;
-      color: var(--text-dim);
-      font-size: 15px;
-      line-height: 1.65;
-    }
-    .cloud-section-cta {
-      min-width: 164px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 9px;
-      padding: 14px 18px;
-      color: #fff;
-      background: var(--accent);
-      border-radius: 12px;
-      box-shadow: 0 10px 28px var(--accent-glow);
-      font-size: 14px;
-      font-weight: 750;
-      text-decoration: none;
-      transition: transform 0.2s ease, background 0.2s ease;
-    }
-    .cloud-section-cta:hover {
-      color: #fff;
-      background: #5a52d5;
-      text-decoration: none;
-      transform: translateY(-2px);
-    }
-    .cloud-section-cta:focus-visible { outline: 3px solid var(--accent2); outline-offset: 3px; }
-    .cloud-section-cta svg { width: 16px; height: 16px; }
-    [dir="rtl"] .cloud-section-cta svg { transform: scaleX(-1); }
-
-    @media (max-width: 820px) {
-      .cloud-section-card {
-        grid-template-columns: 150px minmax(0, 1fr);
-        gap: 22px 28px;
-        padding: 30px;
-      }
-      .cloud-section-browser {
-        width: 150px;
-        grid-row: 1 / span 2;
-      }
-      .cloud-section-cta {
-        width: max-content;
-        min-width: 180px;
-      }
-    }
-    @media (max-width: 560px) {
-      .cloud-section { padding-inline: 16px; }
-      .cloud-section-card {
-        grid-template-columns: 1fr;
-        gap: 20px;
-        padding: 24px;
-        border-radius: 20px;
-      }
-      .cloud-section-browser {
-        width: 100%;
-        height: 104px;
-        grid-row: auto;
-        transform: none;
-      }
-      .cloud-section-browser-body { height: 72px; }
-      .cloud-section-title { font-size: 29px; }
-      .cloud-section-cta { width: 100%; }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .cloud-section-browser,
-      .cloud-section-cta { transition: none; }
-      .cloud-section-card:hover .cloud-section-browser,
-      .cloud-section-cta:hover { transform: none; }
-    }
 
     /* ================================================================
        MCP BRIDGE
@@ -3234,7 +3535,6 @@
       .scene-arrow { display: none; }
       .browser-body { flex-direction: column; }
       .side-panel { width: 100%; border-inline-start: none; border-top: 1px solid var(--border); min-height: 260px; }
-      .modes-grid { grid-template-columns: 1fr; }
       .nav-inner { width: 100%; padding: 12px 10px; gap: 8px; }
       .nav-brand { min-width: 0; font-size: 17px; gap: 6px; }
       .nav-links { gap: 8px; flex-shrink: 0; }
@@ -3334,6 +3634,15 @@
 
 <div class="glow-bg"></div>
 
+<!-- TOP ANNOUNCEMENT BANNER -->
+<aside class="top-announcement-banner">
+  <a href="#mcp" class="top-announcement-link">
+    <span class="top-announcement-pill">New</span>
+    <span class="top-announcement-text">New: MCP server for Claude Code, Codex &amp; Cursor</span>
+    <span class="top-announcement-arrow" aria-hidden="true">→</span>
+  </a>
+</aside>
+
 <!-- NAV -->
 <nav>
   <div class="nav-inner">
@@ -3342,7 +3651,7 @@
     </a>
     <div class="nav-links">
       <a href="/docs/">Документація</a>
-      <a href="/docs/uk/faq/">FAQ</a>
+      <a href="#faq">FAQ</a>
       <a href="/blog">Блог</a>
       <a href="#download" class="nav-cta">Завантажити</a>
       <div class="language-picker" id="language-picker">
@@ -3402,9 +3711,9 @@
   <h1>Open-source AI-<span class="gradient">агент для браузера</span></h1>
   <p>WebBrain — безкоштовне open-source розширення, яке додає можливості AI-агента у ваш браузер. Читайте сторінки, видобувайте дані й автоматизуйте веб-задачі — на будь-якій LLM на ваш вибір. Self-hosted альтернатива пропрієтарним браузерним AI-плагінам.</p>
   <div class="hero-actions">
-    <a href="#download" class="btn btn-primary">
+    <a href="https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb" target="_blank" rel="noopener noreferrer" class="btn btn-primary" id="hero-install-cta">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      Встановити розширення
+      <span id="hero-install-label">Встановити розширення</span>
     </a>
     <a href="https://github.com/webbrain-one/webbrain" target="_blank" class="btn btn-secondary">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
@@ -3434,10 +3743,6 @@
         MarkTechPost
       </span>
     </a>
-    <span class="hero-proof-cell hero-proof-users">
-      <svg class="hero-proof-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      Тисячі користувачів у різних браузерах
-    </span>
   </div>
 
   <!-- Browser mockup — 5 demo scenarios that cross-fade. The first scene
@@ -3757,7 +4062,7 @@
   </div>
 </dialog>
 
-<!-- DEMO VIDEO -->
+<!-- 2. SEE IT WORK: DEMO VIDEO & PROOF CARDS -->
 <section class="section" id="demo" style="padding-top: 30px;">
   <div class="section-label">Демо</div>
   <h2 class="section-title">WebBrain у дії</h2>
@@ -3768,137 +4073,115 @@
     </div>
   </div>
 
-  <!-- Objection handling sits directly after the demo: the visitor has just seen
-       what the agent does, so "will it act without asking me" is the live question.
-       The real speaker thumbnail makes the click destination clear, while the
-       promises stay readable without opening the modal. -->
-  <div class="hero-trust">
-    <div class="hero-trust-media" aria-hidden="true">
-      <img class="hero-trust-thumbnail" src="/assets/security-speaker-thumbnail.jpg" alt="" loading="lazy" decoding="async">
-      <span class="hero-trust-play">
-        <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8a1 1 0 0 1 1.52-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2A1 1 0 0 1 4.5 13.2V2.8z"/></svg>
-      </span>
-      <span class="hero-trust-watch">Переглянути відео про безпеку · 3:10</span>
-    </div>
-    <div class="hero-trust-copy">
-      <div class="hero-trust-heading">
-        <span class="hero-trust-shield" aria-hidden="true">
-          <svg class="shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+  <!-- Two short cards side by side: 🛡 Security and ⚔️ vs Claude in Chrome (1:17) -->
+  <div class="demo-duo-cards">
+    <!-- Card 1: 🛡 Security -->
+    <div class="demo-duo-card demo-duo-security">
+      <div class="demo-duo-media" aria-hidden="true">
+        <img class="demo-duo-thumbnail" src="/assets/security-speaker-thumbnail.jpg" alt="" loading="lazy" decoding="async">
+        <span class="demo-duo-play">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8a1 1 0 0 1 1.52-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2A1 1 0 0 1 4.5 13.2V2.8z"/></svg>
         </span>
-        <span>
-          <span class="hero-trust-kicker">Безпека</span>
-          <h2 class="hero-trust-title" id="hero-trust-title">Як WebBrain залишає контроль за вами</h2>
-        </span>
+        <span class="demo-duo-watch">Переглянути відео про безпеку · 3:10</span>
       </div>
-      <ul class="hero-trust-list">
-        <li>За замовчуванням — режим «Запитати» лише для читання</li>
-        <li>Запитує перед важливими діями</li>
-        <li>Відкритий код, доступний для аудиту</li>
-        <li>Обирайте локальні або хмарні моделі</li>
-      </ul>
+      <div class="demo-duo-copy">
+        <div class="demo-duo-header">
+          <span class="demo-duo-badge-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></svg>
+          </span>
+          <div>
+            <span class="demo-duo-kicker">Безпека</span>
+            <h3 class="demo-duo-title" id="hero-trust-title">Як WebBrain залишає контроль за вами</h3>
+          </div>
+        </div>
+        <ul class="demo-duo-list">
+          <li>За замовчуванням — режим «Запитати» лише для читання</li>
+          <li>Запитує перед важливими діями</li>
+          <li>Відкритий код, доступний для аудиту</li>
+          <li>Обирайте локальні або хмарні моделі</li>
+        </ul>
+      </div>
+      <button
+        class="demo-duo-trigger"
+        id="security-video-open"
+        type="button"
+        aria-label="Переглянути відео про безпеку"
+        aria-haspopup="dialog"
+        aria-controls="security-video-dialog"
+      ></button>
     </div>
-    <button
-      class="hero-trust-trigger"
-      id="security-video-open"
-      type="button"
-      aria-label="Переглянути відео про безпеку"
-      aria-haspopup="dialog"
-      aria-controls="security-video-dialog"
-    ></button>
+
+    <!-- Card 2: ⚔️ vs Claude in Chrome (1:17) -->
+    <div class="demo-duo-card demo-duo-compare">
+      <div class="demo-duo-media" aria-hidden="true">
+        <img class="demo-duo-thumbnail" src="/assets/webbrain-home-demo-poster.jpg" alt="" loading="lazy" decoding="async">
+        <span class="demo-duo-play">
+          <svg viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 2.8a1 1 0 0 1 1.52-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2A1 1 0 0 1 4.5 13.2V2.8z"/></svg>
+        </span>
+        <span class="demo-duo-watch">Переглянути порівняння · 1:17</span>
+      </div>
+      <div class="demo-duo-copy">
+        <div class="demo-duo-header">
+          <span class="demo-duo-badge-icon demo-duo-vs" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </span>
+          <div>
+            <span class="demo-duo-kicker">Порівняно з AI-плагінами для браузера</span>
+            <h3 class="demo-duo-title">Локальний WebBrain випереджає Claude у Chrome</h3>
+          </div>
+        </div>
+        <p class="demo-duo-desc">Те саме завдання, той самий браузер. WebBrain запускає Gemma 4 31B локально й завершує першим.</p>
+        <div class="demo-duo-callout">
+          <span class="demo-duo-tag">Free &amp; Open Source</span>
+          <span class="demo-duo-tag">On-Device Models</span>
+          <span class="demo-duo-tag">Zero Cloud Leakage</span>
+        </div>
+      </div>
+      <button
+        class="demo-duo-trigger"
+        id="comparison-video-open"
+        type="button"
+        aria-label="Переглянути порівняння"
+        aria-haspopup="dialog"
+        aria-controls="comparison-video-dialog"
+      ></button>
+    </div>
   </div>
 </section>
 
-<!-- FEATURES -->
-<section class="section" id="features">
-  <div class="section-label">Можливості</div>
-  <h2 class="section-title">Усе, що потрібно від AI у браузері</h2>
-  <p class="section-subtitle">Повноцінний AI-агент, який живе в бічній панелі браузера й розуміє будь-яку веб-сторінку.</p>
 
-  <div class="features-grid" id="features-grid">
-    <div class="feature-card">
-      <div class="feature-icon">📖</div>
-      <h3>Розуміння сторінки</h3>
-      <p>Читає та розуміє будь-яку веб-сторінку — статті, документацію, дашборди, форми. Ставте запитання й одразу отримуйте відповіді за вмістом поточної сторінки.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🤖</div>
-      <h3>Повноцінний браузерний агент</h3>
-      <p>Клікає, друкує, гортає, навігує та взаємодіє зі сторінками за вас. Автоматизуйте рутинні задачі інструкціями природною мовою.</p>
-      <p class="feature-note">Запитує перед важливими діями; за замовчуванням — режим «Запитати» лише для читання.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">📊</div>
-      <h3>Видобуток даних</h3>
-      <p>Видобуває структуровані дані з будь-якої сторінки — таблиці, списки, посилання, форми. Експортуйте каталоги товарів, результати пошуку або будь-який вміст. Працює і з PDF.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🔌</div>
-      <h3>Підтримка різних LLM</h3>
-      <p>Працює з локальним llama.cpp, OpenAI, Claude та OpenRouter. Використовуйте улюблену модель — або працюйте повністю офлайн із локальним AI.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">🛡️</div>
-      <h3>Спочатку приватність</h3>
-      <p>Запити до локальних моделей залишаються на вашому пристрої. Хмарні провайдери отримують вміст, який ви надсилаєте. Опція Compass «Допомагати вдосконалювати WebBrain» увімкнена за замовчуванням і може передавати відповідні взаємодії для вдосконалення та навчання. Її можна вимкнути в Налаштуваннях. Повністю відкритий вихідний код.</p>
-    </div>
-    <div class="feature-card">
-      <div class="feature-icon">⚡</div>
-      <h3>Розумний контекст</h3>
-      <p>Автоматичне керування контекстом не дає переповнитись вікну токенів. Розумно підрізає історію діалогу й обмежує вивід інструментів — сесія йде рівно й без зривів.</p>
-    </div>
-    <div class="feature-card" data-extra>
-      <div class="feature-icon">👁️</div>
-      <h3>Окрема модель для зору</h3>
-      <p>Поєднайте швидку текстову модель для планування з окремою vision-моделлю для читання скриншотів. Дешевше та швидше, ніж проганяти все через одну велику мультимодальну.</p>
-    </div>
-
-    <div class="feature-card" data-extra>
-      <div class="feature-icon">👤</div>
-      <h3>Автозаповнення профілю</h3>
-      <p>Опціональна plain-text біографія — ім&#39;я, робочий email, компанія, одноразовий пароль — дозволяє агенту легко проходити маловажливі реєстрації, не питаючи щоразу. За замовчуванням вимкнено, усе зберігається локально.</p>
-      <p class="feature-note">За замовчуванням вимкнено. Зберігається локально у вашому браузері й ніколи не надсилається до WebBrain.</p>
-    </div>
-    <div class="feature-card" data-extra>
-      <div class="feature-icon">🍪</div>
-      <h3>Розуміє cookie та paywall</h3>
-      <p>Закриває банери згоди (OneTrust, Cookiebot, Didomi, Quantcast), перш ніж аналізувати сторінку. Розпізнає paywall і чесно повідомляє про нього, а не вигадує текст статті й не намагається його обійти.</p>
-    </div>
-    <div class="feature-card" data-extra>
-      <div class="feature-icon">🧩</div>
-      <h3>Optional CAPTCHA Solver</h3>
-      <p>Enable optional CAPTCHA providers with your own API keys and weighted fallback. hCaptcha uses NopeCHA or NoneCap; other coverage varies by provider. <a href="/docs/captcha/" style="color:var(--accent);text-decoration:none;">See provider coverage and setup</a>.</p>
-      <p class="feature-note">За замовчуванням вимкнено. Власний ключ: жоден сервіс CAPTCHA не використовується, доки ви його не ввімкнете.</p>
-    </div>
-    <div class="feature-card" data-extra>
-      <div class="feature-icon">🌐</div>
-      <h3>Багатомовний інтерфейс</h3>
-      <p>Плагін доступний у English, Español, Français, Türkçe та 中文. При першому запуску автоматично визначає мову браузера; перемикайте будь-коли значком глобуса в бічній панелі. Маркетинговий сайт локалізовано відповідно.</p>
-    </div>
-    <div class="feature-card" data-extra>
-      <div class="feature-icon">💰</div>
-      <h3>Бережемо токени</h3>
-      <p>Скриншоти зменшуються за розміром та ітеративно стискаються в JPEG, перш ніж покинути вашу машину, — image-токени лишаються маленькими. Розумне підрізання контексту та обмеження виводу інструментів роблять хмарні рахунки передбачуваними — жодних сюрпризів у довгих сесіях.</p>
-    </div>
-  </div>
-  <div class="features-more">
-    <button
-      class="features-more-btn"
-      id="features-more-btn"
-      type="button"
-      aria-expanded="false"
-      aria-controls="features-grid"
-      data-label-more="Показати більше можливостей"
-      data-label-less="Згорнути"
-    >
-      <span id="features-more-label">Показати більше можливостей</span>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <polyline points="6 9 12 15 18 9"/>
-      </svg>
-    </button>
+<!-- 3. WORD ON THE WEB (Compact proof strip) -->
+<section class="section voices-section" id="voices" lang="en" dir="ltr" aria-labelledby="voices-title">
+  <h2 id="voices-title">Word on the web</h2>
+  <div class="voices-grid">
+    <figure class="voice">
+      <img class="voice-portrait" src="/assets/voices/chris-messina.png" alt="Illustrated portrait of Chris Messina" width="76" height="76" loading="lazy" decoding="async">
+      <blockquote cite="https://www.producthunt.com/products/webbrain">“The power of this approach is that the assistant has access to your sessions, cookies, and context — <em>intact</em>.”</blockquote>
+      <figcaption>
+        <span class="voice-name">Chris Messina</span>
+        <a class="voice-source" href="https://www.producthunt.com/products/webbrain" target="_blank" rel="noopener noreferrer">Product Hunt</a>
+      </figcaption>
+    </figure>
+    <figure class="voice voice-featured">
+      <img class="voice-portrait" src="/assets/voices/robert-scoble.png" alt="Illustrated portrait of Robert Scoble" width="90" height="90" loading="lazy" decoding="async">
+      <blockquote cite="https://x.com/Scobleizer/status/2098481418687123967">“Makes Google Chrome a lot more useful.”</blockquote>
+      <figcaption>
+        <span class="voice-name">Robert Scoble</span>
+        <a class="voice-source" href="https://x.com/Scobleizer/status/2098481418687123967" target="_blank" rel="noopener noreferrer">X / Scobleizer</a>
+      </figcaption>
+    </figure>
+    <figure class="voice">
+      <img class="voice-portrait" src="/assets/voices/asif-razzaq.png" alt="Illustrated portrait of Asif Razzaq" width="76" height="76" loading="lazy" decoding="async">
+      <blockquote cite="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/">“Run the agent against a local model, and no page data leaves your machine.”</blockquote>
+      <figcaption>
+        <span class="voice-name">Asif Razzaq</span>
+        <a class="voice-source" href="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/" target="_blank" rel="noopener noreferrer">MarkTechPost</a>
+      </figcaption>
+    </figure>
   </div>
 </section>
 
-<!-- PROVIDERS -->
+<!-- 4. BRING YOUR OWN AI -->
 <section class="section" id="providers" style="padding-top: 40px;">
   <div class="section-label">LLM-провайдери</div>
   <h2 class="section-title">Свій AI з собою</h2>
@@ -3980,219 +4263,91 @@
       <div class="pn-label">Mistral</div>
     </a>
   </div>
-
 </section>
 
-<!-- Original-language excerpts. Keep the requested left/center/right order in RTL locales too. -->
-<section class="section voices-section" id="voices" lang="en" dir="ltr" aria-labelledby="voices-title">
-  <h2 id="voices-title">Word on the web</h2>
-  <div class="voices-grid">
-    <figure class="voice">
-      <img class="voice-portrait" src="/assets/voices/chris-messina.png" alt="Illustrated portrait of Chris Messina" width="136" height="136" loading="lazy" decoding="async">
-      <blockquote cite="https://www.producthunt.com/products/webbrain">“The power of this approach is that the assistant has access to your sessions, cookies, and context — <em>intact</em>.”</blockquote>
-      <figcaption>
-        <span class="voice-name">Chris Messina</span>
-        <a class="voice-source" href="https://www.producthunt.com/products/webbrain" target="_blank" rel="noopener noreferrer">Product Hunt</a>
-      </figcaption>
-    </figure>
-    <figure class="voice voice-featured">
-      <img class="voice-portrait" src="/assets/voices/robert-scoble.png" alt="Illustrated portrait of Robert Scoble" width="160" height="160" loading="lazy" decoding="async">
-      <blockquote cite="https://x.com/Scobleizer/status/2098481418687123967">“Makes Google Chrome a lot more useful.”</blockquote>
-      <figcaption>
-        <span class="voice-name">Robert Scoble</span>
-        <a class="voice-source" href="https://x.com/Scobleizer/status/2098481418687123967" target="_blank" rel="noopener noreferrer">X / Scobleizer</a>
-      </figcaption>
-    </figure>
-    <figure class="voice">
-      <img class="voice-portrait" src="/assets/voices/asif-razzaq.png" alt="Illustrated portrait of Asif Razzaq" width="136" height="136" loading="lazy" decoding="async">
-      <blockquote cite="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/">“Run the agent against a local model, and no page data leaves your machine.”</blockquote>
-      <figcaption>
-        <span class="voice-name">Asif Razzaq</span>
-        <a class="voice-source" href="https://www.marktechpost.com/2026/07/02/meet-webbrain-an-open-source-local-first-ai-browser-agent-that-reads-pages-and-automates-tasks-in-chrome-and-firefox/" target="_blank" rel="noopener noreferrer">MarkTechPost</a>
-      </figcaption>
-    </figure>
+<!-- 5. FEATURES (Core cards first, trimmed) -->
+<section class="section" id="features">
+  <div class="section-label">Можливості</div>
+  <h2 class="section-title">Усе, що потрібно від AI у браузері</h2>
+  <p class="section-subtitle">Повноцінний AI-агент, який живе в бічній панелі браузера й розуміє будь-яку веб-сторінку.</p>
+
+  <div class="features-grid" id="features-grid">
+    <!-- 6 core cards shown first -->
+    <div class="feature-card">
+      <div class="feature-icon">📖</div>
+      <h3>Розуміння сторінки</h3>
+      <p>Читає та розуміє будь-яку веб-сторінку — статті, документацію, дашборди, форми. Ставте запитання й одразу отримуйте відповіді за вмістом поточної сторінки.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">🤖</div>
+      <h3>Повноцінний браузерний агент</h3>
+      <p>Клікає, друкує, гортає, навігує та взаємодіє зі сторінками за вас. Автоматизуйте рутинні задачі інструкціями природною мовою.</p>
+      <p class="feature-note">Запитує перед важливими діями; за замовчуванням — режим «Запитати» лише для читання.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">📊</div>
+      <h3>Видобуток даних</h3>
+      <p>Видобуває структуровані дані з будь-якої сторінки — таблиці, списки, посилання, форми. Експортуйте каталоги товарів, результати пошуку або будь-який вміст. Працює і з PDF.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">💰</div>
+      <h3>Бережемо токени</h3>
+      <p>Скриншоти зменшуються за розміром та ітеративно стискаються в JPEG, перш ніж покинути вашу машину, — image-токени лишаються маленькими. Розумне підрізання контексту та обмеження виводу інструментів роблять хмарні рахунки передбачуваними — жодних сюрпризів у довгих сесіях.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">⚡</div>
+      <h3>Розумний контекст</h3>
+      <p>Автоматичне керування контекстом не дає переповнитись вікну токенів. Розумно підрізає історію діалогу й обмежує вивід інструментів — сесія йде рівно й без зривів.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feature-icon">👁️</div>
+      <h3>Окрема модель для зору</h3>
+      <p>Поєднайте швидку текстову модель для планування з окремою vision-моделлю для читання скриншотів. Дешевше та швидше, ніж проганяти все через одну велику мультимодальну.</p>
+    </div>
+
+    <!-- Extra cards behind "show more" -->
+    <div class="feature-card" data-extra>
+      <div class="feature-icon">🍪</div>
+      <h3>Розуміє cookie та paywall</h3>
+      <p>Закриває банери згоди (OneTrust, Cookiebot, Didomi, Quantcast), перш ніж аналізувати сторінку. Розпізнає paywall і чесно повідомляє про нього, а не вигадує текст статті й не намагається його обійти.</p>
+    </div>
+    <div class="feature-card" data-extra>
+      <div class="feature-icon">👤</div>
+      <h3>Автозаповнення профілю</h3>
+      <p>Опціональна plain-text біографія — ім&#39;я, робочий email, компанія, одноразовий пароль — дозволяє агенту легко проходити маловажливі реєстрації, не питаючи щоразу. За замовчуванням вимкнено, усе зберігається локально.</p>
+      <p class="feature-note">За замовчуванням вимкнено. Зберігається локально у вашому браузері й ніколи не надсилається до WebBrain.</p>
+    </div>
+    <div class="feature-card" data-extra>
+      <div class="feature-icon">🧩</div>
+      <h3>Optional CAPTCHA Solver</h3>
+      <p>Enable optional CAPTCHA providers with your own API keys and weighted fallback. hCaptcha uses NopeCHA or NoneCap; other coverage varies by provider. <a href="/docs/captcha/" style="color:var(--accent);text-decoration:none;">See provider coverage and setup</a>.</p>
+      <p class="feature-note">За замовчуванням вимкнено. Власний ключ: жоден сервіс CAPTCHA не використовується, доки ви його не ввімкнете.</p>
+    </div>
+    <div class="feature-card" data-extra>
+      <div class="feature-icon">🌐</div>
+      <h3>Багатомовний інтерфейс</h3>
+      <p>Плагін доступний у English, Español, Français, Türkçe та 中文. При першому запуску автоматично визначає мову браузера; перемикайте будь-коли значком глобуса в бічній панелі. Маркетинговий сайт локалізовано відповідно.</p>
+    </div>
+  </div>
+  <div class="features-more">
+    <button
+      class="features-more-btn"
+      id="features-more-btn"
+      type="button"
+      aria-expanded="false"
+      aria-controls="features-grid"
+      data-label-more="Показати більше можливостей"
+      data-label-less="Згорнути"
+    >
+      <span id="features-more-label">Показати більше можливостей</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <polyline points="6 9 12 15 18 9"/>
+      </svg>
+    </button>
   </div>
 </section>
 
-<!-- APOCALYPSE MODE -->
-<section class="section apocalypse-section" id="apocalypse" aria-labelledby="apocalypse-title">
-  <div class="apocalypse-shell">
-    <div class="apocalypse-copy">
-      <div class="apocalypse-kicker"><span class="apocalypse-kicker-mark" aria-hidden="true">☢</span>Режим апокаліпсису</div>
-      <h2 id="apocalypse-title">WebBrain готовий, навіть коли інтернету немає.</h2>
-      <p class="apocalypse-lead"><strong>Офлайн знання під вашим контролем</strong>Налаштуйте чотири основні компоненти для приватного локального чату: текстову модель, модель комп’ютерного зору, одну офлайн-версію Вікіпедії та Аварійну скриньку.</p>
-      <div class="apocalypse-actions">
-        <a class="apocalypse-cta" href="#download">Встановити WebBrain <span aria-hidden="true">→</span></a>
-        <button
-          class="apocalypse-video-link"
-          id="apocalypse-video-open"
-          type="button"
-          aria-haspopup="dialog"
-          aria-controls="apocalypse-video-dialog"
-        >Дивитися наше відео</button>
-      </div>
-    </div>
-    <div class="apocalypse-stack" aria-hidden="true">
-      <div class="apocalypse-stack-head" aria-hidden="true"><span>WB // OFFLINE KIT</span><span class="apocalypse-stack-ready">READY</span></div>
-      <div class="apocalypse-module">
-        <span class="apocalypse-module-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M8 9h8M8 13h5M8 17h3"/></svg>
-        </span>
-        <span class="apocalypse-module-copy"><strong>WebGPU powered local LLM</strong><span>TEXT MODEL · ON DEVICE</span></span>
-        <span class="apocalypse-module-status" aria-hidden="true">LOCAL</span>
-      </div>
-      <div class="apocalypse-module is-vision">
-        <span class="apocalypse-module-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 12s3.3-5 9.2-5 9.2 5 9.2 5-3.3 5-9.2 5-9.2-5-9.2-5Z"/><circle cx="12" cy="12" r="2.5"/></svg>
-        </span>
-        <span class="apocalypse-module-copy"><strong>Vision Model</strong><span>VISUAL FALLBACK · ON DEVICE</span></span>
-        <span class="apocalypse-module-status" aria-hidden="true">LOCAL</span>
-      </div>
-      <div class="apocalypse-module is-knowledge">
-        <span class="apocalypse-module-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11v17H6.5A2.5 2.5 0 0 0 4 22V5.5Z"/><path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v17h4.5A2.5 2.5 0 0 1 20 22V5.5Z"/></svg>
-        </span>
-        <span class="apocalypse-module-copy"><strong>Wikipedia</strong><span>LOCAL EDITION · ZIM ARCHIVE</span></span>
-        <span class="apocalypse-module-status" aria-hidden="true">OFFLINE</span>
-      </div>
-      <div class="apocalypse-module is-first-aid">
-        <span class="apocalypse-module-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="15" rx="3"/><path d="M8 6V4h8v2M12 10v7M8.5 13.5h7"/></svg>
-        </span>
-        <span class="apocalypse-module-copy"><strong>First Aid — U.S. Army Field Manual</strong><span>EMERGENCY BOX · PDF</span></span>
-        <span class="apocalypse-module-status" aria-hidden="true">OFFLINE</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<dialog
-  class="security-video-dialog apocalypse-video-dialog"
-  id="apocalypse-video-dialog"
-  aria-labelledby="apocalypse-video-dialog-title"
-  aria-describedby="apocalypse-video-dialog-description"
->
-  <div class="security-video-dialog-shell">
-    <div class="security-video-dialog-copy">
-      <div class="security-video-dialog-kicker">Режим апокаліпсису</div>
-      <h2 class="security-video-dialog-title" id="apocalypse-video-dialog-title">WebBrain готовий, навіть коли інтернету немає.</h2>
-      <p class="security-video-dialog-description" id="apocalypse-video-dialog-description">Налаштуйте чотири основні компоненти для приватного локального чату: текстову модель, модель комп’ютерного зору, одну офлайн-версію Вікіпедії та Аварійну скриньку.</p>
-      <button
-        class="security-video-dialog-close"
-        id="apocalypse-video-close"
-        type="button"
-        aria-label="Закрити відео режиму апокаліпсису"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
-    </div>
-    <div class="security-video-dialog-stage">
-      <div class="security-video-dialog-frame">
-        <video id="apocalypse-video" data-desktop-src="/assets/apocalypse-mode.mp4" data-mobile-src="/assets/apocalypse-mode.mp4" controls preload="none" playsinline></video>
-      </div>
-    </div>
-  </div>
-</dialog>
-
-<!-- MODES -->
-<section class="section" id="modes" style="display:none;">
-  <div class="section-label">Режими взаємодії</div>
-  <h2 class="section-title">Запитати або Діяти</h2>
-  <p class="section-subtitle">Два режими під різні задачі. За замовчуванням лише читання, повноцінна сила агента — коли вона вам потрібна.</p>
-
-  <div class="modes-grid">
-    <div class="mode-card ask">
-      <div class="mode-icon">💬</div>
-      <h3>Режим «Запитати»</h3>
-      <p>Лише читання. Запитуйте про поточну сторінку, видобувайте інформацію, робіть резюме. Безпечно й ненав&#39;язливо — нічого не змінюється.</p>
-    </div>
-    <div class="mode-card act">
-      <div class="mode-icon">⚡</div>
-      <h3>Режим «Діяти»</h3>
-      <p>Повноцінний агент. Натискає кнопки, заповнює форми, переходить між сторінками, запускає скрипти. Автоматизуйте складні багатокрокові сценарії однією інструкцією.</p>
-    </div>
-  </div>
-</section>
-
-<!-- MCP SERVER -->
-<section class="section" id="mcp">
-  <div class="section-label">Нове · сервер MCP</div>
-  <h2 class="section-title">Ваш агент для програмування — у браузері, яким ви вже користуєтеся.</h2>
-  <p class="section-subtitle">Підключіть Claude Code, Codex, Cursor, OpenCode або будь-який stdio-клієнт MCP до вкладок Chromium, де ви вже ввійшли. WebBrain зберігає перевірку дозволів на рівні завдання в браузері й тепер також повертає структурований JSON.</p>
-
-  <div class="mcp-showcase">
-    <div class="mcp-copy">
-      <h3>Делегуйте мету. Збережіть сеанс.</h3>
-      <p>Без експорту cookie, фонового входу чи повторного використання облікових даних. Локальний сервер передає завдання WebBrain у Chrome, Edge, Brave, Opera або Vivaldi. Міст MCP не підтримує Firefox.</p>
-      <div class="mcp-command" role="region" aria-label="Команда запуску сервера WebBrain MCP">$ npx -y @webbrain/mcp-server</div>
-      <div class="mcp-actions">
-        <a href="/docs/mcp/" class="btn btn-primary">Відкрити повний посібник з MCP</a>
-        <a href="https://github.com/webbrain-one/webbrain/tree/main/mcp-server" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">GitHub</a>
-      </div>
-    </div>
-    <div class="mcp-console" aria-label="Клієнт MCP через локальний сервер WebBrain до авторизованого браузера Chromium">
-      <div class="mcp-rail">
-        <div class="mcp-node">
-          <span class="mcp-node-icon" aria-hidden="true">⌘</span>
-          <strong>Ваш агент для програмування</strong>
-          <span>MCP · stdio</span>
-        </div>
-        <div class="mcp-arrow" aria-hidden="true">→</div>
-        <div class="mcp-node is-bridge">
-          <span class="mcp-node-icon" aria-hidden="true">◇</span>
-          <strong>WebBrain MCP</strong>
-          <span>loopback only</span>
-        </div>
-        <div class="mcp-arrow" aria-hidden="true">→</div>
-        <div class="mcp-node">
-          <span class="mcp-node-icon" aria-hidden="true">◎</span>
-          <strong>Ваш авторизований браузер</strong>
-          <span>Chrome · Edge · Brave</span>
-        </div>
-      </div>
-      <div class="mcp-tools-label">6 інструментів рівня завдання · дозволи браузера й надалі діють</div>
-      <div class="mcp-tools" aria-label="WebBrain MCP tools">
-        <span class="mcp-tool">webbrain_run</span>
-        <span class="mcp-tool">webbrain_extract</span>
-        <span class="mcp-tool">webbrain_status</span>
-        <span class="mcp-tool">webbrain_respond</span>
-        <span class="mcp-tool">webbrain_abort</span>
-        <span class="mcp-tool">webbrain_connection</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- WEBBRAIN CLOUD (temporarily hidden)
-<section class="cloud-section" aria-labelledby="cloud-section-title">
-  <div class="cloud-section-card">
-    <div class="cloud-section-browser" aria-hidden="true">
-      <div class="cloud-section-browser-bar">
-        <span class="cloud-section-browser-dots"><i></i><i></i><i></i></span>
-        <span class="cloud-section-browser-url">https://webbrain.cloud</span>
-      </div>
-      <div class="cloud-section-browser-body">
-        <img class="cloud-section-browser-logo" src="/logo-github.png" alt="">
-        <span class="cloud-section-agent-chip">AI</span>
-      </div>
-    </div>
-    <div class="cloud-section-copy">
-      <div class="cloud-section-kicker">
-        <span class="cloud-section-badge">Новинка</span>
-        <span>Для ШІ-агентів</span>
-      </div>
-      <strong class="cloud-section-title" id="cloud-section-title">WebBrain<span>.cloud</span></strong>
-      <p class="cloud-section-description">Приватний видимий браузер для Codex та інших ШІ-агентів.</p>
-    </div>
-    <a class="cloud-section-cta" href="https://webbrain.cloud/">
-      Перейти до Cloud
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-    </a>
-  </div>
-</section>
--->
-
-<!-- COMPARISON TABLE -->
+<!-- 6. COMPARE: VS CLAUDE IN CHROME (Table only) -->
 <section class="section" id="compare">
   <div class="section-label">Чому WebBrain?</div>
   <h2 class="section-title">Чим відрізняється WebBrain?</h2>
@@ -4221,85 +4376,89 @@
     </table>
   </div>
 
-  <button
-    class="compare-video-card"
-    id="comparison-video-open"
-    type="button"
-    aria-haspopup="dialog"
-    aria-controls="comparison-video-dialog"
-  >
-    <span class="compare-video-card-icon" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8c0-.8.9-1.3 1.6-.9l10.2 7.2a1 1 0 0 1 0 1.7L8.6 20c-.7.5-1.6 0-1.6-.9V4.8Z"/></svg>
-    </span>
-    <span class="compare-video-card-copy">
-      <span class="compare-video-card-title">Локальний WebBrain випереджає Claude у Chrome</span>
-      <span class="compare-video-card-description">Те саме завдання, той самий браузер. WebBrain запускає Gemma 4 31B локально й завершує першим.</span>
-    </span>
-    <span class="compare-video-card-action">
-      Переглянути порівняння
-      <span class="compare-video-card-runtime" aria-hidden="true">1:17</span>
-    </span>
-  </button>
-
-  <!-- vs Agent Frameworks -->
-  <h3 style="font-size:16px; color:var(--text-dim); margin: 40px 0 16px; text-align:center;">Порівняно з AI-фреймворками для агентів <span style="font-weight:400; font-size:13px;">(інша категорія)</span></h3>
-  <div class="compare-table-wrap">
-    <table class="compare-table">
-      <thead>
-        <tr>
-          <th>Аспект</th>
-          <th class="highlight">WebBrain</th>
-          <th>OpenClaw / Browser-Use / тощо</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr><td>Що це?</td><td class="highlight">Браузерне розширення (для кінцевого користувача)</td><td>Agent-фреймворк / SDK (для розробників)</td></tr>
-        <tr><td>Цільовий користувач</td><td class="highlight">Будь-хто — кодити не потрібно</td><td>Розробники, що будують автоматизації</td></tr>
-        <tr><td>Встановлення</td><td class="highlight">Встановлення в браузер в один клік</td><td>Потрібен Python/Docker</td></tr>
-        <tr><td>Інтерфейс</td><td class="highlight">Вбудований чат у бічній панелі</td><td>Без UI — лише код або API</td></tr>
-        <tr><td>Керування браузером</td><td>Content script (легко)</td><td>CDP / Playwright (повний контроль)</td></tr>
-        <tr><td>Сценарії з кількома вкладками</td><td>Окрема розмова для кожної вкладки</td><td>Програмована оркестрація багатьох вкладок</td></tr>
-        <tr><td>Headless-режим</td><td>Ні — працює у вашому браузері</td><td>Так — headless-автоматизація</td></tr>
-        <tr><td>Розширюваність</td><td>Додавання своїх LLM-провайдерів</td><td>Повноцінний Python SDK, кастомні інструменти</td></tr>
-        <tr><td>Найкраще для</td><td class="highlight">Щоденний AI-помічник у браузері</td><td>Автоматичний скрейпінг / тест-пайплайни</td></tr>
-      </tbody>
-    </table>
-  </div>
-
   <p style="text-align:center; color:var(--text-dim); font-size:13px; margin-top:24px; max-width:600px; margin-left:auto; margin-right:auto;">
     WebBrain — браузерне розширення для кінцевих користувачів, яким потрібен AI-помічник прямо під час серфінгу. Agent-фреймворки на кшталт OpenClaw — це інструменти для розробників, які будують автоматичні браузерні пайплайни. Різні інструменти під різні задачі — і їх можна використовувати разом.
   </p>
 </section>
 
-<dialog
-  class="security-video-dialog comparison-video-dialog"
-  id="comparison-video-dialog"
-  aria-labelledby="comparison-video-dialog-title"
-  aria-describedby="comparison-video-dialog-description"
->
-  <div class="security-video-dialog-shell">
-    <div class="security-video-dialog-copy">
-      <div class="security-video-dialog-kicker">Порівняно з AI-плагінами для браузера</div>
-      <h2 class="security-video-dialog-title" id="comparison-video-dialog-title">Локальний WebBrain випереджає Claude у Chrome</h2>
-      <p class="security-video-dialog-description" id="comparison-video-dialog-description">Те саме завдання, той самий браузер. WebBrain запускає Gemma 4 31B локально й завершує першим.</p>
-      <button
-        class="security-video-dialog-close"
-        id="comparison-video-close"
-        type="button"
-        aria-label="Закрити відео з порівнянням"
-      >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-      </button>
-    </div>
-    <div class="security-video-dialog-stage">
-      <div class="security-video-dialog-frame">
-        <video id="comparison-video" data-desktop-src="/assets/demo-desktop.mp4" data-mobile-src="/assets/demo-mobile.mp4" controls preload="none" playsinline></video>
-      </div>
-    </div>
-  </div>
-</dialog>
+<!-- 7. INLINE FAQ -->
+<section class="section faq-inline-section" id="faq">
+  <div class="section-label">FAQ</div>
+  <h2 class="section-title">Часті запитання</h2>
+  <p class="section-subtitle">Короткі відповіді про налаштування, моделі, оплату, безпеку та роботу WebBrain у браузері.</p>
 
-<!-- DOWNLOAD -->
+  <div class="faq-inline-grid">
+    <details class="faq-inline-item">
+      <summary class="faq-inline-summary">
+        <span>WebBrain — це безкоштовна альтернатива браузерному плагіну Claude?</span>
+        <svg class="faq-inline-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="faq-inline-answer">
+        Так. WebBrain дає схожі можливості AI-агента в браузері — читає сторінки, видобуває дані, натискає кнопки, заповнює форми та автоматизує багатокрокові сценарії. На відміну від пропрієтарного плагіна Claude, що потребує підписки Claude Pro і працює лише з моделями Anthropic, WebBrain повністю безкоштовний, open-source (ліцензія GPL-3.0-or-later) і підтримує різних LLM-провайдерів, зокрема локальні моделі, що повністю працюють на вашій машині.
+      </div>
+    </details>
+
+    <details class="faq-inline-item">
+      <summary class="faq-inline-summary">
+        <span>WebBrain безпечний? Чи може він змінювати веб-сторінки?</span>
+        <svg class="faq-inline-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="faq-inline-answer">
+        У WebBrain три режими. Режим «Запитати» (за замовчуванням) працює лише на читання і нічого не змінює на сторінці. Режим «Діяти» дає змогу клікати, друкувати й переходити, а режим Dev додає інструменти налагодження сторінок. Дії з наслідками за замовчуванням потребують схвалення; якщо вимкнути цей шлюз дозволів, WebBrain показує помітний банер-попередження. Агента можна зупинити будь-коли кнопкою «Стоп». Сирці розширення повністю відкриті на GitHub для аудиту.
+      </div>
+    </details>
+
+    <details class="faq-inline-item">
+      <summary class="faq-inline-summary">
+        <span>Чи можна користуватися WebBrain повністю офлайн?</span>
+        <svg class="faq-inline-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="faq-inline-answer">
+        Так. За замовчуванням WebBrain використовує llama.cpp, який запускає локальну AI-модель просто у вас на комп'ютері. API-ключі не потрібні, інтернету AI не потребує, дані не покидають машину. Завантажте GGUF-модель, запустіть llama-server — і у вас повністю приватний AI-агент у браузері. Також можна користуватися Ollama через його OpenAI-сумісний ендпоінт.
+      </div>
+    </details>
+
+    <details class="faq-inline-item">
+      <summary class="faq-inline-summary">
+        <span>Які AI-моделі підтримує WebBrain?</span>
+        <svg class="faq-inline-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="faq-inline-answer">
+        WebBrain підтримує чотири типи провайдерів: llama.cpp (будь-яка локальна GGUF-модель), OpenAI (GPT-4o, GPT-4 тощо), Claude (Claude Opus, Sonnet, Haiku через нативний API) та OpenRouter (доступ до 100+ моделей від різних провайдерів). Підходить будь-який OpenAI-сумісний ендпоінт, тож можна використовувати Together AI, Groq, Mistral або будь-який локальний сервер з OpenAI-сумісним інтерфейсом.
+      </div>
+    </details>
+
+    <details class="faq-inline-item">
+      <summary class="faq-inline-summary">
+        <span>Що WebBrain робить з cookie-банерами та paywall&#39;ами?</span>
+        <svg class="faq-inline-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="faq-inline-answer">
+        <p><strong>Cookie-банери:</strong> WebBrain розпізнає банери згоди популярних фреймворків (OneTrust, Cookiebot, Didomi, Quantcast, Google Funding Choices, TrustArc) і закриває їх, перш ніж починати міркувати про сторінку. Пріоритет — «Відхилити все» / «Відхилити необов'язкові» / «Лише необхідні», якщо вони видимі; інакше погоджується на «Прийняти все», аби не тонути в лабіринті «Керування налаштуваннями».</p><p><strong>Paywall:</strong> WebBrain чесно повідомляє про paywall і розповідає, що реально зміг побачити (заголовок, підзаголовок, перші абзаци). Він <strong>не</strong> намагається обійти paywall — жодних archine.today, 12ft.io, чистки cookie, вимкнення JS чи трюків з reader-mode. Потрібна вся стаття — увійдіть за підпискою або попросіть WebBrain пошукати безкоштовне висвітлення тієї самої історії.</p>
+      </div>
+    </details>
+
+    <details class="faq-inline-item">
+      <summary class="faq-inline-summary">
+        <span>WebBrain працює у Firefox?</span>
+        <svg class="faq-inline-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </summary>
+      <div class="faq-inline-answer">
+        Так. WebBrain постачається у двох версіях: для Chrome (Manifest V3, використовує sidePanel API) та для Firefox (Manifest V2, використовує sidebar_action). Функціональність однакова. Firefox-версію можна завантажити як тимчасове розширення для розробки або опублікувати на addons.mozilla.org для постійного встановлення.
+      </div>
+    </details>
+  </div>
+
+  <div class="faq-inline-cta-wrap">
+    <a class="faq-bridge" href="/docs/uk/faq/">
+      <span class="faq-bridge-mark" aria-hidden="true">?</span>
+      <strong>FAQ</strong>
+      <span class="faq-bridge-cta">FAQ (30+ questions) <span aria-hidden="true">→</span></span>
+    </a>
+  </div>
+</section>
+
+<!-- 8. DOWNLOAD -->
 <section class="section download-section" id="download">
   <div class="section-label">З чого почати</div>
   <h2 class="section-title">Встановити WebBrain</h2>
@@ -4354,12 +4513,168 @@
       </div>
     </div>
   </div>
-  <a class="faq-bridge" id="faq" href="/docs/uk/faq/">
-    <span class="faq-bridge-mark" aria-hidden="true">?</span>
-    <strong>Часті запитання</strong>
-    <span class="faq-bridge-cta">FAQ <span aria-hidden="true">→</span></span>
-  </a>
 </section>
+
+<!-- 9. FOR DEVELOPERS (MCP & Frameworks) -->
+<section class="section developer-section" id="mcp">
+  <div class="section-label">Нове · сервер MCP</div>
+  <h2 class="section-title">Ваш агент для програмування — у браузері, яким ви вже користуєтеся.</h2>
+  <p class="section-subtitle">Підключіть Claude Code, Codex, Cursor, OpenCode або будь-який stdio-клієнт MCP до вкладок Chromium, де ви вже ввійшли. WebBrain зберігає перевірку дозволів на рівні завдання в браузері й тепер також повертає структурований JSON.</p>
+
+  <div class="mcp-showcase">
+    <div class="mcp-copy">
+      <h3>Делегуйте мету. Збережіть сеанс.</h3>
+      <p>Без експорту cookie, фонового входу чи повторного використання облікових даних. Локальний сервер передає завдання WebBrain у Chrome, Edge, Brave, Opera або Vivaldi. Міст MCP не підтримує Firefox.</p>
+      <div class="mcp-command" role="region" aria-label="Команда запуску сервера WebBrain MCP">$ npx -y @webbrain/mcp-server</div>
+      <div class="mcp-actions">
+        <a href="/docs/mcp/" class="btn btn-primary">Відкрити повний посібник з MCP</a>
+        <a href="https://github.com/webbrain-one/webbrain/tree/main/mcp-server" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">GitHub</a>
+      </div>
+    </div>
+    <div class="mcp-console" aria-label="Клієнт MCP через локальний сервер WebBrain до авторизованого браузера Chromium">
+      <div class="mcp-rail">
+        <div class="mcp-node">
+          <span class="mcp-node-icon" aria-hidden="true">⌘</span>
+          <strong>Ваш агент для програмування</strong>
+          <span>MCP · stdio</span>
+        </div>
+        <div class="mcp-arrow" aria-hidden="true">→</div>
+        <div class="mcp-node is-bridge">
+          <span class="mcp-node-icon" aria-hidden="true">◇</span>
+          <strong>WebBrain MCP</strong>
+          <span>loopback only</span>
+        </div>
+        <div class="mcp-arrow" aria-hidden="true">→</div>
+        <div class="mcp-node">
+          <span class="mcp-node-icon" aria-hidden="true">◎</span>
+          <strong>Ваш авторизований браузер</strong>
+          <span>Chrome · Edge · Brave</span>
+        </div>
+      </div>
+      <div class="mcp-tools-label">6 інструментів рівня завдання · дозволи браузера й надалі діють</div>
+      <div class="mcp-tools" aria-label="WebBrain MCP tools">
+        <span class="mcp-tool">webbrain_run</span>
+        <span class="mcp-tool">webbrain_extract</span>
+        <span class="mcp-tool">webbrain_status</span>
+        <span class="mcp-tool">webbrain_respond</span>
+        <span class="mcp-tool">webbrain_abort</span>
+        <span class="mcp-tool">webbrain_connection</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="developer-frameworks-wrap">
+    <h3 class="developer-frameworks-heading">Порівняно з AI-фреймворками для агентів <span style="font-weight:400; font-size:13px;">(інша категорія)</span></h3>
+    <div class="compare-table-wrap">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Аспект</th>
+            <th class="highlight">WebBrain</th>
+            <th>OpenClaw / Browser-Use / тощо</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Що це?</td><td class="highlight">Браузерне розширення (для кінцевого користувача)</td><td>Agent-фреймворк / SDK (для розробників)</td></tr>
+          <tr><td>Цільовий користувач</td><td class="highlight">Будь-хто — кодити не потрібно</td><td>Розробники, що будують автоматизації</td></tr>
+          <tr><td>Встановлення</td><td class="highlight">Встановлення в браузер в один клік</td><td>Потрібен Python/Docker</td></tr>
+          <tr><td>Інтерфейс</td><td class="highlight">Вбудований чат у бічній панелі</td><td>Без UI — лише код або API</td></tr>
+          <tr><td>Керування браузером</td><td>Content script (легко)</td><td>CDP / Playwright (повний контроль)</td></tr>
+          <tr><td>Сценарії з кількома вкладками</td><td>Окрема розмова для кожної вкладки</td><td>Програмована оркестрація багатьох вкладок</td></tr>
+          <tr><td>Headless-режим</td><td>Ні — працює у вашому браузері</td><td>Так — headless-автоматизація</td></tr>
+          <tr><td>Розширюваність</td><td>Додавання своїх LLM-провайдерів</td><td>Повноцінний Python SDK, кастомні інструменти</td></tr>
+          <tr><td>Найкраще для</td><td class="highlight">Щоденний AI-помічник у браузері</td><td>Автоматичний скрейпінг / тест-пайплайни</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- 10. APOCALYPSE MODE (Compact Banner) -->
+<section class="section apocalypse-banner-section" id="apocalypse" aria-labelledby="apocalypse-title">
+  <div class="apocalypse-compact-card">
+    <div class="apocalypse-compact-info">
+      <div class="apocalypse-compact-kicker">
+        <span class="apocalypse-kicker-mark" aria-hidden="true">☢</span>
+        <span>Режим апокаліпсису</span>
+      </div>
+      <h3 id="apocalypse-banner-title" class="apocalypse-compact-title">WebBrain готовий, навіть коли інтернету немає.</h3>
+      <p class="apocalypse-compact-lead"><strong>Офлайн знання під вашим контролем</strong> Налаштуйте чотири основні компоненти для приватного локального чату: текстову модель, модель комп’ютерного зору, одну офлайн-версію Вікіпедії та Аварійну скриньку.</p>
+    </div>
+    <div class="apocalypse-compact-actions">
+      <button
+        class="btn btn-secondary apocalypse-video-btn"
+        id="apocalypse-video-open"
+        type="button"
+        aria-haspopup="dialog"
+        aria-controls="apocalypse-video-dialog"
+      >
+        <svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M4.5 2.8a1 1 0 0 1 1.52-.85l8 5.2a1 1 0 0 1 0 1.7l-8 5.2A1 1 0 0 1 4.5 13.2V2.8z"/></svg>
+        Дивитися наше відео
+      </button>
+      <a class="apocalypse-docs-link" href="/docs/apocalypse-mode/">
+        Документація <span aria-hidden="true">→</span>
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- VIDEO MODALS -->
+<dialog
+  class="security-video-dialog comparison-video-dialog"
+  id="comparison-video-dialog"
+  aria-labelledby="comparison-video-dialog-title"
+  aria-describedby="comparison-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">Порівняно з AI-плагінами для браузера</div>
+      <h2 class="security-video-dialog-title" id="comparison-video-dialog-title">Локальний WebBrain випереджає Claude у Chrome</h2>
+      <p class="security-video-dialog-description" id="comparison-video-dialog-description">Те саме завдання, той самий браузер. WebBrain запускає Gemma 4 31B локально й завершує першим.</p>
+      <button
+        class="security-video-dialog-close"
+        id="comparison-video-close"
+        type="button"
+        aria-label="Закрити відео з порівнянням"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="comparison-video" data-desktop-src="/assets/demo-desktop.mp4" data-mobile-src="/assets/demo-mobile.mp4" controls preload="none" playsinline></video>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<dialog
+  class="security-video-dialog apocalypse-video-dialog"
+  id="apocalypse-video-dialog"
+  aria-labelledby="apocalypse-video-dialog-title"
+  aria-describedby="apocalypse-video-dialog-description"
+>
+  <div class="security-video-dialog-shell">
+    <div class="security-video-dialog-copy">
+      <div class="security-video-dialog-kicker">Режим апокаліпсису</div>
+      <h2 class="security-video-dialog-title" id="apocalypse-video-dialog-title">WebBrain готовий, навіть коли інтернету немає.</h2>
+      <p class="security-video-dialog-description" id="apocalypse-video-dialog-description">Налаштуйте чотири основні компоненти для приватного локального чату: текстову модель, модель комп’ютерного зору, одну офлайн-версію Вікіпедії та Аварійну скриньку.</p>
+      <button
+        class="security-video-dialog-close"
+        id="apocalypse-video-close"
+        type="button"
+        aria-label="Закрити відео режиму апокаліпсису"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="security-video-dialog-stage">
+      <div class="security-video-dialog-frame">
+        <video id="apocalypse-video" data-desktop-src="/assets/apocalypse-mode.mp4" data-mobile-src="/assets/apocalypse-mode.mp4" controls preload="none" playsinline></video>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <!-- SPREAD THE WORD / OPEN SOURCE -->
 <section class="section">
@@ -4489,6 +4804,23 @@
     cards.forEach(function (card) {
       if (card !== currentCard) secondaryRow.appendChild(card);
     });
+
+    const heroBtn = document.getElementById('hero-install-cta');
+    const heroLabel = document.getElementById('hero-install-label');
+    if (heroBtn) {
+      if (currentBrowser === 'firefox') {
+        heroBtn.href = 'https://addons.mozilla.org/en-US/firefox/addon/webbrain/';
+        if (heroLabel && document.documentElement.lang === 'en') heroLabel.textContent = 'Add to Firefox — free';
+      } else if (currentBrowser === 'edge' && isWindows) {
+        heroBtn.href = 'https://microsoftedge.microsoft.com/addons/detail/dfbioajafcijomhljabppcelecgdgfeo';
+        if (heroLabel && document.documentElement.lang === 'en') heroLabel.textContent = 'Add to Edge — free';
+      } else if (currentBrowser === 'edge') {
+        heroBtn.href = '#download';
+      } else {
+        heroBtn.href = 'https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb';
+        if (heroLabel && document.documentElement.lang === 'en') heroLabel.textContent = 'Add to Chrome — free';
+      }
+    }
   })();
 </script>
 
