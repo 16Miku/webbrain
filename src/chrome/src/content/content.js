@@ -754,11 +754,91 @@
   }
 
   window.__wb_resolve_click_target_for_submit_probe = function resolveClickTargetForSubmitProbe(params = {}) {
-    if (params?.index == null) return null;
-    const index = Number(params.index);
-    if (!Number.isInteger(index) || index < 0) return null;
-    return queryInteractiveForToolIndex()[index] || null;
+    return resolveObservedClickTarget(params);
   };
+
+  // Pure counterpart of clickElement's dispatch resolution. Observation must
+  // never scroll, focus, select an option or dispatch while identifying a target.
+  function resolveObservedClickTarget(params = {}) {
+    if (params.selector && /:contains\(|:has-text\(/.test(params.selector)) return null;
+    if (params.text) {
+      if (typeof params.text !== 'string') return null;
+      const needle = params.text.toLowerCase();
+      const scope = _findTopmostModal() || document;
+      const modes = params.textMatch ? [params.textMatch] : ['exact', 'prefix', 'contains'];
+      if (modes.some(mode => !['exact', 'prefix', 'contains'].includes(mode))) return null;
+      const candidates = _clickTextCandidates(scope);
+      let matches = [];
+      let usedMode = modes[0];
+      for (const mode of modes) {
+        usedMode = mode;
+        matches = candidates.filter(({ txt }) => mode === 'exact' ? txt === needle
+          : mode === 'prefix' ? txt.startsWith(needle)
+            : needle.length >= 3 ? txt.includes(needle)
+              : txt === needle || txt.startsWith(needle + ' ') || txt.endsWith(' ' + needle) || txt.includes(' ' + needle + ' '));
+        if (matches.length) break;
+      }
+      const labelTarget = label => {
+        let target = label.htmlFor ? document.getElementById(label.htmlFor) : null;
+        target ||= label.querySelector('input,textarea,select');
+        if (!target && label.nextElementSibling) {
+          const sibling = label.nextElementSibling;
+          target = /^(INPUT|TEXTAREA|SELECT)$/.test(sibling.tagName) ? sibling : sibling.querySelector('input,textarea,select');
+        }
+        return target;
+      };
+      if (!matches.length) {
+        const labelMap = new Map();
+        for (const label of scope.querySelectorAll('label')) {
+          const text = (label.innerText || '').trim().toLowerCase();
+          if (!text) continue;
+          const target = (label.htmlFor ? document.getElementById(label.htmlFor) : null) || label.querySelector('input,textarea,select');
+          if (target) labelMap.set(text, target);
+        }
+        for (const [text, target] of labelMap) if (needle === text || text.startsWith(needle) || text.includes(needle)) return target;
+        return null;
+      }
+      if (matches.length > 1) {
+        const owners = new Map();
+        for (const match of matches) {
+          const owner = _resolveInteractiveAncestor(match.e) || match.e;
+          if (!owners.has(owner) || (match.primary === true && owners.get(owner).primary !== true)) owners.set(owner, match);
+        }
+        matches = [...owners.values()];
+      }
+      if (matches.length > 1) {
+        const preferred = _preferredPrimaryTextClickMatch(matches);
+        if (preferred) matches = [preferred];
+      }
+      if (matches.length > 1) {
+        const interactive = matches.filter(({ e }) => _isInteractive(e));
+        if (interactive.length === 1) matches = interactive;
+        else {
+          const eligible = (interactive.length > 1 ? interactive : matches).filter(({ e }) => _isEligibleTextClickTarget(e));
+          if (eligible.length === 1) matches = eligible;
+        }
+      }
+      if (matches.length !== 1) return null;
+      const selected = matches[0].e;
+      const resolved = selected.tagName === 'LABEL' ? labelTarget(selected) || selected : selected;
+      // Dispatch may choose a select option instead of a non-exact text
+      // target. Until that local selection is separately bound, do not
+      // authorize the earlier button as though it were the clicked control.
+      if (resolved instanceof HTMLSelectElement || usedMode !== 'exact') {
+        const selects = resolved instanceof HTMLSelectElement ? [resolved] : scope.querySelectorAll('select');
+        for (const select of selects) for (const option of select.options) {
+          if ([option.textContent, option.label, option.value].some(value => String(value || '').trim().toLowerCase() === needle.trim())) return null;
+        }
+      }
+      return _resolveInteractiveAncestor(resolved) || resolved;
+    }
+    if (params.selector) return safeIndexedQuerySelector(params.selector, params.matchIndex).element;
+    if (params.index != null) {
+      const index = typeof params.index === 'number' || (typeof params.index === 'string' && /^\d+$/.test(params.index)) ? Number(params.index) : NaN;
+      return Number.isSafeInteger(index) && index >= 0 ? queryInteractiveForToolIndex()[index] || null : null;
+    }
+    return Number.isFinite(params.x) && Number.isFinite(params.y) ? _shadowAwareElementFromPoint(params.x, params.y) : null;
+  }
 
   /**
    * Get a simplified DOM snapshot for the agent.

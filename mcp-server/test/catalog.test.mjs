@@ -47,6 +47,10 @@ test("MCP catalog exposes structured extraction alongside run controls", async (
     );
 
     const extract = tools.find((tool) => tool.name === "webbrain_extract");
+    const run = tools.find((tool) => tool.name === "webbrain_run");
+    assert.equal(run.inputSchema.properties.task_memory.type, "object");
+    assert.ok(run.inputSchema.properties.task_memory.required.includes("callbackToken"));
+    assert.equal(run.inputSchema.required.includes("task_memory"), false);
     assert.ok(extract, "structured extraction tool is missing");
     assert.deepEqual(extract.inputSchema.required, ["task", "output_schema"]);
     assert.equal(extract.inputSchema.properties.output_schema.type, "object");

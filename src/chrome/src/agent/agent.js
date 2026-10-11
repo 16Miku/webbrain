@@ -163,6 +163,7 @@ import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEma
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
 import { USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS, formatUserMemoryPrompt, normalizeUserMemoryMaxPromptChars, normalizeUserMemoryStore } from './user-memory.js';
 import { createMemcodeRecall } from './memcode-recall.js';
+import { BotMemorySession, BOT_MEMORY_TOOLS, BOT_MEMORY_SCOPE_HEADER } from './bot-memory.js';
 import {
   compileWorkflowFromTrace,
   findWorkflowHealingCandidates,
@@ -1200,6 +1201,7 @@ export class Agent extends LoopDetector {
     // tool result. Consequential actions stay blocked until a direct clarify
     // response or intentional Instant auto-approve arrives.
     this._clarificationAuthorizationGuards = new Map(); // tabId -> { source, authorized, conversationId, blockedAttempts, updatedAt }
+    this._botMemorySessions = new Map(); // volatile per tab; callback credentials never persist
     this.cloudRunContexts = new Map(); // tabId -> { outputSchema, schemaRepairUsed }
     // Deterministic capability × origin permission gate. "Always" grants are
     // persisted in extension storage; "once" grants live for the current turn.
@@ -7167,8 +7169,15 @@ export class Agent extends LoopDetector {
       throw new Error('Invalid conversation fork');
     }
     if (this._runningTabs.has(forkId)) throw new Error('Fork conversation is already running');
+    if (this._botMemorySessions.has(sourceId) || this._botMemorySessions.has(forkId)) {
+      throw new Error('Managed bot conversations require their own fresh memory scope and cannot be forked.');
+    }
 
     await this._hydrate(sourceId);
+    if (this.conversations.get(sourceId)?.[0]?.role === 'system'
+        && this.conversations.get(sourceId)[0].content?.includes(BOT_MEMORY_SCOPE_HEADER)) {
+      throw new Error('Managed bot conversations require their own fresh memory scope and cannot be forked.');
+    }
     await this._hydrate(forkId);
     const existingFork = this.conversations.get(forkId);
     if (Array.isArray(existingFork) && existingFork.length) {
@@ -28840,6 +28849,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     }
     const tier = this._resolvePromptTier();
     let prompt = this._isActionMode(mode) ? this._getActPrompt() : SYSTEM_PROMPT_ASK;
+    const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
+    if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
     if (mode === 'dev') {
       prompt += `\n\n${SYSTEM_PROMPT_DEV_APPENDIX.trim()}`;
     }
@@ -28882,13 +28893,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // Profile auto-fill. Only injected when the user has both enabled the
     // feature AND provided non-empty text — we don't want to push an empty
     // "[User profile]" header to the model.
-    if (this.profileEnabled && this.profileText && this.profileText.trim()) {
+    if (!botMemory && this.profileEnabled && this.profileText && this.profileText.trim()) {
       prompt +=
         `\n\n[User profile — use these details when a form or signup needs them, INSTEAD of asking the user. The user has opted in to sharing this with you. Do NOT volunteer these details on pages that don't need them, and NEVER reveal the password in chat output or screenshots. Treat it as sensitive.]\n` +
         this.profileText.trim();
     }
 
-    if (this.userMemoryEnabled) {
+    if (!botMemory && this.userMemoryEnabled) {
       const memoryPrompt = formatUserMemoryPrompt(this.userMemoryRecords, this.userMemoryMaxPromptChars);
       if (memoryPrompt) prompt += `\n\n${memoryPrompt}`;
     }
@@ -37721,6 +37732,55 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
   }
 
   async executeTool(tabId, name, args, onUpdate = null, executionContext = null) {
+    const memory = this._botMemorySessions.get(tabId);
+    if (!memory) return this._executeToolWithLifecycle(tabId, name, args, onUpdate, executionContext);
+    // Managed bot context cannot consume the user's profile-wide remote store.
+    if (name === 'recall_memcode') return { success: false, noDispatch: true, dispatched: false,
+      error: 'Profile memory recall is unavailable for managed bot runs.' };
+    const linked = this._linkAbortSignals(executionContext?._contentActionAbortSignal, this._runAbortSignal(tabId));
+    try {
+      this._throwIfAborted(linked.signal);
+      if (name.startsWith('bot_memory_')) {
+        try { return await memory.tool(tabId, name, args || {}); }
+        catch { return { success: false, botMemory: true, noDispatch: true, error: 'Bot memory could not confirm this request.' }; }
+      }
+      args = this._normalizeContinuationToolArgs(name, args);
+      const coordinates = this._prepareClickCoordinates(tabId, name, args || {});
+      if (coordinates.block) return coordinates.block;
+      args = coordinates.args;
+      let prepared;
+      if (name === 'click' && args?.index != null) {
+        const index = typeof args.index === 'number' || (typeof args.index === 'string' && /^\d+$/.test(args.index)) ? Number(args.index) : NaN;
+        if (!Number.isSafeInteger(index) || index < 0) return { success: false, botMemory: true, noDispatch: true, dispatched: false, error: 'Choose a valid observed element index.' };
+        args = { ...args, index };
+      }
+      const detected = executionContext?.detectedSubmitAction || executionContext?.detectedSubmit;
+      const detectedSubmit = detected?.isSubmit === true;
+      const consequentialSubmit = detectedSubmit && classifySubmitRisk(detected, detected.url).risk !== SubmitRisk.LOW_RISK_SEARCH;
+      try { prepared = await memory.prepare(tabId, name, args || {}, { signal: linked.signal, detectedSubmit, consequentialSubmit }); }
+      catch (error) {
+        this._throwIfAborted(linked.signal);
+        return { success: false, botMemory: true, noDispatch: true, dispatched: false, error: error.message };
+      }
+      if (prepared.allowed !== true) return { success: false, botMemory: true, noDispatch: true,
+        dispatched: false, retryable: false, ...(['done', 'done_json'].includes(name) ? { blockedDone: true } : {}), error: prepared.reason };
+      // Memory acknowledgement adds a prerequisite. The current permission,
+      // original target, feedback, cancellation and completion guards still run.
+      this._throwIfAborted(linked.signal);
+      const result = await this._executeToolWithLifecycle(tabId, name, args, onUpdate, executionContext);
+      try { await memory.afterTool(tabId, name, args || {}, result, prepared); }
+      catch { if (result && typeof result === 'object') result.botMemoryWarning = 'Action history could not be reconciled; its outcome remains uncertain.'; }
+      if (prepared.reservation && result && typeof result === 'object') result.memoryAttemptId = prepared.reservation.attemptId;
+      return result;
+    } finally { linked.dispose(); }
+  }
+
+  _botMemoryRunTools(tabId, tools) {
+    if (!this._botMemorySessions.has(tabId)) return tools;
+    return [...tools.filter(tool => tool.function.name !== 'recall_memcode'), ...BOT_MEMORY_TOOLS];
+  }
+
+  async _executeToolWithLifecycle(tabId, name, args, onUpdate = null, executionContext = null) {
     const linked = this._linkAbortSignals(executionContext?._contentActionAbortSignal, this._runAbortSignal(tabId));
     const dispatchState = executionContext?._contentActionDispatchState || { started: false };
     // Every text-write route marks dispatch before content messaging or CDP input.
@@ -46430,11 +46490,18 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const requestedRunProvider = String(runOptions?.providerId || '').trim();
     if (requestedRunProvider) this._runProviderOverrides.set(tabId, requestedRunProvider);
     else this._runProviderOverrides.delete(tabId);
+    const previousBotMemory = this._botMemorySessions.get(tabId);
+    let botMemorySession = null;
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false, deferResume: runOptions.deferResume, privateFinalResult: runOptions.privateFinalResult === true });
     }
     try {
+      if (runOptions.taskMemory) {
+        if (runOptions.cloudRun !== true) throw new Error('Bot memory requires a managed Cloud run.');
+        botMemorySession = new BotMemorySession(runOptions.taskMemory, { signal: this._runAbortSignal(tabId) });
+        this._botMemorySessions.set(tabId, botMemorySession);
+      } else this._botMemorySessions.delete(tabId);
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) {
         await cdpClient.startDialogHandling(tabId, {
           signal: this._runAbortSignal(tabId),
@@ -46448,6 +46515,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
+      if (botMemorySession) await botMemorySession.close();
+      if (previousBotMemory) this._botMemorySessions.set(tabId, previousBotMemory);
+      else this._botMemorySessions.delete(tabId);
       this._finishSteeringRun(tabId);
       cdpClient.stopDialogHandling(tabId);
       this.currentCostState.delete(tabId);
@@ -47050,6 +47120,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
     // second source and defeat the selection-only boundary.
+    tools = this._botMemoryRunTools(tabId, tools);
     if (selectionOnly || standaloneChatRun) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     let toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
@@ -47321,6 +47392,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
       });
+      tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
@@ -48192,11 +48264,18 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const requestedRunProvider = String(runOptions?.providerId || '').trim();
     if (requestedRunProvider) this._runProviderOverrides.set(tabId, requestedRunProvider);
     else this._runProviderOverrides.delete(tabId);
+    const previousBotMemory = this._botMemorySessions.get(tabId);
+    let botMemorySession = null;
     const previousCloudContext = this.cloudRunContexts.get(tabId);
     if (runOptions.cloudRun) {
       this.cloudRunContexts.set(tabId, { outputSchema: runOptions.outputSchema ?? null, schemaRepairUsed: false, deferResume: runOptions.deferResume, privateFinalResult: runOptions.privateFinalResult === true });
     }
     try {
+      if (runOptions.taskMemory) {
+        if (runOptions.cloudRun !== true) throw new Error('Bot memory requires a managed Cloud run.');
+        botMemorySession = new BotMemorySession(runOptions.taskMemory, { signal: this._runAbortSignal(tabId) });
+        this._botMemorySessions.set(tabId, botMemorySession);
+      } else this._botMemorySessions.delete(tabId);
       if ((mode === 'act' || mode === 'dev') && !this._isStandaloneChatRun(runOptions)) {
         await cdpClient.startDialogHandling(tabId, {
           signal: this._runAbortSignal(tabId),
@@ -48209,6 +48288,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
+      if (botMemorySession) await botMemorySession.close();
+      if (previousBotMemory) this._botMemorySessions.set(tabId, previousBotMemory);
+      else this._botMemorySessions.delete(tabId);
       this._finishSteeringRun(tabId);
       cdpClient.stopDialogHandling(tabId);
       this.currentCostState.delete(tabId);
@@ -48508,6 +48590,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     });
     // Match the non-streaming path: selection-grounded turns are tool-free so
     // page or network content cannot be introduced after the source anchor.
+    tools = this._botMemoryRunTools(tabId, tools);
     if (selectionOnly || standaloneChatRun) tools = [];
     let allowedToolNames = new Set(tools.map(t => t.function.name));
     let toolSchemas = new Map(tools.map(t => [t.function.name, t.function.parameters]));
@@ -48609,6 +48692,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
       });
+      tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
       if (forceCompletionVerificationTurn) {
         const completionState = this.completionInvariants.get(tabId);
