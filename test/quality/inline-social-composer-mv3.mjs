@@ -28,6 +28,11 @@ const body = 'One owned inline draft: exact spaces  and Turkish ıİşŞğĞüÜ
 const cases = [
   { name: 'set_field', tool: 'set_field' },
   { name: 'type_ax', tool: 'type_ax' },
+  { name: 'prefilled_set_field', tool: 'set_field', prefilled: true },
+  { name: 'prefilled_type_ax', tool: 'type_ax', prefilled: true },
+  { name: 'prefilled_type_text', tool: 'type_text', prefilled: true },
+  { name: 'modal_prefilled_type_ax', tool: 'type_ax', prefilled: true, modal: true },
+  { name: 'prefilled_selection_interrupted', tool: 'type_text', prefilled: true, partialSelection: true },
   { name: 'focus_expansion', tool: 'set_field', focusExpansion: true },
   { name: 'native_preparation_retry', tool: 'set_field', nativePreparationVeto: true },
   { name: 'owner_changed', tool: 'set_field', change: 'owner' },
@@ -126,7 +131,8 @@ const server = http.createServer(async (request, response) => {
         }, current.change || null);
         current.inferenceChanges++;
         await new Promise(resolve => setTimeout(resolve, 240));
-        call = { name: current.tool, args: { ref_id: current.beforeWrite.editor, text: body, clear: true } };
+        call = { name: current.tool, args: { ...(current.tool === 'type_text'
+          ? { selector: '[data-testid="tweetTextarea_0"]' } : { ref_id: current.beforeWrite.editor }), text: body, clear: true } };
       } else if (step === 2) {
         current.writeResult = tools.findLast(tool => tool.name === current.tool)?.result;
         current.afterWrite = await current.page.evaluate(() => qaSnapshot());
@@ -172,6 +178,16 @@ const server = http.createServer(async (request, response) => {
         call = { name: 'click_ax', args: { ref_id: fresh.post } };
       } else if (step === 6 && current.nativePreparationVeto)
         call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
+      else if (!current.change && !current.nativePreparationVeto && current.writeResult?.success === true
+          && step > (current.focusExpansion ? 5 : 3) && !tools.some(tool => tool.name === 'click_ax')
+          && last?.name === 'get_accessibility_tree' && step % 2 === 1) {
+        // A superseded decision sent no input. Observe again before emitting
+        // another Post decision; never replay an actually dispatched click.
+        const fresh = references(observed?.result);
+        assert.ok(fresh.post); current.postRetryReobserved = true;
+        call = { name: 'click_ax', args: { ref_id: fresh.post } };
+      } else if (last?.name === 'click_ax' && !current.change)
+        call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
       else if (step === (current.focusExpansion ? 6 : 4) && !current.change && current.writeResult?.success === true)
         call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
       else call = { name: 'done', args: { outcome: current.change || current.writeResult?.success !== true ? 'partial' : 'success',
@@ -206,7 +222,9 @@ window.qaEvents=[];window.qaCommands=[];window.qaFeedChanges=0;window.qaSaved=[]
 window.qaExpandOnFocus=!!window.qaExpandOnFocus;
 const root=ReactDOM.createRoot(document.querySelector('#app'));
 function App(){
-  const [editorState,setEditorState]=React.useState(()=>Draft.EditorState.createEmpty());
+  const [editorState,setEditorState]=React.useState(()=>window.qaInitialDraft
+    ?Draft.EditorState.createWithContent(Draft.ContentState.createFromText(window.qaInitialDraft))
+    :Draft.EditorState.createEmpty());
   const [identity,setIdentity]=React.useState('${account}');
   const [audience,setAudience]=React.useState(window.qaExpandOnFocus?null:'Everyone can reply');
   const [ownerVersion,setOwnerVersion]=React.useState(0);
@@ -235,7 +253,7 @@ function App(){
       React.createElement('nav',{className:'tabs','aria-label':'Home timeline tabs'},
         React.createElement('button',{type:'button',role:'tab','aria-selected':'true'},'For you'),
         React.createElement('button',{type:'button',role:'tab','aria-selected':'false'},'Following')),
-      React.createElement('div',{id:'inline-owner',key:ownerVersion},
+      React.createElement('div',{id:'inline-owner',key:ownerVersion,role:window.qaModal&&!saved?'dialog':undefined},
         React.createElement('a',{className:'avatar',href:'/'+identity,'aria-label':'Owned QA account avatar'},'QA'),
         React.createElement('div',{className:'compose-inner',onFocus:()=>{if(window.qaExpandOnFocus&&!audience)ReactDOM.flushSync(()=>setAudience('Everyone can reply'));}},
           React.createElement(Draft.Editor,{editorState,onChange,ariaLabel:'Post text',webDriverTestID:'tweetTextarea_0',placeholder:'What is happening?!'}),
@@ -266,6 +284,9 @@ window.qaArmPreparationOverlay=()=>document.querySelector('#post').addEventListe
   document.body.append(overlay);window.qaPreparationOverlays++;
 },{once:true});
 window.qaClearPreparationOverlay=()=>document.getElementById('qa-native-preparation-overlay')?.remove();
+if(window.qaPartialSelection)document.querySelector('[data-testid="tweetTextarea_0"]').addEventListener('keydown',event=>{
+  if(event.isTrusted&&event.code==='KeyA'&&(event.ctrlKey||event.metaKey))event.preventDefault();
+},true);
 for(const type of ['beforeinput','input','paste'])document.querySelector('#app').addEventListener(type,event=>{
   if(event.target.closest('[data-testid="tweetTextarea_0"]'))qaEvents.push({type,trusted:event.isTrusted,inputType:event.inputType,
     data:type==='paste'?event.clipboardData?.getData('text/plain'):event.data});
@@ -361,13 +382,17 @@ try {
     const page = await context.newPage(), pageErrors = [];
     page.on('pageerror', error => pageErrors.push(error.message));
     if (specification.focusExpansion) await page.addInitScript(() => { window.qaExpandOnFocus = true; });
+    if (specification.prefilled) await page.addInitScript(() => { window.qaInitialDraft = 'Old owned draft "Local book" by @ownedqa.'; });
+    if (specification.modal) await page.addInitScript(() => { window.qaModal = true; });
+    if (specification.partialSelection) await page.addInitScript(() => { window.qaPartialSelection = true; });
     await page.goto(fixtureUrl);
     await page.waitForSelector('[data-testid="tweetTextarea_0"]');
     const initial = await page.evaluate(() => ({ state: qaSnapshot(), headings: document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]').length,
       formsOrDialogs: document.querySelectorAll('form,dialog,[role="form"],[role="dialog"]').length }));
-    assert.equal(initial.state.model, ''); assert.equal(initial.state.postEnabled, false);
+    assert.equal(initial.state.model, specification.prefilled ? 'Old owned draft "Local book" by @ownedqa.' : '');
+    assert.equal(initial.state.postEnabled, !!specification.prefilled);
     if (specification.focusExpansion) assert.equal(initial.state.audience, null);
-    assert.equal(initial.headings, 0); assert.equal(initial.formsOrDialogs, 0);
+    assert.equal(initial.headings, 0); assert.equal(initial.formsOrDialogs, specification.modal ? 1 : 0);
     const tabId = await harness.evaluate(async url => (await chrome.tabs.query({})).findLast(tab => tab.url === url)?.id, fixtureUrl);
     assert.ok(tabId);
     current = { ...specification, page, tabId, marker: `Owned inline regression case ${specification.name}.`, requests: [], calls: [],
@@ -418,6 +443,15 @@ Re-observe the Post button after writing, click it once, then verify the owned l
       assert.deepEqual(localPosts, []); assert.equal(clicks.length, 0);
       assert.equal(probe.commands.filter(command => command.method === 'Input.insertText').length, 0);
       assert.deepEqual(state.events, [], 'A stale owner must be rejected before page input.');
+    } else if (specification.partialSelection) {
+      assert.equal(writes.length, 1);
+      assert.equal(writes[0].result.success, false); assert.equal(writes[0].result.mutationMayHaveOccurred, false);
+      assert.equal(writes[0].result.outcomeUnknown, false); assert.equal(writes[0].result.retryable, true);
+      assert.equal(state.model, initial.state.model, 'Failed selection preserves the complete original application draft.');
+      assert.deepEqual(state.saved, []); assert.deepEqual(localPosts, []); assert.equal(clicks.length, 0);
+      assert.equal(probe.commands.filter(command => command.method === 'Input.insertText').length, 0);
+      assert.equal(probe.commands.some(command => command.params?.code === 'Delete'), false);
+      assert.deepEqual(state.events, [], 'An unproved replacement selection never dispatches text input.');
     } else {
       assert.equal(writes.length, specification.focusExpansion ? 2 : 1, 'Only an explicit fresh decision may retry a positively undispatched write.');
       if (specification.focusExpansion) {

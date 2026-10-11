@@ -396,6 +396,66 @@ for (const browser of ['chrome', 'firefox']) {
     });
   }
 
+  test(`${browser}: existing-draft confirmation displays exact quotes before binding a human answer`, async () => {
+    for (const platform of ['twitter', 'bluesky']) {
+      const body = 'Just finished "Local book" by @ownedqa. Keep literal \\n text.';
+      const encoded = JSON.stringify(body).slice(1, -1);
+      const raw = { version: 1, status: 'clarify', actions: [], requirements: null, prohibited: [], reason: 'Missing post content' };
+      const f = setup(`Publish the existing draft on ${platform === 'twitter' ? 'X' : 'Bluesky'}`, raw);
+      const pageUrl = platform === 'twitter' ? 'https://x.com/compose/post' : 'https://bsky.app/';
+      f.agent._currentUrl = async () => pageUrl;
+      f.detected.publicationSnapshot = snapshot(body, platform === 'twitter' ? 'twitter:alice' : 'bluesky:alice.bsky.social');
+      const blocked = await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', { ref_id: 'ref_2001' }, f.detected, f.provider);
+      assert.equal(blocked.noDispatch, true); assert.equal(f.guard.socialPublication.contract.status, 'clarify');
+      f.agent._persistNow = async () => {}; f.agent.clarifyTimeoutSec = 0;
+      let shown;
+      const result = await f.agent.executeTool(f.tabId, 'clarify', {
+        question: `Publish this draft: "${encoded}"?`, options: [`Publish: "${encoded}"`, 'Cancel'], safe_first: true,
+      }, (type, data) => {
+        if (type !== 'clarify') return;
+        shown = data;
+        assert.equal(data.question, `Publish this draft: "${body}"?`);
+        assert.equal(data.options[0], `Publish: "${body}"`);
+        assert.equal(data.requireExplicitAnswer, true, 'Page-derived draft text cannot become an automatic approval.');
+        f.agent.submitClarifyResponse(f.tabId, data.clarifyId, data.options[0], 'option');
+      });
+      assert.equal(result.answer, shown.options[0]); assert.equal(result.source, 'option');
+      assert.equal(f.guard.socialPublicationClarifications[0].question, shown.question);
+      assert.equal(f.guard.socialPublicationClarifications[0].answer, shown.options[0]);
+      f.agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
+        const input = JSON.parse(messages[1].content);
+        assert.equal(input.sources.clarification_question0, shown.question);
+        assert.equal(input.sources.clarification_answer0, shown.options[0]);
+        if (meta.generationName === 'social_publication_authorization') return { content: JSON.stringify({ key: input.key, actionId: 'p1', authorized: true, reason: 'Exact human-confirmed draft.' }) };
+        const action = rawAction('p1', platform, body);
+        action.posts[0].body.source = ref(body, 'clarification_answer0');
+        return { content: JSON.stringify(rawContract([action])) };
+      };
+      assert.equal(await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', { ref_id: 'ref_2001' }, f.detected, f.provider), null);
+      assert.equal(f.guard.socialPublication.contract.actions[0].posts[0].body.value, body);
+      assert.deepEqual(f.guard.socialPublication.outcomes, {}, 'Confirmation and preflight never dispatch a post.');
+    }
+  });
+
+  test(`${browser}: escaped draft display repair cannot borrow a different draft, route, task or purpose`, async () => {
+    const body = 'Owned "quoted" draft', encoded = JSON.stringify(body).slice(1, -1);
+    for (const mutation of [
+      f => { f.detected.publicationSnapshot.posts[0].bodyText = 'Other "quoted" draft'; },
+      f => { f.detected.publicationSnapshot.complete = false; },
+      f => { f.agent._currentUrl = async () => 'https://x.com/other'; },
+      f => { f.guard.taskKey = 'superseded-task'; },
+      (_f, args) => { args.purpose = 'research_escalation'; },
+    ]) {
+      const f = setup('Publish the existing draft', { version: 1, status: 'clarify', actions: [], requirements: null, prohibited: [], reason: 'Missing post content' });
+      f.detected.publicationSnapshot = snapshot(body);
+      await f.agent._workflowPreSubmitDispatchBlock(f.tabId, 'click_ax', { ref_id: 'ref_2001' }, f.detected, f.provider);
+      const args = { question: `Publish "${encoded}"?`, options: [`Publish "${encoded}"`, 'Cancel'] };
+      mutation(f, args);
+      assert.equal(await f.agent._socialDraftClarificationArgs(f.tabId, args), args);
+      assert.deepEqual(f.guard.socialPublication.outcomes, {});
+    }
+  });
+
   test(`${browser}: a referenced four-post draft delivered through done reaches publication and audit intact`, async () => {
     const bodies = ['We released WebBrain.\n\nRead the article.', 'First: Jev.', 'Next: SafeSocial.', 'The takeaway.'];
     const draft = 'Option 1: Something else.\n\nOption 2:\n' + bodies.map((body, i) => `${i + 1}/4\n${body}`).join('\n\n');
