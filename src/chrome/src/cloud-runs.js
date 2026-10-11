@@ -1472,7 +1472,6 @@ export function createCloudRunController({
       } finally {
         privateRecipients.delete(run.runId);
         privateStructuredResults.delete(run.runId);
-        startingTabs.delete(tabId);
         // The bridge flag is a run-scoped grant, not the sidebar's persistent
         // /allow-api setting. Revoke only permission this run added; preserve a
         // pre-existing per-conversation or global user grant.
