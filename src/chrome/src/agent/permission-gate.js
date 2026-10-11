@@ -60,6 +60,12 @@ export const CAPABILITY_LABEL = {
 export const UNTRUSTED_CONTENT_TOOLS = new Set([
   'page_feedback', // Internal monitor observations contain page-derived targets and URLs.
   'recall_memcode',
+  // Managed history and verification can carry prior page text and notes.
+  'bot_memory_lookup',
+  'bot_memory_observe',
+  'bot_memory_verify',
+  'bot_memory_record',
+  'bot_memory_note',
   // Discovery can recover a paid answer; solver output and callback failures
   // also contain external data, even when the tool otherwise reads a catalog.
   'get_captcha_capabilities',

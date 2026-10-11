@@ -27,6 +27,7 @@ import { z } from "zod";
 import { BridgeError, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
 import { bridgeUrl, config } from "./config.js";
 import { abort, awaitSettled, describeSnapshot, getStatus, respond, startRun } from "./runs.js";
+import { taskMemorySchema } from "./task-memory.js";
 
 const bridge = new WebBrainBridge();
 
@@ -64,6 +65,7 @@ server.registerTool(
       "If the run stops with status 'needs_user_input', relay the question to the user and " +
       "answer with webbrain_respond — never guess on their behalf.",
     inputSchema: {
+      task_memory: taskMemorySchema.optional().describe("Private run-scoped bot memory transport. Requires a browser advertising bot_memory_v1. Never include this envelope in task text."),
       task: z
         .string()
         .min(1)
@@ -113,7 +115,7 @@ server.registerTool(
         ),
     },
   },
-  async ({ task, mode, tab_id, allow_api_mutations, timeout_seconds, wait }): Promise<TextResult> => {
+  async ({ task, mode, tab_id, allow_api_mutations, timeout_seconds, wait, task_memory }): Promise<TextResult> => {
     const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
     const deadline = Date.now() + timeoutMs;
     const runId = `mcp_${randomUUID()}`;
@@ -128,6 +130,7 @@ server.registerTool(
             mode,
             tabId: tab_id,
             apiMutationsAllowed: allow_api_mutations,
+            taskMemory: task_memory,
           },
           Math.max(1, deadline - Date.now()),
         );

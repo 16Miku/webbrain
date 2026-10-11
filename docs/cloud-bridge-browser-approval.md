@@ -66,12 +66,12 @@ Extension → backend, on every socket open:
   "type": "hello",
   "client": "webbrain-extension",
   "protocolVersion": 2,
-  "capabilities": ["saved_workflows_v1", "run_modes_v1", "scheduled_jobs_v1"],
+  "capabilities": ["saved_workflows_v1", "run_modes_v1", "scheduled_jobs_v1", "run_provider_v1", "private_results_v1", "bot_memory_v1"],
   "auth": { "type": "bearer", "token": "dev-token" },
   "browserId": "my-laptop",
   "installationId": "0b0c6a3e-…",
   "browser": { "name": "Chrome", "version": "126.0.0.0" },
-  "extensionVersion": "38.0.13",
+  "extensionVersion": "40.2.1",
   "platform": "Linux x86_64",
   "status": { "enabled": true, "approval": "pending", "…": "…" }
 }
@@ -103,6 +103,11 @@ After approval, commands are exactly the existing format:
 ```
 
 `status().approval` is one of `not_required | pending | approved | rejected`.
+
+`bot_memory_v1` enables a private, run-scoped `taskMemory` envelope on
+`cloud_run`. It does not add general storage or configuration commands to the
+socket. See [managed bot memory](cloud-bot-memory.md) for the guarded action
+contract, credential handling, and image-upgrade checks.
 
 ## Reconnection
 

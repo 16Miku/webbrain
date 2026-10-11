@@ -16,6 +16,7 @@
 
 import { BridgeError, TERMINAL_STATUSES, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
 import { config } from "./config.js";
+import { BOT_MEMORY_CAPABILITY, validateTaskMemory, type TaskMemory } from "./task-memory.js";
 
 export interface StartRunOptions {
   runId?: string;
@@ -24,6 +25,7 @@ export interface StartRunOptions {
   tabId?: number;
   apiMutationsAllowed?: boolean;
   outputSchema?: unknown;
+  taskMemory?: TaskMemory;
 }
 
 export interface AwaitOptions {
@@ -49,6 +51,13 @@ export async function startRun(
   if (options.tabId != null) payload.tabId = options.tabId;
   if (options.apiMutationsAllowed) payload.apiMutationsAllowed = true;
   if (options.outputSchema != null) payload.outputSchema = options.outputSchema;
+  if (options.taskMemory !== undefined) {
+    try { payload.taskMemory = validateTaskMemory(options.taskMemory); }
+    catch { throw new BridgeError("Invalid task_memory envelope.", 400); }
+    if (!bridge.capabilities().includes(BOT_MEMORY_CAPABILITY)) {
+      throw new BridgeError("Update the browser extension before starting a task with bot memory.", 409);
+    }
+  }
 
   return await bridge.request<CloudSnapshot>("cloud_run", payload, timeoutMs);
 }
