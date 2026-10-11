@@ -636,11 +636,20 @@ test('coordinate clicks retain their validated viewport point', async () => {
   await session.perform(runId,'click',{point:{x:17,y:23}});
   assert.deepEqual(sent[0].actions[0].actions[0],{type:'pointerMove',origin:'viewport',x:17,y:23});
 });
-test('every release workflow running npm test uses the companion runtime', async () => {
+test('release workflows run the full suite on the companion runtime', async () => {
   const {readFile}=await import('node:fs/promises');
+  const pkg=JSON.parse(await readFile('package.json','utf8'));
+  const shards=Object.keys(pkg.scripts).filter(name=>name.startsWith('test:shard:'));
+  assert.ok(shards.length>0,'expected sharded test scripts in package.json');
   for(const workflow of ['main','minor-release']) {
     const source=await readFile(`.github/workflows/${workflow}.yml`,'utf8');
     assert.match(source,/node-version: 22/);
-    assert.match(source,/run: npm test/);
+  }
+  const minor=await readFile('.github/workflows/minor-release.yml','utf8');
+  assert.match(minor,/run: npm test/);
+  const main=await readFile('.github/workflows/main.yml','utf8');
+  assert.match(main,/npm run test:shard:\$\{\{ matrix\.shard \}\}/);
+  for(const shard of shards) {
+    assert.ok(main.includes(`          - ${shard.replace('test:shard:','')}`),`main.yml matrix should run ${shard}`);
   }
 });
