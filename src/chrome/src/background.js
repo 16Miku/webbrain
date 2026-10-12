@@ -257,7 +257,10 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
     || scheduler.isRunning(tabId)
     || cloudRunController.isRunning(tabId),
 });
-agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
+agent.setRunStartGuard(async (tabId, context) => {
+  await cloudRunController.guardRunStart(tabId, context);
+  return teacherRunInterlock.guardRunStart(tabId);
+});
 const profileSync = new ProfileSyncManager(chrome.storage.local);
 
 async function playWatchAlert({ style = 'default' } = {}) {
@@ -3086,6 +3089,10 @@ async function handleMessage(msg, sender) {
     }
     case 'cloud_respond':
       return await cloudRunController.respond(msg);
+    case 'cloud_pause':
+      return await cloudRunController.pause(msg);
+    case 'cloud_resume':
+      return await cloudRunController.resume(msg);
     case 'cloud_abort':
       return await cloudRunController.abort(msg);
     case 'cloud_bridge_start':

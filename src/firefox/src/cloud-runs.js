@@ -1,3 +1,4 @@
+import { CloudHandoffGate } from './agent/cloud-handoff.js';
 import {
   compileSuccessfulWorkflowByRunId,
   finalizeSavedWorkflowDraft,
@@ -641,6 +642,7 @@ function compactCloudRunForPersistence(run) {
     conversationKey: run?.conversationKey || null,
     memoryProtected: run?.memoryProtected === true,
     memoryOwner: run?.memoryOwner || null,
+    handoff: run?.handoff || null,
     providerId: run?.providerId || null,
     expectedModel: run?.expectedModel || null,
     mode: run?.mode || 'act',
@@ -691,7 +693,13 @@ export function cloudSafeScheduledJob(job, { strictSecretMode = false } = {}) {
 export function buildCloudPersistenceRows(runs) {
   const values = Array.isArray(runs) ? [...runs] : [...(runs?.values?.() || [])];
   const candidates = values
-    .sort((a, b) => String(b?.createdAt || '').localeCompare(String(a?.createdAt || '')))
+    .sort((a, b) => {
+      // Manual control must survive restart even when this task is older than
+      // the retained history or the history fills the storage byte budget.
+      const holdsControl = run => !!run?.handoff && !TERMINAL_STATUSES.has(run.status);
+      return Number(holdsControl(b)) - Number(holdsControl(a))
+        || String(b?.createdAt || '').localeCompare(String(a?.createdAt || ''));
+    })
     .slice(0, CLOUD_RUN_LIMIT)
     .map(compactCloudRunForPersistence);
   const rows = [];
@@ -717,6 +725,7 @@ function cloudSnapshot(run, { includeUpdates = true } = {}) {
     task: run.task,
     structured: run.structured ?? hasCloudOutputSchema(run.outputSchema),
     pendingInput: run.pendingInput || null,
+    handoff: run.handoff || null,
     ...(run.captchaDiagnostics ? { captchaDiagnostics: run.captchaDiagnostics } : {}),
     result: run.result,
     persistenceTruncated: run.persistenceTruncated,
@@ -761,6 +770,8 @@ export function createCloudRunController({
   const runs = new Map();
   const startingTabs = new Set();
   const startingRunIds = new Set();
+  let pendingStarts = 0;
+  const handoffGates = new Map();
   const startingConversations = new Set();
   const runAbortControllers = new Map();
   // Private envelopes live only for the active handle, outside snapshots and
@@ -815,7 +826,7 @@ export function createCloudRunController({
     if (hydratePromise) return hydratePromise;
     hydratePromise = (async () => {
       if (!api.storage?.session?.get) return;
-      const stored = await api.storage.session.get(CLOUD_RUN_STORAGE_KEY).catch(() => ({}));
+      const stored = await api.storage.session.get(CLOUD_RUN_STORAGE_KEY);
       const rows = Array.isArray(stored?.[CLOUD_RUN_STORAGE_KEY]) ? stored[CLOUD_RUN_STORAGE_KEY] : [];
       let changed = false;
       for (const row of rows) {
@@ -832,7 +843,16 @@ export function createCloudRunController({
           return { ...update, seq };
         });
         const restored = { ...row, updates, nextUpdateSeq };
-        if (!TERMINAL_STATUSES.has(restored.status)) {
+        if (restored.handoff && !TERMINAL_STATUSES.has(restored.status)) {
+          // A lost worker has lost ephemeral guards/provider/memory context.
+          // Keep the browser reserved for its owner; never replay this run.
+          restored.status = 'paused';
+          restored.handoff = { ...restored.handoff, state: 'paused', resumable: false, interrupted: true };
+          restored.error = 'WebBrain restarted during browser handoff. Inspect the page and explicitly stop this interrupted run before starting further work.';
+          startingTabs.add(restored.tabId);
+          pushUpdate(restored, 'handoff', restored.handoff);
+          changed = true;
+        } else if (!TERMINAL_STATUSES.has(restored.status)) {
           const at = isoNow();
           restored.status = restored.status === 'aborting' ? 'aborted' : 'failed';
           restored.pendingInput = null;
@@ -1062,8 +1082,8 @@ export function createCloudRunController({
       run.captchaDiagnostics = { ...scrubbedData, observedAt: run.updatedAt };
     }
     if (type === 'clarify' && scrubbedData?.clarifyId
-        && ['running', 'needs_user_input'].includes(run.status)) {
-      run.status = 'needs_user_input';
+        && ['running', 'needs_user_input', 'pausing', 'paused', 'resuming'].includes(run.status)) {
+      if (!run.handoff) run.status = 'needs_user_input';
       run.pendingInput = scrubbedData;
     }
     if (type === 'clarify_timeout_extended' && scrubbedData?.clarifyId
@@ -1073,8 +1093,8 @@ export function createCloudRunController({
     }
     if (type === 'clarify_auto' && scrubbedData?.clarifyId
         && (run.pendingInput?.clarifyId || run.pendingInput?.clarify_id) === scrubbedData.clarifyId
-        && run.status === 'needs_user_input') {
-      run.status = 'running';
+        && (run.status === 'needs_user_input' || run.handoff)) {
+      if (!run.handoff) run.status = 'running';
       run.pendingInput = null;
     }
     if (type === 'run_status'
@@ -1118,7 +1138,25 @@ export function createCloudRunController({
     return parameters;
   }
 
+  function activeHandoff() {
+    return [...runs.values()].find(run => run.handoff && !TERMINAL_STATUSES.has(run.status));
+  }
+
+  function assertNoHandoff() {
+    if (activeHandoff()) {
+      throw cloudRunError('Browser control belongs to an active handoff. Return control or explicitly reconcile the interrupted run before starting another task.', 409);
+    }
+  }
+
   async function startRun(msg = {}) {
+    // Reserve startup before its first await, including model/memory lookup
+    // and helper-tab creation. Handoff cannot grant control during this work.
+    pendingStarts++;
+    try { return await startRunWithReservation(msg); }
+    finally { pendingStarts--; }
+  }
+
+  async function startRunWithReservation(msg = {}) {
     const taskMemory = normalizeCloudTaskMemory(msg);
     if (taskMemory && msg._workflow) throw cloudRunError('Memory-protected tasks require ordinary guarded browser execution.', 409);
     const memoryOwner = await cloudMemoryOwner(taskMemory);
@@ -1150,6 +1188,7 @@ export function createCloudRunController({
 
   async function startRunReserved(msg = {}, startup = null, taskMemory = null, memoryOwner = null) {
     await hydrate();
+    assertNoHandoff();
     const recipient = msg.private_result_public_key == null
       ? null : await importPrivateResultRecipient(msg.private_result_public_key);
     const suppliedRunId = msg.runId ?? msg.run_id;
@@ -1254,6 +1293,7 @@ export function createCloudRunController({
       if (conversationKey) await agent.clearConversation(tabId);
       const targetTab = await api.tabs.get(tabId);
       await activateTab(targetTab);
+      assertNoHandoff();
     } catch (error) {
       startingTabs.delete(tabId);
       startingRunIds.delete(runId);
@@ -1289,6 +1329,29 @@ export function createCloudRunController({
       updatedAt: createdAt,
       completedAt: null,
     };
+    const handoffGate = new CloudHandoffGate({
+      async onState(state) {
+        if (state === 'running') {
+          run.handoff = null;
+          run.status = run.pendingInput ? 'needs_user_input' : 'running';
+        } else {
+          run.status = state;
+          run.handoff = { state, resumable: true, interrupted: false,
+            ...(state === 'paused' ? { pausedAt: isoNow() } : run.handoff?.pausedAt ? { pausedAt: run.handoff.pausedAt } : {}) };
+        }
+        run.updatedAt = isoNow();
+        pushUpdate(run, 'handoff', run.handoff || { state: null });
+        await persist();
+      },
+      keepAlive() {
+        const ping = () => { try { const p = api.runtime?.getPlatformInfo?.(() => { void api.runtime.lastError; }); p?.catch?.(() => {}); } catch {} };
+        ping();
+        const timer = setInterval(ping, 20000);
+        timer?.unref?.();
+        return () => clearInterval(timer);
+      },
+    });
+    handoffGates.set(run.runId, handoffGate);
     runs.set(run.runId, run);
     if (taskMemory) memoryConfigurations.set(run.runId, taskMemory);
     startingRunIds.delete(runId);
@@ -1308,6 +1371,8 @@ export function createCloudRunController({
     } catch (error) {
       runs.delete(run.runId);
       runAbortControllers.delete(runId);
+      handoffGate.close();
+      handoffGates.delete(run.runId);
       privateRecipients.delete(run.runId);
       memoryConfigurations.delete(run.runId);
       startingTabs.delete(tabId);
@@ -1405,6 +1470,14 @@ export function createCloudRunController({
             run.agentDoneSuccess = false;
             content = await agent.processMessage(tabId, prompt, publishUpdate, mode, [], {
               cloudRun: true,
+              handoffBoundary: async () => {
+                if (handoffGate.state === 'pausing' && typeof agent._persistNow === 'function') {
+                  const saved = await agent._persistNow(tabId);
+                  if (saved?.ok !== true) throw new Error('The current browser state could not be saved for safe handoff.');
+                }
+                return handoffGate.boundary();
+              },
+              handoffObserved: () => handoffGate.observed(),
               privateFinalResult: !!recipient,
               ...(taskMemory ? { taskMemory } : {}),
               ...(providerId == null ? {} : { providerId }),
@@ -1445,6 +1518,10 @@ export function createCloudRunController({
               parentRunId: parentTraceRunId,
               parentSessionId: parentTraceSessionId,
             });
+            // A request racing final completion must still acknowledge a safe
+            // boundary, but cannot claim to resume an already released agent.
+            const lateHandoff = await handoffGate.boundary();
+            if (lateHandoff) throw new Error('The agent finished while browser control was changing. Inspect and stop this interrupted handoff before continuing.');
             if (!requestedResume || cancelled() || ['failed', 'aborting', 'aborted'].includes(run.status)) break;
             resumeCount++;
             pushUpdate(run, 'cloud_resume_wait', { status: 'waiting', scheduledAt: requestedResume.scheduledAt, attempt: resumeCount });
@@ -1534,6 +1611,13 @@ export function createCloudRunController({
         );
         run.finalUrl = cloudTerminalUrl(redactWorkflowValue(await getTabUrl(tabId)), { strictSecretMode });
       } finally {
+        handoffGate.close();
+        handoffGates.delete(run.runId);
+        if (run.handoff && run.status !== 'aborting' && run.status !== 'aborted') {
+          run.status = 'paused';
+          run.handoff = { ...run.handoff, state: 'paused', resumable: false, interrupted: true };
+          pushUpdate(run, 'handoff', run.handoff);
+        }
         privateRecipients.delete(run.runId);
         privateStructuredResults.delete(run.runId);
         // The bridge flag is a run-scoped grant, not the sidebar's persistent
@@ -1566,8 +1650,8 @@ export function createCloudRunController({
         if (cancelled()) run.status = 'aborted';
         else if (terminalStatus) run.status = terminalStatus;
         runAbortControllers.delete(runId);
-        run.completedAt = isoNow();
-        run.updatedAt = run.completedAt;
+        run.completedAt = run.handoff ? null : isoNow();
+        run.updatedAt = isoNow();
         // The run is over, so nothing more can quote these; do not hold the
         // literals in memory any longer than the run that typed them.
         strictSecretValues.delete(run.runId);
@@ -1579,7 +1663,7 @@ export function createCloudRunController({
         // Recording flush is still owned by this run. Keep the tab reserved
         // through all cleanup so aborting a nonterminal capture cannot cancel
         // a replacement run or hide its indicators.
-        startingTabs.delete(tabId);
+        if (!run.handoff) startingTabs.delete(tabId);
         await persist().catch(() => {});
       }
     })();
@@ -1657,6 +1741,9 @@ export function createCloudRunController({
 
   async function status(msg = {}) {
     await hydrate();
+    // Pause acknowledgement is externally visible only after its checkpoint
+    // has finished writing; a poll cannot race a pending storage write.
+    await persistQueue;
     const runId = msg.runId || msg.run_id;
     if (!runId) return { runs: [...runs.values()].map(run => cloudSnapshot(run, { includeUpdates: false })) };
     const run = runs.get(runId);
@@ -1668,8 +1755,20 @@ export function createCloudRunController({
     await hydrate();
     const run = runs.get(msg.runId || msg.run_id);
     if (!run) throw new Error('Unknown cloud run.');
-    if (run.status === 'running' || run.status === 'needs_user_input') {
+    if (run.handoff?.interrupted) {
+      run.status = 'aborted';
+      run.handoff = null;
+      pushUpdate(run, 'handoff', { state: null });
+      run.pendingInput = null;
+      run.completedAt = isoNow();
+      run.updatedAt = run.completedAt;
+      run.error = 'Interrupted handoff stopped explicitly. Inspect the browser before starting a new task.';
+      startingTabs.delete(run.tabId);
+      await persist();
+    } else if (['running', 'needs_user_input', 'pausing', 'paused', 'resuming'].includes(run.status)) {
       run.status = 'aborting';
+      run.handoff = null;
+      handoffGates.get(run.runId)?.close();
       run.pendingInput = null;
       run.error = 'Abort requested.';
       run.updatedAt = isoNow();
@@ -1680,11 +1779,61 @@ export function createCloudRunController({
     return cloudSnapshot(run);
   }
 
+  async function pause(msg = {}) {
+    await hydrate();
+    const run = runs.get(msg.runId || msg.run_id);
+    if (!run) throw cloudRunError('Unknown cloud run.', 404);
+    if (run.workflowId) throw cloudRunError('Saved workflow replay does not support browser handoff.', 409);
+    if (run.handoff) {
+      // A duplicate pause must not expose a checkpoint still being written.
+      await persistQueue;
+      return cloudSnapshot(run);
+    }
+    if (!['running', 'needs_user_input'].includes(run.status)) throw cloudRunError('Only a running browser task can be paused.', 409);
+    if (pendingStarts || [...runs.values()].some(other => other !== run && !TERMINAL_STATUSES.has(other.status))
+        || agent.hasOtherRunningTabs?.(run.tabId)) {
+      throw cloudRunError('Another agent is running or starting in this browser. Wait for it to finish before taking control.', 409);
+    }
+    const waitingClarification = run.status === 'needs_user_input' && !!run.pendingInput;
+    if (waitingClarification && agent.canPauseAtClarification?.(run.tabId,
+        run.pendingInput.clarifyId || run.pendingInput.clarify_id) !== true) {
+      throw cloudRunError('Answer the pending action approval before taking control; its browser action has not settled yet.', 409);
+    }
+    const gate = handoffGates.get(run.runId);
+    if (!gate) throw cloudRunError('The active browser run is unavailable for handoff.', 409);
+    await gate.request();
+    if (waitingClarification) {
+      // Only standalone clarify() is a safe wait; internal action approvals
+      // may continue a page mutation before the next tool boundary.
+      // Keep its question pending; handback is not a clarification response.
+      if (typeof agent._persistNow === 'function') {
+        const saved = await agent._persistNow(run.tabId);
+        if (saved?.ok !== true) throw cloudRunError('The clarification state could not be saved for safe handoff.', 409);
+      }
+      await gate.acknowledge();
+    }
+    return cloudSnapshot(run);
+  }
+
+  async function resume(msg = {}) {
+    await hydrate();
+    const run = runs.get(msg.runId || msg.run_id);
+    if (!run) throw cloudRunError('Unknown cloud run.', 404);
+    if (!run.handoff?.resumable || run.handoff.interrupted) {
+      throw cloudRunError('This handoff was interrupted. Inspect the browser and explicitly stop the interrupted run; it cannot safely resume.', 409);
+    }
+    if (typeof (msg.note ?? '') !== 'string' || (msg.note || '').length > 2000) throw cloudRunError('The handoff note must be text of at most 2000 characters.', 400);
+    const gate = handoffGates.get(run.runId);
+    if (!gate) throw cloudRunError('The browser handoff is no longer resumable.', 409);
+    await gate.resume((msg.note || '').trim());
+    return cloudSnapshot(run);
+  }
+
   async function respond(msg = {}) {
     await hydrate();
     const run = runs.get(msg.runId || msg.run_id);
     if (!run) throw cloudRunError('Unknown cloud run.', 404);
-    if (run.status !== 'needs_user_input') {
+    if (run.status !== 'needs_user_input' && !(run.status === 'resuming' && run.pendingInput)) {
       throw cloudRunError('Cloud run is not waiting for user input.', 409);
     }
     const clarifyId = String(msg.clarifyId || msg.clarify_id || '').trim();
@@ -1698,7 +1847,7 @@ export function createCloudRunController({
     if (!agent.submitClarifyResponse(run.tabId, clarifyId, answer, 'cloud_api')) {
       throw cloudRunError('Clarification is no longer available in the active WebBrain run.', 409);
     }
-    run.status = 'running';
+    run.status = run.handoff?.state || 'running';
     run.pendingInput = null;
     run.error = '';
     pushUpdate(run, 'clarify_response', { clarifyId, source: 'cloud_api' });
@@ -1763,12 +1912,25 @@ export function createCloudRunController({
 
   return {
     runs,
+    async guardRunStart(tabId, { kind } = {}) {
+      // A scheduled/sidebar run can arrive before any Cloud status request.
+      // Restore the persisted handoff before letting it touch the browser.
+      await hydrate();
+      const owner = activeHandoff();
+      const settlingOwner = kind === 'cloud' && owner?.tabId === tabId
+        && owner.handoff?.state === 'pausing' && !owner.handoff.interrupted;
+      if (owner && !settlingOwner) {
+        throw cloudRunError('The browser is reserved for manual control. Return control or reconcile the interrupted handoff before starting an agent.', 409);
+      }
+    },
     isRunning: (tabId) => startingTabs.has(tabId),
     startRun,
     startWorkflowRun,
     compileWorkflow,
     status,
     respond,
+    pause,
+    resume,
     abort,
     startBridge,
     stopBridge,

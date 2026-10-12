@@ -61,7 +61,7 @@ test('hello carries identity, token, browser, version and platform', () => {
   assert.deepEqual({ ...hello.browser }, { name: 'Chrome', version: '126.0.1' });
   assert.equal(hello.extensionVersion, '1.2.3');
   assert.equal(hello.platform, 'Linux x86_64');
-  assert.deepEqual([...hello.capabilities], ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1']);
+  assert.deepEqual([...hello.capabilities], ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1', 'run_handoff_v1']);
   assert.equal(JSON.stringify(hello.status).includes('secret-token'), false, 'status must not leak the token');
   assert.equal(JSON.stringify(h.status()).includes('secret-token'), false);
 });
@@ -224,6 +224,32 @@ function fxHarness({ WebSocketImpl, dispatch } = {}) {
 }
 
 for (const build of ['chrome', 'firefox']) {
+  test(`${build}: handoff commands require approval and preserve their run and note payload`, async () => {
+    const h = build === 'chrome' ? harness() : fxHarness();
+    const calls = build === 'chrome' ? h.runtimeCalls : h.calls;
+    if (build === 'chrome') h.start();
+    else h.bridge.start({ url: 'ws://127.0.0.1:17374/extension', ...IDENTITY });
+    const socket = h.sockets[0];
+    socket.emit('open');
+    assert.equal(socket.sent[0].capabilities.includes('run_handoff_v1'), true);
+    try {
+      for (const action of ['cloud_pause', 'cloud_resume']) {
+        await socket.receive({ id: `unapproved-${action}`, action, payload: { runId: 'r1' } });
+        assert.equal(socket.sent.find(reply => reply.id === `unapproved-${action}`).status, 403);
+      }
+      assert.equal(calls.length, 0);
+      await socket.receive({ type: 'connection_approved', browserId: IDENTITY.browserId });
+      await socket.receive({ id: 'pause', action: 'cloud_pause', payload: { runId: 'r1' } });
+      await socket.receive({ id: 'resume', action: 'cloud_resume', payload: { runId: 'r1', note: 'I signed in' } });
+      assert.deepEqual(calls.map(call => ({ ...call })), [
+        { runId: 'r1', target: 'background', action: 'cloud_pause' },
+        { runId: 'r1', note: 'I signed in', target: 'background', action: 'cloud_resume' },
+      ]);
+      assert.equal(socket.sent.find(reply => reply.id === 'pause').ok, true);
+      assert.equal(socket.sent.find(reply => reply.id === 'resume').ok, true);
+    } finally { if (build === 'firefox') h.bridge.stop(); }
+  });
+
   test(`${build}: malformed JSON envelopes get a reply and cannot break the approved bridge`, async () => {
     const h = build === 'chrome' ? harness() : fxHarness();
     if (build === 'chrome') h.start();

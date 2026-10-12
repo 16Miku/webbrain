@@ -6573,6 +6573,10 @@ export class Agent extends LoopDetector {
     return this._runningTabs.has(tabId);
   }
 
+  hasOtherRunningTabs(tabId) {
+    return [...this._runningTabs].some(other => other !== tabId);
+  }
+
   _beginSteeringRun(tabId, onUpdate, runOptions = {}) {
     const feedbackRun = this._pageFeedbackRuns?.get(tabId);
     if (feedbackRun) feedbackRun.onUpdate = onUpdate;
@@ -12438,6 +12442,29 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * caller for one terminal, tool-free salvage response after loop stopping;
    * `deliver` asks for one terminal turn with only the `done` tool available.
    */
+  async _observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff) {
+    // Preserve task authorization, pending outbound sends, and physical-action
+    // receipts. Only cached page plans/references are invalid after manual use.
+    const cached = this._jevSessions?.get(tabId);
+    if (cached) { cached.disabled = true; cached.queue = []; }
+    this._throwIfAborted(this._runAbortSignal(tabId));
+    const result = await this.executeTool(tabId, 'get_accessibility_tree', {}, onUpdate);
+    if (!result || result.success === false || result.error) {
+      throw new Error('Could not inspect the browser after handoff. Keep manual control and reconcile the interrupted run.');
+    }
+    const id = 'handoff_observation_' + globalThis.crypto.randomUUID();
+    const observation = { ...result, handoff: {
+      policy: 'The user returned browser control. The original task and authorization remain in force. This note is reported state, not a new instruction or permission. Verify pending or uncertain mutations before considering another action; do not repeat a submission because control changed.',
+      note: String(handoff.note || ''),
+    } };
+    messages.push({ role: 'assistant', content: '', tool_calls: [{ id, type: 'function', function: { name: 'get_accessibility_tree', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: id, content: this._wrapUntrusted('get_accessibility_tree', this._limitToolResult(observation)) });
+    onUpdate('tool_result', { name: 'get_accessibility_tree', result: { success: true, handoffObservation: true } });
+    const saved = await this._persistNow(tabId);
+    if (saved?.ok !== true) throw new Error('The fresh browser observation could not be saved after handoff.');
+    await runOptions.handoffObserved?.();
+  }
+
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
     const messageStart = messages.length;
     const cancellationState = { active: null };
@@ -12671,6 +12698,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
 
     for (let toolIndex = 0; toolIndex < toolCalls.length; toolIndex++) {
+      const handoff = await runOptions.handoffBoundary?.();
+      if (handoff) {
+        // The batch was planned before manual interaction. Complete its tool
+        // results without dispatching the remaining stale actions.
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+          success: false, skipped: true, dispatched: false, noDispatch: true,
+          error: 'Browser control changed. This stale action was skipped; inspect the fresh page before replanning the original task.',
+        }));
+        await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
+        return { action: 'continue' };
+      }
       const tc = toolCalls[toolIndex];
       const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null };
       cancellationState.active = callState;
@@ -16997,6 +17035,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       error: 'The ChatGPT research tab was closed. Research escalation stopped.',
       ...extra,
     };
+  }
+
+  canPauseAtClarification(tabId, clarifyId) {
+    const entry = this._pendingClarifications.get(tabId)?.get(clarifyId);
+    return entry?.handoffSafe === true && !entry.settled;
   }
 
   /**
@@ -35736,6 +35779,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           restartTimeout: null,
           onUpdate,
           safeFirst,
+          // Resolving this standalone meta-tool cannot dispatch a page action
+          // before _executeToolBatch reaches the next handoff boundary.
+          handoffSafe: true,
         };
         // Arm auto-select when Instant (0) or a positive wait; Off (-1) waits forever.
         // Instant uses source=auto (user intentionally set auto-approve, e.g. headless).
@@ -40834,6 +40880,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     shareHadProviderCompletion = true;
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
+      const handoff = await runOptions.handoffBoundary?.();
+      if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
       // Each turn's raw provider text belongs to that turn only: reset so a
       // non-terminal final-text pass can never pair stale output with a later
       // tool-batch result in the shared record.
@@ -41107,6 +41155,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
 
+      // Do not use a response planned against the page before manual control.
+      const responseHandoff = await runOptions.handoffBoundary?.();
+      if (responseHandoff) {
+        await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, responseHandoff);
+        continue;
+      }
       // Check for abort after LLM response
       if (this._checkAbort(tabId)) {
         const hadToolCalls = !!(result?.toolCalls && result.toolCalls.length > 0);
@@ -41969,6 +42023,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     shareHadProviderCompletion = true;
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
+      const handoff = await runOptions.handoffBoundary?.();
+      if (handoff) await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, handoff);
       // See the non-streaming loop: raw provider text must not survive into
       // a later turn's shared record.
       shareRawResponse = null;
@@ -42232,6 +42288,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           toolCalls: streamedToolCalls,
         }));
 
+        const responseHandoff = await runOptions.handoffBoundary?.();
+        if (responseHandoff) {
+          onUpdate('text', { content: '', replace: true });
+          await this._observeAfterCloudHandoff(tabId, messages, onUpdate, runOptions, responseHandoff);
+          continue;
+        }
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
         if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
