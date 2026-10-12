@@ -791,8 +791,9 @@ for (const build of ['chrome', 'firefox']) {
     agent._completionSubmitStates.set(tabId, { dispatched: true, observedAfterSubmit: false });
     steer(agent, 'Use the updated title');
     await agent._revalidatePendingSteering(tabId, messages, () => {}, 'act', null, null, options);
-    assert.equal(agent._completionSubmitStates.has(tabId), false);
-    assert.equal(agent._planExecutionGuards.get(tabId).socialPublication.outcomes.announcement.status, 'pending');
+    assert.equal(agent._completionSubmitStates.get(tabId).dispatched, true, 'The physical receipt remains available for read-only reconciliation');
+    assert.equal(agent._planExecutionGuards.get(tabId).steeringPriorPublication.outcomes.announcement.status, 'pending');
+    assert.equal(agent._planExecutionGuards.get(tabId).steeringMutationReceipts[0].dispatched, true);
     assert.equal(agent._steeringPriorSubmissionBlock(tabId, 'click', { text: 'Publish' }, { isSubmit: true }).noDispatch, true);
     assert.equal(agent._steeringPriorSubmissionBlock(tabId, 'read_page', {}, null), null);
     agent._storeContinuationExecutionEvidence(tabId);

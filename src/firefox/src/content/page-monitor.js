@@ -15,6 +15,7 @@
   const listeners = [];
   const operations = new Map();
   const modelSnapshots = new Map();
+  let ownedPreparationBindings = new WeakMap();
   const MODEL_SNAPSHOT_MS = 120000;
   const MODEL_TARGET_LIMIT = 512;
   const MODEL_SCAN_LIMIT = 2048;
@@ -146,7 +147,35 @@
   };
   const currentViewport = () => ({ width: window.innerWidth, height: window.innerHeight,
     visualWidth: window.visualViewport?.width ?? window.innerWidth, visualHeight: window.visualViewport?.height ?? window.innerHeight,
-    scale: window.visualViewport?.scale ?? 1, offsetX: window.visualViewport?.offsetLeft ?? 0, offsetY: window.visualViewport?.offsetTop ?? 0 });
+    scale: window.visualViewport?.scale ?? 1, dpr: window.devicePixelRatio,
+    offsetX: window.visualViewport?.offsetLeft ?? 0, offsetY: window.visualViewport?.offsetTop ?? 0 });
+  function reconcileOwnedViewportOffset(viewport, event) {
+    if (event?.target !== window.visualViewport || event.isTrusted !== true || !active || interventionUnreported) return false;
+    for (const op of operations.values()) {
+      const proof = op.preparedBinding && ownedPreparationBindings.get(op.preparedBinding);
+      if (!proof?.viewportNotificationPending || proof.scrollPreparationUntil < Date.now()
+          || proof.runToken !== runToken || proof.documentToken !== documentToken
+          || proof.userAt !== lastUserAt || proof.interventionRevision !== interventionRevision
+          || deepActiveElement() !== op.preparedBinding.target) continue;
+      const before = proof.binding, after = actionFootprint(before.target, before.readonlyPreparation);
+      if (!after) continue;
+      const originalContext = JSON.parse(before.context), currentContext = JSON.parse(after.context);
+      const original = originalContext[2];
+      if (![original, viewport].every(value => value.scale === 1 && value.visualWidth === value.width
+          && value.visualHeight === value.height && Math.abs(value.offsetX) < 1 && Math.abs(value.offsetY) < 1)
+          || ['width', 'height', 'visualWidth', 'visualHeight', 'scale', 'dpr'].some(key => original[key] !== viewport[key])) continue;
+      // A full-size, unzoomed visual viewport has no independent pan range.
+      // After an owned fractional scroll some engines report its subpixel
+      // remainder late (e.g. pageTop=346.833, scrollY=347, offsetTop=-0.167).
+      // Consume only that phase's first bounded native notification, with the
+      // exact rect/hit, window scroll and every private semantic value intact.
+      currentContext[2] = { ...currentContext[2], offsetX: original.offsetX, offsetY: original.offsetY };
+      if (!samePreparedBinding(before, { ...after, context: JSON.stringify(currentContext) })) continue;
+      ownedPreparationBindings.set(op.preparedBinding, { ...proof, binding: after, viewportNotificationPending: false });
+      return true;
+    }
+    return false;
+  }
   function flushAgentResize(source, expected = agentResize) {
     if (!expected || agentResize !== expected) return Promise.resolve();
     clearTimeout(expected.timer); agentResize = null;
@@ -579,6 +608,32 @@
         && item.clickHandler === after[key][index].clickHandler
         && (!item.files || (item.files.length === after[key][index].files?.length
           && item.files.every((file, fileIndex) => file === after[key][index].files[fileIndex])))));
+  }
+  function preparedBindingFor(before) {
+    const proof = before && ownedPreparationBindings.get(before);
+    return proof && proof.runToken === runToken && proof.documentToken === documentToken
+      && proof.userAt === lastUserAt && proof.interventionRevision === interventionRevision
+      ? proof.binding : before;
+  }
+  function samePreparationSemantics(before, after) {
+    if (!before?.model || !after?.model) return false;
+    if (![before, after].every(binding => binding.hit === binding.target || binding.target.contains?.(binding.hit))) return false;
+    const original = JSON.parse(before.context), current = JSON.parse(after.context);
+    // Only scroll offsets and the target rectangle can be derived from this
+    // synchronous owned phase. URL, viewport and recipient context stay exact.
+    for (const slot of [3, 4, 5]) current[slot] = original[slot];
+    return samePreparedBinding(before, { ...after, hit: before.hit, context: JSON.stringify(current) });
+  }
+  function bindingPredicate(before, after) {
+    if (!before || !after) return 'semantic_binding_changed';
+    if (before.target !== after.target || before.scope !== after.scope) return 'target_changed';
+    if (before.context !== after.context || before.hit !== after.hit) {
+      if (samePreparationSemantics(before, after)) return 'geometry_changed';
+      const original = JSON.parse(before.context), current = JSON.parse(after.context);
+      for (const slot of [3, 4, 5]) current[slot] = original[slot];
+      if (samePreparedBinding(before, { ...after, hit: before.hit, context: JSON.stringify(current) })) return 'target_hit_changed';
+    }
+    return samePreparedBinding(before, after) ? '' : 'semantic_binding_changed';
   }
   // Model snapshots bind an action's meaning, not unrelated text/counts in
   // its surrounding page. These exact values stay private in this realm.
@@ -1474,7 +1529,7 @@
     return JSON.stringify(value);
   }
   function inputContinuationBindingMatches(op, after) {
-    const before = op?.preparedBinding;
+    const before = preparedBindingFor(op?.preparedBinding);
     if (!op?.dispatched || op.kind !== 'input' || before?.model !== true || !after
         || before.target !== after.target || before.scope !== after.scope || before.hit !== after.hit || before.context !== after.context) return false;
     return ['ancestors', 'nodes'].every(key => before[key].length === after[key].length
@@ -1488,7 +1543,7 @@
   }
   function operationBindingMatches(op, target = op?.preparedBinding?.target) {
     const current = operationBinding(op, target);
-    return samePreparedBinding(op?.preparedBinding, current) || inputContinuationBindingMatches(op, current);
+    return samePreparedBinding(preparedBindingFor(op?.preparedBinding), current) || inputContinuationBindingMatches(op, current);
   }
   function modelTarget(params = {}) {
     if (!modelActionTools.has(params.tool) || Number.isFinite(params.x) || Number.isFinite(params.y)
@@ -1520,24 +1575,26 @@
   }
   function modelBindingResult(params = {}) {
     const snapshot = modelSnapshots.get(params.snapshotToken || params.expectedModelSnapshot);
-    if (!active || !snapshot || snapshot.until < Date.now() || snapshot.runToken !== runToken
-        || params.runToken !== runToken || snapshot.interventionRevision !== interventionRevision
-        || snapshot.userAt !== lastUserAt || interventionUnreported || (pendingDOM && pendingDOM.source !== 'page')) return {};
+    if (!active || params.runToken !== runToken || snapshot?.runToken !== runToken) return { reason: 'model_snapshot_invalid' };
+    if (!snapshot || snapshot.until < Date.now()) return { reason: 'model_snapshot_expired' };
+    if (snapshot.interventionRevision !== interventionRevision || snapshot.userAt !== lastUserAt || interventionUnreported)
+      return { reason: 'intervention_changed' };
+    if (pendingDOM && pendingDOM.source !== 'page') return { reason: 'pending_feedback' };
     const target = modelTarget(params);
     if (!target) return params.ref_id && snapshot.refs.has(params.ref_id) ? {} : { reason: 'target_unresolved' };
     const before = snapshot.targets.get(target), previous = snapshot.uncertified.get(target);
     if (!before && !previous) return { reason: 'target_uncovered' };
-    if (params.ref_id && snapshot.hasRefs && snapshot.refs.get(params.ref_id) !== target) return {};
+    if (params.ref_id && snapshot.hasRefs && snapshot.refs.get(params.ref_id) !== target) return { reason: 'target_changed' };
     if (!params.ref_id && !params.selector && !params.nativeTarget && !params.textMatch && modelFocusTools.has(params.tool)
-        && snapshot.focusTarget !== target) return {};
+        && snapshot.focusTarget !== target) return { reason: 'focus_changed' };
     if (before?.readonlyPreparation && params.tool !== 'click_ax') return {};
-    if (before) return samePreparedBinding(before, actionFootprint(target, before.readonlyPreparation)) ? { binding: before } : {};
+    if (before) {
+      const reason = bindingPredicate(preparedBindingFor(before), actionFootprint(target, before.readonlyPreparation));
+      return reason ? { reason } : { binding: before };
+    }
     const current = modelCandidateIdentity(target);
     return current && previous.value === current.value && previous.parent === current.parent && previous.form === current.form
       ? { uncertified: true } : {};
-  }
-  function modelBinding(params = {}) {
-    return modelBindingResult(params).binding || null;
   }
   function captureModel(params = {}) {
     if (!active || params.runToken !== runToken) return { ready: false, runToken, documentToken };
@@ -1842,12 +1899,29 @@
     if (op?.allowPassiveRebase === true && op.preparedBinding?.model === true && op.focusBound
         && !allowFocusRebind && deepActiveElement() !== op.focusTarget) return true;
     return op?.allowPassiveRebase === true && !!op.preparedBinding
-      && (!op.dispatched || (op.preparedBinding.model === true && (op.kind === 'input' || op.pointerPreparationOnly === true)))
+      && (!op.dispatched || (op.preparedBinding.model === true && (op.kind === 'input' || op.pointerPreparationOnly === true || op.typingPreparationOnly === true)))
       && !operationBindingMatches(op);
+  }
+  function nativeReceiverPredicate(op, params) {
+    if (!params.nativeTarget || op?.preparedBinding?.model !== true) return '';
+    // Resolve the actual transport marker alone; a stale marker cannot fall
+    // back to the requested selector or ref and borrow its certificate.
+    const receiver = resolveTarget({ nativeTarget: params.nativeTarget });
+    if (!receiver) return 'target_unresolved';
+    const target = op.tabFocusRebound === true && receiver === op.focusTarget
+      ? op.focusTarget : op.preparedBinding.target;
+    // Button text/SVG and editor paragraphs can receive their owner's input.
+    // A separate activator, including one inside a shadow root, cannot.
+    let node = receiver;
+    for (let depth = 0; node && depth < 256; depth++, node = bindingParent(node)) {
+      if (node === target) return '';
+      if (node.matches(modelControlSelector + ',[tabindex]')) return 'target_changed';
+    }
+    return 'target_changed';
   }
   function rebasePassivePreparation(op, params = {}) {
     const continuingInput = op?.dispatched && op.kind === 'input' && op.preparedBinding?.model === true;
-    const continuingPreparation = op?.dispatched && op.pointerPreparationOnly === true && op.preparedBinding?.model === true;
+    const continuingPreparation = op?.dispatched && (op.pointerPreparationOnly === true || op.typingPreparationOnly === true) && op.preparedBinding?.model === true;
     if (!active || !op || op.allowPassiveRebase !== true || (op.dispatched && !continuingInput && !continuingPreparation) || op.coordinateSensitive || op.layoutInvalidated
         || op.until < Date.now() || lastUserAt > op.userAt || interventionUnreported
         || op.preparedInterventionRevision !== interventionRevision
@@ -2513,10 +2587,13 @@
       if (event.isTrusted && !expected('scroll', el, event)) interact('activity', el);
     });
     lastViewport = JSON.stringify(currentViewport());
-    const onResize = () => {
+    const onResize = event => {
       const current = currentViewport(), key = JSON.stringify(current);
       if (!active || key === lastViewport) return;
       lastViewport = key; revision++; publishRevision();
+      if (reconcileOwnedViewportOffset(current, event)) {
+        send({ kind: 'resize', source: 'agent', target: 'viewport', viewport: current }); return;
+      }
       if (agentResize?.runToken === runToken && agentResize.events.length < 16) {
         agentResize.events.push(current);
         return;
@@ -2573,6 +2650,7 @@
       el.removeAttribute?.('data-webbrain-native-target');
     }
     nativeTargets.clear();
+    ownedPreparationBindings = new WeakMap();
     observer?.disconnect(); observer = null;
     layoutObserver?.disconnect(); layoutObserver = null;
     clearTimeout(domTimer); clearTimeout(scrollTimer); clearInterval(controlTimer); domTimer = null; scrollTimer = null; controlTimer = null; unreported = 0; interventionUnreported = 0; interventionRevision = 0; pendingDOM = null; lastFeedbackDelivery = Promise.resolve();
@@ -2611,13 +2689,14 @@
     const coordinateTarget = coordinateSensitive ? target || coordinateHit : null;
     const coordinateTargetAtPoint = !target || !coordinateHit || target === coordinateHit || target.contains?.(coordinateHit);
     const operationTarget = target || focusTarget;
-    const certified = expected ? modelBinding(params) : inherited
+    const bindingResult = expected ? modelBindingResult(params) : null;
+    const certified = expected ? bindingResult.binding : inherited
       && previous.runToken === runToken && previous.until >= Date.now()
       && previous.preparedInterventionRevision === interventionRevision && lastUserAt === previous.userAt
       && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page')
       && !previous.modelBindingInvalid && !previous.layoutInvalidated
       && operationTarget === previous.preparedBinding.target
-      && samePreparedBinding(previous.preparedBinding, actionFootprint(operationTarget, previous.preparedBinding.readonlyPreparation)) ? previous.preparedBinding : null;
+      && operationBindingMatches(previous, operationTarget) ? previous.preparedBinding : null;
     const proofRequired = expected || inherited;
     const allowPassiveRebase = inherited ? previous.allowPassiveRebase === true : params.allowPassiveRebase === true;
     const controlStateAtPrepare = operationTarget && /^(INPUT|TEXTAREA|SELECT|OPTION)$/.test(operationTarget.tagName)
@@ -2629,6 +2708,7 @@
         modelBindingTool: previous.modelBindingTool || previous.tool } : {}),
       allowPassiveRebase: allowPassiveRebase && (!proofRequired || !!certified),
       modelBindingInvalid: proofRequired && !certified,
+      modelBindingReason: proofRequired && !certified ? bindingResult?.reason || 'semantic_binding_changed' : '',
       preparedTargetSignature: operationTarget ? signature(operationTarget) : undefined, kinds: new Set(),
       preparedBinding: proofRequired ? certified : allowPassiveRebase && operationTarget ? preparedBinding(operationTarget) : null,
       preparedInterventionRevision: interventionRevision,
@@ -2640,7 +2720,7 @@
     return proofRequired ? { modelBindingValid: !!certified } : {};
   }
   // The second argument is private producer provenance, never message/model params.
-  function dispatch(params, selectorPreparationOnly = false) {
+  function dispatch(params, selectorPreparationOnly = false, typingPreparationOnly = false) {
     if (!active || (params.runToken && params.runToken !== runToken)) return;
     const op = operations.get(params.operationId) || { operationId: params.operationId, userAt: lastUserAt };
     if (params.fenceOnly && !op.nativeSecret) op.nativeSecret = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -2656,8 +2736,9 @@
     // Only certified, unheld pointer movement is preparation. Once this same
     // operation has consequential input, later movement cannot downgrade it.
     const consequentialInputPending = op.consequentialInputPending === true
-      || (op.dispatched && !op.finished && op.pointerPreparationOnly !== true && op.selectorPreparationOnly !== true);
+      || (op.dispatched && !op.finished && op.pointerPreparationOnly !== true && op.selectorPreparationOnly !== true && op.typingPreparationOnly !== true);
     op.selectorPreparationOnly = selectorPreparationOnly === true;
+    op.typingPreparationOnly = typingPreparationOnly === true && !consequentialInputPending;
     const movementEvents = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove'];
     op.pointerPreparationOnly = !consequentialInputPending && params.pointerPreparationOnly === true
       && !params.fenceOnly && !params.release && params.kind === 'click' && params.navigationCandidate === false
@@ -2668,7 +2749,7 @@
       && movementEvents.every(type => params.eventTypes.includes(type));
     // History is monotonic until fresh prepare, even across finish/fence calls.
     op.consequentialInputPending = consequentialInputPending
-      || (!params.fenceOnly && !op.pointerPreparationOnly && !op.selectorPreparationOnly);
+      || (!params.fenceOnly && !op.pointerPreparationOnly && !op.selectorPreparationOnly && !op.typingPreparationOnly);
     if (!params.release) op.navigationCandidate = params.kind === 'click' && params.navigationCandidate !== false;
     op.scrollAncestors = params.addScrollTarget ? op.scrollAncestors || new Set() : new Set();
     if (params.scrollIntoView || params.nativeWheel || ['input', 'click'].includes(params.kind)) {
@@ -2699,6 +2780,7 @@
       const error = new Error('Browser changed during action preparation. Re-observe before acting.');
       error.code = 'page_feedback_pending';
       error.dispatched = false;
+      error.pagePreparationVeto = preparationVetoFacts(op, { layoutChanged, bindingChanged, target: params.element });
       throw error;
     }
     dispatch({ ...params, runToken });
@@ -2767,7 +2849,7 @@
       && op.preparedBinding?.target === target && op.until >= Date.now()
       && op.preparedInterventionRevision === interventionRevision && lastUserAt <= op.userAt && !interventionUnreported
       && (!pendingDOM || pendingDOM.source === 'page')
-      && samePreparedBinding(op.preparedBinding, operationBinding(op, target)));
+      && operationBindingMatches(op, target));
     prepare({ selector: params.selector, ref_id: params.ref_id, x: params.x, y: params.y,
       textMatch: action === 'click' ? params.text : undefined, tool: action, operationId, runToken,
       ...(params.expectedModelSnapshot !== undefined || approved?.expectedModelSnapshot !== undefined
@@ -2806,8 +2888,13 @@
     if (rebased) localOperation.revision = operation.preparedRevision;
     if (operation?.modelBindingInvalid || layoutChanged || bindingChanged || (!rebased && (domTimer || unreported)) || lastUserAt > localOperation.userAt || revision !== localOperation.revision) {
       const error = new Error('Browser changed during action preparation. Re-observe before acting.');
-      error.code = 'page_feedback_pending'; error.dispatched = localOperation.started === true; throw error;
+      error.code = 'page_feedback_pending'; error.dispatched = localOperation.started === true;
+      error.pagePreparationVeto = preparationVetoFacts(operation, { layoutChanged, bindingChanged, target });
+      throw error;
     }
+    // A validation-only phase must retain the preceding actual preparation's
+    // scroll attribution until its delayed browser events have arrived.
+    if (preparation && operation?.dispatched && (operation.typingPreparationOnly || ['scroll', 'focus'].includes(operation.kind))) return;
     if (!preparation) {
       localOperation.started = true;
       const marker = { userAt: lastUserAt }; agentTurn = marker;
@@ -2818,6 +2905,50 @@
       addScrollTarget: kind === 'scroll' && !!target,
       navigationCandidate: !preparation && localOperation.navigationCandidate,
       fenceOnly: preparation, runToken });
+  }
+  function withLocalPreparation(kind, target, callback) {
+    const op = operations.get(localOperation?.operationId);
+    // This producer is isolated-world code, not a message/model parameter.
+    // An exact typing certificate can own synchronous scroll/focus only.
+    const certified = active && op?.allowPassiveRebase === true && op.preparedBinding?.model === true
+      && ['type_ax', 'set_field', 'type_text', 'type'].includes(op.modelBindingTool || op.tool)
+      && ['scroll', 'focus'].includes(kind) && target === op.preparedBinding.target
+      && !op.consequentialInputPending;
+    if (!certified) { beforeLocalDispatch({ preparation: kind === 'focus', kind, target }); return callback(); }
+    beforeLocalDispatch({ preparation: true, kind, target });
+    const before = preparedBindingFor(op.preparedBinding);
+    const previousProof = ownedPreparationBindings.get(op.preparedBinding);
+    const previousScrollX = window.scrollX, previousScrollY = window.scrollY;
+    const preparedIntervention = interventionRevision, preparedUserAt = lastUserAt, preparedRun = runToken;
+    dispatch({ ...localOperation, runToken, kind, element: target, scrollIntoView: kind === 'scroll' || op.windowScroll,
+      addScrollTarget: true,
+      navigationCandidate: false }, false, true);
+    const priorSynchronous = op.synchronous, previousTurn = agentTurn;
+    const marker = { userAt: lastUserAt }; op.synchronous = true; agentTurn = marker;
+    try {
+      const result = callback();
+      flushPendingMutations(op); sampleFormControls(target);
+      const after = actionFootprint(target, before.readonlyPreparation);
+      const changedAuthority = !active || runToken !== preparedRun || lastUserAt !== preparedUserAt
+        || interventionRevision !== preparedIntervention || interventionUnreported;
+      const changedFocus = kind === 'focus' && deepActiveElement() !== target;
+      if (changedAuthority || changedFocus || !samePreparationSemantics(before, after)) {
+        const error = new Error('Browser changed during action preparation. Re-observe before acting.');
+        error.code = 'page_feedback_pending'; error.dispatched = localOperation?.started === true;
+        error.pagePreparationVeto = { predicate: changedAuthority ? 'intervention_changed' : changedFocus ? 'focus_changed' : bindingPredicate(before, after) || 'semantic_binding_changed' };
+        throw error;
+      }
+      // Keep the observation's exact semantic/private values immutable. Only a
+      // derived geometry proof for this original node is shared with its owner.
+      ownedPreparationBindings.set(op.preparedBinding, { binding: after, runToken, documentToken,
+        userAt: lastUserAt, interventionRevision,
+        scrollPreparationUntil: kind === 'scroll' && (previousScrollX !== window.scrollX || previousScrollY !== window.scrollY)
+          ? Date.now() + 200 : previousProof?.scrollPreparationUntil || 0,
+        viewportNotificationPending: kind === 'scroll' && (previousScrollX !== window.scrollX || previousScrollY !== window.scrollY)
+          ? true : previousProof?.viewportNotificationPending === true });
+      op.preparedRevision = revision; localOperation.revision = revision;
+      return result;
+    } finally { op.synchronous = priorSynchronous; if (agentTurn === marker) agentTurn = previousTurn; }
   }
   function withLocalDispatch(callback) {
     beforeLocalDispatch();
@@ -2830,6 +2961,17 @@
     op.synchronous = true;
     try { return callback(); }
     finally { op.synchronous = previous; }
+  }
+  function preparationVetoFacts(op, { layoutChanged = false, bindingChanged = false, target, documentChanged = false } = {}) {
+    const predicate = !active ? 'run_ended' : !op ? 'operation_missing' : documentChanged ? 'document_changed'
+      : op.until < Date.now() ? 'operation_expired'
+      : lastUserAt > op.userAt || op.preparedInterventionRevision !== interventionRevision || interventionUnreported ? 'intervention_changed'
+      : op.modelBindingInvalid ? op.modelBindingReason || 'model_snapshot_invalid'
+      : target && target !== op.target ? 'target_changed' : layoutChanged ? 'geometry_changed'
+      : bindingChanged ? op.focusBound && deepActiveElement() !== op.focusTarget ? 'focus_changed'
+        : bindingPredicate(preparedBindingFor(op.preparedBinding), operationBinding(op)) || 'semantic_binding_changed'
+      : domTimer || unreported ? 'pending_feedback' : op.preparedRevision !== revision ? 'revision_changed' : 'document_revision_changed';
+    return { predicate };
   }
   function captureLocalInputObservation(target) {
     const owner = localOperation, op = operations.get(owner?.operationId);
@@ -2891,15 +3033,22 @@
     }
     else if (msg.action === 'page_monitor_dispatch') {
       const params = msg.params || {};
+      if (!params.release && (!active || params.runToken !== runToken)) {
+        respond({ ready: false, pageFeedbackPending: true, preparationVeto: { predicate: 'run_ended' } }); return;
+      }
       const prepared = operations.get(params.operationId);
       if (!params.release) { flushPendingMutations(prepared); sampleFormControls(prepared?.target); }
       const layoutChanged = !params.release && active && coordinatePreparationShifted(prepared);
       const bindingChanged = !params.release && preparedBindingChanged(prepared);
-      const rebased = !params.release && !layoutChanged && rebasePassivePreparation(prepared, params);
-      if (!params.release && active && (prepared?.modelBindingInvalid || layoutChanged || bindingChanged || (!rebased && (domTimer || unreported)) || (prepared && prepared.preparedRevision !== revision)
+      const receiverPredicate = !params.release ? nativeReceiverPredicate(prepared, params) : '';
+      const rebased = !params.release && !layoutChanged && !receiverPredicate && rebasePassivePreparation(prepared, params);
+      if (!params.release && active && (prepared?.modelBindingInvalid || layoutChanged || bindingChanged || receiverPredicate || (!rebased && (domTimer || unreported)) || (prepared && prepared.preparedRevision !== revision)
           || (params.documentToken && (params.documentToken !== documentToken || (!rebased && params.documentRevision !== revision))))) {
-        // Content-free veto facts only; the existing dispatch predicate above is unchanged.
+        // Report bounded predicate names and facts without leaking the target.
         const preparationVeto = {
+          ...preparationVetoFacts(prepared, { layoutChanged, bindingChanged,
+            documentChanged: !!params.documentToken && params.documentToken !== documentToken }),
+          ...(receiverPredicate ? { predicate: receiverPredicate } : {}),
           modelBindingInvalid: prepared?.modelBindingInvalid === true,
           layoutChanged: layoutChanged === true, preparedBindingChanged: bindingChanged === true,
           passiveRebased: rebased === true, pendingFeedback: !!(domTimer || unreported),
@@ -2933,7 +3082,7 @@
     }
   };
   api.runtime.onMessage.addListener(onMessage);
-  window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture,
+  window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalPreparation, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture,
     get active() { return active; },
     get disposed() { return disposed; },
     dispose() { disposed = true; requestGeneration++; stop(); api.runtime.onMessage.removeListener?.(onMessage); } };

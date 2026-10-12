@@ -8,7 +8,7 @@ const { validateUploadFile, observedFileViewerResource, source: FILE_UPLOAD_POLI
  */
 
 import { combineImages } from './image-utils.js';
-import { beforePageAgentDispatch, capturePageAgentInputCompletion, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from '../agent/page-feedback.js';
+import { beforePageAgentDispatch, capturePageAgentInputCompletion, hasPageAgentDispatchOwner, pageAgentDispatchTool, pageFeedbackPendingResult } from '../agent/page-feedback.js';
 
 const SELECTOR_SCROLL_DISPATCH_SOURCE = `
   const beforeSelectorScroll = (element, guard) => {
@@ -874,16 +874,29 @@ export class CDPClient {
 
   async _pageAgentObjectTarget(tabId, objectId, sessionId = '') {
     const nativeTarget = globalThis.crypto.randomUUID();
+    const typing = ['type_ax', 'set_field', 'type_text'].includes(pageAgentDispatchTool(tabId));
     const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
       objectId, returnByValue: true,
-      functionDeclaration: `function (marker) {
+      functionDeclaration: `function (marker, typing) {
         const fence = this.ownerDocument?.documentElement?.getAttribute('data-webbrain-page-revision');
         if (!fence || !this.isConnected) return null;
-        this.setAttribute('data-webbrain-native-target', marker);
+        // Pointer hit testing can return a paragraph inside an editor. Native
+        // typing belongs to its actual editing host; the monitor still checks
+        // that exact host against the original private action certificate.
+        let target = this;
+        if (typing && target.isContentEditable) {
+          let host = target;
+          for (let parent = host.parentElement; parent?.isContentEditable; parent = parent.parentElement) host = parent;
+          const activation = target.closest('button,a[href],input,textarea,select,summary,[onclick],[tabindex],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"]');
+          // An activator inside the editor remains its own receiving node;
+          // typing cannot certify a click on that descendant through the host.
+          if (!activation || activation === host || !host.contains(activation)) target = host;
+        }
+        target.setAttribute('data-webbrain-native-target', marker);
         const split = fence.lastIndexOf(':');
         return { nativeTarget: marker, documentToken: fence.slice(0, split), documentRevision: Number(fence.slice(split + 1)) };
       }`,
-      arguments: [{ value: nativeTarget }],
+      arguments: [{ value: nativeTarget }, { value: typing }],
     }, sessionId);
     return result?.result?.value || {};
   }
@@ -909,7 +922,16 @@ export class CDPClient {
           if (!objectId) return {};
           ({ node } = await this.sendCommand(tabId, 'DOM.describeNode', { objectId }, currentSession));
         } else {
-          const hit = await this.sendCommand(tabId, 'DOM.getNodeForLocation', { x: Math.round(x), y: Math.round(y) }, currentSession);
+          // Input uses viewport coordinates; DOM hit testing uses document
+          // coordinates. Resolve the receiving document's current offsets,
+          // including after an owned preparation scroll and inside an OOPIF.
+          const offset = await this.sendCommand(tabId, 'Runtime.evaluate', {
+            expression: '({ x: window.scrollX, y: window.scrollY })', returnByValue: true,
+            ...(contextId ? { contextId } : {}),
+          }, currentSession);
+          const scroll = offset?.result?.value;
+          if (!Number.isFinite(scroll?.x) || !Number.isFinite(scroll?.y)) throw new Error('Cannot resolve native input document coordinates');
+          const hit = await this.sendCommand(tabId, 'DOM.getNodeForLocation', { x: Math.round(x + scroll.x), y: Math.round(y + scroll.y) }, currentSession);
           ({ node } = await this.sendCommand(tabId, 'DOM.describeNode', { backendNodeId: hit.backendNodeId }, currentSession));
           const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { backendNodeId: hit.backendNodeId }, currentSession);
           objectId = resolved.object.objectId;
