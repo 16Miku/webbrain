@@ -414,6 +414,13 @@
     return false;
   }
 
+  function _withTypingPreparation(kind, el, callback) {
+    const monitor = window.__wbPageMonitor;
+    if (monitor?.withLocalPreparation) return monitor.withLocalPreparation(kind, el, callback);
+    monitor?.beforeLocalDispatch({ preparation: kind === 'focus', kind, target: el });
+    return callback();
+  }
+
   function _scrollElementIntoClearView(el) {
     if (!el?.isConnected) return;
     try {
@@ -425,21 +432,17 @@
       const fullyVisible = _isFullyVisibleForInteraction(el, insets);
       const coveredByFixed = fullyVisible && _isCoveredByFixedNonModalSurface(el, view);
       if (!fullyVisible || coveredByFixed) {
-        window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
-        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        _withTypingPreparation('scroll', el, () => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }));
         const rAfter = el.getBoundingClientRect();
         if (rAfter.top < insets.top) {
-          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
-          view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' });
+          _withTypingPreparation('scroll', el, () => view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' }));
         } else if (rAfter.bottom > view.innerHeight - insets.bottom) {
-          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
-          view.scrollBy({ top: rAfter.bottom - (view.innerHeight - insets.bottom) + 16, behavior: 'instant' });
+          _withTypingPreparation('scroll', el, () => view.scrollBy({ top: rAfter.bottom - (view.innerHeight - insets.bottom) + 16, behavior: 'instant' }));
         }
       }
     } catch (error) {
       if (error?.code === 'page_feedback_pending') throw error;
-      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
-      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+      try { _withTypingPreparation('scroll', el, () => el.scrollIntoView({ block: 'center', inline: 'center' })); } catch (fallbackError) { if (fallbackError?.code === 'page_feedback_pending') throw fallbackError; }
     }
   }
 
@@ -2795,7 +2798,7 @@
     }
 
     if (actionDeadlineExpired()) return deadlineFailure();
-    el.focus();
+    _withTypingPreparation('focus', el, () => el.focus());
     if (actionDeadlineExpired()) return deadlineFailure();
     showAgentWorkingTarget(el, 'type_text');
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
@@ -9161,7 +9164,7 @@
           if (actionDeadlineExpired()) return deadlineFailure();
           try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.focus({ preventScroll: true }); } catch {}
+          try { _withTypingPreparation('focus', el, () => el.focus({ preventScroll: true })); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'type_ax');
           // Capture the element's on-screen rect so the background can
@@ -9307,7 +9310,11 @@
             method,
             ref_id,
             rect: typeRect,
-            ...(selectExpected !== null ? { value: actual } : {}),
+            ...(selectExpected !== null ? {
+              value: actual,
+              ...(el.selectedOptions?.length === 1
+                ? { selectedText: String(el.selectedOptions[0].textContent || '').replace(/\s+/g, ' ').trim() } : {}),
+            } : {}),
             fieldMeta,
             fallbackAttempted,
           };
@@ -9376,7 +9383,7 @@
             ? { ...preparedRecipient, nativeDraftOwnInputs:{ el, count:0 } } : null;
           try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.focus({ preventScroll: true }); } catch {}
+          try { _withTypingPreparation('focus', el, () => el.focus({ preventScroll: true })); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'set_field');
           const rect = (() => {
@@ -9689,9 +9696,9 @@
           if (!el || !el.isConnected) return { success: false, error: `ref_id ${ref_id} is stale` };
           const typeable = el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
           if (!typeable) return { success: false, error: `ref_id ${ref_id} is not a text field` };
-          window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: el });
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
-          try { el.focus({ preventScroll: true }); } catch {}
+          _withTypingPreparation('scroll', el, () => { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {} });
+          _withTypingPreparation('focus', el, () => { try { el.focus({ preventScroll: true }); } catch {} });
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
           if (el.isContentEditable) {
             const selection = window.getSelection();
             const range = document.createRange();
@@ -10266,7 +10273,7 @@
       // "<tool> returned no result." with no diagnosis. Always answer.
       sendResponse(withLiveDocumentScope({
         success: false,
-        ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true } : {}),
+        ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true, ...(err.pagePreparationVeto ? { preparationVeto: err.pagePreparationVeto } : {}) } : {}),
         error: `${msg.action} failed: ${err?.message || String(err)}`,
       }));
       return;
@@ -10278,7 +10285,7 @@
         (value) => sendResponse(withLiveDocumentScope(value)),
         (err) => sendResponse(withLiveDocumentScope({
           success: false,
-          ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true } : {}),
+          ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true, ...(err.pagePreparationVeto ? { preparationVeto: err.pagePreparationVeto } : {}) } : {}),
           error: `${msg.action} failed: ${err?.message || String(err)}`,
         })),
       );

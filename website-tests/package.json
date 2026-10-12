@@ -1,0 +1,22 @@
+{
+  "name": "webbrain-website-tests",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "cli": "node cli.mjs",
+    "setup": "node cli.mjs setup",
+    "doctor": "node cli.mjs doctor",
+    "list": "node cli.mjs list",
+    "dry-run": "node cli.mjs dry-run",
+    "run": "node cli.mjs run",
+    "summarize": "node cli.mjs summarize",
+    "reconcile": "node cli.mjs reconcile",
+    "cleanup": "node cli.mjs cleanup",
+    "reconcile-setup": "node cli.mjs reconcile-setup",
+    "test": "node --test core.test.mjs local.test.mjs cloud.test.mjs sites.test.mjs runner-integration.test.mjs recovery.test.mjs layout.test.mjs",
+    "test:installed": "node check-installed.mjs"
+  }
+}

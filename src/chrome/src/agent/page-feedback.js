@@ -2,6 +2,8 @@ import { canRetainPageFeedbackCalls, isLiteralCalculationTask, isPageIndependent
 import { accountFeedbackSupersession, resetFeedbackSupersession } from './page-feedback-recovery.js';
 import { captureMediaDownloadStateInPage } from './media-download-binding.js';
 import * as trace from '../trace/recorder.js';
+import { buildAskResponseScopeMessages, parseAskResponseScope } from './ask-response-scope.js';
+import { withCompletionTimeout } from './completion-verifier.js';
 
 /** Run-owned browser observations. Keep the Firefox copy byte-identical. */
 export const PAGE_FEEDBACK_IDLE_MS = 1000;
@@ -11,6 +13,53 @@ const dispatchOwners = new Map();
 const clean = (value, limit = 240) => String(value ?? '').replace(/[\u0000-\u001f]/g, ' ').slice(0, limit);
 const token = () => globalThis.crypto.randomUUID();
 const apiFor = () => globalThis.browser || globalThis.chrome;
+
+function automaticAnswerFeedback(events) {
+  return !!events.length && events.every(event => ['page', 'unknown'].includes(event.source)
+    && (event.kind === 'dom' || (event.kind === 'navigation' && event.frameId > 0)
+      || (['activity', 'resize'].includes(event.kind) && event.source === 'page')));
+}
+
+function askAnswerCandidate(calls, withoutTools, content) {
+  if (withoutTools && Array.isArray(calls) && calls.length === 0) return typeof content === 'string' ? content : '';
+  if (!Array.isArray(calls) || calls.length !== 1 || calls[0]?.function?.name !== 'done') return '';
+  try {
+    const args = JSON.parse(calls[0].function.arguments);
+    return args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 1
+      && typeof args.summary === 'string' ? args.summary : '';
+  } catch { return ''; }
+}
+
+function askPriorContext(agent, messages) {
+  const prior = [], doneSummaries = new Map();
+  for (const message of messages) {
+    if (message?.role === 'tool' && doneSummaries.has(message.tool_call_id)) {
+      try {
+        const result = JSON.parse(agent._unwrapUntrusted(message.content));
+        if (result?.done === true && result.success !== false && !result.error && !result.blockedDone && !result.skipped) {
+          // Only the paired model-authored answer is conversation context.
+          // Result summaries and verification/page fields remain excluded.
+          prior.push({ role: 'assistant', content: doneSummaries.get(message.tool_call_id) });
+        }
+      } catch { /* An incomplete receipt cannot certify a previous reply. */ }
+      continue;
+    }
+    if (!['user', 'assistant'].includes(message?.role) || agent._isPinnedAgentStateMessage?.(message)
+        || agent._isLocalConversationStatusMessage?.(message) || agent._isAgentInjectedUserMessage?.(message)) continue;
+    if (message.role === 'assistant') for (const call of message.tool_calls || []) {
+      if (call?.function?.name !== 'done' || !call.id) continue;
+      try {
+        const args = JSON.parse(call.function.arguments);
+        if (typeof args?.summary === 'string' && !args.data_ref) doneSummaries.set(call.id, args.summary);
+      } catch { /* Keep malformed calls out of dependency context. */ }
+    }
+    const content = message.role === 'user' ? agent._plannerUserAuthoredText(message) : message.content;
+    if (content != null && typeof content !== 'string') return null;
+    if (content) prior.push({ role: message.role, content });
+  }
+  // Do not clip a previous turn's late qualification or live-source requirement.
+  return JSON.stringify(prior);
+}
 
 // Content-free diagnostics only: no event target, URL, value or identity token.
 function feedbackEventSummary(events) {
@@ -113,21 +162,36 @@ async function notifyPageMonitorFrames(api, tabId, message, knownFrames = [], on
 }
 
 export const hasPageAgentDispatchOwner = tabId => dispatchOwners.has(tabId);
+export const pageAgentDispatchTool = tabId => dispatchOwners.get(tabId)?.tool?.() || '';
 
 export function pageFeedbackPendingResult() {
   return { success: false, skipped: true, dispatched: false, noDispatch: true,
     pageFeedbackPending: true, error: 'The browser changed during action preparation. Re-observe the page before acting.' };
 }
 
+function preparationVetoDiagnostics(veto) {
+  const facts = {};
+  if (!veto || typeof veto !== 'object') return facts;
+  if (['owner_pending_before', 'owner_pending_after', 'monitor_rejected',
+    'document_mapping_changed', 'owner_ended', 'current_owner_changed'].includes(veto.cause)) facts.cause = veto.cause;
+  // Preserve diagnostics through every wrapper without copying page values.
+  for (const key of [
+    'ownerPendingAfter', 'monitorRejected',
+    'modelBindingInvalid', 'layoutChanged', 'preparedBindingChanged', 'passiveRebased',
+    'pendingFeedback', 'revisionChanged', 'documentChanged', 'documentRevisionChanged',
+  ]) if (typeof veto[key] === 'boolean') facts[key] = veto[key];
+  if (new Set(['semantic_binding_changed', 'geometry_changed', 'model_snapshot_invalid', 'model_snapshot_expired',
+    'focus_changed', 'pending_feedback', 'revision_changed', 'document_changed', 'document_revision_changed',
+    'intervention_changed', 'target_changed', 'target_hit_changed', 'operation_expired', 'operation_missing',
+    'run_ended', 'target_unresolved', 'target_uncovered', 'current_owner_changed']).has(veto.predicate)) facts.predicate = veto.predicate;
+  return facts;
+}
+
 function preparationVetoError(cause, monitorVeto = null, ownerPendingAfter = false, monitorRejected = false) {
   const error = new Error(pageFeedbackPendingResult().error);
   error.code = 'page_feedback_pending';
-  // Copy fixed booleans only; never copy document/ref/target/value data.
-  error.pagePreparationVeto = { cause, ownerPendingAfter: ownerPendingAfter === true, monitorRejected: monitorRejected === true };
-  if (monitorVeto && typeof monitorVeto === 'object') for (const key of [
-    'modelBindingInvalid', 'layoutChanged', 'preparedBindingChanged', 'passiveRebased',
-    'pendingFeedback', 'revisionChanged', 'documentChanged', 'documentRevisionChanged',
-  ]) if (typeof monitorVeto[key] === 'boolean') error.pagePreparationVeto[key] = monitorVeto[key];
+  error.pagePreparationVeto = { ...preparationVetoDiagnostics(monitorVeto), cause,
+    ownerPendingAfter: ownerPendingAfter === true, monitorRejected: monitorRejected === true };
   return error;
 }
 
@@ -263,6 +327,7 @@ export const pageFeedbackMethods = {
       }
     };
     dispatchOwners.set(tabId, { runToken: run.token, operationId: '', operationFrames: new Map(),
+      tool: () => run.dispatchCall?.name || '',
       pending: () => this._pageFeedbackBlocksCall(tabId, run.dispatchCall?.name, run.dispatchCall?.args),
       allowPassiveRebase: () => run.dispatchCall?.allowPassiveRebase === true,
       expectedModelSnapshot: () => run.dispatchCall?.dispatchState?.started ? undefined : run.dispatchCall?.expectedModelSnapshot,
@@ -507,12 +572,19 @@ export const pageFeedbackMethods = {
     return !!this._pageFeedbackRuns?.get(tabId)?.events.size;
   },
 
-  async _waitForPageFeedbackIdle(tabId) {
+  async _waitForPageFeedbackIdle(tabId, { automaticAskReply = false } = {}) {
     const run = this._pageFeedbackRuns?.get(tabId);
     const signal = this._runAbortSignal(tabId);
     while (run && this._pageFeedbackRuns.get(tabId) === run) {
       this._throwIfAborted(signal);
-      const remaining = (this._pageFeedbackIdleMs ?? PAGE_FEEDBACK_IDLE_MS) - (Date.now() - Math.max(run.lastUserAt, run.lastActivityAt));
+      if (this._hasPendingSteering?.(tabId)) return;
+      // Automatic child commits can continue indefinitely. A read-only terminal
+      // candidate still waits for actual user gestures, then uses its reply scope
+      // or bounded recovery; browser actions keep the full activity wait.
+      const automaticAsk = automaticAskReply || (this._effectiveRunMode?.(tabId, null) === 'ask'
+        && automaticAnswerFeedback([...run.events.values()]));
+      const latestActivity = automaticAsk ? run.lastUserAt : Math.max(run.lastUserAt, run.lastActivityAt);
+      const remaining = (this._pageFeedbackIdleMs ?? PAGE_FEEDBACK_IDLE_MS) - (Date.now() - latestActivity);
       if (!run.gestures.size && remaining <= 0) return;
       await new Promise(resolve => {
         const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
@@ -571,6 +643,93 @@ export const pageFeedbackMethods = {
       && isLiteralCalculationTask(this._pageFeedbackLiteralCalculationTask(tabId), receipt.expression, guard));
   },
 
+  _pageFeedbackAskOwnerCurrent(tabId, run, state) {
+    const main = state?.frames?.get(0), current = run?.frames.get(0);
+    return !!(state?.runMode === 'ask' && state.askReplyOwner && main && current
+      && this._pageFeedbackRuns?.get(tabId) === run && run.modelState === state
+      && run.token === state.token && run.url === state.url
+      && main.token === current.token && main.id === current.id
+      && state.steeringRevision === (this._steeringRuns?.get(tabId)?.acceptedIds.size || 0)
+      && this._effectiveRunMode?.(tabId, null) === 'ask'
+      && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
+      && state.askReplyOwner === this._nativeChatOwnerScope?.(tabId));
+  },
+
+  async _pageFeedbackAskDocumentCurrent(tabId, run, state) {
+    if (!this._pageFeedbackAskOwnerCurrent(tabId, run, state)) return false;
+    try {
+      const api = apiFor();
+      const [tab, frames] = await Promise.all([api.tabs.get(tabId), api.webNavigation?.getAllFrames?.({ tabId })]);
+      const currentId = frames?.find(frame => frame.frameId === 0)?.documentId;
+      if (!state.documentId) {
+        // Firefox can omit browser document IDs. The live monitor must confirm
+        // its original top document even on a same-URL reload.
+        const monitor = await api.tabs.sendMessage(tabId,
+          { target: 'content', action: 'page_monitor_state', active: true }, { frameId: 0 });
+        if (monitor?.ready !== true || monitor.active !== true || monitor.runToken !== run.token
+            || monitor.documentToken !== state.frames.get(0).token) return false;
+      }
+      return tab.url === state.url && (!state.documentId || currentId === state.documentId)
+        && this._pageFeedbackAskOwnerCurrent(tabId, run, state);
+    } catch { return false; }
+  },
+
+  async _retainIndependentAskAnswer(tabId, calls, withoutTools = false, content = '', stage = 'response') {
+    const run = this._pageFeedbackRuns?.get(tabId), state = run?.modelState;
+    const answer = askAnswerCandidate(calls, withoutTools, content);
+    if (!answer.trim() || !run?.events.size || !automaticAnswerFeedback([...run.events.values()])
+        || !await this._pageFeedbackAskDocumentCurrent(tabId, run, state)) return false;
+    // Ordinary passive updates already retain terminal replies. Classify only
+    // a harder rejection, or reuse an existing exact answer proof at dispatch.
+    if (!run.askReplyScope?.independent && isPassivePageFeedback([...run.events.values()])
+        && this._pageFeedbackStateCurrent(tabId, run, state)) return false;
+    const readRevision = run.askReplyReadRevision || 0;
+    let scope = run.askReplyScope;
+    if (!scope || scope.owner !== state.askReplyOwner || scope.readRevision !== readRevision
+        || scope.answer !== answer) {
+      const messages = this.conversations?.get(tabId) || [];
+      const binding = this._activeTaskBinding?.(messages);
+      const prior = messages.slice(0, Math.max(0, binding?.taskIndex ?? 0));
+      const priorContext = askPriorContext(this, prior);
+      const input = buildAskResponseScopeMessages({ task: binding?.text || '', answer, priorContext });
+      if (!input) return false;
+      const provider = this._activeProvider?.(tabId), runId = this.currentRunId?.get(tabId);
+      const started = Date.now();
+      let independent = false;
+      const controller = new AbortController();
+      const linked = this._linkAbortSignals(controller.signal, this._runAbortSignal(tabId));
+      const invalidation = setInterval(() => {
+        if (!this._pageFeedbackAskOwnerCurrent(tabId, run, state)) controller.abort(new Error('Ask answer ownership changed.'));
+      }, 50);
+      try {
+        if (runId) await trace.recordLLMRequest(runId, 0, { providerClass: provider.constructor.name, model: provider.model,
+          messageCount: input.length, toolsCount: 0, phase: 'ask_response_scope' }, { messages: input, tools: [] });
+        const result = await withCompletionTimeout(signal => this._chatWithCostAllowance(provider, input,
+          { temperature: 0, maxTokens: 300, signal }, this.currentCostState?.get(tabId),
+          { tabId, generationName: 'ask_response_scope' }), linked.signal, 10000);
+        independent = !result?.costAllowanceMessage && !result?.toolCalls?.length && parseAskResponseScope(result?.content) === true;
+        if (runId) await trace.recordLLMResponse(runId, 0, { content: result?.content, usage: result?.usage,
+          latencyMs: Date.now() - started, model: provider.model, phase: 'ask_response_scope' });
+      } catch (error) {
+        if (this._checkAbort(tabId) || this._isCostAllowanceError?.(error)) throw error;
+        if (runId) trace.recordNote(runId, 0, 'ask_response_scope_unavailable', { latencyMs: Date.now() - started });
+      } finally { clearInterval(invalidation); linked.dispose(); }
+      if (!await this._pageFeedbackAskDocumentCurrent(tabId, run, state)) return false;
+      scope = run.askReplyScope = { owner: state.askReplyOwner, readRevision, independent, answer };
+    }
+    if (!scope.independent || !automaticAnswerFeedback([...run.events.values()])
+        || !await this._pageFeedbackAskDocumentCurrent(tabId, run, state)) return false;
+    if (!automaticAnswerFeedback([...run.events.values()])) return false;
+    const events = [...run.events.values()];
+    run.events.clear();
+    resetFeedbackSupersession(run);
+    const runId = this.currentRunId?.get(tabId);
+    if (runId) trace.recordNote(runId, 0, 'page_feedback_decision', { stage, disposition: 'retained',
+      reason: 'page_independent_answer', feedback: feedbackEventSummary(events), streak: 0,
+      toolNames: (calls || []).map(call => call.function?.name), refreshMs: 0 });
+    return true;
+  },
+
   async _capturePageFeedbackModelState(tabId, messages = null) {
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run) return;
@@ -585,6 +744,7 @@ export const pageFeedbackMethods = {
     const state = { token: run.token, url, documentId, page: run.latestPage, runMode,
       frames: new Map([...run.frames].map(([id, frame]) => [id, { token: frame.token, id: frame.id }])),
       steeringRevision: this._steeringRuns?.get(tabId)?.acceptedIds.size || 0, mediaBindings: {} };
+    if (runMode === 'ask') state.askReplyOwner = this._nativeChatOwnerScope?.(tabId) || '';
     const calculationResponseScope = this._pageFeedbackCalculationResponseScope(tabId);
     if (calculationResponseScope) state.calculationResponseScope = calculationResponseScope;
     if (this._pageFeedbackCalculationComplete(tabId)) {
@@ -644,6 +804,8 @@ export const pageFeedbackMethods = {
         const capture = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_capture_model',
           params: { runToken: run.token, includeTree: true,
             ...(nativeChatOwner ? { nativeChatOwner } : {}),
+            ...(run.uploadObservationScope?.documentToken === state.frames.get(0)?.token
+              && run.uploadObservationScope.url === url ? { uploadTargets: run.uploadObservationScope.selectors } : {}),
             ...(run.actionObservationScope ? { observationRef: run.actionObservationScope.ref } : {}),
             ...(run.actionCaptureTarget ? { actionTarget: run.actionCaptureTarget } : {}) } }, { frameId: 0 });
         const [tab, frames] = await Promise.all([api.tabs.get(tabId), api.webNavigation?.getAllFrames?.({ tabId })]);
@@ -788,7 +950,9 @@ export const pageFeedbackMethods = {
 
   _pageFeedbackRecoveryResult(tabId, messages, onUpdate = () => {}) {
     const run = this._pageFeedbackRuns?.get(tabId);
-    if (this._hasPendingSteering?.(tabId) || (run?.events.size && !isPassivePageFeedback([...run.events.values()]))) {
+    const automaticAsk = run?.askAutomaticRetry && this._pageFeedbackAskOwnerCurrent(tabId, run, run.modelState)
+      && automaticAnswerFeedback([...run.events.values()]);
+    if (this._hasPendingSteering?.(tabId) || (run?.events.size && !isPassivePageFeedback([...run.events.values()]) && !automaticAsk)) {
       this._resetPageFeedbackProgress(tabId);
       if (run) run.deferredFeedback = [];
       return null;
@@ -800,14 +964,14 @@ export const pageFeedbackMethods = {
     // failure never grants the publication-audit bypass reserved for that audit.
     this._offerFailureRecovery?.(tabId, { stage: 'action_preparation', code: recovery.code,
       message: recovery.message }, onUpdate);
-    onUpdate('warning', { message: recovery.message });
+    onUpdate(this._effectiveRunMode?.(tabId, null) === 'ask' ? 'error' : 'warning', { message: recovery.message, code: recovery.code });
     return { action: 'return', value: recovery.message, status: recovery.code };
   },
 
   _resetPageFeedbackProgress(tabId) {
     const run = this._pageFeedbackRuns?.get(tabId);
     resetFeedbackSupersession(run);
-    if (run) run.actionContextUnverified = false;
+    if (run) { run.actionContextUnverified = false; delete run.askAutomaticRetry; }
     const messages = this.conversations?.get(tabId);
     if (messages) for (let index = messages.length - 1; index >= 0; index--) {
       if (messages[index]?.webbrainAppOwnedKind === 'page_feedback_recovery') messages.splice(index, 1);
@@ -833,7 +997,16 @@ export const pageFeedbackMethods = {
   async _refreshPageFeedbackForCall(tabId, call, onUpdate = () => {}) {
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run?.events.size) return false;
+    if (await this._retainIndependentAskAnswer(tabId, [call], false, '', 'preparation')) return false;
     if (!isPassivePageFeedback([...run.events.values()])) {
+      if (askAnswerCandidate([call], false, '').trim() && automaticAnswerFeedback([...run.events.values()])
+          && this._pageFeedbackAskOwnerCurrent(tabId, run, run.modelState)) {
+        const messages = [];
+        const blocked = await this._applyPendingPageFeedback(tabId, messages, onUpdate,
+          { workflow: true, responseToolCalls: [call], stage: 'preparation' });
+        if (blocked) run.deferredFeedback = messages;
+        return blocked;
+      }
       resetFeedbackSupersession(run);
       return true;
     }
@@ -847,11 +1020,17 @@ export const pageFeedbackMethods = {
   },
 
   async _applyPendingPageFeedback(tabId, messages, onUpdate = () => {},
-    { workflow = false, responseToolCalls = null, responseWithoutTools = false,
+    { workflow = false, responseToolCalls = null, responseWithoutTools = false, responseContent = '',
       stage = responseToolCalls === null ? 'observation' : 'response' } = {}) {
     if (!this._hasPendingPageFeedback(tabId) || this._checkAbort(tabId)) return false;
+    if (await this._retainIndependentAskAnswer(tabId, responseToolCalls, responseWithoutTools, responseContent, stage)) return false;
     const started = Date.now();
-    await this._waitForPageFeedbackIdle(tabId);
+    const pendingRun = this._pageFeedbackRuns?.get(tabId);
+    const automaticAskReply = !!(askAnswerCandidate(responseToolCalls, responseWithoutTools, responseContent).trim()
+        || (responseToolCalls === null && pendingRun?.askAutomaticRetry))
+      && this._pageFeedbackAskOwnerCurrent(tabId, pendingRun, pendingRun?.modelState)
+      && automaticAnswerFeedback([...pendingRun.events.values()]);
+    await this._waitForPageFeedbackIdle(tabId, { automaticAskReply });
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run || this._checkAbort(tabId)) return false;
     const events = [...run.events.values()], batchRevision = run.revision;
@@ -947,9 +1126,14 @@ export const pageFeedbackMethods = {
       && this._pageFeedbackStateCurrent(tabId, run, state, url) && this._pageFeedbackCalculationComplete(tabId));
     const accepted = retained && completionStillCurrent
       && (!finalPending.length || canRetain(finalPending, { pending: true }));
+    const automaticAskRetry = !!(this._pageFeedbackAskOwnerCurrent(tabId, run, state)
+      && automaticAnswerFeedback(events) && (!finalPending.length || automaticAnswerFeedback(finalPending))
+      && (askAnswerCandidate(responseToolCalls, responseWithoutTools, responseContent).trim()
+        || (responseToolCalls === null && run.askAutomaticRetry)));
     if (Array.isArray(responseToolCalls) && !accepted) {
-      const recovery = accountFeedbackSupersession(run, { passive: sameDocument && isPassivePageFeedback(events)
-        && (!finalPending.length || isPassivePageFeedback(finalPending)), stage,
+      if (automaticAskRetry) run.askAutomaticRetry = true;
+      const recovery = accountFeedbackSupersession(run, { passive: automaticAskRetry || (sameDocument && isPassivePageFeedback(events)
+        && (!finalPending.length || isPassivePageFeedback(finalPending))), stage,
         ...(honestUnverifiedContext ? { reason: 'target_context_unverified' } : {}),
         toolNames: responseToolCalls.map(call => call.function?.name) });
       if (recovery.nudge) {
@@ -959,7 +1143,7 @@ export const pageFeedbackMethods = {
         messages.push(this._appOwnedUserMessage(recovery.message, 'page_feedback_recovery'));
       }
       if (recovery.stop) run.recoveryResult = recovery;
-    } else if (!isPassivePageFeedback(events)) resetFeedbackSupersession(run);
+    } else if (!isPassivePageFeedback(events) && !automaticAskRetry) resetFeedbackSupersession(run);
     if (accepted) {
       for (const call of responseToolCalls) {
         try {
@@ -1062,6 +1246,18 @@ export function installPageFeedback(Agent) {
       const observationDocument = run?.frames.get(0)?.token, observationUrl = run?.url;
       const result = await execute.call(this, tabId, name, args, onUpdate, executionContext);
       noDispatch = result?.noDispatch === true || result?.dispatched === false;
+      if (run && !executionContext.pageFeedbackRead && name === 'get_interactive_elements' && Array.isArray(result)
+          && this._pageFeedbackRuns?.get(tabId) === run && observationDocument
+          && run.frames.get(0)?.token === observationDocument && run.url === observationUrl) {
+        run.uploadObservationScope = { documentToken: observationDocument, url: observationUrl,
+          selectors: [...new Set(result.filter(item => item?.tag === 'input' && item.type === 'file'
+            && typeof item.selector === 'string' && item.selector.length > 0 && item.selector.length <= 4096)
+            .map(item => item.selector))].slice(0, 8) };
+      }
+      if (run && !executionContext.pageFeedbackRead && result?.success !== false && !noDispatch && name !== 'done') {
+        run.askReplyReadRevision = (run.askReplyReadRevision || 0) + 1;
+        delete run.askReplyScope;
+      }
       if (run && !executionContext.pageFeedbackRead && result?.success !== false && !noDispatch) resetFeedbackSupersession(run);
       if (run && !executionContext.pageFeedbackRead && ['get_accessibility_tree', 'get_interactive_elements'].includes(name)
           && result?.success !== false && !result?.error && typeof result?.pageContent === 'string') {
@@ -1079,9 +1275,11 @@ export function installPageFeedback(Agent) {
     } catch (error) {
       noDispatch = !dispatchState.started;
       if (error?.code === 'page_feedback_pending') {
-        if (!dispatchState.started) return pageFeedbackPendingResult();
+        const facts = preparationVetoDiagnostics(error.pagePreparationVeto);
+        const diagnostic = Object.keys(facts).length ? { preparationVeto: facts } : {};
+        if (!dispatchState.started) return { ...pageFeedbackPendingResult(), ...diagnostic };
         const interrupted = { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
-          pageFeedbackPending: true, error: 'The browser changed after this action began. Inspect its outcome before attempting another mutation.' };
+          pageFeedbackPending: true, ...diagnostic, error: 'The browser changed after this action began. Inspect its outcome before attempting another mutation.' };
         return this._finalizeToolResultOnce(tabId, name, args, interrupted, dispatchState);
       }
       throw error;

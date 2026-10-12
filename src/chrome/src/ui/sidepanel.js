@@ -89,7 +89,7 @@ import {
   saveStagedScreenshot,
 } from './staged-screenshot-store.js';
 import { installClipboardImagePasteHandler, installFileDropHandlers } from './attachment-drop.js';
-import { isTextAttachment } from './attachment-file.js';
+import { isTextAttachment, isVideoAttachment, videoMimeType } from './attachment-file.js';
 
 const isStandaloneWindow = new URLSearchParams(window.location.search).get('standalone') === 'true';
 const _btwParams = new URLSearchParams(window.location.search);
@@ -12547,7 +12547,7 @@ function attachmentDataUrlBytes(dataUrl) {
 function attachmentMetadata(att, deliveryState = 'included') {
   const state = MESSAGE_ATTACHMENT_STATES.has(deliveryState) ? deliveryState : 'included';
   return {
-    kind: ['image', 'document', 'text'].includes(att?.kind) ? att.kind : 'document',
+    kind: ['image', 'document', 'text', 'video'].includes(att?.kind) ? att.kind : 'document',
     name: String(att?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240) || 'attachment',
     mimeType: String(att?.mimeType || '').slice(0, 120),
     size: Number.isFinite(Number(att?.size)) ? Math.max(0, Number(att.size)) : 0,
@@ -12581,7 +12581,7 @@ function renderMessageAttachments(msgEl, attachments, state = 'included') {
     const icon = document.createElement('span');
     icon.className = 'message-attachment-icon';
     icon.setAttribute('aria-hidden', 'true');
-    icon.textContent = meta.kind === 'image' ? '▧' : meta.kind === 'text' ? '≡' : '▤';
+    icon.textContent = meta.kind === 'image' ? '▧' : meta.kind === 'text' ? '≡' : meta.kind === 'video' ? '▶' : '▤';
 
     const name = document.createElement('span');
     name.className = 'message-attachment-name';
@@ -14665,6 +14665,9 @@ const MAX_ATTACHMENT_BYTES = 16 * 1024 * 1024; // matches PDF_PASSTHROUGH_MAX_BY
 // server-side processing like PDFs), so the 16MB binary cap would blow any
 // context window — cap them far lower.
 const MAX_TEXT_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+// Videos are upload-only and never enter model context, so the cap only needs
+// to match the 25MB limit that upload_file applies to user attachments.
+const MAX_VIDEO_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 function normalizeAttachmentTabId(tabId = renderedTabId ?? currentTabId) {
   if (tabId == null || tabId === '') return null;
@@ -15123,16 +15126,17 @@ async function handleAttachedFiles(fileList, tabId = renderedTabId ?? currentTab
       // The reported MIME type for text files is OS-registry dependent and
       // often empty — fall back to the extension.
       const isTextFile = isTextAttachment(file);
-      if (!isImage && !isPdf && !isTextFile) {
+      const isVideo = !isImage && !isPdf && !isTextFile && isVideoAttachment(file);
+      if (!isImage && !isPdf && !isTextFile && !isVideo) {
         if (normalizeAttachmentTabId() === numericTabId) {
           addMessage('system', systemHtml(tSystemHtml('sp.attach.unsupported_type', { name: file.name })));
         }
         continue;
       }
-      const maxBytes = isTextFile ? MAX_TEXT_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
+      const maxBytes = isTextFile ? MAX_TEXT_ATTACHMENT_BYTES : isVideo ? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;
       if (file.size > maxBytes) {
         if (normalizeAttachmentTabId() === numericTabId) {
-          addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name: file.name, max: isTextFile ? '5MB' : '16MB' })));
+          addMessage('system', systemHtml(tSystemHtml('sp.attach.too_large', { name: file.name, max: isTextFile ? '5MB' : isVideo ? '25MB' : '16MB' })));
         }
         continue;
       }
@@ -15158,10 +15162,10 @@ async function handleAttachedFiles(fileList, tabId = renderedTabId ?? currentTab
           const dataUrl = await readFileAsDataUrl(file);
           if (generation !== getAttachmentGeneration(numericTabId)) continue;
           getPendingAttachmentsForTab(numericTabId).push({
-            kind: isImage ? 'image' : 'document',
+            kind: isImage ? 'image' : isVideo ? 'video' : 'document',
             name: file.name,
             dataUrl,
-            mimeType: file.type || (isPdf ? 'application/pdf' : ''),
+            mimeType: isVideo ? videoMimeType(file) : (file.type || (isPdf ? 'application/pdf' : '')),
             size: file.size,
             source: 'user_upload',
           });

@@ -21,7 +21,9 @@ let nextTab = 2600;
 function makeAgent(Agent, next) {
   const provider = {
     name: 'feedback progress test', model: 'test', promptTier: 'full', contextWindow: 128000,
-    supportsTools: true, supportsVision: false, chat: next,
+    supportsTools: true, supportsVision: false,
+    chat: messages => messages[0]?.content?.startsWith('You classify whether one proposed terminal WebBrain Ask answer')
+      ? Promise.resolve({ content: '{"pageIndependent":false}' }) : next(messages),
     async *chatStream(messages) {
       const response = await next(messages);
       if (response.content) yield { type: 'text', content: response.content };

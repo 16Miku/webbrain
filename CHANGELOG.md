@@ -4,6 +4,32 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [Unreleased]
+
+### Fixed
+- Preserve exact editor identity and private values through owned focus and scroll preparation, while permitting the resulting geometry changes.
+- Bind native input to the certified receiving control, allowing passive descendants while rejecting unrelated or nested activators.
+- Preserve acknowledged click delivery through page rendering and focus restoration, with separate pending effect verification and repeat protection.
+- Separate ordinary control preparation from publication and deletion checks, and reconcile prior submissions before newly authorized work after a correction.
+- Report bounded action-preparation rejection predicates without exposing field values.
+- Keep earlier submission receipts for reconciliation while requiring current-task receipts for completion.
+- Restore native Mastodon record, menu and confirmation ownership without counting confirmation preparation as deletion.
+
+## [40.3.0] - 2026-10-12
+
+### Changed
+- Record the version published under tag `v40.3.0`; subsequent development changes are listed under Unreleased.
+
+## [40.2.2] - 2026-10-12
+
+### Changed
+- Record the then-current development version from `package.json` and both browser manifests; this entry does not certify a published release.
+
+### Fixed
+- Retain conversation-only Ask replies through automatic iframe changes, with bounded retries for page-dependent answers and prompt cancellation for mid-run corrections.
+- Recover discovered hidden file inputs through their visible widgets, and certify native disclosure and authored interactive controls without weakening target or user-intervention checks.
+- Verify saved releases, generated message drafts and metadata edits against task-bound evidence and exact fresh readback; preserve completed submission progress in failure messages.
+
 ## [40.2.0] - Unreleased
 
 ### Summary

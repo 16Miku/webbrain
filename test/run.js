@@ -80753,14 +80753,11 @@ test('agent prefers download_public_media before download_social_media when avai
     clickNavigationAgent._ensureGateSetting = async () => { };
     clickNavigationAgent._skipPermissionGate = true;
     let clickNavigationExecutedSocial = false;
-    let clickNavigationUrlReads = 0;
-    clickNavigationAgent._currentUrl = async () => {
-      clickNavigationUrlReads += 1;
-      return clickNavigationUrlReads === 1
-        ? 'https://www.instagram.com/reel/before/'
-        : 'https://www.instagram.com/reel/after/';
-    };
+    let clickNavigationCurrentUrl = 'https://www.instagram.com/reel/before/';
+    clickNavigationAgent._currentUrl = async () => clickNavigationCurrentUrl;
     clickNavigationAgent.executeTool = async (_tabId, name) => {
+      // Preparation can read the URL repeatedly; navigation occurs on click.
+      if (name === 'click') clickNavigationCurrentUrl = 'https://www.instagram.com/reel/after/';
       if (name === 'download_social_media') {
         clickNavigationExecutedSocial = true;
         return { success: true, completedCount: 1 };
@@ -81622,7 +81619,7 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
       /const dispatchKeySequence = \(key, keyCode, includeKeypress = false\) => \{[\s\S]*result\.dispatched = true;\s*if \(key === 'Enter'\) submissionDispatched = true;\s*el\.dispatchEvent\(new KeyboardEvent\('keydown'[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);[\s\S]*const expiredBeforeKeyup = expiredAfterKeydown \|\| actionDeadlineExpired\(\);[\s\S]*el\.dispatchEvent\(new KeyboardEvent\('keyup'[\s\S]*result\.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired\(\);/,
       `${label}: set_field can leave a synthetic key pressed when a listener crosses the deadline`,
     );
-    assert.match(branch, /el\.focus\(\{ preventScroll: true \}\);\s*\} catch \{\}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
+    assert.match(branch, /_withTypingPreparation\('focus', el, \(\) => el\.focus\(\{ preventScroll: true \}\)\);\s*\} catch \(error\) \{ if \(error\?\.code === 'page_feedback_pending'\) throw error; \}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
     assert.match(branch, /if \(setter\) setter\.call\(el, newVal\); else el\.value = newVal;\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/, `${label}: set_field does not recheck its deadline before page events`);
     if (label === 'firefox') {
       assert.doesNotMatch(branch, /_retryFieldWithExecCommand/, 'firefox: a dispatched field write must not trigger an automatic second write');
@@ -85669,13 +85666,48 @@ test('chrome submit detector probes iframe coordinate clicks in child frames', (
 
 test('submit probe index resolver stays aligned with content click ordering', () => {
   const cases = [
-    ['chrome', 'src/chrome/src/content/content.js', /return queryInteractiveForToolIndex\(\)\[index\] \|\| null/],
-    ['firefox', 'src/firefox/src/content/content.js', /return queryInteractiveForToolIndex\(\)\[index\] \|\| null/],
+    ['chrome', 'src/chrome/src/content/content.js'],
+    ['firefox', 'src/firefox/src/content/content.js'],
   ];
-  for (const [label, rel, expectedResolver] of cases) {
+  for (const [label, rel] of cases) {
     const content = fs.readFileSync(path.join(ROOT, rel), 'utf8');
     assert.match(content, /window\.__wb_resolve_click_target_for_submit_probe/, `${label}: content submit-probe resolver missing`);
-    assert.match(content, expectedResolver, `${label}: submit-probe resolver should use the same indexed click ordering as content click`);
+    const resolverStart = content.indexOf('  function resolveObservedClickTarget(');
+    const resolverEnd = content.indexOf('\n  function ', resolverStart + 4);
+    const orderStart = content.indexOf('  function queryInteractiveForToolIndex()');
+    const orderEnd = content.indexOf('\n  function _cssString', orderStart);
+    const clickStart = content.indexOf('  function clickElement(');
+    const indexStart = content.indexOf('} else if (params.index != null) {', clickStart);
+    const indexEnd = content.indexOf('} else if (params.x', indexStart);
+    assert.ok(resolverStart >= 0 && resolverEnd > resolverStart && orderStart >= 0 && orderEnd > orderStart
+      && clickStart >= 0 && indexStart > clickStart && indexEnd > indexStart, `${label}: actual resolver boundaries missing`);
+    // Run the actual observation resolver, full-inventory ordering helper and
+    // click dispatch's pure index-resolution block. A legacy DOM-order list
+    // differs from what the tool exposes and must never select the target.
+    const nodes = [{ id: 'visual-first' }, { id: 'visual-second' }, { id: 'hidden-file-last' }];
+    const context = { queryInteractiveFull: () => nodes.map(el => ({ el })),
+      queryInteractive: () => { throw new Error('legacy DOM ordering must not resolve a model index'); },
+      _staleIndexError: () => ({ success: false }) };
+    const runtime = vm.runInNewContext(`(() => {
+      ${content.slice(orderStart, orderEnd)}
+      ${content.slice(resolverStart, resolverEnd)}
+      function resolveDispatchedIndex(params) {
+        let el;
+        ${content.slice(content.indexOf('{', indexStart) + 1, indexEnd)}
+        return el || null;
+      }
+      return { probe: resolveObservedClickTarget, dispatch: resolveDispatchedIndex };
+    })()`, context);
+    for (const index of [0, 1, 2, '0', '1', '2']) {
+      assert.equal(runtime.probe({ index }), nodes[Number(index)], `${label}: the probe selected the wrong observed node`);
+      assert.equal(runtime.dispatch({ index }), nodes[Number(index)], `${label}: dispatch and probe ordering diverged`);
+    }
+    for (const index of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1,
+      '-1', '1.5', '1e0', 'map', 'length', '__proto__', 'constructor', true, {}]) {
+      assert.equal(runtime.probe({ index }), null, `${label}: an unsafe index received target authority: ${String(index)}`);
+    }
+    assert.equal(runtime.probe({ index: nodes.length }), null, `${label}: an out-of-inventory index resolved`);
+    assert.equal(runtime.dispatch({ index: nodes.length }).success, false, `${label}: dispatch accepted an absent indexed node`);
   }
 });
 
@@ -90530,8 +90562,26 @@ test('submit-aware completion accepts the observed AMO finish document and rejec
       submitUrl,
       { ...missingSubmitResult, dispatched: false, noDispatch: true },
     );
-    assert.equal(agent._completionSubmitStates.get(tabId)?.dispatched, false,
-      `${AgentClass.name}: explicit no-dispatch result was treated as a possible submit`);
+    const uncertainSubmit = agent._completionSubmitStates.get(tabId);
+    assert.equal(uncertainSubmit?.dispatched, true,
+      `${AgentClass.name}: contradictory no-dispatch flags erased a lost-response submit`);
+    assert.equal(uncertainSubmit?.observedAfterSubmit, false,
+      `${AgentClass.name}: uncertainty flags were mistaken for a terminal confirmation`);
+    // A genuine pre-dispatch veto has no native ACK or lost-response claim.
+    // It cannot erase a previous delivery receipt and permit a duplicate send.
+    const veto = { success: false, dispatched: false, noDispatch: true, error: 'Preparation rejected before dispatch' };
+    assert.equal(agent._recordCompletionSubmitAttempt(tabId, { isSubmit: true }, 'click_ax',
+      { ref_id: 'another-submit' }, submitUrl, submitUrl, veto), null);
+    assert.equal(agent._completionSubmitStates.get(tabId), uncertainSubmit,
+      `${AgentClass.name}: a later preparation veto replaced the earlier real submit receipt`);
+    const freshTabId = tabId + 1;
+    const vetoedSubmit = agent._recordCompletionSubmitAttempt(freshTabId, { isSubmit: true }, 'click_ax',
+      { ref_id: 'fresh-submit' }, submitUrl, submitUrl, veto);
+    assert.equal(vetoedSubmit?.dispatched, false,
+      `${AgentClass.name}: a fresh proved pre-dispatch veto acquired submit provenance`);
+    assert.equal(agent._completionSubmissionEvidence(freshTabId, finishState, finishUrl).verifiedFinalSubmit, false,
+      `${AgentClass.name}: a confirmation-shaped document certified a submit that never dispatched`);
+    agent._completionSubmitStates.delete(freshTabId);
 
     const wizardStepUrl = 'https://example.test/wizard/step-2';
     agent._planExecutionGuards.set(tabId, {
@@ -93432,6 +93482,7 @@ test('trusted continuation carries verified submit state without permitting ordi
       completionSignalObserved: true,
       observedAfterSubmit: true,
       workflowBinding: null,
+      taskKey: '',
     }, `${AgentClass.name}: trusted continuation did not restore verified submit evidence`);
 
     agent._storeContinuationExecutionEvidence(tabId);
@@ -113971,7 +114022,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.ok(fallbackTypeStart >= 0 && fallbackTypeEnd > fallbackTypeStart, `${label}: fallback typing deadline boundary missing`);
     assert.match(
       fallbackType,
-      /el\.focus\(\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
+      /_withTypingPreparation\('focus', el, \(\) => el\.focus\(\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
       `${label}: fallback typing can mutate a field after late focus handlers cross the deadline`,
     );
     assert.match(
@@ -120431,7 +120482,7 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const MAX_TEXT_ATTACHMENT_BYTES = 5 * 1024 * 1024'), `${label} should accept text attachments up to the 5MB text cap`);
     assert.match(
       source,
-      /const maxBytes = isTextFile \? MAX_TEXT_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;/,
+      /const maxBytes = isTextFile \? MAX_TEXT_ATTACHMENT_BYTES : isVideo \? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;/,
       `${label} should size-check text attachments against the text cap`,
     );
     assert.match(

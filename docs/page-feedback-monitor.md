@@ -49,6 +49,28 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   remain attributed within the operation; preparation scrolling never claims
   input events on the field. Pending feedback is propagated through scroll
   fallbacks rather than permitting an extra viewport mutation.
+- Editable preparation separates owned scroll and focus from text input. The
+  original document, editor, semantic owners and private values remain bound;
+  only geometry and hit information produced by that synchronous preparation
+  can be refreshed. Replacement editors, changed form or recipient state,
+  later geometry changes and human intervention still require a new decision.
+  Refusals report bounded predicate names instead of private values.
+  A recent owned scroll can reconcile one native subpixel visual-viewport
+  notification within 200 ms when the original target, hit, rectangle, values,
+  document scroll, full-size viewport, scale and DPR remain unchanged. This
+  handles delayed browser rounding; larger, later, synthetic or unrelated
+  viewport changes retain the normal invalidation path.
+- Native input also validates the actual receiving node against the private
+  action certificate. Passive descendants can receive their owner's input;
+  unrelated controls and nested activators, including shadow-root controls,
+  cannot borrow an editor or button's authority. Held input can still be
+  released, and the existing authorized Tab focus transition remains bound.
+- A fully acknowledged Chrome native button click enters read-only effect
+  observation. Page-owned focus restoration and rendering changes do not erase
+  its delivery receipt. Unverified effects carry `effectVerificationPending`
+  and cannot certify a remote save, publication or deletion. Lost input
+  acknowledgements, interrupted authority and unresolved reads retain repeat
+  locks; observing effects never sends a second click or clears queued feedback.
 - Meaningful visible content, control state, visibility and geometry changes are
   coalesced. Visible subtree identity changes invalidate targets even when the
   replacement has identical text and geometry. CSS animation and extension
@@ -139,6 +161,17 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   AX observation of its owner together with the new private footprint. Target
   selectors and labels retain their exact strings throughout validation and
   preparation; truncation cannot certify a different target.
+- File discovery can prioritize up to eight exact input selectors in the next
+  synchronous observation, before a large document exhausts the general scan.
+  Hidden transport wrappers require a bounded visible widget with one file slot
+  and one activation purpose; the actual input, widget, form, owner and document
+  remain bound. The current observation pairs the selector with its visible
+  widget as untrusted page data. Discovery never repairs or dispatches an old
+  rejected call, opens a chooser, or grants upload permission.
+- Native `summary` controls and authored click/tab-focus targets use the same
+  observed owner and exact action footprint as native and ARIA buttons. Changed
+  handler identity, disclosure state, target/owner identity and user intervention
+  invalidate the original decision; ordinary wrappers do not become controls.
 - Native navigation, header/banner and tab-list landmarks can own an action
   when their complete bounded local context was observed with that same
   decision. Transparent wrappers do not prevent the landmark from owning its
