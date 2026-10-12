@@ -11,7 +11,7 @@ import { createQuotaController } from './compass-quota.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
+import { codeFenceLanguage, highlightCode, renderMarkdownBlockquotes, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
 import { applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -10168,6 +10168,14 @@ function handleAgentUpdateMessage(msg) {
       break;
 
     case 'tool_result':
+      // A refused completion (blocked done, or a completion skipped for a
+      // fresh turn) keeps the run working; do not leave "Finishing up" shown
+      // while the next step is decided.
+      if (isTerminalDoneTool(data.name) && (data.result?.blockedDone === true
+          || (data.result?.success === false && data.result?.done !== true))) {
+        clearThinkingActivityTimers();
+        beginThinkingActivity();
+      }
       if (currentAssistantEl) {
         if (data.name === 'generate_image') {
           void appendGeneratedMedia(currentAssistantEl.querySelector('.message-content'), data.result, t);
@@ -13457,6 +13465,7 @@ function formatMarkdown(text, options = {}) {
   // Code and inline-code placeholders were extracted above, so
   // Markdown-looking source inside them is not interpreted here.
   text = renderMarkdownTables(text);
+  text = renderMarkdownBlockquotes(text);
   text = renderMarkdownHeadings(text);
   text = text
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')

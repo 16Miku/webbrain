@@ -158,6 +158,7 @@ import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, 
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
+import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpRedactRefs, otpServiceDisplay, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
@@ -10663,55 +10664,22 @@ export class Agent extends LoopDetector {
   }
 
   /**
-   * Synthesize a transparent summary when the agent hits the step limit
-   * without producing a final answer. Walks the conversation to count
-   * tool usage and surface the last non-empty assistant message and the
-   * last tool call, so the user sees WHY the run ended instead of an
-   * empty `done` event. Pure deterministic — no extra LLM call.
+   * Plain-language account of a run that hit the step limit without a final
+   * answer. The tool inventory and arguments remain in the trace and verbose
+   * rows; the chat explains the limit and quotes the last thing the agent
+   * said, if anything. Pure deterministic — no extra LLM call.
    */
   _buildStepLimitSummary(messages, steps) {
-    const toolCounts = new Map();
     let lastAssistantText = '';
-    let lastToolCall = null;
     const binding = this._activeTaskBinding(messages);
     // Earlier attempts remain in history, but this handoff describes the
     // latest authorized revision rather than quoting its superseded answer.
     const summaryMessages = binding.updates?.some(update => update.kind === 'steering')
       ? messages.slice(binding.index + 1) : messages;
     for (const m of summaryMessages) {
-      if (m.role === 'assistant') {
-        if (Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls) {
-            const name = tc?.function?.name || tc?.name;
-            if (name) {
-              toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
-              lastToolCall = { name, args: tc?.function?.arguments || tc?.arguments || '' };
-            }
-          }
-        }
-        if (typeof m.content === 'string' && m.content.trim()) {
-          lastAssistantText = m.content;
-        }
-      }
+      if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) lastAssistantText = m.content;
     }
-    const sortedTools = [...toolCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([n, c]) => `${n} ×${c}`)
-      .join(', ');
-    const lastActionLine = lastToolCall
-      ? `Last tool attempted: ${lastToolCall.name}${lastToolCall.args ? ' (' + String(lastToolCall.args).slice(0, 120) + ')' : ''}`
-      : '';
-    const lastTextSnippet = lastAssistantText
-      ? `Last thing I said: "${lastAssistantText.slice(0, 280).replace(/\s+/g, ' ').trim()}${lastAssistantText.length > 280 ? '…' : ''}"`
-      : '';
-    return [
-      `[Step limit reached after ${steps} steps without completing the task.`,
-      sortedTools ? `Tools attempted: ${sortedTools}.` : '',
-      lastActionLine,
-      lastTextSnippet,
-      'This usually means: (a) the task is too complex for the current model — try a stronger one, (b) the step limit is too low — raise it in Settings, or (c) the strategy was wrong — try breaking it into smaller parts.]',
-    ].filter(Boolean).join('\n\n');
+    return stepLimitUserMessage(steps, lastAssistantText);
   }
 
   _stepLimitRecoveryEligible(provider, runOptions = {}) {
@@ -15651,12 +15619,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (planOnlyDecision?.failure) {
           await cancelPendingResumes();
+          // The tool result keeps the guard's diagnostic for verbose rows,
+          // traces and later model turns; the chat shows the plain account.
           const failedResult = {
             success: false,
             done: true,
             outcome: 'failed',
             planOnlyTerminal: true,
-            summary: planOnlyDecision.failure,
+            summary: planOnlyDecision.userMessage || planOnlyDecision.failure,
             error: planOnlyDecision.failure,
           };
           onUpdate('tool_result', { name: fnName, result: failedResult });
@@ -15671,7 +15641,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             () => ({ success: false, skipped: true, error: 'skipped: plan-only completion failed' })
           );
           this._persist(tabId);
-          return { action: 'return', value: planOnlyDecision.failure, status: 'plan_only_output' };
+          return { action: 'return', value: planOnlyDecision.userMessage || planOnlyDecision.failure,
+            status: planOnlyDecision.status || 'plan_only_output' };
         }
         let rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
         if (!scheduledResume && this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
@@ -19683,7 +19654,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _clarificationAuthorizationStopMessage() {
-    return '[Agent stopped before dispatching another action or accepting a success completion because the latest clarification answer was auto-selected after a timeout and was not user authorization. Please answer the clarification explicitly and retry.]';
+    // The block itself (a timeout-selected answer is not authorization) is
+    // recorded on the refused tool result; the chat asks for a real answer.
+    return terminalGuardUserMessage('clarification_required');
   }
 
   _clarificationAuthorizationPlainFinalDecision(tabId) {
@@ -22083,6 +22056,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const progress = publicationProgress(social.contract, social.outcomes);
     if (progress.complete) return [];
     return progress.missing.map(id => social.contract.actions.find(a => a.id === id)?.platform || id);
+  }
+
+  /** Platform names only: which destinations were verified, dispatched but unconfirmed, or never published. */
+  _socialPublicationOutcomeFacts(guard) {
+    const social = guard?.socialPublication;
+    const facts = { verified: [], unconfirmed: [], notStarted: [] };
+    if (!social?.contract || social.contract.status !== 'ready') {
+      facts.notStarted.push(guard?.siteWorkflow?.adapterName || 'unresolved_intent');
+      return facts;
+    }
+    const missing = new Set(publicationProgress(social.contract, social.outcomes).missing);
+    for (const action of social.contract.actions || []) {
+      const status = social.outcomes?.[action.id]?.status;
+      if (status === 'verified') facts.verified.push(action.platform);
+      else if (!missing.has(action.id)) continue;
+      else if (status === 'pending') facts.unconfirmed.push(action.platform);
+      else facts.notStarted.push(action.platform);
+    }
+    return facts;
   }
 
   async _adoptLiveSocialPublishWorkflow(tabId, provider, detected = null) {
@@ -35234,6 +35226,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (!state?.enabled) return null;
+    // The bracketed diagnostic stays in tool results and traces; the chat
+    // shows a plain-language account of what happened.
+    const terminal = (kind, failure, status, facts = {}) => ({ failure, status,
+      userMessage: terminalGuardUserMessage(kind, { consequential: state.successfulConsequentialToolCalls > 0,
+        readOnly: state.successfulTaskToolCalls > 0, ...facts }) });
     if (state.taskKey && this._progressTaskKeyHash(tabId) !== state.taskKey) state.taskDrifted = true;
     const recoveryAnchor = this._executionTaskRecoveryAnchor(state);
     if (!viaDone && this._isSafetyRefusalTerminal(content)) return null;
@@ -35339,91 +35336,76 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       };
     }
     if (state.taskDrifted) {
-      return {
-        failure: 'The user task changed after this run was authorized, so WebBrain discarded its execution evidence and stopped. Start a fresh run for the current task.',
-        status: 'task_binding_changed',
-      };
+      return terminal('task_changed',
+        'The user task changed after this run was authorized, so WebBrain discarded its execution evidence and stopped. Start a fresh run for the current task.',
+        'task_binding_changed');
     }
     if (missingRequiredSchedulingTool) {
-      return {
-        failure: `[Agent stopped because the approved plan required ${state.requiredSchedulingTool}, but no successful matching scheduling call was verified after one recovery nudge. The task may have performed one-time actions, but the requested future work was not scheduled.]`,
-        status: 'required_tool_missing',
-      };
+      return terminal('schedule_missing',
+        `[Agent stopped because the approved plan required ${state.requiredSchedulingTool}, but no successful matching scheduling call was verified after one recovery nudge. The task may have performed one-time actions, but the requested future work was not scheduled.]`,
+        'required_tool_missing');
     }
     if (missingRequiredDownload) {
-      return {
-        failure: '[Agent stopped because the approved task required a downloaded file, but no successful DOWNLOAD-capability tool result was verified after one recovery nudge. A URL, link, media-resolution result, or unrelated page action does not prove that a file was saved.]',
-        status: 'required_tool_missing',
-      };
+      return terminal('download_missing',
+        '[Agent stopped because the approved task required a downloaded file, but no successful DOWNLOAD-capability tool result was verified after one recovery nudge. A URL, link, media-resolution result, or unrelated page action does not prove that a file was saved.]',
+        'required_tool_missing');
     }
     if (missingSocialPublishTargets.length) {
-      return {
-        failure: `[Agent stopped because job-bound terminal evidence was still missing for these requested social destinations after one recovery nudge: ${missingSocialPublishTargets.map(name => name === 'twitter' ? 'X' : name === 'bluesky' ? 'Bluesky' : name).join(', ')}. A post may already exist on another destination; inspect each missing destination before retrying to avoid duplicate publication.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('social_missing',
+        `[Agent stopped because job-bound terminal evidence was still missing for these requested social destinations after one recovery nudge: ${missingSocialPublishTargets.map(name => name === 'twitter' ? 'X' : name === 'bluesky' ? 'Bluesky' : name).join(', ')}. A post may already exist on another destination; inspect each missing destination before retrying to avoid duplicate publication.]`,
+        'required_evidence_missing', this._socialPublicationOutcomeFacts(state));
     }
     if (missingRequiredSubmission) {
-      return {
-        failure: this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
+      return terminal('submission_missing', this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch. ${this._workflowPublicationRecoveryInstruction(state)}]`
           : state.siteWorkflow?.job?.id
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`
           : '[Agent stopped because the approved task required verified terminal evidence after its submit/send/publish dispatch, but no structured site workflow was bound and generic submission evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]',
-        status: 'required_evidence_missing',
-      };
+        'required_evidence_missing', { submitted: this._completionSubmitStates.get(tabId)?.dispatched === true
+          && this._completionSubmitStates.get(tabId)?.taskKey === state.taskKey });
     }
     if (forbiddenSubmission) {
-      return {
-        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job was authorized to prepare the form and leave it unsubmitted, but a submit action was dispatched. The submission may have gone through; inspect the page before doing anything else.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('forbidden_submission',
+        `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job was authorized to prepare the form and leave it unsubmitted, but a submit action was dispatched. The submission may have gone through; inspect the page before doing anything else.]`,
+        'required_evidence_missing');
     }
     if (missingJobEvidence) {
-      return {
-        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires its own terminal evidence — a deterministic count for the verified query, or trusted conversation coverage through the terminal page — and that evidence was still missing after one recovery nudge. Any figure or summary produced so far is unverified.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('job_evidence_missing',
+        `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires its own terminal evidence — a deterministic count for the verified query, or trusted conversation coverage through the terminal page — and that evidence was still missing after one recovery nudge. Any figure or summary produced so far is unverified.]`,
+        'required_evidence_missing');
     }
     if (missingDraftEvidence) {
-      return {
-        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required a verified saved draft — the intended recipients, the requested subject, the complete body, and the provider's own saved-draft state — but that evidence was still missing after one recovery nudge. The composer may still hold unsaved text; inspect it before retrying.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('draft_missing',
+        `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required a verified saved draft — the intended recipients, the requested subject, the complete body, and the provider's own saved-draft state — but that evidence was still missing after one recovery nudge. The composer may still hold unsaved text; inspect it before retrying.]`,
+        'required_evidence_missing');
     }
     if (missingRequiredLedger) {
-      return {
-        failure: `The selected ${state.siteWorkflow.job.id} site workflow ended without exact reconciliation against a complete app-owned inventory after one recovery nudge, so full item-level completion was not verified.`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('ledger_incomplete',
+        `The selected ${state.siteWorkflow.job.id} site workflow ended without exact reconciliation against a complete app-owned inventory after one recovery nudge, so full item-level completion was not verified.`,
+        'required_evidence_missing');
     }
     const hasSuccessfulToolEvidence = state.successfulTaskToolCalls > 0;
     const hasSuccessfulConsequentialEvidence = state.successfulConsequentialToolCalls > 0;
     if (staleCancellation && state.staleCancellationRecoveryAttempted) {
-      return {
-        failure: hasSuccessfulToolEvidence
+      return terminal('stale_cancellation', hasSuccessfulToolEvidence
           ? '[Agent stopped because the model repeated a stale cancellation status after one recovery nudge. No current user stop was received. Some task tools completed, but final completion was not verified. Inspect the current state before retrying to avoid duplicate side effects.]'
           : '[Agent stopped because the model repeated a stale cancellation status after one recovery nudge. No current user stop was received and no successful action was verified.]',
-        status: 'plan_only_output',
-      };
+        'plan_only_output', { toolsCompleted: hasSuccessfulToolEvidence });
     }
     if (runtimeModeContradiction) {
-      return {
-        failure: hasSuccessfulConsequentialEvidence
+      return terminal('mode_contradiction', hasSuccessfulConsequentialEvidence
           ? 'The model still claimed Ask mode after a runtime-mode correction even though this was an Act/Dev run. Some consequential tools may already have completed, but final completion was not verified. Inspect the current page before retrying to avoid duplicate side effects.'
           : hasSuccessfulToolEvidence
           ? 'The model still claimed Ask mode after a runtime-mode correction instead of using the available Act/Dev tools. Only read-only task evidence was recorded; no consequential page action was recorded, and nothing was verified as changed, submitted, or sent.'
           : 'The model still claimed Ask mode after a runtime-mode correction instead of using the available Act/Dev tools. No successful page action was verified, and nothing was verified as changed, submitted, or sent.',
-        status: 'plan_only_output',
-      };
+        'plan_only_output');
     }
-    return {
-      failure: hasSuccessfulConsequentialEvidence
+    return terminal('default', hasSuccessfulConsequentialEvidence
         ? 'Some task tools completed, but I could not verify a valid completion after the recovery attempt. Please inspect the current page before retrying to avoid duplicate side effects.'
         : hasSuccessfulToolEvidence
         ? 'Some read-only task tools completed, but I could not verify the requested action after the recovery attempt. No consequential page action was recorded, and nothing was verified as changed, submitted, or sent.'
         : 'I could not verify any requested page action after the recovery attempt, so I stopped without claiming completion. No successful action was verified, and nothing was verified as submitted or sent.',
-      status: 'plan_only_output',
-    };
+      'plan_only_output');
   }
 
   _buildAutoProgressResumeInstruction(tabId) {
@@ -48933,8 +48915,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           this._persist(tabId);
           break;
         }
-        finalResponse = '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]';
+        finalResponse = terminalGuardUserMessage('placeholder_output');
         _traceStatus = 'placeholder_output';
+        if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: _traceStatus,
+          detail: '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]' });
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -48958,16 +48942,20 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           this._persist(tabId);
           break;
         }
-        // Second empty in a row: give up with a transparent message.
-        finalResponse = emptyOutputFailureMessage(modelOutputDiagnostics(result, {
+        // Second empty in a row: give up with a plain message. The provider
+        // diagnosis stays in the recovery card's technical details and trace.
+        const emptyDiagnostics = modelOutputDiagnostics(result, {
           requestedMaxTokens: mainMaxTokens,
           recoveryAttempt: 2,
-        }));
+        });
+        const emptyDetail = emptyOutputFailureMessage(emptyDiagnostics);
+        finalResponse = terminalGuardUserMessage('empty_output', { reason: emptyDiagnostics.emptyReason });
         _traceStatus = 'empty_output';
         traceFailureCode = 'EMPTY_RESPONSE';
+        if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: _traceStatus, detail: emptyDetail });
         this._offerFailureRecovery(tabId, { stage: 'model', code: 'empty_response',
           message: 'Failed while getting a usable model response. The model returned no answer after a recovery attempt.',
-          diagnostics: finalResponse }, onUpdate);
+          diagnostics: emptyDetail }, onUpdate);
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -49124,8 +49112,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         continue;
       }
       if (planOnlyDecision?.failure) {
-        finalResponse = planOnlyDecision.failure;
+        finalResponse = planOnlyDecision.userMessage || planOnlyDecision.failure;
         _traceStatus = planOnlyDecision.status || 'plan_only_output';
+        if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: _traceStatus, detail: planOnlyDecision.failure });
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -50173,10 +50162,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             this._persist(tabId);
             return finish(scheduledResume.message, 'scheduled_resume');
           }
-          const failMsg = emptyOutputFailureMessage(outputDiagnostics);
+          const emptyDetail = emptyOutputFailureMessage(outputDiagnostics);
+          const failMsg = terminalGuardUserMessage('empty_output', { reason: outputDiagnostics?.emptyReason });
+          if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: 'empty_output', detail: emptyDetail });
           this._offerFailureRecovery(tabId, { stage: 'model', code: 'empty_response',
             message: 'Failed while getting a usable model response. The model returned no answer after a recovery attempt.',
-            diagnostics: failMsg }, onUpdate);
+            diagnostics: emptyDetail }, onUpdate);
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
@@ -50202,7 +50193,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             this._persist(tabId);
             return finish(scheduledResume.message, 'scheduled_resume');
           }
-          const failMsg = '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]';
+          const failMsg = terminalGuardUserMessage('placeholder_output');
+          if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: 'placeholder_output',
+            detail: '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]' });
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
@@ -50338,13 +50331,16 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           continue;
         }
         if (planOnlyDecision?.failure) {
-          messages.push({ role: 'assistant', content: planOnlyDecision.failure });
+          const visibleFailure = planOnlyDecision.userMessage || planOnlyDecision.failure;
+          if (runId) trace.recordNote(runId, steps, 'terminal_guard', {
+            status: planOnlyDecision.status || 'plan_only_output', detail: planOnlyDecision.failure });
+          messages.push({ role: 'assistant', content: visibleFailure });
           // Replace any rejected plan text already emitted as streaming deltas
           // so the visible terminal content matches the failed run result.
-          onUpdate('text', { content: planOnlyDecision.failure, replace: true });
-          onUpdate('warning', { message: planOnlyDecision.failure });
+          onUpdate('text', { content: visibleFailure, replace: true });
+          onUpdate('warning', { message: visibleFailure });
           this._persist(tabId);
-          return finish(planOnlyDecision.failure, planOnlyDecision.status || 'plan_only_output');
+          return finish(visibleFailure, planOnlyDecision.status || 'plan_only_output');
         }
         if (this._isClearlyIncompleteStandaloneAnswer(fullText, runOptions)) {
           if (!standaloneIncompleteAnswerRecoveryAttempted) {

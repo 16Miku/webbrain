@@ -289,7 +289,7 @@ for (const build of ['chrome', 'firefox']) {
             if (revisedKind === 'respond') assert.equal(result, 'Revised answer');
             else {
               // The replacement turn keeps the normal step cap and completion verification.
-              assert.match(result, /Step limit reached after 1 steps/);
+              assert.match(result, /reached the step limit \(1 step\)/);
               assert.doesNotMatch(result, /Obsolete final-step answer|example\.com\/old/);
               assert.equal(calls, 2);
             }

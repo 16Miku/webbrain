@@ -79,8 +79,8 @@ function addError(row, data) {
 const FAILED_END_STATUSES = [
   'error', 'loop_stopped', 'max_steps', 'cancelled', 'cost_limit',
   'plan_only_output', 'incomplete_output', 'empty_output',
-  'placeholder_output', 'required_tool_missing', 'grounding_unavailable',
-  'captcha_manual_required',
+  'placeholder_output', 'required_tool_missing', 'required_evidence_missing',
+  'task_binding_changed', 'grounding_unavailable', 'captcha_manual_required',
 ];
 
 function markEnd(row, data) {

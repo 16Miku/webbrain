@@ -324,7 +324,9 @@ for (const build of ['chrome', 'firefox']) {
         assert.deepEqual(updates.filter(e => e.type === 'tool_call').map(e => e.data.name), ['calculate']);
         assert.equal(updates.some(e => e.type === 'tool_result' && e.data.name === 'done'), false);
         assert.doesNotMatch(result, /page kept changing/);
-        assert.match(result, /could not verify the requested action after the recovery attempt/i);
+        // The chat answer is plain language; the guard's diagnostic stays in traces.
+        assert.match(result, /couldn't verify the requested result, so I stopped\. Nothing was changed, submitted, or sent\./);
+        assert.doesNotMatch(result, /\[|\]|recovery attempt|task tools/);
       } finally { documents.delete(tab); }
     });
   }

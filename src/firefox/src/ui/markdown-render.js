@@ -819,6 +819,25 @@ export function highlightCode(code, language) {
   }
 }
 
+/**
+ * Convert escaped Markdown blockquote lines (`&gt; text`) into blockquote
+ * elements. Showing the markers literally makes people copy them back into
+ * requests as if they were content. Inline formatting and the newline-to-<br>
+ * pass stay with the caller; the block swallows its trailing newline so it is
+ * not followed by an extra blank line.
+ */
+export function renderMarkdownBlockquotes(text) {
+  return String(text == null ? '' : text).replace(
+    /(?:^[ \t]{0,3}&gt;[^\r\n]*(?:\r?\n|$))+/gm,
+    block => {
+      const inner = block.replace(/\r?\n$/, '').split(/\r?\n/)
+        .map(line => line.replace(/^[ \t]{0,3}&gt;[ \t]?/, ''))
+        .join('\n');
+      return `<blockquote>${inner}</blockquote>`;
+    }
+  );
+}
+
 /** Convert escaped ATX heading lines while leaving inline formatting for the caller. */
 export function renderMarkdownHeadings(text) {
   return String(text == null ? '' : text).replace(
