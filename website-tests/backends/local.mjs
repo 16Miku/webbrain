@@ -630,9 +630,20 @@ export function createLocalBackend(role, options = {}) {
       if (!mime) throw new Error('Only WebBrain-supported text, image and PDF chat attachments are accepted.');
       return { name, kind: extension === '.pdf' ? 'document' : 'image', mimeType: mime, dataUrl: `data:${mime};base64,${bytes.toString('base64')}` };
     },
-    async close() {
+    async close({ pendingEntries = [], saveReceipt } = {}) {
       for (const entry of [...activeRuns.values()]) await backend.stop(entry.handle).catch(() => {});
-      for (const page of ownedPages) await page.close().catch(() => {});
+      // Closing a tab deletes the extension journal. Persist exact terminal
+      // receipts first; otherwise retain the browser for live reconciliation.
+      let preserveBrowser = false;
+      for (const entry of pendingEntries) {
+        try {
+          const receipt = await backend.inspectSavedRun(entry);
+          if (!saveReceipt || receipt.active || !terminalStatuses.has(receipt.status)) throw new Error('Journal is not durably terminal.');
+          await saveReceipt(entry, receipt);
+        } catch { preserveBrowser = true; }
+      }
+      if (preserveBrowser && !attached) return { preserved: true };
+      if (!preserveBrowser) for (const page of ownedPages) await page.close().catch(() => {});
       ownedPages.clear(); handles.clear(); checkpoints.clear();
       await transport?.close?.().catch(() => {});
       transport = null;

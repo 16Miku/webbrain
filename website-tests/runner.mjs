@@ -189,10 +189,9 @@ export class WorkflowRunner {
       if (!site.originAllowed(url, binding)) throw new HarnessError('site_origin_mismatch');
       if (this.config.actors.A.backend === 'cloud' && binding.manualActorIdentityVerified !== true)
         throw new HarnessError('cloud_actor_identity_confirmation_required');
-      const cloudPrivatePhases = this.config.actors.A.backend === 'cloud' && scenario.steps.some(stage =>
-        stage.expectation === 'composer' || scenario.kind === 'files');
-      if (cloudPrivatePhases && (!this.config.manualEvidenceFile || !this.manualCheckpoint))
-        throw new HarnessError('cloud_private_phase_requires_manual_evidence', 'A receiver cannot observe the actor’s private draft/folder.', 'unsupported');
+      const cloudActorEvidence = this.config.actors.A.backend === 'cloud' && scenario.steps.some(stage => stage.actor !== 'B');
+      if (cloudActorEvidence && (!this.config.manualEvidenceFile || !this.manualCheckpoint))
+        throw new HarnessError('cloud_private_phase_requires_manual_evidence', 'Actor stages require evidence from the actor’s selected browser.', 'unsupported');
       const actor = await this.backend('A');
       // Establish independent observation before allowing any remote mutation.
       const observerRole = scenario.requiresObserver || actor.capabilities?.domObservation === false && this.config.actors.B.backend ? 'B' : 'A';
@@ -241,8 +240,7 @@ export class WorkflowRunner {
           const plan = this.taskPlanner({ scenario, stage, context });
           const task = typeof plan === 'string' ? plan : plan.task;
           const phase = plan.observation?.phase || stage.phase || stage.expectation || 'resource';
-          const actorPrivatePhase = phase === 'composer' || scenario.kind === 'files' && stage.actor !== 'B';
-          const viewRole = stage.actor === 'B' ? 'B' : actor.capabilities?.domObservation === false && !actorPrivatePhase ? observerRole : 'A';
+          const viewRole = stage.actor === 'B' ? 'B' : 'A';
           let observedContext = { ...context, ...plan.observation, observedAfter: new Date(stageStart).toISOString(), expectedIdentity: viewRole === 'B' ? binding.observerIdentity || binding.recipientIdentity : binding.expectedIdentity };
           if (stage.actor === 'B' && stage.action === 'navigation') {
             const evidence = await this.observe('B', scenario.site, observedContext, phase);
@@ -350,7 +348,10 @@ export class WorkflowRunner {
   }
   async close() {
     if (this.events.length) await fs.writeFile(path.join(this.directory, 'events.json'), JSON.stringify(this.events, null, 2), { mode: 0o600 });
-    for (const backend of Object.values(this.backends)) await backend.close().catch(() => {});
+    for (const [role, backend] of Object.entries(this.backends)) await backend.close({
+      pendingEntries: this.ledger?.pendingEntries().filter(entry => entry.actor === role) || [],
+      saveReceipt: (entry, receipt) => this.ledger.saveLocalReceipt(entry.requestId, receipt),
+    }).catch(() => {});
     for (const lockPath of this.lockPaths || []) {
       if (!this.ledger) continue;
       const lock = JSON.parse(await fs.readFile(lockPath, 'utf8'));

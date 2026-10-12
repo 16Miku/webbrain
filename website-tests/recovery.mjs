@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { authorize, HarnessError, lockFiles, placeholder, redact, safeError } from './config.mjs';
-import { MutationLedger } from './ledger.mjs';
+import { MutationLedger, validLocalReceipt } from './ledger.mjs';
 import { WorkflowRunner, createBackend, publicDoctor } from './runner.mjs';
 import { sites, normalizeIdentity } from './sites.mjs';
 import { scenarios, planTask, verifyEvidence } from './scenarios.mjs';
@@ -261,7 +261,8 @@ export async function recover(config, directory, args = {}, cleanup = false, { b
         if (!runId && !entry.tabId) fail('explicit_dispatch_receipt_required');
         const value = await backend(role, entry);
         const runtime = config.actors[role].backend === 'cloud' ? await value.getRun(runId)
-          : value.inspectSavedRun ? await value.inspectSavedRun(entry) : null;
+          : validLocalReceipt(entry, entry.localReceipt) ? entry.localReceipt
+            : value.inspectSavedRun ? await value.inspectSavedRun(entry) : null;
         if (!runtime) fail('runtime_terminal_receipt_required');
         const terminal = runtime.active !== true && TERMINAL.has(runtime.status);
         receipts.set(entry.requestId, { terminal, runtime });

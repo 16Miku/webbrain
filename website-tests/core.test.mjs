@@ -215,3 +215,36 @@ test('copied placeholder configuration defaults to exactly one owned fixture and
   const live = await loadConfig({ cwd, env: {}, overrides: { target: 'live' } }); assert.equal(selectScenarios(live).length, 8);
   await assert.rejects(main(['run', '--target', 'live'], { cwd, env: {} }), { code: 'live_scenario_selection_required' });
 });
+
+test('paired Cloud stages use actor evidence and reserve B for receipts', async t => {
+  const cfg = await config(t, { actors: { A: { backend: 'cloud', name: 'actor' }, B: { backend: 'local', name: 'observer' } }, manualEvidenceFile: 'unused' });
+  Object.assign(cfg.sites.x, { manualActorIdentityVerified: true, observerIdentity: 'receiver', recipientIdentity: 'receiver', recipient: 'receiver' });
+  cfg.allowedRecipients = ['receiver'];
+  const { runner } = injectedRunner(cfg, path.join(cfg.artifacts, 'one'));
+  runner.manualCheckpoint = async () => {};
+  await runner.backend('A');
+  runner.backends.A.capabilities.domObservation = false;
+  const roles = [];
+  runner.observe = async role => { roles.push(role); return { actualEffect: true }; };
+  await runner.initialize();
+  const result = await runner.runScenario({ ...simpleScenario, requiresObserver: true,
+    steps: [{ id: 'publish', actor: 'A', action: 'post' }, { id: 'receipt', actor: 'B', action: 'navigation' }] });
+  await runner.close();
+  assert.equal(result.status, 'passed', JSON.stringify(result));
+  assert.deepEqual(roles, ['A', 'B']);
+});
+
+test('runner shutdown durably saves pending local receipts', async t => {
+  const cfg = await config(t), { runner } = injectedRunner(cfg, path.join(cfg.artifacts, 'one'), { observed: false });
+  await runner.initialize(); await runner.runScenario(simpleScenario);
+  runner.backends.A.close = async ({ pendingEntries, saveReceipt }) => {
+    assert.equal(pendingEntries.length, 1);
+    const entry = pendingEntries[0];
+    await saveReceipt(entry, { backend: 'local', source: 'installed-extension-run-journal', tabId: entry.tabId,
+      requestId: entry.requestId, runId: entry.runId, status: 'completed', active: false, content: 'private' });
+  };
+  await runner.close();
+  const ledger = await MutationLedger.load(runner.ledger.filename, cfg);
+  assert.equal(ledger.pendingEntries()[0].localReceipt.status, 'completed');
+  assert.equal(JSON.stringify(ledger.data).includes('private'), false);
+});

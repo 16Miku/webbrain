@@ -38,6 +38,13 @@ export class MutationLedger {
     for (const key of ['status', 'runId', 'sessionId', 'tabId', 'completedAt', 'code', 'verifiedAt', 'remoteName', 'sha256']) if (patch[key] !== undefined) entry[key] = patch[key];
     await this.save(); return entry;
   }
+  async saveLocalReceipt(requestId, receipt) {
+    const entry = this.data.entries.find(item => item.requestId === requestId);
+    if (!validLocalReceipt(entry, receipt)) throw new HarnessError('local_saved_run_identity_mismatch');
+    entry.localReceipt = { backend: 'local', source: receipt.source, tabId: receipt.tabId,
+      requestId, runId: receipt.runId, status: receipt.status, active: false };
+    await this.save();
+  }
   async recordResource(entry, resource, identity) {
     if (!resource?.id || !resource?.url || !identity) throw new HarnessError('resource_ownership_unproven');
     const item = { id: resource.id, url: resource.url, kind: resource.kind, conversationId: resource.conversationId,
@@ -58,4 +65,11 @@ export class MutationLedger {
   }
   pendingEntries() { return this.data.entries.filter(e => ['attempted', 'accepted', 'ambiguous', 'running', 'needs_user_input'].includes(e.status)); }
   pendingResources() { return this.data.resources.filter(r => r.cleanup !== 'verified'); }
+}
+
+export function validLocalReceipt(entry, receipt) {
+  return !!entry && receipt?.backend === 'local' && receipt.source === 'installed-extension-run-journal'
+    && Number.isSafeInteger(entry.tabId) && entry.tabId > 0 && receipt.tabId === entry.tabId && receipt.requestId === entry.requestId && !!receipt.runId
+    && (!entry.runId || receipt.runId === entry.runId) && receipt.active === false
+    && ['completed', 'failed', 'aborted', 'stopped', 'cancelled'].includes(receipt.status);
 }

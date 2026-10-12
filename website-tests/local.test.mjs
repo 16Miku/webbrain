@@ -621,3 +621,22 @@ test('installed MV3 extension reports real source and attached-browser detach pr
   const stillAlive = await fetch(`${cdpUrl}/json/version`);
   assert.equal(stillAlive.status, 200, 'CDP detachment leaves the Chrome process alive.');
 });
+
+test('shutdown saves an exact terminal receipt before destroying its tab journal', async t => {
+  const { backend, calls } = await rig(t, { prior: { requestId: 'saved-request', runId: 'saved-run', status: 'failed', events: [] } });
+  await backend.connect(); await backend.open('https://x.com/');
+  await backend.close({ pendingEntries: [{ tabId: 31, runId: 'saved-run', requestId: 'saved-request' }],
+    saveReceipt: async (entry, receipt) => {
+      assert.equal(calls.some(call => call[0] === 'page.close'), false);
+      assert.equal(receipt.requestId, entry.requestId); assert.equal(receipt.status, 'failed');
+      calls.push(['receipt.saved']);
+    } });
+  assert.ok(calls.findIndex(call => call[0] === 'receipt.saved') < calls.findIndex(call => call[0] === 'page.close'));
+});
+
+test('shutdown preserves a dedicated browser if its pending receipt cannot be saved', async t => {
+  const { backend, calls } = await rig(t);
+  await backend.connect(); await backend.open('https://x.com/');
+  assert.deepEqual(await backend.close({ pendingEntries: [{ tabId: 31, requestId: 'unknown' }], saveReceipt: async () => {} }), { preserved: true });
+  assert.equal(calls.some(call => ['page.close', 'context.close', 'transport.close'].includes(call[0])), false);
+});

@@ -436,3 +436,25 @@ test('unknown upload hash or mismatched remote bytes remain pending without any 
   assert.equal((await loaded(mismatch)).pendingEntries().length, 1);
   assert.ok(mismatch.calls.every(call => call.method === 'GET' || call.method === 'POST' && call.url.endsWith('/downloads-access')));
 });
+
+test('recovery uses a durable exact local receipt after shutdown deletes the live journal', async t => {
+  const ctx = await setup(t);
+  await capture(ctx, 'publish', { id: '123', url: ctx.binding.url, kind: 'post' });
+  const entry = await ctx.ledger.attempt({ scenario: ctx.scenario.id, stage: 'cleanup', actor: 'A', action: 'delete', marker });
+  await ctx.ledger.update(entry.requestId, { status: 'ambiguous', tabId: 7, runId: 'cleanup-run' });
+  await ctx.ledger.saveLocalReceipt(entry.requestId, { backend: 'local', source: 'installed-extension-run-journal',
+    tabId: 7, requestId: entry.requestId, runId: 'cleanup-run', active: false, status: 'stopped' });
+  await assert.rejects(ctx.ledger.saveLocalReceipt(entry.requestId, { ...entry.localReceipt, runId: 'other' }), { code: 'local_saved_run_identity_mismatch' });
+  const mock = injected(ctx, { removed: ['123'] });
+  const original = mock.backendFactory;
+  mock.backendFactory = async (...args) => {
+    const backend = await original(...args);
+    backend.inspectSavedRun = async () => { throw new Error('Tab was closed'); };
+    return backend;
+  };
+  const report = await recover(ctx.config, ctx.directory, {}, false, mock);
+  assert.equal(report.counts.blocked, 0, JSON.stringify(report));
+  assert.equal((await loaded(ctx)).pendingEntries().length, 0);
+  assert.equal((await loaded(ctx)).pendingResources().length, 0);
+  assert.equal(mock.calls.run.length, 0);
+});

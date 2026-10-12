@@ -181,16 +181,16 @@ build. Configure `manualActorIdentityVerified:true` only after checking A's
 actual login in the chosen browser; the string `"false"` is not confirmation.
 
 Cloud REST has no documented DOM/control endpoint. A separate logged-in local
-B can independently prove public posts, incoming mail/messages and shared access,
-but cannot observe A's private unsent draft or pre-share folder. Full workflows
-therefore require explicit actor-tab manual evidence for those phases. Without
-it, preflight reports unsupported before dispatching a private-phase task.
+B can independently prove incoming mail/messages and shared access in the
+separate receiver stages. Every A stage requires explicit actor-tab manual
+evidence, including sends, replies and cleanup, so captured message/thread IDs
+belong to A's account. Without it, preflight reports unsupported before dispatch.
 Automated active steering/checkpoints are also unsupported on REST alone.
 Finished-run `/messages` continuation is not active-run steering.
 
 For manual verification set `manualEvidenceFile` to an ignored private JSON
 file and run in an interactive terminal. A noninteractive CLI with no manual
-observer callback is blocked before any private-phase task. Each checkpoint writes a private
+observer callback is blocked before any actor task. Each checkpoint writes a private
 requirement file with the exact run marker, stage, expected body/account/resource.
 Observe the actual browser and append evidence to `{ "observations": [...] }`.
 Rows use the same `webbrain-authenticated-evidence/1` schema as DOM observations,
@@ -289,6 +289,12 @@ select the matching dashboard run explicitly:
 ```powershell
 npm run reconcile -- --report RUN_DIRECTORY --request-id RECORDED_REQUEST_ID --run-id CONFIRMED_RUN_ID
 ```
+
+Local shutdown saves exact terminal extension receipts in the private ledger
+before closing actor tabs. Recovery can use those receipts after the live tab
+journal has been deleted, and still requires independent effect evidence. If a
+receipt cannot be saved or the run is still active, shutdown retains the browser
+and its tabs for reconciliation.
 
 Reconciliation reads existing runs/effects and never resends. An ambiguous Cloud
 upload can be reconciled by its recorded byte hash and exact server filename;
