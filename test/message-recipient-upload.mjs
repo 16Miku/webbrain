@@ -227,6 +227,22 @@ for (const kind of ['chrome', 'firefox']) {
     assert.equal(result.success, true, JSON.stringify(result));
     assert.equal((await f.state()).changes, 1);
   });
+  test('X public post composer is not recipient-bound, so its upload attaches', async page => {
+    const f = await setup(page, kind, 'https://x.com/compose/post');
+    await page.locator('#composer').evaluate(el => { el.style.top = '80px'; el.style.height = '120px'; });
+    const { block, context } = await f.bind();
+    assert.equal(block, null, JSON.stringify(block));
+    const result = await f.agent.executeTool(71, 'upload_file', f.args, null, context);
+    assert.equal(result.success, true, JSON.stringify(result));
+    assert.equal((await f.state()).changes, 1);
+  });
+  test('X direct-message conversation keeps its recipient guard for a top-placed composer', async page => {
+    const f = await setup(page, kind, 'https://x.com/i/chat/123');
+    await page.locator('#composer').evaluate(el => { el.style.top = '80px'; el.style.height = '120px'; });
+    const { block } = await f.bind();
+    assert.equal(block?.noDispatch, true, JSON.stringify(block));
+    assert.equal((await f.state()).changes, 0);
+  });
   for (const change of ['counter', 'resolution counter', 'recipient', 'resolution recipient', 'node', 'human', 'missing snapshot']) {
     test(`original model snapshot and actual monitor validate protected upload across ${change}`, async page => {
       const f = await setup(page, kind);

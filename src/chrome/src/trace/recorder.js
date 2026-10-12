@@ -373,7 +373,7 @@ function _newSeq(runId) {
 
 function normalizeTraceAttachments(attachments) {
   return (Array.isArray(attachments) ? attachments : []).slice(0, 20).map(attachment => ({
-    kind: ['image', 'document', 'text'].includes(attachment?.kind) ? attachment.kind : 'document',
+    kind: ['image', 'document', 'text', 'video'].includes(attachment?.kind) ? attachment.kind : 'document',
     name: String(attachment?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240),
     mimeType: String(attachment?.mimeType || '').slice(0, 120),
     size: Number.isFinite(Number(attachment?.size)) ? Math.max(0, Number(attachment.size)) : 0,
