@@ -1,5 +1,9 @@
 # WebBrain Cloud E2E
 
+Persistent authenticated account workflows use the separate opt-in
+[authenticated runner](../website-tests/README.md). They do not run
+in this public/incognito CI suite or inherit its mutation permissions.
+
 `ci/` runs catalogued browser-agent scenarios in a fresh WebBrain Cloud
 incognito browser. Each scenario produces a structured result, exported trace,
 deterministic rubric, optional `.webm` recording, and a suite summary.

@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+artifacts/
+profiles/
+node_modules/
+*.private.json
