@@ -576,12 +576,13 @@
     if (!before || !after || before.target !== after.target || before.scope !== after.scope || before.hit !== after.hit || before.context !== after.context) return false;
     return ['ancestors', 'nodes'].every(key => before[key].length === after[key].length
       && before[key].every((item, index) => item.node === after[key][index].node && item.value === after[key][index].value
+        && item.clickHandler === after[key][index].clickHandler
         && (!item.files || (item.files.length === after[key][index].files?.length
           && item.files.every((file, fileIndex) => file === after[key][index].files[fileIndex])))));
   }
   // Model snapshots bind an action's meaning, not unrelated text/counts in
   // its surrounding page. These exact values stay private in this realm.
-  const modelControlSelector = 'button,a[href],input,textarea,select,option,[contenteditable]:not([contenteditable="false"]),'
+  const modelControlSelector = 'button,a[href],input,textarea,select,option,summary,[onclick],[tabindex]:not([tabindex="-1"]),[contenteditable]:not([contenteditable="false"]),'
     + '[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="textbox"],'
     + '[role="combobox"],[role="listbox"],[role="option"],[role="slider"],[role="spinbutton"],[role="tab"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"]';
   const entityOwnerSelector = 'dialog,[role="dialog"],[role="alertdialog"],[role="region"],article,[role="article"],[role="listitem"]';
@@ -1124,6 +1125,47 @@
         || controls.length > 64 || identities.length > 64 || owners.length > 64 || images.length > 64) return null;
     return { main, headings, controls, identities, owners, images };
   }
+  function nativeFileWidget(target) {
+    if (!(target instanceof HTMLInputElement) || target.type !== 'file' || target.disabled
+        || target.closest('fieldset[disabled]')) return null;
+    // A transport-only wrapper may hide the input itself. Its visible widget
+    // must still identify one exact file slot and one rendered activation
+    // purpose; a hidden form, composer or arbitrary collection is not a widget.
+    for (let owner = bindingParent(target), depth = 0; owner && depth < 6;
+      owner = bindingParent(owner), depth++) {
+      if (owner === document.body || owner === document.documentElement || owner.matches('form,[role="form"]')) break;
+      const descendants = sampleDescendants(owner, 256);
+      if (descendants.exceeded) break;
+      if (!visible(owner)) continue;
+      const files = owner.querySelectorAll('input[type="file"]');
+      if (files.length !== 1 || files[0] !== target) break;
+      const controls = [...owner.querySelectorAll(modelControlSelector)];
+      if (controls.some(node => node !== target && node.matches('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]'))) break;
+      const activationSelector = 'button,input[type="button"],label,[role="button"]';
+      const activators = [owner, ...owner.querySelectorAll(activationSelector)].filter(node => node.matches(activationSelector)
+        && visible(node) && !node.disabled && !node.closest('fieldset[disabled]')
+        && !(node.matches('button') && (node.type === 'submit' || node.type === 'reset'))
+        && (!node.matches('label') || node.control === target));
+      if (activators.length !== 1 || controls.some(node => node !== target && node !== activators[0]
+        && !activators[0].contains(node))) continue;
+      const activator = activators[0], purpose = String(window.__wb_ax_name?.(activator) || '').trim();
+      if (!purpose || purpose.length > 512 || !modelLabels(activator)) return null;
+      const transport = new Set(); let hiddenTransport = false;
+      for (let parent = bindingParent(target); parent && parent !== owner; parent = bindingParent(parent)) {
+        if (parent.inert || parent.getAttribute('aria-hidden') === 'true'
+            || parent.matches(entityOwnerSelector + ',form,[role="form"]')
+            || [...parent.querySelectorAll(modelControlSelector)].some(node => node !== target)) return null;
+        transport.add(parent);
+        const style = getComputedStyle(parent);
+        hiddenTransport ||= style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden';
+      }
+      // Existing visible section/form ownership remains authoritative. This
+      // proof is only for an otherwise hidden, transport-only ancestor chain.
+      if (hiddenTransport) return { owner, activator, transport };
+    }
+    return null;
+  }
   function actionFootprint(target, readonlyPreparation = null) {
     if (readonlyPreparation && !readonlyPreparationMatches(readonlyPreparation, target)) return null;
     const structuralFile = target instanceof Element && target.tagName === 'INPUT' && target.type === 'file';
@@ -1138,8 +1180,10 @@
     const form = action.form || target.closest('form,[role="form"]');
     const ownerBase = form || action;
     const conversation = currentConversationContext(target);
+    const fileWidget = structuralFile ? nativeFileWidget(target) : null;
     if (conversation && form && !conversation.footer.contains(form)) return null;
-    let owner = readonlyPreparation?.scope || conversation?.pane || (ownerBase.matches(entityOwnerSelector) ? ownerBase : ownerBase.closest(entityOwnerSelector));
+    let owner = readonlyPreparation?.scope || conversation?.pane
+      || (ownerBase.matches(entityOwnerSelector) ? ownerBase : ownerBase.closest(entityOwnerSelector));
     const namedSemanticScope = node => {
       if (!(node instanceof Element) || node === action || node.matches(modelControlSelector)
           || !node.matches('form,[role="form"],section,[role="region"]')) return false;
@@ -1192,6 +1236,7 @@
     if (!owner && form && [...form.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],'+modelEntityIdentitySelector)]
       .some(node => node.closest('form,[role="form"]') === form && !node.closest(entityOwnerSelector)
         && !node.closest('aside,nav,[role="navigation"],[role="complementary"]'))) owner = form;
+    if (!owner && fileWidget) { owner = fileWidget.owner; meaningfulOwner = true; }
     if (!owner) {
       // A tiny toolbar is not a composer owner. Find the bounded container
       // that includes its editor and action, with a heading outside the form
@@ -1223,6 +1268,15 @@
     const addNode = (node, options = {}) => {
       const previous = nodes.find(item => item.node === node);
       if (previous) {
+        if (options.control && !Object.hasOwn(previous, 'clickHandler')) {
+          // Associated labels can seed a later control before its activator is
+          // visited. Strengthen its control state without losing complete text
+          // or label evidence, or changing the continuation signature's slots.
+          const value = JSON.parse(previous.value), control = JSON.parse(modelSemantic(node, { control: true }));
+          for (const slot of [11, 12, 13]) value[slot] = control[slot];
+          previous.value = JSON.stringify(value);
+          previous.clickHandler = node.onclick;
+        }
         // A form/owner may already have an attribute-only binding. Plain
         // destination text must strengthen it without aggregating editor data
         // or downgrading an existing complete label/control binding.
@@ -1235,6 +1289,7 @@
       const labels = modelLabels(node);
       if (!labels) return false;
       nodes.push({ node, value: modelSemantic(node, options),
+        ...(options.control ? { clickHandler: node.onclick } : {}),
         ...(node.tagName === 'INPUT' && node.type === 'file' ? { files: [...node.files || []] } : {}) });
       if (options.text) boundTextNodes.add(node);
       for (const label of labels) {
@@ -1252,10 +1307,16 @@
       const labels = modelLabels(ancestor);
       if (!labels) return null;
       const style = getComputedStyle(ancestor);
-      if (ancestor.inert || ancestor.getAttribute('aria-hidden') === 'true' || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
-          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return null;
+      if (ancestor.inert || ancestor.getAttribute('aria-hidden') === 'true'
+          || (!fileWidget?.transport.has(ancestor) && (style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+            || Number(style.opacity) === 0 || style.contentVisibility === 'hidden'))) return null;
       ancestors.push({ node: ancestor, value: modelSemantic(ancestor) });
       for (const label of labels) if (!addNode(label.node, { text: true })) return null;
+    }
+    if (fileWidget) {
+      if (!addNode(fileWidget.owner, { directText: true })
+          || !addNode(fileWidget.activator, { text: true, control: true, observedName: true })) return null;
+      dialogIdentities.add(fileWidget.activator);
     }
     if (form) {
       if (!addNode(form)) return null;
@@ -1368,7 +1429,7 @@
     // An arbitrary container/toolbar with no entity anchor cannot establish
     // the recipient or item. Such targets retain strict legacy dispatch only.
     if (!owner || !meaningfulOwner) return null;
-    if (!conversation && (!owner || unstructuredOwner || nativeFileSection)) {
+    if (!conversation && (!owner || unstructuredOwner || nativeFileSection || fileWidget)) {
       // Without an explicit entity boundary, an outside conversation heading
       // may identify the recipient. Never infer that a small form/toolbar owns
       // it; broad heading binding is a conservative fallback for these pages.
@@ -1383,6 +1444,7 @@
     return { model: true, structuralFile, target, scope: owner || form || action, ancestors, nodes, hit,
       dialogIdentities,
       visualImages,
+      ...(fileWidget ? { fileWidget } : {}),
       ...(inlinePostOwner ? { observedAccountLinks: inlinePostOwner.accountLinks } : {}),
       ...(mainOwner ? { observedMainControls: mainOwner.controls.filter(node => visible(node)) } : {}),
       ...(conversation ? { conversationCarrier: conversation.carrier, conversationComposer: conversation.composer } : {}),
@@ -1419,6 +1481,7 @@
       && before[key].every((item, index) => {
         const current = after[key][index];
         return item.node === current.node
+          && item.clickHandler === current.clickHandler
           && (key === 'nodes' ? inputContinuationValue(item, before.target) === inputContinuationValue(current, before.target) : item.value === current.value)
           && (!item.files || (item.files.length === current.files?.length && item.files.every((file, fileIndex) => file === current.files[fileIndex])));
       }));
@@ -1503,6 +1566,14 @@
       ? window.__wb_native_chat_read_target?.(params.nativeChatOwner) : null;
     const priorityTarget = readonlyPreparation?.target || nativeReadTarget?.target || (params.actionTarget && typeof params.actionTarget === 'object'
       ? modelTarget(params.actionTarget) : null);
+    const uploadTargets = new Map();
+    for (const selector of Array.isArray(params.uploadTargets) ? params.uploadTargets.slice(0, 8) : []) {
+      if (typeof selector !== 'string' || !selector || selector.length > 4096) continue;
+      const target = modelTarget({ tool: 'upload_file', selector });
+      if (target instanceof HTMLInputElement && target.type === 'file') uploadTargets.set(target, selector);
+    }
+    if (priorityTarget instanceof HTMLInputElement && priorityTarget.type === 'file' && params.actionTarget?.selector)
+      uploadTargets.set(priorityTarget, params.actionTarget.selector);
     const observationRoot = /^ref_[A-Za-z0-9_-]+$/.test(params.observationRef || '')
       ? window.__wb_ax_lookup?.(params.observationRef) : null;
     const validObservationRoot = observationRoot instanceof Element && observationRoot.ownerDocument === document
@@ -1670,6 +1741,23 @@
     const observedFootprint = footprint => {
       if (!page) return true;
       if (!footprint.structuralFile && !publicNodes.has(footprint.target)) return false;
+      if (footprint.fileWidget) {
+        const widget = footprint.fileWidget.activator;
+        if (!exposeIdentity(widget, { completeLabel: true })) return false;
+        let selector = uploadTargets.get(footprint.target);
+        if (!selector && footprint.target.id) {
+          const candidate = '#' + CSS.escape(footprint.target.id), query = queryOpenTargets(candidate);
+          if (query.complete && query.elements.length === 1 && query.elements[0] === footprint.target) selector = candidate;
+        }
+        // Keep the discovered selector paired with its actual current widget.
+        // This is page data only; no input ref or chooser click is authorized.
+        if (selector) {
+          const line = `\nfile input selector=${JSON.stringify(selector)} widget_ref=${JSON.stringify(window.__wb_ax_ref?.(widget))}\n`;
+          if (evidenceLength + line.length > MODEL_EVIDENCE_MAX || page.pageContent.length + line.length > MODEL_PUBLIC_MAX
+              || JSON.stringify({ ...page, pageContent: page.pageContent + line }).length > 16000) return false;
+          page.pageContent += line; evidenceLength += line.length;
+        }
+      }
       if (footprint.conversationComposer) {
         const composer = footprint.conversationComposer;
         const authored = String(composer.getAttribute('aria-label') || composer.getAttribute('title')
@@ -1712,6 +1800,10 @@
     // and seeds its original identity before a large page consumes the budget.
     // The rejected previous model call never receives this fresh certificate.
     if (priorityTarget) captureTarget(priorityTarget);
+    // A successful file inventory belongs to a later decision. Re-resolve its
+    // bounded exact selectors in this same current observation, before a deep
+    // document can exhaust the general scan; discovery never dispatches files.
+    for (const target of uploadTargets.keys()) captureTarget(target);
     // The model-visible AX targets are captured before the general DOM scan,
     // so a deep page's earlier decorative nodes do not consume their budget.
     if (page) for (const node of publicNodes) captureTarget(node);

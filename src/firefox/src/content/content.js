@@ -8319,7 +8319,11 @@
             method: fallbackAttempted ? 'type_ax_execcommand_fallback' : method,
             ref_id,
             rect: typeRect,
-            ...(selectExpected !== null ? { value: actual } : {}),
+            ...(selectExpected !== null ? {
+              value: actual,
+              ...(el.selectedOptions?.length === 1
+                ? { selectedText: String(el.selectedOptions[0].textContent || '').replace(/\s+/g, ' ').trim() } : {}),
+            } : {}),
             fieldMeta,
             fallbackAttempted,
           };

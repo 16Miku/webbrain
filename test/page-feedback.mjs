@@ -1291,6 +1291,8 @@ async function feedbackDecisionTraceMethod(build, records) {
   const policy = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
   const recovery = await import(`../src/${build}/src/agent/page-feedback-recovery.js`);
   const media = await import(`../src/${build}/src/agent/media-download-binding.js`);
+  const answerScope = await import(`../src/${build}/src/agent/ask-response-scope.js`);
+  const completion = await import(`../src/${build}/src/agent/completion-verifier.js`);
   const { projectTraceEventData } = await import(`../src/${build}/src/trace/privacy.js`);
   const feedbackPath = new URL(`../src/${build}/src/agent/page-feedback.js`, import.meta.url);
   const source = fs.readFileSync(feedbackPath, 'utf8');
@@ -1302,8 +1304,8 @@ async function feedbackDecisionTraceMethod(build, records) {
     _appendEvent: (runId, kind, data) => records.push(structuredClone({ runId, kind, data, metadata: projectTraceEventData(kind, data) })),
   });
   const imports = source.match(/^import [^\n]+;\r?\n/gm) || [];
-  assert.equal(imports.length, 4);
-  const context = vm.createContext({ ...policy, ...recovery, ...media, trace: { recordNote },
+  assert.equal(imports.length, 6);
+  const context = vm.createContext({ ...policy, ...recovery, ...media, ...answerScope, ...completion, trace: { recordNote },
     chrome: api, browser: api, setTimeout, clearTimeout, crypto: globalThis.crypto });
   return vm.runInContext(source.replace(/^import [^\n]+;\r?\n/gm, '').replace(/^export /gm, '')
     + '\nObject.assign(pageFeedbackMethods._applyPendingPageFeedback, { diagnosticSummary: typeof feedbackEventSummary === \"function\" ? feedbackEventSummary : null });', context);
@@ -1328,7 +1330,7 @@ for (const build of ['chrome', 'firefox']) {
         const originalStateCurrent = agent._pageFeedbackStateCurrent; let stateChecks = 0;
         agent._pageFeedbackStateCurrent = (...args) => { stateChecks++; return originalStateCurrent.apply(agent, args); };
         if (change === 'document') api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'replacement-private-document' }] };
-        if (change === 'steering') agent._steeringRuns.set(tab, { acceptedIds: new Set(['private-steering-id']) });
+        if (change === 'steering') agent._steeringRuns.set(tab, { messages: [], revision: 0, authorizedRevision: 0, acceptedIds: new Set(['private-steering-id']) });
         if (change === 'run') agent.executeTool = async () => {
           const run = agent._pageFeedbackRuns.get(tab);
           agent._pageFeedbackRuns.set(tab, { ...run });
@@ -1493,7 +1495,7 @@ for (const build of ['chrome', 'firefox']) {
         const binding = bind(agent, tab), child = bind(agent, tab, 2, 'child-document', 'child-token');
         await agent._capturePageFeedbackModelState(tab);
         if (change === 'document') api.webNavigation = { getAllFrames: async () => [{ frameId: 0, documentId: 'replacement-document' }] };
-        if (change === 'steering') agent._steeringRuns.set(tab, { acceptedIds: new Set(['new-task-revision']) });
+        if (change === 'steering') agent._steeringRuns.set(tab, { messages: [], revision: 0, authorizedRevision: 0, acceptedIds: new Set(['new-task-revision']) });
         let refreshed = false;
         agent.executeTool = async (_id, name) => {
           assert.equal(name, 'get_accessibility_tree');

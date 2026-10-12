@@ -139,6 +139,17 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   AX observation of its owner together with the new private footprint. Target
   selectors and labels retain their exact strings throughout validation and
   preparation; truncation cannot certify a different target.
+- File discovery can prioritize up to eight exact input selectors in the next
+  synchronous observation, before a large document exhausts the general scan.
+  Hidden transport wrappers require a bounded visible widget with one file slot
+  and one activation purpose; the actual input, widget, form, owner and document
+  remain bound. The current observation pairs the selector with its visible
+  widget as untrusted page data. Discovery never repairs or dispatches an old
+  rejected call, opens a chooser, or grants upload permission.
+- Native `summary` controls and authored click/tab-focus targets use the same
+  observed owner and exact action footprint as native and ARIA buttons. Changed
+  handler identity, disclosure state, target/owner identity and user intervention
+  invalidate the original decision; ordinary wrappers do not become controls.
 - Native navigation, header/banner and tab-list landmarks can own an action
   when their complete bounded local context was observed with that same
   decision. Transparent wrappers do not prevent the landmark from owning its

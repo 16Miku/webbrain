@@ -1621,6 +1621,7 @@ export class Agent extends LoopDetector {
     if (workflowComposerFieldEvidence && result && typeof result === 'object') {
       result.workflowComposerFieldEvidence = workflowComposerFieldEvidence;
     }
+    this._rememberWorkflowAuthoredMetadataEvidence(tabId, name, args, result, next);
     const workflowReleaseAssetEvidence = this._rememberWorkflowReleaseAssetActionEvidence(
       tabId,
       name,
@@ -2286,6 +2287,9 @@ export class Agent extends LoopDetector {
       ? this._normalizeWorkflowMetadataRequirementsDetails(guard.workflowMetadataRequirements)
       : { items: [], incomplete: false };
     const metadataRequirements = metadataDetails.items;
+    const authoredMetadata = siteWorkflow.job.id === 'update-metadata'
+      ? this._workflowAuthoredMetadataForSubmit(tabId, pageUrl, siteWorkflow)
+      : null;
     // Requested fields that were never resolved are not absent fields. A job
     // whose contract binds them cannot verify anything until they are.
     const metadataIncomplete = guard.workflowMetadataRequirementsIncomplete === true
@@ -2423,6 +2427,12 @@ export class Agent extends LoopDetector {
       job: siteWorkflow.job.id,
       verificationKind,
       recipientBound,
+      ...(verificationKind === 'published_resource' ? {
+        publicationTaskBinding: {
+          taskKey: this._progressTaskKeyHash(tabId),
+          sourceSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)),
+        },
+      } : {}),
       ...(recipientBound ? {
         recipientTargets: recipientTarget.recipients.map(recipient => ({ ...recipient })),
         messageBody,
@@ -2452,9 +2462,19 @@ export class Agent extends LoopDetector {
             messageSubjectAvailable: true,
           }
         : {}),
-      ...(metadataRequirements.length || metadataIncomplete ? {
+      ...(this._workflowJobStoresMetadataRequirements(siteWorkflow) ? {
         metadataRequirements: metadataRequirements.map(requirement => ({ ...requirement })),
+        metadataRequirementsResolved: !metadataIncomplete,
         ...(metadataIncomplete ? { metadataRequirementsIncomplete: true } : {}),
+      } : {}),
+      ...(siteWorkflow.adapterName === 'github' && siteWorkflow.job.id === 'publish-release'
+        && typeof detectedSubmit?.githubReleaseReview?.complete === 'boolean'
+        ? { githubReleaseReview: { ...detectedSubmit.githubReleaseReview } } : {}),
+      ...(authoredMetadata ? {
+        authoredMetadataRequirements: authoredMetadata.items,
+        authoredMetadataIncomplete: authoredMetadata.incomplete,
+        metadataTaskBinding: { taskKey: this._progressTaskKeyHash(tabId), sourceSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)),
+          resourceScope: this._workflowJobScopeIdentity(pageUrl) },
       } : {}),
       ...(verificationKind === 'published_resource'
         && ['twitter', 'bluesky'].includes(siteWorkflow.adapterName)
@@ -5058,6 +5078,110 @@ export class Agent extends LoopDetector {
     }
   }
 
+  // Native field names identify a release independently of UI language. Read
+  // complete values, including the Markdown backing textarea, rather than the
+  // shortened permission summary or the rendered Markdown's different bytes.
+  static _githubReleaseFormSnapshot = function (pageUrl, root = document, expected = null) {
+    try {
+      root ||= document;
+      if (expected && (root !== document || location.href !== expected.url
+          || [location.href, performance.timeOrigin].join('|') !== expected.frameDocumentIdentity)) return null;
+      const parsed = new URL(pageUrl);
+      const route = /^\/([^/]+\/[^/]+)\/releases\/(new|edit\/([^/]+))\/?$/.exec(parsed.pathname);
+      if (parsed.hostname !== 'github.com' || !route) return null;
+      const titles = Array.from(root.querySelectorAll('input[name="release[name]"], input#release-title, input#release_title'));
+      const bodies = Array.from(root.querySelectorAll('textarea[name="release[body]"], textarea#release_body, textarea#release-notes'));
+      if (titles.length !== 1 || bodies.length !== 1) return null;
+      const form = titles[0].closest('form');
+      if (!form || bodies[0].closest('form') !== form || String(form.method).toLowerCase() !== 'post') return null;
+      const action = new URL(form.getAttribute('action') || pageUrl, pageUrl);
+      const releasesPath = `/${route[1]}/releases`;
+      if (action.origin !== parsed.origin || (action.pathname !== releasesPath && !action.pathname.startsWith(`${releasesPath}/`))) return null;
+      const tags = Array.from(form.querySelectorAll('input[name="tag_name"], input[name="release[tag_name]"]'));
+      if (tags.length > 1) return null;
+      const tag = tags.length === 1 ? tags[0].value : (route[3] ? decodeURIComponent(route[3]) : '');
+      const title = titles[0].value, notes = bodies[0].value;
+      if (typeof tag !== 'string' || !tag || tag.length > 500 || typeof title !== 'string'
+          || !title || title.length > 10000 || typeof notes !== 'string' || notes.length > 25000) return null;
+      const snapshot = { complete: true, repository: route[1].toLowerCase(), tag, title, notes, formAction: action.href,
+        formRef: root === document && typeof window.__wb_ax_ref === 'function' ? String(window.__wb_ax_ref(form) || '') : '' };
+      if (expected && ((expected.actionUrl && snapshot.formAction !== expected.actionUrl)
+          || (expected.formRef && snapshot.formRef !== expected.formRef))) return null;
+      return snapshot;
+    } catch { return null; }
+  };
+
+  async _captureGithubReleaseReview(tabId, detected) {
+    const guard = this._planExecutionGuards.get(tabId), run = this.completionInvariants.get(tabId);
+    const workflow = guard?.siteWorkflow;
+    if (workflow?.adapterName !== 'github' || workflow.job?.id !== 'publish-release') return null;
+    if (detected?.validationSubmitEvidence !== 'strong') return { complete: false, reason: 'native_submit_unavailable' };
+    const provider = this._activeProvider(tabId), taskKey = this._progressTaskKeyHash(tabId);
+    const sourceSha256 = this._sha256TextSync(this._progressTaskAnchorText(tabId));
+    const current = () => this._planExecutionGuards.get(tabId) === guard
+      && this.completionInvariants.get(tabId) === run && this._activeProvider(tabId) === provider
+      && this._progressTaskKeyHash(tabId) === taskKey && this._sha256TextSync(this._progressTaskAnchorText(tabId)) === sourceSha256
+      && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId);
+    if (!current()) return { complete: false, reason: 'task_changed' };
+    try {
+      const frameId = Number.isSafeInteger(detected.frameId) && detected.frameId >= 0 ? detected.frameId : 0;
+      const result = await withCompletionTimeout(() => browser.tabs.executeScript(tabId, { frameId, code: `(() => {
+        const capture = ${Agent._githubReleaseFormSnapshot.toString()};
+        return capture(${JSON.stringify(detected.url)}, null, ${JSON.stringify({ url: detected.url,
+          frameDocumentIdentity: detected.frameDocumentIdentity, actionUrl: detected.actionUrl || '', formRef: detected.formRef || '' })});
+      })()` }), this._runAbortSignal(tabId), 2000);
+      if (!current()) return { complete: false, reason: 'task_changed' };
+      return result?.[0] || { complete: false, reason: 'native_form_incomplete' };
+    } catch { return { complete: false, reason: 'capture_unavailable' }; }
+  }
+
+  async _githubReleaseVerification(tabId, pageUrl, submissionEvidence) {
+    const guard = this._planExecutionGuards.get(tabId), run = this.completionInvariants.get(tabId);
+    const submit = submissionEvidence?.submit, binding = submit?.workflowBinding;
+    if (binding?.githubReleaseReview?.complete !== true) return null;
+    const release = this._workflowGithubReleaseIdentityParts(binding.publishedResourceIdentity);
+    if (!release || this._workflowPublishedResourceIdentity(guard?.siteWorkflow, pageUrl) !== binding.publishedResourceIdentity
+        || release.repository !== binding.githubReleaseReview.repository || release.tag !== binding.githubReleaseReview.tag) return null;
+    const provider = this._activeProvider(tabId), taskKey = this._progressTaskKeyHash(tabId);
+    const current = () => this._planExecutionGuards.get(tabId) === guard
+      && this.completionInvariants.get(tabId) === run && this._completionSubmitStates.get(tabId) === submit
+      && submit.workflowBinding === binding
+      && this._activeProvider(tabId) === provider && this._progressTaskKeyHash(tabId) === taskKey
+      && binding.publicationTaskBinding?.taskKey === taskKey
+      && binding.publicationTaskBinding?.sourceSha256 === this._sha256TextSync(this._progressTaskAnchorText(tabId))
+      && !this._checkAbort(tabId) && !this._hasUnvalidatedSteering(tabId);
+    if (!current()) return null;
+    try {
+      const editUrl = new URL(`/${release.repository}/releases/edit/${encodeURIComponent(release.tag)}`, pageUrl).href;
+      const result = await browser.tabs.executeScript(tabId, { frameId: 0, code: `(async () => {
+        const expected = ${JSON.stringify(pageUrl)}, editUrl = ${JSON.stringify(editUrl)};
+        if (location.href !== expected || new URL(editUrl).origin !== location.origin) return null;
+        const stamp = [location.href, performance.timeOrigin].join('|');
+        const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 2500);
+        try {
+          const response = await fetch(editUrl, { method: 'GET', credentials: 'same-origin', redirect: 'error', signal: controller.signal });
+          if (!response.ok || response.url !== editUrl || !(response.headers.get('content-type') || '').toLowerCase().includes('text/html')) return null;
+          const reader = response.body?.getReader();
+          if (!reader) return null;
+          const decoder = new TextDecoder();
+          let html = '', bytes = 0;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            bytes += value.byteLength;
+            if (bytes > 2000000) { await reader.cancel(); return null; }
+            html += decoder.decode(value, { stream: true });
+          }
+          html += decoder.decode();
+          if ([location.href, performance.timeOrigin].join('|') !== stamp) return null;
+          const capture = ${Agent._githubReleaseFormSnapshot.toString()};
+          return capture(editUrl, new DOMParser().parseFromString(html, 'text/html'));
+        } finally { clearTimeout(timeout); }
+      })()` });
+      return current() ? result?.[0] || null : null;
+    } catch { return null; }
+  }
+
   _workflowGithubCommitIdentityParts(identity) {
     const match = /^github:github\.com\/([^/]+\/[^/]+)\/commit\/([0-9a-f]{7,40})$/i.exec(String(identity || ''));
     return match ? { repository: match[1].toLowerCase(), sha: match[2].toLowerCase() } : null;
@@ -5442,6 +5566,21 @@ export class Agent extends LoopDetector {
   }
 
   _workflowPublishedResourcePayloadMatch(binding, state, pageState, pageUrl, submit) {
+    if (binding?.githubReleaseReview) {
+      const saved = pageState?.githubReleaseVerification;
+      const review = binding.githubReleaseReview;
+      if (review.complete !== true || saved?.complete !== true || saved.repository !== review.repository
+          || saved.tag !== review.tag || saved.title !== review.title || saved.notes !== review.notes) return false;
+      if (binding.metadataRequirementsIncomplete === true) return false;
+      const requirements = Array.isArray(binding.metadataRequirements) ? binding.metadataRequirements : [];
+      if (!requirements.length && binding.metadataRequirementsResolved !== true) return false;
+      return requirements.every(requirement => ['tag', 'title', 'notes'].includes(requirement.field)
+        ? this._workflowMetadataValue(requirement.value) === this._workflowMetadataValue(saved[requirement.field])
+        : this._workflowPublishedPayloadValueObserved(requirement, {
+            pageText: pageState.workflowPageText, pageUrl, publishedResourceIdentity: binding.publishedResourceIdentity,
+            inventory: state?.workflowInventoryEvidence,
+          }));
+    }
     if (state?.siteWorkflow?.adapterName === 'github'
         && state.siteWorkflow?.job?.id === 'edit-file-and-commit') {
       const proof = pageState?.githubCommittedFileVerification;
@@ -5480,7 +5619,10 @@ export class Agent extends LoopDetector {
     if (!this._workflowJobBindsPublicationPayload(state?.siteWorkflow?.job)) return true;
     if (binding?.metadataRequirementsIncomplete === true) return false;
     const requirements = Array.isArray(binding?.metadataRequirements) ? binding.metadataRequirements : [];
-    if (requirements.length < 1) return false;
+    // A resolved empty list means the request imposed no exact payload fields.
+    // It is different from an absent or failed classification. The caller still
+    // requires a real dispatch and its own saved resource, never a bare URL.
+    if (requirements.length < 1) return binding?.metadataRequirementsResolved === true;
     if (this._workflowMetadataRequirementsMatchInventory(
       requirements,
       state?.workflowInventoryEvidence,
@@ -5703,12 +5845,25 @@ export class Agent extends LoopDetector {
     if (!draftJob && siteWorkflow?.job?.requiresSubmission !== true) return null;
     const submit = submissionEvidence?.submit;
     const binding = submit?.workflowBinding;
+    const publication = this._workflowVerificationKind(siteWorkflow) === 'published_resource';
+    const failPublication = (reason, fields = []) => {
+      if (publication) state.workflowTerminalEvidenceFailure = { reason, fields,
+        dispatchRecorded: submit?.dispatched === true,
+        boundSavedResourceObserved: !!binding?.publishedResourceIdentity
+          && this._workflowPublishedResourceIdentities(siteWorkflow, [pageUrl], pageUrl).includes(binding.publishedResourceIdentity),
+      };
+      return null;
+    };
+    if (publication) state.workflowTerminalEvidenceFailure = null;
     // A draft job has no dispatched submit to bind to, so its evidence binds
     // to the live adapter job and the observed composer instead.
     if (!draftJob
-        && (!binding || binding.bindingKey !== this._adapterWorkflowBindingKey(siteWorkflow))) return null;
+        && (!binding || binding.bindingKey !== this._adapterWorkflowBindingKey(siteWorkflow))) return failPublication('dispatch_binding_missing');
     const live = resolveAdapterWorkflowJob(pageUrl, siteWorkflow.job.id);
-    if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return null;
+    if (!this._sameAdapterWorkflowBinding(siteWorkflow, live)) return failPublication('workflow_changed');
+    if (publication && binding?.publicationTaskBinding
+        && (binding.publicationTaskBinding.taskKey !== this._progressTaskKeyHash(tabId)
+          || binding.publicationTaskBinding.sourceSha256 !== this._sha256TextSync(this._progressTaskAnchorText(tabId)))) return failPublication('task_binding_changed');
     const verificationKind = this._workflowVerificationKind(siteWorkflow);
     const text = this._workflowTerminalText(pageState?.workflowPageText || '');
     let verified = false;
@@ -5850,8 +6005,13 @@ export class Agent extends LoopDetector {
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && this._workflowSavedStateSignal(text)
         && binding.metadataRequirementsIncomplete !== true
+        && binding.authoredMetadataIncomplete !== true
+        && (!binding.metadataTaskBinding
+          || (binding.metadataTaskBinding.taskKey === this._progressTaskKeyHash(tabId)
+            && binding.metadataTaskBinding.sourceSha256 === this._sha256TextSync(this._progressTaskAnchorText(tabId))
+            && binding.metadataTaskBinding.resourceScope === this._workflowJobScopeIdentity(pageUrl)))
         && this._workflowMetadataRequirementsMatchInventory(
-          binding.metadataRequirements,
+          [...(binding.metadataRequirements || []), ...(binding.authoredMetadataRequirements || [])],
           state.workflowInventoryEvidence,
           submit?.actionSequence,
         );
@@ -5938,6 +6098,33 @@ export class Agent extends LoopDetector {
         && payloadMatches
         && (submissionEvidence?.verifiedFinalSubmit === true || sameRoutePublicationVerified);
       source = 'dispatch_bound_published_resource';
+      if (!verified) {
+        if (!binding.publishedResourceIdentity) return failPublication('saved_resource_not_bound');
+        if (!observedResourceIdentities.includes(binding.publishedResourceIdentity)) return failPublication('saved_resource_mismatch');
+        if (binding.metadataRequirementsIncomplete === true
+            || (!(binding.metadataRequirements || []).length && binding.metadataRequirementsResolved !== true)) return failPublication('payload_requirements_unresolved');
+        if (binding.githubReleaseReview?.complete === false) return failPublication('release_review_unavailable');
+        if (binding.githubReleaseReview && pageState?.githubReleaseVerification?.complete !== true) return failPublication('saved_release_readback_missing');
+        if (binding.githubReleaseReview && !payloadMatches) {
+          const review = binding.githubReleaseReview, saved = pageState.githubReleaseVerification;
+          if (saved.repository !== review.repository || ['tag', 'title', 'notes'].some(field => saved[field] !== review[field])) {
+            return failPublication('saved_release_payload_mismatch');
+          }
+          return failPublication('requested_payload_mismatch', (binding.metadataRequirements || []).filter(requirement =>
+            ['tag', 'title', 'notes'].includes(requirement.field)
+              ? this._workflowMetadataValue(requirement.value) !== this._workflowMetadataValue(saved[requirement.field])
+              : !this._workflowPublishedPayloadValueObserved(requirement, {
+                  pageText: pageState.workflowPageText, pageUrl, publishedResourceIdentity: binding.publishedResourceIdentity,
+                  inventory: state?.workflowInventoryEvidence,
+                })).map(requirement => requirement.field));
+        }
+        if (!payloadMatches) return failPublication('requested_payload_mismatch', (binding.metadataRequirements || [])
+          .filter(requirement => !this._workflowPublishedPayloadValueObserved(requirement, {
+            pageText: pageState?.workflowPageText, pageUrl, publishedResourceIdentity: binding.publishedResourceIdentity,
+            inventory: state?.workflowInventoryEvidence,
+          })).map(requirement => requirement.field));
+        return failPublication('post_submit_verification_missing');
+      }
     } else {
       verified = submissionEvidence?.verifiedFinalSubmit === true;
       source = 'verified_submit_transition';
@@ -5950,6 +6137,27 @@ export class Agent extends LoopDetector {
       source,
       ...(binding?.socialPublication ? { socialContractKey: binding.socialPublication.contractKey, socialActionId: binding.socialPublication.actionId } : {}),
     };
+  }
+
+  _workflowPublicationRecoveryInstruction(state) {
+    const failure = state?.workflowTerminalEvidenceFailure;
+    const reasons = {
+      dispatch_binding_missing: 'No submission record is bound to this workflow.',
+      workflow_changed: 'The current page belongs to a different workflow.',
+      task_binding_changed: 'The publication record belongs to a different task.',
+      saved_resource_not_bound: 'The dispatch has no bound saved resource identity.',
+      saved_resource_mismatch: 'The observed resource differs from the resource bound to the dispatch.',
+      payload_requirements_unresolved: 'The requested publication fields were not successfully resolved.',
+      release_review_unavailable: 'The complete native release fields could not be captured before publication.',
+      saved_release_readback_missing: 'The exact saved release fields could not be read back.',
+      saved_release_payload_mismatch: 'The saved release tag, title, or notes differ from the reviewed or requested values.',
+      requested_payload_mismatch: 'The saved resource does not show every exact requested publication field.',
+      post_submit_verification_missing: 'The saved resource lacks verified post-submit observation.',
+    };
+    const fields = (failure?.fields || []).filter(field => /^[a-z_]+$/.test(String(field))).slice(0, 12);
+    const observed = failure?.dispatchRecorded && failure.boundSavedResourceObserved
+      ? 'A publication dispatch is recorded and its bound saved resource was observed. ' : '';
+    return `${observed}${reasons[failure?.reason] || 'The publication certificate is incomplete.'}${fields.length ? ` Unverified fields: ${fields.join(', ')}.` : ''} Re-read the saved resource in the same tab and inspect its current values before changing anything. A publication may already exist; do not repeat Publish or Update merely to satisfy verification. If the missing evidence cannot be obtained, report partial or failed with this exact blocker.`;
   }
 
   _completionPageWarning(tabId, summary, outcome, pageState, pageUrl = '', workflowEvidence = null) {
@@ -17380,7 +17588,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled
         || guard.siteWorkflow?.job?.template !== 'message'
-        || (name !== 'set_field' && name !== 'type_ax')
+        || !['set_field', 'type_ax', 'type_text'].includes(name)
         || result?.verified !== true
         || !this._isSuccessfulExecutionEvidence(result)) return null;
     const field = this._workflowComposerFieldKey(result?.fieldMeta);
@@ -17411,6 +17619,66 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const evidence = guard?.workflowComposerFieldEvidence;
     if (!evidence || evidence.taskKey !== this._progressTaskKeyHash(tabId)) return {};
     return evidence.fields && typeof evidence.fields === 'object' ? evidence.fields : {};
+  }
+
+  _rememberWorkflowAuthoredMetadataEvidence(tabId, name, args, result, completionState) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || guard.siteWorkflow?.job?.id !== 'update-metadata'
+        || !['set_field', 'type_ax', 'type_text', 'set_checked'].includes(name) || !this._isSuccessfulExecutionEvidence(result)) return null;
+    const taskKey = this._progressTaskKeyHash(tabId), bindingKey = this._adapterWorkflowBindingKey(guard.siteWorkflow);
+    const pageUrl = String(result.refScopeUrl || this._lastAxScopes.get(tabId)?.pageUrl || '');
+    const documentScope = this._workflowInventoryDocumentScope(tabId, pageUrl);
+    let meta = result?.fieldMeta, checkedValue = null;
+    if (name === 'set_checked') {
+      const inventory = guard.workflowInventoryEvidence;
+      const candidates = (inventory?.items || []).filter(item => item.ref_id === args.ref_id
+        && item.documentScope === documentScope);
+      if (inventory?.bindingKey !== bindingKey || inventory.taskKey !== taskKey
+          || inventory.documents?.[documentScope]?.complete !== true || candidates.length !== 1 || candidates[0].role !== 'checkbox'
+          || String(result.tag).toLowerCase() !== 'input' || String(result.type).toLowerCase() !== 'checkbox'
+          || typeof args.checked !== 'boolean') return null;
+      const item = candidates[0], identity = String(result.checkboxIdentity || '');
+      const expectedIdentity = item.domId ? `id:${item.domId}`
+        : item.fieldName && identity.startsWith(`name:${item.fieldName}|value:`) ? identity : `ref:${args.ref_id}`;
+      if (!identity || identity !== expectedIdentity || result.checkboxState?.identity !== identity
+          || result.desiredChecked !== args.checked || result.checkedAfter !== args.checked
+          || result.checkboxState.desiredChecked !== args.checked || result.checkboxState.actualChecked !== args.checked) return null;
+      meta = { name: item.fieldName, id: item.domId, labelText: item.label };
+      checkedValue = String(args.checked);
+    }
+    if (!meta || typeof meta !== 'object') return null;
+    const keys = new Set([meta.name, meta.id, meta.ariaLabel, meta.labelText, meta.placeholder]
+      .map(value => this._workflowMetadataFieldKey(value)).filter(Boolean));
+    if (keys.size !== 1) return null;
+    const field = [...keys][0];
+    const prior = guard.workflowAuthoredMetadataEvidence;
+    const compatible = prior?.taskKey === taskKey && prior?.bindingKey === bindingKey
+      && prior.pageUrl === pageUrl && prior.documentScope === documentScope;
+    const fields = { ...(compatible ? prior.fields : {}) };
+    const nativeSelection = name === 'type_ax' && result.method === 'type_ax_select'
+      && String(meta.tag).toLowerCase() === 'select' && typeof result.value === 'string';
+    const value = checkedValue ?? (nativeSelection ? result.selectedText ?? result.value : args.text);
+    const replaced = result.verified === true && (checkedValue !== null || nativeSelection
+      || (name === 'set_field' ? args.clear !== false : args.clear === true))
+      && typeof value === 'string' && value.length <= 10000;
+    fields[field] = replaced
+      ? { field, value: this._workflowMetadataValue(value), sequence: Number(completionState?.lastAction?.sequence || 0) }
+      : { field, unbound: true };
+    guard.workflowAuthoredMetadataEvidence = { taskKey, bindingKey, pageUrl, documentScope, fields };
+    return { field, bound: replaced };
+  }
+
+  _workflowAuthoredMetadataForSubmit(tabId, pageUrl, siteWorkflow) {
+    const guard = this._planExecutionGuards.get(tabId), evidence = guard?.workflowAuthoredMetadataEvidence;
+    if (!evidence) return guard?.workflowMetadataRequirementsResolved === true
+      ? { items: [], incomplete: !(guard.workflowMetadataRequirements || []).length } : { items: [], incomplete: true };
+    const compatible = evidence.taskKey === this._progressTaskKeyHash(tabId)
+      && evidence.bindingKey === this._adapterWorkflowBindingKey(siteWorkflow)
+      && evidence.pageUrl === pageUrl && !!evidence.documentScope
+      && evidence.documentScope === this._workflowInventoryDocumentScope(tabId, pageUrl);
+    const fields = Object.values(evidence.fields || {});
+    return { items: compatible ? fields.filter(field => !field.unbound).map(({ field, value }) => ({ field, value })) : [],
+      incomplete: !compatible || fields.some(field => field.unbound) };
   }
 
   // GitHub ships a localized UI, so an English-only label match would read a
@@ -24976,6 +25244,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const detected = (Array.isArray(rawResults) ? rawResults : [])
         .find(item => item && item.isSubmit === true);
       if (detected) {
+        const githubReleaseReview = await this._captureGithubReleaseReview(tabId, detected);
         const host = normalizeHost(detected.host || detected.url || args?.urlFilter || currentUrl) || 'this site';
         const frameBaseline = name === 'iframe_click' && Number.isInteger(detected.frameId) && detected.frameId > 0
           ? await this._readCompletionFrame(tabId, detected.frameId).catch(() => null) : null;
@@ -25001,6 +25270,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: String(detected.action || '').slice(0, 300),
           actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
+          ...(githubReleaseReview ? { githubReleaseReview } : {}),
           semanticCommit: detected.semanticCommit === true,
           ...(Array.isArray(detected.publicationResourceUrls) ? { publicationResourceUrls: detected.publicationResourceUrls.slice(0, 200) } : {}),
           publicationResourceUrlsComplete: detected.publicationResourceUrlsComplete === true,
@@ -30953,6 +31223,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             ),
           }
         : null,
+      workflowAuthoredMetadataEvidence: carryMatches && carried.workflowAuthoredMetadataEvidence
+        ? { ...carried.workflowAuthoredMetadataEvidence,
+            fields: Object.fromEntries(Object.entries(carried.workflowAuthoredMetadataEvidence.fields || {})
+              .map(([field, proof]) => [field, { ...proof }])) }
+        : null,
       workflowRequiredJobEvidence: '',
       workflowJobScopeIdentity: '',
       workflowObservedScopeIdentities: [],
@@ -31461,6 +31736,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ),
             }
           : null,
+        workflowAuthoredMetadataEvidence: guard.workflowAuthoredMetadataEvidence
+          ? { ...guard.workflowAuthoredMetadataEvidence,
+              fields: Object.fromEntries(Object.entries(guard.workflowAuthoredMetadataEvidence.fields || {})
+                .map(([field, proof]) => [field, { ...proof }])) }
+          : null,
         workflowJobScopeObserved: guard.workflowJobScopeObserved === true,
         workflowEmptyCollectionObserved: guard.workflowEmptyCollectionObserved === true,
         workflowJobEvidenceSatisfied: guard.workflowJobEvidenceSatisfied === true,
@@ -31756,7 +32036,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           : missingSocialPublishTargets.length
           ? `[PLAN EXECUTION BLOCK: This task requests publication on every named social destination, but job-bound terminal evidence is still missing for: ${missingSocialPublishTargets.map(name => name === 'twitter' ? 'X' : name === 'bluesky' ? 'Bluesky' : name).join(', ')}. Continue with those destinations and verify each published resource before calling done again. Do not republish on a destination already verified in this run.]`
           : missingRequiredSubmission
-          ? (state.siteWorkflow?.job?.id
+          ? (this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
+            ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow.job.id} job requires terminal evidence for its own publication. ${this._workflowPublicationRecoveryInstruction(state)}]`
+            : state.siteWorkflow?.job?.id
             ? `[PLAN EXECUTION BLOCK: The selected ${state.siteWorkflow.job.id} job requires terminal evidence for its own submit/send/publish/commit contract. Filling fields, another site's submit, or an unrelated success signal is not completion. Dispatch the intended action and observe the job-specific terminal state (for example recipient-bound sent state, saved/published resource, form confirmation, or paid/ticket-issued transaction) before calling done again. If that cannot be verified, use outcome partial or failed and report the exact blocker.]`
             // No site workflow was selected, so there is no job contract to
             // point at.
@@ -31804,7 +32086,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (missingRequiredSubmission) {
       return {
-        failure: state.siteWorkflow?.job?.id
+        failure: this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
+          ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch. ${this._workflowPublicationRecoveryInstruction(state)}]`
+          : state.siteWorkflow?.job?.id
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`
           : '[Agent stopped because the approved task required verified terminal evidence after its submit/send/publish dispatch, but no structured site workflow was bound and generic submission evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]',
         status: 'required_evidence_missing',
@@ -36241,7 +36525,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const submissionEvidence = this._completionSubmissionEvidence(
               tabId, pageState, pageState.url || '',
             );
-            const githubCommittedFileVerification = await this._githubCommittedFileVerification(
+             const githubReleaseVerification = await this._githubReleaseVerification(
+               tabId, pageState.url || '', submissionEvidence,
+             );
+             if (githubReleaseVerification) pageState.githubReleaseVerification = githubReleaseVerification;
+             const githubCommittedFileVerification = await this._githubCommittedFileVerification(
               tabId, pageState, pageState.url || '', submissionEvidence,
             );
             if (githubCommittedFileVerification) {
@@ -36286,6 +36574,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             delete pageState.workflowPageText;
             delete pageState.workflowResourceUrls;
             delete pageState.workflowResourceRecords;
+            delete pageState.githubReleaseVerification;
           }
             if (executionGuard?.enabled && !completionWarning) {
               if (executionGuard.siteWorkflow?.job?.requiresSubmission === true) {
@@ -40253,7 +40542,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
         : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
       if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
-        responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0,
+        responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: result.content,
       }))
           || this._applyPendingSteering(tabId, messages, onUpdate)) {
         const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
@@ -41366,7 +41655,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
         if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
-          responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0,
+          responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: fullText,
         }))
             || this._applyPendingSteering(tabId, messages, onUpdate)) {
           const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);

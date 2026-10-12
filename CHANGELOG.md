@@ -4,6 +4,16 @@ All notable changes to WebBrain are documented in this file.
 
 This changelog was generated from the repository Git history and release tags. Versions without a Git tag are inferred from version-bump commits and the current `package.json` / browser manifest versions.
 
+## [40.2.2] - 2026-10-12
+
+### Changed
+- Record the current development version from `package.json` and both browser manifests; this entry does not certify a published release.
+
+### Fixed
+- Retain conversation-only Ask replies through automatic iframe changes, with bounded retries for page-dependent answers and prompt cancellation for mid-run corrections.
+- Recover discovered hidden file inputs through their visible widgets, and certify native disclosure and authored interactive controls without weakening target or user-intervention checks.
+- Verify saved releases, generated message drafts and metadata edits against task-bound evidence and exact fresh readback; preserve completed submission progress in failure messages.
+
 ## [40.2.0] - Unreleased
 
 ### Summary
