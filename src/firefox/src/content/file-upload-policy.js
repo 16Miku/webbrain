@@ -41,6 +41,9 @@
     else if (is(255,10) || is(0,0,0,12,74,88,76,32,13,10,135,10)) { mime='image/jxl'; extensions=['.jxl']; }
     else if (brands.some(brand => brand === 'avif' || brand === 'avis')) { mime='image/avif'; extensions=['.avif']; }
     else if (brands.some(brand => ['heic','heix','hevc','hevx','mif1','msf1'].includes(brand))) { mime='image/heif'; extensions=['.heic','.heif']; }
+    else if (brands[0] === 'qt  ') { mime='video/quicktime'; extensions=['.mov']; }
+    else if (brands.some(brand => ['mp41','mp42','isom','iso2','iso3','iso4','iso5','iso6','avc1','M4V ','M4VH','M4VP'].includes(brand))) { mime='video/mp4'; extensions=['.mp4','.m4v']; }
+    else if (is(26,69,223,163) && ascii(0,Math.min(bytes.length,64)).includes('webm')) { mime='video/webm'; extensions=['.webm']; }
     else if (ascii(0,4)==='RIFF' && ascii(8,12)==='WAVE') { mime='audio/wav'; extensions=['.wav']; }
     else if (ascii(0,3)==='ID3') { mime='audio/mpeg'; extensions=['.mp3']; }
     else {
@@ -65,15 +68,16 @@
     const effective = zipDeclared ? declared : contentKnown ? mime : mime === 'text/plain' && textualDeclared ? declared : mime || declared;
     for (const token of tokens) {
       if (/^\.[a-z0-9][a-z0-9._+-]*$/.test(token) && name.endsWith(token)) {
-        if (/^\.(?:png|jpe?g|jpe|gif|webp|bmp|tiff?|ico|svg|avif|hei[cf]|jxl|pdf)$/.test(token) && (!contentKnown || !bytes.length)) continue;
+        if (/^\.(?:png|jpe?g|jpe|gif|webp|bmp|tiff?|ico|svg|avif|hei[cf]|jxl|pdf|mp4|m4v|mov|webm)$/.test(token) && (!contentKnown || !bytes.length)) continue;
         if (/^\.(?:docx|xlsx|pptx|odt|ods|odp|epub|jar|zip)$/.test(token) && mime !== 'application/zip') continue;
+        if (/^\.(?:mp4|m4v|mov|webm)$/.test(token) && mime && !extensions.includes(token)) continue;
         if (/^\.(?:txt|csv|md|json|xml|html?|log)$/.test(token) && mime && !mime.startsWith('text/') && mime !== 'image/svg+xml') continue;
         // A conclusively recognized signature cannot be overridden by a renamed file.
         // Explicit custom extensions and unknown formats retain native accept semantics.
         if (!contentKnown || extensions.includes(token) || !/^\.(?:png|jpe?g|jpe|gif|webp|bmp|tiff?|ico|svg|avif|hei[cf]|jxl|pdf)$/.test(token)) return { success: true, actualMime: mime, contentTypeVerified: contentKnown && mime !== 'application/zip' };
       }
       const normalized=canonical(token);
-      if ((normalized.startsWith('image/') || normalized === 'application/pdf') && (!contentKnown || !bytes.length)) continue;
+      if ((normalized.startsWith('image/') || normalized === 'application/pdf' || normalized === 'video/*' || ['video/mp4', 'video/quicktime', 'video/webm'].includes(normalized)) && (!contentKnown || !bytes.length)) continue;
       if (/^[a-z0-9!#$&^_.+-]+\/(?:[a-z0-9!#$&^_.+-]+|\*)$/.test(normalized) && effective) {
         if (!mime && (normalized.startsWith('text/') || /^(?:application\/(?:pdf|zip|json|xml|javascript|x-javascript|vnd\.openxmlformats-officedocument\..*|vnd\.oasis\.opendocument\..*))$/.test(normalized))) continue;
         const match = normalized === effective || (mime === 'application/zip' && normalized === 'application/zip') || (normalized.endsWith('/*') && effective.startsWith(normalized.slice(0,-1)));

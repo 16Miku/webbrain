@@ -16258,6 +16258,8 @@ const ADAPTERS = [
     matches: (url) => /^https?:\/\/(www\.)?(twitter\.com|x\.com)\//.test(url),
     messaging: {
       verifyActiveRecipient: url => /^\/i\/chat\/[^/]+\/?$/.test(new URL(url).pathname),
+      // A public post has no recipient to bind, so this route is not a messaging surface.
+      publicComposer: url => /^\/compose\/(?:post|tweet)\/?$/.test(new URL(url).pathname),
     },
     fullPageCapture: { infiniteScroll: isTwitterInfiniteScrollUrl },
     notes: `
@@ -18218,6 +18220,19 @@ const GENERIC_MESSAGING_MAIL_LIKE_RE = new RegExp(
   + '|/(?:mail|compose)(?:/|$)',
   'i',
 );
+
+/**
+ * True for a public composer whose adapter declares that it has no recipient
+ * to bind (for example X /compose/post). Only the upload path may use this to
+ * skip recipient binding; clicks and typing on the same route keep the guard.
+ */
+export function isPublicComposerRoute(url) {
+  try {
+    return getActiveAdapter(url)?.messaging?.publicComposer?.(url) === true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Return the machine-readable recipient-safety policy for a messaging page.

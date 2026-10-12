@@ -120484,7 +120484,7 @@ test('sidepanel: pending attachments are tab-scoped and send-gated while loading
     assert.ok(source.includes('const MAX_TEXT_ATTACHMENT_BYTES = 5 * 1024 * 1024'), `${label} should accept text attachments up to the 5MB text cap`);
     assert.match(
       source,
-      /const maxBytes = isTextFile \? MAX_TEXT_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;/,
+      /const maxBytes = isTextFile \? MAX_TEXT_ATTACHMENT_BYTES : isVideo \? MAX_VIDEO_ATTACHMENT_BYTES : MAX_ATTACHMENT_BYTES;/,
       `${label} should size-check text attachments against the text cap`,
     );
     assert.match(

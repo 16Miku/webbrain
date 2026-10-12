@@ -2927,7 +2927,7 @@ function assertChatRequestInput(msg) {
   const hasWorkflow = structuredInputAllowed && typeof msg.workflowId === 'string' && msg.workflowId.trim().length > 0;
   const hasAttachment = structuredInputAllowed && Array.isArray(msg.attachments) && msg.attachments.some(attachment =>
     attachment && typeof attachment === 'object'
-    && ['image', 'document', 'text'].includes(attachment.kind)
+    && ['image', 'document', 'text', 'video'].includes(attachment.kind)
     && ((typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith('data:') && attachment.dataUrl.includes(','))
       || (attachment.kind === 'text' && typeof attachment.textContent === 'string')));
   if (validTextType && (hasText || hasWorkflow || hasAttachment)) return;
