@@ -1,0 +1,36 @@
+{
+  "schema": "manual-authenticated-evidence-example/1",
+  "_notes": [
+    "Schema examples only. Copy to an ignored private file and fill from actual browser observations at each checkpoint. The provided values are not evidence. Never paste model completion as confirmation."
+  ],
+  "observations": [
+    {
+      "schema": "webbrain-authenticated-evidence/1",
+      "source": "manual-confirmed-private",
+      "confirmedByOperator": true,
+      "confirmedAt": "REPLACE_ACTUAL_OBSERVATION_ISO_TIMESTAMP",
+      "site": "x",
+      "stage": "compose",
+      "marker": "REPLACE_CURRENT_PRIVATE_CHECKPOINT_MARKER",
+      "url": "https://x.com/home",
+      "identity": {
+        "matched": true,
+        "actual": "REPLACE_ACTOR_X_HANDLE"
+      },
+      "blocked": false,
+      "count": 0,
+      "exactCount": 0,
+      "matches": [],
+      "scope": {
+        "recipientMatched": true
+      },
+      "composer": {
+        "count": 1,
+        "exactCount": 1,
+        "recipientMatched": true,
+        "saved": false,
+        "attachmentPresent": false
+      }
+    }
+  ]
+}

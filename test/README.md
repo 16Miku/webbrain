@@ -1,5 +1,10 @@
 # Tests
 
+Authenticated local/Cloud workflows are separately opt-in. See
+[the setup, scenario matrix and verification limits](../website-tests/README.md).
+`npm run test:authenticated` checks the harness without live accounts;
+`npm run authenticated -- dry-run --target live` previews scoped live cases.
+
 Three layers, each with a different scope, speed, and cost profile.
 
 ## Setup (once)

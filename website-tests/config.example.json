@@ -1,0 +1,111 @@
+{
+  "schema": "authenticated-tests/1",
+  "target": "fixtures",
+  "liveMutations": false,
+  "selectedSites": [],
+  "selectedScenarios": [],
+  "allowedActions": [],
+  "allowedRecipients": [],
+  "allowedDestinations": [],
+  "privateArtifacts": false,
+  "artifacts": "artifacts",
+  "limits": {
+    "maxRuns": 90,
+    "timeoutMs": 180000,
+    "totalTimeoutMs": 3600000,
+    "pollMs": 3000,
+    "repetitions": 1
+  },
+  "actors": {
+    "A": {
+      "backend": "env:WBTEST_ACTOR_BACKEND",
+      "profile": "env:WBTEST_ACTOR_PROFILE",
+      "extensionPath": "env:WBTEST_ACTOR_EXTENSION_PATH",
+      "provider": "env:WBTEST_ACTOR_PROVIDER",
+      "model": "env:WBTEST_ACTOR_MODEL",
+      "apiKey": "env:WEBBRAIN_API_KEY",
+      "sessionId": "env:WBTEST_ACTOR_SESSION_ID"
+    },
+    "B": {
+      "backend": "env:WBTEST_OBSERVER_BACKEND",
+      "profile": "env:WBTEST_OBSERVER_PROFILE",
+      "apiKey": "env:WEBBRAIN_OBSERVER_API_KEY",
+      "sessionId": "env:WBTEST_OBSERVER_SESSION_ID"
+    }
+  },
+  "sites": {
+    "x": {
+      "url": "https://x.com/home",
+      "expectedIdentity": "REPLACE_ACTOR_X_HANDLE",
+      "observerIdentity": "REPLACE_OBSERVER_X_HANDLE",
+      "observerUrl": "REPLACE_EXACT_ACTOR_TEST_PROFILE_URL"
+    },
+    "whatsapp": {
+      "url": "https://web.whatsapp.com/",
+      "expectedIdentity": "REPLACE_ACTOR_E164_PHONE",
+      "observerIdentity": "REPLACE_OBSERVER_E164_PHONE",
+      "recipient": "REPLACE_OBSERVER_CONTACT_NAME",
+      "recipientIdentity": "REPLACE_OBSERVER_E164_PHONE",
+      "observerRecipient": "REPLACE_ACTOR_CONTACT_NAME",
+      "observerRecipientIdentity": "REPLACE_ACTOR_E164_PHONE",
+      "observerUrl": "https://web.whatsapp.com/"
+    },
+    "telegram": {
+      "url": "https://web.telegram.org/k/",
+      "expectedIdentity": "REPLACE_ACTOR_E164_PHONE",
+      "observerIdentity": "REPLACE_OBSERVER_E164_PHONE",
+      "recipient": "REPLACE_OBSERVER_CONTACT_NAME",
+      "recipientIdentity": "REPLACE_OBSERVER_NUMERIC_PEER_ID",
+      "observerRecipient": "REPLACE_ACTOR_CONTACT_NAME",
+      "observerRecipientIdentity": "REPLACE_ACTOR_NUMERIC_PEER_ID",
+      "observerUrl": "REPLACE_EXACT_OBSERVER_TEST_CONVERSATION_URL"
+    },
+    "bluesky": {
+      "url": "https://bsky.app/",
+      "expectedIdentity": "REPLACE_ACTOR_BSKY_HANDLE",
+      "observerIdentity": "REPLACE_OBSERVER_BSKY_HANDLE",
+      "observerUrl": "REPLACE_EXACT_ACTOR_TEST_PROFILE_URL"
+    },
+    "mastodon": {
+      "url": "https://replace.instance.invalid/web/home",
+      "expectedIdentity": "REPLACE_ACTOR_USER_AT_INSTANCE",
+      "observerIdentity": "REPLACE_OBSERVER_USER_AT_INSTANCE",
+      "observerUrl": "REPLACE_EXACT_ACTOR_TEST_PROFILE_URL"
+    },
+    "gmail": {
+      "url": "https://mail.google.com/mail/u/0/",
+      "expectedIdentity": "REPLACE_ACTOR_EMAIL",
+      "observerIdentity": "REPLACE_OBSERVER_EMAIL",
+      "recipient": "REPLACE_OBSERVER_EMAIL",
+      "recipientIdentity": "REPLACE_OBSERVER_EMAIL",
+      "observerUrl": "https://mail.google.com/mail/u/0/"
+    },
+    "protonmail": {
+      "url": "https://mail.proton.me/u/0/inbox",
+      "expectedIdentity": "REPLACE_ACTOR_EMAIL",
+      "observerIdentity": "REPLACE_OBSERVER_EMAIL",
+      "recipient": "REPLACE_OBSERVER_EMAIL",
+      "recipientIdentity": "REPLACE_OBSERVER_EMAIL",
+      "observerUrl": "https://mail.proton.me/u/0/inbox"
+    },
+    "drive": {
+      "url": "https://drive.google.com/drive/u/0/my-drive",
+      "expectedIdentity": "REPLACE_ACTOR_EMAIL",
+      "observerIdentity": "REPLACE_OBSERVER_EMAIL",
+      "recipient": "REPLACE_OBSERVER_EMAIL",
+      "recipientIdentity": "REPLACE_OBSERVER_EMAIL",
+      "folderUrl": "REPLACE_EXACT_DISPOSABLE_FOLDER_URL",
+      "observerUrl": "https://drive.google.com/drive/u/0/shared-with-me"
+    }
+  },
+  "interventions": {},
+  "_notes": [
+    "Copy this file to .env.authenticated.json beside the suite .env and replace placeholders using dedicated test accounts. JSON credentials must be env: references.",
+    "Live work requires target=live, liveMutations=true, explicit action and exact recipient/folder allowlists. Allowed action names: navigation, compose, edit, post, send, upload, delete, share, rename, reply, forward, download, create.",
+    "For WhatsApp and Telegram, expose your own account profile/settings phone number and the exact recipient's contact details before preflight. Their conversation title is insufficient identity proof.",
+    "The read-only identity observer never clicks to reveal account details. Operator-verified identitySelector/identityAttribute and recipientIdentitySelector/recipientIdentityAttribute may bind a changed UI; a selector alone never bypasses exact value checks.",
+    "Drive operates only within the designated disposable folder. Keep that exact URL in allowedDestinations. The runner supplies a uniquely marked fixture filename and revisedFilename.",
+    "When a cloud browser cannot expose independent DOM, use a local observer or explicit identity-backed private manual evidence. Model completion text alone cannot pass.",
+    "Live selectors are provisional. A missing identity, canonical item ID, safe cleanup proof, or checkpoint capability blocks that operation; fixture passes do not claim real-account success."
+  ]
+}
