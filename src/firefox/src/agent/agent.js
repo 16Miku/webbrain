@@ -6573,6 +6573,10 @@ export class Agent extends LoopDetector {
     return this._runningTabs.has(tabId);
   }
 
+  hasOtherRunningTabs(tabId) {
+    return [...this._runningTabs].some(other => other !== tabId);
+  }
+
   _beginSteeringRun(tabId, onUpdate, runOptions = {}) {
     const feedbackRun = this._pageFeedbackRuns?.get(tabId);
     if (feedbackRun) feedbackRun.onUpdate = onUpdate;
@@ -17031,6 +17035,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       error: 'The ChatGPT research tab was closed. Research escalation stopped.',
       ...extra,
     };
+  }
+
+  canPauseAtClarification(tabId, clarifyId) {
+    const entry = this._pendingClarifications.get(tabId)?.get(clarifyId);
+    return entry?.handoffSafe === true && !entry.settled;
   }
 
   /**
@@ -35770,6 +35779,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           restartTimeout: null,
           onUpdate,
           safeFirst,
+          // Resolving this standalone meta-tool cannot dispatch a page action
+          // before _executeToolBatch reaches the next handoff boundary.
+          handoffSafe: true,
         };
         // Arm auto-select when Instant (0) or a positive wait; Off (-1) waits forever.
         // Instant uses source=auto (user intentionally set auto-approve, e.g. headless).

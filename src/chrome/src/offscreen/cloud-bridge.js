@@ -21,8 +21,8 @@
     'cloud_scheduled_jobs',
     'cloud_respond',
     'cloud_abort',
-  'cloud_pause',
-  'cloud_resume',
+    'cloud_pause',
+    'cloud_resume',
   ]);
   let socket = null;
   let bridgeUrl = null;

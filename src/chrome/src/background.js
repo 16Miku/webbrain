@@ -257,8 +257,8 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
     || scheduler.isRunning(tabId)
     || cloudRunController.isRunning(tabId),
 });
-agent.setRunStartGuard((tabId, context) => {
-  cloudRunController.guardRunStart(tabId, context);
+agent.setRunStartGuard(async (tabId, context) => {
+  await cloudRunController.guardRunStart(tabId, context);
   return teacherRunInterlock.guardRunStart(tabId);
 });
 const profileSync = new ProfileSyncManager(chrome.storage.local);

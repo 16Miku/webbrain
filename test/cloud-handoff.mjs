@@ -16,7 +16,7 @@ globalThis.chrome = globalThis.browser = {
 
 for (const browser of ['chrome', 'firefox']) {
   const { CloudHandoffGate } = await import(`../src/${browser}/src/agent/cloud-handoff.js`);
-  const { createCloudRunController } = await import(`../src/${browser}/src/cloud-runs.js`);
+  const { createCloudRunController, buildCloudPersistenceRows } = await import(`../src/${browser}/src/cloud-runs.js`);
   const { Agent } = await import(`../src/${browser}/src/agent/agent.js`);
 
   function harness(processMessage) {
@@ -24,7 +24,8 @@ for (const browser of ['chrome', 'firefox']) {
     const api = { storage: { session: { get: async key => ({ [key]: structuredClone(stored[key]) }), set: async data => Object.assign(stored, structuredClone(data)) } },
       tabs: { get: async id => ({ id, url: 'https://example.com/' }), query: async () => [{ id: 7, url: 'https://example.com/' }], update: async () => {} } };
     let clarificationResolve;
-    const agent = { isRunning: () => false, strictSecretMode: true, processMessage, abort() {}, _persistNow: async () => ({ ok: true }),
+    const agent = { isRunning: () => false, hasOtherRunningTabs: () => false, canPauseAtClarification: () => true,
+      strictSecretMode: true, processMessage, abort() {}, _persistNow: async () => ({ ok: true }),
       submitClarifyResponse(_tab, _id, answer) { clarificationResolve?.(answer); return true; } };
     let seq = 0;
     const controller = createCloudRunController({ chromeApi: api, agent, makeRunId: () => `run_handoff_${++seq}`, ensureOffscreen: async () => {} });
@@ -77,11 +78,11 @@ for (const browser of ['chrome', 'firefox']) {
     await assert.rejects(restarted.resume({ runId: run.runId }), error => error.status === 409);
     await assert.rejects(restarted.startRun({ task: 'Another bot' }), error => error.status === 409);
     await assert.rejects(restarted.startRun({ task: 'Another bot in another tab', tabId: 8 }), error => error.status === 409);
-    for (const kind of ['scheduled', 'interactive']) assert.throws(() => restarted.guardRunStart(8, { kind }), error => error.status === 409);
+    for (const kind of ['scheduled', 'interactive', 'cloud']) await assert.rejects(restarted.guardRunStart(8, { kind }), error => error.status === 409);
     assert.equal(calls, 1, 'neither restart nor Hand back replays the old task');
     assert.equal((await restarted.abort({ runId: run.runId })).status, 'aborted');
     assert.equal(restarted.isRunning(7), false);
-    assert.doesNotThrow(() => restarted.guardRunStart(8, { kind: 'scheduled' }));
+    await restarted.guardRunStart(8, { kind: 'scheduled' });
     await h.controller.abort({ runId: run.runId });
   });
 
@@ -197,10 +198,119 @@ for (const browser of ['chrome', 'firefox']) {
     await h.controller.pause({ runId: run.runId }); ready.resolve(); await writing.promise;
     let exposed = false;
     const status = h.controller.status({ runId: run.runId }).then(value => { exposed = true; return value; });
+    let pauseExposed = false;
+    const repeatPause = h.controller.pause({ runId: run.runId }).then(value => { pauseExposed = true; return value; });
     await tick(); assert.equal(exposed, false, 'the viewer does not get control until the checkpoint is durable');
+    assert.equal(pauseExposed, false, 'repeating Take over also waits for the checkpoint');
     written.resolve(); assert.equal((await status).status, 'paused');
+    assert.equal((await repeatPause).status, 'paused');
     await h.controller.abort({ runId: run.runId });
     await until(() => h.controller.runs.get(run.runId).status === 'aborted');
     assert.equal(h.controller.isRunning(7), false);
+  });
+
+  test(`${browser}: another Cloud startup prevents handoff until it settles`, async () => {
+    const pending = deferred(), entered = deferred(), done = deferred();
+    let started = 0;
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      started++; await done.promise; options.onRunFinished('done'); return 'Read';
+    });
+    const run = await h.controller.startRun({ task: 'Read', tabId: 7 });
+    const get = h.api.tabs.get;
+    h.api.tabs.get = async id => { if (id === 8) { entered.resolve(); await pending.promise; } return get(id); };
+    const second = h.controller.startRun({ task: 'Read in another tab', tabId: 8 });
+    await entered.promise;
+    try {
+      await assert.rejects(h.controller.pause({ runId: run.runId }), error => error.status === 409);
+      assert.equal(h.controller.runs.get(run.runId).handoff, undefined);
+    } finally { pending.resolve(); await second; done.resolve(); }
+    await until(() => [...h.controller.runs.values()].every(value => value.status === 'completed'));
+    assert.equal(started, 2);
+  });
+
+  test(`${browser}: other active Cloud or native tabs prevent manual control`, async () => {
+    const done = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      await done.promise; options.onRunFinished('done'); return 'Read';
+    });
+    const run = await h.controller.startRun({ task: 'Read', tabId: 7 });
+    const other = await h.controller.startRun({ task: 'Read', tabId: 8 });
+    try {
+      await assert.rejects(h.controller.pause({ runId: run.runId }), error => error.status === 409);
+      h.controller.runs.get(other.runId).status = 'completed';
+      h.agent.hasOtherRunningTabs = id => id === 7;
+      await assert.rejects(h.controller.pause({ runId: run.runId }), error => error.status === 409);
+      assert.equal(h.controller.runs.get(run.runId).handoff, undefined);
+    } finally { done.resolve(); }
+    await until(() => h.controller.runs.get(run.runId).status === 'completed');
+  });
+
+  test(`${browser}: startup guards hydrate interrupted handoffs before permitting any agent`, async () => {
+    const h = harness(async () => assert.fail('No new run should start'));
+    h.stored.webbrainCloudRunSnapshots = [{ runId: 'old', tabId: 7, status: 'paused', createdAt: '2020-01-01',
+      handoff: { state: 'paused', resumable: true, interrupted: false } }];
+    for (const kind of ['cloud', 'scheduled', 'interactive']) {
+      await assert.rejects(h.controller.guardRunStart(8, { kind }), error => error.status === 409);
+    }
+    assert.equal(h.controller.isRunning(7), true);
+    await h.controller.abort({ runId: 'old' });
+    await h.controller.guardRunStart(8, { kind: 'interactive' });
+  });
+
+  test(`${browser}: unavailable persisted state cannot silently authorize a new agent`, async () => {
+    const h = harness(async () => assert.fail('No run should start'));
+    h.api.storage.session.get = async () => { throw new Error('Session storage unavailable'); };
+    await assert.rejects(h.controller.guardRunStart(8, { kind: 'interactive' }), /Session storage unavailable/);
+    await assert.rejects(h.controller.startRun({ task: 'Read' }), /Session storage unavailable/);
+    assert.equal(h.controller.runs.size, 0);
+  });
+
+  test(`${browser}: history limits cannot evict an old active handoff`, () => {
+    const handoff = { runId: 'old-paused', tabId: 7, status: 'paused', createdAt: '2000-01-01',
+      handoff: { state: 'paused', resumable: true, interrupted: false } };
+    const history = Array.from({ length: 60 }, (_, index) => ({ runId: `history-${index}`, status: 'completed',
+      createdAt: `2026-01-01T00:00:${String(index).padStart(2, '0')}Z` }));
+    const rows = buildCloudPersistenceRows([...history, handoff]);
+    assert.equal(rows.length, 50);
+    assert.equal(rows[0].runId, 'old-paused');
+    assert.equal(rows[0].handoff.state, 'paused');
+  });
+
+  test(`${browser}: internal permission waits cannot acknowledge an unsettled action`, async () => {
+    const answer = deferred(); let posted = false;
+    const h = harness(async (_tab, _task, update, _mode, _attachments, options) => {
+      update('clarify', { clarifyId: 'submit-form', promptKind: 'submitConfirmation', question: 'Submit?', options: ['once', 'deny'] });
+      await answer.promise; posted = true; options.onRunFinished('done'); return 'Submitted';
+    });
+    h.agent.canPauseAtClarification = () => false;
+    h.setClarificationResolver(() => answer.resolve());
+    const run = await h.controller.startRun({ task: 'Submit the form' });
+    await until(() => h.controller.runs.get(run.runId).status === 'needs_user_input');
+    await assert.rejects(h.controller.pause({ runId: run.runId }), error => error.status === 409);
+    assert.equal(h.controller.runs.get(run.runId).handoff, undefined);
+    assert.equal(posted, false);
+    await h.controller.respond({ runId: run.runId, clarifyId: 'submit-form', answer: 'once' });
+    await until(() => h.controller.runs.get(run.runId).status === 'completed');
+    assert.equal(posted, true);
+  });
+
+  test(`${browser}: native standalone clarification is safe but native form approval is not`, async () => {
+    const provider = { name: 'test', model: 'test' };
+    const agent = new Agent({ getActive: () => provider });
+    agent.clarifyTimeoutSec = -1;
+    const ready = deferred(); let question, approval;
+    const standalone = agent._executeToolImpl(7, 'clarify', { question: 'Have you signed in?', options: ['Yes', 'Stop'] },
+      (type, data) => { if (type === 'clarify') { question = data; ready.resolve(); } });
+    const form = agent._promptSubmitConfirmation(7, { host: 'example.com', summary: 'Submit this form' },
+      (type, data) => { if (type === 'clarify') approval = data; });
+    try {
+      await ready.promise;
+      assert.equal(agent.canPauseAtClarification(7, question.clarifyId), true);
+      assert.equal(agent.canPauseAtClarification(7, approval.clarifyId), false);
+    } finally { agent._cancelClarifications(7, 'Fixture cleanup'); await Promise.all([standalone, form]); }
+    assert.equal(agent.canPauseAtClarification(7, question.clarifyId), false);
+    agent._runningTabs.add(8);
+    assert.equal(agent.hasOtherRunningTabs(7), true);
+    assert.equal(agent.hasOtherRunningTabs(8), false);
   });
 }
