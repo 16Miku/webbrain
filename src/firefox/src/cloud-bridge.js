@@ -9,7 +9,7 @@
  */
 
 export const BRIDGE_PROTOCOL_VERSION = 2;
-const BRIDGE_CAPABILITIES = ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1'];
+const BRIDGE_CAPABILITIES = ['saved_workflows_v1', 'run_modes_v1', 'scheduled_jobs_v1', 'run_provider_v1', 'private_results_v1', 'bot_memory_v1', 'run_handoff_v1'];
 const ALLOWED_BRIDGE_ACTIONS = new Set([
   'cloud_run',
   'cloud_workflow_compile',
@@ -18,6 +18,8 @@ const ALLOWED_BRIDGE_ACTIONS = new Set([
   'cloud_scheduled_jobs',
   'cloud_respond',
   'cloud_abort',
+  'cloud_pause',
+  'cloud_resume',
 ]);
 
 export function createCloudBridge({ dispatch, WebSocketImpl = globalThis.WebSocket, nav = globalThis.navigator } = {}) {
