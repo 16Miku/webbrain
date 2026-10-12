@@ -420,18 +420,18 @@ test('Chrome certified native BUTTON initial trusted input and one-shot fences',
     assert.equal(commitEvidence(f).verifiedFinalSubmit, false);
   });
 
-  await nativeT.test('native commit metadata: post-ACK page focus interruption does not certify a commit', async () => {
+  await nativeT.test('native commit metadata: page-owned focus preserves delivery without certifying a remote commit', async () => {
     const f = await fixture({ label: 'Publish', noCommit: true, preparationScript: "commit.addEventListener('click',event=>{if(event.isTrusted)setTimeout(()=>document.querySelector('main input').focus(),50);});" });
     f.agent._beginCompletionInvariant(17);
     const result = await dispatch(f);
-    assert.equal(result.success, false); assert.equal(result.nativeInputAcknowledged, true);
-    assert.equal(result.observationInterrupted, true); assert.equal(result.outcomeUnknown, true);
-    assert.equal(result.name, undefined); assert.equal(result.verified, false);
+    assert.equal(result.success, true); assert.equal(result.nativeInputAcknowledged, true);
+    assert.equal(result.observationInterrupted, false); assert.equal(result.trusted, true);
+    assert.equal(result.name, 'Publish');
     rememberCommit(f, result);
-    assert.equal(f.agent._completionSubmitStates.has(17), false);
+    assert.equal(f.agent._completionSubmitStates.has(17), true, 'Delivery receipt is distinct from saved-state evidence.');
     assert.equal(commitEvidence(f).verifiedFinalSubmit, false);
     const beforeRepeat = commands.filter(call => call.method === 'Input.dispatchMouseEvent' && call.type === 'mousePressed').length;
-    await freshObservation(f); await dispatch(f);
+    await dispatch(f);
     assert.equal(commands.filter(call => call.method === 'Input.dispatchMouseEvent' && call.type === 'mousePressed').length, beforeRepeat);
   });
 
@@ -895,21 +895,18 @@ test('Chrome certified native BUTTON initial trusted input and one-shot fences',
         ['mouseMoved','mousePressed','mouseReleased']);
       assert.equal(result.dispatched, true);
       assert.equal(result.nativeInputAcknowledged, true, 'Completed protocol acknowledgements must survive effect-observation failure.');
-      assert.equal(result.observationInterrupted, restoration === 'next-turn');
+      assert.equal(result.observationInterrupted, false, 'Read-only effect inspection permits page-owned focus restoration.');
+      assert.equal(result.success, true); assert.equal(result.trusted, true); assert.equal(result.verified, false);
+      assert.equal(result.effectVerificationPending, true); assert.equal(result.retryable, false);
       if (restoration === 'next-turn') {
-        assert.equal(result.success, false); assert.equal(result.trusted, false); assert.equal(result.verified, false);
-        assert.equal(result.outcomeUnknown, true); assert.equal(result.retryable, false);
-        assert.equal(timing.preparationVeto.stage, 'observation');
-        assert.equal(timing.preparationVeto.pageFeedbackPending, true);
-        assert.match(result.error, /Observation interrupted after native input acknowledgements completed/);
-        assert.doesNotMatch(result.error, /Browser interaction changed|business save|saved successfully/i);
+        assert.equal(result.error, undefined, 'Completed input must not be presented as a failed click.');
+        assert.match(result.warning, /click was delivered/i);
         assert.ok(feedback.some(event => event.kind === 'activity' && event.source === 'page'));
         assert.equal(feedback.some(event => event.source === 'user'), false);
         await page.evaluate(() => document.querySelector('main').append(qaClosedModal));
-        await freshObservation(f);
         const beforeRepeat = commands.filter(call=>call.method==='Input.dispatchMouseEvent' && call.type==='mousePressed').length;
         const repeat = await dispatch(f);
-        assert.equal(repeat.noDispatch, true); assert.equal(repeat.nativeInputAcknowledged, false);
+        assert.equal(repeat.noDispatch, true); assert.notEqual(repeat.nativeInputAcknowledged, true);
         assert.equal((await facts()).clicks.length, 1);
         assert.equal(commands.filter(call=>call.method==='Input.dispatchMouseEvent' && call.type==='mousePressed').length, beforeRepeat);
       } else {
@@ -917,6 +914,30 @@ test('Chrome certified native BUTTON initial trusted input and one-shot fences',
         assert.notEqual(result.outcomeUnknown, true); assert.equal(result.verified, false);
       }
     });
+
+  await nativeT.test('a failed post-click read preserves delivered input and its pending repeat lock', async () => {
+    const f = await fixture({ noCommit: true });
+    const resolve = f.agent._resolveClickAxFallbackTarget;
+    f.agent._resolveClickAxFallbackTarget = function(tab, ref, signal, options) {
+      if (options?.observeOnly) throw new Error('Fixture read response unavailable');
+      return resolve.call(this, tab, ref, signal, options);
+    };
+    const result = await dispatch(f);
+    assert.equal(result.success, true); assert.equal(result.trusted, true);
+    assert.equal(result.dispatched, true); assert.equal(result.nativeInputAcknowledged, true);
+    assert.equal(result.verified, false); assert.equal(result.effectVerificationPending, true);
+    assert.equal(result.observationInterrupted, true); assert.equal(result.retryable, false);
+    assert.equal(result.error, undefined); assert.match(result.warning, /click was delivered/i);
+    assert.deepEqual((await facts()).clicks, [{ trusted: true, active: true }]);
+    f.agent._resolveClickAxFallbackTarget = resolve;
+    await freshObservation(f);
+    const commandsBefore = commands.filter(call => call.method === 'Input.dispatchMouseEvent').length;
+    const repeat = await dispatch(f);
+    assert.equal(repeat.noDispatch, true);
+    assert.equal(commands.filter(call => call.method === 'Input.dispatchMouseEvent').length, commandsBefore,
+      'A new observation cannot replay unresolved delivered input.');
+    assert.equal((await facts()).clicks.length, 1);
+  });
 
   await nativeT.test('native ACK metadata stays false when the real release acknowledgement is lost', async () => {
     const f = await fixture({ noCommit: true });
@@ -1063,8 +1084,9 @@ test('Chrome certified native BUTTON initial trusted input and one-shot fences',
     try { result = await dispatch(f, timing); }
     finally { cdpClient.consumeFileInputClickGuard = consume; }
     assert.equal(unrelatedMutationDelivered, true, 'The unknown mutation must already be queued before input completion.');
-    assert.equal(result.success, false); assert.equal(result.verified, false);
-    assert.equal(result.nativeInputAcknowledged, true); assert.equal(result.outcomeUnknown, true);
+    assert.equal(result.success, true); assert.equal(result.verified, false);
+    assert.equal(result.nativeInputAcknowledged, true); assert.equal(result.effectVerificationPending, true);
+    assert.equal(result.inconclusive, true);
     assert.equal(result.retryable, false); assert.equal(timing.trustedInputEvents, 3);
     assert.deepEqual((await facts()).clicks, [{ trusted: true, active: true }]);
     const before = commands.filter(call => call.method === 'Input.dispatchMouseEvent').length;
@@ -1444,9 +1466,10 @@ test('Chrome certified native BUTTON initial trusted input and one-shot fences',
     let result;
     try { result = await f.agent.executeTool(17, 'click_ax', args); }
     finally { cdpClient.consumeFileInputClickGuard = consume; }
-    assert.equal(unknownDelivered, true); assert.equal(result.success, false); assert.equal(result.verified, false);
-    assert.equal(result.nativeInputAcknowledged, true); assert.equal(result.outcomeUnknown, true);
-    assert.equal(result.retryable, false);
+    assert.equal(unknownDelivered, true); assert.equal(result.success, true);
+    assert.equal(result.nativeInputAcknowledged, true);
+    assert.ok([...f.run.events.values()].some(event => event.source === 'unknown'),
+      'Read-only observation must preserve unknown feedback for the next decision.');
     assert.deepEqual((await facts()).clicks, [{ trusted: true, active: true }]); assert.equal((await facts()).commits, 1);
     assert.deepEqual(commands.filter(call => call.method === 'Input.dispatchMouseEvent').map(call => call.type),
       ['mouseMoved', 'mousePressed', 'mouseReleased']);
@@ -1599,7 +1622,7 @@ test('native observation note is boolean-only and recorder failure preserves the
 
 for (const build of ['chrome', 'firefox']) test(`${build} transport prepress diagnostics remain bounded without changing the veto or release`, async () => {
   const { Agent: BuildAgent } = await import(`../src/${build}/src/agent/agent.js`);
-  const { beforePageAgentDispatch } = await import(`../src/${build}/src/agent/page-feedback.js`);
+  const { beforePageAgentDispatch, installPageFeedback } = await import(`../src/${build}/src/agent/page-feedback.js`);
   const originalMessage = api.tabs.sendMessage;
   const originalGet = api.tabs.get;
   const agent = new BuildAgent({});
@@ -1629,6 +1652,30 @@ for (const build of ['chrome', 'firefox']) test(`${build} transport prepress dia
     assert.equal('modelBindingInvalid' in error.pagePreparationVeto, false);
     assert.equal('layoutChanged' in error.pagePreparationVeto, false);
     assert.equal(Object.values(error.pagePreparationVeto).every(value => value === 'monitor_rejected' || typeof value === 'boolean'), true);
+    monitorVeto.predicate = 'target_changed';
+    for (const started of [false, true]) {
+      class DiagnosticProbe extends BuildAgent {
+        async executeTool(id, _name, _args, _update, context) {
+          if (started) context._contentActionDispatchState.started = true;
+          try { await beforePageAgentDispatch(api, id, { kind: 'click' }); }
+          catch (caught) {
+            caught.pagePreparationVeto.privateValue = 'PRIVATE_DRAFT';
+            caught.pagePreparationVeto.selector = 'PRIVATE_SELECTOR';
+            throw caught;
+          }
+        }
+      }
+      installPageFeedback(DiagnosticProbe);
+      const probe = new DiagnosticProbe({});
+      const receipt = await probe.executeTool(tab, 'click_ax', { ref_id: 'ref_PRIVATE' });
+      assert.equal(receipt.success, false);
+      assert.equal(receipt.dispatched, started);
+      assert.equal(receipt.preparationVeto.predicate, 'target_changed');
+      assert.equal(receipt.preparationVeto.cause, 'monitor_rejected');
+      assert.doesNotMatch(JSON.stringify(receipt.preparationVeto), /PRIVATE|ref_|https?:/);
+      if (started) { assert.equal(receipt.outcomeUnknown, true); assert.equal(receipt.retryable, false); }
+      else assert.equal(receipt.noDispatch, true);
+    }
     stateChecks = 0;
     agent._pageFeedbackBlocksCall = () => { stateChecks++; return true; };
     try { await beforePageAgentDispatch(api, tab, { kind: 'click' }); } catch (caught) { error = caught; }

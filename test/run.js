@@ -80753,14 +80753,11 @@ test('agent prefers download_public_media before download_social_media when avai
     clickNavigationAgent._ensureGateSetting = async () => { };
     clickNavigationAgent._skipPermissionGate = true;
     let clickNavigationExecutedSocial = false;
-    let clickNavigationUrlReads = 0;
-    clickNavigationAgent._currentUrl = async () => {
-      clickNavigationUrlReads += 1;
-      return clickNavigationUrlReads === 1
-        ? 'https://www.instagram.com/reel/before/'
-        : 'https://www.instagram.com/reel/after/';
-    };
+    let clickNavigationCurrentUrl = 'https://www.instagram.com/reel/before/';
+    clickNavigationAgent._currentUrl = async () => clickNavigationCurrentUrl;
     clickNavigationAgent.executeTool = async (_tabId, name) => {
+      // Preparation can read the URL repeatedly; navigation occurs on click.
+      if (name === 'click') clickNavigationCurrentUrl = 'https://www.instagram.com/reel/after/';
       if (name === 'download_social_media') {
         clickNavigationExecutedSocial = true;
         return { success: true, completedCount: 1 };
@@ -81622,7 +81619,7 @@ test('set_field waits for reconciliation and verifies the complete value', () =>
       /const dispatchKeySequence = \(key, keyCode, includeKeypress = false\) => \{[\s\S]*result\.dispatched = true;\s*if \(key === 'Enter'\) submissionDispatched = true;\s*el\.dispatchEvent\(new KeyboardEvent\('keydown'[\s\S]*const expiredAfterKeydown = actionDeadlineExpired\(\);[\s\S]*const expiredBeforeKeyup = expiredAfterKeydown \|\| actionDeadlineExpired\(\);[\s\S]*el\.dispatchEvent\(new KeyboardEvent\('keyup'[\s\S]*result\.completedWithinDeadline = !expiredBeforeKeyup && !actionDeadlineExpired\(\);/,
       `${label}: set_field can leave a synthetic key pressed when a listener crosses the deadline`,
     );
-    assert.match(branch, /el\.focus\(\{ preventScroll: true \}\);\s*\} catch \{\}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
+    assert.match(branch, /_withTypingPreparation\('focus', el, \(\) => el\.focus\(\{ preventScroll: true \}\)\);\s*\} catch \(error\) \{ if \(error\?\.code === 'page_feedback_pending'\) throw error; \}\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/, `${label}: set_field can mutate after focus handlers cross the deadline`);
     assert.match(branch, /if \(setter\) setter\.call\(el, newVal\); else el\.value = newVal;\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*el\.dispatchEvent\(new Event\('input'/, `${label}: set_field does not recheck its deadline before page events`);
     if (label === 'firefox') {
       assert.doesNotMatch(branch, /_retryFieldWithExecCommand/, 'firefox: a dispatched field write must not trigger an automatic second write');
@@ -93485,6 +93482,7 @@ test('trusted continuation carries verified submit state without permitting ordi
       completionSignalObserved: true,
       observedAfterSubmit: true,
       workflowBinding: null,
+      taskKey: '',
     }, `${AgentClass.name}: trusted continuation did not restore verified submit evidence`);
 
     agent._storeContinuationExecutionEvidence(tabId);
@@ -114024,7 +114022,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.ok(fallbackTypeStart >= 0 && fallbackTypeEnd > fallbackTypeStart, `${label}: fallback typing deadline boundary missing`);
     assert.match(
       fallbackType,
-      /el\.focus\(\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
+      /_withTypingPreparation\('focus', el, \(\) => el\.focus\(\)\);\s*if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);/,
       `${label}: fallback typing can mutate a field after late focus handlers cross the deadline`,
     );
     assert.match(

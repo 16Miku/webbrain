@@ -213,7 +213,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   const captures = new Map();
   const capture = async (modality, refresh = false) => {
     const before = await agent._completionDocumentStamp(tabId, true);
-    if (!semanticCommitDocumentMatches(agent._completionSubmitStates.get(tabId), before)) return null;
+    if (!semanticCommitDocumentMatches(agent._currentCompletionSubmitState(tabId), before)) return null;
     const cached = captures.get(modality);
     const reusable = cached?.identity === before && context.isCurrent();
     if (!refresh && reusable) return cached;
@@ -228,7 +228,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       pixels = (await agent._shrinkImageForBudget(pixels, 0, 0, { ...budget, maxTargetPx: Math.min(1408, budget.maxTargetPx), maxTargetTokens: Math.min(1400, budget.maxTargetTokens) })).dataUrl;
       observation = { type: 'image_url', image_url: { url: pixels } };
     } else {
-      const submit = agent._completionSubmitStates.get(tabId);
+      const submit = agent._currentCompletionSubmitState(tabId);
       // Certify a single same-document form against its entire subtree rather
       // than unrelated page counters or feeds. Unknown/replaced scopes and
       // navigation still require the complete page. Live statuses and dialogs
@@ -258,7 +258,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     const frame = typeof agent._completionIframeSnapshot === 'function' ? await agent._completionIframeSnapshot(tabId) : null;
     const identity = await agent._completionDocumentStamp(tabId, true);
     if (!identity || identity !== before || !context.isCurrent()) return null;
-    const submit = agent._completionSubmitStates.get(tabId);
+    const submit = agent._currentCompletionSubmitState(tabId);
     const binding = submit?.workflowBinding;
     const workflowBinding = binding ? { adapterName: binding.adapterName, revision: binding.revision,
       job: binding.job, verificationKind: binding.verificationKind, recipientBound: binding.recipientBound === true } : null;

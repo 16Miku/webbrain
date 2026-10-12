@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
+import { createCompletionInvariantState } from '../src/chrome/src/agent/completion-invariant.js';
 
 // The page, native AX refs, submit probe, normalized intent contract, and
 // content dispatch are real. Every browser request is fulfilled locally.
@@ -96,6 +97,7 @@ for (const build of ['chrome','firefox']) {
         ['conflicting accessible commit name','<button id="unsafe" type="button" aria-label="Send">Show details</button>'],
         ['explicit submit type','<button id="unsafe" type="submit">Finish</button>'],
         ['hidden target','<button id="unsafe" type="button" hidden>Show details</button>'],
+        ['unbound saved resource deletion','<button id="unsafe" type="button">Delete resource</button>'],
       ];
       for(const[name,html]of unsafeControls)await t.test(`${name} retains no-dispatch protection`,async()=>{
         const f=await setup(html);
@@ -125,6 +127,14 @@ for (const build of ['chrome','firefox']) {
         ['unknown submission obligation',{gate:{requiresSubmission:null}}],
         ['ready publication contract',{request:'Post Hello on Bluesky.',contract:{version:1,status:'ready',actions:[{id:'p1',platform:'bluesky',account:null,posts:[{body:{kind:'exact',source:{source:'request',start:'Hello',end:'Hello'}},media:{kind:'count',type:'any',format:null,min:0,max:0},context:{kind:'post',target:null}}]}],requirements:'p1',prohibited:[],reason:'Publication requested.'}}],
         ['contract requires refresh',{},f=>{f.guard.socialPublication.needsRecompile=true;}],
+      ])await t.test(`${condition} does not turn a resolved preparatory activation into publication`,async()=>{
+        const f=await setup('<button id="ordinary" type="button">Show details</button>',options);
+        change?.(f);
+        const {result}=await attempt(f,{ref_id:await targetRef('ordinary')});
+        assert.equal(result.success,true);
+        assert.deepEqual(await page.evaluate(()=>window.uiClicks),['ordinary']);
+      });
+      for(const[condition,options,change]of[
         ['different task identity',{},f=>{f.guard.taskKey='replacement-task';}],
         ['Stop',{},f=>{f.agent._checkAbort=()=>true;}],
         ['pending accepted steering',{},f=>{f.agent._hasPendingSteering=()=>true;}],
@@ -146,6 +156,97 @@ for (const build of ['chrome','firefox']) {
         }
         assert.deepEqual(await page.evaluate(()=>window.uiClicks),[]);
       });
+      await t.test('structural resource popup labels pass with no publication contract and after steering',async()=>{
+        for(const host of ['https://example.test/','https://x.com/','https://bsky.app/']) {
+          await page.goto(host);
+          await page.evaluate(() => { window.contentListeners=[]; window.chrome={runtime:{sendMessage:()=>{},onMessage:{addListener:fn=>window.contentListeners.push(fn)}}};window.browser=window.chrome; });
+          for(const name of ['accessibility-tree.js','content.js'])await page.addScriptTag({content:readFileSync(`src/${build}/src/content/${name}`,'utf8')});
+          const f=await setup('<button id="ordinary" type="button" aria-haspopup="menu" aria-controls="choices">Thread post options</button><div id="choices" role="menu"></div>',{compile:false});
+          f.guard.steeringPriorSubmission={dispatched:true,observedAfterSubmit:false};
+          for(const [tool,args]of [['click_ax',{ref_id:await targetRef('ordinary')}],['click',{selector:'#ordinary'}]]) {
+            const detected=await f.agent._detectLikelySubmitAction(1,tool,args);
+            assert.equal(detected.resolvedPreparatoryTarget,true);
+            assert.equal(f.agent._steeringPriorSubmissionBlock(1,tool,args,detected),null);
+            assert.equal(await f.agent._socialPublicationPreSubmitBlock(1,tool,args,detected,f.provider),null);
+          }
+        }
+      });
+      await t.test('compound and localized commit captions do not gain ordinary activation status',async()=>{
+        for(const caption of ['Click here to publish','Schedule and publish','Review then delete','Click to confirm','Jetzt senden','Şimdi gönder']) {
+          const f=await setup(`<button id="unsafe" type="button">${caption}</button>`,{compile:false});
+          const detected=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('unsafe')});
+          assert.notEqual(detected?.resolvedOrdinaryActivationTarget,true,caption);
+        }
+      });
+      await t.test('native resource scope ignores unrelated height but rejects virtualization, hiding and replaced owners',async()=>{
+        const url='https://bsky.app/profile/alice/post/900';
+        for(const failure of [null,'virtualized','hidden','replaced-owner','expired']) {
+          const f=await setup(`<section id="collection"><article id="resource" ${failure==='virtualized'?'aria-setsize="200" aria-posinset="1"':''}><a rel="bookmark" href="${url}">Original</a><p>Saved exact body</p><button id="ordinary" type="button" aria-haspopup="menu">Resource controls</button></article></section><aside style="height:3000px">Unrelated sidebar</aside><form><button id="finish" type="submit">Save</button></form>`,{compile:false});
+          const observed=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('ordinary')});
+          assert.equal(observed.actionResource?.complete,true);
+          f.guard.steeringPriorSubmissionReconciliation={resourceScopeToken:observed.actionResource.scopeToken,resourceUrl:url};
+          await page.evaluate(({failure,token})=>{const article=document.getElementById('resource');
+            if(failure==='hidden')article.hidden=true;
+            else if(failure==='replaced-owner')article.parentElement.outerHTML='<section id="collection"></section>';
+            else article.remove();
+            if(failure==='expired')globalThis.__wbResourceMutationScopes.scopes.get(token).until=0;
+          },{failure,token:observed.actionResource.scopeToken});
+          const fresh=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('finish')},{mutationReconciliation:true});
+          assert.equal(fresh.reconciliationResourceScanComplete,false,'Whole-page height cannot prove absence');
+          assert.equal(fresh.reconciliationScope?.removed===true,failure===null,String(failure));
+        }
+      });
+      await t.test('native draft toolbar and selected local attachment controls remain preparation',async()=>{
+        const f=await setup('<section><div role="toolbar" aria-controls="draft"><button id="ordinary" type="button">Remove formatting</button></div><div id="draft" contenteditable="true">Local draft</div></section>',{compile:false});
+        let detected=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('ordinary')});
+        assert.equal(detected.resolvedNonSubmitTarget,true);
+        assert.equal(detected.mutationKind,undefined);
+        assert.equal(await f.agent._socialPublicationPreSubmitBlock(1,'click_ax',{},detected,f.provider),null);
+        const attached=await setup('<div role="dialog"><div contenteditable="true">Local draft</div><input id="file" type="file"><figure><img id="preview" style="width:30px;height:30px"><button id="ordinary" type="button">Remove attachment</button></figure></div>',{compile:false});
+        await page.locator('#file').setInputFiles({name:'local.txt',mimeType:'text/plain',buffer:Buffer.from('local fixture')});
+        await page.evaluate(()=>{document.getElementById('preview').src=URL.createObjectURL(document.getElementById('file').files[0]);});
+        detected=await attached.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('ordinary')});
+        assert.equal(detected.resolvedNonSubmitTarget,true);
+        assert.equal(detected.mutationKind,undefined);
+        assert.equal(await attached.agent._socialPublicationPreSubmitBlock(1,'click_ax',{},detected,attached.provider),null);
+      });
+      await t.test('form editor ownership cannot turn Save or resource deletion into local formatting',async()=>{
+        const f=await setup('<form><div role="toolbar" aria-controls="draft"><button id="bold" type="button">Bold</button><button id="format" type="button">Remove formatting</button><button id="save" type="button">Save</button><button id="delete" type="button">Delete record</button><button id="remove" type="button">Remove record</button><button id="title-save" type="button" title="Save record">Bold</button><button id="title-delete" type="button" title="Delete record">Bold</button></div><div id="draft" contenteditable="true">Local draft</div></form>',{compile:false});
+        f.guard.steeringPriorSubmission={dispatched:true,observedAfterSubmit:false};
+        for(const id of ['bold','format']) {
+          const detected=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef(id)});
+          assert.equal(detected.isSubmit,false,id);assert.equal(detected.resolvedNonSubmitTarget,true,id);
+          assert.equal(f.agent._steeringPriorSubmissionBlock(1,'click_ax',{},detected),null,id);
+        }
+        for(const id of ['save','delete','remove','title-save','title-delete']) {
+          const detected=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef(id)});
+          assert.equal(detected.isSubmit,true,id);assert.notEqual(detected.resolvedDraftControl,true,id);
+          assert.equal(f.agent._steeringPriorSubmissionBlock(1,'click_ax',{},detected).noDispatch,true,id);
+        }
+        assert.deepEqual(await page.evaluate(()=>window.uiClicks),[]);
+      });
+      await t.test('resource B never borrows A and portal ownership requires its actual clicked native launcher',async()=>{
+        const url='https://bsky.app/profile/alice/post/900';
+        const f=await setup(`<section><article id="owned"><a rel="bookmark" href="${url}">Original</a><p>Saved body</p><button id="launcher" type="button" aria-haspopup="menu" aria-controls="choices">Resource controls</button></article><article id="other"><p>Unbound resource B</p><button id="wrong" type="button">Delete record</button></article></section><div id="choices" role="menu" aria-labelledby="launcher"><button id="portal" type="button">Delete record</button></div><div id="unrelated" role="menu"><button id="foreign" type="button">Delete record</button></div>`,{compile:false});
+        f.agent.completionInvariants.set(1,createCompletionInvariantState('owned-resource-run'));
+        let portal=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('portal')});
+        assert.equal(portal.actionResource,undefined,'Read-only preparation does not establish portal ownership');
+        await page.evaluate(()=>{document.getElementById('choices').hidden=true;document.getElementById('launcher').addEventListener('click',()=>{document.getElementById('choices').hidden=false;});});
+        const args={ref_id:await targetRef('launcher')}, opened=await attempt(f,args);
+        assert.equal(opened.result.success,true);
+        f.agent._recordCompletionToolResult(1,'click_ax',args,opened.result,{detectedSubmit:opened.detected});
+        assert.equal(f.guard.resolvedResourceScope.launcherDispatched,true);
+        const wrong=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('wrong')});
+        assert.equal(wrong.actionResource,undefined,'An existing different owner vetoes fallback, even if it lacks a permalink');
+        assert.equal((await f.agent._resourceMutationPreSubmitBlock(1,'click_ax',{},wrong,f.provider)).actionGuard.reason,'resource_unresolved');
+        portal=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('portal')});
+        assert.equal(portal.actionResource.url,url,'A native aria-controls/labelledby relation resolves the actual opened A menu');
+        const foreign=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('foreign')});
+        assert.equal(foreign.actionResource,undefined,'A different portal cannot borrow the latest URL');
+        f.guard.resolvedResourceScope.launcherDispatched=false;
+        portal=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('portal')});
+        assert.equal(portal.actionResource,undefined,'Uncertain or undispatched launchers confer no ownership');
+      });
       await t.test('unique text and selector resolve the same ordinary native activation',async()=>{
         const f=await setup('<button id="ordinary" type="button">Show details</button>');
         for(const args of [{text:'Show details',textMatch:'exact'},{selector:'#ordinary'}]){
@@ -164,7 +265,7 @@ for (const build of ['chrome','firefox']) {
         }
         assert.deepEqual(await page.evaluate(()=>window.uiClicks),[]);
       });
-      assert.equal(requests,1,'only the intercepted fixture navigation occurred');
+      assert.equal(requests,4,'only the intercepted fixture navigations occurred');
     }finally{globalThis.chrome=originalChrome;globalThis.browser=originalBrowser;await browser.close();}
   });
 }

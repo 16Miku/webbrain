@@ -75,8 +75,10 @@ async function fixture(engine, build, { runToken = 'test-run', siteIsolation = f
 async function installScrollHelper(page, build) {
   const source = read(build, 'content/content.js');
   const helper = source.match(/^  function _scrollElementIntoClearView\([\s\S]*?^  }/m)?.[0];
+  const typingPreparation = source.match(/^  function _withTypingPreparation\([\s\S]*?^  }/m)?.[0];
   assert.ok(helper);
-  await page.addScriptTag({ content: `window._scrollElementIntoClearView = ${helper};` });
+  assert.ok(typingPreparation);
+  await page.addScriptTag({ content: `${typingPreparation}\nwindow._scrollElementIntoClearView = ${helper};` });
   await page.evaluate(() => Object.assign(window, {
     _isAlreadyVisibleInFixedSurface: () => false, _getViewportDockedInsets: () => ({ top: 0, bottom: 0 }),
     _isFullyVisibleForInteraction: () => false, _isCoveredByFixedNonModalSurface: () => false,
@@ -245,7 +247,9 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
       const start = source.indexOf(`'${action}': ${action === 'field_value_digest' ? 'async ' : ''}() => {`), end = source.indexOf('\n      },', start);
       assert.ok(start > 0 && end > start); return source.slice(start, end + 8);
     });
-    await page.addScriptTag({ content: `window.axHelpers = { ${entries.join(',\n')} };` });
+    const typingPreparation = source.match(/^  function _withTypingPreparation\([\s\S]*?^  }/m)?.[0];
+    assert.ok(typingPreparation);
+    await page.addScriptTag({ content: `${typingPreparation}\nwindow.axHelpers = { ${entries.join(',\n')} };` });
     await page.waitForTimeout(250);
     await page.evaluate(() => { feedback = []; });
     host._pageFeedbackRuns.get(tab).events.clear();

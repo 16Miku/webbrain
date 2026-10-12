@@ -162,21 +162,36 @@ async function notifyPageMonitorFrames(api, tabId, message, knownFrames = [], on
 }
 
 export const hasPageAgentDispatchOwner = tabId => dispatchOwners.has(tabId);
+export const pageAgentDispatchTool = tabId => dispatchOwners.get(tabId)?.tool?.() || '';
 
 export function pageFeedbackPendingResult() {
   return { success: false, skipped: true, dispatched: false, noDispatch: true,
     pageFeedbackPending: true, error: 'The browser changed during action preparation. Re-observe the page before acting.' };
 }
 
+function preparationVetoDiagnostics(veto) {
+  const facts = {};
+  if (!veto || typeof veto !== 'object') return facts;
+  if (['owner_pending_before', 'owner_pending_after', 'monitor_rejected',
+    'document_mapping_changed', 'owner_ended', 'current_owner_changed'].includes(veto.cause)) facts.cause = veto.cause;
+  // Preserve diagnostics through every wrapper without copying page values.
+  for (const key of [
+    'ownerPendingAfter', 'monitorRejected',
+    'modelBindingInvalid', 'layoutChanged', 'preparedBindingChanged', 'passiveRebased',
+    'pendingFeedback', 'revisionChanged', 'documentChanged', 'documentRevisionChanged',
+  ]) if (typeof veto[key] === 'boolean') facts[key] = veto[key];
+  if (new Set(['semantic_binding_changed', 'geometry_changed', 'model_snapshot_invalid', 'model_snapshot_expired',
+    'focus_changed', 'pending_feedback', 'revision_changed', 'document_changed', 'document_revision_changed',
+    'intervention_changed', 'target_changed', 'target_hit_changed', 'operation_expired', 'operation_missing',
+    'run_ended', 'target_unresolved', 'target_uncovered', 'current_owner_changed']).has(veto.predicate)) facts.predicate = veto.predicate;
+  return facts;
+}
+
 function preparationVetoError(cause, monitorVeto = null, ownerPendingAfter = false, monitorRejected = false) {
   const error = new Error(pageFeedbackPendingResult().error);
   error.code = 'page_feedback_pending';
-  // Copy fixed booleans only; never copy document/ref/target/value data.
-  error.pagePreparationVeto = { cause, ownerPendingAfter: ownerPendingAfter === true, monitorRejected: monitorRejected === true };
-  if (monitorVeto && typeof monitorVeto === 'object') for (const key of [
-    'modelBindingInvalid', 'layoutChanged', 'preparedBindingChanged', 'passiveRebased',
-    'pendingFeedback', 'revisionChanged', 'documentChanged', 'documentRevisionChanged',
-  ]) if (typeof monitorVeto[key] === 'boolean') error.pagePreparationVeto[key] = monitorVeto[key];
+  error.pagePreparationVeto = { ...preparationVetoDiagnostics(monitorVeto), cause,
+    ownerPendingAfter: ownerPendingAfter === true, monitorRejected: monitorRejected === true };
   return error;
 }
 
@@ -312,6 +327,7 @@ export const pageFeedbackMethods = {
       }
     };
     dispatchOwners.set(tabId, { runToken: run.token, operationId: '', operationFrames: new Map(),
+      tool: () => run.dispatchCall?.name || '',
       pending: () => this._pageFeedbackBlocksCall(tabId, run.dispatchCall?.name, run.dispatchCall?.args),
       allowPassiveRebase: () => run.dispatchCall?.allowPassiveRebase === true,
       expectedModelSnapshot: () => run.dispatchCall?.dispatchState?.started ? undefined : run.dispatchCall?.expectedModelSnapshot,
@@ -1259,9 +1275,11 @@ export function installPageFeedback(Agent) {
     } catch (error) {
       noDispatch = !dispatchState.started;
       if (error?.code === 'page_feedback_pending') {
-        if (!dispatchState.started) return pageFeedbackPendingResult();
+        const facts = preparationVetoDiagnostics(error.pagePreparationVeto);
+        const diagnostic = Object.keys(facts).length ? { preparationVeto: facts } : {};
+        if (!dispatchState.started) return { ...pageFeedbackPendingResult(), ...diagnostic };
         const interrupted = { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
-          pageFeedbackPending: true, error: 'The browser changed after this action began. Inspect its outcome before attempting another mutation.' };
+          pageFeedbackPending: true, ...diagnostic, error: 'The browser changed after this action began. Inspect its outcome before attempting another mutation.' };
         return this._finalizeToolResultOnce(tabId, name, args, interrupted, dispatchState);
       }
       throw error;
