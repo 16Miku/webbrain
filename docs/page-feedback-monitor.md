@@ -95,8 +95,17 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   acknowledgements, interrupted authority and unresolved reads retain repeat
   locks; observing effects never sends a second click or clears queued feedback.
   The agent's own hover may move a certified native button by up to 8 px
-  (lift, border or scale); it is then pressed at its re-verified current
-  centre, and any other change refuses before input.
+  (lift, border or scale), also through a CSS transition or a page hover
+  animation. Without sending input, the agent then samples that exact button
+  read-only, at most 600 ms, until two consecutive samples have the same
+  rectangle and the same hit node at its centre and no finite geometry
+  transition is still running on it or an ancestor. The settled button is
+  re-verified, the monitor fence refreshes its geometry proof only for the
+  same node with identical semantics and hit, and it is pressed once at that
+  settled centre. A button that keeps moving (including an infinite
+  animation), a covering, hidden or replaced node, a changed document or
+  route, a semantic change, a move beyond 8 px from the prepared centre, any
+  user input or Stop during the wait refuses before input.
 - Trusted CDP input is marked dispatched only at the transport boundary, after
   the receiving-node and page-feedback fences pass. A rejection before the
   protocol call means nothing was sent; any later failure means the input was

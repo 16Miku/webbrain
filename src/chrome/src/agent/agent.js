@@ -501,6 +501,11 @@ const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const RUN_STARTUP_TIMEOUT_MS = 15_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+// The agent's own hover may start a transition on a certified native button.
+// Its geometry is sampled (read-only) at this interval until it settles, for
+// at most this long, before the single press.
+const NATIVE_BUTTON_HOVER_SETTLE_MS = 600;
+const NATIVE_BUTTON_HOVER_POLL_MS = 50;
 const ASK_MODE_HANDOFF_TIMEOUT_MS = 5_000;
 const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 // A completed focus click is a browser dispatch, but need not be a text write.
@@ -18748,6 +18753,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       assertCurrent();
       if (!await finishPointer()) return failure('The acknowledged pointer operation could not be completed for the current owner. Re-observe before acting.');
       assertCurrent();
+      // The hover can start a CSS transition or a page hover animation on this
+      // exact button. Wait, bounded and sending no input, until its geometry
+      // and hit node are stable, so the re-probe, fence and press below all see
+      // the settled button. Any other change, input or Stop refuses here.
+      preparationStage = 'settle_after_pointer';
+      const settled = await this._settleTrustedNativeButtonHover(tabId, args, prepared, messageOptions, assertCurrent, run);
+      if (settled.success !== true) {
+        if (timing) timing.preparationVeto = { stage: preparationStage, predicate: settled.predicate };
+        return failure(settled.error);
+      }
+      assertCurrent();
       // Hover or asynchronous preparation must not change the exact target,
       // private model footprint, document, route or chosen physical point.
       preparationStage = 'reprobe_after_pointer';
@@ -18771,12 +18787,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           || Math.abs(current.x - prepared.x) > 8 || Math.abs(current.y - prepared.y) > 8) {
         return failure('The native button changed during trusted input preparation. Re-observe before acting.');
       }
+      // The re-probe must see the settled geometry; a later move means the
+      // button did not settle after all.
+      if (current.x !== settled.sample.x || current.y !== settled.sample.y
+          || ['x', 'y', 'w', 'h'].some(key => current.rect?.[key] !== settled.sample.roundedRect?.[key])) {
+        if (timing) timing.preparationVeto = { stage: preparationStage, predicate: 'geometry_changed' };
+        return failure('The native button moved again after its hover settled. No click was sent. Re-observe before acting.');
+      }
       // The agent's own hover may lift or resize this exact certified button
-      // (:hover transform, border or size). The re-probe hit-tested its current
-      // centre on the same node; the monitor fence below rechecks the certified
-      // binding, and the press transport hit-tests the pressed point against
-      // that node immediately before the press. Never press the stale
-      // pre-hover point, which could now hit another node.
+      // (:hover transform, border or size), also through a transition. The
+      // settled re-probe hit-tested its current centre on the same node; the
+      // monitor fence below rechecks and refreshes the certified binding at
+      // that settled geometry, and the press transport hit-tests the pressed
+      // point against that node immediately before the press. Never press the
+      // stale pre-hover point, which could now hit another node.
       const pressPoint = { x: current.x, y: current.y };
       preparationStage = 'after_pointer_before_press';
       const inputGuard = await beforePageAgentDispatch(chrome, tabId, { kind: 'click', tool: 'click_ax', ref_id: args.ref_id,
@@ -18912,6 +18936,55 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return failure(observationInterrupted
         ? 'Observation interrupted after native input acknowledgements completed. The final page effect is unverified; do not repeat this input. Read this control and its owning dialog or section before any further action. Preserve any staged preview and inspect the original task-authorized Save/Submit/Commit controls; do not reopen the chooser or switch upload fields just because observation was interrupted. Acknowledged input does not prove a remote save.'
         : error?.message || String(error), uncertain, released, observationInterrupted);
+    }
+  }
+
+  // After the agent's own trusted hover over a certified native button, sample
+  // the exact button read-only until two consecutive samples have the same
+  // rectangle and the same hit node at its centre, with no finite geometry
+  // transition still running. Sends no input. Bounded: a target that keeps
+  // moving, any input, Stop, a replaced or covered node, or a changed document
+  // refuses before the press.
+  async _settleTrustedNativeButtonHover(tabId, args, prepared, messageOptions, assertCurrent, run) {
+    const startedAt = Date.now();
+    const settleSession = globalThis.crypto.randomUUID();
+    const userAt = run.lastUserAt;
+    const intervened = () => run.lastUserAt !== userAt || [...run.events.values()].some(event => event.source === 'user');
+    const interventionRefusal = { success: false, predicate: 'intervention_changed',
+      error: 'Input was observed while the native button settled after the pointer move. No click was sent. Re-observe before acting.' };
+    const pause = ms => new Promise(resolve => {
+      const signal = this._runAbortSignal?.(tabId);
+      let timer = null;
+      const done = () => { clearTimeout(timer); signal?.removeEventListener?.('abort', done); resolve(); };
+      timer = setTimeout(done, ms);
+      signal?.addEventListener?.('abort', done, { once: true });
+    });
+    let previous = null;
+    for (let samples = 1; ; samples++) {
+      assertCurrent();
+      if (intervened()) return interventionRefusal;
+      const sample = await chrome.tabs.sendMessage(tabId, { target: 'content', action: 'sample_trusted_native_button',
+        params: { ref_id: args.ref_id, expectedDocumentToken: prepared.documentToken, expectedPageUrl: prepared.refScopeUrl,
+          settleSession, pointer: { x: prepared.x, y: prepared.y } } }, messageOptions);
+      assertCurrent();
+      if (intervened() || sample?.userInput === true) return interventionRefusal;
+      if (sample?.success !== true || !Number.isFinite(sample.x) || !Number.isFinite(sample.y)
+          || !Array.isArray(sample.rect) || sample.rect.length !== 4) {
+        return { success: false,
+          predicate: ['target_hit_changed', 'document_changed', 'run_ended'].includes(sample?.predicate) ? sample.predicate : 'target_changed',
+          error: typeof sample?.error === 'string' && sample.error.length <= 300 ? sample.error
+            : 'The native button could not be verified while its hover settled. No click was sent. Re-observe before acting.' };
+      }
+      if (previous && sample.animating !== true && sample.hit === previous.hit
+          && sample.rect.every((value, index) => value === previous.rect[index])) {
+        return { success: true, sample, samples, settleMs: Date.now() - startedAt };
+      }
+      previous = sample;
+      if (Date.now() - startedAt + NATIVE_BUTTON_HOVER_POLL_MS > NATIVE_BUTTON_HOVER_SETTLE_MS) {
+        return { success: false, predicate: 'geometry_changed',
+          error: 'The native button was still moving after the pointer reached it. No click was sent. Re-observe before acting.' };
+      }
+      await pause(NATIVE_BUTTON_HOVER_POLL_MS);
     }
   }
 

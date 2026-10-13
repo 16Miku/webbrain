@@ -6673,6 +6673,99 @@
     } catch { return null; }
   };
 
+  // --- Trusted native button hover settle (read-only) ---
+  // After the agent's own trusted hover, the agent samples the exact certified
+  // button until its geometry is stable before the press. Sampling never
+  // focuses, scrolls, dispatches or starts a monitor operation. Hit nodes are
+  // compared by private isolated-world tokens, never by page data.
+  const _nativeButtonHitTokens = new WeakMap();
+  let _nativeButtonHitTokenSeq = 0;
+  let _nativeButtonSettleWatch = null;
+  const _nativeButtonPaintOnlyProperty = /^(?:color|opacity|box-shadow|text-shadow|filter|backdrop-filter|fill|fill-opacity|stroke|stroke-opacity|caret-color|accent-color|text-decoration-color|outline(?:-color|-width|-style|-offset)?|background(?:-color|-image|-position(?:-x|-y)?|-size)?|border(?:-(?:top|right|bottom|left|block-start|block-end|inline-start|inline-end))?-color)$/;
+
+  function _nativeButtonHitToken(node) {
+    if (!node) return 0;
+    let value = _nativeButtonHitTokens.get(node);
+    if (!value) { value = ++_nativeButtonHitTokenSeq; _nativeButtonHitTokens.set(node, value); }
+    return value;
+  }
+
+  // Physical input during the settle wait belongs to the user: the agent sends
+  // none. Pointer movement at the agent's own hover point (late or repeated
+  // browser movement events) is not intervention.
+  function _nativeButtonSettleWatchFor(session, pointer) {
+    if (_nativeButtonSettleWatch?.session === session) return _nativeButtonSettleWatch;
+    _nativeButtonSettleWatch?.stop();
+    const types = ['pointermove', 'mousemove', 'pointerdown', 'mousedown', 'pointerup', 'mouseup',
+      'keydown', 'keyup', 'wheel', 'touchstart', 'touchmove', 'touchend'];
+    const watch = { session, input: false };
+    const onInput = event => {
+      if (!event.isTrusted) return;
+      if ((event.type === 'pointermove' || event.type === 'mousemove')
+          && Math.abs(event.clientX - pointer.x) <= 1 && Math.abs(event.clientY - pointer.y) <= 1) return;
+      watch.input = true;
+    };
+    for (const type of types) window.addEventListener(type, onInput, { capture: true, passive: true });
+    const timer = setTimeout(() => watch.stop(), 2000);
+    watch.stop = () => {
+      clearTimeout(timer);
+      for (const type of types) window.removeEventListener(type, onInput, true);
+      if (_nativeButtonSettleWatch === watch) _nativeButtonSettleWatch = null;
+    };
+    _nativeButtonSettleWatch = watch;
+    return watch;
+  }
+
+  // A finite running transition/animation that can still move or resize the
+  // button (on it or an ancestor) means it has not settled, even when two
+  // samples happen to match (a delay phase or a sub-pixel easing tail).
+  // Infinite animations never settle by waiting; their geometry samples decide.
+  function _nativeButtonGeometryAnimating(el) {
+    let animations = [];
+    try { animations = document.getAnimations(); } catch { return false; }
+    return animations.some(animation => {
+      try {
+        const target = animation.effect?.target;
+        if (animation.playState !== 'running' || !(target instanceof Element) || animation.effect.pseudoElement
+            || !_isComposedAncestor(target, el)) return false;
+        if (animation.effect.getComputedTiming?.().iterations === Infinity) return false;
+        const properties = typeof animation.transitionProperty === 'string' ? [animation.transitionProperty]
+          : (animation.effect.getKeyframes?.() || []).flatMap(frame => Object.keys(frame))
+            .filter(key => !['offset', 'computedOffset', 'easing', 'composite'].includes(key))
+            .map(key => key.startsWith('--') ? key : key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`));
+        return !properties.length || properties.some(property => !_nativeButtonPaintOnlyProperty.test(property));
+      } catch { return true; }
+    });
+  }
+
+  function _sampleTrustedNativeButton(params = {}) {
+    const failure = (predicate, error, extra = {}) => ({ success: false, dispatched: false, noDispatch: true, predicate, error, ...extra });
+    const { ref_id, expectedDocumentToken, expectedPageUrl, settleSession, pointer } = params;
+    if (typeof ref_id !== 'string' || typeof settleSession !== 'string' || !settleSession
+        || !Number.isFinite(pointer?.x) || !Number.isFinite(pointer?.y)) return failure('target_changed', 'Invalid native button sample.');
+    const watch = _nativeButtonSettleWatchFor(settleSession, pointer);
+    if (window.__wbPageMonitor?.active !== true) return failure('run_ended', 'The browser run ended while the native button settled. No click was sent.');
+    if ((expectedDocumentToken && expectedDocumentToken !== _axDocumentToken())
+        || (expectedPageUrl && expectedPageUrl !== location.href)) {
+      return failure('document_changed', 'The page or route changed while the native button settled. No click was sent. Re-observe before acting.');
+    }
+    const el = typeof window.__wb_ax_lookup === 'function' ? window.__wb_ax_lookup(ref_id) : null;
+    if (!el || !el.isConnected || el.tagName !== 'BUTTON') {
+      return failure('target_changed', 'The exact native button was removed or replaced while its hover settled. No click was sent. Re-observe before acting.');
+    }
+    const rect = el.getBoundingClientRect();
+    const x = Math.round(rect.left + rect.width / 2), y = Math.round(rect.top + rect.height / 2);
+    const hit = _shadowAwareElementFromPoint(x, y);
+    if (!_axFallbackVisibility(el).visible || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight
+        || !hit || !_isComposedAncestor(el, hit) || _axInteractiveHitDescendant(el, hit)) {
+      return failure('target_hit_changed', 'The native button became hidden, covered or ambiguous while its hover settled. No click was sent. Re-observe before clicking.');
+    }
+    return { success: true, dispatched: false, noDispatch: true, x, y,
+      rect: [rect.left, rect.top, rect.width, rect.height],
+      roundedRect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+      hit: _nativeButtonHitToken(hit), animating: _nativeButtonGeometryAnimating(el), userInput: watch.input === true };
+  }
+
   function _probeMessageRecipientGuard(params = {}, receiveConversationContext = null) {
     try {
       const tool = String(params.tool || '');
@@ -8954,6 +9047,9 @@
           return failure(e && e.message || String(e));
         }
       },
+      // Read-only sample of a certified native button while the agent's own
+      // hover settles. It never focuses, scrolls or dispatches.
+      'sample_trusted_native_button': () => _sampleTrustedNativeButton(msg.params || {}),
       'set_checked': () => {
         let dispatched = false;
         const failure = (error, extra = {}) => ({
