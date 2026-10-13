@@ -118,6 +118,63 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     } finally { await browser.close(); }
   });
 
+  test(`${build}: relaxed native clicks validate the supplied point after passive target movement`, { timeout: 60000 }, async t => {
+    const browser = await engine.launch({ headless: true });
+    try {
+      for (const scenario of [
+        { name: 'an unchanged off-center point passes', moved: false, freshPoint: false, explicitRef: false, accepted: true },
+        { name: 'a stale native marker cannot approve a point over another button', moved: true, freshPoint: false, explicitRef: false, accepted: false },
+        { name: 'an explicit original ref cannot conceal stale coordinates', moved: true, freshPoint: false, explicitRef: true, accepted: false },
+        { name: 'a freshly resolved point follows the unchanged moved target', moved: true, freshPoint: true, explicitRef: false, accepted: true },
+      ]) await t.test(scenario.name, async () => {
+        const f = await fixture(browser, build);
+        try {
+          await f.page.evaluate(() => {
+            window.qaWrongClicks = 0;
+            human.addEventListener('click', () => qaWrongClicks++);
+          });
+          const snapshot = await capture(f.page);
+          assert.equal(snapshot.monitoringRelaxed, true);
+          assert.equal((await prepare(f.page, snapshot)).modelBindingValid, true);
+          const native = await f.page.evaluate(() => {
+            const rect = send.getBoundingClientRect();
+            // Match the transport race: the receiver marker and revision are
+            // captured before page layout changes, separately from dispatch.
+            send.setAttribute('data-webbrain-native-target', 'qa-native-point-target');
+            const fence = document.documentElement.getAttribute('data-webbrain-page-revision');
+            const split = fence.lastIndexOf(':');
+            return { nativeTarget: 'qa-native-point-target', ref_id: __wb_ax_ref(send),
+              documentToken: fence.slice(0, split), documentRevision: Number(fence.slice(split + 1)),
+              x: rect.left + 5, y: rect.top + 5,
+              rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } };
+          });
+          if (scenario.moved) await f.page.evaluate(rect => {
+            send.style.transform = 'translateY(120px)';
+            human.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px;margin:0`;
+          }, native.rect);
+          const point = scenario.freshPoint ? await f.page.evaluate(() => {
+            const rect = send.getBoundingClientRect();
+            return { x: rect.left + 5, y: rect.top + 5 };
+          }) : { x: native.x, y: native.y };
+          assert.equal(await f.page.evaluate(point => document.elementFromPoint(point.x, point.y)?.id, point),
+            scenario.accepted ? 'send' : 'human');
+          const receipt = await f.page.evaluate(({ native, point, explicitRef }) => qaMessage('page_monitor_dispatch', {
+            operationId: 'owned-retry-action', kind: 'click', nativeTarget: native.nativeTarget,
+            documentToken: native.documentToken, documentRevision: native.documentRevision, ...point,
+            ...(explicitRef ? { ref_id: native.ref_id } : {}),
+            eventTypes: ['pointerdown', 'mousedown', 'click'],
+          }), { native, point, explicitRef: scenario.explicitRef });
+          // Simulate the transport only executing input after its fence agrees.
+          if (receipt.ready) await f.page.mouse.click(point.x, point.y);
+          assert.equal(receipt.ready, scenario.accepted, JSON.stringify(receipt));
+          if (!scenario.accepted) assert.equal(receipt.preparationVeto.predicate, 'target_hit_changed');
+          assert.equal(await f.page.evaluate(() => qaWrongClicks), 0);
+          assert.equal(await f.page.evaluate(() => qaClicks), scenario.accepted ? 1 : 0);
+        } finally { await f.context.close(); }
+      });
+    } finally { await browser.close(); }
+  });
+
   test(`${build}: no private state grant, mismatched grant or old observation preserves ordinary monitoring`, { timeout: 120000 }, async t => {
     const browser = await engine.launch({ headless: true });
     try {

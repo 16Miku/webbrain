@@ -1686,7 +1686,16 @@
     return ['characterData', 'childList'].includes(record.type)
       && (node === binding.target || binding.target.contains(node));
   }
-  function relaxedActionability(target, { hit = false, input = false } = {}) {
+  function nativeReceiverBelongsTo(target, receiver) {
+    // Decorative descendants can receive their control's input; another
+    // activator inside that control cannot borrow the original certificate.
+    for (let node = receiver, depth = 0; node && depth < 256; node = bindingParent(node), depth++) {
+      if (node === target) return true;
+      if (node.matches(modelControlSelector + ',[tabindex]')) return false;
+    }
+    return false;
+  }
+  function relaxedActionability(target, { hit = false, input = false, point = null } = {}) {
     if (!(target instanceof Element) || !target.isConnected || target.ownerDocument !== document || !visible(target)
         || !target.matches(modelControlSelector) || target.disabled === true || (input && target.readOnly === true)) return false;
     for (let node = target; node; node = bindingParent(node)) {
@@ -1698,7 +1707,9 @@
     const rect = target.getBoundingClientRect();
     if (!(rect.width > 0 && rect.height > 0)) return false;
     if (!hit) return true;
-    const receiver = deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const receiver = point ? deepElementFromPoint(point.x, point.y)
+      : deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (point) return nativeReceiverBelongsTo(target, receiver);
     return !!receiver && (receiver === target || target.contains(receiver));
   }
   function modelBindingResult(params = {}) {
@@ -2068,10 +2079,17 @@
         && resolveTarget(params) !== op.preparedBinding.target) {
       revokeRelaxedGrant(); return 'target_changed';
     }
+    // Native markers bind a node, not the mouse point. Passive movement may
+    // leave that node intact while the captured command now hits another one.
+    const point = op?.preparedBinding?.relaxed && params.kind === 'click' && params.pointerPreparationOnly !== true
+      && (params.x !== undefined || params.y !== undefined) ? { x: params.x, y: params.y } : null;
+    if (point && (!Number.isFinite(point.x) || !Number.isFinite(point.y))) {
+      revokeRelaxedGrant(); return 'target_hit_changed';
+    }
     if (op?.preparedBinding?.relaxed && ['click', 'input'].includes(params.kind)
         && params.pointerPreparationOnly !== true
-        && !relaxedActionability(op.preparedBinding.target, { hit: true, input: params.kind === 'input' })) {
-      revokeRelaxedGrant(); return 'target_not_actionable';
+        && !relaxedActionability(op.preparedBinding.target, { hit: true, input: params.kind === 'input', point })) {
+      revokeRelaxedGrant(); return point ? 'target_hit_changed' : 'target_not_actionable';
     }
     if (!params.nativeTarget || op?.preparedBinding?.model !== true) return '';
     // Resolve the actual transport marker alone; a stale marker cannot fall
@@ -2080,14 +2098,7 @@
     if (!receiver) return 'target_unresolved';
     const target = op.tabFocusRebound === true && receiver === op.focusTarget
       ? op.focusTarget : op.preparedBinding.target;
-    // Button text/SVG and editor paragraphs can receive their owner's input.
-    // A separate activator, including one inside a shadow root, cannot.
-    let node = receiver;
-    for (let depth = 0; node && depth < 256; depth++, node = bindingParent(node)) {
-      if (node === target) return '';
-      if (node.matches(modelControlSelector + ',[tabindex]')) return 'target_changed';
-    }
-    return 'target_changed';
+    return nativeReceiverBelongsTo(target, receiver) ? '' : 'target_changed';
   }
   function rebasePassivePreparation(op, params = {}) {
     const relaxed = op?.preparedBinding?.relaxed === true && currentRelaxedGrant(op.preparedBinding.grantToken);
