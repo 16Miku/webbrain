@@ -43,6 +43,7 @@ async function prepare() {
     historicalVisionDirs: [
       'test/vision/results/2026-08-27-openrouter-full_qwen_qwen3.8-flash_production',
       'test/vision/results/2026-08-27-openrouter-full_z-ai_glm-5.3-flash_production',
+      'test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production',
     ],
     note: 'Only October 14 models are new inference. August historical responses are retained, dated separately, and verified against matching pinned inputs. Full historical request byte equality is unprovable because old planner runs omitted bodies.' };
   await writeFile(`${OUT}/config.json`, JSON.stringify(config, null, 2) + '\n');

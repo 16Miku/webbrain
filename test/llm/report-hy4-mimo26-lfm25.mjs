@@ -212,6 +212,8 @@ for (const [path, sha256] of Object.entries(visionManifest.sourceHashes)) {
 const visionSources = [
   { model: 'qwen/qwen3.8-flash', label: 'Qwen3.8 Flash', date: '2026-08-27', path: 'test/vision/results/2026-08-27-openrouter-full_qwen_qwen3.8-flash_production' },
   { model: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash', date: '2026-08-27', path: 'test/vision/results/2026-08-27-openrouter-full_z-ai_glm-5.3-flash_production' },
+  { model: 'inclusionai/ling-3.0-flash-vl', label: 'Ling 3.0 Flash VL', date: '2026-10-07', rawStreams: true,
+    path: 'test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production' },
 ];
 function vision(source) {
   const cases = ids.map(id => read(join(root, source.path, `${id}.json`)));
@@ -227,7 +229,7 @@ function vision(source) {
     assert.deepEqual(c.request, { systemPrompt: VISION_SYSTEM_PROMPT, userText: PRODUCTION_USER_TEXT,
       foldSystem: false, temperature: 0, maxTokens: 800, chatTemplateKwargs: REQUEST_DEFAULTS.chatTemplateKwargs });
     assert.deepEqual(c.score, scoreVisionResponse({ content: c.response.content, expected: visionRubrics[c.id] }));
-    if (source.fresh) {
+    if (source.fresh || source.rawStreams) {
       const events = c.response.raw.split(/\r?\n/).filter(line => line.startsWith('data: ') && line !== 'data: [DONE]').map(line => JSON.parse(line.slice(6)));
       assert(events.every(event => !event.error));
       assert(c.response.raw.includes('data: [DONE]'));
@@ -252,7 +254,7 @@ function vision(source) {
     cachedTokens: cases.reduce((n,c)=>n+(c.response.usage?.prompt_tokens_details?.cached_tokens||0),0),
     reasoningTokens: cases.reduce((n,c)=>n+(c.response.usage?.completion_tokens_details?.reasoning_tokens||0),0),
     sixSections: cases.filter(c=>c.score.sectionCount===6).length, emptyOutputs: cases.filter(c=>!c.response.content.trim()).length,
-    lengthLimited: source.fresh ? cases.filter(c=>c.response.finishReason==='length').length : null,
+    lengthLimited: cases.some(c=>c.response.finishReason!=null) ? cases.filter(c=>c.response.finishReason==='length').length : null,
     byDifficulty: group(c=>c.question.difficulty.slug), byCategory: group(c=>c.question.category), providers: group(c=>c.response.provider||'not recorded'),
     caseScores: cases.map(c=>({id:c.id,pass:c.score.success,ratio:c.score.ratio,criticalFailures:c.score.criticalFailures})) };
   assert.equal(row.costRecords,100);
@@ -264,10 +266,10 @@ function vision(source) {
   return row;
 }
 const oldVision = visionSources.map(vision);
-writeFileSync(join(out,'historical-vision-regression.json'),JSON.stringify({models:2,cases:200,inputAndScoreMatches:true,rows:oldVision},null,2)+'\n');
+writeFileSync(join(out,'historical-vision-regression.json'),JSON.stringify({models:visionSources.length,cases:oldVision.length*100,inputAndScoreMatches:true,rows:oldVision},null,2)+'\n');
 
   if (process.argv.includes('--historical-only')) {
-  console.log('Historical regression passed: 1,300 planner responses and 200 vision responses.');
+  console.log(`Historical regression passed: 1,300 planner responses and ${oldVision.length*100} vision responses.`);
 } else {
   const newCohort = fresh.map(source => load(source));
   for (const entry of newCohort) assert.equal(entry.row.errors,0, `Recover and archive failed requests before ranking: ${entry.row.model}`);
@@ -293,7 +295,7 @@ writeFileSync(join(out,'historical-vision-regression.json'),JSON.stringify({mode
     startedAt:fullCampaign.startedAt,finishedAt:fullCampaign.finishedAt,wallTimeMs:Date.parse(fullCampaign.finishedAt)-Date.parse(fullCampaign.startedAt),
     concurrency:fullCampaign.concurrency,note:'Six runners execute concurrently. All individual request latencies include network/provider/generation time; historical infrastructure, caches, prices and concurrency conditions differ.' };
   const report = {date:DATE,status:'complete',sourceCommit:replay.meta.sourceCommit,replaySha256:hash(readFileSync(replayPath)),
-    casesPerPlannerModel:100,actTools:48,consensusModels:17,comparisonsPerModel:1600,historicalPlannerModels:13,newPlannerModels:4,newVisionModels:2,
+    casesPerPlannerModel:100,actTools:48,consensusModels:17,comparisonsPerModel:1600,historicalPlannerModels:13,newPlannerModels:4,newVisionModels:2,historicalVisionModels:visionSources.length,
     method:'Leave-one-out consensus across all 17 models, comparing the first proposed tool call per response. Recursive object-key sorting only; preserve argument values, defaults, and extra arguments. Additional tool calls are counted separately and not executed or scored. No-tool/no-tool agrees; rejected API requests are excluded from quality. Consensus is agreement, not ground truth.',
     caveat:'Only the four October 14 planner models and two MiMo vision runs are new. Historical requests were omitted and are reconstructed from pinned source; full historical body equality is unprovable. Serving dates, provider routes, caches and bills differ. No browser tools are executed.',
     results,primaryComparison:results.filter(r=>selected.has(r.model)),visionResults,pairwise,visionPairwise,campaign};

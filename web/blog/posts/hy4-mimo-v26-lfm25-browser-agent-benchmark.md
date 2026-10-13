@@ -54,7 +54,7 @@ The offline audit first reproduces all thirteen original models' consensus, sche
 
 Exact consensus compares the first proposed tool and its arguments after recursively sorting object keys. Values, defaults, and extra arguments remain significant. Tool consensus ignores the arguments. Schema validity and the archived canonical ideal action are separate checks. No-tool responses can agree with one another; consensus measures agreement, not ground truth. No browser tool is executed.
 
-**Only the four new planners and two MiMo screenshot runs are October 14 inference.** The planner peers retain August 2 results, and the Qwen/GLM screenshot references retain August 27 results. Their infrastructure, prices, caches, and serving dates differ. Old planner bodies were omitted; source reconstruction verifies the matching intended payload without proving full historical byte equality. Raw UTC timestamps begin October 13; the local test date is October 14 in Istanbul.
+**Only the four new planners and two MiMo screenshot runs are October 14 inference.** The planner peers retain August 2 results, the Qwen/GLM screenshot references retain August 27 results, and Ling's screenshot row reuses its October 7 run. Their infrastructure, prices, caches, and serving dates differ. Old planner bodies were omitted; source reconstruction verifies the matching intended payload without proving full historical byte equality. Raw UTC timestamps begin October 13; the local test date is October 14 in Istanbul.
 
 ## Planner quality, speed, and the actual bill
 
@@ -92,7 +92,7 @@ Multi-call replies require the same care: **6, 3, 11, and 1 responses** contain 
 
 Both MiMo routes receive **100 actual 1280×720 screenshots**, the original production six-section prompt, fixed user text, temperature **0**, and an **800-token** maximum. The original thinking-disabling kwargs are retained, without an extra reasoning override or provider pin. HY4 and Liquid receive no images and remain unscored for vision.
 
-The report checks image/prompt/question/rubric/scorer parity and reproduces all 200 saved Qwen/GLM grades. A strict pass combines enough weighted substring evidence with the case threshold and critical-check gate. Six numbered sections are a separate coverage measure, not an independent hard pass requirement. Literal matching can reject a recognized synonym, and the score is not a human measure of general visual intelligence.
+The report checks image/prompt/question/rubric/scorer parity and reproduces all **300 saved Qwen/GLM/Ling grades**. A strict pass combines enough weighted substring evidence with the case threshold and critical-check gate. Six numbered sections are a separate coverage measure, not an independent hard pass requirement. Literal matching can reject a recognized synonym, and the score is not a human measure of general visual intelligence.
 
 | Model | Strict passes / 100 | Mean rubric | Median | p95 | Cost / 100 |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -100,26 +100,29 @@ The report checks image/prompt/question/rubric/scorer parity and reproduces all 
 | Qwen3.8 Flash | 79 | 94.8% | 8.49s | 13.43s | $0.0411 |
 | MiMo-V2.6-Pro | 77 | 94.0% | 5.73s | 11.59s | $0.0645 |
 | GLM-5.3 Flash | 76 | 93.8% | 5.49s | 8.92s | $0.0211 |
+| Ling 3.0 Flash VL | 65 | 88.1% | 3.46s | 4.88s | $0.0054 |
 
-Flash's **81 passes** lead the four rows, versus Pro's **77**. Its screenshot median is **1.91s**, compared with **5.73s** for Pro, and its $0.0214 bill is roughly one third of Pro's $0.0645. Qwen and GLM remain dated references; GLM's old bill reflects its August launch promotion, not a claim that that price remains available today. Small pass gaps from one run each do not establish a stable statistical ranking.
+Flash's **81 passes** lead the five rows, versus Pro's **77**. Its screenshot median is **1.91s**, compared with **5.73s** for Pro, and its $0.0214 bill is roughly one third of Pro's $0.0645. Qwen and GLM remain dated references; GLM's old bill reflects its August launch promotion, not a claim that that price remains available today. Small pass gaps from one run each do not establish a stable statistical ranking.
+
+**Ling 3.0 Flash VL is a compatible historical vision reference.** Its [October 7 screenshot test](/blog/ling30-flash-vl-compared-with-budget-vision-models) used the same 100 image hashes, system/user prompt, temperature 0, 800-token maximum, thinking-disabling kwargs, and unchanged scorer. Its 65 passes cost $0.0054, roughly a quarter of Flash's bill, with a 3.46-second median. That bill reflects Novita's dated promotion and cache state. Ling's earlier text-planner test used the May 41-tool protocol, so it does not enter the seventeen-model planner ranking above. No new Ling inference was run for this addition.
 
 Qwen still has the highest **mean weighted rubric score, 94.8%**, versus Flash's 94.3%. Flash and Qwen both pass 75 screenshots; Flash alone passes six and Qwen alone passes four. Flash and Pro also share 75 passes, with six Flash-only and two Pro-only passes. Strict threshold passes and average recovered evidence describe different aspects of the same responses.
 
 Strict-pass rates by difficulty, twenty images per band:
 
-| Band | MiMo-V2.6-Flash | Qwen3.8 Flash | MiMo-V2.6-Pro | GLM-5.3 Flash |
-| --- | ---: | ---: | ---: | ---: |
-| Easy | 85% | 70% | 85% | 80% |
-| Basic | 75% | 85% | 80% | 70% |
-| Intermediate | 90% | 85% | 80% | 85% |
-| Advanced | 75% | 80% | 65% | 80% |
-| Challenging | 80% | 75% | 75% | 65% |
+| Band | MiMo-V2.6-Flash | Qwen3.8 Flash | MiMo-V2.6-Pro | GLM-5.3 Flash | Ling 3.0 VL |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Easy | 85% | 70% | 85% | 80% | 70% |
+| Basic | 75% | 85% | 80% | 70% | 70% |
+| Intermediate | 90% | 85% | 80% | 85% | 65% |
+| Advanced | 75% | 80% | 65% | 80% | 70% |
+| Challenging | 80% | 75% | 75% | 65% | 50% |
 
 Flash scores **4/5 on multilingual OCR**, compared with **2/5** for Pro. It also handles all five checkout, email, chart, photo, and map cases. Pro wins the calendar comparison 4/5 to 3/5 and occlusion/contrast 5/5 to 4/5. Each category has only five cases, so one screenshot changes its percentage by twenty points.
 
 The shared failures remain important: **both MiMo models score 0/5 on modal overlays and 1/5 on form validation**, just as both Qwen3.8 and GLM-5.3 did in their saved runs. Flash's higher aggregate pass count does not remove these specific contract weaknesses.
 
-All new screenshot outputs are nonempty and have six parsed sections. **Neither MiMo run hits the token cap.** Pro reports **1,438 reasoning tokens** within completion usage despite the disabling kwargs; Flash reports zero. Historical finish reasons were not captured, so the report leaves their clipping counts unknown. New raw streams preserve the reasoning evidence; historical `reasoningChars: 0` fields are an old parser convention.
+All new screenshot outputs are nonempty and have six parsed sections. **Neither MiMo run hits the token cap.** Pro reports **1,438 reasoning tokens** within completion usage despite the disabling kwargs; Flash reports zero. Ling's saved run reports **33,885 reasoning tokens and 22 length-limited responses**, with 98 parsed six-section outputs, under that same budget. Its route did not eliminate reported reasoning either; the score therefore measures the delivered configuration, not the model's ceiling with different reasoning controls. Qwen/GLM historical finish reasons were not captured, so their clipping counts remain unknown. The MiMo and Ling raw streams preserve the reasoning evidence; historical `reasoningChars: 0` fields are an old parser convention.
 
 ## Cache, provider, and budget context
 
@@ -140,7 +143,7 @@ Six independent runners execute concurrently, with three requests per planner mo
 
 All reference latencies are recomputed with that same procedure. A median can differ slightly from an earlier article that selected the lower middle observation, such as Qwen's screenshot median of 8.49 seconds here versus 8.42 seconds in the original post.
 
-The campaign records **606 Chat Completions requests: 600 scored cases plus six separate preflights**, with zero API errors and zero retries. The scored runs cost **$0.6005** in total; including preflights, the observed bill is **$0.6335**. No planner or screenshot response ends with a length limit. API keys and authorization headers are excluded from the evidence.
+The October 14 campaign records **606 Chat Completions requests: 600 scored cases plus six separate preflights**, with zero API errors and zero retries. The scored runs cost **$0.6005** in total; including preflights, the observed bill is **$0.6335**. None of those 600 new responses ends with a length limit. The reused historical reference runs are excluded from this campaign bill. API keys and authorization headers are excluded from the evidence.
 
 For this workload, **Flash is the strongest new budget default to investigate**: cheap, fast first dispatch, the highest screenshot pass count here, and broad multimodal input. HY4 and Pro still deserve assessment through their ideal-tool choices and argument validity, rather than being reduced to one consensus rank. Liquid is the local-agent-oriented member of the group, with a useful hosted dispatch result; assessing its on-device advantage requires an actual local run. These conclusions concern the measured opening action and screenshot contract, not long-horizon task completion.
 
@@ -148,7 +151,7 @@ For this workload, **Flash is the strongest new budget default to investigate**:
 
 The [analysis directory](https://github.com/webbrain-one/webbrain/tree/main/test/llm/analysis/2026-10-14-hy4-mimo26-lfm25) contains the seventeen-model report, case hashes, archived ideal actions, historical regressions, pairwise pass differences, provider metadata, campaign timings, and all six runners' logs. The raw [planner results](https://github.com/webbrain-one/webbrain/tree/main/test/llm/results) use the `2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182` tag; raw [MiMo vision results](https://github.com/webbrain-one/webbrain/tree/main/test/vision/results) use `2026-10-14-openrouter-mimo26-vision`. Separate preflight directories are committed alongside them.
 
-Every new planner case saves the complete request and API response. Every new vision case saves raw SSE, final text, usage, provider, finish reason, latency, prompt metadata, and image hashes; the shared PNGs remain in the corpus. All 600 new case results and six preflights accompany this post.
+Every new planner case saves the complete request and API response. Every new vision case saves raw SSE, final text, usage, provider, finish reason, latency, prompt metadata, and image hashes; the shared PNGs remain in the corpus. All 600 new case results and six preflights accompany this post. The [100 raw Ling vision cases](https://github.com/webbrain-one/webbrain/tree/main/test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production) are already committed; this update rechecks and reuses them.
 
 ```powershell
 node test/llm/report-hy4-mimo26-lfm25.mjs

@@ -11802,6 +11802,706 @@
       "sha256": "1ea6dd2c9941b5b0992d0cbbe33de246179b85fc28ac3bc7411ddf60f6f518b0"
     },
     {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "001",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/001.json",
+      "sha256": "9396038bc546e4883e5de7a0189e117ee4c39c22c91d7a2eae24e48e2066c117"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "002",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/002.json",
+      "sha256": "2b94ad1d69b6ea8964c583c2b7e1913fb9828fa34e79e816466e88fda3f8cf3a"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "003",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/003.json",
+      "sha256": "f18be35847767ea533cabe53b7e48e0d1a2bf57160fc7cd54f0f8640275ef8df"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "004",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/004.json",
+      "sha256": "5dd8168980634c6bb361939a60d5cc7cc37b03d2215d41da71767a4a6fadecad"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "005",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/005.json",
+      "sha256": "5d69d445308f10d1fca0bb52f48aae4f2d6c555c9f00dc271d166b70b6a9bd1f"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "006",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/006.json",
+      "sha256": "8e5e3a5a7a3c73d6506af4027d516a5b9e1e58c27e8363d9647c7fd3b7e281d4"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "007",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/007.json",
+      "sha256": "f7e6d5819df60afea6697ff8885eeadca19bf0be3b567f7c58e97d1c4d8a1144"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "008",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/008.json",
+      "sha256": "3116e7b2a4010f7cc4f1ccfc23f7746c6f427dfafdb4cef290323bca78ddf995"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "009",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/009.json",
+      "sha256": "fab4aca1fb40abf74c1f085d213bcf935e2735df897b36c0a6d19b55e9d6d0e2"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "010",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/010.json",
+      "sha256": "b7625f942d3c50124aeddd5e2b5c1374e67b2ebf459ca85771705f8017981a8f"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "011",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/011.json",
+      "sha256": "b00795408d3238a0fede80169e6a818889b04b91e84670b16154c79279578bb7"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "012",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/012.json",
+      "sha256": "35f02faabb6a0458b7d0874143553365c51c48fdf3944bcea1c26108cce71313"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "013",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/013.json",
+      "sha256": "c95bb038b33f8cb5c1cd1b93c1fb02a66e2ad5ce70f6065b9843345b66af959d"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "014",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/014.json",
+      "sha256": "ae92af4bf1e72634a248e957ad059a26bf1080dfd1b6fc68703f590b9d6c669b"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "015",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/015.json",
+      "sha256": "c30bf705d9bfc9edb03b872361c9ad3b17cf57b8bb325c331c74f702ff75d9f3"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "016",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/016.json",
+      "sha256": "7de3433f40816b954a5985329f58fe6329a93a5d043d5cfde7fca3b4147ce0d2"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "017",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/017.json",
+      "sha256": "13c8f50db00d9fb04b2a98a72ce89d591375796baa5a577d488ab543167e8e7a"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "018",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/018.json",
+      "sha256": "2072107a3efae4ed32b49d0b05ed4d9ac1ff5c7762c31b95f7091e83e590782f"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "019",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/019.json",
+      "sha256": "60a8d6d092e68285a5d69b1346badbc04fea82aabe46e64adb464c60852d0b05"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "020",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/020.json",
+      "sha256": "2e8d53acce6c7c4a32f2117edc883d7f0a80043476d2c978eb33ca6d1fd44e78"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "021",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/021.json",
+      "sha256": "1edb26d308cdb4758ed26fd8b73c2309d621bde247cba2a15bf4bb105fc3a4aa"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "022",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/022.json",
+      "sha256": "420536120a19404062d156e8f01e8ab88e9f376781c7844feb18883481eb8833"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "023",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/023.json",
+      "sha256": "3150cfaf21887b9d28ebb63061b06bbaf5c57ded96dc3662e5bf7608f6015a16"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "024",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/024.json",
+      "sha256": "d3939686cd1e8477eae0259a923010f35e0f8fd5b4191ac3d3fcf08703ad4098"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "025",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/025.json",
+      "sha256": "a889353164bc1e1976568554f58fb7f41d613a0ffda2f4c0e314d5800838c4e4"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "026",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/026.json",
+      "sha256": "15d8ce4258c1692ee5869403dc19e5e0b84abadc2e50a332d5301dc8bd467245"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "027",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/027.json",
+      "sha256": "3c3e7bf059e32f422be5ac66a208ffc917c47094ce167f095a1918f956fa1110"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "028",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/028.json",
+      "sha256": "925ae559e9fb2895c342f0114f59ee87b5858696ba4ea6db0231166d0f5d2d50"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "029",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/029.json",
+      "sha256": "a5f6d494dd2e317234b802b4793fd9b30c0bc3403843e7ff40d9b431dff52912"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "030",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/030.json",
+      "sha256": "7832d3bfa1f6b5f38904290bb715d957d6e0b4ab9b32ad651a2348a4507c9bd3"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "031",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/031.json",
+      "sha256": "8ed22ee9f9162f9b12ad32bd6dadeb3e52bfdf74ac66a45aeb9e2369d70ffd6d"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "032",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/032.json",
+      "sha256": "01aec8b2e8bc7e171a841663369edcb47ffd40431b8de4a62256740035b1f78b"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "033",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/033.json",
+      "sha256": "3173321ffc4b061003fa570c62f5d27cdc31bf9e7e5376bba9f37898280c50f4"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "034",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/034.json",
+      "sha256": "09f5e80c1f2864f4e1e961d90e1ce3080f379e2cfcfd5ce9e0d28b415accec93"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "035",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/035.json",
+      "sha256": "b9161f4b034fc7494af56642dda31486d0fa965b057cf56db48b2e524ceaecbc"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "036",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/036.json",
+      "sha256": "a22efd38ec2fe9deefb33544d58ad0cbccf14c600583dcaa1c5c1137d656a411"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "037",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/037.json",
+      "sha256": "8e4340f4787616b683f86e7dd0ff3aa5145cbc49254091d7344c9643420682ad"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "038",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/038.json",
+      "sha256": "d999281cba9a4752f3d8fc1392ca1a06f6e07bc4ad372f4d0be6ff7954ea1405"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "039",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/039.json",
+      "sha256": "0d40d841517c786f5f716c668dcebd1a43c9c026956c56849f031e14a73f97c4"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "040",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/040.json",
+      "sha256": "149d24e477f2ef92478e6256a4f2094c2d3de3b809588c1a822f304dce67bbc0"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "041",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/041.json",
+      "sha256": "e72c02eb82e7a9cb5777d9f96e79ae4310175cce04770f501b5324a8f628fd17"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "042",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/042.json",
+      "sha256": "1ab87838c3485d84e2dc109bdf37c8a0ea413473ec1de67368e97f5043a0a9af"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "043",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/043.json",
+      "sha256": "75e325bcf8bfeecd79cd8ab00d4e76f228038fc9c697eb41c18bf9b9f5f3a5e0"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "044",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/044.json",
+      "sha256": "c2e91012dcc16009225f04913cecea18f039c896a53e381fc0d20857ecabde1a"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "045",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/045.json",
+      "sha256": "405c3dc47a4933ad8c4d4e2c15351e1ed0ce279d48ff5f3b8a2bce5fb572de91"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "046",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/046.json",
+      "sha256": "f0d8c1c771ad07ee43c97821281096644da9d1984993fbd06516fa8812d6fe9d"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "047",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/047.json",
+      "sha256": "55d2936c70c70bbbd3767297196f7d3f076c884c9859709a8fa420875edb27ba"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "048",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/048.json",
+      "sha256": "140e74e26c25fb96551d122d24c1fb62947c5eea51d2483ed28d9c9d7653e449"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "049",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/049.json",
+      "sha256": "f2b707c407bb53dcd59f9fc7ee788e2de14a6ec5d87442cf58bf8e79eedc59f6"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "050",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/050.json",
+      "sha256": "bb7fa4b98695a1bb72aa6e388016e566dbc1c196bdb9ea4aee552674a49939e7"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "051",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/051.json",
+      "sha256": "553b975b562d0b6016a2ea1ab4823aae0075918f6c0487cd57d867d107e37b38"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "052",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/052.json",
+      "sha256": "d390d039d1d05604c027f266d13f0e804be483393988883c917a820ae1a4dd9a"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "053",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/053.json",
+      "sha256": "d95f8f7d7e5f968cff1611d60038685dc4863d1faa14abcf32dca2fac6ddcb9c"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "054",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/054.json",
+      "sha256": "089c5afc138b1fbc8e9fda041cfe29836f97753a1959ed7ec1924fb9f016aa6b"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "055",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/055.json",
+      "sha256": "9a3d98dc2e3bf62a3675ed3065d263c4da231247928979658f5a4994dab5d980"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "056",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/056.json",
+      "sha256": "01ed0afcb58cd3756c07f579f402c63a3efd3d2bc910faaaabd60c55d80a120e"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "057",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/057.json",
+      "sha256": "397724aa2f6c16e9f00eae29239a0331de625f51552888afcb43ccfae1b73355"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "058",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/058.json",
+      "sha256": "22391ab0acd87ddb360f17e6ec59dfee3399cecc7b6ba227573dfd38315f86dc"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "059",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/059.json",
+      "sha256": "a0444fec114cc2d639ac36f39cc74c60300576bad52c8bf61c710803df7a32a1"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "060",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/060.json",
+      "sha256": "2276f60682d0b75d4a604ecb5e1d9e7770383bfe81a7d5068612e4263e6e33b3"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "061",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/061.json",
+      "sha256": "255f4aed1e9c63ea78743ab01f299d5a5367363d2dd3cfaa7b84b279aa4a6ead"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "062",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/062.json",
+      "sha256": "7962d8f771908a586944a9934aad68561035a3fe5f4988c7f912da2ab2c80669"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "063",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/063.json",
+      "sha256": "2ab147e0f63c9d789dba1b76645bcfb3f36a1689aec0bd50dbc006a172244a5a"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "064",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/064.json",
+      "sha256": "e99fcfcbeb69c34259d920f0b35daae1d510ba2461bec3f36c405abfb1c46bfc"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "065",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/065.json",
+      "sha256": "ea474fa41d9b8e9768744dc104f8004473e3508eb6e1853fa68cb5e37b14b144"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "066",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/066.json",
+      "sha256": "e5817825062c53d1da95be49255764f6a13f82d9b57fd2094fe0d60153b0d620"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "067",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/067.json",
+      "sha256": "14cb82800a0d272b0de474656a679c99351ad488fad1e633cb9a940dad54f02e"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "068",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/068.json",
+      "sha256": "c7cffdb7c60466e43f3e9a45647a251432fca70759b20a261c440563b1da535e"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "069",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/069.json",
+      "sha256": "26b4cd45d0d8bbe2c22b8eca38ee5bfd0e52cd0345b98106d6ba4807d97a0865"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "070",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/070.json",
+      "sha256": "c10b1748e4490e90a7102c509f6cd7cb62b66a707fd5cf01b25957bd4fd15f7b"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "071",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/071.json",
+      "sha256": "efa59ea041f0303a5af241aef4605feb8f56ab6e52122c9d2133e427f22533de"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "072",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/072.json",
+      "sha256": "ed15543ef867449fffe4fbbae38f057a95675d913143c14726e1db659a16365a"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "073",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/073.json",
+      "sha256": "1451aaf0f2ce4c21bec1a989e16db003d4b7e2c412be90674189fbb72a7d7590"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "074",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/074.json",
+      "sha256": "f45c39124325cc7615ed43ba1f4cedc1764bada33450b45a8b2db2456a07f2d0"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "075",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/075.json",
+      "sha256": "5ac0211fdaaa82b5466f442326ff79c04f84508d8ff4946966946e004a1a5fa1"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "076",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/076.json",
+      "sha256": "053531a4993dd5a28909176790ea710f2c136cd4b701b4abaccc352beebcfee8"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "077",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/077.json",
+      "sha256": "3bc7129f941efa84ad9bc109d20b6536e860f5a07ff464d79a26c064463f28c2"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "078",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/078.json",
+      "sha256": "9043bef151cb6cb63cf3faaa08b5ca23720f0a81f4913c45653b40b6b8d8acb2"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "079",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/079.json",
+      "sha256": "11af02814f4dc597cdc6b8a41c633f203f5ad4944af8b572f6f862e464c0540e"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "080",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/080.json",
+      "sha256": "00ec8d1383212e580ec2906bb93b1b91b860cba20ef13906d4c89d8c0283aaeb"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "081",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/081.json",
+      "sha256": "744618eda17a88119c250c20e2f41333ffebee40bc3406620686b744ef8a3296"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "082",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/082.json",
+      "sha256": "77663dec26c9690afd1c348d0a08fa925babc79446f56e28bb2bf78567e2e382"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "083",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/083.json",
+      "sha256": "6832e0546d0814bd47dbdd86982937986f8bcd47fb3e092d32b49b3416d470bc"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "084",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/084.json",
+      "sha256": "42a62b0d3dd3ee952ffb246907ba336e6457cfc6b49ef2d43d67810f61175cc3"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "085",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/085.json",
+      "sha256": "f99580f8def303a4ab377cda9aeea106afb96c62d3789900527f05a273055bc2"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "086",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/086.json",
+      "sha256": "6fd7621a5dcdddeb3843a3cc6778b2fca52bae179a2d1acb5502b101c1d68f4f"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "087",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/087.json",
+      "sha256": "b852567c230772b7f9e6fbcd0e83b38cb1a2d8d987741c8c140d98e55603a9d6"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "088",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/088.json",
+      "sha256": "b43f2d0ec95969c3e77c823efb6fe4af4873807dc64cd8ffc2a6a3ad3bb04488"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "089",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/089.json",
+      "sha256": "eba5716988a134816f62dce28b5f93d08d4bb75b48c391d38cbeae7f1882ced9"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "090",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/090.json",
+      "sha256": "250c094fb4c2d945c48cf98ddf390dbe9bf8f0f87a6777e9efbf235ed2da65ca"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "091",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/091.json",
+      "sha256": "e4d9a6d9efe11c5da5f9b9a09ad2b704218e14dd4f3b14bdb565ccb9e170619e"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "092",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/092.json",
+      "sha256": "10b3113d6b9deb745cf34da5c18de8055ccc07572b4b7456dc520e9edaa1cad3"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "093",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/093.json",
+      "sha256": "cfa5dd2850d0e1636020c299d2ecebfd85f91b45ee7b25560006fdbe072802e5"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "094",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/094.json",
+      "sha256": "d2aab7d64bbe01e8c63dea52be3d3866fc7fc19af21bb727aadaf61dbd8af281"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "095",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/095.json",
+      "sha256": "1d1be2e8b05958c50e1da01b01d5b5a9c443244118d9eb2d4eb15a3d9a0cd162"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "096",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/096.json",
+      "sha256": "586919d4dd4bc0dd97aa3cf49015bc87a5160ba6d296b352ad85e64886935bb1"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "097",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/097.json",
+      "sha256": "51aa6538b2352e75da4d5a1f594e95a361f4892f5dff768e5a3eb51e6cd0485f"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "098",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/098.json",
+      "sha256": "2714dcc03d23c0e9286c21f213c0ab5e98bdb15d406c5bfbcbba5737fb863587"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "099",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/099.json",
+      "sha256": "df0f0056359b4d96b569951d567147654a9873a535e941529bb7d0359923c870"
+    },
+    {
+      "track": "vision",
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "id": "100",
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production/100.json",
+      "sha256": "9a6385e41bd4f5194fbc29d4189703017d4a6617fe63c15e277101ac559a3324"
+    },
+    {
       "model": "tencent/hy4-preview",
       "id": "001",
       "path": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_tencent_hy4-preview/001.json",

@@ -4,7 +4,9 @@ Completed October 14, 2026 (Istanbul; raw UTC timestamps begin October 13). **60
 
 New planner results: Pro ranks 3/17 (43.6% exact consensus, 44 ideal tools, 95/95 schema-valid first calls, 6123 ms median, 46683 ms p95, $0.124612667); Flash ranks 7/17 (41.9%, 37, 96/97, 1195 ms, 4259 ms, $0.010978782); HY4 ranks 14/17 (27.5%, 36, 98/98, 5805.5 ms, 11638 ms, $0.2961319824); Liquid ranks 15/17 (24.9%, 23, 94/95, 1832 ms, 6677 ms, $0.0828711). No content-tool fallback was needed. Flash 058 misses `extract_data.type`; Liquid 092 sends an unsupported key enum. Schema validation and consensus inspect the first call only; multi-call responses remain in raw evidence.
 
-Vision: Flash passes 81/100 (94.3% mean score, 1908 ms median, 4586 ms p95, $0.021394496); Pro passes 77/100 (94.0%, 5728 ms, 11589 ms, $0.0644821588). Both have 100 parsed six-section, nonempty outputs. Pro reports 1438 reasoning tokens despite the disabling kwargs; Flash reports zero. All 400 vision grades, including the two historical references, are reproduced from the unchanged scorer.
+Vision: Flash passes 81/100 (94.3% mean score, 1908 ms median, 4586 ms p95, $0.021394496); Pro passes 77/100 (94.0%, 5728 ms, 11589 ms, $0.0644821588). Both have 100 parsed six-section, nonempty outputs. Pro reports 1438 reasoning tokens despite the disabling kwargs; Flash reports zero. All 500 vision grades, including the three historical references, are reproduced from the unchanged scorer.
+
+The comparison now also reuses Ling 3.0 Flash VL's October 7 vision run: 65/100 passes, 88.1% mean score, 3458.5 ms median, 4878 ms p95, and $0.0053822608. All 100 image hashes, prompt/settings/questions and grades match this vision protocol. Its raw streams are checked against final content, usage, provider and finish reason; its 22 length-limited responses and 33,885 reasoning tokens are retained. No new inference or cost is added. Its earlier May 41-tool text-planner run is incompatible with the 48-tool August planner protocol and is excluded from the 17-model pool.
 
 Requested models:
 

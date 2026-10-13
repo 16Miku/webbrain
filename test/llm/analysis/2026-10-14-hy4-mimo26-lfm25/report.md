@@ -24,3 +24,4 @@ Only the four October 14 planner models and two MiMo vision runs are new. Histor
 | Qwen3.8 Flash | 79 | 94.8% | 8.49s | 13.43s | $0.0411 |
 | MiMo-V2.6-Pro | 77 | 94.0% | 5.73s | 11.59s | $0.0645 |
 | GLM-5.3 Flash | 76 | 93.8% | 5.49s | 8.92s | $0.0211 |
+| Ling 3.0 Flash VL | 65 | 88.1% | 3.46s | 4.88s | $0.0054 |

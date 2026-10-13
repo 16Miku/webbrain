@@ -34,7 +34,7 @@
         "p95",
         "Cost / 100"
       ],
-      "rows": 4
+      "rows": 5
     },
     {
       "headers": [
@@ -42,7 +42,8 @@
         "MiMo-V2.6-Flash",
         "Qwen3.8 Flash",
         "MiMo-V2.6-Pro",
-        "GLM-5.3 Flash"
+        "GLM-5.3 Flash",
+        "Ling 3.0 VL"
       ],
       "rows": 5
     },
@@ -63,7 +64,7 @@
   "usageMatchesReport": true,
   "canonical": "https://webbrain.one/blog/hy4-mimo-v26-lfm25-browser-agent-benchmark",
   "jsonLdParsed": 1,
-  "internalLinksChecked": 3,
+  "internalLinksChecked": 4,
   "mobile": {
     "viewport": 390,
     "page": 390,
