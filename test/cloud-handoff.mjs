@@ -19,17 +19,18 @@ for (const browser of ['chrome', 'firefox']) {
   const { createCloudRunController, buildCloudPersistenceRows } = await import(`../src/${browser}/src/cloud-runs.js`);
   const { Agent } = await import(`../src/${browser}/src/agent/agent.js`);
 
-  function harness(processMessage) {
+  function harness(processMessage, options = {}) {
     const stored = {};
-    const api = { storage: { session: { get: async key => ({ [key]: structuredClone(stored[key]) }), set: async data => Object.assign(stored, structuredClone(data)) } },
+    const local = {};
+    const api = { storage: { local: { get: async key => ({ [key]: structuredClone(local[key]) }), set: async data => Object.assign(local, structuredClone(data)) }, session: { get: async key => ({ [key]: structuredClone(stored[key]) }), set: async data => Object.assign(stored, structuredClone(data)) } },
       tabs: { get: async id => ({ id, url: 'https://example.com/' }), query: async () => [{ id: 7, url: 'https://example.com/' }], update: async () => {} } };
     let clarificationResolve;
     const agent = { isRunning: () => false, hasOtherRunningTabs: () => false, canPauseAtClarification: () => true,
       strictSecretMode: true, processMessage, abort() {}, _persistNow: async () => ({ ok: true }),
       submitClarifyResponse(_tab, _id, answer) { clarificationResolve?.(answer); return true; } };
     let seq = 0;
-    const controller = createCloudRunController({ chromeApi: api, agent, makeRunId: () => `run_handoff_${++seq}`, ensureOffscreen: async () => {} });
-    return { controller, stored, agent, api, setClarificationResolver(value) { clarificationResolve = value; } };
+    const controller = createCloudRunController({ chromeApi: api, agent, makeRunId: () => `run_handoff_${++seq}`, ensureOffscreen: async () => {}, ...options });
+    return { controller, stored, local, agent, api, setClarificationResolver(value) { clarificationResolve = value; } };
   }
 
   test(`${browser}: pausing acknowledges only a settled boundary and keeps its tab reservation`, async () => {
@@ -312,5 +313,306 @@ for (const browser of ['chrome', 'firefox']) {
     agent._runningTabs.add(8);
     assert.equal(agent.hasOtherRunningTabs(7), true);
     assert.equal(agent.hasOtherRunningTabs(8), false);
+  });
+  for (const restart of ['extension reload', 'browser startup without session storage']) {
+    test(`${browser}: ${restart} restores only a durable manual guard and never replays`, async () => {
+      const ready = deferred(); let calls = 0;
+      const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => { calls++; await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read'; });
+      const run = await h.controller.startRun({ task: 'Private task with secret-provider-token' });
+      await h.controller.pause({ runId: run.runId }); ready.resolve();
+      await until(() => h.controller.runs.get(run.runId).status === 'paused');
+      await h.controller.status({ runId: run.runId });
+      const guard = h.local.webbrainCloudHandoffGuards[0];
+      assert.deepEqual(Object.keys(guard).sort(), ['createdAt', 'pausedAt', 'runId', 'tabId', 'updatedAt']);
+      assert.equal(JSON.stringify(h.local).includes('secret-provider-token'), false);
+      delete h.stored.webbrainCloudRunSnapshots;
+      if (restart.includes('without')) delete h.api.storage.session;
+      const restarted = createCloudRunController({ chromeApi: h.api, agent: h.agent, ensureOffscreen: async () => {} });
+      const restored = await restarted.status({ runId: run.runId });
+      assert.equal(restored.status, 'paused'); assert.equal(restored.handoff.interrupted, true); assert.equal(restored.handoff.resumable, false);
+      assert.equal(restored.task, undefined); assert.equal(restored.result, undefined); assert.equal(calls, 1);
+      await assert.rejects(restarted.resume({ runId: run.runId }), error => error.status === 409);
+      await assert.rejects(restarted.startRun({ task: 'Other bot', tabId: 8 }), error => error.status === 409);
+      await assert.rejects(restarted.guardRunStart(8, { kind: 'scheduled' }), error => error.status === 409);
+      assert.equal((await restarted.abort({ runId: run.runId })).status, 'aborted');
+      assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+      await restarted.guardRunStart(8, { kind: 'interactive' });
+      await h.controller.abort({ runId: run.runId });
+    });
+  }
+
+  test(`${browser}: a durable guard overrides a matching stale terminal snapshot`, async () => {
+    const ready = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => { await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read'; });
+    const run = await h.controller.startRun({ task: 'Read' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve();
+    await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    h.stored.webbrainCloudRunSnapshots[0].status = 'aborted'; h.stored.webbrainCloudRunSnapshots[0].handoff = null;
+    const restarted = createCloudRunController({ chromeApi: h.api, agent: h.agent, ensureOffscreen: async () => {} });
+    const restored = await restarted.status({ runId: run.runId });
+    assert.equal(restored.status, 'paused'); assert.equal(restored.handoff.interrupted, true);
+    await restarted.abort({ runId: run.runId }); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+    await h.controller.abort({ runId: run.runId });
+  });
+
+  test(`${browser}: durable local acknowledgement blocks publication and direct resume while writing`, async () => {
+    const ready = deferred(), writing = deferred(), written = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => { await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read'; });
+    const write = h.api.storage.local.set;
+    h.api.storage.local.set = async data => { if (data.webbrainCloudHandoffGuards?.[0]?.pausedAt) { writing.resolve(); await written.promise; } return write(data); };
+    const run = await h.controller.startRun({ task: 'Read' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve(); await writing.promise;
+    assert.equal(h.controller.runs.get(run.runId).status, 'pausing');
+    let exposed = false, resumed = false;
+    const status = h.controller.status({ runId: run.runId }).then(value => { exposed = true; return value; });
+    const returning = h.controller.resume({ runId: run.runId }).then(() => { resumed = true; }, error => { assert.equal(error.status, 409); });
+    await tick(); assert.equal(exposed, false); assert.equal(resumed, false);
+    written.resolve(); await status; await returning;
+    await h.controller.abort({ runId: run.runId });
+  });
+
+  test(`${browser}: failed guard writes retain read-only ownership and abort waits for native quiescence`, async () => {
+    const ready = deferred(), finished = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => { await ready.promise; await options.handoffBoundary(); await finished.promise; options.onRunFinished('done'); return 'Read'; });
+    const run = await h.controller.startRun({ task: 'Read' });
+    const write = h.api.storage.local.set;
+    h.api.storage.local.set = async () => { throw Error('Fixture guard write failure'); };
+    await assert.rejects(h.controller.pause({ runId: run.runId }), /guard write failure/);
+    assert.equal(h.controller.runs.get(run.runId).handoff.resumable, false);
+    await assert.rejects(h.controller.guardRunStart(8, { kind: 'scheduled' }), error => error.status === 409);
+    h.api.storage.local.set = write;
+    const aborting = await h.controller.abort({ runId: run.runId }); assert.equal(aborting.status, 'aborting');
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1, 'a cancellation request must retain the durable guard');
+    ready.resolve(); await tick(); assert.equal(h.local.webbrainCloudHandoffGuards.length, 1);
+    finished.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'aborted');
+    await h.controller.status({ runId: run.runId }); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+  });
+
+  test(`${browser}: guard removal failures preserve the lock until explicit cancellation retries`, async () => {
+    const ready = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => { await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read'; });
+    const run = await h.controller.startRun({ task: 'Read' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    const restarted = createCloudRunController({ chromeApi: h.api, agent: h.agent, ensureOffscreen: async () => {} });
+    await restarted.status({ runId: run.runId });
+    const write = h.api.storage.local.set;
+    h.api.storage.local.set = async data => { if (!data.webbrainCloudHandoffGuards.length) throw Error('Fixture clear failure'); return write(data); };
+    await assert.rejects(restarted.abort({ runId: run.runId }), /clear failure/);
+    assert.equal(restarted.runs.get(run.runId).status, 'paused');
+    assert.equal(restarted.runs.get(run.runId).handoff.interrupted, true);
+    assert.equal(restarted.runs.get(run.runId).updates.at(-1).data.state, 'paused', 'failed cancellation cannot publish a null handoff');
+    assert.equal(restarted.isRunning(7), true);
+    await assert.rejects(restarted.guardRunStart(8, { kind: 'interactive' }), error => error.status === 409);
+    h.api.storage.local.set = write;
+    assert.equal((await restarted.abort({ runId: run.runId })).status, 'aborted'); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+    await h.controller.abort({ runId: run.runId });
+  });
+
+  test(`${browser}: handback guard-clear failure stops before any further action`, async () => {
+    const ready = deferred(); let observations = 0, actions = 0;
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      await ready.promise; await options.handoffBoundary(); observations++;
+      await options.handoffObserved(); actions++; options.onRunFinished('done'); return 'Read';
+    });
+    const run = await h.controller.startRun({ task: 'Read only' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    const write = h.api.storage.local.set;
+    h.api.storage.local.set = async data => { if (!data.webbrainCloudHandoffGuards.length) throw Error('Fixture observed-clear failure'); return write(data); };
+    await h.controller.resume({ runId: run.runId }); await until(() => h.controller.runs.get(run.runId).handoff?.interrupted);
+    const stopped = await h.controller.status({ runId: run.runId });
+    assert.equal(stopped.status, 'paused'); assert.equal(stopped.handoff.resumable, false); assert.equal(observations, 1); assert.equal(actions, 0);
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1);
+    await assert.rejects(h.controller.startRun({ task: 'Another bot', tabId: 8 }), error => error.status === 409);
+    h.api.storage.local.set = write; await h.controller.abort({ runId: run.runId }); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+  });
+
+  test(`${browser}: queued persistence cannot resurrect a confirmed cleared guard`, async () => {
+    const ready = deferred(), clearing = deferred(), cleared = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => { await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read'; });
+    const run = await h.controller.startRun({ task: 'Read' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    const restarted = createCloudRunController({ chromeApi: h.api, agent: h.agent, ensureOffscreen: async () => {} }); await restarted.status({ runId: run.runId });
+    const write = h.api.storage.local.set;
+    h.api.storage.local.set = async data => { if (!data.webbrainCloudHandoffGuards.length) { clearing.resolve(); await cleared.promise; } return write(data); };
+    const first = restarted.abort({ runId: run.runId }); await clearing.promise;
+    const queued = restarted.abort({ runId: run.runId }); await tick(); cleared.resolve();
+    await first; await queued; await restarted.status({ runId: run.runId }); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+    await h.controller.abort({ runId: run.runId });
+  });
+
+  test(`${browser}: failed or malformed durable guard reads prevent run startup`, async () => {
+    const valid = { runId: 'owned_1', tabId: 7, createdAt: '2026-10-12T23:00:00.000Z', updatedAt: '2026-10-12T23:00:00.000Z', pausedAt: null };
+    const readFailure = Symbol('read failure');
+    for (const value of [readFailure, null, false, 0, '', [{ runId: '', tabId: 7 }], [{ ...valid, runId: 123 }], [{ ...valid, runId: ' ' }],
+      [valid, valid], [{ ...valid, tabId: '7' }], [{ ...valid, createdAt: 'yesterday' }]]) {
+      let calls = 0;
+      const h = harness(async () => { calls++; });
+      h.api.storage.local.get = async () => { if (value === readFailure) throw Error('Fixture read failure'); return { webbrainCloudHandoffGuards: value }; };
+      await assert.rejects(h.controller.startRun({ task: 'Read' })); assert.equal(calls, 0);
+    }
+  });
+
+  test(`${browser}: failed live cancellation clear stays interrupted until owner retries`, async () => {
+    const ready = deferred();
+    const h = harness(async (_tab, _task, update, _mode, _attachments, options) => { await ready.promise; await options.handoffBoundary(); update('clarify', { clarifyId: 'late', question: 'Late question' }); options.onRunFinished('done'); return 'Read'; });
+    const run = await h.controller.startRun({ task: 'Read' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    const write = h.api.storage.local.set;
+    h.api.storage.local.set = async data => { if (!data.webbrainCloudHandoffGuards.length) throw Error('Fixture live clear failure'); return write(data); };
+    assert.equal((await h.controller.abort({ runId: run.runId })).status, 'aborting');
+    await until(() => h.controller.runs.get(run.runId).handoff?.interrupted);
+    const stopped = await h.controller.status({ runId: run.runId });
+    assert.equal(stopped.status, 'paused'); assert.equal(stopped.handoff.resumable, false); assert.equal(stopped.pendingInput, null); assert.equal(stopped.completedAt, null);
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1);
+    await assert.rejects(h.controller.guardRunStart(8, { kind: 'scheduled' }), error => error.status === 409);
+    h.api.storage.local.set = write; assert.equal((await h.controller.abort({ runId: run.runId })).status, 'aborted'); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+  });
+
+  test(`${browser}: valid caller correlation IDs remain usable for handoff and reload`, async () => {
+    for (const runId of ['request:17', 'tenant/run/1', 'browser-ü-任务']) {
+      const ready = deferred();
+      const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+        await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read';
+      });
+      await h.controller.startRun({ task: 'Read only', runId });
+      await h.controller.pause({ runId }); ready.resolve();
+      await until(() => h.controller.runs.get(runId).status === 'paused'); await h.controller.status({ runId });
+      delete h.stored.webbrainCloudRunSnapshots;
+      const restarted = createCloudRunController({ chromeApi: h.api, agent: h.agent });
+      assert.equal((await restarted.status({ runId })).handoff.interrupted, true);
+      await restarted.abort({ runId }); await h.controller.abort({ runId });
+    }
+    const h = harness(async () => assert.fail('Oversized ID must not dispatch'));
+    await assert.rejects(h.controller.startRun({ task: 'Read', runId: 'x'.repeat(16 * 1024 + 1) }), error => error.status === 400);
+    assert.equal(h.controller.runs.size, 0);
+  });
+
+  test(`${browser}: cancellation during a pending pause guard write cannot resurrect manual control`, async () => {
+    for (const fail of [false, true]) {
+      const ready = deferred(), writing = deferred(), written = deferred(), finished = deferred();
+      const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+        await ready.promise; await options.handoffBoundary(); await finished.promise; options.onRunFinished('done'); return 'Read';
+      });
+      const run = await h.controller.startRun({ task: 'Read' });
+      await h.controller.pause({ runId: run.runId });
+      const set = h.api.storage.local.set;
+      let failed = false;
+      h.api.storage.local.set = async data => {
+        if (data.webbrainCloudHandoffGuards?.[0]?.pausedAt) {
+          writing.resolve(); await written.promise;
+          if (fail && !failed) { failed = true; throw Error('Fixture pending pause write failure'); }
+        }
+        return set(data);
+      };
+      ready.resolve(); await writing.promise;
+      const aborting = h.controller.abort({ runId: run.runId });
+      await tick(); assert.equal(h.controller.runs.get(run.runId).status, 'aborting');
+      await assert.rejects(h.controller.guardRunStart(8, { kind: 'scheduled' }), error => error.status === 409);
+      written.resolve(); await aborting;
+      assert.equal(h.controller.runs.get(run.runId).handoff, null, 'a delayed pause callback cannot restore writable state');
+      finished.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'aborted');
+      assert.equal((await h.controller.status({ runId: run.runId })).status, 'aborted');
+      assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+    }
+  });
+
+  test(`${browser}: cancellation stays nonterminal through native and recording cleanup`, async () => {
+    const ready = deferred(), settled = deferred(), flushing = deferred(), flushed = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      await ready.promise; await options.handoffBoundary(); await settled.promise; options.onRunFinished('done'); return 'Read';
+    }, {
+      startRecording: async () => ({ ok: true, state: { recordingId: 'capture-1' } }),
+      stopRecording: async () => { flushing.resolve(); await flushed.promise; return { ok: true }; },
+    });
+    const run = await h.controller.startRun({ task: 'Read', capture: 'video' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve();
+    await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    assert.equal((await h.controller.abort({ runId: run.runId })).status, 'aborting');
+    for (const kind of ['cloud', 'scheduled', 'interactive']) await assert.rejects(h.controller.guardRunStart(8, { kind }), error => error.status === 409);
+    await assert.rejects(h.controller.startRun({ task: 'Another bot', tabId: 8 }), error => error.status === 409);
+    settled.resolve(); await flushing.promise;
+    const pending = await h.controller.status({ runId: run.runId });
+    assert.equal(pending.completedAt, null); assert.notEqual(pending.status, 'aborted');
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1, 'recording still owns the profile');
+    flushed.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'aborted');
+    await h.controller.status({ runId: run.runId }); assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+    await h.controller.guardRunStart(8, { kind: 'interactive' });
+  });
+
+  test(`${browser}: a failed public paused checkpoint becomes nonresumable`, async () => {
+    const ready = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      await ready.promise; await options.handoffBoundary(); options.onRunFinished('done'); return 'Read';
+    });
+    const run = await h.controller.startRun({ task: 'Read' });
+    await h.controller.pause({ runId: run.runId });
+    const set = h.api.storage.session.set;
+    h.api.storage.session.set = async data => {
+      if (data.webbrainCloudRunSnapshots?.[0]?.handoff?.resumable && data.webbrainCloudRunSnapshots[0].status === 'paused') throw Error('Fixture public checkpoint failure');
+      return set(data);
+    };
+    ready.resolve(); await until(() => h.controller.runs.get(run.runId).handoff?.interrupted);
+    assert.equal(h.controller.runs.get(run.runId).handoff.resumable, false);
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1);
+    await assert.rejects(h.controller.resume({ runId: run.runId }));
+    h.api.storage.session.set = set;
+    await until(() => !h.controller.runs.get(run.runId).pendingInput);
+    await h.controller.abort({ runId: run.runId }); await until(() => h.controller.runs.get(run.runId).status === 'aborted');
+  });
+
+  test(`${browser}: abort racing a fresh-observation guard clear retains ownership through recording cleanup`, async () => {
+    const ready = deferred(), clearing = deferred(), cleared = deferred(), continued = deferred(), flushing = deferred(), flushed = deferred();
+    const h = harness(async (_tab, _task, _update, _mode, _attachments, options) => {
+      await ready.promise; await options.handoffBoundary(); await options.handoffObserved();
+      await continued.promise; options.onRunFinished('done'); return 'Read';
+    }, {
+      startRecording: async () => ({ ok: true, state: { recordingId: 'capture-2' } }),
+      stopRecording: async () => { flushing.resolve(); await flushed.promise; return { ok: true }; },
+    });
+    const run = await h.controller.startRun({ task: 'Read', capture: 'video' });
+    await h.controller.pause({ runId: run.runId }); ready.resolve();
+    await until(() => h.controller.runs.get(run.runId).status === 'paused'); await h.controller.status({ runId: run.runId });
+    const set = h.api.storage.local.set;
+    let held = false;
+    h.api.storage.local.set = async data => {
+      if (!held && !data.webbrainCloudHandoffGuards.length) {
+        held = true; clearing.resolve(); await cleared.promise;
+      }
+      return set(data);
+    };
+    await h.controller.resume({ runId: run.runId }); await clearing.promise;
+    const aborting = h.controller.abort({ runId: run.runId });
+    await tick();
+    await assert.rejects(h.controller.guardRunStart(8, { kind: 'scheduled' }), error => error.status === 409);
+    cleared.resolve();
+    assert.equal((await aborting).status, 'aborting');
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1, 'cancellation during clear restores the durable reservation');
+    continued.resolve(); await flushing.promise;
+    for (const kind of ['cloud', 'scheduled', 'interactive']) await assert.rejects(h.controller.guardRunStart(8, { kind }), error => error.status === 409);
+    await assert.rejects(h.controller.startRun({ task: 'Another bot', tabId: 8 }), error => error.status === 409);
+    const pending = await h.controller.status({ runId: run.runId });
+    assert.equal(pending.completedAt, null); assert.notEqual(pending.status, 'aborted');
+    assert.equal(h.local.webbrainCloudHandoffGuards.length, 1);
+    flushed.resolve(); await until(() => h.controller.runs.get(run.runId).status === 'aborted');
+    assert.equal((await h.controller.status({ runId: run.runId })).status, 'aborted');
+    assert.deepEqual(h.local.webbrainCloudHandoffGuards, []);
+    await h.controller.guardRunStart(8, { kind: 'interactive' });
+  });
+
+  if (browser === 'firefox') test('Firefox keeps its in-process Cloud bridge transport', async () => {
+    const calls = [];
+    const h = harness(async () => assert.fail('Bridge controls must not start browser work'), {
+      bridge: {
+        start: async options => { calls.push(['start', options.url]); return { connected: true }; },
+        stop: async () => { calls.push(['stop']); return { connected: false }; },
+        status: async () => { calls.push(['status']); return { connected: true }; },
+      },
+      ensureOffscreen: () => assert.fail('Firefox has no offscreen document'),
+    });
+    h.api.runtime = { sendMessage: () => assert.fail('Firefox uses its injected background bridge') };
+    assert.equal((await h.controller.startBridge('ws://127.0.0.1:17374/extension')).connected, true);
+    assert.equal((await h.controller.bridgeStatus()).connected, true);
+    assert.equal((await h.controller.stopBridge()).connected, false);
+    assert.deepEqual(calls, [['start', 'ws://127.0.0.1:17374/extension'], ['status'], ['stop']]);
   });
 }

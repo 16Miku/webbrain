@@ -19,10 +19,12 @@ export class CloudHandoffGate {
 
   async acknowledge() {
     if (this.closed || this.state !== 'pausing') return;
-    this.state = 'paused';
     // A durable acknowledgement is required before the viewer becomes writable.
     await this.onState('paused');
-    if (!this.closed) this.stopKeepAlive = this.keepAlive();
+    if (!this.closed && this.state === 'pausing') {
+      this.state = 'paused';
+      this.stopKeepAlive = this.keepAlive();
+    }
   }
 
   async boundary() {
