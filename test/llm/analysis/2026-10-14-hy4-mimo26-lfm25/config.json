@@ -1,0 +1,60 @@
+{
+  "date": "2026-10-14",
+  "replayPath": "test/llm/freeze/full-replay-7182c21f.json",
+  "replaySha256": "3d27c43da02747496dbd050a366ef6188f14eaf99a5b41de35e5c55581669062",
+  "sourceCommit": "7182c21f58a94689c2ac3b547a279b9c5e699283",
+  "models": [
+    {
+      "model": "tencent/hy4-preview",
+      "label": "Tencent HY4 Preview",
+      "vision": false,
+      "plannerDir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_tencent_hy4-preview",
+      "visionDir": null
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "label": "MiMo-V2.6-Pro",
+      "vision": true,
+      "plannerDir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-pro",
+      "visionDir": "test/vision/results/2026-10-14-openrouter-mimo26-vision_xiaomi_mimo-v2.6-pro_production"
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "label": "MiMo-V2.6-Flash",
+      "vision": true,
+      "plannerDir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-flash",
+      "visionDir": "test/vision/results/2026-10-14-openrouter-mimo26-vision_xiaomi_mimo-v2.6-flash_production"
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "label": "Liquid LFM2.5-24B-A2B",
+      "vision": false,
+      "plannerDir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_liquid_lfm-2.5-24b-a2b",
+      "visionDir": null
+    }
+  ],
+  "planner": {
+    "cases": 100,
+    "actTools": 48,
+    "temperature": 0.15,
+    "maxTokens": 4096,
+    "reasoningOverride": null,
+    "compatibility": "off",
+    "concurrency": 3,
+    "timeoutMs": 180000
+  },
+  "vision": {
+    "cases": 100,
+    "temperature": 0,
+    "maxTokens": 800,
+    "promptMode": "production",
+    "concurrency": 2,
+    "providerRouting": "automatic"
+  },
+  "historicalPlannerModels": 13,
+  "historicalVisionDirs": [
+    "test/vision/results/2026-08-27-openrouter-full_qwen_qwen3.8-flash_production",
+    "test/vision/results/2026-08-27-openrouter-full_z-ai_glm-5.3-flash_production"
+  ],
+  "note": "Only October 14 models are new inference. August historical responses are retained, dated separately, and verified against matching pinned inputs. Full historical request byte equality is unprovable because old planner runs omitted bodies."
+}

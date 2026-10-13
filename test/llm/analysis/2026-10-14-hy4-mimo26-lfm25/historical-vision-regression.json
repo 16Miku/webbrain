@@ -1,0 +1,1568 @@
+{
+  "models": 2,
+  "cases": 200,
+  "inputAndScoreMatches": true,
+  "rows": [
+    {
+      "model": "qwen/qwen3.8-flash",
+      "label": "Qwen3.8 Flash",
+      "date": "2026-08-27",
+      "path": "test/vision/results/2026-08-27-openrouter-full_qwen_qwen3.8-flash_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 79,
+      "meanScore": 0.9476381766381763,
+      "meanLatencyMs": 8824.91,
+      "medianLatencyMs": 8495,
+      "p95LatencyMs": 13428,
+      "costRecords": 100,
+      "usageCost": 0.04105615000000001,
+      "promptTokens": 123400,
+      "completionTokens": 45345,
+      "cachedTokens": 0,
+      "reasoningTokens": 19241,
+      "sixSections": 99,
+      "emptyOutputs": 0,
+      "lengthLimited": null,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 14
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 17
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 17
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 16
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 15
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 5
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 4
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 5
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 5
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 5
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 5
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 5
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 4
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 5
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 4
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 4
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 2
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 4
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 4
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 4
+        }
+      },
+      "providers": {
+        "not recorded": {
+          "cases": 100,
+          "passes": 79
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": true,
+          "ratio": 0.8,
+          "criticalFailures": []
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": false,
+          "ratio": 0.5555555555555556,
+          "criticalFailures": [
+            "caption"
+          ]
+        },
+        {
+          "id": "017",
+          "pass": false,
+          "ratio": 0.7777777777777778,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "018",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "target"
+          ]
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "label"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "038",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": true,
+          "ratio": 0.9629629629629629,
+          "criticalFailures": []
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "status"
+          ]
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "058",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "059",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.7777777777777778,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "070",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "082",
+          "pass": false,
+          "ratio": 0.9166666666666666,
+          "criticalFailures": [
+            "notice"
+          ]
+        },
+        {
+          "id": "083",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "route-alert"
+          ]
+        },
+        {
+          "id": "096",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "label": "GLM-5.3 Flash",
+      "date": "2026-08-27",
+      "path": "test/vision/results/2026-08-27-openrouter-full_z-ai_glm-5.3-flash_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 76,
+      "meanScore": 0.9382857420357417,
+      "meanLatencyMs": 5859.7,
+      "medianLatencyMs": 5490.5,
+      "p95LatencyMs": 8917,
+      "costRecords": 100,
+      "usageCost": 0.02105408,
+      "promptTokens": 150200,
+      "completionTokens": 45116,
+      "cachedTokens": 24832,
+      "reasoningTokens": 19049,
+      "sixSections": 100,
+      "emptyOutputs": 0,
+      "lengthLimited": null,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 16
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 14
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 17
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 16
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 13
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 2
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 5
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 5
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 5
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 5
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 5
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 5
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 3
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 5
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 4
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 5
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 3
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 3
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 4
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 3
+        }
+      },
+      "providers": {
+        "not recorded": {
+          "cases": 100,
+          "passes": 76
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "017",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "018",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.6363636363636364,
+          "criticalFailures": [
+            "label",
+            "security-blocker"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "input",
+            "blocker"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "038",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "target"
+          ]
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "status"
+          ]
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "058",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "059",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.5555555555555556,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "070",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 0.875,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": false,
+          "ratio": 0.8461538461538461,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "082",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "083",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": false,
+          "ratio": 0.8333333333333334,
+          "criticalFailures": [
+            "external-blocker"
+          ]
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "route-alert"
+          ]
+        },
+        {
+          "id": "096",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.5454545454545454,
+          "criticalFailures": [
+            "input",
+            "status"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "cover"
+          ]
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        }
+      ]
+    }
+  ]
+}
