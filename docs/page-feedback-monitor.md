@@ -305,7 +305,9 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   recipient, a reply that does not name it, and a refusal or redirect ("No, not
   …", "Cancel all") approve nothing, and the clarify result tells the model why.
   Only an affirmative grant ("Send all remaining messages…", "send all")
-  approves every remaining send.
+  approves every remaining send. Icon-only attachment and picker launchers
+  beside a chat composer, named by their icon's label or title, are composer
+  utilities; Like, Send, mixed and unnamed icons stay guarded.
 - A cancelled `beforeinput` handled by a native chat editor can receive an
   exact read-only draft certificate while its original operation, document,
   identity nodes, editor, focus and selection remain current. The certificate

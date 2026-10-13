@@ -259,6 +259,23 @@ for (const kind of ['chrome', 'firefox']) {
     }
   });
 
+  // The model clicked the composer's icon buttons while the send was blocked.
+  // Attachment and picker launchers are not sends; Like and Send stay guarded.
+  for (const [control, nonSend] of [['attach', true], ['titled', true], ['like', false], ['send-icon', false],
+    ['mixed', false], ['bare', false]]) {
+    test(`the ${control} icon control ${nonSend ? 'is a composer utility' : 'stays a guarded send'}`, async page => {
+      await setup(page, kind);
+      const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args: { selector: `#${control}` },
+        adapterName: 'generic-messaging', supportsRecipientSets: false });
+      assert.equal(probe.success, true, JSON.stringify(probe));
+      if (nonSend) {
+        assert.equal(probe.messageSend, false, JSON.stringify(probe));
+        assert.equal(probe.composerUtility, true);
+      } else {
+        assert.notEqual(probe.messageSend, false, JSON.stringify(probe));
+      }
+    });
+  }
 }
 
 let passed = 0, failed = 0;

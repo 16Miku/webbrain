@@ -5742,7 +5742,18 @@
     + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
     + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
     + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
-    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode)',
+    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode'
+    // Attachment and picker launchers of chat composers (Instagram, Messenger
+    // and similar). They open a file chooser or a picker; they never send.
+    + '|add\\s+(?:an?\\s+)?(?:photos?|images?|pictures?|videos?|files?|attachments?|media|gifs?|stickers?)'
+    + '(?:\\s+(?:or|and|&)\\s+(?:an?\\s+)?(?:photos?|images?|pictures?|videos?|files?|gifs?|stickers?))?'
+    + '|choose\\s+(?:an?\\s+)?(?:emojis?|gifs?|stickers?)(?:\\s+(?:or|and|&)\\s+(?:an?\\s+)?(?:emojis?|gifs?|stickers?))?'
+    + '|(?:open\\s+)?(?:gif|sticker)s?(?:\\s+picker)?$'
+    + '|(?:fotoğraf|resim|görsel|video|dosya|medya)(?:\\s+(?:veya|ya\\s+da|ve)\\s+(?:fotoğraf|resim|video|dosya))?\\s+ekle'
+    + '|(?:emoji|gif|çıkartma)(?:\\s+(?:veya|ya\\s+da)\\s+(?:emoji|gif|çıkartma))?\\s+seç'
+    + '|(?:foto|bild|video|datei|anhang)(?:\\s+oder\\s+(?:foto|bild|video))?\\s+hinzufügen|emoji\\s+auswählen'
+    + '|(?:añadir|agregar|adicionar)\\s+(?:una?\\s+)?(?:foto|imagen|imagem|vídeo|video|archivo|arquivo)'
+    + '|ajouter\\s+(?:une?\\s+)?(?:photo|image|vidéo|fichier)|choisir\\s+un\\s+emoji)',
     'i',
   );
 
@@ -5758,7 +5769,17 @@
         || el.textContent
         || '',
       ).replace(/\s+/g, ' ').trim();
-      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
+      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label) && !_hasMessageCommitName(label)) return true;
+      // Icon-only controls carry their name on the icon itself (<svg
+      // aria-label>, <img alt>). Every named icon must be a utility.
+      if (!label) {
+        const iconNames = Array.from(el.querySelectorAll?.('svg[aria-label],[role="img"][aria-label],img[alt]') || [])
+          .slice(0, 4)
+          .map(icon => String(icon.getAttribute('aria-label') || icon.getAttribute('alt') || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        if (iconNames.length && iconNames.every(name => _COMPOSER_UTILITY_LABEL_RE.test(name)
+          && !_hasMessageCommitName(name))) return true;
+      }
       const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
       if (formattingScope && formattingScope !== el) return true;
       return !!el.hasAttribute?.('aria-pressed');
