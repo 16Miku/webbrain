@@ -37,6 +37,17 @@ function throwIfPageFeedbackPending(result) {
   error.code = 'page_feedback_pending'; throw error;
 }
 
+// Rejections raised before a command could reach chrome.debugger: the session
+// check, the receiving-target and page-feedback fences, and the caller's last
+// beforeSend check. Any other rejection can follow an applied Input command
+// (a lost acknowledgement), so callers must treat it as possibly delivered.
+const COMMAND_NOT_SENT_ERRORS = new WeakSet();
+export function isCdpCommandNotSentError(error) {
+  if (!error || typeof error !== 'object') return false;
+  // The dispatch fence rejects before any protocol command is issued.
+  return COMMAND_NOT_SENT_ERRORS.has(error) || error.code === 'page_feedback_pending';
+}
+
 function readProseMirrorText(el) {
   if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
   // Paragraphs are document line breaks, not innerText's visual spacing.
@@ -822,7 +833,39 @@ export class CDPClient {
   /**
    * Send a CDP command and get the result.
    */
-  async sendCommand(tabId, method, params = {}, sessionId = '') {
+  async sendCommand(tabId, method, params = {}, sessionId = '', { beforeSend = null } = {}) {
+    try {
+      await this._beforeCommand(tabId, method, params, sessionId);
+      // Last synchronous point before the command can reach the page. Callers
+      // record dispatch (and recheck cancellation) only after the fence passed.
+      if (typeof beforeSend === 'function') beforeSend();
+    } catch (error) {
+      if (error && typeof error === 'object') COMMAND_NOT_SENT_ERRORS.add(error);
+      throw error;
+    }
+
+    return new Promise((resolve, reject) => {
+      chrome.debugger.sendCommand(
+        { tabId, ...(sessionId ? { sessionId } : {}) },
+        method,
+        params,
+        (result) => {
+          // Chrome extension APIs expose callback failures through
+          // chrome.runtime.lastError, not a second callback argument. Read it
+          // synchronously while the callback is active; Chrome clears it after
+          // the callback returns.
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message || String(error)));
+            return;
+          }
+          resolve(result);
+        },
+      );
+    });
+  }
+
+  async _beforeCommand(tabId, method, params, sessionId) {
     if (!this.sessions.has(tabId)) {
       throw new Error(`Not attached to tab ${tabId}`);
     }
@@ -850,26 +893,6 @@ export class CDPClient {
           && params.button === 'none' && params.buttons === 0,
       });
     }
-
-    return new Promise((resolve, reject) => {
-      chrome.debugger.sendCommand(
-        { tabId, ...(sessionId ? { sessionId } : {}) },
-        method,
-        params,
-        (result) => {
-          // Chrome extension APIs expose callback failures through
-          // chrome.runtime.lastError, not a second callback argument. Read it
-          // synchronously while the callback is active; Chrome clears it after
-          // the callback returns.
-          const error = chrome.runtime.lastError;
-          if (error) {
-            reject(new Error(error.message || String(error)));
-            return;
-          }
-          resolve(result);
-        },
-      );
-    });
   }
 
   async _pageAgentObjectTarget(tabId, objectId, sessionId = '') {
@@ -3596,7 +3619,7 @@ export class CDPClient {
   /**
    * Dispatch mouse event.
    */
-  async dispatchMouseEvent(tabId, type, x, y, button = 'left') {
+  async dispatchMouseEvent(tabId, type, x, y, button = 'left', options = {}) {
     // Use string button names as required by CDP Input.dispatchMouseEvent.
     // 'buttons' is a bitmask: 1 = left held. clickCount must be 1 on BOTH
     // mousePressed AND mouseReleased for the browser to synthesize a 'click'
@@ -3610,7 +3633,7 @@ export class CDPClient {
       button: isMove ? 'none' : button,
       buttons: isDown ? 1 : 0,
       clickCount: isMove ? 0 : 1,
-    });
+    }, '', options);
   }
 
   /**
@@ -4984,7 +5007,16 @@ export class CDPClient {
     }
 
     // Step 1: real mouse events at center coordinates.
+    // dispatchAttempted means a click-producing command may have reached the
+    // page. It is set at the transport's last pre-protocol point (after the
+    // page-feedback fence), and also for any rejection that cannot be placed
+    // before that point, because a lost acknowledgement can follow delivery.
     let dispatchAttempted = false;
+    const markDispatchAttempted = () => {
+      if (dispatchAttempted) return;
+      if (typeof options?.onDispatch === 'function') options.onDispatch();
+      dispatchAttempted = true;
+    };
     const pageDeadlineResult = (priorDispatchAttempted, error) => priorDispatchAttempted
       ? {
           success: false,
@@ -5015,15 +5047,16 @@ export class CDPClient {
       };
     };
     if (info.inViewport && info.hitOk) {
+      const rect = {
+        x: Math.round(info.x - (info.width || 1) / 2),
+        y: Math.round(info.y - (info.height || 1) / 2),
+        w: Math.round(info.width || 1),
+        h: Math.round(info.height || 1),
+      };
+      let released = false;
       try {
         await this.armFileInputClickGuard(tabId);
         throwIfAborted();
-        const rect = {
-          x: Math.round(info.x - (info.width || 1) / 2),
-          y: Math.round(info.y - (info.height || 1) / 2),
-          w: Math.round(info.width || 1),
-          h: Math.round(info.height || 1),
-        };
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: info.x, y: info.y, button: 'none', buttons: 0,
         });
@@ -5035,20 +5068,21 @@ export class CDPClient {
           rect,
         });
         if (validation.success !== true) return validation;
-        dispatchAttempted = true;
-        await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
-          type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,
-        });
+        let pressChecked = false;
         try {
-          throwIfAborted();
+          await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+            type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,
+          }, '', { beforeSend: () => { pressChecked = true; throwIfAborted(); markDispatchAttempted(); } });
         } catch (error) {
-          if (error?.code === 'page_feedback_pending') throw error;
-          await cancelPressedPointer();
+          if (!pressChecked && !isCdpCommandNotSentError(error)) markDispatchAttempted();
           throw error;
         }
+        markDispatchAttempted();
+        throwIfAborted();
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: info.x, y: info.y, button: 'left', buttons: 0, clickCount: 1,
         });
+        released = true;
         throwIfAborted();
         const blockedFileInput = await this.consumeFileInputClickGuard(tabId);
         if (blockedFileInput?.blocked) {
@@ -5069,9 +5103,31 @@ export class CDPClient {
           rect,
         };
       } catch (e) {
+        if (dispatchAttempted) {
+          // The trusted press may already have activated the target. A DOM or
+          // JS fallback would be a second activation reusing the consumed
+          // dispatch authorization, so report the possibly delivered click.
+          if (!released) await cancelPressedPointer();
+          if (actionExpired()) throwIfAborted();
+          if (e?.code === 'page_feedback_pending') throw e;
+          return {
+            success: false,
+            dispatched: true,
+            outcomeUnknown: true,
+            retryable: false,
+            trusted: true,
+            method: info.viaCDP ? 'cdp-mouse-closed-shadow' : 'cdp-mouse',
+            tag: info.tag,
+            text: info.text,
+            x: info.x,
+            y: info.y,
+            rect,
+            error: `The trusted click was sent but its acknowledgement was lost (${e?.message || String(e)}). Inspect the page before deciding whether to click again; no fallback click was sent.`,
+          };
+        }
         if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) throwIfAborted();
-        // fall through to fallback
+        // No press reached the protocol: fall through to the fallback.
       }
     }
 
@@ -5105,7 +5161,7 @@ export class CDPClient {
           const validation = await authorizeDispatch({ x: info.x, y: info.y, tag: info.tag });
           if (validation.success !== true) return validation;
           const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'click', selector, x: info.x, y: info.y });
-          dispatchAttempted = true;
+          let clickChecked = false;
           const clicked = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
             objectId,
             functionDeclaration: `function(actionDeadlineAt, pageGuard) {
@@ -5131,6 +5187,9 @@ export class CDPClient {
             arguments: [{ value: deadlineAt }, { value: pageGuard || null }],
             returnByValue: true,
             awaitPromise: false,
+          }, '', { beforeSend: () => { clickChecked = true; throwIfAborted(); markDispatchAttempted(); } }).catch(error => {
+            if (!clickChecked && !isCdpCommandNotSentError(error)) markDispatchAttempted();
+            throw error;
           });
           if (clicked?.result?.value?.pageFeedbackPending === true) {
             await this.consumeFileInputClickGuard(tabId);
@@ -5166,6 +5225,14 @@ export class CDPClient {
       } catch (e) {
         if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) throwIfAborted();
+        // A node click whose response was lost may already have run.
+        if (dispatchAttempted) {
+          return {
+            success: false, dispatched: true, outcomeUnknown: true, retryable: false,
+            method: 'cdp-node-click',
+            error: `The node click was sent but its response was lost (${e?.message || String(e)}). Inspect the page before deciding whether to click again; no fallback click was sent.`,
+          };
+        }
         // fall through
       } finally {
         if (objectId) {
@@ -5182,7 +5249,8 @@ export class CDPClient {
     if (fallbackValidation.success !== true) return fallbackValidation;
     const priorDispatchAttempted = dispatchAttempted;
     const pageGuard = await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'click', selector, x: info.x, y: info.y });
-    dispatchAttempted = true;
+    throwIfAborted();
+    markDispatchAttempted();
     const fb = await this.evaluateFunction(tabId, `function (sel, actionDeadlineAt, pageGuard) {
         ${PAGE_AGENT_DOM_ACTION_SOURCE}
         const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
@@ -5763,9 +5831,29 @@ export class CDPClient {
       error.name = 'AbortError';
       throw error;
     };
-    const markDispatch = () => {
-      throwIfAborted();
+    // Dispatch is recorded once the page-feedback fence has passed, immediately
+    // before an input command can reach the page, and for any rejection the
+    // transport cannot place before that point. A vetoed command stays unsent.
+    let inputSent = false;
+    const markSent = () => {
+      // The caller's hook may refuse (owner ended); then nothing was sent.
       if (beforeDispatch) beforeDispatch();
+      inputSent = true;
+    };
+    const sendInput = async (method, params) => {
+      let checked = false;
+      try {
+        const result = await this.sendCommand(tabId, method, params, '', {
+          beforeSend: () => { checked = true; throwIfAborted(); markSent(); },
+        });
+        if (!inputSent) markSent();
+        return result;
+      } catch (error) {
+        // A rejection from our own last check, or one the transport places
+        // before the protocol call, sent nothing; any other may follow delivery.
+        if (!checked && !isCdpCommandNotSentError(error)) markSent();
+        throw error;
+      }
     };
     const cancelPressedPointer = async () => {
       try {
@@ -5789,16 +5877,15 @@ export class CDPClient {
           });
         } catch {}
       };
-      markDispatch();
       try {
-        await this.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        await sendInput('Input.dispatchKeyEvent', {
           type: 'keyDown',
           ...keyParams,
           ...(commands.length ? { commands } : {}),
         });
       } catch (error) {
         if (error?.code === 'page_feedback_pending') throw error;
-        if (actionExpired()) {
+        if (actionExpired() && !isCdpCommandNotSentError(error)) {
           // A delayed debugger response can mean keyDown reached the page even
           // though the action deadline already expired. Release defensively so
           // later user or agent input cannot inherit a stuck key state.
@@ -6151,7 +6238,8 @@ export class CDPClient {
         });
         throwIfAborted();
         dispatched = true;
-        markDispatch();
+        // Focusing the field is preparation: only text-changing commands
+        // below record text dispatch for the caller.
         await this.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: info.x, y: info.y, button: 'left', buttons: 1, clickCount: 1,
         });
@@ -6259,12 +6347,14 @@ export class CDPClient {
         } catch (e) {
           if (e?.code === 'page_feedback_pending') throw e;
           if (actionExpired()) throwIfAborted();
+          // Only a select-all/Delete that may have reached the page can have
+          // changed the text; a refused key leaves the value untouched.
           return {
             success: false,
-            dispatched,
-            ...(dispatched ? {} : { noDispatch: true }),
+            dispatched: inputSent,
+            ...(inputSent ? {} : { noDispatch: true }),
             verified: false,
-            mutationMayHaveOccurred: dispatched,
+            mutationMayHaveOccurred: inputSent,
             error: `Could not safely clear the text field: ${e?.message || String(e)}`,
           };
         }
@@ -6311,12 +6401,23 @@ export class CDPClient {
       // Type via Input.insertText — atomic, fires beforeinput/input correctly.
       try {
         dispatched = true;
-        markDispatch();
-        await this.sendCommand(tabId, 'Input.insertText', { text: insertionText });
+        await sendInput('Input.insertText', { text: insertionText });
         throwIfAborted();
       } catch (e) {
         if (e?.code === 'page_feedback_pending') throw e;
         if (actionExpired()) throwIfAborted();
+        if (!inputSent) {
+          // Refused before the protocol call and no earlier input reached the
+          // page: nothing changed, so this is not an uncertain write.
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            verified: false,
+            retryable: true,
+            error: `Text insertion was not sent: ${e?.message || String(e)}`,
+          };
+        }
         return {
           success: false,
           dispatched: true,

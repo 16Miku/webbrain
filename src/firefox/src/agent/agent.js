@@ -15330,10 +15330,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return await finish(await dispatch());
     } catch (error) {
       if (error?.code === 'content_action_timeout') {
-        return this._contentActionTimeoutResult('click_ax', error);
+        return dispatchState.started ? this._contentActionTimeoutResult('click_ax', error)
+          : this._contentActionPreparationTimeoutResult('click_ax', error, 'click preparation');
       }
-      // A rejected first message is the no-receiver path that triggers
-      // injection; no page click was delivered unless the retry starts.
+      // Stop keeps the real dispatch state for the lifecycle wrapper.
+      if (error?.name === 'AbortError') throw error;
+      throwIfAborted();
+      // Only the browser's explicit missing-receiver error proves that the
+      // click message reached no listener. A torn-down response conduit can
+      // follow a delivered el.click() that navigated or replaced its
+      // document; resending would click twice or misreport the delivery.
+      if (!this._isMissingContentReceiverError(error)) {
+        return this._contentActionCommunicationFailure('click_ax', error, dispatchState.started);
+      }
       dispatchState.started = false;
       try {
         throwIfAborted();
@@ -15342,13 +15351,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return await finish(await dispatch());
       } catch (retryError) {
         if (retryError?.code === 'content_action_timeout') {
-          return this._contentActionTimeoutResult('click_ax', retryError);
+          return dispatchState.started ? this._contentActionTimeoutResult('click_ax', retryError)
+            : this._contentActionPreparationTimeoutResult('click_ax', retryError, 'content-script injection');
         }
-        let pageUrl = '';
-        try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
-        const accessFailure = firefoxHostPermissionFailure(pageUrl, retryError.message);
-        if (accessFailure) return accessFailure;
-        return { error: `Failed to communicate with page: ${retryError.message}` };
+        if (retryError?.name === 'AbortError') throw retryError;
+        if (this._isMissingContentReceiverError(retryError)) dispatchState.started = false;
+        if (!dispatchState.started) {
+          let pageUrl = '';
+          try { pageUrl = (await browser.tabs.get(tabId))?.url || ''; } catch {}
+          const accessFailure = firefoxHostPermissionFailure(pageUrl, retryError.message);
+          if (accessFailure) return accessFailure;
+        }
+        return this._contentActionCommunicationFailure('click_ax', retryError, dispatchState.started);
       }
     }
   }

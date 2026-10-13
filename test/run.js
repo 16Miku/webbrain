@@ -81703,7 +81703,7 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
     assert.ok(branchStart >= 0 && branchEnd > branchStart && blockStart > branchStart && blockEnd > blockStart && blockEnd < branchEnd, `${label}: submit block must remain inside the set_field handler`);
     const block = source.slice(blockStart, blockEnd);
     const runner = vm.runInNewContext(`async (stubs) => {
-      const { el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
+      const { el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, runStopped, stoppedBeforeSubmit, ref_id, rect } = stubs;
       let nativeSubmitAttempted = false;
       let submissionOutcomeUnknown = true;
       let submissionDispatched = false;
@@ -81775,6 +81775,9 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
         _consumeMessageRecipientDispatchBinding: () => ({ success: true }),
         actionDeadlineExpired: () => false,
         deadlineFailure: () => { throw new Error('unexpected deadline failure'); },
+        // The submit block now rechecks Stop before each commit key.
+        runStopped: () => false,
+        stoppedBeforeSubmit: () => { throw new Error('unexpected run stop'); },
         ref_id: 'ref_1',
         rect: { x: 0, y: 0, w: 1, h: 1 },
       });
@@ -114501,7 +114504,9 @@ test('Chrome primary selector clicks classify deadline expiry at mouse dispatch'
       const delayedClick = new Promise(resolve => { releaseClick = resolve; });
       cdpClientCh.clickElement = async (_tabId, _selector, options) => {
         assert.ok(options.abortSignal instanceof AbortSignal);
-        if (dispatchStarted) await options.beforeDispatch({ x: 10, y: 20 });
+        // Authorization precedes the press; dispatch is recorded when the
+        // press reaches the transport boundary (onDispatch).
+        if (dispatchStarted) { await options.beforeDispatch({ x: 10, y: 20 }); options.onDispatch?.(); }
         markClickStarted();
         await delayedClick;
         return { success: false, dispatched: dispatchStarted, noDispatch: !dispatchStarted };

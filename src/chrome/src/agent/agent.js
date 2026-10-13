@@ -56,7 +56,7 @@ import { buildGithubStargazerProgressItems } from './observers/github-stargazers
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
-import { cdpClient } from '../cdp/cdp-client.js';
+import { cdpClient, isCdpCommandNotSentError } from '../cdp/cdp-client.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, isPublicComposerRoute, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
@@ -506,6 +506,30 @@ const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 // Only this module can attest that its exact ref stayed unchanged before any
 // trusted text command was attempted; page/model data cannot forge this proof.
 const TRUSTED_FIELD_PREPARATION_UNCHANGED = Symbol('trustedFieldPreparationUnchanged');
+// Sends one trusted CDP input command through `send(options)`. `onSent` runs
+// once the page-feedback fence has passed, immediately before the command can
+// reach the page, and also for any rejection the transport cannot place before
+// that point (a lost acknowledgement can follow delivery). After that, callers
+// never resend, re-dispatch or fall back.
+async function sendTrustedCdpInput(send, { beforeSend = null, onSent = null } = {}) {
+  let sent = false, checked = false;
+  const markSent = () => {
+    if (sent) return;
+    onSent?.();
+    sent = true;
+  };
+  try {
+    const result = await send({ beforeSend: () => { checked = true; beforeSend?.(); markSent(); } });
+    markSent();
+    return result;
+  } catch (error) {
+    // A rejection from our own last check, or one the transport places
+    // before the protocol call, sent nothing; any other may follow delivery.
+    if (!checked && !isCdpCommandNotSentError(error)) markSent();
+    throw error;
+  }
+}
+
 const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
@@ -1123,6 +1147,7 @@ export class Agent extends LoopDetector {
     this._lastCdpClickIdent = new Map(); // tabId -> string
     this._lastClickProgress = new Map(); // tabId -> { ident, snapshot }
     this._clickAxCdpFallbacks = new Map(); // tabId -> Set(documentToken|ref_id), one trusted attempt per certified action; unresolved input locks its target
+    this._taskClickLocks = new Map(); // tabId -> { taskToken, keys:Set }, possibly delivered trusted clicks still unresolved for this task
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
     this._uncertainTextMutations = new Map(); // tabId -> Map(target -> unresolved, potentially applied text write; no raw text)
     this._verifiedTextReplacements = new Map(); // tabId -> exact replacement digest bound to the live document
@@ -16424,10 +16449,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _autoSelectOption(tabId, cdpClient, optionText, abortSignal = null, beforeDispatch = null) {
     const throwIfAborted = () => this._throwIfAborted(abortSignal);
-    const markDispatch = () => {
-      throwIfAborted();
-      if (typeof beforeDispatch === 'function') beforeDispatch();
-    };
+    // Key input is marked dispatched only once its fence passed (see
+    // sendTrustedCdpInput); focusing the exact select is preparation.
+    const sendKeyDown = params => sendTrustedCdpInput(
+      options => cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', params, '', options),
+      { beforeSend: throwIfAborted, onSent: typeof beforeDispatch === 'function' ? beforeDispatch : null },
+    );
     throwIfAborted();
     const needle = (optionText || '').trim();
     if (!needle) return null;
@@ -16582,11 +16609,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Escape must belong to the exact select found by the modal-scoped,
       // ambiguity-checked scan. Sending it to the previously focused control
       // can close a dialog or cancel unrelated UI before this select is used.
-      markDispatch();
+      throwIfAborted();
       if (!await focusExactTarget()) return null;
-      await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-      });
+      await sendKeyDown({ type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
@@ -16600,10 +16625,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
       const arrowVK = delta > 0 ? 40 : 38;
       for (let i = 0; i < Math.abs(delta); i++) {
-        markDispatch();
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-        });
+        await sendKeyDown({ type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK });
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
@@ -18347,7 +18369,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       dispatched: uncertain, ...(uncertain ? { outcomeUnknown: true, retryable: false }
         : { noDispatch: true, outcomeUnknown: false, retryable: false }),
       ...(timing?.preparationVeto ? { preparationVeto: { ...timing.preparationVeto } } : {}), error });
-    if (attempted.has(actionKey) || attempted.has(pendingKey)) return failure('This observed button action was already attempted or its input outcome remains unresolved. Do not repeat it; a verified effect and a new current observation are required for another action.');
+    if (attempted.has(actionKey) || attempted.has(pendingKey) || this._taskClickLockKeys(tabId)?.has(pendingKey)) return failure('This observed button action was already attempted or its input outcome remains unresolved. Do not repeat it; a verified effect and a new current observation are required for another action.');
     // Store only short certificate/target keys; never retain model snapshots.
     if (attempted.size > 4094) return failure('The trusted input bookkeeping limit for this run was reached. No input was sent.');
     let pressed = false, pressAttempted = false, released = false, clickUserAt;
@@ -18385,9 +18407,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (current.documentToken !== prepared.documentToken
           || current.refScopeUrl !== prepared.refScopeUrl || current.ref_id !== args.ref_id
-          || current.x !== prepared.x || current.y !== prepared.y) {
+          || current.tag !== prepared.tag || current.name !== prepared.name
+          || current.buttonStrongState !== prepared.buttonStrongState || current.buttonDisabled !== prepared.buttonDisabled
+          || !Number.isFinite(current.x) || !Number.isFinite(current.y)
+          // Only small hover geometry (lift, border, scale) is the same
+          // physical decision; a larger move needs a new observation.
+          || Math.abs(current.x - prepared.x) > 8 || Math.abs(current.y - prepared.y) > 8) {
         return failure('The native button changed during trusted input preparation. Re-observe before acting.');
       }
+      // The agent's own hover may lift or resize this exact certified button
+      // (:hover transform, border or size). The re-probe hit-tested its current
+      // centre on the same node; the monitor fence below rechecks the certified
+      // binding, and the press transport hit-tests the pressed point against
+      // that node immediately before the press. Never press the stale
+      // pre-hover point, which could now hit another node.
+      const pressPoint = { x: current.x, y: current.y };
       preparationStage = 'after_pointer_before_press';
       const inputGuard = await beforePageAgentDispatch(chrome, tabId, { kind: 'click', tool: 'click_ax', ref_id: args.ref_id,
         documentToken: dispatchCall.modelState.actionBinding.documentToken, fenceOnly: true, prepareMonitor: true });
@@ -18396,16 +18430,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!finishInput) return failure('The current owned native input operation could not be captured. Re-observe before acting.');
       // Reserve before the consequential protocol call: a lost acknowledgement
       // is not permission to replay either a trusted or a synthetic click.
-      if (attempted.has(actionKey) || attempted.has(pendingKey)) return failure('A trusted input attempt for this action is already pending. Do not repeat it.');
+      if (attempted.has(actionKey) || attempted.has(pendingKey) || this._taskClickLockKeys(tabId)?.has(pendingKey)) return failure('A trusted input attempt for this action is already pending. Do not repeat it.');
       attempted.add(actionKey); attempted.add(pendingKey);
       clickUserAt = run.lastUserAt;
-      pressAttempted = true; dispatchState.started = true; baseline.startedAt = Date.now();
       preparationStage = 'press';
-      await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', prepared.x, prepared.y);
+      // Dispatch starts when the press passes its fence and final owner check.
+      await sendTrustedCdpInput(
+        options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', pressPoint.x, pressPoint.y, 'left', options),
+        { beforeSend: assertCurrent, onSent: () => {
+          pressAttempted = true; dispatchState.started = true; baseline.startedAt = Date.now();
+          this._rememberTaskClickLock(tabId, pendingKey);
+        } },
+      );
       pressed = true; if (timing) timing.trustedInputEvents++;
       assertCurrent();
       preparationStage = 'release';
-      await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', prepared.x, prepared.y);
+      await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', pressPoint.x, pressPoint.y);
       released = true; pressed = false; if (timing) timing.trustedInputEvents++;
       assertNotAborted();
       const blocked = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -18466,8 +18506,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // may follow, even if its page effect is unverified. This proves delivery,
       // not a business save. Lost or aborted input never reaches this release.
       attempted.delete(pendingKey);
+      this._releaseTaskClickLock(tabId, pendingKey);
       return { success: true, method: 'cdp-native-button', initialTrustedNativeButton: true,
-        ref_id: args.ref_id, tag: prepared.tag, name: String(current.name || '').slice(0, 160), rect: prepared.rect, dispatched: true,
+        ref_id: args.ref_id, tag: prepared.tag, name: String(current.name || '').slice(0, 160), rect: current.rect || prepared.rect, dispatched: true,
         trusted: true, verified: verifiedLocalEffect,
         nativeInputAcknowledged: true, observationInterrupted: false,
         effectVerificationPending: !verifiedLocalEffect,
@@ -18478,7 +18519,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       if (pressed || (pressAttempted && !released)) await this._cancelTrustedClickPress(tabId);
       // The dispatch fence rejects before the protocol command is sent.
-      const uncertain = pressed || released || (pressAttempted && error?.code !== 'page_feedback_pending');
+      const uncertain = pressed || released || (pressAttempted && !isCdpCommandNotSentError(error));
       if (!uncertain) { dispatchState.started = false; attempted.delete(pendingKey); }
       if (timing) {
         const veto = error?.pagePreparationVeto;
@@ -18654,6 +18695,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
+    // An earlier trusted click on this exact document|ref may have landed
+    // without a verified effect (lost acknowledgement or interrupted
+    // observation). It stays locked across Continue/Retry of the same task,
+    // for the synthetic path as well; a re-rendered target or another
+    // document has a different key.
+    const taskLocks = this._taskClickLockKeys(tabId);
+    if (taskLocks?.size && axScope?.documentToken && typeof args?.ref_id === 'string'
+        && (taskLocks.has(`native-button-pending:${axScope.documentToken}|${args.ref_id}`)
+          || taskLocks.has(`${axScope.documentToken}|${args.ref_id}`))) {
+      return { success: false, dispatched: false, noDispatch: true, retryable: false, repeatBlocked: true,
+        error: 'An earlier trusted click on this exact target in this task may already have taken effect and was never verified. Inspect the page to reconcile its outcome instead of clicking it again.' };
+    }
     const actionDeadlineAt = [upstreamAbortSignal, deadlineAbortSignal]
       .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
       .filter(deadlineAt => Number.isFinite(deadlineAt) && deadlineAt > 0)
@@ -18719,10 +18772,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throwIfAborted();
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
-          return this._contentActionTimeoutResult('click_ax', error);
+          return dispatchState.started ? this._contentActionTimeoutResult('click_ax', error)
+            : this._contentActionPreparationTimeoutResult('click_ax', error, 'click preparation');
         }
-        // A rejected first message is the no-receiver path that triggers
-        // injection; no page click was delivered unless the retry starts.
+        // Stop keeps the real dispatch state for the lifecycle wrapper.
+        if (error?.name === 'AbortError') throw error;
+        throwIfAborted();
+        // Only the browser's explicit missing-receiver error proves that the
+        // click message reached no listener. A closed response channel can
+        // follow a delivered el.click() that navigated or replaced its
+        // document; resending would click twice or misreport the delivery.
+        if (!this._isMissingContentReceiverError(error)) {
+          return this._contentActionCommunicationFailure('click_ax', error, dispatchState.started);
+        }
         dispatchState.started = false;
         try {
           throwIfAborted();
@@ -18736,9 +18798,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           throwIfAborted();
         } catch (retryError) {
           if (retryError?.code === 'content_action_timeout') {
-            return this._contentActionTimeoutResult('click_ax', retryError);
+            return dispatchState.started ? this._contentActionTimeoutResult('click_ax', retryError)
+              : this._contentActionPreparationTimeoutResult('click_ax', retryError, 'content-script injection');
           }
-          return { error: `Failed to communicate with page: ${retryError.message}` };
+          if (retryError?.name === 'AbortError') throw retryError;
+          if (this._isMissingContentReceiverError(retryError)) dispatchState.started = false;
+          return this._contentActionCommunicationFailure('click_ax', retryError, dispatchState.started);
         }
       }
       const syntheticClickStartedAt = Number(response?._syntheticClickStartedAt);
@@ -38702,6 +38767,40 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     };
   }
 
+  // A possibly delivered trusted click whose effect was not verified locks
+  // its exact document|ref for the rest of the task. The per-run lock set is
+  // cleared at every run boundary, including trusted Continue and recovery
+  // Retry, which reuse the task token; a new task (new token) drops these.
+  _taskClickLockKeys(tabId) {
+    const token = this._taskTokens?.get(tabId);
+    const entry = this._taskClickLocks?.get(tabId);
+    if (!entry) return null;
+    if (typeof token !== 'string' || !token || entry.taskToken !== token) {
+      // A different task must re-observe; it does not inherit old locks.
+      if (typeof token === 'string' && token) this._taskClickLocks?.delete(tabId);
+      return null;
+    }
+    return entry.keys;
+  }
+
+  _rememberTaskClickLock(tabId, key) {
+    const token = this._taskTokens?.get(tabId);
+    if (typeof token !== 'string' || !token || !key) return;
+    this._taskClickLocks ??= new Map();
+    let entry = this._taskClickLocks.get(tabId);
+    if (!entry || entry.taskToken !== token) {
+      entry = { taskToken: token, keys: new Set() };
+      this._taskClickLocks.set(tabId, entry);
+    }
+    // Bounded: the oldest lock yields only after many distinct unresolved clicks.
+    if (entry.keys.size >= 256) entry.keys.delete(entry.keys.values().next().value);
+    entry.keys.add(key);
+  }
+
+  _releaseTaskClickLock(tabId, key) {
+    this._taskClickLocks?.get(tabId)?.keys.delete(key);
+  }
+
   async _readTextMutationEnrichment(operation, signal) {
     if (!signal) return operation();
     this._throwIfAborted(signal);
@@ -38915,15 +39014,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         } catch {}
       };
       throwIfEarlyCdpAborted();
-      markEarlyCdpDispatched();
       try {
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        // Dispatch starts only once the fence passed; a vetoed key is unsent.
+        await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown',
           ...keyParams,
           ...(commands.length ? { commands } : {}),
-        });
+        }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
       } catch (error) {
-        if (earlyCdpAbortSignal?.aborted) {
+        if (earlyCdpAbortSignal?.aborted && !isCdpCommandNotSentError(error)) {
           await releaseKey();
           throwIfEarlyCdpAborted();
         }
@@ -44267,19 +44366,20 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (recipientValidation?.success !== true) return recipientValidation;
           }
           throwIfEarlyCdpAborted();
-          markEarlyCdpDispatched();
-          let textPointerPressed = false;
+          let textPressSent = false;
+          let textPointerReleased = false;
           try {
-            await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y);
-            textPointerPressed = true;
+            // Dispatch starts only once the press passed its fence; a vetoed
+            // press leaves this click undispatched.
+            await sendTrustedCdpInput(options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y, 'left', options),
+              { beforeSend: throwIfEarlyCdpAborted, onSent: () => { textPressSent = true; markEarlyCdpDispatched(); } });
             throwIfEarlyCdpAborted();
             await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', info.x, info.y);
-            textPointerPressed = false;
+            textPointerReleased = true;
             throwIfEarlyCdpAborted();
           } catch (error) {
-            if (earlyCdpAbortSignal?.aborted && textPointerPressed) {
-              await cancelEarlyCdpPressedPointer();
-            }
+            // A press whose release was not acknowledged may still be held.
+            if (textPressSent && !textPointerReleased) await cancelEarlyCdpPressedPointer();
             throw error;
           }
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -44393,9 +44493,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                 if (validation?.success !== true) return validation;
               }
               throwIfEarlyCdpAborted();
-              markEarlyCdpDispatched();
               return { success: true };
             },
+            // Marked at the transport boundary, after the press fence passed.
+            onDispatch: markEarlyCdpDispatched,
           });
           if ((selResult?.noDispatch === true || selResult?.dispatched === false) && selResult?.outcomeUnknown !== true) {
             earlyCdpDispatchState.started = false;
@@ -44578,19 +44679,18 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (recipientValidation?.success !== true) return recipientValidation;
           }
           throwIfEarlyCdpAborted();
-          markEarlyCdpDispatched();
-          let coordinatePointerPressed = false;
+          let coordinatePressSent = false;
+          let coordinatePointerReleased = false;
           try {
-            await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY);
-            coordinatePointerPressed = true;
+            await sendTrustedCdpInput(options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY, 'left', options),
+              { beforeSend: throwIfEarlyCdpAborted, onSent: () => { coordinatePressSent = true; markEarlyCdpDispatched(); } });
             throwIfEarlyCdpAborted();
             await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', clickX, clickY);
-            coordinatePointerPressed = false;
+            coordinatePointerReleased = true;
             throwIfEarlyCdpAborted();
           } catch (error) {
-            if (earlyCdpAbortSignal?.aborted && coordinatePointerPressed) {
-              await cancelEarlyCdpPressedPointer();
-            }
+            // A press whose release was not acknowledged may still be held.
+            if (coordinatePressSent && !coordinatePointerReleased) await cancelEarlyCdpPressedPointer();
             throw error;
           }
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -44650,6 +44750,25 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // index-based: fall through to content-script path which knows the
         // interactive-elements ordering.
       } catch (e) {
+        if (e?.code === 'content_action_timeout' || e?.name === 'AbortError') throw e;
+        // A fence veto before any press reached the page is an undispatched
+        // action; the page-feedback wrapper reports it with its diagnostics.
+        if (e?.code === 'page_feedback_pending' && earlyCdpDispatchState.started !== true) throw e;
+        if (earlyCdpDispatchState.started === true) {
+          // Input was sent (or its acknowledgement was lost): a later failure,
+          // such as a post-click read on a navigated document, cannot make it
+          // undispatched. Observe before any further click.
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: true,
+            outcomeUnknown: true,
+            mutationMayHaveOccurred: true,
+            verified: false,
+            retryable: false,
+            ...(e?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}),
+            error: `The click input was sent but its outcome is unknown (${e.message}). Inspect the page before deciding whether to click again.`,
+          }, coordinateDiagnostic);
+        }
         return this._withCoordinateReconciliation(
           { success: false, error: `Click failed: ${e.message}` },
           coordinateDiagnostic,
@@ -44658,7 +44777,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     }
 
     if (name === 'type_text') {
-      let dispatched = false;
       try {
         await cdpClient.attach(tabId);
         throwIfEarlyCdpAborted();
@@ -44709,7 +44827,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                   error: 'Focused select target could not be prepared.',
                 };
               }
-              dispatched = true;
               await dispatchEarlyCdpKeyPress({
                 key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
               });
@@ -44760,7 +44877,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               if (args.clear) {
                 const selectAllModifiers = await cdpClient.selectAllModifier(tabId);
                 throwIfEarlyCdpAborted();
-                dispatched = true;
                 await dispatchEarlyCdpKeyPress({
                   key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
                 });
@@ -44784,10 +44900,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                 }
                 throwIfEarlyCdpAborted();
               }
-              dispatched = true;
-              markEarlyCdpDispatched();
               const nativeText = String(args.text ?? '').replace(/\r\n?/g, '\n');
-              await cdpClient.sendCommand(tabId, 'Input.insertText', { text: nativeText });
+              await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.insertText',
+                { text: nativeText }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
               throwIfEarlyCdpAborted();
               const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
                 text: nativeText,
@@ -44824,12 +44939,16 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               };
             } finally { await clearReceipt?.dispose(); }
           } catch (error) {
+            // Dispatch state comes from the transport boundary: a fence veto
+            // before any key or text reached the page is not an uncertain write.
+            const inputSent = earlyCdpDispatchState.started === true;
+            if (error?.code === 'page_feedback_pending' && !inputSent) throw error;
             return {
               success: false,
-              dispatched,
-              ...(dispatched ? {} : { noDispatch: true }),
-              retryable: !dispatched,
-              error: dispatched
+              dispatched: inputSent,
+              ...(inputSent ? {} : { noDispatch: true }),
+              retryable: !inputSent,
+              error: inputSent
                 ? `Focused typing outcome became uncertain: ${error?.message || String(error)}`
                 : `Focused typing was not dispatched: ${error?.message || String(error)}`,
             };
@@ -44993,7 +45112,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             }
 
             // Close any open native dropdown first
-            dispatched = true;
             await dispatchEarlyCdpKeyPress({
               key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
             });
@@ -45068,7 +45186,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (args.clear) {
               const selectAllModifiers = await cdpClient.selectAllModifier(tabId);
               throwIfEarlyCdpAborted();
-              dispatched = true;
               await dispatchEarlyCdpKeyPress({
                 key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
               });
@@ -45091,10 +45208,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               }
               throwIfEarlyCdpAborted();
             }
-            dispatched = true;
-            markEarlyCdpDispatched();
             const nativeText = String(args.text ?? '').replace(/\r\n?/g, '\n');
-            await cdpClient.sendCommand(tabId, 'Input.insertText', { text: nativeText });
+            await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.insertText',
+              { text: nativeText }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
             throwIfEarlyCdpAborted();
             const verified = await cdpClient.verifyTextEntry(tabId, {
               focused: true,
@@ -45134,9 +45250,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           error: 'type_text: internal — no branch matched. Provide {text} (with focused field) or {selector, text}.',
         };
       } catch (e) {
+        // Keys and text mark dispatch at the transport boundary. A fence veto
+        // before any input reached the page stays undispatched (no text debt).
+        const typeDispatched = earlyCdpDispatchState.started === true;
+        if (e?.code === 'page_feedback_pending' && !typeDispatched) throw e;
         return {
           success: false,
-          ...(dispatched
+          ...(typeDispatched
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
           error: `Type failed: ${e.message}`,
@@ -45173,6 +45293,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       let guardedTargetConsumed = false;
       let messageRecipientConsumed = false;
       let keyDispatchAttempted = false;
+      let deliveredKeys = 0;
       try {
         await cdpClient.attach(tabId);
         throwIfEarlyCdpAborted();
@@ -45220,21 +45341,19 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           ';': { code: 'Semicolon', windowsVirtualKeyCode: 186 },
         }[key];
 
+        const keyEvent = (type, options) => cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type,
+          key,
+          code: keyMeta.code,
+          windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
+        }, '', options);
         for (let i = 0; i < repeat; i++) {
-          keyDispatchAttempted = true;
-          markEarlyCdpDispatched();
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-            type: 'keyDown',
-            key,
-            code: keyMeta.code,
-            windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
+          await sendTrustedCdpInput(options => keyEvent('keyDown', options), {
+            beforeSend: throwIfEarlyCdpAborted,
+            onSent: () => { keyDispatchAttempted = true; markEarlyCdpDispatched(); },
           });
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-            type: 'keyUp',
-            key,
-            code: keyMeta.code,
-            windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
-          });
+          await keyEvent('keyUp');
+          deliveredKeys++;
           throwIfEarlyCdpAborted();
         }
 
@@ -45248,16 +45367,41 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           earlyCdpAbortSignal,
         );
       } catch (e) {
-        if (guardedTargetConsumed || messageRecipientConsumed) {
+        const guarded = guardedTargetConsumed || messageRecipientConsumed;
+        if (keyDispatchAttempted) {
+          // A trusted key may already have reached the page. Replaying the
+          // requested keys synthetically would repeat them, so report how many
+          // complete key presses were acknowledged and leave the outcome open.
+          if (e?.code === 'content_action_timeout' || e?.name === 'AbortError') throw e;
           return {
             success: false,
-            dispatched: keyDispatchAttempted,
-            ...(keyDispatchAttempted ? {} : { noDispatch: true, retryable: true }),
-            error: keyDispatchAttempted
-              ? `Keyboard dispatch became uncertain after the guarded target was revalidated: ${e.message || e}`
-              : `Keyboard dispatch failed after the guarded target was revalidated: ${e.message || e}`,
+            dispatched: true,
+            outcomeUnknown: true,
+            mutationMayHaveOccurred: true,
+            verified: false,
+            retryable: false,
+            method: 'cdp-key',
+            key,
+            repeat,
+            deliveredKeys,
+            ...(e?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}),
+            error: guarded
+              ? `Keyboard dispatch became uncertain after the guarded target was revalidated (${deliveredKeys} of ${repeat} key presses acknowledged): ${e.message || e}`
+              : `Keyboard input became uncertain after ${deliveredKeys} of ${repeat} ${key} key presses were acknowledged (${e.message || e}). Inspect the page before sending more keys.`,
           };
         }
+        if (guarded) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: `Keyboard dispatch failed after the guarded target was revalidated: ${e.message || e}`,
+          };
+        }
+        // A fence veto before any key stays undispatched; the page-feedback
+        // wrapper reports it. It is never converted into synthetic keys.
+        if (e?.code === 'page_feedback_pending') throw e;
         // Fall through to content-script path if CDP is unavailable.
       }
     }
@@ -46408,6 +46552,14 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       return { expectedModelSnapshot: call.expectedModelSnapshot,
         relaxedMonitorGrantToken: call.relaxedMonitorGrantToken, allowPassiveRebase: true };
     };
+    // Trusted input is marked only once its fence passed (or its rejection
+    // cannot be placed before the protocol call); a vetoed command is unsent.
+    const markTrustedDispatched = () => { trustedDispatched = true; };
+    const markTextAttempted = () => { trustedDispatched = true; trustedTextAttempted = true; };
+    const sendTrusted = (method, params, onSent) => sendTrustedCdpInput(
+      options => cdpClient.sendCommand(tabId, method, params, '', options),
+      { beforeSend: () => this._throwIfAborted(abortSignal), onSent },
+    );
     const finishPreparationFailure = async failure => {
       if (!trustedDispatched || trustedTextAttempted || !beforePreparation?.documentToken || abortSignal?.aborted) return failure;
       const afterPreparation = await this._textMutationValueDigest(tabId, digestTarget);
@@ -46459,10 +46611,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
         this._throwIfAborted(abortSignal);
-        trustedDispatched = true;
-        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        await sendTrusted('Input.dispatchMouseEvent', {
           type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
-        });
+        }, markTrustedDispatched);
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
         });
@@ -46489,7 +46640,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         }
         prepared = reselected;
       }
-      trustedDispatched = true;
       const appendingContentEditable = prepared.contentEditable && !clearsExisting;
       // Canonicalize before native insertion as well as readback: raw CRLF
       // becomes CR spaces plus LF paragraphs in browser-managed editors.
@@ -46497,12 +46647,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         ? (typeof args?.text === 'string' ? args.text : '')
         : expected).replace(/\r\n?/g, '\n');
       this._throwIfAborted(abortSignal);
-      // A lost response can precede a delayed applied write. After this
-      // boundary an unchanged sample cannot make the text command retry-safe.
-      trustedTextAttempted = true;
+      // A lost response can precede a delayed applied write. Once the first
+      // text-changing command passes its fence, an unchanged sample cannot
+      // make it retry-safe; a vetoed command leaves the editor untouched.
       const pageHandledPaste = prepared.editorKind === 'draftjs' && /[\r\n]/.test(trustedText);
       let verification;
       if (pageHandledPaste) {
+        markTextAttempted();
         verification = await sendContent({
           target: 'content', action: 'ax_paste_draft',
           params: { ref_id: args.ref_id, text: trustedText, clear: clearsExisting },
@@ -46514,7 +46665,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         }
       } else {
         if (trustedText || appendingContentEditable) {
-          await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
+          await sendTrusted('Input.insertText', { text: trustedText }, markTextAttempted);
         } else {
           // Native chat knows that an explicitly deleted caret is an empty
           // message. Keep that proof private and scoped; generic BRs stay LF.
@@ -46529,9 +46680,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               if (nativeClearReceipt) {
                 const modifiers = await cdpClient.selectAllModifier(tabId);
                 this._throwIfAborted(abortSignal);
-                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                await sendTrusted('Input.dispatchKeyEvent', {
                   type: 'keyDown', key: 'a', code: 'KeyA', modifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
-                });
+                }, markTextAttempted);
                 await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                   type: 'keyUp', key: 'a', code: 'KeyA', modifiers, windowsVirtualKeyCode: 65,
                 });
@@ -46539,9 +46690,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             }
           }
           this._throwIfAborted(abortSignal);
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          await sendTrusted('Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-          });
+          }, markTextAttempted);
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
           });
@@ -46640,10 +46791,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         this._throwIfAborted(abortSignal);
         let enterDispatched = false;
         try {
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          await sendTrusted('Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
-          });
-          enterDispatched = true;
+          }, () => { enterDispatched = true; });
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
           });
@@ -46942,7 +47092,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
     const fallbackKey = `${target.documentToken || 'document'}|${args?.ref_id || ''}`;
     const attempted = this._clickAxCdpFallbacks.get(tabId) || new Set();
-    if (attempted.has(fallbackKey)) {
+    if (attempted.has(fallbackKey) || this._taskClickLockKeys(tabId)?.has(fallbackKey)) {
       if (timing) timing.duplicateFallbackBlocked = true;
       return withSnapshot({
         ...response,
@@ -46982,6 +47132,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     let dispatchStage = 'attach';
     let dispatchedEvents = 0;
     let pressedDelivered = false;
+    let pointerReleased = false;
     try {
       this._throwIfAborted(abortSignal);
       await this._measureClickAxStage(timing, 'fallbackPreparationMs', () => cdpClient.attach(tabId));
@@ -47006,27 +47157,29 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       await this._measureClickAxStage(
         timing,
         'fallbackDispatchMs',
-        () => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', target.x, target.y),
+        () => sendTrustedCdpInput(
+          options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', target.x, target.y, 'left', options),
+          { beforeSend: () => this._throwIfAborted(abortSignal), onSent: () => {
+            // Reserve the one-shot slot before the press can reach the page:
+            // a press is partial user input, and a lost acknowledgement is not
+            // permission to replay it or the synthetic click before it.
+            pressedDelivered = true;
+            attempted.add(fallbackKey);
+            this._clickAxCdpFallbacks.set(tabId, attempted);
+            this._rememberTaskClickLock(tabId, fallbackKey);
+          } },
+        ),
       );
       dispatchedEvents++;
       if (timing) timing.trustedInputEvents = dispatchedEvents;
-      pressedDelivered = true;
-      // A confirmed press is partial user input; from this point onward a
-      // retry could double-activate or leave mismatched pointer state.
-      attempted.add(fallbackKey);
-      this._clickAxCdpFallbacks.set(tabId, attempted);
-      try {
-        this._throwIfAborted(abortSignal);
-      } catch (error) {
-        await this._cancelTrustedClickPress(tabId);
-        throw error;
-      }
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'mouseReleased';
       await this._measureClickAxStage(
         timing,
         'fallbackDispatchMs',
         () => cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y),
       );
+      pointerReleased = true;
       dispatchedEvents++;
       if (timing) timing.trustedInputEvents = dispatchedEvents;
       this._throwIfAborted(abortSignal);
@@ -47052,12 +47205,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
       dispatchStage = 'complete';
     } catch (error) {
+      // A press whose release was not acknowledged may still be held.
+      if (pressedDelivered && !pointerReleased) await this._cancelTrustedClickPress(tabId);
       if (error?.code === 'content_action_timeout') throw error;
-      const fallbackAttempted = dispatchedEvents > 0;
+      const fallbackAttempted = dispatchedEvents > 0 || pressedDelivered;
       return withSnapshot({
         ...response,
         success: false,
         dispatched: true,
+        ...(pressedDelivered ? { outcomeUnknown: true } : {}),
         noProgress: pressedDelivered || undefined,
         fallback: 'cdp_after_synthetic_no_progress',
         fallbackAttempted,
@@ -47114,6 +47270,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       );
     }
     if (trustedTargetStateChanged || trustedTargetWeakStateChanged) {
+      this._releaseTaskClickLock(tabId, fallbackKey);
       return withSnapshot({
         ...response,
         success: true,
@@ -47166,6 +47323,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }, trustedObservation);
     }
 
+    // A verified effect reconciles the trusted click for later runs of this
+    // task; the per-run one-shot slot still stays used for this run.
+    this._releaseTaskClickLock(tabId, fallbackKey);
     return withSnapshot({
       ...response,
       success: true,
