@@ -17,6 +17,12 @@ time. Stop interrupts the wait.
 Window and visual-viewport size, zoom and offset changes invalidate prepared
 coordinates. Top-level viewport activity waits for geometry to settle; embedded
 frame size changes are page layout observations and do not extend the user gate.
+A full-size, unzoomed visual viewport cannot pan by itself, so a sub-pixel
+offset change with the same size, scale and DPR is the remainder of a
+fractional layout scroll (Firefox reports it, Chromium does not). It is
+reported as that scroll, with the document scroll's attribution, and counts as
+scroll geometry in footprint comparisons, so both browsers treat a page's own
+scrolling the same way.
 
 `composerDeliveryMode` only controls typed chat messages (Queue/Steer). Automatic
 page feedback uses its own bounded queue and cannot promote a queued message to

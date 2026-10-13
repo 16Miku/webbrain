@@ -112,7 +112,6 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         await f.page.evaluate(ref_id => qaMessage('type_ax', { ref_id, text: 'Replacement draft', clear: true,
           _bidiPrepare: '00000000-0000-4000-8000-000000000000' }), f.ref_id);
         if (name.startsWith('later ') && /viewport|zoom|DPR/.test(name)) await f.page.waitForTimeout(80);
-        const previousScroll = name === 'later viewport motion' ? await f.page.evaluate(() => scrollY) : null;
         if (name === 'later human click') await f.page.locator('#private').click();
         else if (name === 'later viewport dimensions') await f.page.setViewportSize({ width: 900, height: 650 });
         else await f.page.evaluate(name => {
@@ -124,7 +123,6 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
             Object.defineProperty(visualViewport, 'offsetTop', { configurable: true, get: () => 0.25 });
             visualViewport.dispatchEvent(new Event('scroll'));
           }
-          if (name === 'later viewport motion') scrollBy({ top: 2, behavior: 'instant' });
           if (name === 'later zoom') {
             Object.defineProperty(visualViewport, 'scale', { configurable: true, get: () => 1.25 });
             visualViewport.dispatchEvent(new Event('resize'));
@@ -136,15 +134,32 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           if (name === 'changed URL') history.pushState({}, '', '/changed-editor');
           if (name === 'Stop') return qaMessage('page_monitor_state', { active: false });
         }, name);
-        // Gecko can apply even an instant scroll on its next refresh. Check an
-        // actual later viewport movement, rather than a queued scroll request.
-        if (name === 'later viewport motion') await f.page.waitForFunction(previous => Math.abs(scrollY - previous) >= 1, previousScroll);
         const result = await f.page.evaluate(async ({ ref_id, name }) => {
           const params = {
           operationId: 'owned-input', tool: 'type_ax', kind: 'input', ref_id, fenceOnly: true,
           ...(name === 'different run' ? { runToken: 'new-run' } : {}),
           ...(name === 'different document' ? { documentToken: 'new-document' } : {}),
           };
+          if (name === 'later viewport motion') {
+            // Gecko re-applies the agent's own pending scrollIntoView on its
+            // next reflow, which would undo the page's motion (the exact
+            // footprint is then intact again). Let that reflow happen first.
+            document.body.style.paddingBottom = '1px'; void document.body.offsetHeight;
+            document.body.style.paddingBottom = ''; void document.body.offsetHeight;
+            const previous = scrollY;
+            scrollBy({ top: 2, behavior: 'instant' });
+            // Gecko can apply even an instant scroll on its next refresh. Fence
+            // in the first frame that shows the actual later movement.
+            return new Promise((resolve, reject) => {
+              const deadline = performance.now() + 5000;
+              const check = () => {
+                if (Math.abs(scrollY - previous) >= 1) qaMessage('page_monitor_dispatch', params).then(resolve, reject);
+                else if (performance.now() > deadline) reject(new Error(`the page did not move from ${previous}`));
+                else requestAnimationFrame(check);
+              };
+              requestAnimationFrame(check);
+            });
+          }
           if (name === 'stale native revision') {
             // Isolate the revision contract from an earlier scroll/layout
             // observation: a fresh decision owns the current exact editor.
@@ -158,6 +173,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           return qaMessage('page_monitor_dispatch', params);
         }, { ref_id: f.ref_id, name });
         assert.equal(result.ready, false, JSON.stringify(result));
+        if (name === 'later viewport motion') assert.equal(result.preparationVeto?.predicate, 'geometry_changed', JSON.stringify(result));
         assert.equal(await f.page.evaluate(() => qaInputCount), 0);
       } finally { await f.browser.close(); }
     });

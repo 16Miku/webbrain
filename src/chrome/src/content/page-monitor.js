@@ -182,6 +182,15 @@
     visualWidth: window.visualViewport?.width ?? window.innerWidth, visualHeight: window.visualViewport?.height ?? window.innerHeight,
     scale: window.visualViewport?.scale ?? 1, dpr: window.devicePixelRatio,
     offsetX: window.visualViewport?.offsetLeft ?? 0, offsetY: window.visualViewport?.offsetTop ?? 0 });
+  // A full-size, unzoomed visual viewport has no independent pan range. When
+  // only its sub-pixel offset differs, the change is the remainder of a
+  // fractional layout scroll (Firefox reports it; Chromium does not), not a
+  // zoom, resize or browser-chrome change.
+  function viewportRemainderOnly(before, after) {
+    return !!before && !!after && [before, after].every(value => value.scale === 1 && value.visualWidth === value.width
+        && value.visualHeight === value.height && Math.abs(value.offsetX) < 1 && Math.abs(value.offsetY) < 1)
+      && ['width', 'height', 'visualWidth', 'visualHeight', 'scale', 'dpr'].every(key => before[key] === after[key]);
+  }
   function reconcileOwnedViewportOffset(viewport, event) {
     if (event?.target !== window.visualViewport || event.isTrusted !== true || !active || interventionUnreported) return false;
     for (const op of operations.values()) {
@@ -195,19 +204,13 @@
       if (!after) continue;
       if (before.relaxed) {
         const original = proof.viewport;
-        if (!original || !sameRelaxedBinding(before, after)
-            || ![original, viewport].every(value => value.scale === 1 && value.visualWidth === value.width
-              && value.visualHeight === value.height && Math.abs(value.offsetX) < 1 && Math.abs(value.offsetY) < 1)
-            || ['width', 'height', 'visualWidth', 'visualHeight', 'scale', 'dpr'].some(key => original[key] !== viewport[key])) continue;
+        if (!original || !sameRelaxedBinding(before, after) || !viewportRemainderOnly(original, viewport)) continue;
         ownedPreparationBindings.set(op.preparedBinding, { ...proof, binding: after, viewportNotificationPending: false });
         return true;
       }
       const originalContext = JSON.parse(before.context), currentContext = JSON.parse(after.context);
       const original = originalContext[2];
-      if (![original, viewport].every(value => value.scale === 1 && value.visualWidth === value.width
-          && value.visualHeight === value.height && Math.abs(value.offsetX) < 1 && Math.abs(value.offsetY) < 1)
-          || ['width', 'height', 'visualWidth', 'visualHeight', 'scale', 'dpr'].some(key => original[key] !== viewport[key])) continue;
-      // A full-size, unzoomed visual viewport has no independent pan range.
+      if (!viewportRemainderOnly(original, viewport)) continue;
       // After an owned fractional scroll some engines report its subpixel
       // remainder late (e.g. pageTop=346.833, scrollY=347, offsetTop=-0.167).
       // Consume only that phase's first bounded native notification, with the
@@ -684,11 +687,16 @@
     if (before?.relaxed) return sameRelaxedBinding(before, after);
     if (!before?.model || !after?.model) return false;
     if (![before, after].every(binding => binding.hit === binding.target || binding.target.contains?.(binding.hit))) return false;
+    return samePreparedBinding(before, { ...after, hit: before.hit, context: withOriginalGeometry(before, after) });
+  }
+  // Only scroll offsets, the target rectangle and a scroll's sub-pixel visual
+  // viewport remainder are geometry. URL, base, viewport size and zoom, and
+  // recipient context stay exact.
+  function withOriginalGeometry(before, after) {
     const original = JSON.parse(before.context), current = JSON.parse(after.context);
-    // Only scroll offsets and the target rectangle can be derived from this
-    // synchronous owned phase. URL, viewport and recipient context stay exact.
     for (const slot of [3, 4, 5]) current[slot] = original[slot];
-    return samePreparedBinding(before, { ...after, hit: before.hit, context: JSON.stringify(current) });
+    if (viewportRemainderOnly(original[2], current[2])) current[2] = original[2];
+    return JSON.stringify(current);
   }
   // Share a derived geometry proof for this original certificate. Callers
   // have checked samePreparationSemantics; private semantic values stay fixed.
@@ -738,9 +746,7 @@
     if (before.target !== after.target || before.scope !== after.scope) return 'target_changed';
     if (before.context !== after.context || before.hit !== after.hit) {
       if (samePreparationSemantics(before, after)) return 'geometry_changed';
-      const original = JSON.parse(before.context), current = JSON.parse(after.context);
-      for (const slot of [3, 4, 5]) current[slot] = original[slot];
-      if (samePreparedBinding(before, { ...after, hit: before.hit, context: JSON.stringify(current) })) return 'target_hit_changed';
+      if (samePreparedBinding(before, { ...after, hit: before.hit, context: withOriginalGeometry(before, after) })) return 'target_hit_changed';
     }
     return samePreparedBinding(before, after) ? '' : 'semantic_binding_changed';
   }
@@ -2945,6 +2951,8 @@
     const onResize = event => {
       const current = currentViewport(), key = JSON.stringify(current);
       if (!active || key === lastViewport) return;
+      let previous = null;
+      try { previous = JSON.parse(lastViewport); } catch {}
       lastViewport = key; revision++; publishRevision();
       if (reconcileOwnedViewportOffset(current, event)) {
         send({ kind: 'resize', source: 'agent', target: 'viewport', viewport: current }); return;
@@ -2954,6 +2962,13 @@
         return;
       }
       if (agentResize) void flushAgentResize('unknown');
+      // Report a scroll remainder as the scroll it belongs to, attributed like
+      // the document scroll; it is not a top-level viewport change.
+      if (viewportRemainderOnly(previous, current)) {
+        send({ kind: 'scroll', source: Date.now() - lastUserAt < 1000 ? 'user' : 'unknown',
+          target: targetName(document.documentElement), viewport: { x: window.scrollX, y: window.scrollY } });
+        return;
+      }
       send({ kind: 'resize', source: window === window.top ? 'unknown' : 'page', target: 'viewport', viewport: current });
     };
     listen(window, 'resize', onResize);
