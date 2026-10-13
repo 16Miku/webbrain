@@ -1409,7 +1409,6 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         ['form action', () => { document.getElementById('form').action = '/other'; }],
         ['external accessible label', () => { document.getElementById('send-label').textContent = 'Delete'; }],
         ['target node identity', () => { const node = document.getElementById('send'); node.replaceWith(node.cloneNode(true)); }],
-        ['target geometry', () => { document.getElementById('send').style.transform = 'translateX(45px)'; }],
         ['opaque occluding overlay', () => {
           const rect = document.getElementById('send').getBoundingClientRect(); const overlay = document.createElement('div');
           overlay.style.cssText = `position:fixed;z-index:99999;background:black;left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`;
@@ -1426,6 +1425,23 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           assert.equal(prepared.modelBindingValid, false, 'Preparation must compare against the pre-inference snapshot');
           assert.equal((await dispatchModel(page)).ready, false);
           assert.equal(await page.evaluate(() => submissions), 0);
+        } finally { await context.close(); }
+      });
+
+      // A ref/selector decision binds the node, not its coordinates: a pure
+      // move with identical semantics and hit is rebased before preparation.
+      // Geometry is still exact from preparation to dispatch (see
+      // test/monitor-owned-geometry.mjs).
+      await t.test('target geometry changed before prepare keeps the decision for the same node', async () => {
+        const { context, page } = await modelFixture(browser, build);
+        try {
+          const snapshot = await captureModel(page);
+          await page.evaluate(() => { document.getElementById('send').style.transform = 'translateX(45px)'; });
+          await page.waitForTimeout(180);
+          assert.equal((await validateModel(page, snapshot)).ready, true);
+          assert.equal((await prepareModel(page, snapshot)).modelBindingValid, true);
+          assert.equal((await dispatchModel(page)).ready, true);
+          assert.equal(await page.evaluate(() => submissions), 1);
         } finally { await context.close(); }
       });
 

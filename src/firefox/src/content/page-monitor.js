@@ -36,6 +36,9 @@
   let pointerHeld = false, composing = false, localOperation = null, controlIterator = null;
   let preparedOperationCursor = 0;
   let requestGeneration = 0, unreported = 0, interventionUnreported = 0, pendingDOM = null;
+  // Every non-passive observation (user, unknown, page focus/input/scroll,
+  // frame resize). Legacy bindings without a private footprint keep this fence.
+  let uncertainRevision = 0, uncertainUnreported = 0;
   let interventionDiagnostic = '';
   let lastViewport = '';
   let agentResize = null;
@@ -141,11 +144,18 @@
     publishRevision();
     const feedback = { ...event, runToken, documentToken, seq: ++seq, revision };
     const pending = event.source !== 'agent';
-    const intervention = pending && (event.kind !== 'dom' || event.source !== 'page');
+    // Only genuine human input and a top-level viewport change (window size,
+    // zoom, browser chrome) invalidate model-bound decisions by themselves.
+    // Automatic or uncertain observations still advance `revision`, so strict
+    // fences remain; a certificate's private action footprint judges them.
+    const intervention = pending && (event.source === 'user'
+      || (event.kind === 'resize' && event.source === 'unknown' && window === window.top));
+    const uncertain = pending && (event.kind !== 'dom' || event.source !== 'page');
     const owner = runToken;
     if (pending) unreported++;
-    if (intervention) {
-      interventionRevision++; interventionUnreported++;
+    if (intervention) { interventionRevision++; interventionUnreported++; }
+    if (uncertain) {
+      uncertainRevision++; uncertainUnreported++;
       if (!(event.kind === 'dom' && event.source === 'unknown' && interventionDiagnostic.startsWith('dom.'))) {
         const kind = ['dom', 'activity', 'input', 'click', 'selection', 'scroll', 'navigation', 'resize'].includes(event.kind) ? event.kind : 'other';
         const source = ['user', 'page', 'unknown'].includes(event.source) ? event.source : 'other';
@@ -154,9 +164,14 @@
     }
     try {
       const delivery = Promise.resolve(api.runtime.sendMessage({ target: 'background', action: 'page_feedback', feedback }))
-        .then(() => { if (owner === runToken) {
+        .then(reply => { if (owner === runToken) {
           if (pending) unreported = Math.max(0, unreported - 1);
           if (intervention) interventionUnreported = Math.max(0, interventionUnreported - 1);
+          if (uncertain) uncertainUnreported = Math.max(0, uncertainUnreported - 1);
+          // The background no longer owns this run (for example after an MV3
+          // worker restart). Stop observing instead of waking it for every
+          // page update; a new run reactivates this document by handshake.
+          if (reply?.accepted === false && reply.reason === 'stale-observation') stop();
         } })
         .catch(() => stop());
       if (pending) lastFeedbackDelivery = delivery;
@@ -174,7 +189,7 @@
       if (!proof?.viewportNotificationPending || proof.scrollPreparationUntil < Date.now()
           || proof.runToken !== runToken || proof.documentToken !== documentToken
           || proof.userAt !== lastUserAt || proof.interventionRevision !== interventionRevision
-          || deepActiveElement() !== op.preparedBinding.target) continue;
+          || (proof.focusRequired !== false && deepActiveElement() !== op.preparedBinding.target)) continue;
       const before = proof.binding, after = before.relaxed
         ? relaxedTargetBinding(before.target, before.grantToken) : actionFootprint(before.target, before.readonlyPreparation);
       if (!after) continue;
@@ -386,6 +401,10 @@
     send({ kind: 'dom', source, target: targetName(target || currentHit) });
     return true;
   }
+  function physicalInputEvent(event) {
+    return event?.isTrusted === true && (['keydown', 'keyup', 'keypress', 'pointerdown', 'pointerup', 'mousedown', 'mouseup'].includes(event.type)
+      || (event.type === 'click' && event.detail > 0));
+  }
   function expected(kind, el, event, nativeMarkerOnly = false) {
     let activatedNativeMarker = false;
     const markerNode = event?.composedPath?.().find(node => node instanceof Element && node.hasAttribute(nativeMarkerAttribute))
@@ -427,6 +446,10 @@
     prune();
     const match = op => {
       if (event && !event.isTrusted && !op.synchronous) return null;
+      // A content-script operation dispatches synthetic events only. A trusted
+      // key or pointer press/release (or a click with a pointer detail) during
+      // it is physical input; its execCommand/focus/scroll effects still match.
+      if (op.localSynthetic === true && physicalInputEvent(event)) return null;
       if (event) {
         const keyboardClick = kind === 'click' && event.type === 'click' && event.isTrusted === true && op.keyboardClickTarget
           && related(op.keyboardClickTarget, el);
@@ -446,6 +469,12 @@
       // Preparation can focus only the field that was already identified for
       // this input action. A page script moving focus elsewhere stays visible.
       if (kind === 'focus' && op.focusEligible && op.focusTarget === el && lastUserAt <= op.userAt) {
+        const found = match(op); if (found) return found;
+      }
+      // Its own synchronous preparation focus commits the field losing focus.
+      // The user's earlier edits there were reported by their own input events.
+      if (kind === 'input' && event?.type === 'change' && op.preparationBlur?.target === el
+          && lastUserAt <= op.preparationBlur.userAt) {
         const found = match(op); if (found) return found;
       }
       if (!op.dispatched) continue;
@@ -660,6 +689,49 @@
     // synchronous owned phase. URL, viewport and recipient context stay exact.
     for (const slot of [3, 4, 5]) current[slot] = original[slot];
     return samePreparedBinding(before, { ...after, hit: before.hit, context: JSON.stringify(current) });
+  }
+  // Share a derived geometry proof for this original certificate. Callers
+  // have checked samePreparationSemantics; private semantic values stay fixed.
+  function rebaseOwnedGeometry(binding, after, ownedWindowScroll = false) {
+    const previous = ownedPreparationBindings.get(binding);
+    const current = previous && preparedBindingFor(binding) === previous.binding ? previous : null;
+    ownedPreparationBindings.set(binding, { binding: after, runToken, documentToken, userAt: lastUserAt, interventionRevision,
+      // An owned window scroll may be followed by one late subpixel visual
+      // viewport notification (as after typing preparation); a click target
+      // need not hold focus for that bounded reconciliation.
+      ...(ownedWindowScroll ? { scrollPreparationUntil: Date.now() + 200, viewportNotificationPending: true, focusRequired: false }
+        : { scrollPreparationUntil: current?.scrollPreparationUntil || 0, viewportNotificationPending: current?.viewportNotificationPending === true,
+          ...(current?.focusRequired === false ? { focusRequired: false } : {}) }) });
+  }
+  // Decision-level validation (model response, preparation). The model chose
+  // this exact node by ref/selector, not by coordinates: when only scroll
+  // offsets or the target rectangle moved and the hit is still the target,
+  // the decision stands and the proof is rebased to the current geometry.
+  // Exact geometry/hit checks then apply from preparation until dispatch.
+  function modelDecisionPredicate(before, after) {
+    const current = preparedBindingFor(before);
+    const predicate = bindingPredicate(current, after);
+    if (predicate !== 'geometry_changed') return predicate;
+    // Another node receiving the hit (for example an interactive or named
+    // descendant replacing a decorative icon) is not a pure move.
+    if (current.hit !== after.hit) return 'target_hit_changed';
+    rebaseOwnedGeometry(before, after);
+    return '';
+  }
+  // An owned synchronous phase (selector scroll, pointer hover) may move the
+  // certified node. Refresh its derived geometry proof once, at the end of
+  // that phase, only for the same node with identical semantics and hit.
+  // Any later geometry change is still checked exactly before dispatch.
+  function refreshOwnedGeometry(op, phase) {
+    if (!active || !phase || op?.ownedGeometryPhase !== phase || operations.get(op.operationId) !== op) return;
+    op.ownedGeometryPhase = null;
+    // Relaxed retry bindings carry no geometry; their grant rules apply instead.
+    if (op.preparedBinding?.model !== true || op.preparedBinding.relaxed || op.allowPassiveRebase !== true
+        || op.modelBindingInvalid || op.layoutInvalidated || authorityChanged(op)) return;
+    const before = preparedBindingFor(op.preparedBinding);
+    const after = actionFootprint(op.preparedBinding.target, op.preparedBinding.readonlyPreparation);
+    if (samePreparationSemantics(before, after) && before.hit === after.hit) rebaseOwnedGeometry(op.preparedBinding, after,
+      phase.kind === 'selector-scroll' && (phase.scrollX !== window.scrollX || phase.scrollY !== window.scrollY));
   }
   function bindingPredicate(before, after) {
     if (!before || !after) return 'semantic_binding_changed';
@@ -1721,7 +1793,7 @@
     if (snapshot.relaxedGrantToken && !relaxed) return { reason: 'relaxed_grant_expired' };
     if (snapshot.userAt !== lastUserAt || (!relaxed && (snapshot.interventionRevision !== interventionRevision || interventionUnreported)))
       return { reason: 'intervention_changed' };
-    if (!relaxed && pendingDOM && pendingDOM.source !== 'page') return { reason: 'pending_feedback' };
+    if (!relaxed && pendingDOM?.source === 'user') return { reason: 'pending_feedback' };
     const target = modelTarget(params);
     if (!target) {
       if (relaxed) { revokeRelaxedGrant(); return { reason: 'target_unresolved' }; }
@@ -1749,7 +1821,7 @@
     }
     if (before?.readonlyPreparation && params.tool !== 'click_ax') return {};
     if (before) {
-      const reason = bindingPredicate(preparedBindingFor(before), actionFootprint(target, before.readonlyPreparation));
+      const reason = modelDecisionPredicate(before, actionFootprint(target, before.readonlyPreparation));
       return reason ? { reason } : { binding: before };
     }
     const current = modelCandidateIdentity(target);
@@ -2067,11 +2139,17 @@
       ...(params.observationRef ? { observationScopeCaptured } : {}),
       ...(page ? { page } : {}) };
   }
+  // A certified operation whose only dispatch so far was its own preparation
+  // (selector scroll, pointer hover, typing scroll/focus). Its footprint is
+  // checked, and can be rebased over passive churn, at the next boundary.
+  function ownedPreparationPhase(op) {
+    return op?.pointerPreparationOnly === true || op?.typingPreparationOnly === true || op?.selectorPreparationOnly === true;
+  }
   function preparedBindingChanged(op, { allowFocusRebind = false } = {}) {
     if (op?.allowPassiveRebase === true && op.preparedBinding?.model === true && op.focusBound
         && !allowFocusRebind && deepActiveElement() !== op.focusTarget) return true;
     return op?.allowPassiveRebase === true && !!op.preparedBinding
-      && (!op.dispatched || (op.preparedBinding.model === true && (op.kind === 'input' || op.pointerPreparationOnly === true || op.typingPreparationOnly === true)))
+      && (!op.dispatched || (op.preparedBinding.model === true && (op.kind === 'input' || ownedPreparationPhase(op))))
       && !operationBindingMatches(op);
   }
   function nativeReceiverPredicate(op, params) {
@@ -2100,14 +2178,21 @@
       ? op.focusTarget : op.preparedBinding.target;
     return nativeReceiverBelongsTo(target, receiver) ? '' : 'target_changed';
   }
+  // Model-bound operations are fenced by genuine intervention only; their
+  // private footprint judges automatic page activity. Legacy bindings keep
+  // the previous fence on every uncertain (non-passive) observation.
+  function authorityChanged(op) {
+    if (!op || lastUserAt > op.userAt) return true;
+    return op.preparedBinding?.model === true
+      ? op.preparedInterventionRevision !== interventionRevision || interventionUnreported > 0 || pendingDOM?.source === 'user'
+      : op.preparedUncertainRevision !== uncertainRevision || uncertainUnreported > 0 || (!!pendingDOM && pendingDOM.source !== 'page');
+  }
   function rebasePassivePreparation(op, params = {}) {
     const relaxed = op?.preparedBinding?.relaxed === true && currentRelaxedGrant(op.preparedBinding.grantToken);
     const continuingInput = op?.dispatched && op.kind === 'input' && op.preparedBinding?.model === true;
-    const continuingPreparation = op?.dispatched && (op.pointerPreparationOnly === true || op.typingPreparationOnly === true) && op.preparedBinding?.model === true;
+    const continuingPreparation = op?.dispatched && ownedPreparationPhase(op) && op.preparedBinding?.model === true;
     if (!active || !op || op.allowPassiveRebase !== true || (op.dispatched && !continuingInput && !continuingPreparation) || op.coordinateSensitive || op.layoutInvalidated
-        || op.until < Date.now() || lastUserAt > op.userAt || (!relaxed && interventionUnreported)
-        || (!relaxed && op.preparedInterventionRevision !== interventionRevision)
-        || (!relaxed && pendingDOM && pendingDOM.source !== 'page')
+        || op.until < Date.now() || lastUserAt > op.userAt || (!relaxed && authorityChanged(op))
         || (params.documentToken && params.documentToken !== documentToken)) return false;
     const independentNavigation = op.tool === 'navigate';
     if (independentNavigation) {
@@ -2125,11 +2210,7 @@
     }
     // Do not suppress feedback. Flush it for the agent while rebasing only this
     // exact, freshly revalidated operation over unrelated passive mutations.
-    if (domTimer) {
-      clearTimeout(domTimer); domTimer = null;
-      const observation = pendingDOM; pendingDOM = null;
-      if (observation) send(observation);
-    }
+    if (domTimer) flushPendingDOM();
     op.preparedRevision = revision;
     return true;
   }
@@ -2218,6 +2299,11 @@
     }
     return { nodes, exceeded: false };
   }
+  const rootHandlers = [['animationend', checkSettledAnimation], ['animationcancel', checkSettledAnimation],
+    ['transitionend', checkSettledAnimation], ['transitioncancel', checkSettledAnimation],
+    ['beforetoggle', onBeforeToggle], ['toggle', onToggle]];
+  const shadowListenerRoots = new Set();
+  let shadowListenerSweepAt = 256;
   function observeRoot(root, budget) {
     if (!root || roots.has(root) || !observer) return;
     roots.add(root);
@@ -2227,32 +2313,49 @@
         'aria-expanded', 'aria-selected', 'aria-checked', 'aria-pressed', 'aria-disabled',
         'type', 'href', 'target', 'download', 'action', 'method', 'formaction', 'formmethod', 'formtarget', 'novalidate', 'formnovalidate',
         'aria-valuenow', 'aria-valuetext', 'aria-hidden', 'hidden', 'disabled', 'readonly', 'checked', 'selected', 'open', 'popover', 'inert', 'class', 'style'] });
-    for (const name of ['animationend', 'animationcancel', 'transitionend', 'transitioncancel'])
-      listen(root, name, checkSettledAnimation);
-    listen(root, 'beforetoggle', event => {
-      const el = elementFor(event);
-      if (ignored(el) || !el.hasAttribute('popover') || !('popover' in el)) return;
-      const mark = { observer, oldState: event.oldState, newState: event.newState, notified: false,
-        agentUserAt: agentTurn && lastUserAt <= agentTurn.userAt ? agentTurn.userAt : undefined };
-      popoverTurns.set(el, mark);
-      // Check after page handlers can cancel opening, but before an action can
-      // dispatch in the next task. Retain exact attribution for the later toggle.
-      queueMicrotask(() => {
-        if (!active || observer !== mark.observer || popoverTurns.get(el) !== mark || event.defaultPrevented
-            || popoverOpen(el) !== (mark.newState === 'open')) return;
-        mark.notified = true;
-        onMutations([{ type: 'popover', target: el, stateChanged: mark.oldState !== mark.newState, agentUserAt: mark.agentUserAt }]);
-      });
-    });
-    listen(root, 'toggle', event => {
-      const el = elementFor(event);
-      if (ignored(el) || !el.hasAttribute('popover') || !('popover' in el)
-          || popoverOpen(el) !== (event.newState === 'open')) return;
-      const mark = popoverTurns.get(el);
-      if (mark?.observer === observer && mark.newState === event.newState && mark.notified) return;
-      onMutations([{ type: 'popover', target: el, stateChanged: event.oldState !== event.newState }]);
-    });
+    // Animation and popover events are not composed, so each open shadow root
+    // needs its own listeners. Track those roots weakly: a removed component
+    // must stay collectable while the run continues.
+    if (root === document) for (const [name, handler] of rootHandlers) listen(root, name, handler);
+    else {
+      for (const [name, handler] of rootHandlers) root.addEventListener(name, handler, { capture: true, passive: true });
+      shadowListenerRoots.add(new WeakRef(root));
+      if (shadowListenerRoots.size >= shadowListenerSweepAt) {
+        for (const reference of shadowListenerRoots) if (!reference.deref()) shadowListenerRoots.delete(reference);
+        shadowListenerSweepAt = Math.max(256, shadowListenerRoots.size * 2);
+      }
+    }
     seed(root, budget);
+  }
+  function removeShadowRootListeners() {
+    for (const reference of shadowListenerRoots) {
+      const root = reference.deref();
+      if (root) for (const [name, handler] of rootHandlers) root.removeEventListener(name, handler, true);
+    }
+    shadowListenerRoots.clear(); shadowListenerSweepAt = 256;
+  }
+  function onBeforeToggle(event) {
+    const el = elementFor(event);
+    if (!active || ignored(el) || !el.hasAttribute('popover') || !('popover' in el)) return;
+    const mark = { observer, oldState: event.oldState, newState: event.newState, notified: false,
+      agentUserAt: agentTurn && lastUserAt <= agentTurn.userAt ? agentTurn.userAt : undefined };
+    popoverTurns.set(el, mark);
+    // Check after page handlers can cancel opening, but before an action can
+    // dispatch in the next task. Retain exact attribution for the later toggle.
+    queueMicrotask(() => {
+      if (!active || observer !== mark.observer || popoverTurns.get(el) !== mark || event.defaultPrevented
+          || popoverOpen(el) !== (mark.newState === 'open')) return;
+      mark.notified = true;
+      onMutations([{ type: 'popover', target: el, stateChanged: mark.oldState !== mark.newState, agentUserAt: mark.agentUserAt }]);
+    });
+  }
+  function onToggle(event) {
+    const el = elementFor(event);
+    if (!active || ignored(el) || !el.hasAttribute('popover') || !('popover' in el)
+        || popoverOpen(el) !== (event.newState === 'open')) return;
+    const mark = popoverTurns.get(el);
+    if (mark?.observer === observer && mark.newState === event.newState && mark.notified) return;
+    onMutations([{ type: 'popover', target: el, stateChanged: event.oldState !== event.newState }]);
   }
   function popoverOpen(el) {
     return el.hasAttribute('popover') && 'popover' in el && el.matches(':popover-open');
@@ -2558,11 +2661,24 @@
     for (const op of operations.values())
       if (!op.dispatched && op.target && op.until >= Date.now()) op.preparedTargetSignature = signature(op.target);
     if (!changed) return;
-    if (source !== 'page' && source !== 'agent') interventionRevision++;
+    // DOM mutations alone never establish human origin. A user-turn change is
+    // an intervention; unknown attribution remains a strict legacy fence only.
+    if (source === 'user') interventionRevision++;
+    if (source !== 'page' && source !== 'agent') uncertainRevision++;
     revision++; publishRevision();
     clearTimeout(domTimer);
-    pendingDOM = { kind: 'dom', source, target };
-    domTimer = setTimeout(() => { domTimer = null; const observation = pendingDOM; pendingDOM = null; send(observation); }, 150);
+    // Coalescing keeps the strongest attribution in this window. A later
+    // passive batch must not relabel an earlier user or unknown change.
+    if (!pendingDOM || domSeverity(source) >= domSeverity(pendingDOM.source)) pendingDOM = { kind: 'dom', source, target };
+    domTimer = setTimeout(flushPendingDOM, 150);
+  }
+  function domSeverity(source) {
+    return source === 'user' ? 3 : source === 'unknown' ? 2 : source === 'page' ? 1 : 0;
+  }
+  function flushPendingDOM() {
+    clearTimeout(domTimer); domTimer = null;
+    const observation = pendingDOM; pendingDOM = null;
+    if (observation) send(observation);
   }
   function observeLayoutShifts() {
     if (typeof PerformanceObserver !== 'function'
@@ -2607,7 +2723,7 @@
       return;
     }
     stop();
-    active = true; runToken = state.runToken; seq = 0; revision = 0; interventionRevision = 0; interventionDiagnostic = ''; publishRevision();
+    active = true; runToken = state.runToken; seq = 0; revision = 0; interventionRevision = 0; uncertainRevision = 0; interventionDiagnostic = ''; publishRevision();
     relaxedMonitorGrant = authorizedGrant;
     observer = new MutationObserver(onMutations);
     observeRoot(document);
@@ -2678,6 +2794,12 @@
         const op = operations.get(guard.operationId);
         op.target = el; op.scrollAncestors.clear();
         for (let node = el?.parentElement || el?.getRootNode?.().host; node; node = node.parentElement || node.getRootNode?.().host) op.scrollAncestors.add(node);
+        // The caller scrolls synchronously after this event returns. Refresh
+        // the owned geometry proof at the end of that same script task.
+        if (selectorPreparationOnly) {
+          const phase = op.ownedGeometryPhase = { kind: 'selector-scroll', scrollX: window.scrollX, scrollY: window.scrollY };
+          queueMicrotask(() => refreshOwnedGeometry(op, phase));
+        }
       } catch { event.preventDefault(); }
     }, false);
     const noteAgentTurn = event => {
@@ -2686,6 +2808,12 @@
       if (!op) return;
       if (event.type === 'keydown') op.tabFocusRebindAllowed = event.key === 'Tab';
       if (['input', 'beforeinput', 'change'].includes(event.type)) rememberAgentLayout(op);
+      // The agent's own certified pointer movement can apply :hover styles or
+      // page hover handlers. After that input task, refresh only its geometry.
+      if (op.pointerPreparationOnly === true && event.isTrusted === true && !op.ownedGeometryPhase) {
+        const phase = op.ownedGeometryPhase = { kind: 'hover' };
+        setTimeout(() => refreshOwnedGeometry(op, phase), 0);
+      }
       const marker = { userAt: op.userAt };
       agentTurn = marker;
       const enterFormSubmit = event.type === 'keydown' && event.key === 'Enter' && op.kind === 'input'
@@ -2782,10 +2910,12 @@
       const expectedInput = expected('input', el, event);
       const expectedClick = !expectedInput && el.matches?.('input[type="checkbox"],input[type="radio"],select,option')
         ? expected('click', el, event) : null;
-      const localInput = !event.isTrusted && agentTurn && lastUserAt <= agentTurn.userAt
-        && localOperation?.started && operations.get(localOperation.operationId)?.target === el;
+      // Untrusted events dispatched synchronously inside the agent's own turn
+      // (its synthetic input, or a page handler re-dispatching for a hidden
+      // native control) are part of that action rather than page input.
+      const agentTurnInput = !event.isTrusted && agentTurn && lastUserAt <= agentTurn.userAt;
       if (ignored(el)) return;
-      if (expectedInput || expectedClick || localInput) { refreshControl(el); return; }
+      if (expectedInput || expectedClick || agentTurnInput) { refreshControl(el); return; }
       if (event.isTrusted) interact('input', el);
       else { revision++; send({ kind: 'input', source: 'page', target: targetName(el) }); }
       refreshControl(el);
@@ -2879,8 +3009,9 @@
     ownedPreparationBindings = new WeakMap();
     observer?.disconnect(); observer = null;
     layoutObserver?.disconnect(); layoutObserver = null;
-    clearTimeout(domTimer); clearTimeout(scrollTimer); clearInterval(controlTimer); domTimer = null; scrollTimer = null; controlTimer = null; unreported = 0; interventionUnreported = 0; interventionRevision = 0; pendingDOM = null; lastFeedbackDelivery = Promise.resolve();
+    clearTimeout(domTimer); clearTimeout(scrollTimer); clearInterval(controlTimer); domTimer = null; scrollTimer = null; controlTimer = null; unreported = 0; interventionUnreported = 0; interventionRevision = 0; uncertainUnreported = 0; uncertainRevision = 0; pendingDOM = null; lastFeedbackDelivery = Promise.resolve();
     listeners.splice(0).forEach(remove => remove());
+    removeShadowRootListeners();
     operations.clear(); modelSnapshots.clear(); localOperation = null; agentTurn = null;
     animationAttribution = new WeakMap();
     agentLayoutHistory.length = 0;
@@ -2919,11 +3050,11 @@
     const certified = expected ? bindingResult.binding : inherited
       && previous.runToken === runToken && previous.until >= Date.now()
       && lastUserAt === previous.userAt
-      && (previous.preparedBinding.relaxed ? currentRelaxedGrant(previous.preparedBinding.grantToken)
-        : previous.preparedInterventionRevision === interventionRevision && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page'))
+      && (previous.preparedBinding.relaxed ? currentRelaxedGrant(previous.preparedBinding.grantToken) : !authorityChanged(previous))
       && !previous.modelBindingInvalid && !previous.layoutInvalidated
       && operationTarget === previous.preparedBinding.target
-      && operationBindingMatches(previous, operationTarget) ? previous.preparedBinding : null;
+      && (previous.preparedBinding.relaxed ? operationBindingMatches(previous, operationTarget)
+        : !modelDecisionPredicate(previous.preparedBinding, operationBinding(previous, operationTarget))) ? previous.preparedBinding : null;
     const proofRequired = expected || inherited;
     const allowPassiveRebase = inherited ? previous.allowPassiveRebase === true : params.allowPassiveRebase === true;
     const controlStateAtPrepare = operationTarget && /^(INPUT|TEXTAREA|SELECT|OPTION)$/.test(operationTarget.tagName)
@@ -2938,7 +3069,7 @@
       modelBindingReason: proofRequired && !certified ? bindingResult?.reason || 'semantic_binding_changed' : '',
       preparedTargetSignature: operationTarget ? signature(operationTarget) : undefined, kinds: new Set(),
       preparedBinding: proofRequired ? certified : allowPassiveRebase && operationTarget ? preparedBinding(operationTarget) : null,
-      preparedInterventionRevision: interventionRevision,
+      preparedInterventionRevision: interventionRevision, preparedUncertainRevision: uncertainRevision, localSynthetic: false,
       preparedPageContext: JSON.stringify([location.href, document.baseURI, currentViewport(), window.scrollX, window.scrollY]),
       coordinateSensitive, coordinateTarget, coordinateHit, coordinateTargetAtPoint,
       coordinatePoint: coordinateSensitive ? { x: params.x, y: params.y } : null,
@@ -2963,6 +3094,7 @@
     if (!params.release) op.eventTypes = Array.isArray(params.eventTypes) ? new Set(params.eventTypes) : null;
     op.focused = params.kind === 'input'; op.kind = params.kind;
     op.nativeWheel = params.nativeWheel === true;
+    op.ownedGeometryPhase = null; // A later dispatch ends any owned geometry phase.
     // Only certified, unheld pointer movement is preparation. Once this same
     // operation has consequential input, later movement cannot downgrade it.
     const consequentialInputPending = op.consequentialInputPending === true
@@ -3087,9 +3219,9 @@
     const approved = [...operations.values()].reverse().find(op => op.allowPassiveRebase === true && !op.dispatched
       && op.preparedBinding?.target === target && op.until >= Date.now()
       && lastUserAt <= op.userAt
-      && (op.preparedBinding.relaxed ? currentRelaxedGrant(op.preparedBinding.grantToken)
-        : op.preparedInterventionRevision === interventionRevision && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page'))
-      && operationBindingMatches(op, target));
+      && (op.preparedBinding.relaxed ? currentRelaxedGrant(op.preparedBinding.grantToken) && operationBindingMatches(op, target)
+        : !authorityChanged(op) && (op.preparedBinding.model === true
+          ? !modelDecisionPredicate(op.preparedBinding, operationBinding(op, target)) : operationBindingMatches(op, target))));
     prepare({ selector: params.selector, ref_id: params.ref_id, x: params.x, y: params.y,
       textMatch: action === 'click' ? params.text : undefined, tool: bindingTool, operationId, runToken,
       ...(params.expectedModelSnapshot !== undefined || approved?.expectedModelSnapshot !== undefined
@@ -3097,26 +3229,33 @@
       ...(approved?.preparedBinding?.relaxed ? { relaxedMonitorGrantToken: approved.preparedBinding.grantToken } : {}),
       ...(bindingTool !== action ? { relaxedMonitorGrantToken: params.relaxedMonitorGrantToken } : {}),
       allowPassiveRebase: params.allowPassiveRebase === true || !!approved });
-    if (approved?.preparedBinding?.model === true) {
-      const local = operations.get(operationId);
-      if (local) {
-        local.preparedBinding = approved.preparedBinding;
-        local.modelBindingTool = approved.modelBindingTool || approved.tool;
-        local.expectedModelSnapshot = approved.expectedModelSnapshot;
-        local.focusBound = approved.focusBound;
-        local.modelBindingInvalid = false;
-        local.allowPassiveRebase = true;
-      }
+    const local = operations.get(operationId);
+    // Content-script dispatch is synthetic. It can produce trusted focus,
+    // scroll and execCommand input, never trusted keys or pointer presses.
+    if (local) local.localSynthetic = true;
+    if (local && approved?.preparedBinding?.model === true) {
+      local.preparedBinding = approved.preparedBinding;
+      local.modelBindingTool = approved.modelBindingTool || approved.tool;
+      local.expectedModelSnapshot = approved.expectedModelSnapshot;
+      local.focusBound = approved.focusBound;
+      local.modelBindingInvalid = false;
+      local.allowPassiveRebase = true;
     }
-    localOperation = { operationId, kind: kindFor(action), userAt: lastUserAt, revision,
+    const installed = localOperation = { operationId, kind: kindFor(action), userAt: lastUserAt, revision,
       navigationCandidate: ['click', 'click_ax', 'set_checked'].includes(action),
-      scrollIntoView: /^ax_resolve|ax_prepare_field/.test(action) };
+      scrollIntoView: /^ax_resolve|ax_prepare_field/.test(action), previous };
     // Do not mark a BiDi preparation probe as actual input.
     if (!params._bidiPrepare) beforeLocalDispatch({ preparation: true });
     return () => {
       const op = operations.get(operationId);
       if (op) { finishRelaxedOwnedAction(op); op.until = Date.now() + 200; op.finished = true; }
-      localOperation = previous;
+      installed.finished = true;
+      // Restore only this action's own owner. A stop/start or a later action in
+      // between keeps its current owner; a finished outer owner is not revived.
+      if (localOperation !== installed) return;
+      let next = installed.previous;
+      while (next?.finished) next = next.previous;
+      localOperation = next || null;
     };
   }
   function beforeLocalDispatch({ preparation = false, kind, target } = {}) {
@@ -3134,6 +3273,13 @@
       error.code = 'page_feedback_pending'; error.dispatched = localOperation.started === true;
       error.pagePreparationVeto = preparationVetoFacts(operation, { layoutChanged, bindingChanged, target });
       throw error;
+    }
+    // The caller moves focus synchronously next. That move commits the field
+    // that loses focus (a trusted 'change'); attribute only that commit here.
+    if (preparation && kind === 'focus' && operation) {
+      const blur = { target: deepActiveElement(), userAt: lastUserAt };
+      operation.preparationBlur = blur;
+      setTimeout(() => { if (operation.preparationBlur === blur) operation.preparationBlur = null; }, 0);
     }
     // A validation-only phase must retain the preceding actual preparation's
     // scroll attribution until its delayed browser events have arrived.
@@ -3209,7 +3355,7 @@
   function preparationVetoFacts(op, { layoutChanged = false, bindingChanged = false, target, documentChanged = false } = {}) {
     const predicate = !active ? 'run_ended' : !op ? 'operation_missing' : documentChanged ? 'document_changed'
       : op.until < Date.now() ? 'operation_expired'
-      : lastUserAt > op.userAt || op.preparedInterventionRevision !== interventionRevision || interventionUnreported ? 'intervention_changed'
+      : authorityChanged(op) ? 'intervention_changed'
       : op.modelBindingInvalid ? op.modelBindingReason || 'model_snapshot_invalid'
       : target && target !== op.target ? 'target_changed' : layoutChanged ? 'geometry_changed'
       : bindingChanged ? op.focusBound && deepActiveElement() !== op.focusTarget ? 'focus_changed'
@@ -3302,10 +3448,7 @@
           documentChanged: !!params.documentToken && params.documentToken !== documentToken,
           documentRevisionChanged: !!params.documentToken && !rebased && params.documentRevision !== revision,
         };
-        if (domTimer) {
-          clearTimeout(domTimer); domTimer = null; const observation = pendingDOM; pendingDOM = null;
-          if (observation) send(observation);
-        }
+        if (domTimer) flushPendingDOM();
         void lastFeedbackDelivery.then(() => respond({ ready: false, pageFeedbackPending: true, preparationVeto }));
         return true;
       }
@@ -3323,16 +3466,28 @@
           && (!active || params.runToken !== runToken || params.documentToken !== documentToken || !op)) {
         respond({ ready: false }); return;
       }
+      // Deliver this operation's own observed reactions before its tool returns:
+      // pending observer records are processed while it is still unfinished,
+      // the debounced DOM batch is sent now, and the reply awaits delivery.
+      if (active && params.runToken === runToken) {
+        flushPendingMutations(op); sampleFormControls(op?.target);
+        if (domTimer) flushPendingDOM();
+      }
       if (op) { finishRelaxedOwnedAction(op); op.until = Date.now() + 200; op.finished = true; }
-      respond({ ready: true });
+      void lastFeedbackDelivery.then(() => respond({ ready: true }));
+      return true;
     }
   };
   api.runtime.onMessage.addListener(onMessage);
   window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalPreparation, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture,
     get active() { return active; },
     get disposed() { return disposed; },
-    dispose() { disposed = true; requestGeneration++; stop(); api.runtime.onMessage.removeListener?.(onMessage); } };
+    dispose() {
+      disposed = true; requestGeneration++; stop(); api.runtime.onMessage.removeListener?.(onMessage);
+      window.removeEventListener('pageshow', onPageShow);
+    } };
   void requestState();
   // A document restored from BFCache needs a fresh run/document handshake.
-  window.addEventListener('pageshow', () => { if (!disposed && !active) void requestState(); });
+  function onPageShow() { if (!disposed && !active) void requestState(); }
+  window.addEventListener('pageshow', onPageShow);
 })();
