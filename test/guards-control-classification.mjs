@@ -86,6 +86,10 @@ for (const build of ['chrome', 'firefox']) {
             ({ detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') }));
             assert.equal(detected?.resolvedNavigationTarget, true, 'Trash folder link');
             assert.equal(block, null);
+            f = await setup('https://mail.example/inbox', '<nav><a role="menuitem" href="/mail?folder=inbox">Inbox</a> <a id="t" role="menuitem" href="/mail?folder=trash">Trash</a></nav>', { steering, gate: { requiresStateChange: false } });
+            ({ detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') }));
+            assert.equal(detected?.resolvedNavigationTarget, true, 'Trash folder selected by query');
+            assert.equal(block, null);
             f = await setup('https://mail.example/compose', '<section><textarea aria-label="Body">Hi Bob</textarea><div class="attachment"><span>report.pdf</span><button id="t" type="button" aria-label="Remove attachment">×</button></div><button type="button">Send</button></section>', { steering });
             ({ detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') }));
             assert.equal(detected?.resolvedDraftControl, true, 'draft attachment');
@@ -99,6 +103,9 @@ for (const build of ['chrome', 'firefox']) {
             ['https://admin.example/users', '<table><tr><td>bob@example.com</td><td><button id="t" type="button">Delete</button></td></tr></table>'],
             ['https://mail.example/msg/42', '<div role="toolbar"><div id="t" role="button" tabindex="0" aria-label="Delete">🗑</div></div><h2>Subject</h2>'],
             ['https://app.example/items', '<ul><li>Item <a id="t" role="button" href="#">Delete</a></li></ul>'],
+            // A GET link whose query performs the deletion keeps its caption.
+            ['https://blog.example/wp-admin/edit.php', '<ul><li>Post 1 <span role="menu"><a id="t" role="menuitem" href="/wp-admin/post.php?post=1&amp;action=trash&amp;_wpnonce=abc">Trash</a></span></li></ul>'],
+            ['https://admin.example/list', '<ul><li>Row 5 <span role="menu"><a id="t" role="menuitem" href="/admin.php?do=delete_row&amp;id=5">Delete</a></span></li></ul>'],
             ['https://notes.example/', '<section><textarea aria-label="New note"></textarea><div class="note"><p>Buy milk</p><button id="t" type="button">Remove</button></div></section>'],
             ['https://app.example/settings', '<dialog open><form method="dialog"><p>Delete this item?</p><button value="cancel">Cancel</button><button id="t" value="confirm">Delete</button></form></dialog>'],
           ]) {

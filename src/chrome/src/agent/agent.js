@@ -29835,14 +29835,30 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       };
       const deleteAction = value => /(?:^|[^\p{L}])(?:delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
       const deletionCaption = value => deleteAction(withoutViewStateRemoval(value));
+      // A GET link whose query names a destructive action (WordPress
+      // action=trash, admin panels' action=delete, _method=DELETE) mutates
+      // when followed. Path segments such as /trash or /delete/ usually name a
+      // folder or a confirmation page, so they stay navigation.
+      const destructiveLinkQuery = link => {
+        try {
+          const destructive = /^(?:delete|destroy|remove|trash|erase|purge)(?:$|[._-])/i;
+          for (const [name, value] of new URL(link.href).searchParams) {
+            if (/^(?:delete|destroy|remove|trash|erase|purge)$/i.test(name)) return true;
+            if (/^(?:action|do|op|operation|task|cmd|command|act|a|_method|method|mode)$/i.test(name) && destructive.test(value)) return true;
+          }
+        } catch {}
+        return false;
+      };
       // A link with a real destination navigates even when its caption names
       // a folder such as Trash. A placeholder href or an explicit button role
-      // marks a scripted command drawn as a link, which keeps its caption.
+      // marks a scripted command drawn as a link, which keeps its caption, as
+      // does a link whose query performs a destructive action.
       const navigationOwnsActivation = (() => {
         const link = target && ['click', 'click_ax', 'iframe_click'].includes(toolName) ? navigationLinkFor(target) : null;
         if (!link) return false;
         return !String(link.getAttribute('href') || '').trim().startsWith('#')
-          && String(link.getAttribute('role') || '').toLowerCase() !== 'button';
+          && String(link.getAttribute('role') || '').toLowerCase() !== 'button'
+          && !destructiveLinkQuery(link);
       })();
       if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName)
           && nativeResourceVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
@@ -31241,6 +31257,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this._lastCdpClickIdent?.delete(tabId);
     this._lastClickProgress?.delete(tabId);
     this._clickAxCdpFallbacks?.delete(tabId);
+    // Task-scoped click locks: a cleared conversation starts a new task anyway.
+    this._taskClickLocks?.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
     this.progressExpectedItems.delete(tabId);
