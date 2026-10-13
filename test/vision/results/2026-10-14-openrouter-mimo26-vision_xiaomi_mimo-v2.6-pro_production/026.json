@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-13T22:58:34.100Z",
+  "id": "026",
+  "model": "xiaomi/mimo-v2.6-pro",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "026",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "toast-notification",
+    "title": "Settings updated",
+    "image": "images/026.png",
+    "question": "What transient notification is visible, and is it success, warning, error, or informational? Focus on the “Settings updated” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/026.png",
+    "bytes": 92556,
+    "sha256": "4f864bbce9cc0a4cf70c517bb3bb861e51ef653ebe1dad2c243fc374251a542b"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Preferences settings panel with toggle switches in a \"WebScene\" app.\n\n2) Visible text:\n- Nav/brand: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Preferences\"\n- Toggle row labels: \"General\", \"Notifications\", \"Privacy\", \"Integrations\"\n- Button: \"Close\"\n- Toast: \"Settings updated\", \"Synced just now\"\n\n3) Inputs: No text form fields. Four toggle switches:\n- \"General\" — off (gray, knob left)\n- \"Notifications\" — on (green, knob right)\n- \"Privacy\" — off (gray, knob left)\n- \"Integrations\" — off (gray, knob left)\nNone appear focused or disabled.\n\n4) State signals:\n- Success toast, dark background, top-right, overlapping the card: checkmark icon + \"Settings updated\" / \"Synced just now\". No auto-dismiss visible yet.\n- No spinners, modals, CAPTCHAs, or cookie banners.\n\n5) Blockers:\n- Toast overlays the top-right of the preferences card but does not cover any toggles or the \"Close\" button.\n- No other blockers; \"Close\" button is enabled (green).\n\n6) Unknowns:\n- Green circular avatar/icon at top-right has no readable label; its menu contents are unknown.\n- Whether toggles persist without clicking \"Close\" is unknown.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1184,
+      "completion_tokens": 301,
+      "total_tokens": 1485,
+      "cost": 0.0006550092,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 272,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.0006550092,
+        "upstream_inference_prompt_cost": 0.0003931392,
+        "upstream_inference_completions_cost": 0.00026187
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 6,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null,
+    "provider": "DeepInfra",
+    "finishReason": "stop",
+    "raw": ": OPENROUTER PROCESSING\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\"Let\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"Let\",\"format\":\"unknown\",\"index\":0}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\" me describe\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\" me describe\",\"format\":\"unknown\",\"index\":0}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":\" the screenshot.\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\" the screenshot.\",\"format\":\"unknown\",\"index\":0}]},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"1\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\") Page purpose: Preferences\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" settings\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" panel with\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" toggle switches in\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" a\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"WebScene\\\" app.\\n\\n2) Visible\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" text:\\n- Nav/\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"brand: \\\"WebScene\\\",\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Home\\\", \\\"Workspace\\\", \\\"Activity\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"\\n- Heading: \\\"Preferences\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Toggle row\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" labels: \\\"General\\\", \\\"Notifications\\\",\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Privacy\\\", \\\"Integrations\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Button: \\\"Close\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Toast: \\\"Settings updated\\\",\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Synced just now\\\"\\n\\n3)\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Inputs: No\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" text form fields. Four toggle switches\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\":\\n-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"General\\\" — off (gray,\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" knob\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" left)\\n- \\\"Notifications\\\" — on\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" (green, knob right)\\n- \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Privacy\\\" — off (\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"gray, knob left)\\n-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Integrations\\\" — off (\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"gray, knob left)\\nNone appear\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" focused or\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" disabled.\\n\\n4) State signals:\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Success toast,\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" dark background\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\", top-right,\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" overlapping the\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" card:\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" check\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"mark icon + \\\"Settings updated\\\" /\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Synced just now\\\". No auto\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"-dismiss visible yet\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\".\\n- No\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" spin\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ners, mod\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"als, CAP\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"TCH\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"As, or cookie\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" banners.\\n\\n5) Blockers\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\":\\n- Toast overlays\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" the top\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"-right of\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" the preferences\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" card but\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" does not\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" cover\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" any toggles\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" or the \\\"Close\\\" button.\\n-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" No other\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" blockers; \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Close\\\" button is enabled\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" (\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"green).\\n\\n6) Unknown\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"s:\\n- Green circular\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" avatar/icon\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" at top-right has no readable\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" label; its\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" menu contents\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" are unknown.\\n- Whether\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" togg\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"les persist\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" without\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" clicking\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Close\\\" is unknown\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\".\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\",\"reasoning\":null},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"gen-1791932312-1e4tHC2HM0AHkq8Fsjeh\",\"object\":\"chat.completion.chunk\",\"created\":1791932312,\"model\":\"xiaomi/mimo-v2.6-pro\",\"provider\":\"DeepInfra\",\"service_tier\":\"default\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1184,\"completion_tokens\":301,\"total_tokens\":1485,\"cost\":0.0006550092,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":272,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0006550092,\"upstream_inference_prompt_cost\":0.0003931392,\"upstream_inference_completions_cost\":0.00026187},\"completion_tokens_details\":{\"reasoning_tokens\":6,\"image_tokens\":0,\"audio_tokens\":0}}}\n\ndata: [DONE]\n\n"
+  },
+  "latencyMs": {
+    "headers": 445,
+    "total": 3673
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 9,
+    "possible": 9,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "state_signals": {
+        "earned": 4,
+        "possible": 4,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "preferences",
+          "settings",
+          "upload",
+          "export"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "preferences",
+          "settings"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Preferences",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Preferences"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Close",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Close"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "toast",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Settings updated",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Settings updated"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "detail",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Synced just now",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Synced just now"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

@@ -92,7 +92,7 @@ function load(source, { caseIds = ids, recordAudit = true } = {}) {
     emittedToolCalls: 0, nativeToolCalls: 0, schemaValidToolCalls: 0, idealToolMatches: 0, exactIdealMatches: 0,
     promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, reasoningTokens: 0,
     costRecords: 0, usageCost: 0, lengthLimited: 0, contentFallbackCalls: 0,
-    accessibilityTreeFirstCalls: 0, attempts: 0, providers: {}, byTool: {}, schemaErrors: [] };
+    accessibilityTreeFirstCalls: 0, attempts: 0, multiToolCallResponses: 0, noToolResponses: 0, noToolCaseIds: [], multiToolCallCaseIds: [], providers: {}, byTool: {}, schemaErrors: [] };
   const records = [], latencies = [];
   for (const id of caseIds) {
     const path = join(dir, `${id}.json`), bytes = readFileSync(path), record = JSON.parse(bytes);
@@ -116,6 +116,8 @@ function load(source, { caseIds = ids, recordAudit = true } = {}) {
     if (record.error) row.errors++;
     else { row.responses++; latencies.push(record.latencyMs); }
     const call = record.firstToolCall || null, ideal = rubrics.cases[id].expected.idealFirstToolCall;
+    if (!record.error && !call) { row.noToolResponses++; row.noToolCaseIds.push(id); }
+    if ((record.response?.choices?.[0]?.message?.tool_calls?.length || 0) > 1) { row.multiToolCallResponses++; row.multiToolCallCaseIds.push(id); }
     let schemaErrors = [];
     if (call) {
       row.emittedToolCalls++;
@@ -166,6 +168,7 @@ function load(source, { caseIds = ids, recordAudit = true } = {}) {
   row.medianLatencyMs = latencies.length ? (latencies[Math.floor((latencies.length - 1) / 2)] + latencies[Math.floor(latencies.length / 2)]) / 2 : null;
   row.p95LatencyMs = latencies.length ? latencies[Math.ceil(latencies.length * 0.95) - 1] : null;
   row.cachedPromptSharePct = row.promptTokens ? row.cachedPromptTokens / row.promptTokens * 100 : null;
+  if (source.fresh) assert.equal(row.costRecords, row.responses, `Missing API cost evidence: ${source.model}`);
   if (source.historical && caseIds.length === 100) for (const metric of ['emittedToolCalls', 'schemaValidToolCalls', 'idealToolMatches', 'exactIdealMatches']) {
     assert.equal(row[metric], source.historical[metric], `Historical ${metric} regression: ${source.model}`);
   }
@@ -212,6 +215,7 @@ const visionSources = [
 ];
 function vision(source) {
   const cases = ids.map(id => read(join(root, source.path, `${id}.json`)));
+  assert.deepEqual(cases.map(c => c.id), ids, `Vision case order/identity drift: ${source.model}`);
   for (const c of cases) {
     assert.equal(c.id, c.question.id);
     assert.equal(c.model, source.model);
@@ -262,7 +266,7 @@ function vision(source) {
 const oldVision = visionSources.map(vision);
 writeFileSync(join(out,'historical-vision-regression.json'),JSON.stringify({models:2,cases:200,inputAndScoreMatches:true,rows:oldVision},null,2)+'\n');
 
-if (process.argv.includes('--historical-only')) {
+  if (process.argv.includes('--historical-only')) {
   console.log('Historical regression passed: 1,300 planner responses and 200 vision responses.');
 } else {
   const newCohort = fresh.map(source => load(source));
@@ -273,11 +277,26 @@ if (process.argv.includes('--historical-only')) {
   const pairwise = newCohort.flatMap(entry => [...oldCohort,...newCohort].filter(peer=>peer!==entry).map(peer => ({model:entry.row.model,peer:peer.row.model,
     exactMatches:entry.records.filter((r,i)=>r.signature===peer.records[i].signature).length,
     toolMatches:entry.records.filter((r,i)=>r.name===peer.records[i].name).length,cases:100})));
+  const visionPairwise = visionResults.flatMap(entry => visionResults.filter(peer=>peer!==entry).map(peer=>({model:entry.model,peer:peer.model,
+    bothPass:entry.caseScores.filter((r,i)=>r.pass&&peer.caseScores[i].pass).length,
+    modelOnlyPass:entry.caseScores.filter((r,i)=>r.pass&&!peer.caseScores[i].pass).length,
+    peerOnlyPass:entry.caseScores.filter((r,i)=>!r.pass&&peer.caseScores[i].pass).length,
+    neitherPass:entry.caseScores.filter((r,i)=>!r.pass&&!peer.caseScores[i].pass).length,cases:100})));
+  const fullCampaign = read(join(out,'campaign-full.json')), preflightCampaign = read(join(out,'campaign-preflight.json'));
+  const preflightCases = preflightCampaign.runs.map(run=>read(join(root,run.dir,'001.json')));
+  assert.equal(preflightCases.length,6);
+  assert(preflightCases.every(c=>!c.error));
+  const benchmarkCost = newCohort.reduce((s,c)=>s+c.row.usageCost,0)+visionResults.filter(r=>r.fresh).reduce((s,r)=>s+r.usageCost,0);
+  const preflightCost = preflightCases.reduce((s,c)=>s+(c.usage?.cost??c.response?.usage?.cost??0),0);
+  const campaign = { benchmarkRequests:600,preflightRequests:6,totalRecordedRequests:606,inferenceResponses:606,
+    apiErrors:0,retries:0,benchmarkCostUsd:benchmarkCost,preflightCostUsd:preflightCost,totalReportedCostUsd:benchmarkCost+preflightCost,
+    startedAt:fullCampaign.startedAt,finishedAt:fullCampaign.finishedAt,wallTimeMs:Date.parse(fullCampaign.finishedAt)-Date.parse(fullCampaign.startedAt),
+    concurrency:fullCampaign.concurrency,note:'Six runners execute concurrently. All individual request latencies include network/provider/generation time; historical infrastructure, caches, prices and concurrency conditions differ.' };
   const report = {date:DATE,status:'complete',sourceCommit:replay.meta.sourceCommit,replaySha256:hash(readFileSync(replayPath)),
     casesPerPlannerModel:100,actTools:48,consensusModels:17,comparisonsPerModel:1600,historicalPlannerModels:13,newPlannerModels:4,newVisionModels:2,
-    method:'Leave-one-out consensus across all 17 models. Recursive object-key sorting only; preserve argument values, defaults, and extra arguments. No-tool/no-tool agrees; rejected API requests are excluded from quality. Consensus is agreement, not ground truth.',
+    method:'Leave-one-out consensus across all 17 models, comparing the first proposed tool call per response. Recursive object-key sorting only; preserve argument values, defaults, and extra arguments. Additional tool calls are counted separately and not executed or scored. No-tool/no-tool agrees; rejected API requests are excluded from quality. Consensus is agreement, not ground truth.',
     caveat:'Only the four October 14 planner models and two MiMo vision runs are new. Historical requests were omitted and are reconstructed from pinned source; full historical body equality is unprovable. Serving dates, provider routes, caches and bills differ. No browser tools are executed.',
-    results,primaryComparison:results.filter(r=>selected.has(r.model)),visionResults,pairwise};
+    results,primaryComparison:results.filter(r=>selected.has(r.model)),visionResults,pairwise,visionPairwise,campaign};
   writeFileSync(join(out,'comparison.json'),JSON.stringify(report,null,2)+'\n');
   writeFileSync(join(out,'audit.json'),JSON.stringify({replaySha256:report.replaySha256,cases:audit},null,2)+'\n');
   const table = '| Model | Exact consensus | Tool consensus | Valid / emitted | Ideal tool | Exact ideal | Median | p95 | Cost |\n| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n' +

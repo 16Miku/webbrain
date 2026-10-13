@@ -1,0 +1,159 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-13T22:58:55.119Z",
+  "id": "071",
+  "model": "xiaomi/mimo-v2.6-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "071",
+    "difficulty": {
+      "level": 4,
+      "slug": "advanced",
+      "label": "Advanced"
+    },
+    "category": "data-table",
+    "title": "Fatura listesi",
+    "image": "images/071.png",
+    "question": "Locate the target row and report its exact status without mixing it with neighboring rows. Focus on the “Fatura listesi” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/071.png",
+    "bytes": 84124,
+    "sha256": "6d05e6deaa76e5febe0ebd1970ffa5f321ad09b6cf3f65479c539d363b0f1172"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: Invoice list table in a Turkish-language web app (\"WebScene\" dashboard).\n\n2) Visible text:\n- Nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Fatura listesi\"\n- Button: \"Filter\"\n- Table headers: \"FATURA\", \"VADE\", \"DURUM\"\n- Row 1: \"TR-8831\", \"18 Ağu\", \"Ödendi\"\n- Row 2: \"TR-8832\", \"21 Ağu\", \"Gecikmiş\"\n\n3) Inputs: No visible form fields (no search box, dropdowns, or text inputs shown).\n\n4) State signals: Row \"TR-8832\" is highlighted (light purple background), suggesting it is selected/hovered. No spinners, toasts, modals, banners, or CAPTCHAs.\n\n5) Blockers: None apparent.\n\n6) Unknowns: Status values may be badges/pills; exact styling of \"Ödendi\"/\"Gecikmiş\" indicators unclear. No pagination or additional rows visible — table may be truncated below the fold.",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1186,
+      "completion_tokens": 245,
+      "total_tokens": 1431,
+      "cost": 0.00022278,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00022278,
+        "upstream_inference_prompt_cost": 0.00015418,
+        "upstream_inference_completions_cost": 0.0000686
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null,
+    "provider": "Makora",
+    "finishReason": "stop",
+    "raw": "data: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"1\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\") Page purpose: Invoice\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" list table\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" in a Turkish\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"-language web\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" app (\\\"WebScene\\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" dashboard\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\").\\n\\n2) Visible text:\\n-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Nav: \\\"WebScene\\\",\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Home\\\", \\\"Workspace\\\", \\\"Activity\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"\\n- Heading: \\\"Fatura list\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"esi\\\"\\n- Button: \\\"Filter\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Table\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" headers: \\\"FATURA\\\", \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"VADE\\\", \\\"DURUM\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Row 1: \\\"TR-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"8831\\\", \\\"18\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Ağu\\\", \\\"Ödendi\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Row 2: \\\"TR-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"8832\\\", \\\"21\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Ağu\\\", \\\"Gecikmiş\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"\\n\\n3) Inputs: No\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" visible\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" form fields (no\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" search box\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\", dropdown\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"s, or text\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" inputs shown\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\").\\n\\n4) State signals: Row\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"TR-8832\\\" is\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" highlighted (light purple background),\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" suggesting\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" it is selected/h\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"overed. No spin\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ners, toasts, modals\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\", banners,\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" or CAPTCH\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"As.\\n\\n5\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\") Blockers: None apparent\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\".\\n\\n6) Unknowns: Status\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" values\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" may\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" be badges\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"/p\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ills; exact styling\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" of \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Ödendi\\\"/\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"Gecikmiş\\\" indicators\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" unclear.\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" No pagination\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" or additional\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" rows visible —\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" table\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" may be truncated below\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" the fold\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\".\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"gen-1791932335-ESEP8sGKvJm2SErKhCGh\",\"object\":\"chat.completion.chunk\",\"created\":1791932335,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"service_tier\":null,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1186,\"completion_tokens\":245,\"total_tokens\":1431,\"cost\":0.00022278,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.00022278,\"upstream_inference_prompt_cost\":0.00015418,\"upstream_inference_completions_cost\":0.0000686},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}\n\ndata: [DONE]\n\n"
+  },
+  "latencyMs": {
+    "headers": 480,
+    "total": 1584
+  },
+  "score": {
+    "success": true,
+    "ratio": 1,
+    "earned": 7,
+    "possible": 7,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visual_reasoning": {
+        "earned": 3,
+        "possible": 3,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "table",
+          "orders",
+          "members",
+          "deployment",
+          "invoice",
+          "audit"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "table",
+          "invoice"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Fatura listesi",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Fatura listesi"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "target-row",
+        "dimension": "visual_reasoning",
+        "section": null,
+        "kind": "all",
+        "values": [
+          "TR-8832",
+          "Gecikmiş"
+        ],
+        "weight": 3,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "TR-8832",
+          "Gecikmiş"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

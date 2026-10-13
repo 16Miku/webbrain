@@ -1,0 +1,122 @@
+▸ 100 case(s), base=https://openrouter.ai/api/v1, model=liquid/lfm-2.5-24b-a2b, browser=chrome, concurrency=3
+▸ endpoint=https://openrouter.ai/api/v1/chat/completions
+▸ prompt: mode=case, tier=full
+▸ writing to G:\esoku\Documents\webbrain-one-2\test\llm\results\2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_liquid_lfm-2.5-24b-a2b
+[2/100] 002 → navigate 1765ms
+[3/100] 003 → navigate 1854ms
+[1/100] 001 → navigate 2261ms
+[5/100] 005 → list_downloads 1270ms
+[4/100] 004 → navigate 2256ms
+[6/100] 006 → navigate 1786ms
+[7/100] 007 → navigate 1038ms
+[10/100] 010 → navigate 1142ms
+[9/100] 009 → new_tab 1401ms
+[8/100] 008 → navigate 1817ms
+[11/100] 011 → navigate 1445ms
+[14/100] 014 → get_accessibility_tree 1717ms
+[12/100] 012 → go_back 3594ms
+[15/100] 015 → get_accessibility_tree 1657ms
+[16/100] 016 → get_accessibility_tree 1671ms
+[13/100] 013 → get_accessibility_tree 5006ms
+[17/100] 017 → navigate 2562ms
+[18/100] 018 → navigate 2173ms
+[19/100] 019 → navigate 2432ms
+[22/100] 022 → get_accessibility_tree 1304ms
+[20/100] 020 → research_url 2051ms
+[21/100] 021 → navigate 3578ms
+[24/100] 024 → get_accessibility_tree 1858ms
+[23/100] 023 → navigate 2537ms
+[26/100] 026 → read_page 1101ms
+[27/100] 027 → read_page 1261ms
+[25/100] 025 → get_accessibility_tree 2045ms
+[28/100] 028 → get_accessibility_tree 1523ms
+[29/100] 029 → get_accessibility_tree 991ms
+[30/100] 030 → get_accessibility_tree 1101ms
+[33/100] 033 → get_accessibility_tree 1076ms
+[31/100] 031 → get_accessibility_tree 1750ms
+[32/100] 032 → navigate 1804ms
+[36/100] 036 → get_accessibility_tree 1186ms
+[35/100] 035 → get_accessibility_tree 1920ms
+[37/100] 037 → get_accessibility_tree 1232ms
+[38/100] 038 → get_accessibility_tree 1393ms
+[39/100] 039 → get_accessibility_tree 1343ms
+[40/100] 040 → get_accessibility_tree 1083ms
+[41/100] 041 → get_accessibility_tree 1111ms
+[42/100] 042 → navigate 2124ms
+[34/100] 034 → get_accessibility_tree 8204ms
+[43/100] 043 → get_accessibility_tree 3096ms
+[44/100] 044 → get_accessibility_tree 1719ms
+[45/100] 045 → get_accessibility_tree 1438ms
+[47/100] 047 → navigate 2113ms
+[48/100] 048 → navigate 1104ms
+[46/100] 046 → get_accessibility_tree 3143ms
+[50/100] 050 → get_accessibility_tree 1109ms
+[49/100] 049 → get_accessibility_tree 1320ms
+[53/100] 053 → get_accessibility_tree 1585ms
+[52/100] 052 → get_accessibility_tree 1943ms
+[51/100] 051 → get_accessibility_tree 2992ms
+[55/100] 055 → navigate 1598ms
+[54/100] 054 → download_resource_from_page 1926ms
+[57/100] 057 → get_accessibility_tree 1698ms
+[58/100] 058 → get_accessibility_tree 2094ms
+[59/100] 059 → list_downloads 1855ms
+[60/100] 060 → get_accessibility_tree 1613ms
+[62/100] 062 → get_accessibility_tree 1198ms
+[61/100] 061 → get_accessibility_tree 1763ms
+[56/100] 056 → fetch_url 6677ms
+[63/100] 063 → get_accessibility_tree 1847ms
+[64/100] 064 → scroll 2527ms
+[67/100] 067 → get_accessibility_tree 948ms
+[66/100] 066 → get_accessibility_tree 2148ms
+[69/100] 069 → navigate 831ms
+[70/100] 070 → get_accessibility_tree 1681ms
+[68/100] 068 → get_accessibility_tree 3893ms
+[65/100] 065 (no tool) 6808ms
+[73/100] 073 → get_accessibility_tree 1566ms
+[72/100] 072 → get_accessibility_tree 3796ms
+[74/100] 074 → go_back 2524ms
+[76/100] 076 → get_accessibility_tree 2364ms
+[77/100] 077 → get_accessibility_tree 2826ms
+[71/100] 071 → get_accessibility_tree 10846ms
+[79/100] 079 → get_accessibility_tree 1088ms
+[75/100] 075 → get_accessibility_tree 7244ms
+[78/100] 078 → get_accessibility_tree 4082ms
+[81/100] 081 → get_accessibility_tree 3072ms
+[82/100] 082 (no tool) 2426ms
+[83/100] 083 → fetch_url 4514ms
+[84/100] 084 (no tool) 3334ms
+[85/100] 085 (no tool) 2197ms
+[86/100] 086 (no tool) 2550ms
+[87/100] 087 → new_tab 1066ms
+[89/100] 089 → new_tab 2494ms
+[90/100] 090 → get_accessibility_tree 3749ms
+[88/100] 088 → navigate 6658ms
+[91/100] 091 → get_accessibility_tree 1234ms
+[92/100] 092 → press_keys 2171ms
+[93/100] 093 → navigate 1635ms
+[80/100] 080 → get_accessibility_tree 20816ms
+[95/100] 095 → read_page 1171ms
+[96/100] 096 → get_accessibility_tree 1389ms
+[97/100] 097 → get_accessibility_tree 1131ms
+[99/100] 099 → get_accessibility_tree 1049ms
+[98/100] 098 → get_accessibility_tree 2565ms
+[100/100] 100 → get_accessibility_tree 1414ms
+[94/100] 094 → get_window_info 5552ms
+
+▸ done in 84908ms
+▸ tool-call dist: {
+  navigate: 22,
+  list_downloads: 2,
+  new_tab: 3,
+  get_accessibility_tree: 56,
+  go_back: 2,
+  research_url: 1,
+  read_page: 3,
+  download_resource_from_page: 1,
+  fetch_url: 2,
+  scroll: 1,
+  '(no_tool_call)': 5,
+  press_keys: 1,
+  get_window_info: 1
+}
+▸ G:\esoku\Documents\webbrain-one-2\test\llm\results\2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_liquid_lfm-2.5-24b-a2b/summary.json

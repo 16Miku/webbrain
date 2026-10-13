@@ -1,0 +1,100 @@
+{
+  "date": "2026-10-14",
+  "tables": [
+    {
+      "headers": [
+        "Model",
+        "Disclosed total / active parameters",
+        "Inputs on the requested route",
+        "Advertised context"
+      ],
+      "rows": 4
+    },
+    {
+      "headers": [
+        "Rank",
+        "Model",
+        "Exact consensus",
+        "Tool consensus",
+        "Valid / emitted",
+        "Ideal tool",
+        "Exact ideal",
+        "Median",
+        "p95",
+        "Cost / 100"
+      ],
+      "rows": 9
+    },
+    {
+      "headers": [
+        "Model",
+        "Strict passes / 100",
+        "Mean rubric",
+        "Median",
+        "p95",
+        "Cost / 100"
+      ],
+      "rows": 4
+    },
+    {
+      "headers": [
+        "Band",
+        "MiMo-V2.6-Flash",
+        "Qwen3.8 Flash",
+        "MiMo-V2.6-Pro",
+        "GLM-5.3 Flash"
+      ],
+      "rows": 5
+    },
+    {
+      "headers": [
+        "Planner",
+        "Prompt tokens",
+        "Completion tokens",
+        "Reasoning tokens within completion",
+        "Cached prompt share"
+      ],
+      "rows": 4
+    }
+  ],
+  "plannerMatchesReport": true,
+  "visionMatchesReport": true,
+  "bandsMatchReport": true,
+  "usageMatchesReport": true,
+  "canonical": "https://webbrain.one/blog/hy4-mimo-v26-lfm25-browser-agent-benchmark",
+  "jsonLdParsed": 1,
+  "internalLinksChecked": 3,
+  "mobile": {
+    "viewport": 390,
+    "page": 390,
+    "tables": [
+      {
+        "width": 350,
+        "content": 560,
+        "overflow": "auto"
+      },
+      {
+        "width": 350,
+        "content": 723,
+        "overflow": "auto"
+      },
+      {
+        "width": 350,
+        "content": 560,
+        "overflow": "auto"
+      },
+      {
+        "width": 350,
+        "content": 560,
+        "overflow": "auto"
+      },
+      {
+        "width": 350,
+        "content": 560,
+        "overflow": "auto"
+      }
+    ]
+  },
+  "indexSearchPassed": true,
+  "pageErrors": []
+}

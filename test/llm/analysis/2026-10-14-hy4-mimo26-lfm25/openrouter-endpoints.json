@@ -5,7 +5,7 @@
     "vision": false,
     "url": "https://openrouter.ai/api/v1/models/tencent/hy4-preview/endpoints",
     "status": 200,
-    "retrievedAt": "2026-10-13T22:49:54.891Z",
+    "retrievedAt": "2026-10-13T22:57:25.613Z",
     "data": {
       "data": {
         "id": "tencent/hy4-preview",
@@ -303,7 +303,7 @@
     "vision": true,
     "url": "https://openrouter.ai/api/v1/models/xiaomi/mimo-v2.6-pro/endpoints",
     "status": 200,
-    "retrievedAt": "2026-10-13T22:49:54.893Z",
+    "retrievedAt": "2026-10-13T22:57:25.608Z",
     "data": {
       "data": {
         "id": "xiaomi/mimo-v2.6-pro",
@@ -532,7 +532,7 @@
     "vision": true,
     "url": "https://openrouter.ai/api/v1/models/xiaomi/mimo-v2.6-flash/endpoints",
     "status": 200,
-    "retrievedAt": "2026-10-13T22:49:54.892Z",
+    "retrievedAt": "2026-10-13T22:57:25.606Z",
     "data": {
       "data": {
         "id": "xiaomi/mimo-v2.6-flash",
@@ -595,7 +595,7 @@
             },
             "status": 0,
             "uptime_last_30m": 93.33333333333333,
-            "uptime_last_5m": 80,
+            "uptime_last_5m": 100,
             "uptime_last_1d": 97.91066282420749,
             "supports_implicit_caching": true,
             "native_tools": {},
@@ -745,7 +745,7 @@
             "status": 0,
             "uptime_last_30m": 100,
             "uptime_last_5m": 100,
-            "uptime_last_1d": 43.26292789512017,
+            "uptime_last_1d": 43.37700145560407,
             "supports_implicit_caching": true,
             "native_tools": {},
             "supports_voice_cloning": false,
@@ -892,9 +892,9 @@
               "function": true
             },
             "status": 0,
-            "uptime_last_30m": 92,
-            "uptime_last_5m": 100,
-            "uptime_last_1d": 98.41646872525732,
+            "uptime_last_30m": 90,
+            "uptime_last_5m": null,
+            "uptime_last_1d": 98.41017488076311,
             "supports_implicit_caching": true,
             "native_tools": {},
             "supports_voice_cloning": false,
@@ -966,7 +966,7 @@
     "vision": false,
     "url": "https://openrouter.ai/api/v1/models/liquid/lfm-2.5-24b-a2b/endpoints",
     "status": 200,
-    "retrievedAt": "2026-10-13T22:49:54.892Z",
+    "retrievedAt": "2026-10-13T22:57:25.613Z",
     "data": {
       "data": {
         "id": "liquid/lfm-2.5-24b-a2b",

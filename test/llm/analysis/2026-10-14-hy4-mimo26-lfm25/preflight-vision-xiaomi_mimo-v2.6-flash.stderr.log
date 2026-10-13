@@ -1,0 +1,3 @@
+▸ 1 vision case(s), endpoint=https://openrouter.ai/api/v1/chat/completions, model=xiaomi/mimo-v2.6-flash, concurrency=2
+▸ prompt mode=production, fold system=false, results=G:\esoku\Documents\webbrain-one-2\test\vision\results\2026-10-14-openrouter-mimo26-vision-preflight_xiaomi_mimo-v2.6-flash_production
+· 001 70.0%

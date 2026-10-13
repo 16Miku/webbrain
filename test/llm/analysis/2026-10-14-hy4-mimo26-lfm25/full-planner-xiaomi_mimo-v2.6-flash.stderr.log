@@ -1,0 +1,127 @@
+▸ 100 case(s), base=https://openrouter.ai/api/v1, model=xiaomi/mimo-v2.6-flash, browser=chrome, concurrency=3
+▸ endpoint=https://openrouter.ai/api/v1/chat/completions
+▸ prompt: mode=case, tier=full
+▸ writing to G:\esoku\Documents\webbrain-one-2\test\llm\results\2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-flash
+[3/100] 003 → navigate 4667ms
+[1/100] 001 → navigate 5131ms
+[2/100] 002 → navigate 5125ms
+[5/100] 005 → list_downloads 2376ms
+[6/100] 006 → navigate 2396ms
+[7/100] 007 → navigate 843ms
+[4/100] 004 → navigate 4673ms
+[9/100] 009 → new_tab 1050ms
+[8/100] 008 → navigate 3864ms
+[10/100] 010 → navigate 2432ms
+[11/100] 011 → navigate 3157ms
+[14/100] 014 → get_accessibility_tree 813ms
+[12/100] 012 → navigate 2590ms
+[13/100] 013 → navigate 2255ms
+[16/100] 016 → get_accessibility_tree 827ms
+[17/100] 017 → navigate 824ms
+[19/100] 019 → navigate 931ms
+[15/100] 015 → get_accessibility_tree 2790ms
+[21/100] 021 → navigate 912ms
+[18/100] 018 → navigate 2267ms
+[20/100] 020 → navigate 3088ms
+[24/100] 024 → navigate 1067ms
+[23/100] 023 → navigate 3241ms
+[25/100] 025 → get_accessibility_tree 791ms
+[22/100] 022 → get_accessibility_tree 3881ms
+[26/100] 026 → read_page 864ms
+[28/100] 028 → read_page 659ms
+[27/100] 027 → read_page 3284ms
+[29/100] 029 → extract_data 3267ms
+[31/100] 031 → get_accessibility_tree 815ms
+[30/100] 030 → get_accessibility_tree 3836ms
+[34/100] 034 → get_accessibility_tree 842ms
+[33/100] 033 → get_accessibility_tree 1813ms
+[32/100] 032 → get_accessibility_tree 2608ms
+[37/100] 037 → get_accessibility_tree 662ms
+[38/100] 038 → get_accessibility_tree 1317ms
+[36/100] 036 → verify_form 2889ms
+[35/100] 035 → get_accessibility_tree 3531ms
+[39/100] 039 → get_accessibility_tree 964ms
+[40/100] 040 → get_accessibility_tree 759ms
+[41/100] 041 → get_accessibility_tree 901ms
+[43/100] 043 → get_accessibility_tree 953ms
+[45/100] 045 → get_accessibility_tree 919ms
+[46/100] 046 → get_accessibility_tree 918ms
+[42/100] 042 → navigate 3230ms
+[47/100] 047 → get_accessibility_tree 958ms
+[49/100] 049 → get_accessibility_tree 695ms
+[44/100] 044 → get_accessibility_tree 4259ms
+[50/100] 050 → get_accessibility_tree 860ms
+[51/100] 051 → get_accessibility_tree 1112ms
+[52/100] 052 → get_accessibility_tree 928ms
+[53/100] 053 → get_accessibility_tree 855ms
+[54/100] 054 → download_social_media 1177ms
+[48/100] 048 → get_accessibility_tree 4683ms
+[57/100] 057 → fetch_url 1178ms
+[56/100] 056 → download_social_media 1408ms
+[59/100] 059 → list_downloads 785ms
+[58/100] 058 → extract_data 1047ms
+[55/100] 055 → download_social_media 3224ms
+[62/100] 062 → get_accessibility_tree 743ms
+[61/100] 061 → get_accessibility_tree 795ms
+[63/100] 063 → get_accessibility_tree 867ms
+[64/100] 064 → scroll 899ms
+[60/100] 060 → get_accessibility_tree 2509ms
+[66/100] 066 → get_selection 698ms
+[65/100] 065 (no tool) 1104ms
+[68/100] 068 → get_accessibility_tree 723ms
+[69/100] 069 → get_accessibility_tree 995ms
+[67/100] 067 → get_accessibility_tree 2331ms
+[71/100] 071 → clarify 984ms
+[70/100] 070 → get_accessibility_tree 3403ms
+[72/100] 072 → get_accessibility_tree 2103ms
+[73/100] 073 → clarify 2240ms
+[74/100] 074 → go_back 615ms
+[75/100] 075 → progress_read 1212ms
+[77/100] 077 → get_accessibility_tree 1060ms
+[78/100] 078 → navigate 1094ms
+[79/100] 079 → get_accessibility_tree 988ms
+[76/100] 076 → clarify 2695ms
+[81/100] 081 → get_accessibility_tree 835ms
+[82/100] 082 (no tool) 951ms
+[80/100] 080 → get_accessibility_tree 1876ms
+[83/100] 083 → research_url 923ms
+[85/100] 085 → done 884ms
+[84/100] 084 → done 1730ms
+[86/100] 086 → get_accessibility_tree 3035ms
+[87/100] 087 → new_tab 2514ms
+[88/100] 088 → press_keys 3806ms
+[89/100] 089 → new_tab 2217ms
+[91/100] 091 → get_accessibility_tree 785ms
+[92/100] 092 → get_accessibility_tree 749ms
+[90/100] 090 → get_accessibility_tree 3224ms
+[94/100] 094 → get_accessibility_tree 2868ms
+[93/100] 093 → navigate 3574ms
+[95/100] 095 → get_accessibility_tree 3653ms
+[97/100] 097 → extract_data 1245ms
+[98/100] 098 → get_accessibility_tree 835ms
+[96/100] 096 (no tool) 2326ms
+[99/100] 099 → get_accessibility_tree 1812ms
+[100/100] 100 → get_accessibility_tree 1614ms
+
+▸ done in 63840ms
+▸ tool-call dist: {
+  navigate: 21,
+  list_downloads: 2,
+  new_tab: 3,
+  get_accessibility_tree: 49,
+  read_page: 3,
+  extract_data: 3,
+  verify_form: 1,
+  download_social_media: 3,
+  fetch_url: 1,
+  scroll: 1,
+  get_selection: 1,
+  '(no_tool_call)': 3,
+  clarify: 3,
+  go_back: 1,
+  progress_read: 1,
+  research_url: 1,
+  done: 2,
+  press_keys: 1
+}
+▸ G:\esoku\Documents\webbrain-one-2\test\llm\results\2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-flash/summary.json

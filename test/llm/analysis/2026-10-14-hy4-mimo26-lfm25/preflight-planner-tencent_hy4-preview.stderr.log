@@ -1,0 +1,9 @@
+▸ 1 case(s), base=https://openrouter.ai/api/v1, model=tencent/hy4-preview, browser=chrome, concurrency=3
+▸ endpoint=https://openrouter.ai/api/v1/chat/completions
+▸ prompt: mode=case, tier=full
+▸ writing to G:\esoku\Documents\webbrain-one-2\test\llm\results\2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182-preflight_chrome_tencent_hy4-preview
+[1/1] 001 → navigate 8348ms
+
+▸ done in 8352ms
+▸ tool-call dist: { navigate: 1 }
+▸ G:\esoku\Documents\webbrain-one-2\test\llm\results\2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182-preflight_chrome_tencent_hy4-preview/summary.json
