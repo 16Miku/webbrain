@@ -110,12 +110,19 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   the receiving-node and page-feedback fences pass. A rejection before the
   protocol call means nothing was sent; any later failure means the input was
   delivered with an unknown outcome. Such input is never resent and never
-  followed by a DOM, script or content-script fallback. For `click_ax`, only
-  the browser's missing-receiver error proves that the click was not
-  delivered. A possibly delivered, unverified trusted click locks its exact
-  document and ref for the rest of the task, including Continue and Retry; a
-  verified effect or a new task releases it. Stop between a field write and
-  its submit or Enter prevents the submit and reports the write as it happened.
+  followed by a DOM, script or content-script fallback. This covers hover
+  (from its first pointer move) and drag_drop and set_checked (from their
+  press; the no-button move before a press is pointer preparation, as for a
+  click). In Firefox, a trusted BiDi action is dispatched when its native
+  request is posted after the preparation probe and page-feedback fence, and
+  a content-script action when its message is sent; a refusal before either,
+  a content-side fence or a companion refusal before input reports no
+  dispatch. For `click_ax`, only the browser's missing-receiver error proves
+  that the click was not delivered. A possibly delivered, unverified trusted
+  click locks its exact document and ref for the rest of the task, including
+  Continue and Retry; a verified effect or a new task releases it. Stop
+  between a field write and its submit or Enter prevents the submit and
+  reports the write as it happened.
 - Meaningful visible content, control state, visibility and geometry changes are
   coalesced. Visible subtree identity changes invalidate targets even when the
   replacement has identical text and geometry. CSS animation and extension

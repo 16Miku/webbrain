@@ -39044,10 +39044,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         abortSignal,
         deadlineAt: Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.deadlineAt) || 0,
         deadlineError: CONTENT_ACTION_SIGNAL_DEADLINES.get(abortSignal)?.error || null,
-        beforeDispatch: () => {
+        // Marked at the transport boundary, once the press passed its fences
+        // (or for a rejection that may follow delivery), never before them.
+        onDispatch: () => {
           recoveryState.clickStarted = true;
           if (upstreamDispatchState) upstreamDispatchState.started = true;
-          return { success: true };
         },
       });
       recoveryState.clickResult = clickResult;
@@ -39063,7 +39064,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     }
     this._throwIfAborted(abortSignal);
 
-    const clickDispatched = clickResult?.dispatched === true || clickResult?.success === true;
+    // The transport boundary is the authority: a press that passed its fences
+    // may have been delivered even when its acknowledgement or result was lost.
+    const clickDispatched = recoveryState.clickStarted === true
+      || clickResult?.dispatched === true || clickResult?.success === true;
     if (clickDispatched) {
       await new Promise(resolve => setTimeout(resolve, SET_CHECKED_VERIFY_DELAY_MS));
       this._throwIfAborted(abortSignal);
@@ -39174,6 +39178,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       success,
       dispatched: clickDispatched,
       noDispatch: clickDispatched ? undefined : true,
+      // Possibly delivered, never acknowledged: inspect, never repeat blindly.
+      ...(clickDispatched && !trustedClickSucceeded ? { outcomeUnknown: true, retryable: false } : {}),
+      ...(!clickDispatched && clickError?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}),
       trusted: trustedClickSucceeded,
       verified: success,
       needsTrustedClick: false,
@@ -46341,6 +46348,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       if (typeof refId !== 'string') {
         return { success: false, error: 'hover: ref_id (string, e.g. "ref_42") is required' };
       }
+      // The pointer move is this tool's input: dispatch starts when the first
+      // move passes its fences at the transport boundary. A refusal before that
+      // sent nothing; after it, a failure has an unknown outcome and the moves
+      // are never resent.
+      let hoverInputSent = false;
       try {
         const rectResp = await chrome.tabs.sendMessage(tabId, {
           target: 'content', action: 'ax_resolve_rect', params: { ref_id: refId },
@@ -46367,12 +46379,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // listening to mouseenter/mouseover/pointerover. We move twice (once
         // ~10px outside, once at center) so sites that only fire on the
         // first crossing of the element boundary still see a transition.
-        markEarlyCdpDispatched();
-        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: Math.max(0, x - 10), y, button: 'none', buttons: 0,
-        });
+        }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: () => { hoverInputSent = true; markEarlyCdpDispatched(); } });
         throwIfEarlyCdpAborted();
-        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
@@ -46387,7 +46397,14 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           hint: 'A hover-revealed menu/tooltip typically renders in a React portal at the end of <body>. Re-read the tree with get_accessibility_tree({filter:"visible"}) — do NOT pass a ref_id (subtree filter will miss the portal).',
         };
       } catch (e) {
-        return { success: false, error: `hover failed: ${e.message || e}` };
+        // Stop and the action deadline keep their lifecycle reporting, which
+        // reads the dispatch state; a fence veto is reported by the
+        // page-feedback wrapper (undispatched before any move, uncertain after).
+        if (e?.name === 'AbortError' || e?.code === 'content_action_timeout' || e?.code === 'page_feedback_pending') throw e;
+        return hoverInputSent
+          ? { success: false, dispatched: true, outcomeUnknown: true, retryable: false, method: 'cdp-hover', ref_id: refId,
+            error: `hover input was sent but did not complete (${e.message || e}). Inspect the page before hovering again.` }
+          : { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, error: `hover failed: ${e.message || e}` };
       }
     }
 
@@ -46399,7 +46416,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
       const stepsRaw = Number(args.steps ?? 10);
       const steps = Math.max(2, Math.min(40, Number.isFinite(stepsRaw) ? Math.floor(stepsRaw) : 10));
-      let dragPressed = false;
+      // Like a click, the no-button move onto the source is pointer
+      // preparation; the drag is dispatched when its press passes its fences at
+      // the transport boundary. After that a failure has an unknown outcome,
+      // any held button is released, and nothing is resent.
+      let dragPressSent = false, dragReleased = false;
       try {
         // Single round-trip: content.js scrolls source-then-dest and
         // measures BOTH rects in the same viewport snapshot. The previous
@@ -46441,15 +46462,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // mid-drag waypoints are what HTML5 dnd dragenter/dragover handlers
         // listen to; Trello/Linear/Notion need at least a handful so the
         // drop indicator can settle before the release.
-        markEarlyCdpDispatched();
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseMoved', x: x1, y: y1, button: 'none', buttons: 0,
         });
         throwIfEarlyCdpAborted();
-        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mousePressed', x: x1, y: y1, button: 'left', buttons: 1, clickCount: 1,
-        });
-        dragPressed = true;
+        }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: () => { dragPressSent = true; markEarlyCdpDispatched(); } });
         throwIfEarlyCdpAborted();
         for (let i = 1; i <= steps; i++) {
           const t = i / steps;
@@ -46467,7 +46486,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x: x2, y: y2, button: 'left', buttons: 0, clickCount: 1,
         });
-        dragPressed = false;
+        dragReleased = true;
         throwIfEarlyCdpAborted();
         return {
           success: true,
@@ -46478,8 +46497,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           hint: 'Re-read the accessibility tree to confirm the order/position changed. If nothing moved, the site may use HTML5 drag-and-drop with custom DataTransfer payloads that CDP cannot fully emulate — try the drag again with higher `steps` (15–20) or fall back to keyboard-based reorder controls if the site exposes them.',
         };
       } catch (e) {
-        if (dragPressed) await this._cancelTrustedClickPress(tabId);
-        return { success: false, error: `drag_drop failed: ${e.message || e}` };
+        // A press whose release was not acknowledged may still be held.
+        if (dragPressSent && !dragReleased) await this._cancelTrustedClickPress(tabId);
+        if (e?.name === 'AbortError' || e?.code === 'content_action_timeout' || e?.code === 'page_feedback_pending') throw e;
+        return dragPressSent
+          ? { success: false, dispatched: true, outcomeUnknown: true, retryable: false, method: 'cdp-drag',
+            error: `drag_drop input was sent but did not complete (${e.message || e}). Inspect the page before dragging again.` }
+          : { success: false, dispatched: false, noDispatch: true, outcomeUnknown: false, error: `drag_drop failed: ${e.message || e}` };
       }
     }
 

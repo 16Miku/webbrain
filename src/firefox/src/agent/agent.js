@@ -40685,18 +40685,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       throwIfContentPipelineAborted();
       this._throwIfAborted(stageAbortSignal);
-      if (Agent.STATE_CHANGE_TOOLS.has(name)) markContentPipelineDispatched();
-      this._throwIfAborted(stageAbortSignal);
       const deadlines = [contentPipelineAbortSignal, stageAbortSignal]
         .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
         .filter(value => Number.isFinite(value) && value > 0);
       const actionDeadlineAt = deadlines.length ? Math.min(...deadlines) : 0;
-      return firefoxBidi.sendContent(tabId, {
+      // Dispatch starts at the transport boundary of the route actually taken:
+      // the content message, or a trusted BiDi request after its preparation
+      // probe and page-feedback fence. A refusal before either sent nothing.
+      const response = await firefoxBidi.sendContent(tabId, {
         target: 'content',
         action,
         params: contentArgs,
         ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
-      }, messageOptions);
+      }, messageOptions, { onDispatch: Agent.STATE_CHANGE_TOOLS.has(name) ? () => {
+        throwIfContentPipelineAborted();
+        this._throwIfAborted(stageAbortSignal);
+        markContentPipelineDispatched();
+      } : null });
+      // A content-side fence or a companion refusal before input proves that
+      // nothing was dispatched; the provisional transport state ends here.
+      if (response?.dispatched === false && response?.noDispatch === true) contentPipelineDispatchState.started = false;
+      return response;
     };
     const dispatchContentAction = () => runContentActionStage(sendContentAction);
     const provenNoDispatchDeadline = response => {

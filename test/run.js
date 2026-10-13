@@ -3345,7 +3345,8 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
       assert.equal(options.trustedOnly, true);
       assert.equal(options.requireUnique, true);
       assert.ok(options.abortSignal instanceof AbortSignal);
-      assert.equal(typeof options.beforeDispatch, 'function');
+      // Dispatch is recorded at the press transport boundary, never before its fence.
+      assert.equal(typeof options.onDispatch, 'function');
       trustedClickCompletedAt = Date.now();
       return { success: true, method: 'cdp-mouse', rect: { x: 1, y: 2, w: 20, h: 20 } };
     };
@@ -3588,7 +3589,7 @@ test('Chrome set_checked fails closed when marker verification resolves another 
       assert.equal(options.trustedOnly, true);
       assert.equal(options.requireUnique, true);
       assert.ok(options.abortSignal instanceof AbortSignal);
-      assert.equal(typeof options.beforeDispatch, 'function');
+      assert.equal(typeof options.onDispatch, 'function');
       return { success: true, method: 'cdp-mouse' };
     };
 
@@ -114874,7 +114875,8 @@ test('Chrome bounds trusted checkbox recovery before and during the CDP click', 
     };
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.clickElement = async (_tabId, _selector, options) => {
-      options.beforeDispatch();
+      // The press reached its transport boundary (after its fences).
+      options.onDispatch();
       markClickStarted();
       return delayedClick;
     };
