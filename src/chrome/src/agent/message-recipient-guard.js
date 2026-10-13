@@ -221,6 +221,112 @@ export function answerNamesAllObservedRecipients(normalizedAnswer, observedCandi
   return search(0, []);
 }
 
+// Words that make a displayed question about where a message goes: sending,
+// sharing or forwarding it, or which person, account or conversation gets it.
+// Stems match at a word start so inflected forms count; scripts written
+// without spaces between words match anywhere.
+const RECIPIENT_QUESTION_WORD = new RegExp(`(?<![\\p{L}\\p{N}])(?:${[
+  'send', 'sent', 'messag', 'deliver', 'forward', 'shar(?:e|ing)', 'repl(?:y|ies|ying)', 'recipient', 'contact',
+  'conversa', 'chat', 'dms?(?![\\p{L}])', 'e-?mail', 'mail', 'thread', 'inbox', 'person', 'people', 'user', 'account',
+  'whom', 'address',
+  'gönder', 'ilet', 'yolla', 'mesaj', 'paylaş', 'alıcı', 'kişi', 'kullanıcı', 'hesab', 'hesap', 'sohbet', 'konuşma',
+  'schick', 'nachricht', 'empfänger', 'weiterleit', 'teilen',
+  'envi[aáeéoó]', 'envoy', 'envoi', 'mensaj', 'mensag', 'messagg', 'destinat', 'compart', 'partag', 'partilh',
+  'condivid', 'inoltr', 'reenv', 'transf[eé]r', 'invia', 'invio', 'pessoa', 'contatt',
+  'stuur', 'verstuur', 'verzend', 'bericht', 'ontvanger', 'delen',
+  'wyśl', 'wysł', 'wiadomo', 'odbiorc', 'udostępn', 'zpráv', 'příjemc',
+  'отправ', 'посла', 'пошл', 'сообщен', 'пересла', 'получател', 'собеседник', 'надісл', 'повідомл', 'одержувач',
+  'kirim', 'pesan', 'penerima', 'bagikan', 'gửi', 'tin nhắn', 'người nhận', 'chia sẻ',
+  'أرسل', 'ارسل', 'إرسال', 'ارسال', 'رسالة', 'مستلم', 'المستلم', 'بفرست', 'پیام', 'گیرنده',
+  'שלח', 'הודעה', 'נמען', 'भेज', 'संदेश', 'प्राप्तकर्ता',
+].join('|')})`, 'iu');
+const RECIPIENT_QUESTION_UNSPACED = /送|发|發|传|傳|消息|信息|訊息|收件|联系人|聯絡人|メッセージ|宛|보내|전송|메시지|받는|ส่ง|ข้อความ/u;
+
+/**
+ * Does a clarification question show the user the exact recipients the page
+ * addresses, and ask about them as recipients?
+ *
+ * A recipient is authorized only by an answer that names it, given to a
+ * question that showed it. The question must name every observed recipient
+ * itself (options alone do not show where the message goes) and either ask
+ * about sending to them or be declared a recipient question by its caller.
+ */
+export function questionPresentsObservedRecipients(question, observedCandidates, declaredRecipientQuestion = false) {
+  const text = String(question ?? '');
+  if (!text.trim() || text.length > 2000) return false;
+  if (!answerNamesAllObservedRecipients(text, observedCandidates)) return false;
+  return declaredRecipientQuestion === true || questionAsksAboutRecipient(text);
+}
+
+/** Does a question ask about sending a message or about who receives it? */
+export function questionAsksAboutRecipient(question) {
+  const normalized = normalizeRecipientAnswer(question).replace(/\u0307/g, '');
+  if (!normalized || normalized.length > 2000) return false;
+  return RECIPIENT_QUESTION_WORD.test(normalized) || RECIPIENT_QUESTION_UNSPACED.test(normalized);
+}
+
+// A reply that refuses, cancels or points somewhere else. Naming a recipient
+// inside such a reply ("No, not Mallory") is never approval of that recipient.
+const ANSWER_REFUSAL = new RegExp(`(?<![\\p{L}\\p{N}])(?:${[
+  'no', 'nope', 'nah', 'not', 'never', 'none', 'nobody', 'no\\s*one', 'nothing', 'neither', 'nor',
+  "don[’']?t", "doesn[’']?t", "didn[’']?t", "won[’']?t", "wouldn[’']?t", "shouldn[’']?t", "can[’']?t", 'cannot',
+  "isn[’']?t", "wasn[’']?t", "aren[’']?t", 'stop', 'cancel\\p{L}*', 'abort\\p{L}*', 'reject\\p{L}*', 'refuse\\p{L}*', 'deny',
+  'wrong', 'incorrect', 'mistake\\p{L}*', 'other', 'another', 'different', 'else',
+  'hayır', 'hayir', 'değil', 'degil', 'yanlış', 'yanlis', 'iptal', 'vazgeç\\p{L}*', 'vazgec\\p{L}*', 'gönderme\\p{L}*',
+  'gonderme\\p{L}*', 'yollama\\p{L}*', 'istemiyorum', 'olmaz', 'yok', 'başka', 'baska', 'diğer', 'diger',
+  'nein', 'nicht', 'kein\\p{L}*', 'falsch', 'abbrechen', 'stopp', 'andere[mnrs]?',
+  'não', 'nao', 'non', 'nunca', 'jamais', 'mai', 'ningun[oa]?', 'nadie', 'nada', 'nenhum\\p{L}*', 'nessun\\p{L}*',
+  'aucun\\p{L}*', 'pas', 'cancelar', 'annuler', 'annulla', 'incorrect[oa]', 'equivocad[oa]', 'errad[oa]',
+  'sbagliat[oa]', 'faux', 'otr[oa]', 'outr[oa]', 'altr[oa]', 'autre\\p{L}*',
+  'nee', 'niet', 'geen', 'annuleren', 'verkeerd\\p{L}*',
+  'nie', 'anuluj', 'inn[ya]', 'нет', 'не', 'ни', 'никому', 'никогда', 'отмен\\p{L}*', 'неправильн\\p{L}*', 'друг(?:ой|ому|ая|ие|ую|ого|им)',
+  'ні', 'скасу\\p{L}*', 'tidak', 'bukan', 'jangan', 'batal\\p{L}*', 'salah', 'không', 'đừng', 'hủy', 'sai',
+  'لا', 'ليس', 'إلغاء', 'الغاء', 'خطأ', 'לא', 'בטל', 'नहीं', 'मत', 'रद्द',
+].join('|')})(?![\\p{L}\\p{N}])`, 'iu');
+const ANSWER_REFUSAL_UNSPACED = /不要|不是|不对|不對|别|別|取消|错|錯|いいえ|違う|ちがう|キャンセル|ないで|아니|취소|마세요|말아/u;
+
+/**
+ * Does the user's reply refuse, cancel or redirect the send rather than
+ * approve it? The observed recipient names themselves are removed first, so a
+ * contact called "No Limits" is still approvable by name.
+ */
+export function answerRefusesRecipient(answer, observedCandidates = []) {
+  let text = normalizeRecipientAnswer(answer);
+  if (!text || text.length > 8192) return !!text;
+  const aliases = [];
+  for (const candidate of Array.isArray(observedCandidates) ? observedCandidates.slice(0, 16) : []) {
+    const identity = typeof candidate === 'string' ? candidate : (candidate?.identity ?? candidate?.recipient);
+    for (const alias of [identity, ...(Array.isArray(candidate?.aliases) ? candidate.aliases.slice(0, 16) : [])]) {
+      const normalized = normalizeRecipientIdentity(alias);
+      if (normalized && !aliases.includes(normalized)) aliases.push(normalized);
+    }
+  }
+  aliases.sort((left, right) => right.length - left.length);
+  for (const alias of aliases) {
+    for (const span of findCandidateAnswerSpans(text, alias).reverse()) {
+      text = `${text.slice(0, span.start)} ${text.slice(span.end)}`;
+    }
+  }
+  // A non-Turkish locale lowercases "İ" to "i" plus a combining dot.
+  text = text.replace(/\u0307/g, '');
+  return ANSWER_REFUSAL.test(text) || ANSWER_REFUSAL_UNSPACED.test(text);
+}
+
+/**
+ * Does the user's reply grant every remaining send of the task at once, as
+ * the "Send all remaining messages in this task without asking again" option
+ * does? A refusal ("Cancel all") is never a grant; check that first.
+ */
+export function answerGrantsAllRemainingSends(answer) {
+  const text = normalizeRecipientAnswer(answer);
+  if (!text || text.length > 2000) return false;
+  const bare = text.replace(/[\p{P}\p{S}\s]+/gu, ' ').trim();
+  return /(?<![\p{L}\p{N}])(?:send|allow|approve|authori[sz]e)\s+(?:(?:them|these|those|it)\s+)?all(?![\p{L}\p{N}])/u.test(text)
+    || /(?<![\p{L}\p{N}])all\s+(?:remaining|the\s+rest|of\s+them)(?![\p{L}\p{N}])/u.test(text)
+    || /(?<![\p{L}\p{N}])(?:hepsin[ei]|tümün[eü]|herkese)\s+(?:gönder|yolla|ilet)/u.test(text)
+    || /^(?:all|everything|everyone|all of them|hepsi|hepsine|hepsini|tümü|tümüne|alle|todos|todas|tous|tutti|все|全部|すべて|모두)$/u.test(bare);
+}
+
 export function messageTargetMatchesObservedIdentities(target, candidates) {
   const normalizedTarget = normalizeMessageTarget(target);
   const recipients = new Map();

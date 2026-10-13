@@ -69,7 +69,7 @@ import {
   workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
-import { answerNamesAllObservedRecipients, answerNamesIdentity, messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientAnswer, normalizeRecipientIdentity, resolveClarifiedRecipients } from './message-recipient-guard.js';
+import { answerGrantsAllRemainingSends, answerNamesAllObservedRecipients, answerNamesIdentity, answerRefusesRecipient, messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientAnswer, normalizeRecipientIdentity, questionAsksAboutRecipient, questionPresentsObservedRecipients, resolveClarifiedRecipients } from './message-recipient-guard.js';
 import { advanceChatSession, chatRunEndedNotice, createOwnedNativeChatReadRepair, createChatSession, decideChatSend, markChatSendPending, normalizeChatSession, normalizeChatSnapshot, normalizeNativeOpaqueBaseline, serializeChatSession } from './chat-workflow.js';
 import {
   fetchUrl,
@@ -28607,17 +28607,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : inconclusive
         ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
         : target
-          ? `Message send blocked: this send would go to ${observedRecipientLabel ? `"${observedRecipientLabel}"` : 'a recipient'} which is not the recipient authorized for this task, so nothing was dispatched. Do NOT click Send again, and do not retry with different targeting.
-Ask the user to authorize it — one clarify, then act on their answer. The options must carry the address/identity text itself, because authorization binds to what the page shows and a bare "yes" cannot authorize a send. Include the multi-send option when the task sends more than one message:
-clarify({ question: "Send to ${observedRecipientLabel || '<observed address>'} instead?", options: ["${observedRecipientLabel || '<observed address>'}", "Send all remaining emails in this task without asking again", "Cancel"] })
-- If they pick the address: that recipient is authorized for the rest of this task, so retry the Send and continue normally.
-- If they pick "send all remaining": every remaining send in this task is authorized, so keep going without asking again.
-- If they pick "Cancel": stop and report that the send was not authorized.
-If the user has already named or confirmed this exact recipient, do NOT ask again — treat it as authorized, retry the Send once, and continue.`
+          ? this._recipientMismatchGuidance(observedRecipientLabel, target)
           : (guard?.requiresSubmission === false || guard?.requiresStateChange === false || !target
             ? 'Message send blocked: the current plan does not authorize sending or submitting messages. Return the draft in chat or ask the user to authorize sending before attempting delivery.'
             : 'Message send blocked: the current task has no structured recipient authorization. Ask the user to name the recipient or explicitly authorize the currently open conversation before retrying.'),
     };
+  }
+
+  /**
+   * Model guidance for a send whose page-observed recipient is not the one
+   * the task authorized. It names both, prescribes one clarify that shows the
+   * exact observed name, and never suggests retrying without the user's pick:
+   * the guard only accepts a bound answer, so a bare retry is blocked again.
+   */
+  _recipientMismatchGuidance(observedRecipientLabel, target) {
+    const planned = normalizeMessageTarget(target)?.target_kind === 'named'
+      ? normalizeMessageTarget(target).recipients.map(recipient => recipient.identity).slice(0, 3).join(', ')
+      : '';
+    const name = observedRecipientLabel || '<observed address>';
+    return `Message send blocked: this send would go to ${observedRecipientLabel ? `"${observedRecipientLabel}"` : 'a recipient'}, which is not ${planned ? `exactly the recipient named for this task ("${planned}")` : 'the conversation authorized for this task'}, so nothing was dispatched. Do not retry with different targeting.
+Ask the user once whether to send it there. Put that exact name in the question and as an option, because authorization binds to what the page shows and a bare "yes" cannot authorize a send:
+clarify({ question: "Send it to ${name} instead?", options: ["${name}", "Cancel"] })
+If the task sends more than one message, also offer "Send all remaining messages in this task without asking again".
+- If they pick the name: that recipient is authorized for the rest of this task, so retry the send and continue normally.
+- If they pick "Send all remaining messages": every remaining send in this task is authorized, so keep going without asking again.
+- If they pick "Cancel": stop and report that the send was not authorized.`;
   }
 
   _isRecipientClarification(context, pendingType = 'message_recipient', observedCandidates = []) {
@@ -28633,7 +28647,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     if (pendingType === 'recipient_change') {
       const changeWord = /(change|switch|different|instead|update|replace|another|new|更改|更换|切换|替换|换成)/i.test(questionText);
       const targetWord = /(recipient|conversation|contact|send to|person|address|target|someone else|\b(?:to|cc|bcc|role|field)\b|收件人|联系人|发送)/i.test(questionText);
-      return changeWord && targetWord;
+      if (changeWord && targetWord) return true;
+      // The user has to see where the message goes, not a particular wording.
+      // A question that names the recipients the page addresses and asks about
+      // sending to them ("Send the photo to Gamze Çömlekçi?") shows exactly
+      // that; the answer must still name the same page-observed recipients.
+      return questionPresentsObservedRecipients(context.question, observedCandidates,
+        purpose === 'message_recipient' || purpose === 'recipient_change');
     }
 
     // Check if the clarify question, reason, or options explicitly mention any observed candidate identity or alias
@@ -28679,9 +28699,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
    * messaging (requiresSubmission=true and requiresStateChange=true) and must
    * match the specific clarification purpose or question.
    */
-  _bindClarifiedMessageRecipient(tabId, answer, source = 'user', clarifyContext = null) {
+  _bindClarifiedMessageRecipient(tabId, answer, source = 'user', clarifyContext = null, outcome = null) {
+    // `outcome`, when given, receives why nothing was bound so the clarify
+    // result can tell the model what the user actually needs to see.
+    const unbound = reason => {
+      if (outcome && typeof outcome === 'object') outcome.reason = reason;
+      return false;
+    };
     const guard = this._planExecutionGuards.get(tabId);
-    if (!guard) return false;
+    if (!guard) return unbound('no_pending_recipient');
     // Read and clear together. The consent the guard staged belongs to exactly
     // one clarify, the one its own error told the model to ask; every later
     // question is a different question and must not inherit it. Clearing on
@@ -28700,31 +28726,36 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       : [];
     guard.pendingRecipientAuthorization = false;
     guard.observedRecipientCandidates = null;
-    if (!pending || !pendingType || observed.length === 0) return false;
-    if (!answer || source === 'timeout' || source === 'auto') return false;
+    if (outcome && typeof outcome === 'object') outcome.observed = observed.slice(0, 16);
+    if (!pending || !pendingType || observed.length === 0) return unbound('no_pending_recipient');
+    if (!answer || source === 'timeout' || source === 'auto') return unbound('no_user_answer');
     if (pendingType === 'recipient_change') {
       if (!clarifyContext || !this._isRecipientClarification(clarifyContext, 'recipient_change', observed)) {
-        return false;
+        return unbound('recipient_not_presented');
       }
     } else if (clarifyContext && !this._isRecipientClarification(clarifyContext, 'message_recipient', observed)) {
-      return false;
+      return unbound('recipient_not_presented');
     }
     const normalizedAnswer = normalizeRecipientAnswer(answer);
-    if (!normalizedAnswer) return false;
+    if (!normalizedAnswer) return unbound('no_user_answer');
+    // A refusal or redirect is never approval, even when it names the
+    // recipient ("No, not Mallory") or says "all" ("Cancel all").
+    if (answerRefusesRecipient(answer, observed)) return unbound('answer_refused');
     // A user may authorize the rest of the task in one answer instead of one
     // recipient at a time (multi-email / multi-recipient runs). This is still
     // the USER's grant: it can only arrive as a real clarify answer, never as
     // model text, and it still requires a page-observed recipient to exist.
-    const allowAllSends = /(?:^|[^\p{L}])(?:all|everything|any|every|allow\s+all|send\s+all)(?:[^\p{L}]|$)/iu
-      .test(normalizedAnswer);
-    if (!allowAllSends && !answerNamesAllObservedRecipients(normalizedAnswer, observed)) return false;
+    const allowAllSends = answerGrantsAllRemainingSends(normalizedAnswer);
+    if (!allowAllSends && !answerNamesAllObservedRecipients(normalizedAnswer, observed)) {
+      return unbound('answer_does_not_name_recipient');
+    }
     const resolvedRecipients = allowAllSends
       ? observed
         .map(item => ({ identity: item?.identity || item, role: item?.role || 'to' }))
         .filter(recipient => recipient.identity)
       : resolveClarifiedRecipients(observed, guard.messaging, clarifyContext, answer);
     const target = normalizeMessageTarget({ target_kind: 'named', recipients: resolvedRecipients });
-    if (!target) return false;
+    if (!target) return unbound('answer_does_not_name_recipient');
     guard.messaging = target;
     // Remember the grant for the rest of this task: a multi-email run must not
     // re-ask for an address the user already authorized, and an explicit
@@ -28737,6 +28768,71 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     guard.approvedRecipients = approved;
     if (allowAllSends) guard.messageRecipientApprovedAll = true;
     return true;
+  }
+
+  /**
+   * Stage recipient consent for a clarification that shows the recipients the
+   * page addresses right now. The guard normally stages consent when it blocks
+   * a send, and each clarify uses it up; without this, a recipient question
+   * asked before the first send (or asked again after a vague reply) could
+   * never bind, so the user was asked the same thing again and again. Only a
+   * read-only observation runs, only under a plan that already permits this
+   * message, and the send itself is still checked against the page.
+   */
+  async _stageRecipientConsentForQuestion(tabId, context) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const target = normalizeMessageTarget(guard?.messaging);
+    if (!guard || !target || guard.pendingRecipientAuthorization
+        || guard.requiresSubmission !== true || guard.requiresStateChange !== true) return false;
+    const declared = context?.purpose === 'message_recipient' || context?.purpose === 'recipient_change';
+    if (!declared && !questionAsksAboutRecipient(context?.question)) return false;
+    let policy = null;
+    try { policy = getMessageRecipientGuardPolicy(await this._currentUrl(tabId)); } catch {}
+    if (!policy?.verifyActiveRecipient) return false;
+    const probe = await this._messageRecipientContentProbe(tabId, {
+      tool: 'observe_active_conversation',
+      args: {},
+      adapterName: policy.adapterName,
+      supportsRecipientSets: policy.supportsRecipientSets === true,
+    });
+    if (probe?.success !== true || probe?.conclusive !== true) return false;
+    const candidates = this._messageRecipientCandidates(probe);
+    const identityCountAccepted = policy.supportsRecipientSets === true ? candidates.length > 0 : candidates.length === 1;
+    if (!identityCountAccepted || !questionPresentsObservedRecipients(context?.question, candidates, declared)) return false;
+    if (this._planExecutionGuards.get(tabId) !== guard || guard.pendingRecipientAuthorization) return false;
+    guard.observedRecipientCandidates = candidates;
+    guard.pendingRecipientAuthorization = target.target_kind === 'named' ? 'recipient_change' : true;
+    return true;
+  }
+
+  /**
+   * What the model must do after a reply that did not approve the recipient
+   * a blocked send would reach. Without this the generic "treat it as
+   * authoritative" note reads as approval, the retry is blocked again and the
+   * user is asked the same question until the run gives up.
+   */
+  _unboundRecipientClarificationNote(outcome = {}) {
+    const names = (Array.isArray(outcome?.observed) ? outcome.observed : [])
+      .map(item => String(item?.identity || item?.name || item || '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    const label = names.join(', ');
+    const named = label ? ` ("${label}")` : '';
+    const example = label
+      ? ` For example: clarify({ question: "Send it to ${label}?", options: ["${label}", "Cancel"] }).`
+      : '';
+    switch (outcome?.reason) {
+      case 'answer_refused':
+        return `The reply reads as declining or correcting the recipient this send would reach${named}, so nothing was authorized or sent. If the user named someone else, open that conversation and continue there. If it is unclear whether they meant that recipient, ask once more with the exact name as an option.${example} Otherwise stop and report that the send was not authorized.`;
+      case 'answer_does_not_name_recipient':
+        return `The reply did not choose the recipient this send would reach${named}, so nothing was authorized or sent. Only an answer that picks that exact name approves it; a reply such as "yes" or "that's the right person" cannot. If the user meant that recipient, ask once more with the exact name in the question and as an option.${example} Otherwise stop and report that the send was not authorized.`;
+      case 'recipient_not_presented':
+        return `The question did not ask the user to approve sending to the recipient this send would reach${named}, so the reply cannot approve it and nothing was sent. Ask once with that exact name in the question and as an option.${example}`;
+      case 'no_pending_recipient':
+        return 'This is a direct reply from the user; continue the task with it in mind. It did not approve a recipient by itself: approval is recorded only when the question shows the exact recipient name the open conversation has, so if a send is blocked, ask then with the exact name the block reports.';
+      default:
+        return '';
+    }
   }
 
   _fallbackSubmitConfirmationInfo(host, tool, reason, summary = '') {
@@ -40761,12 +40857,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           ? 'recipient_change'
           : (args?.purpose === 'message_recipient' ? 'message_recipient' : null));
       const explicitRecipientQuestion = purpose === 'message_recipient' || purpose === 'recipient_change';
-      const recipientBindingRequired = explicitRecipientQuestion
-        || (!!clarificationGuard?.pendingRecipientAuthorization
-          && this._isRecipientClarification({ question, options, reason, purpose },
-            typeof clarificationGuard.pendingRecipientAuthorization === 'string'
-              ? clarificationGuard.pendingRecipientAuthorization : 'message_recipient',
-            clarificationGuard.observedRecipientCandidates || []));
       const technicalRecipientReasons = new Set(['recipient_identity_unavailable', 'message_body_unverified',
         'message_body_baseline_unavailable', 'recipient_dispatch_binding_unavailable']);
       const technicalRecipientReason = technicalRecipientReasons.has(clarificationGuard?.messageRecipientTechnicalBlock)
@@ -40779,6 +40869,22 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           recipientBinding: { required: true, bound: false, reasonCode: technicalRecipientReason },
           error: 'Recipient confirmation cannot repair the unresolved technical message guard. No clarification was shown. Re-read the active recipient and composer evidence; if it remains unavailable, report the blocker instead of requesting the same approval again.' };
       }
+      // A question that shows the recipients the page addresses binds to what
+      // the page shows now, even before any send was blocked.
+      if (clarificationGuard && !clarificationGuard.pendingRecipientAuthorization) {
+        try { await this._stageRecipientConsentForQuestion(tabId, { question, options, reason, purpose }); } catch {}
+      }
+      const pendingRecipientCandidates = clarificationGuard?.observedRecipientCandidates || [];
+      const recipientBindingRequired = explicitRecipientQuestion
+        || (!!clarificationGuard?.pendingRecipientAuthorization
+          && (this._isRecipientClarification({ question, options, reason, purpose },
+            typeof clarificationGuard.pendingRecipientAuthorization === 'string'
+              ? clarificationGuard.pendingRecipientAuthorization : 'message_recipient',
+            pendingRecipientCandidates)
+            // A recipient question that cannot satisfy a pending recipient
+            // change must still report that it approved nothing.
+            || this._isRecipientClarification({ question, options, reason, purpose }, 'message_recipient',
+              pendingRecipientCandidates)));
       const isResearchEscalation = purpose === 'research_escalation';
       const requireExplicitAnswer = isResearchEscalation || args?.require_explicit_answer === true;
       const researchRequest = isResearchEscalation ? repairClarifyText(normalizeResearchRequest(args?.research_request)) : '';
@@ -40899,8 +41005,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       // nothing, matching how research escalation treats those sources below.
       // Every clarification outcome (human answer, timeout, auto) must consume
       // the staged recipient consent so a later unrelated clarify does not inherit it.
+      const recipientOutcome = {};
       const recipientBound = this._bindClarifiedMessageRecipient(tabId, answer, source,
-        { question, options, reason, purpose, safeFirst: entrySafeFirst });
+        { question, options, reason, purpose, safeFirst: entrySafeFirst }, recipientOutcome);
       const recipientBinding = recipientBindingRequired ? { required: true, bound: recipientBound,
         ...(!recipientBound ? { reasonCode: technicalRecipientReasons.has(clarificationGuard?.messageRecipientTechnicalBlock)
           ? clarificationGuard.messageRecipientTechnicalBlock : 'recipient_authorization_not_bound' } : {}) } : null;
@@ -40925,7 +41032,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // Settings Instant auto-approve (headless / unattended). User policy — proceed.
         note = 'This answer was auto-selected because Clarify timeout is set to Instant (source=auto). The user intentionally configured unattended auto-approve; treat this answer as the chosen default and continue the task. Do not re-ask the same question. Put the intended default first in options when Instant mode may be on.';
       } else {
-        note = 'This is a direct reply from the user. Treat it as authoritative for the question you asked; do not re-ask. Continue the task with this answer in mind.';
+        note = (recipientBinding && !recipientBound && this._unboundRecipientClarificationNote(recipientOutcome))
+          || 'This is a direct reply from the user. Treat it as authoritative for the question you asked; do not re-ask. Continue the task with this answer in mind.';
       }
       return {
         success: true,

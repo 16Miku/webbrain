@@ -296,6 +296,16 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   another approval question cannot repair missing evidence. Recipient
   clarifications report `recipientBinding` separately from general user
   authorization and suppress repeated questions for known technical blockers.
+- A recipient clarification approves the recipients the page addresses when
+  its question names each of them and asks about sending to them (or declares
+  a recipient purpose), and the user's answer picks those exact names; the
+  wording "instead" is not required. A question asked before any send was
+  blocked binds to a fresh read-only observation of the open conversation, and
+  the send itself is still checked against the page. A question that hides the
+  recipient, a reply that does not name it, and a refusal or redirect ("No, not
+  …", "Cancel all") approve nothing, and the clarify result tells the model why.
+  Only an affirmative grant ("Send all remaining messages…", "send all")
+  approves every remaining send.
 - A cancelled `beforeinput` handled by a native chat editor can receive an
   exact read-only draft certificate while its original operation, document,
   identity nodes, editor, focus and selection remain current. The certificate
