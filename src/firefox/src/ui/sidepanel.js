@@ -13845,12 +13845,15 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   });
   const follower = { requestId, promise };
   localRunFollowers.set(tabId, follower);
+  // Without a reconnect the run's own inbox returned whatever it left
+  // unapplied. This reaction is registered first, so it runs before the
+  // awaiting code below resumes.
   let backgroundInterrupted = true;
-  try {
-    const result = await promise;
-    // Without a reconnect the run's own inbox returned whatever it left unapplied.
+  promise.then(result => {
     backgroundInterrupted = result?.reconnected === true || result?.resumed === true;
-    return result;
+  }, () => {});
+  try {
+    return await promise;
   } finally {
     if (localRunFollowers.get(tabId) === follower) localRunFollowers.delete(tabId);
     if (backgroundInterrupted && shouldContinueRunRecovery()) await reclaimUnappliedSteering(tabId);
