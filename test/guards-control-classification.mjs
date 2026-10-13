@@ -98,22 +98,26 @@ for (const build of ['chrome', 'firefox']) {
         });
 
         await t.test('requested resource deletions and scripted commands keep the deletion guard', async () => {
-          for (const [url, html] of [
-            ['https://shop.example/cart', '<ul class="cart"><li>Wool socks — $12 <button id="t" type="button">Remove</button></li><li>Hat <button type="button">Remove</button></li></ul>'],
-            ['https://admin.example/users', '<table><tr><td>bob@example.com</td><td><button id="t" type="button">Delete</button></td></tr></table>'],
-            ['https://mail.example/msg/42', '<div role="toolbar"><div id="t" role="button" tabindex="0" aria-label="Delete">🗑</div></div><h2>Subject</h2>'],
-            ['https://app.example/items', '<ul><li>Item <a id="t" role="button" href="#">Delete</a></li></ul>'],
+          // A row without a permalink is now bound by its text; a request that
+          // names no row cannot select it. Toolbar, unlinked menu and dialog
+          // deletions have no record at all.
+          for (const [url, html, reason] of [
+            ['https://shop.example/cart', '<ul class="cart"><li>Wool socks — $12 <button id="t" type="button">Remove</button></li><li>Hat <button type="button">Remove</button></li></ul>', 'record_not_named_in_request'],
+            ['https://admin.example/users', '<table><tr><td>bob@example.com</td><td><button id="t" type="button">Delete</button></td></tr></table>', 'record_not_named_in_request'],
+            ['https://mail.example/msg/42', '<div role="toolbar"><div id="t" role="button" tabindex="0" aria-label="Delete">🗑</div></div><h2>Subject</h2>', 'resource_unresolved'],
+            ['https://app.example/items', '<ul><li>Item <a id="t" role="button" href="#">Delete</a></li></ul>', 'record_not_named_in_request'],
             // A GET link whose query performs the deletion keeps its caption.
-            ['https://blog.example/wp-admin/edit.php', '<ul><li>Post 1 <span role="menu"><a id="t" role="menuitem" href="/wp-admin/post.php?post=1&amp;action=trash&amp;_wpnonce=abc">Trash</a></span></li></ul>'],
-            ['https://admin.example/list', '<ul><li>Row 5 <span role="menu"><a id="t" role="menuitem" href="/admin.php?do=delete_row&amp;id=5">Delete</a></span></li></ul>'],
-            ['https://notes.example/', '<section><textarea aria-label="New note"></textarea><div class="note"><p>Buy milk</p><button id="t" type="button">Remove</button></div></section>'],
-            ['https://app.example/settings', '<dialog open><form method="dialog"><p>Delete this item?</p><button value="cancel">Cancel</button><button id="t" value="confirm">Delete</button></form></dialog>'],
+            ['https://blog.example/wp-admin/edit.php', '<ul><li>Post 1 <span role="menu"><a id="t" role="menuitem" href="/wp-admin/post.php?post=1&amp;action=trash&amp;_wpnonce=abc">Trash</a></span></li></ul>', 'resource_unresolved'],
+            ['https://admin.example/list', '<ul><li>Row 5 <span role="menu"><a id="t" role="menuitem" href="/admin.php?do=delete_row&amp;id=5">Delete</a></span></li></ul>', 'resource_unresolved'],
+            ['https://notes.example/', '<section><textarea aria-label="New note"></textarea><div class="note"><p>Buy milk</p><button id="t" type="button">Remove</button></div></section>', 'record_not_named_in_request'],
+            ['https://app.example/settings', '<dialog open><form method="dialog"><p>Delete this item?</p><button value="cancel">Cancel</button><button id="t" value="confirm">Delete</button></form></dialog>', 'resource_unresolved'],
           ]) {
             const f = await setup(url, html, { request: 'Delete the selected item.' });
             const { detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') });
             assert.equal(detected?.mutationKind, 'delete', url);
             assert.equal(block?.noDispatch, true, url);
-            assert.equal(block.actionGuard.reason, 'resource_unresolved', url);
+            assert.equal(block.actionGuard.reason, reason, url);
+            assert.equal(f.modelCalls.includes('resource_mutation_authorization'), false, url);
           }
         });
 

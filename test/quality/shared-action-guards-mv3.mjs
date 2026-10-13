@@ -563,7 +563,8 @@ try {
           if (current.unrelatedRecord) {
             assert.equal(state.unrelatedDeletes, 0, 'Opening A cannot lend its resource identity to canonical-less B.');
             assert.equal(state.current.body, originalBody);
-            assert.ok(clicks.some(click => click.result.actionGuard?.reason === 'resource_unresolved'), 'The unrelated target must fail its own resource proof.');
+            assert.ok(clicks.some(click => click.result.actionGuard?.reason === 'record_not_named_in_request'),
+              'Canonical-less B is bound only to its own visible record, which the latest request does not name.');
             assert.equal(current.resourceAudits.length, 0, 'Unproved B cannot reach authorization using A\'s canonical identity.');
           }
         } else {

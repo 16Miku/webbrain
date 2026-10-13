@@ -236,9 +236,11 @@ for (const build of ['chrome','firefox']) {
         assert.equal(opened.result.success,true);
         f.agent._recordCompletionToolResult(1,'click_ax',args,opened.result,{detectedSubmit:opened.detected});
         assert.equal(f.guard.resolvedResourceScope.launcherDispatched,true);
-        const wrong=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('wrong')});
+        const wrongArgs={ref_id:await targetRef('wrong')}, wrong=await f.agent._detectLikelySubmitAction(1,'click_ax',wrongArgs);
         assert.equal(wrong.actionResource,undefined,'An existing different owner vetoes fallback, even if it lacks a permalink');
-        assert.equal((await f.agent._resourceMutationPreSubmitBlock(1,'click_ax',{},wrong,f.provider)).actionGuard.reason,'resource_unresolved');
+        // B is bound only to its own visible record, which this request never asks to delete.
+        assert.equal(wrong.actionRecord?.text,'Unbound resource B');
+        assert.equal((await f.agent._resourceMutationPreSubmitBlock(1,'click_ax',wrongArgs,wrong,f.provider)).actionGuard.reason,'deletion_not_requested');
         portal=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('portal')});
         assert.equal(portal.actionResource.url,url,'A native aria-controls/labelledby relation resolves the actual opened A menu');
         const foreign=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('foreign')});
