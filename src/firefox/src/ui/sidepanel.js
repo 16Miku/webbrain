@@ -1468,6 +1468,10 @@ const {
   hasQueuedForTab: hasQueuedContextMenuPromptForTab,
   consumePendingContextMenuPrompt,
   clearQueuedForTab,
+  holdQueuedForTab: holdQueuedContextMenuPromptsForTab,
+  getHeldForTab: getHeldContextMenuPromptsForTab,
+  runHeldPrompt: runHeldContextMenuPrompt,
+  deleteHeldPrompt: deleteHeldContextMenuPrompt,
 } = createContextMenuPromptHandler({
   getCurrentTabId: () => currentTabId,
   getIsProcessing: () => isProcessing || isConversationClearInProgress(),
@@ -1478,6 +1482,9 @@ const {
   sendMessage,
   sendToBackground,
   getIsDocumentVisible: () => document.visibilityState !== 'hidden',
+  onHeldPromptsChange: (tabId) => {
+    if (tabId == null || sameTabId(currentTabId, tabId)) renderQueuedComposerMessages();
+  },
 });
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
@@ -2660,10 +2667,13 @@ function queueUnconsumedSteeringMessages(tabId, messages, { held = false } = {})
 
 // After Stop nothing may start on its own. Held items stay visible in the
 // queue until the user edits (then sends), steers or deletes them; messages
-// queued during a later run still drain normally.
+// queued during a later run still drain normally. Browser-menu prompts queued
+// for the tab are held too, unless a conversation clear (with its own rules
+// for them) stopped the run.
 function holdQueuedComposerMessages(tabId) {
   const queue = getQueuedComposerMessages(tabId);
   if (queue.some(item => !item.held)) setQueuedComposerMessages(tabId, queue.map(item => ({ ...item, held: true })));
+  if (!isConversationClearInProgress(tabId)) holdQueuedContextMenuPromptsForTab(tabId);
 }
 
 function nextAutomaticQueuedComposerMessage(tabId) {
@@ -2736,6 +2746,10 @@ function syncComposerDeliveryState() {
     button.closest('.queued-message')?.classList.toggle('has-steer', isProcessing);
     button.disabled = !isProcessing || blocked;
   });
+  // A held browser-menu prompt is sent only by an explicit click while idle.
+  queuedMessagesEl?.querySelectorAll('.queued-message-run').forEach(button => {
+    button.disabled = isProcessing || blocked;
+  });
   const sendLabel = isProcessing
     ? (composerDeliveryMode === 'steer' ? 'sp.steer.title' : 'sp.queue.send')
     : 'sp.btn.send';
@@ -2761,12 +2775,51 @@ function queuedComposerButton(className, action, queueId, labelKey, svgPath) {
   return btn;
 }
 
+// A browser-menu or selection prompt held by Stop. It shows what the chat
+// bubble would show (never the model-only wrapper) and waits for Send or Delete.
+function heldContextMenuPromptRow(prompt, tabId) {
+  const row = document.createElement('div');
+  row.className = 'queued-message';
+  row.dataset.queueId = prompt.id;
+  row.dataset.held = 'true';
+  row.setAttribute('role', 'listitem');
+
+  const label = document.createElement('span');
+  label.className = 'queued-message-label';
+  label.textContent = t('sp.queue.held');
+
+  const text = document.createElement('span');
+  text.className = 'queued-message-text';
+  text.textContent = formatSelectionPromptForDisplay(prompt.text);
+  text.title = text.textContent;
+
+  const send = queuedComposerButton(
+    'queued-message-run',
+    'run-context-menu-prompt',
+    prompt.id,
+    'sp.btn.send',
+    '<path d="M22 2 11 13"></path><path d="M22 2 15 22 11 13 2 9z"></path>',
+  );
+  const remove = queuedComposerButton(
+    'queued-message-delete',
+    'delete-context-menu-prompt',
+    prompt.id,
+    'sp.queue.delete',
+    '<path d="M18 6L6 18"></path><path d="M6 6l12 12"></path>',
+  );
+  send.disabled = isTabProcessing(tabId) || isTabAbortRequested(tabId);
+  row.append(label, text, send, remove);
+  return row;
+}
+
 function renderQueuedComposerMessages(tabId = currentTabId) {
   if (!queuedMessagesEl) return;
   const messages = getQueuedComposerMessages(tabId);
+  // Browser-menu prompts held by Stop share the queue area.
+  const heldMenuPrompts = getHeldContextMenuPromptsForTab(tabId);
   queuedMessagesEl.replaceChildren();
-  queuedMessagesEl.classList.toggle('hidden', messages.length === 0);
-  if (!messages.length) return;
+  queuedMessagesEl.classList.toggle('hidden', messages.length === 0 && heldMenuPrompts.length === 0);
+  if (!messages.length && !heldMenuPrompts.length) return;
 
   messages.forEach((item, index) => {
     const row = document.createElement('div');
@@ -2817,6 +2870,7 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
     row.append(edit, remove);
     queuedMessagesEl.appendChild(row);
   });
+  heldMenuPrompts.forEach(prompt => queuedMessagesEl.appendChild(heldContextMenuPromptRow(prompt, tabId)));
   syncComposerDeliveryState();
 }
 
@@ -3040,6 +3094,17 @@ function navigateComposerHistory(direction) {
 
 function deleteQueuedComposerMessage(tabId, queueId) {
   removeQueuedComposerMessage(tabId, queueId);
+}
+
+// Send or delete a browser-menu prompt held by Stop. If the request fails,
+// the prompt stays listed and paused.
+async function handleHeldContextMenuPromptAction(action, promptId) {
+  try {
+    if (action === 'run-context-menu-prompt') await runHeldContextMenuPrompt(promptId);
+    else await deleteHeldContextMenuPrompt(promptId);
+  } catch (error) {
+    showComposerToast(error?.message || String(error));
+  }
 }
 
 function clearQueuedComposerMessagesForTab(tabId) {
@@ -14051,7 +14116,10 @@ async function abortRun(tabId = currentTabId) {
   });
 
   try {
-    await sendToBackground('abort', { tabId });
+    // Only a user Stop holds the tab's browser-menu prompt; a conversation
+    // clear stops the run under its own rules for that prompt.
+    if (isConversationClearInProgress(tabId)) await sendToBackground('abort', { tabId, conversationClear: true });
+    else await sendToBackground('abort', { tabId });
   } catch {
     // Best effort
   }
@@ -14821,6 +14889,8 @@ queuedMessagesEl?.addEventListener('click', (e) => {
     if (item) void steerComposerMessage(currentTabId, item.text, { queueId });
   } else if (action === 'delete') {
     deleteQueuedComposerMessage(currentTabId, queueId);
+  } else if (action === 'run-context-menu-prompt' || action === 'delete-context-menu-prompt') {
+    void handleHeldContextMenuPromptAction(action, queueId);
   }
 });
 

@@ -131,6 +131,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function hideSlashCommandAutocomplete() {}
         function autoResizeInput() {}
         function drainQueuedPromptsAfterRunSettles() {}
+        function getHeldContextMenuPromptsForTab() { return []; }
         function showComposerToast(text) { notices.push(text); }
         function normalizeScreenshotCommandText(value) { return value; }
         function normalizeSelectionSourceGrounding() { return null; }
