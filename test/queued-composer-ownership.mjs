@@ -59,7 +59,7 @@ function fixture(build, { preferences = Promise.resolve(), refresh = Promise.res
     'sameTabId', 'getQueuedComposerMessages', 'setQueuedComposerMessages',
     'shiftQueuedComposerMessage', 'removeQueuedComposerMessage', 'enqueueQueuedComposerMessage',
     'composerSubmissionIsCurrent', 'queuedComposerSubmissionIsCurrent',
-    'drainQueuedComposerMessageForCurrentTab',
+    'nextAutomaticQueuedComposerMessage', 'drainQueuedComposerMessageForCurrentTab',
   ].map(name => extract(source, name)).join('\n');
   // Only the history/render/network suffix is stubbed. The production queue,
   // async preflight, draft clearing and first run reservation execute verbatim.

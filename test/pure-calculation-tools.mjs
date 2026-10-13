@@ -404,7 +404,7 @@ for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(ROOT_URL + 'src/' + build + '/src/agent/agent.js');
   const { RunUiJournal } = await import(ROOT_URL + 'src/' + build + '/src/run-ui-journal.js');
   for (const streaming of [false, true]) {
-    test(`${build}: ${streaming ? 'stream' : 'chat'} same-batch calculation and completion recovers focus with one calculation`, async () => {
+    test(`${build}: ${streaming ? 'stream' : 'chat'} same-batch calculation and completion finishes once despite later page focus`, async () => {
       const tab = nextTab++, requestId = `same-batch-terminal-${tab}`;
       let agent, send, requests = 0, calculations = 0, doneCalls = 0;
       const advertised = [], journal = new RunUiJournal(); journal.begin(tab, requestId, { mode: 'act' });
@@ -415,7 +415,7 @@ for (const build of ['chrome', 'firefox']) {
           batch.toolCalls.push(...call('same-batch-done', 'done', { summary: answer, outcome: 'success' }).toolCalls);
           return batch;
         }
-        assert.ok(requests <= 2, 'A captured pre-receipt response must recover with one current done decision.');
+        assert.fail('An executed done is terminal; page focus after it must not reopen the run.');
         return call('fresh-receipt-done', 'done', { summary: answer, outcome: 'success' });
       });
       agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
@@ -441,8 +441,10 @@ for (const build of ['chrome', 'firefox']) {
         const result = streaming ? await agent.processMessageStream(tab, ORIGINAL_CALC_CORRECTION, update, 'act', options)
           : await agent.processMessage(tab, ORIGINAL_CALC_CORRECTION, update, 'act', [], options);
         const snapshot = journal.finish(tab, requestId, 'completed', result);
-        assert.equal(result, answer); assert.equal(calculations, 1); assert.equal(requests, 2); assert.equal(doneCalls, 2);
-        assert.deepEqual([...advertised[0]].sort(), ['calculate', 'done']); assert.deepEqual(advertised[1], ['done']);
+        // The done executed in the batch is terminal: page focus afterwards
+        // neither reopens the run nor costs another model call.
+        assert.equal(result, answer); assert.equal(calculations, 1); assert.equal(requests, 1); assert.equal(doneCalls, 1);
+        assert.deepEqual([...advertised[0]].sort(), ['calculate', 'done']); assert.equal(advertised.length, 1);
         assert.equal(snapshot.finalContent, answer); assert.equal(snapshot.successfulDone, true); assert.equal(snapshot.runSucceeded, true);
       } finally { documents.delete(tab); }
     });
@@ -545,9 +547,11 @@ for (const build of ['chrome', 'firefox']) {
         const result = streaming ? await agent.processMessageStream(tab, ORIGINAL_CALC_CORRECTION, update, 'act', options)
           : await agent.processMessage(tab, ORIGINAL_CALC_CORRECTION, update, 'act', [], options);
         const final = journal.finish(tab, requestId, 'completed', result);
-        assert.equal(calculations, 1); assert.equal(doneCalls, sameBatch ? 2 : 1); assert.equal(judges, 0);
+        // A verified done in the batch is terminal; page focus during its
+        // verification does not reopen the run.
+        assert.equal(calculations, 1); assert.equal(doneCalls, 1); assert.equal(judges, 0);
         assert.equal(final.finalContent, answer); assert.equal(final.successfulDone, true); assert.equal(final.runSucceeded, true);
-        assert.deepEqual(projections, [['calculate', 'done'], ['done']]);
+        assert.deepEqual(projections, sameBatch ? [['calculate', 'done']] : [['calculate', 'done'], ['done']]);
       }); } finally { documents.delete(tab); }
     });
 

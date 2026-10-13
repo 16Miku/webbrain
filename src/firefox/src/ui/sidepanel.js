@@ -2644,7 +2644,7 @@ function setQueuedComposerMessages(tabId, messages) {
   if (sameTabId(currentTabId, numericTabId)) renderQueuedComposerMessages(numericTabId);
 }
 
-function queueUnconsumedSteeringMessages(tabId, messages) {
+function queueUnconsumedSteeringMessages(tabId, messages, { held = false } = {}) {
   const queue = getQueuedComposerMessages(tabId).slice();
   const incoming = [];
   for (const item of messages || []) {
@@ -2653,9 +2653,21 @@ function queueUnconsumedSteeringMessages(tabId, messages) {
     while (queuedSteeringMessageIds.size > 1000) {
       queuedSteeringMessageIds.delete(queuedSteeringMessageIds.values().next().value);
     }
-    incoming.push({ id: item.id, text: item.text });
+    incoming.push({ id: item.id, text: item.text, ...(held ? { held: true } : {}) });
   }
   if (incoming.length) setQueuedComposerMessages(tabId, [...incoming, ...queue]);
+}
+
+// After Stop nothing may start on its own. Held items stay visible in the
+// queue until the user edits (then sends), steers or deletes them; messages
+// queued during a later run still drain normally.
+function holdQueuedComposerMessages(tabId) {
+  const queue = getQueuedComposerMessages(tabId);
+  if (queue.some(item => !item.held)) setQueuedComposerMessages(tabId, queue.map(item => ({ ...item, held: true })));
+}
+
+function nextAutomaticQueuedComposerMessage(tabId) {
+  return getQueuedComposerMessages(tabId).find(item => !item.held) || null;
 }
 
 async function steerComposerMessage(tabId, text, { queueId = null, fromComposer = false } = {}) {
@@ -2679,7 +2691,7 @@ async function steerComposerMessage(tabId, text, { queueId = null, fromComposer 
     });
     if (isConversationClearInProgress(tabId) || clearedConversationRunRequestIds.has(requestId)) return false;
     if (!response.accepted) {
-      queueUnconsumedSteeringMessages(tabId, [{ id: messageId, text: draft }]);
+      queueUnconsumedSteeringMessages(tabId, [{ id: messageId, text: draft }], { held: isTabAbortRequested(tabId) });
     }
     if (queueId) removeQueuedComposerMessage(tabId, queueId);
     if (fromComposer) {
@@ -2760,6 +2772,7 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
     const row = document.createElement('div');
     row.className = 'queued-message';
     row.dataset.queueId = item.id;
+    if (item.held) row.dataset.held = 'true';
     row.setAttribute('role', 'listitem');
 
     const label = document.createElement('span');
@@ -3050,7 +3063,7 @@ function drainQueuedComposerMessageForCurrentTab() {
   if (inputEl.value !== '') return false;
   if (steeringRequestsByTab.has(Number(currentTabId))) return false;
   const tabId = currentTabId;
-  const item = getQueuedComposerMessages(tabId)[0];
+  const item = nextAutomaticQueuedComposerMessage(tabId);
   if (!item) return false;
   resetComposerHistoryNavigation(currentTabId);
   inputEl.value = item.text;
@@ -3600,7 +3613,7 @@ function scheduleQueuedPromptDrainRetry(tabId) {
 }
 
 function hasQueuedPromptForTab(tabId) {
-  return getQueuedComposerMessages(tabId).length > 0
+  return !!nextAutomaticQueuedComposerMessage(tabId)
     || hasQueuedContextMenuPromptForTab(tabId);
 }
 
@@ -5389,6 +5402,7 @@ async function adoptRestoredRunState(tabId, state) {
   const mode = ['ask', 'act', 'dev'].includes(runUi.mode)
     ? runUi.mode
     : (['ask', 'act', 'dev'].includes(assistantEl?.dataset?.runMode) ? assistantEl.dataset.runMode : agentMode);
+  let runEndedByStop = false;
 
   try {
     const res = await sendRunWithReconnect('continue_start', {
@@ -5400,6 +5414,7 @@ async function adoptRestoredRunState(tabId, state) {
       probeFirst: true,
       requireDurableSubmittedTurn: runUi.kind !== 'continue',
     });
+    runEndedByStop = ['stopped', 'cancelled'].includes(res?.runStatus);
     if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
     const returnedPlannerFailure = plannerRequestFailureUpdate(res?.updates);
     if (returnedPlannerFailure
@@ -5436,6 +5451,7 @@ async function adoptRestoredRunState(tabId, state) {
     adoptedRunRecoveryRequestIds.delete(requestId);
     conversationClearFollowerCancellationRequestIds.delete(requestId);
     const ownsRunState = localRunRequestIds.get(Number(tabId)) === requestId;
+    if (ownsRunState && (runEndedByStop || isTabAbortRequested(tabId))) holdQueuedComposerMessages(tabId);
     if (ownsRunState) {
       localRunRequestIds.delete(Number(tabId));
       setTabProcessing(tabId, false);
@@ -9543,6 +9559,7 @@ async function sendMessage(extraChatParams = {}) {
   let contextMenuReservationRejected = false;
   let completedSuccessfully = false;
   let promptEligibleCompletion = false;
+  let runEndedByStop = false;
   const selectionGroundedBeforeSend = isSelectionGroundedForTab(tabId);
   if (sourceGrounding) setSelectionGroundedForTab(tabId, true, sourceGrounding);
   try {
@@ -9571,6 +9588,7 @@ async function sendMessage(extraChatParams = {}) {
       chatHistoryRecordIdsByTab.set(tabId, res.conversationId);
     }
     accepted = true;
+    runEndedByStop = ['stopped', 'cancelled'].includes(res?.runStatus);
     completedSuccessfully = isSuccessfulActCompletion(res);
     promptEligibleCompletion = completedSuccessfully || isSuccessfulAskCompletion(modeForSend, res);
     if (sameTabId(currentTabId, tabId)) renderReturnedQuota(assistantEl, res);
@@ -9751,6 +9769,7 @@ async function sendMessage(extraChatParams = {}) {
         storeReviewSuccess: currentTabId === tabId && promptEligibleCompletion,
       });
     }
+    if (wasAborted || runEndedByStop) holdQueuedComposerMessages(tabId);
     await drainQueuedPromptsAfterRunSettles(tabId);
   }
   return accepted;
@@ -10030,7 +10049,13 @@ function handleAgentUpdateMessage(msg) {
   // Fallback queues belong to their source tab even while another tab is visible.
   if (msg.type === 'steering_queued') {
     if (isConversationClearInProgress(msg.tabId)) return;
-    queueUnconsumedSteeringMessages(msg.tabId, msg.data?.messages);
+    queueUnconsumedSteeringMessages(msg.tabId, msg.data?.messages, {
+      held: msg.data?.stopped === true || isTabAbortRequested(msg.tabId),
+    });
+  }
+  // A run stopped outside this panel (page Stop button) also holds its queue.
+  if (msg.type === 'run_complete' && ['stopped', 'cancelled'].includes(msg.data?.status)) {
+    holdQueuedComposerMessages(msg.tabId);
   }
 
   // Drop updates that belong to a different tab's run. agent_update is a
@@ -10078,6 +10103,10 @@ function handleAgentUpdateMessage(msg) {
       if ((eventAssistantEl || currentAssistantEl)?.dataset.responseRetrying === 'true') {
         finishResponseRetry(eventAssistantEl || currentAssistantEl);
       }
+      // The run is now reconsidering the task; an earlier tool or completion
+      // status ("Finishing up") no longer describes what it is doing.
+      clearThinkingActivityTimers();
+      beginThinkingActivity();
       const id = String(data?.id || '');
       if (id && !messagesEl.querySelector(`[data-steering-message-id="${CSS.escape(id)}"]`)) {
         const userEl = addMessage('user', data.text, { beforeCurrentAssistant: true });
@@ -10150,6 +10179,9 @@ function handleAgentUpdateMessage(msg) {
 
     case 'tool_call':
       showActivity(friendlyToolLabel(data.name, data.args));
+      // "Finishing up" stays only while the run is actually finishing; a
+      // later main step means the completion did not end the run.
+      if (isTerminalDoneTool(data.name)) activityDisplayMode = 'terminal';
       showInspectionBanner(data.name);
       if (currentAssistantEl) {
         clearTransientAssistantTextForToolCall();
@@ -13063,9 +13095,10 @@ function beginThinkingActivity() {
 }
 
 function startThinkingActivity() {
-  // A main step ends the planner status. Keep concrete tool statuses until
-  // another concrete update arrives.
-  if (activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning') return;
+  // A main step ends the planner status and a completion that did not end the
+  // run. Keep other concrete tool statuses until another concrete update.
+  if (activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning'
+      && activityDisplayMode !== 'terminal') return;
   beginThinkingActivity();
 }
 
@@ -13948,6 +13981,7 @@ async function abortRun(tabId = currentTabId) {
   const follower = localRunFollowers.get(Number(tabId));
   if (requestId) cancelledRunRecoveryRequestIds.add(requestId);
   setTabAbortRequested(tabId, true);
+  holdQueuedComposerMessages(tabId);
   if (sameTabId(currentTabId, tabId)) showActivity(t('sp.activity.stopping'));
 
   let fallbackTimer = null;
@@ -14004,6 +14038,8 @@ async function abortRun(tabId = currentTabId) {
       syncSendButtonState();
       hideActivity();
       currentAssistantEl = null;
+      // Messages queued while "Stopping…" are held too; nothing runs on its own.
+      holdQueuedComposerMessages(tabId);
       setTabAbortRequested(tabId, false);
       await flushRenderedTabChat();
       await drainQueuedPromptsAfterRunSettles(tabId);

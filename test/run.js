@@ -51327,7 +51327,11 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.notEqual(drainEnd, -1, `${label}: queued composer drain helper boundary should exist`);
     const drainBody = panel.slice(drainStart, drainEnd);
     const draftGuardIdx = drainBody.indexOf("if (inputEl.value !== '') return false;");
-    const queuePeekIdx = drainBody.indexOf('const item = getQueuedComposerMessages(tabId)[0];');
+    // After Stop, held items stay queued for manual send; the drain takes the
+    // first item that may run automatically.
+    const queuePeekIdx = drainBody.indexOf('const item = nextAutomaticQueuedComposerMessage(tabId);');
+    assert.match(panel, /function nextAutomaticQueuedComposerMessage\(tabId\) \{\s*return getQueuedComposerMessages\(tabId\)\.find\(item => !item\.held\) \|\| null;/,
+      `${label}: the automatic drain must skip messages held after Stop`);
     assert.notEqual(draftGuardIdx, -1, `${label}: queued composer drain should preserve newly typed drafts`);
     assert.notEqual(queuePeekIdx, -1, `${label}: queued composer drain should inspect its owned next message before preflight`);
     assert.equal(draftGuardIdx < queuePeekIdx, true, `${label}: queued composer drain must preserve drafts before preparing queued messages`);
@@ -54753,7 +54757,7 @@ test('status-strip clicks hide default compact history while verbose restores fu
     );
     assert.match(
       panel,
-      /function startThinkingActivity\(\) \{[\s\S]*?if \(activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning'\) return;[\s\S]*?function showActivity\(text\)[\s\S]*?clearThinkingActivityTimers\(\);[\s\S]*?activityDisplayMode = 'concrete';[\s\S]*?function hideActivity\(\) \{\s*clearThinkingActivityTimers\(\);/,
+      /function startThinkingActivity\(\) \{[\s\S]*?if \(activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning'\s*&& activityDisplayMode !== 'terminal'\) return;[\s\S]*?function showActivity\(text\)[\s\S]*?clearThinkingActivityTimers\(\);[\s\S]*?activityDisplayMode = 'concrete';[\s\S]*?function hideActivity\(\) \{\s*clearThinkingActivityTimers\(\);/,
       `${label}: concrete and terminal activity should stop pending generic rotations`,
     );
     assert.doesNotMatch(

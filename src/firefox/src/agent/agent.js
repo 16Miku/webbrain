@@ -6629,8 +6629,42 @@ export class Agent extends LoopDetector {
       // A cached fast-path action was prepared before this correction.
       const session = this._jevSessions?.get(tabId);
       if (session) { session.disabled = true; session.queue = []; }
+      // The in-flight main inference answers the superseded task and has no
+      // browser side effects. Stop waiting for it so the correction applies now.
+      this._interruptSteeredInference(run);
     }
     return { accepted: true, messageId: id };
+  }
+
+  _interruptSteeredInference(run) {
+    const controller = run?.inferenceInterrupt;
+    if (!controller || controller.signal.aborted) return;
+    const error = new Error('The model response was superseded by an accepted correction.');
+    error.name = 'AbortError';
+    controller.abort(error);
+  }
+
+  // Bind one main inference to this run's correction inbox (Stop keeps its own
+  // run signal). Returns null for runs without steering (cloud/scheduled).
+  _armSteeringInterrupt(tabId) {
+    const run = this._steeringRuns.get(tabId);
+    if (!run) return null;
+    const controller = new AbortController();
+    run.inferenceInterrupt = controller;
+    if (run.messages.length) this._interruptSteeredInference(run);
+    return controller;
+  }
+
+  _disarmSteeringInterrupt(tabId, controller) {
+    const run = this._steeringRuns.get(tabId);
+    if (controller && run?.inferenceInterrupt === controller) run.inferenceInterrupt = null;
+  }
+
+  // A pending correction supersedes a main inference that was interrupted or
+  // failed meanwhile: retrying or recovering the old request is pointless. Stop
+  // and cost limits keep their own handling.
+  _steeringSupersedesInference(tabId, error) {
+    return this._hasPendingSteering(tabId) && !this._checkAbort(tabId) && !this._isCostAllowanceError(error);
   }
 
   _hasPendingSteering(tabId) {
@@ -6992,7 +7026,9 @@ export class Agent extends LoopDetector {
     const run = this._steeringRuns.get(tabId);
     this._steeringRuns.delete(tabId);
     if (run?.messages.length) {
-      run.onUpdate('steering_queued', { messages: run.messages });
+      // After Stop nothing may start on its own: the panel keeps these
+      // corrections queued for an explicit send instead of draining them.
+      run.onUpdate('steering_queued', { messages: run.messages, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
     }
   }
 
@@ -20379,6 +20415,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
       if (this._isPinnedAgentStateMessage(m)) continue;
       if (this._isLocalConversationStatusMessage(m)) continue;
+      // App-owned runtime notes (browser observations with wrapped page data,
+      // recovery nudges) are not user-authored and must never reach the
+      // planner as "User:" history.
+      if (m.role === 'user' && this._isAgentInjectedUserMessage(m)) continue;
       const rawText = userMessageToText(m);
       const taskText = m.role === 'user' ? this._plannerUserAuthoredText(m) : rawText;
       const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
@@ -40839,6 +40879,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
       const startedAt = Date.now();
+      const steeringInterrupt = this._armSteeringInterrupt(tabId);
+      if (steeringInterrupt) chatOptions = { ...chatOptions, signal: steeringInterrupt.signal };
       let result;
       try {
         // Retain the exact request for voluntary research sharing (see
@@ -40847,7 +40889,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         currentNonStreamRequestMessages = chatMessages;
         result = await chatMainTurnRaw(chatMessages, chatOptions, requestContext);
       } catch (error) {
-        if (error?.webbrainOutputEmitted === true) throw error;
+        if (error?.webbrainOutputEmitted === true || this._steeringSupersedesInference(tabId, error)) throw error;
         const fallbackMessages = await this._visionFallbackMessages(tabId, chatMessages, costState, error);
         if (!fallbackMessages) throw error;
         onUpdate('warning', {
@@ -40856,6 +40898,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         currentNonStreamRequestMessages = fallbackMessages;
         result = await chatMainTurnRaw(fallbackMessages, chatOptions, requestContext);
+      } finally {
+        this._disarmSteeringInterrupt(tabId, steeringInterrupt);
       }
       messageCompletion = aggregateMessageCompletion(
         messageCompletion,
@@ -40902,6 +40946,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // provider before producing a 'done' outcome, so research sharing may
     // consider this run. Failures/cancels are still excluded via _traceStatus.
     shareHadProviderCompletion = true;
+    const supersedeInferenceForSteering = error => {
+      if (!this._steeringSupersedesInference(tabId, error)) return false;
+      if (runId) trace.recordStepEnd(runId, steps, { ok: true, status: 'steering_superseded' });
+      onUpdate('text', { content: '', replace: true });
+      return true;
+    };
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -41004,7 +41054,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       steps++;
       lastTraceStep = steps;
-      await this._applyPendingPageFeedback(tabId, messages, onUpdate);
+      // A pending correction is applied first; the refresh read (and idle
+      // wait) still runs before the next inference on the following pass.
+      if (!this._hasPendingSteering(tabId)) await this._applyPendingPageFeedback(tabId, messages, onUpdate);
       if (this._hasPendingSteering(tabId)) { steps--; continue; }
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
@@ -41081,6 +41133,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('warning', { message: finalResponse });
           break;
         }
+        if (supersedeInferenceForSteering(e)) continue;
         // If context overflow, trim aggressively and retry once
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
@@ -41112,6 +41165,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            if (supersedeInferenceForSteering(e2)) continue;
             const retryCode = this._traceErrorCodeFor(e2);
             traceFailureCode = retryCode;
             _traceStatus = 'error';
@@ -41145,7 +41199,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
               };
             result = await retryModelCall(e, () => chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' }), {
-              isAborted: () => this._checkAbort(tabId),
+              // A correction also ends the retry delay; it supersedes the old request.
+              isAborted: () => this._checkAbort(tabId) || this._hasPendingSteering(tabId),
               onRetry: async ({ error, delayMs, attempt }) => {
                 this._logDebug({ type: 'llm_error_retrying', step: steps, error: error.message, delayMs, attempt });
                 if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
@@ -41167,6 +41222,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            if (supersedeInferenceForSteering(e2)) continue;
             traceFailureCode = this._traceErrorCodeFor(e2);
             _traceStatus = 'error';
             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
@@ -41199,9 +41255,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
         : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
-      if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
-        responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: result.content,
-      }))
+      // A pending correction supersedes this response anyway; do not first
+      // wait for a page-feedback refresh read (the next pass still applies it).
+      if (this._hasPendingSteering(tabId)
+          || (await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
+            responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: result.content,
+          }))
           || this._applyPendingSteering(tabId, messages, onUpdate)) {
         const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
         if (recovery) {
@@ -41263,9 +41322,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const batchResult = await this._executeToolBatch(
           tabId, result.toolCalls, messages, onUpdate, provider, assistantToolContent, allowedToolNames, steps, runOptions, toolSchemas
         );
+        // An executed done (success, partial or failed) is terminal: page
+        // activity, including the user's own clicks, cannot reopen it. Only an
+        // accepted correction can. After a non-terminal batch, pending page
+        // feedback is applied at the next step without discarding its
+        // completion-recovery turn.
         if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
-            && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: batchResult.action === 'return' ? [result.toolCalls.at(-1)] : null }))
-              || this._applyPendingSteering(tabId, messages, onUpdate))) {
+            && this._applyPendingSteering(tabId, messages, onUpdate)) {
           onUpdate('text', { content: '', replace: true });
           continue;
         }
@@ -41273,9 +41336,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (typeof runOptions.afterVerifiedCompletion === 'function') {
             await this._settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions);
             this._throwIfAborted(this._runAbortSignal(tabId));
-            const superseded = !batchResult.status
-              && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: [result.toolCalls.at(-1)] }))
-                || this._applyPendingSteering(tabId, messages, onUpdate));
+            const superseded = !batchResult.status && this._applyPendingSteering(tabId, messages, onUpdate);
             this._throwIfAborted(this._runAbortSignal(tabId));
             if (superseded) {
               onUpdate('text', { content: '', replace: true });
@@ -42153,7 +42214,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       steps++;
       lastTraceStep = steps;
-      await this._applyPendingPageFeedback(tabId, messages, onUpdate);
+      const messagesBeforeFeedback = pendingVisionFallbackMessages ? new Set(messages) : null;
+      // A pending correction is applied first; the refresh read (and idle
+      // wait) still runs before the next inference on the following pass.
+      if (!this._hasPendingSteering(tabId) && await this._applyPendingPageFeedback(tabId, messages, onUpdate)
+          && pendingVisionFallbackMessages) {
+        // Keep the one-shot fallback: a fresh request would resend the image
+        // the provider just rejected. Swap its superseded browser observations
+        // (the same kinds feedback compaction replaces) for the new text ones.
+        pendingVisionFallbackMessages = [
+          ...pendingVisionFallbackMessages.filter(message => !['page_feedback', 'page_feedback_capture', 'page_action_observation']
+            .includes(message?.webbrainAppOwnedKind)),
+          ...messages.filter(message => !messagesBeforeFeedback.has(message) && !this._messagesContainImageBlocks([message])),
+        ];
+      }
       if (this._hasPendingSteering(tabId)) { steps--; continue; }
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
@@ -42163,6 +42237,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         traceStepClosed = true;
         return runId ? trace.recordStepEnd(runId, steps, payload) : Promise.resolve();
       };
+      let releaseSteeringInterrupt = () => {};
+      let inferenceOpen = true;
 
       try {
         streamEmittedOutput = false;
@@ -42215,6 +42291,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const _llmStart = Date.now();
         let costStopMessage = '';
 
+        const steeringInterrupt = fastResult ? null : this._armSteeringInterrupt(tabId);
+        if (steeringInterrupt) {
+          // Stop keeps the run signal; an accepted correction aborts only this request.
+          const inferenceSignal = this._linkAbortSignals(streamOpts.signal, steeringInterrupt.signal);
+          streamOpts.signal = inferenceSignal.signal;
+          releaseSteeringInterrupt = () => {
+            inferenceSignal.dispose();
+            this._disarmSteeringInterrupt(tabId, steeringInterrupt);
+          };
+        }
         this._throwIfAborted(streamOpts.signal);
         let streamAttempt = 0;
         const modelStream = fastResult ? this._jevToolStream(fastResult) : retryModelStream(async () => {
@@ -42227,7 +42313,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }, { messages: prunedMessages, tools: streamOpts.tools || [], runtimeMode: mode });
           return provider.chatStream(prunedMessages, streamOpts);
         }, {
-          isAborted: () => this._checkAbort(tabId),
+          isAborted: () => this._checkAbort(tabId) || this._hasPendingSteering(tabId),
           onRetry: async ({ error, delayMs, attempt }) => {
             onUpdate('thinking', { step: steps, note: `The model service could not start the response. Retrying (${attempt})…` });
             if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
@@ -42290,6 +42376,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
         this._throwIfAborted(streamOpts.signal);
+        // From here a correction is handled at the existing response boundary.
+        inferenceOpen = false;
+        releaseSteeringInterrupt();
 
         fullText = Agent._stripReasoningTags(fullText);
         const streamedToolCalls = hasToolCalls ? Object.values(toolCallsAccumulator) : [];
@@ -42328,9 +42417,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
-        if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
-          responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: fullText,
-        }))
+        // A pending correction supersedes this response anyway; do not first
+        // wait for a page-feedback refresh read (the next pass still applies it).
+        if (this._hasPendingSteering(tabId)
+            || (await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
+              responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: fullText,
+            }))
             || this._applyPendingSteering(tabId, messages, onUpdate)) {
           const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
           if (recovery) {
@@ -42379,9 +42471,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const batchResult = await this._executeToolBatch(
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
-        if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
-            && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: batchResult.action === 'return' ? [toolCalls.at(-1)] : null }))
-              || this._applyPendingSteering(tabId, messages, onUpdate))) {
+          // An executed done (success, partial or failed) is terminal: page
+          // activity, including the user's own clicks, cannot reopen it. Only
+          // an accepted correction can. After a non-terminal batch, pending
+          // page feedback is applied at the next step without discarding its
+          // completion-recovery turn.
+          if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
+              && this._applyPendingSteering(tabId, messages, onUpdate)) {
             onUpdate('text', { content: '', replace: true });
             continue;
           }
@@ -42389,9 +42485,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             if (typeof runOptions.afterVerifiedCompletion === 'function') {
               await this._settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions);
               this._throwIfAborted(this._runAbortSignal(tabId));
-              const superseded = !batchResult.status
-                && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: [toolCalls.at(-1)] }))
-                  || this._applyPendingSteering(tabId, messages, onUpdate));
+              const superseded = !batchResult.status && this._applyPendingSteering(tabId, messages, onUpdate);
               this._throwIfAborted(this._runAbortSignal(tabId));
               if (superseded) {
                 onUpdate('text', { content: '', replace: true });
@@ -42679,7 +42773,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return finish(fullText);
 
       } catch (e) {
+        releaseSteeringInterrupt();
         if (this._checkAbort(tabId)) throw e;
+        // Only the inference itself is superseded; tool-batch errors keep
+        // their normal handling.
+        if (inferenceOpen && this._steeringSupersedesInference(tabId, e)) {
+          await closeTraceStep({ ok: true, status: 'steering_superseded' });
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         const caughtMessage = formatErrorMessage(e);
         const stepErrorCode = this._traceErrorCodeFor(e);
         await closeTraceStep({ ok: false, code: stepErrorCode });

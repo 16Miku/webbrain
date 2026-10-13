@@ -140,6 +140,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
             function clearPlanReviewActiveRun() { hideActivity(); }
             function isPlanReviewTimeoutTerminal() { return false; }
             function isTabAbortRequested() { return false; }
+            function holdQueuedComposerMessages() {}
             function formatErrorMessage(value) { return String(value); }
             function takeActiveRetryPayloadForError() { return {}; }
             function activeRetryPayloadForRequest() { return null; }
