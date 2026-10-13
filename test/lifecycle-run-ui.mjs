@@ -189,7 +189,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function onAgentUpdate(msg) {\n${preFilter}\n}
         window.panel = {
           queue: () => getQueuedComposerMessages(7).map(item => ({ text: item.text, held: item.held === true })),
-          rows: () => [...queuedMessagesEl.querySelectorAll('.queued-message')].map(row => ({ text: row.querySelector('.queued-message-text').textContent, held: row.dataset.held === 'true' })),
+          rows: () => [...queuedMessagesEl.querySelectorAll('.queued-message')].map(row => ({ text: row.querySelector('.queued-message-text').textContent, held: row.dataset.held === 'true', label: row.querySelector('.queued-message-label').textContent })),
           enqueue: text => enqueueQueuedComposerMessage(7, text),
           stop: async () => { const pending = abortRun(7); running = false; setTabProcessing(7, false); await pending; },
           update: msg => onAgentUpdate(msg),
@@ -210,8 +210,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await wait(120);
       assert.deepEqual(await page.evaluate(() => window.panel.sent), [], 'Nothing starts on its own after Stop');
       assert.deepEqual(await page.evaluate(() => window.panel.rows()), [
-        { text: 'Also post it on Mastodon', held: true }, { text: 'Then summarize the replies', held: true },
-      ], 'Held items stay visible in the queue');
+        { text: 'Also post it on Mastodon', held: true, label: 'sp.queue.held' },
+        { text: 'Then summarize the replies', held: true, label: 'sp.queue.held' },
+      ], 'Held items stay visible in the queue and say they are paused');
       // Manual send: the user moves a held item into the composer.
       await page.evaluate(() => window.panel.edit(0));
       assert.equal(await page.evaluate(() => window.panel.input()), 'Also post it on Mastodon');

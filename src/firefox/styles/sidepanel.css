@@ -3108,6 +3108,16 @@ html[data-ui-scale="175"] .conversation-action-label {
   grid-template-columns: auto minmax(0, 1fr) auto auto auto;
 }
 
+/* Held after Stop: nothing sends it automatically; edit, steer or delete it. */
+.queued-message[data-held="true"] {
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.queued-message[data-held="true"] .queued-message-label {
+  color: var(--text-secondary);
+}
+
 .queued-message-label {
   color: var(--accent);
   font-size: 11px;

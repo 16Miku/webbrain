@@ -150,6 +150,7 @@ export default {
   "sp.queue.send": "הוספת הודעה לתור",
   "sp.queue.label": "בתור",
   "sp.queue.label_numbered": "בתור {index}",
+  "sp.queue.held": "מושהה לאחר עצירה",
   "sp.queue.edit": "ערוך הודעה בתור",
   "sp.queue.delete": "מחק הודעה בתור",
   "sp.inspection": "WebBrain התחיל לבדוק את הדף הזה",

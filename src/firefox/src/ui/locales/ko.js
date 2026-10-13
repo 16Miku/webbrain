@@ -853,6 +853,7 @@ export default {
   "sp.queue.send": "메시지를 대기열에 추가",
   "sp.queue.label": "대기 중",
   "sp.queue.label_numbered": "대기 중 {index}",
+  "sp.queue.held": "중지 후 보류됨",
   "sp.queue.edit": "대기 중인 메시지 편집",
   "sp.queue.delete": "대기 중인 메시지 삭제",
   "sp.slash.check_progress": "현재 진행 로그 표시",

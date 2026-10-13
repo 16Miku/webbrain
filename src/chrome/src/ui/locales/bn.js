@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "বার্তা সারিতে রাখুন",
   'sp.queue.label': "সারিবদ্ধ",
   'sp.queue.label_numbered': "সারিবদ্ধ {index}",
+  'sp.queue.held': "থামানোর পরে বিরতিতে",
   'sp.queue.edit': "সারিবদ্ধ বার্তা সম্পাদনা করুন",
   'sp.queue.delete': "সারিবদ্ধ বার্তা মুছুন",
 

@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "Nachricht einreihen",
   'sp.queue.label': 'In Warteschlange',
   'sp.queue.label_numbered': 'In Warteschlange {index}',
+  'sp.queue.held': 'Nach Stopp pausiert',
   'sp.queue.edit': 'Warteschlangen-Nachricht bearbeiten',
   'sp.queue.delete': 'Warteschlangen-Nachricht löschen',
   'sp.inspection': 'WebBrain hat begonnen, diese Seite zu analysieren',

@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "संदेश कतार में डालें",
   'sp.queue.label': "कतारबद्ध",
   'sp.queue.label_numbered': "कतारबद्ध {index}",
+  'sp.queue.held': "रोकने के बाद रुका हुआ",
   'sp.queue.edit': "पंक्तिबद्ध संदेश संपादित करें",
   'sp.queue.delete': "पंक्तिबद्ध संदेश हटाएँ",
 

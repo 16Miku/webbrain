@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "Mettre le message en attente",
   "sp.queue.label": "En file d’attente",
   "sp.queue.label_numbered": "En file d’attente {index}",
+  "sp.queue.held": "En pause après l’arrêt",
   "sp.queue.edit": "Modifier le message en file d’attente",
   "sp.queue.delete": "Supprimer le message en file d’attente",
   "sp.slash.check_progress": "Afficher le journal de progression actuel",

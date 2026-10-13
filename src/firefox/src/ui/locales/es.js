@@ -853,6 +853,7 @@ export default {
   "sp.queue.send": "Poner mensaje en cola",
   "sp.queue.label": "En cola",
   "sp.queue.label_numbered": "En cola {index}",
+  "sp.queue.held": "En pausa tras detener",
   "sp.queue.edit": "Editar mensaje en cola",
   "sp.queue.delete": "Eliminar mensaje en cola",
   "sp.slash.check_progress": "Mostrar el registro de progreso actual",

@@ -2534,9 +2534,11 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
 
     const label = document.createElement('span');
     label.className = 'queued-message-label';
-    label.textContent = messages.length > 1
-      ? t('sp.queue.label_numbered', { index: index + 1 })
-      : t('sp.queue.label');
+    // A held item (after Stop) never sends on its own; say so.
+    label.textContent = item.held ? t('sp.queue.held')
+      : messages.length > 1
+        ? t('sp.queue.label_numbered', { index: index + 1 })
+        : t('sp.queue.label');
 
     const text = document.createElement('span');
     text.className = 'queued-message-text';

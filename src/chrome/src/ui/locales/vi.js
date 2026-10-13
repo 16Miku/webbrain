@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "Xếp tin nhắn vào hàng đợi",
   'sp.queue.label': "Đã xếp hàng",
   'sp.queue.label_numbered': "Đã xếp hàng {index}",
+  'sp.queue.held': "Tạm giữ sau khi dừng",
   'sp.queue.edit': "Chỉnh sửa tin nhắn xếp hàng đợi",
   'sp.queue.delete': "Xóa tin nhắn xếp hàng đợi",
 

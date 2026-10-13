@@ -861,6 +861,7 @@ export default {
   "sp.queue.send": "Dodaj wiadomość do kolejki",
   "sp.queue.label": "W kolejce",
   "sp.queue.label_numbered": "W kolejce {index}",
+  "sp.queue.held": "Wstrzymane po zatrzymaniu",
   "sp.queue.edit": "Edytuj wiadomość w kolejce",
   "sp.queue.delete": "Usuń wiadomość z kolejki",
   "sp.slash.check_progress": "Pokaż bieżący dziennik postępu",

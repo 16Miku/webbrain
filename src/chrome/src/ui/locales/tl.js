@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "Ipila ang mensahe",
   "sp.queue.label": "Naka-queue",
   "sp.queue.label_numbered": "Naka-queue {index}",
+  "sp.queue.held": "Naka-pause pagkatapos ihinto",
   "sp.queue.edit": "I-edit ang naka-queue na mensahe",
   "sp.queue.delete": "I-delete ang naka-queue na mensahe",
   "sp.slash.check_progress": "Ipakita ang kasalukuyang progress ledger",
