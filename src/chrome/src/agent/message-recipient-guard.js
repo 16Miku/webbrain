@@ -226,21 +226,22 @@ export function answerNamesAllObservedRecipients(normalizedAnswer, observedCandi
 // Stems match at a word start so inflected forms count; scripts written
 // without spaces between words match anywhere.
 const RECIPIENT_QUESTION_WORD = new RegExp(`(?<![\\p{L}\\p{N}])(?:${[
-  'send', 'sent', 'messag', 'deliver', 'forward', 'shar(?:e|ing)', 'repl(?:y|ies|ying)', 'recipient', 'contact',
+  'send', 'sent', 'messag', 'deliver', 'forward', 'shar(?:e|ing)', 'repl(?:y|ies|ying)', 'recipient', 'receiv', 'contact',
   'conversa', 'chat', 'dms?(?![\\p{L}])', 'e-?mail', 'mail', 'thread', 'inbox', 'person', 'people', 'user', 'account',
   'whom', 'address',
-  'gönder', 'ilet', 'yolla', 'mesaj', 'paylaş', 'alıcı', 'kişi', 'kullanıcı', 'hesab', 'hesap', 'sohbet', 'konuşma',
-  'schick', 'nachricht', 'empfänger', 'weiterleit', 'teilen',
+  'gönder', 'ilet', 'yolla', 'mesaj', 'paylaş', 'alıcı', 'kime', 'kişi', 'kullanıcı', 'hesab', 'hesap', 'sohbet', 'konuşma',
+  'schick', 'nachricht', 'empfänger', 'erhalt', 'bekomm', 'wem', 'weiterleit', 'teilen',
   'envi[aáeéoó]', 'envoy', 'envoi', 'mensaj', 'mensag', 'messagg', 'destinat', 'compart', 'partag', 'partilh',
-  'condivid', 'inoltr', 'reenv', 'transf[eé]r', 'invia', 'invio', 'pessoa', 'contatt',
+  'condivid', 'inoltr', 'reenv', 'transf[eé]r', 'invia', 'invio', 'pessoa', 'contatt', 'recib', 'reçoi', 'recev',
+  'receb', 'ricev',
   'stuur', 'verstuur', 'verzend', 'bericht', 'ontvanger', 'delen',
   'wyśl', 'wysł', 'wiadomo', 'odbiorc', 'udostępn', 'zpráv', 'příjemc',
-  'отправ', 'посла', 'пошл', 'сообщен', 'пересла', 'получател', 'собеседник', 'надісл', 'повідомл', 'одержувач',
+  'отправ', 'посла', 'пошл', 'сообщен', 'пересла', 'получ', 'собеседник', 'надісл', 'повідомл', 'одержувач',
   'kirim', 'pesan', 'penerima', 'bagikan', 'gửi', 'tin nhắn', 'người nhận', 'chia sẻ',
   'أرسل', 'ارسل', 'إرسال', 'ارسال', 'رسالة', 'مستلم', 'المستلم', 'بفرست', 'پیام', 'گیرنده',
   'שלח', 'הודעה', 'נמען', 'भेज', 'संदेश', 'प्राप्तकर्ता',
 ].join('|')})`, 'iu');
-const RECIPIENT_QUESTION_UNSPACED = /送|发|發|传|傳|消息|信息|訊息|收件|联系人|聯絡人|メッセージ|宛|보내|전송|메시지|받는|ส่ง|ข้อความ/u;
+const RECIPIENT_QUESTION_UNSPACED = /送|发|發|传|傳|消息|信息|訊息|收|联系人|聯絡人|メッセージ|宛|受け取|보내|전송|메시지|받|ส่ง|ข้อความ/u;
 
 /**
  * Does a clarification question show the user the exact recipients the page

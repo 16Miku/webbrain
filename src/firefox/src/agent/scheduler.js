@@ -143,6 +143,20 @@ function normalizePendingClarify(data, now = Date.now()) {
       changedFields: normalizeFields(submitConfirmation.changedFields, 8),
     };
   }
+  const recipientConfirmation = asObject(obj.recipientConfirmation);
+  if (Array.isArray(recipientConfirmation.recipients) && recipientConfirmation.recipients.length) {
+    pending.recipientConfirmation = {
+      recipients: recipientConfirmation.recipients.slice(0, 16).map((recipient) => {
+        const item = asObject(recipient);
+        return { identity: String(item.identity || '').slice(0, 240), role: ['to', 'cc', 'bcc'].includes(item.role) ? item.role : 'to' };
+      }).filter((recipient) => recipient.identity),
+      requested: Array.isArray(recipientConfirmation.requested)
+        ? recipientConfirmation.requested.slice(0, 8).map((value) => String(value).slice(0, 240)).filter(Boolean)
+        : [],
+      host: String(recipientConfirmation.host || '').slice(0, 300),
+      offerAll: recipientConfirmation.offerAll === true,
+    };
+  }
   return pending;
 }
 

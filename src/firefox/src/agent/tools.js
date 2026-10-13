@@ -768,7 +768,7 @@ export const AGENT_TOOLS = [
           purpose: {
             type: 'string',
             enum: ['research_escalation', 'message_recipient', 'recipient_change'],
-            description: 'Optional purpose of the clarification. Use message_recipient to ask the user to confirm or specify the message/email recipient, recipient_change to switch an already-authorized recipient, or research_escalation to delegate a read-only research subtask.',
+            description: 'Optional purpose of the clarification. Use message_recipient to ask the user who should receive a message, recipient_change to switch an already-authorized recipient, or research_escalation to delegate a read-only research subtask. Do not ask the user to confirm the recipient of a send that is already prepared: WebBrain confirms it with the user itself before sending.',
           },
           research_request: {
             type: 'string',

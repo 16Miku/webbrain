@@ -6134,7 +6134,8 @@ function rebindClarifyCards() {
 
     // Restart countdown after HTML restore when timeout metadata survived on
     // the card. Skip permission/form-submit cards (they never auto-timeout).
-    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1') return;
+    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
+      || card.dataset.recipientConfirmation === '1') return;
     const deadlineTs = Number(card.dataset.deadlineTs);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
     const firstOption = card.dataset.firstOption
@@ -10659,7 +10660,7 @@ function renderClarifyCard(data) {
   if (data.pendingReconciliation === true) card.dataset.pendingReconciliation = '1';
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
-    : data.workflowHealing || data.pendingReconciliation === true
+    : data.workflowHealing || data.pendingReconciliation === true || data.recipientConfirmation
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -10768,6 +10769,54 @@ function renderClarifyCard(data) {
       b.textContent = label;
       b.dataset.value = value;
       b.addEventListener('click', () => submitClarify(card, tabId, clarifyId, value, 'option'));
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Recipient confirmation: WebBrain asks whether a message may go to the
+  // person the open conversation shows. Fixed choices return stable values
+  // ('once'/'always'/'deny') with no free-text input, so nothing is parsed.
+  if (data.recipientConfirmation) {
+    card.dataset.recipientConfirmation = '1';
+    const confirmation = data.recipientConfirmation || {};
+    const recipients = (Array.isArray(confirmation.recipients) ? confirmation.recipients : [])
+      .map(item => ({ identity: String(item?.identity || '').slice(0, 240), role: String(item?.role || 'to').toLowerCase() }))
+      .filter(item => item.identity)
+      .slice(0, 16);
+    const recipient = recipients
+      .map(item => (item.role === 'cc' || item.role === 'bcc' ? `${item.identity} (${item.role.toUpperCase()})` : item.identity))
+      .join(', ') || String(data.question || '').slice(0, 240);
+    const requested = (Array.isArray(confirmation.requested) ? confirmation.requested : [])
+      .map(value => String(value || '').slice(0, 240)).filter(Boolean).join(', ');
+    const host = String(confirmation.host || '').slice(0, 300) || 'this site';
+    qEl.textContent = t('sp.recipient.question', { recipient });
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = requested
+      ? t('sp.recipient.reason_requested', { requested, recipient, host })
+      : t('sp.recipient.reason_open', { recipient, host });
+    card.appendChild(reasonEl);
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    const choices = [
+      ['once', t('sp.recipient.send', { recipient })],
+      ...(confirmation.offerAll === true ? [['always', t('sp.recipient.send_all')]] : []),
+      ['deny', t('sp.recipient.dont_send')],
+    ];
+    for (const [value, label] of choices) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 300);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
       optionsEl.appendChild(b);
     }
     card.appendChild(optionsEl);
@@ -11037,7 +11086,8 @@ function lockClarifyCardFromAuto(data) {
   for (const card of document.querySelectorAll('.clarify-card')) {
     if (String(card.dataset.clarifyId || '') !== clarifyId) continue;
     if (card.classList.contains('clarify-answered')) return;
-    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1') return;
+    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
+      || card.dataset.recipientConfirmation === '1') return;
     clearClarifyCountdown(card);
     card.classList.add('clarify-answered');
     for (const el of card.querySelectorAll('button, input')) {
@@ -11408,7 +11458,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     } else {
       prefix = typeof t === 'function' ? t('sp.clarify.your_answer') : 'Your answer:';
     }
-    answered.textContent = `${prefix} ${answer}`;
+    answered.textContent = `${prefix} ${card.dataset.answerLabel || answer}`;
     card.appendChild(answered);
     placeAnsweredClarifyCardInTimeline(card);
     scrollToBottom();

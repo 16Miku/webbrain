@@ -7734,6 +7734,13 @@ export class Agent extends LoopDetector {
       display.submitConfirmation.changedFields = Array.isArray(data.submitConfirmation.changedFields)
         ? data.submitConfirmation.changedFields.slice(0, 8).map(value => record(value, ['label', 'value'], 120)) : [];
     }
+    if (data.recipientConfirmation) {
+      display.recipientConfirmation = record(data.recipientConfirmation, ['host', 'offerAll'], 300);
+      display.recipientConfirmation.recipients = Array.isArray(data.recipientConfirmation.recipients)
+        ? data.recipientConfirmation.recipients.slice(0, 16).map(value => record(value, ['identity', 'role'], 240)) : [];
+      display.recipientConfirmation.requested = Array.isArray(data.recipientConfirmation.requested)
+        ? data.recipientConfirmation.requested.slice(0, 8).map(value => String(value).slice(0, 240)) : [];
+    }
     if (data.researchEscalation) display.researchEscalation = record(data.researchEscalation, ['engine', 'request'], 6000);
     if (data.workflowHealing) {
       const target = value => record(value, ['role', 'name', 'label', 'ariaLabel', 'placeholder',
@@ -14346,24 +14353,46 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ...(fnName === 'navigate' && this._completionSubmitStates.get(tabId)?.semanticCommit
           ? { _completionNavigationReceipt: {} } : {}) };
       let messageRecipientBlock = null;
+      const runMessageRecipientGuard = () => this._withContentActionDeadline(
+        async abortSignal => {
+          const block = await this._messageRecipientGuardBlock(
+            tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
+          );
+          this._throwIfAborted(abortSignal);
+          return block;
+        },
+        fnName,
+        this._contentActionDeadlineMs(fnName, fnArgs),
+      );
+      let askedRecipient = false;
       try {
-        messageRecipientBlock = await this._withContentActionDeadline(
-          async abortSignal => {
-            const block = await this._messageRecipientGuardBlock(
-              tabId, fnName, fnArgs, beforeUrl, messageRecipientExecutionContext,
-            );
-            this._throwIfAborted(abortSignal);
-            return block;
-          },
-          fnName,
-          this._contentActionDeadlineMs(fnName, fnArgs),
-        );
+        messageRecipientBlock = await runMessageRecipientGuard();
+        if (messageRecipientBlock?.recipientConfirmation && !scheduledBypassesGate) {
+          // The user confirms the recipient on WebBrain's own card; the
+          // card's wait has no content deadline, each guard run has one.
+          askedRecipient = true;
+          messageRecipientBlock = await this._resolveMessageRecipientConfirmation(tabId, messageRecipientBlock,
+            onUpdate, runMessageRecipientGuard);
+        }
       } catch (error) {
         if (error?.code !== 'content_action_timeout') throw error;
         const loopStop = await recordPagePreparationTimeout(error, 'message-recipient safety preflight');
         if (loopStop) return loopStop;
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
+      }
+      if (askedRecipient) {
+        if (this._checkAbort(tabId) || messageRecipientBlock?.recipientConfirmationCancelled === true) {
+          const value = '[Stopped by user before executing requested tool calls.]';
+          this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+            success: false,
+            cancelled: true,
+            error: value,
+          }));
+          onUpdate('warning', { message: 'Stopped by user.' });
+          return { action: 'abort', value };
+        }
+        if (this._hasPendingSteering(tabId)) return skipSteeredPermissionWait(toolIndex);
       }
       if (messageRecipientBlock) {
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
@@ -25217,13 +25246,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (recoverDraft) sendContext.nativeChatDraftBinding = draft.binding;
     let recipientBlock = null;
     try {
-      recipientBlock = await this._messageRecipientGuardBlock(
+      const runRecipientGuard = () => this._messageRecipientGuardBlock(
         tabId,
         'set_field',
         dispatchArgs,
         before.url || '',
         sendContext,
       );
+      recipientBlock = await runRecipientGuard();
+      if (recipientBlock?.recipientConfirmation) {
+        recipientBlock = await this._resolveMessageRecipientConfirmation(tabId, recipientBlock, onUpdate, runRecipientGuard,
+          { allowPrompt: this.scheduledRunPolicies.get(tabId)?.requireConsequentialConfirmation !== false });
+      }
     } catch (error) {
       recipientBlock = {
         success: false,
@@ -25451,7 +25485,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       guard?.approvedRecipients || [], guard?.messagingConversationScope || '']);
   }
 
-  async _recipientBoundUploadContext(tabId, args, executionContext = {}) {
+  async _recipientBoundUploadContext(tabId, args, executionContext = {}, onUpdate = null) {
     let pageUrl = '';
     try { pageUrl = await this._currentUrl(tabId); } catch {}
     const publicComposer = executionContext.messageRecipientGuardRequired !== true
@@ -25474,7 +25508,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error: 'Attachment blocked because its verified file source changed before dispatch.' } };
     }
     if (!context.messageRecipientDispatchBinding?.token) {
-      const block = await this._messageRecipientGuardBlock(tabId, 'upload_file', args, pageUrl, context);
+      const runGuard = () => this._messageRecipientGuardBlock(tabId, 'upload_file', args, pageUrl, context);
+      let block = await runGuard();
+      if (block?.recipientConfirmation) {
+        block = await this._resolveMessageRecipientConfirmation(tabId, block, onUpdate, runGuard,
+          { allowPrompt: this.scheduledRunPolicies.get(tabId)?.requireConsequentialConfirmation !== false });
+      }
       if (block) return { protected: true, block };
     }
     if (!context.messageRecipientDispatchBinding?.token || !sourceKey) {
@@ -25880,6 +25919,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       target,
       this._messageRecipientCandidates(probe),
     );
+    // The user's OWN grant authorizes the send even when the planner's
+    // original target differs. A confirmed recipient (WebBrain's confirmation
+    // card, or a clarify answer that picks the observed name) is approved for
+    // the rest of the task, and "send all remaining" approves the task. Both
+    // come only from the user, never from model text.
     const observedIdentities = this._messageRecipientCandidates(probe)
       .map(item => normalizeRecipientIdentity(item?.identity || item))
       .filter(Boolean);
@@ -25903,9 +25947,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         'Message send blocked because WebBrain cannot establish the active recipient identity from this page. Re-read the active conversation header or open the intended chat. If identity remains unavailable, report this technical blocker; additional recipient approval cannot resolve missing page evidence.');
     }
     if (conclusiveSend && observedIdentities.length > 0 && guard) delete guard.messageRecipientTechnicalBlock;
+    // A send that reaches someone other than the authorized recipient is
+    // confirmed by the user on WebBrain's own card (see
+    // _resolveMessageRecipientConfirmation), never by the model's wording.
+    // The plan must already authorize sending a message.
+    const recipientNeedsConfirmation = conclusiveSend && !!target && observedIdentities.length > 0
+      && !targetMatchesObserved && !approvedByUser && !!guard
+      && guard.requiresSubmission === true && guard.requiresStateChange === true
+      && !!normalizeMessageTarget(guard.messaging);
     // An already authorized recipient can still lack draft or delivery
-    // evidence. Asking to authorize that recipient again cannot repair it.
-    if (conclusiveSend && (targetMatchesObserved || approvedByUser)) {
+    // evidence. Asking to authorize that recipient again cannot repair it,
+    // and neither can asking to confirm a new one.
+    if (conclusiveSend && (targetMatchesObserved || approvedByUser || recipientNeedsConfirmation)) {
       if (name !== 'upload_file' && !this._workflowMessageBody(probe?.messageBody)) {
         return technicalBlock('message_body_unverified',
           'Message send blocked because WebBrain could not verify the draft body for the authorized recipient. Re-read the current composer and verify the intended draft. If the body remains unavailable, report this technical blocker instead of asking for recipient approval again.');
@@ -25931,6 +25984,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Message send blocked because WebBrain could not bind recipient verification to the final action dispatch. Re-read the active conversation and retry once. If binding remains unavailable, report this technical blocker instead of asking for recipient approval again.');
       }
       if (resolvedTwitterTarget) guard.messaging = resolvedTwitterTarget;
+      // The user approved this recipient even though the planner's original
+      // target did not match, so re-point the guard at what the user agreed
+      // to. Later sends in the same task then verify against the approval
+      // list instead of re-asking for the same address. This happens before
+      // an upload's authorization key is taken, so the key it is checked
+      // against at dispatch is the same.
+      if (!targetMatchesObserved && approvedByUser && observedIdentities.length > 0
+          && executionContext && typeof executionContext === 'object') {
+        const approvedTarget = normalizeMessageTarget({
+          target_kind: 'named',
+          recipients: this._messageRecipientCandidates(probe).map(item => ({
+            identity: item?.identity || item,
+            role: item?.role || 'to',
+          })),
+        });
+        if (approvedTarget && guard) guard.messaging = approvedTarget;
+      }
       if (executionContext && typeof executionContext === 'object') {
         executionContext.messageRecipientGuardRequired = true;
         executionContext.messageRecipientDispatchBinding = binding;
@@ -25950,16 +26020,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             executionContext.messageRecipientTwitterEmptyConversationBaseline = true;
           }
         }
-        if (!targetMatchesObserved && approvedByUser && observedIdentities.length > 0) {
-          const approvedTarget = normalizeMessageTarget({
-            target_kind: 'named',
-            recipients: this._messageRecipientCandidates(probe).map(item => ({
-              identity: item?.identity || item,
-              role: item?.role || 'to',
-            })),
-          });
-          if (approvedTarget && guard) guard.messaging = approvedTarget;
-        }
         if (probe.composerSubjectAvailable === true) {
           executionContext.messageRecipientSubject = this._workflowMetadataValue(probe.composerSubject);
           executionContext.messageRecipientSubjectAvailable = true;
@@ -25972,9 +26032,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     // Retain what the page actually showed only when the plan already permits
-    // messaging and has pre-existing messaging authorization. The block below
-    // tells the model to ask the user who the message is for, and that answer
-    // has to be matched against real observed identities. A read-only plan
+    // messaging and has pre-existing messaging authorization. A clarify answer
+    // can then approve the recipient too, and it has to be matched against
+    // real observed identities. A read-only plan
     // (requiresSubmission=false or requiresStateChange=false) or an unrelated
     // consequential submission plan (guard.messaging=null) must never stage
     // recipient consent: an answer to a recipient clarify must not elevate an
@@ -26001,12 +26061,49 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : false;
     }
 
+    const sendVerifiableOnceApproved = recipientNeedsConfirmation
+      && (name === 'upload_file' ? probe.messageAttachment === true && !!uploadSourceKey
+        : !!this._workflowMessageBody(probe?.messageBody))
+      && Number.isInteger(messageBodyBaselineCount) && messageBodyBaselineCount >= 0;
+    if (sendVerifiableOnceApproved) {
+      const recipients = this._messageRecipientCandidates(probe)
+        .map(item => ({ identity: String(item?.identity || item || '').trim().slice(0, 240),
+          role: ['to', 'cc', 'bcc'].includes(item?.role) ? item.role : 'to' }))
+        .filter(item => item.identity)
+        .slice(0, 16);
+      const declined = Array.isArray(guard.declinedRecipients) ? guard.declinedRecipients : [];
+      if (recipients.length && recipients.every(item => declined.includes(normalizeRecipientIdentity(item.identity)))) {
+        return this._declinedRecipientBlock(recipients);
+      }
+      const requestedTarget = normalizeMessageTarget(guard.requestedMessaging) || target;
+      let host = '';
+      try { host = new URL(resolvedPageUrl).hostname; } catch {}
+      return {
+        success: false,
+        blocked: true,
+        noDispatch: true,
+        dispatched: false,
+        messageRecipientGuard: true,
+        retryable: false,
+        reasonCode: 'active_recipient_unverified',
+        recipientConfirmation: {
+          recipients,
+          requested: requestedTarget?.target_kind === 'named'
+            ? requestedTarget.recipients.map(item => item.identity).slice(0, 8) : [],
+          host: host.slice(0, 300),
+          // "Don't ask again" only where a task sends to several people.
+          offerAll: (requestedTarget?.target_kind === 'named' && requestedTarget.recipients.length > 1)
+            || (Array.isArray(guard.approvedRecipients) && guard.approvedRecipients.length > 0),
+        },
+        error: this._recipientMismatchGuidance(recipients.map(item => item.identity).join(', '), requestedTarget),
+      };
+    }
+
     const missingLinkedInComposer = policy.adapterName === 'linkedin'
       && probe?.success === true && probe?.composerAvailable === false;
     const inconclusive = probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true;
     // Human-readable view of who the page actually addresses, so a mismatch
-    // block can name the exact observed recipient instead of asking the user to
-    // re-confirm blindly.
+    // block can name the exact observed recipient.
     const observedRecipientLabel = (() => {
       try {
         return (this._messageRecipientCandidates(probe) || [])
@@ -26043,23 +26140,132 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   /**
-   * Model guidance for a send whose page-observed recipient is not the one
-   * the task authorized. It names both, prescribes one clarify that shows the
-   * exact observed name, and never suggests retrying without the user's pick:
-   * the guard only accepts a bound answer, so a bare retry is blocked again.
+   * What the model reads when a send to an unconfirmed recipient could not be
+   * put to the user (an unattended run) or was not confirmed. It names both
+   * recipients and never asks the model to obtain consent itself: WebBrain
+   * shows the user its own confirmation whenever someone can answer it.
    */
   _recipientMismatchGuidance(observedRecipientLabel, target) {
     const planned = normalizeMessageTarget(target)?.target_kind === 'named'
       ? normalizeMessageTarget(target).recipients.map(recipient => recipient.identity).slice(0, 3).join(', ')
       : '';
-    const name = observedRecipientLabel || '<observed address>';
-    return `Message send blocked: this send would go to ${observedRecipientLabel ? `"${observedRecipientLabel}"` : 'a recipient'}, which is not ${planned ? `exactly the recipient named for this task ("${planned}")` : 'the conversation authorized for this task'}, so nothing was dispatched. Do not retry with different targeting.
-Ask the user once whether to send it there. Put that exact name in the question and as an option, because authorization binds to what the page shows and a bare "yes" cannot authorize a send:
-clarify({ question: "Send it to ${name} instead?", options: ["${name}", "Cancel"] })
-If the task sends more than one message, also offer "Send all remaining messages in this task without asking again".
-- If they pick the name: that recipient is authorized for the rest of this task, so retry the send and continue normally.
-- If they pick "Send all remaining messages": every remaining send in this task is authorized, so keep going without asking again.
-- If they pick "Cancel": stop and report that the send was not authorized.`;
+    return `Message send blocked: this send would go to ${observedRecipientLabel ? `"${observedRecipientLabel}"` : 'a recipient'}, which is not ${planned ? `exactly the recipient named for this task ("${planned}")` : 'the conversation authorized for this task'}, and the user has not confirmed it, so nothing was sent. Do not retry with different targeting. Report that the message was not sent and name both recipients, or open the conversation the user asked for.`;
+  }
+
+  _declinedRecipientBlock(recipients = []) {
+    const label = recipients.map(item => item?.identity || item).filter(Boolean).slice(0, 3).join(', ');
+    return {
+      success: false,
+      blocked: true,
+      noDispatch: true,
+      dispatched: false,
+      messageRecipientGuard: true,
+      retryable: false,
+      recipientDeclined: true,
+      reasonCode: 'recipient_declined',
+      error: `The user chose not to send to ${label ? `"${label}"` : 'this recipient'}, so nothing was sent. Do not retry this send. If the user named someone else, open that conversation; otherwise report that the message was not sent.`,
+    };
+  }
+
+  /**
+   * Ask the user, on WebBrain's own card, whether a send may go to the
+   * recipients the page shows. Fixed choices return stable values, so there
+   * is no wording to interpret: 'once' approves these recipients for the rest
+   * of the task, 'always' every remaining send of the task (offered only for
+   * tasks with several recipients), anything else declines. Like permission
+   * prompts it never times out; Stop cancels it (null).
+   */
+  async _promptRecipientConfirmation(tabId, confirmation, onUpdate) {
+    const clarifyId = `recipient_${secureRandomBase36Token(12)}`;
+    const tabPending = this._pendingClarifications.get(tabId) || new Map();
+    this._pendingClarifications.set(tabId, tabPending);
+    const responsePromise = new Promise((resolve) => {
+      tabPending.set(clarifyId, { resolve, ts: Date.now() });
+    });
+    const recipients = (confirmation?.recipients || []).slice(0, 16);
+    const names = recipients.map(item => item.identity).join(', ');
+    try {
+      onUpdate('clarify', {
+        promptKind: 'recipientConfirmation',
+        clarifyId,
+        recipientConfirmation: {
+          recipients,
+          requested: (confirmation?.requested || []).slice(0, 8),
+          host: String(confirmation?.host || '').slice(0, 300),
+          offerAll: confirmation?.offerAll === true,
+        },
+        question: `Send to ${names}?`,
+        options: confirmation?.offerAll === true ? ['once', 'always', 'deny'] : ['once', 'deny'],
+      });
+    } catch { /* UI emit must never break the run */ }
+    const response = await responsePromise;
+    tabPending.delete(clarifyId);
+    if (tabPending.size === 0 && this._pendingClarifications.get(tabId) === tabPending) this._pendingClarifications.delete(tabId);
+    if (response?.cancelled) return null;
+    if (['timeout', 'auto'].includes(response?.source)) return 'deny';
+    const value = String(response?.answer || '').trim().toLowerCase();
+    if (value === 'once') return 'once';
+    if (value === 'always' && confirmation?.offerAll === true) return 'always';
+    return 'deny';
+  }
+
+  _approveConfirmedRecipients(tabId, confirmation, all = false) {
+    const guard = this._planExecutionGuards.get(tabId);
+    const target = normalizeMessageTarget({ target_kind: 'named', recipients: confirmation?.recipients || [] });
+    if (!guard || !target) return false;
+    if (!guard.requestedMessaging) guard.requestedMessaging = normalizeMessageTarget(guard.messaging);
+    guard.messaging = target;
+    const approved = Array.isArray(guard.approvedRecipients) ? guard.approvedRecipients.slice() : [];
+    for (const recipient of target.recipients) {
+      const identity = normalizeRecipientIdentity(recipient.identity);
+      if (identity && !approved.includes(identity)) approved.push(identity);
+    }
+    guard.approvedRecipients = approved;
+    if (all) guard.messageRecipientApprovedAll = true;
+    guard.pendingRecipientAuthorization = false;
+    guard.observedRecipientCandidates = null;
+    return true;
+  }
+
+  /**
+   * Resolve a guard result that only lacks the user's confirmation of the
+   * recipient: ask once on WebBrain's card, record the choice, and re-run the
+   * guard so the send binds to a fresh observation of the same page. Returns
+   * null when the send may proceed, otherwise the result for the model. An
+   * unattended run cannot be asked, so its block is returned unchanged.
+   */
+  async _resolveMessageRecipientConfirmation(tabId, block, onUpdate, rerunGuard, { allowPrompt = true } = {}) {
+    const confirmation = block?.recipientConfirmation;
+    if (!confirmation || !allowPrompt || typeof onUpdate !== 'function') return block;
+    const choice = await this._promptRecipientConfirmation(tabId, confirmation, onUpdate);
+    if (choice === null) {
+      return { success: false, cancelled: true, blocked: true, noDispatch: true, dispatched: false,
+        messageRecipientGuard: true, recipientConfirmationCancelled: true, reasonCode: 'recipient_confirmation_cancelled',
+        error: 'Stopped before the recipient was confirmed. Nothing was sent.' };
+    }
+    if (choice === 'deny') {
+      const guard = this._planExecutionGuards.get(tabId);
+      if (guard) {
+        const declined = Array.isArray(guard.declinedRecipients) ? guard.declinedRecipients.slice() : [];
+        for (const item of confirmation.recipients || []) {
+          const identity = normalizeRecipientIdentity(item?.identity);
+          if (identity && !declined.includes(identity)) declined.push(identity);
+        }
+        guard.declinedRecipients = declined;
+      }
+      return this._declinedRecipientBlock(confirmation.recipients);
+    }
+    if (!this._approveConfirmedRecipients(tabId, confirmation, choice === 'always')) {
+      return { ...block, recipientConfirmation: undefined };
+    }
+    const next = await rerunGuard();
+    if (next?.recipientConfirmation) {
+      const label = (next.recipientConfirmation.recipients || []).map(item => item.identity).join(', ');
+      const { recipientConfirmation, ...changed } = next;
+      return { ...changed, reasonCode: 'recipient_changed_during_confirmation',
+        error: `The open conversation changed to "${label}" while the user was confirming a different recipient, so nothing was sent. Re-read the page; if this is the conversation the user asked for, retry the send and WebBrain will ask the user again.` };
+    }
+    return next;
   }
 
   _isRecipientClarification(context, pendingType = 'message_recipient', observedCandidates = []) {
@@ -26235,9 +26441,10 @@ If the task sends more than one message, also offer "Send all remaining messages
 
   /**
    * What the model must do after a reply that did not approve the recipient
-   * a blocked send would reach. Without this the generic "treat it as
-   * authoritative" note reads as approval, the retry is blocked again and the
-   * user is asked the same question until the run gives up.
+   * a send would reach. The generic "treat it as authoritative" note read as
+   * approval, so the model retried, was blocked again and asked the same
+   * question. WebBrain now confirms the recipient with the user itself when
+   * the send is tried, so the model never needs to ask again.
    */
   _unboundRecipientClarificationNote(outcome = {}) {
     const names = (Array.isArray(outcome?.observed) ? outcome.observed : [])
@@ -26246,18 +26453,15 @@ If the task sends more than one message, also offer "Send all remaining messages
       .slice(0, 3);
     const label = names.join(', ');
     const named = label ? ` ("${label}")` : '';
-    const example = label
-      ? ` For example: clarify({ question: "Send it to ${label}?", options: ["${label}", "Cancel"] }).`
-      : '';
+    const card = `If the user meant that recipient, continue with the send: WebBrain shows the user its own confirmation${named} before anything is sent. Do not ask about the recipient again.`;
     switch (outcome?.reason) {
       case 'answer_refused':
-        return `The reply reads as declining or correcting the recipient this send would reach${named}, so nothing was authorized or sent. If the user named someone else, open that conversation and continue there. If it is unclear whether they meant that recipient, ask once more with the exact name as an option.${example} Otherwise stop and report that the send was not authorized.`;
+        return `The reply declines or corrects the recipient this send would reach${named}, so nothing was approved or sent. Do not send there. If the user named someone else, open that conversation and continue there; otherwise stop and report that the message was not sent.`;
       case 'answer_does_not_name_recipient':
-        return `The reply did not choose the recipient this send would reach${named}, so nothing was authorized or sent. Only an answer that picks that exact name approves it; a reply such as "yes" or "that's the right person" cannot. If the user meant that recipient, ask once more with the exact name in the question and as an option.${example} Otherwise stop and report that the send was not authorized.`;
       case 'recipient_not_presented':
-        return `The question did not ask the user to approve sending to the recipient this send would reach${named}, so the reply cannot approve it and nothing was sent. Ask once with that exact name in the question and as an option.${example}`;
+        return `The reply did not pick the recipient's exact name, so it approved nothing by itself and nothing was sent. ${card}`;
       case 'no_pending_recipient':
-        return 'This is a direct reply from the user; continue the task with it in mind. It did not approve a recipient by itself: approval is recorded only when the question shows the exact recipient name the open conversation has, so if a send is blocked, ask then with the exact name the block reports.';
+        return 'This is a direct reply from the user; continue the task with it in mind. If a send would reach someone other than the recipient named for the task, WebBrain asks the user itself; do not ask about the recipient again.';
       default:
         return '';
     }
@@ -38915,7 +39119,7 @@ If the task sends more than one message, also offer "Send all remaining messages
           return { success: false, error: 'selector parameter is required for upload_file' };
         }
 
-        const recipientUpload = await this._recipientBoundUploadContext(tabId, args, dispatchContext);
+        const recipientUpload = await this._recipientBoundUploadContext(tabId, args, dispatchContext, onUpdate);
         throwIfContentPipelineAborted();
         if (recipientUpload.block) return recipientUpload.block;
 

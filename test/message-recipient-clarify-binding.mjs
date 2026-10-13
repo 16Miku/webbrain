@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 // A user asked to send a photo to "gamze" on Instagram. The open conversation
-// was "Gamze Çömlekçi", so the recipient guard asked for confirmation, and the
-// user picked "Gamze Çömlekçi" twice. Both answers were discarded because the
-// model's question did not say "instead", and the run gave up. These cases run
-// the real content probe, guard, clarify tool and upload handler in both
-// builds: a question that shows the exact observed recipient binds the user's
-// pick, while refusals, vague replies and questions that hide the recipient
-// still authorize nothing.
+// was "Gamze Çömlekçi". The user picked "Gamze Çömlekçi" twice in the model's
+// questions, but the guard discarded both answers because the question did
+// not say "instead", and the run gave up. Now WebBrain itself asks once, on
+// its own card with fixed choices, whether the message may go to the person
+// the page shows; a model question that shows that name and gets it picked
+// still counts, and refusals never do. These cases run the real content
+// probe, guard, clarify tool, confirmation and upload handler in both builds.
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -105,6 +105,24 @@ async function setup(page, kind) {
     const block = await agent._messageRecipientGuardBlock(71, 'upload_file', args, page.url(), context);
     return { block, context };
   };
+  // WebBrain's own card: answered with a fixed value, or left for Stop.
+  const confirm = async (block, choice, { allowPrompt = true, beforeAnswer = null } = {}) => {
+    const cards = [];
+    const context = {};
+    const rerun = () => agent._messageRecipientGuardBlock(71, 'upload_file', args, page.url(), context);
+    const result = await agent._resolveMessageRecipientConfirmation(71, block, (status, details) => {
+      if (status !== 'clarify') return;
+      cards.push(details);
+      const settle = async () => {
+        if (beforeAnswer) await beforeAnswer();
+        const entry = agent._pendingClarifications.get(71).get(details.clarifyId);
+        if (choice === null) agent._cancelClarifications(71, 'stopped');
+        else agent._settleClarification(entry, { answer: choice, source: 'option' });
+      };
+      void settle();
+    }, rerun, { allowPrompt });
+    return { result, cards, context };
+  };
   // Shows one clarify card and answers it the way the user did.
   const ask = async (clarifyArgs, answer, source = 'option') => {
     const shown = [];
@@ -117,7 +135,7 @@ async function setup(page, kind) {
   };
   const state = () => page.evaluate(() => ({ inputs: window.inputEvents, changes: window.changeEvents,
     count: document.querySelector('#file')?.files?.length || 0 }));
-  return { agent, args, bind, ask, state };
+  return { agent, args, bind, ask, confirm, state };
 }
 
 const traceQuestions = [
@@ -142,10 +160,11 @@ for (const kind of ['chrome', 'firefox']) {
       const first = await f.bind();
       assert.equal(first.block?.reasonCode, 'active_recipient_unverified', JSON.stringify(first.block));
       assert.equal(first.block.retryable, false);
+      assert.deepEqual(first.block.recipientConfirmation, { recipients: [{ identity: RECIPIENT, role: 'to' }],
+        requested: ['gamze'], host: 'www.instagram.com', offerAll: false });
       assert.match(first.block.error, new RegExp(`"${RECIPIENT}"`));
       assert.match(first.block.error, /named for this task \("gamze"\)/);
-      assert.match(first.block.error, /clarify\(/);
-      assert.doesNotMatch(first.block.error, /emails|treat it as authorized/);
+      assert.doesNotMatch(first.block.error, /clarify\(|emails|treat it as authorized/);
       const { result, shown } = await f.ask(question, RECIPIENT);
       assert.equal(shown.length, 1);
       assert.deepEqual(result.recipientBinding, { required: true, bound: true }, JSON.stringify(result));
@@ -163,19 +182,19 @@ for (const kind of ['chrome', 'firefox']) {
 
   for (const [label, question, answer, source, reason] of [
     ['a question that hides the recipient', { options: [RECIPIENT, 'Cancel'], question: 'Who should I send the photo to?' },
-      RECIPIENT, 'option', /did not ask the user to approve sending to the recipient[\s\S]*Gamze Çömlekçi/],
+      RECIPIENT, 'option', /did not pick the recipient's exact name[\s\S]*its own confirmation \("Gamze Çömlekçi"\)/],
     ['a question about something else', { options: [RECIPIENT, 'No'], question: `Is ${RECIPIENT} your colleague?` },
-      RECIPIENT, 'option', /did not ask the user to approve sending to the recipient/],
+      RECIPIENT, 'option', /approved nothing by itself[\s\S]*Do not ask about the recipient again/],
     ['a reply that does not pick the name', { options: [RECIPIENT, 'Cancel'], question: `Send it to ${RECIPIENT} instead?` },
-      "you're on the right user", 'text', /did not choose the recipient[\s\S]*ask once more with the exact name[\s\S]*Gamze Çömlekçi/],
+      "you're on the right user", 'text', /did not pick the recipient's exact name[\s\S]*continue with the send: WebBrain shows the user its own confirmation \("Gamze Çömlekçi"\)/],
     ['a refusal that names the recipient', { options: [RECIPIENT, 'Cancel'], question: `Send it to ${RECIPIENT} instead?` },
-      `No, not ${RECIPIENT}`, 'text', /declining or correcting/],
+      `No, not ${RECIPIENT}`, 'text', /declines or corrects[\s\S]*Do not send there/],
     ['a Turkish refusal that names the recipient', { options: [RECIPIENT, 'İptal'], question: `${RECIPIENT}'ye göndereyim mi?` },
-      `Hayır, ${RECIPIENT} değil`, 'text', /declining or correcting/],
+      `Hayır, ${RECIPIENT} değil`, 'text', /declines or corrects/],
     ['a cancellation that says "all"', { options: [RECIPIENT, 'Send all remaining messages in this task without asking again', 'Cancel'],
-      question: `Send it to ${RECIPIENT} instead?` }, 'Cancel all', 'text', /declining or correcting/],
+      question: `Send it to ${RECIPIENT} instead?` }, 'Cancel all', 'text', /declines or corrects/],
     ['an answer naming someone the page does not show', { options: [RECIPIENT, 'Cancel'], question: `Send it to ${RECIPIENT} instead?` },
-      'Gamze Yılmaz', 'text', /did not choose the recipient/],
+      'Gamze Yılmaz', 'text', /did not pick the recipient's exact name/],
     ['a timed-out question', { options: [RECIPIENT, 'Cancel'], question: `Send it to ${RECIPIENT} instead?` },
       RECIPIENT, 'timeout', /AUTO-SELECTED|auto-selected/],
   ]) {
@@ -257,6 +276,100 @@ for (const kind of ['chrome', 'firefox']) {
       assert.equal(refused.result.recipientBinding.bound, false, answer);
       assert.equal(f.agent._planExecutionGuards.get(71).messageRecipientApprovedAll, undefined, answer);
     }
+  });
+
+  test('WebBrain asks once with its own card, and Send attaches the photo', async page => {
+    const f = await setup(page, kind);
+    const { block } = await f.bind();
+    const { result, cards, context } = await f.confirm(block, 'once');
+    assert.equal(result, null, JSON.stringify(result));
+    assert.equal(cards.length, 1);
+    assert.equal(cards[0].promptKind, 'recipientConfirmation');
+    assert.equal(cards[0].question, `Send to ${RECIPIENT}?`);
+    assert.deepEqual(cards[0].options, ['once', 'deny']);
+    assert.deepEqual(cards[0].recipientConfirmation.requested, ['gamze']);
+    assert.ok(context.messageRecipientDispatchBinding?.token);
+    const upload = await f.agent.executeTool(71, 'upload_file', f.args, null, context);
+    assert.equal(upload.success, true, JSON.stringify(upload));
+    assert.deepEqual(await f.state(), { inputs: 1, changes: 1, count: 1 });
+    // The same person is not asked about again in this task.
+    const again = await f.bind();
+    assert.equal(again.block, null, JSON.stringify(again.block));
+  });
+
+  test('Don\'t send blocks the send and is not asked again for the same person', async page => {
+    const f = await setup(page, kind);
+    const { block } = await f.bind();
+    const { result, cards, context } = await f.confirm(block, 'deny');
+    assert.equal(cards.length, 1);
+    assert.equal(result.reasonCode, 'recipient_declined', JSON.stringify(result));
+    assert.equal(result.noDispatch, true);
+    assert.match(result.error, /chose not to send to "Gamze Çömlekçi"[\s\S]*Do not retry/);
+    const upload = await f.agent.executeTool(71, 'upload_file', f.args, null, context);
+    assert.equal(upload.success, false);
+    const retry = await f.bind();
+    assert.equal(retry.block?.reasonCode, 'recipient_declined', JSON.stringify(retry.block));
+    assert.equal(retry.block.recipientConfirmation, undefined);
+    assert.deepEqual(await f.state(), { inputs: 0, changes: 0, count: 0 });
+  });
+
+  test('Stop while the card is open sends nothing', async page => {
+    const f = await setup(page, kind);
+    const { block } = await f.bind();
+    const { result } = await f.confirm(block, null);
+    assert.equal(result.cancelled, true, JSON.stringify(result));
+    assert.equal(result.recipientConfirmationCancelled, true);
+    assert.equal((await f.bind()).block?.reasonCode, 'active_recipient_unverified');
+    assert.deepEqual(await f.state(), { inputs: 0, changes: 0, count: 0 });
+  });
+
+  test('a conversation that changes while the card is open is not sent to', async page => {
+    const f = await setup(page, kind);
+    const { block } = await f.bind();
+    const { result, context } = await f.confirm(block, 'once', { beforeAnswer: () => page.evaluate(() => {
+      document.querySelector('#recipient').textContent = 'Gamze Yılmaz';
+    }) });
+    assert.equal(result.reasonCode, 'recipient_changed_during_confirmation', JSON.stringify(result));
+    assert.match(result.error, /changed to "Gamze Yılmaz"/);
+    assert.equal(context.messageRecipientDispatchBinding, undefined);
+    assert.deepEqual(await f.state(), { inputs: 0, changes: 0, count: 0 });
+  });
+
+  test('an unattended run is not asked and sends nothing', async page => {
+    const f = await setup(page, kind);
+    const { block } = await f.bind();
+    const { result, cards } = await f.confirm(block, 'once', { allowPrompt: false });
+    assert.equal(cards.length, 0);
+    assert.equal(result, block);
+    assert.match(result.error, /user has not confirmed it, so nothing was sent/);
+  });
+
+  test('a task with several recipients can approve the remaining sends at once', async page => {
+    const f = await setup(page, kind);
+    f.agent._planExecutionGuards.get(71).messaging = { target_kind: 'named',
+      recipients: [{ identity: 'gamze', role: 'to' }, { identity: 'ali', role: 'to' }] };
+    const { block } = await f.bind();
+    assert.equal(block.recipientConfirmation.offerAll, true);
+    const { result, cards } = await f.confirm(block, 'always');
+    assert.deepEqual(cards[0].options, ['once', 'always', 'deny']);
+    assert.equal(result, null, JSON.stringify(result));
+    assert.equal(f.agent._planExecutionGuards.get(71).messageRecipientApprovedAll, true);
+  });
+
+  test('"always" is ignored where it was not offered', async page => {
+    const f = await setup(page, kind);
+    const { block } = await f.bind();
+    const { result } = await f.confirm(block, 'always');
+    assert.equal(result.reasonCode, 'recipient_declined', JSON.stringify(result));
+    assert.equal(f.agent._planExecutionGuards.get(71).messageRecipientApprovedAll, undefined);
+  });
+
+  test('a plan that does not send messages never offers the card', async page => {
+    const f = await setup(page, kind);
+    f.agent._planExecutionGuards.get(71).requiresSubmission = false;
+    const { block } = await f.bind();
+    assert.equal(block?.noDispatch, true, JSON.stringify(block));
+    assert.equal(block.recipientConfirmation, undefined);
   });
 
   // The model clicked the composer's icon buttons while the send was blocked.

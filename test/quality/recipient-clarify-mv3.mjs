@@ -7,28 +7,32 @@ import { chromium } from 'playwright';
 import { conformFixtureCompletionCall } from './completion-provider-contract.mjs';
 
 // The reported trace through the installed MV3 extension: the user asks to
-// send a photo to "gamze", the open direct thread is "Gamze Çömlekçi", the
-// recipient guard blocks the attachment and asks once, the user picks that
-// exact name, and the attachment is sent once. A second variant answers with
-// a refusal that names the recipient, which must send nothing. The thread,
-// photo and model are owned local fixtures; nothing leaves the host.
+// send a photo to "gamze", and the open direct thread is "Gamze Çömlekçi".
+// WebBrain asks once on its own card and the photo is sent once when the user
+// picks Send; Don't send sends nothing. A model question that shows the exact
+// name and gets it picked also counts (one question in total), and a typed
+// refusal never does. The thread, photo and model are owned local fixtures;
+// nothing leaves the host.
 const threadUrl = 'https://www.instagram.com/direct/t/17848282661759097/';
 const recipient = 'Gamze Çömlekçi';
 const question = `Send the photo to ${recipient} on Instagram?`;
 const selector = 'input[type="file"][accept="audio/*,.mp4,.mov,.png,.jpg,.jpeg"][multiple]';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS3kAAAAASUVORK5CYII=', 'base64');
 
-// Default settings advertise clarify without `purpose`; the trace's settings
-// (research escalation on) advertise it, and that model declared it.
-for (const [variant, answer, source, declared] of [['approved', recipient, 'option', false],
-  ['approved-declared-purpose', recipient, 'option', true], ['refused', `No, not ${recipient}`, 'user', false]]) {
-  await runVariant(variant, answer, source, declared);
-}
+// [variant, model steps, model-question answer, its source, card answer, sends expected]
+const variants = [
+  ['card-send', ['download', 'list', 'upload', 'tree', 'done'], null, null, 'once', 1],
+  ['card-dont-send', ['download', 'list', 'upload', 'done'], null, null, 'deny', 0],
+  ['model-asks-first', ['download', 'list', 'clarify', 'upload', 'tree', 'done'], recipient, 'option', null, 1],
+  ['typed-refusal', ['download', 'list', 'clarify', 'upload', 'done'], `No, not ${recipient}`, 'user', 'deny', 0],
+];
+for (const variant of variants) await runVariant(...variant);
 
-async function runVariant(variant, answer, source, declared) {
-  const approved = variant.startsWith('approved');
+async function runVariant(variant, steps, answer, source, cardAnswer, expectedSends) {
+  const approved = expectedSends > 0;
   const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS
-    || `ci/artifacts/quality-audit-2026-10-07/recipient-clarify-mv3/${variant}`);
+    ? path.join(process.env.WEBBRAIN_QUALITY_ARTIFACTS, variant)
+    : `ci/artifacts/quality-audit-2026-10-07/recipient-clarify-mv3/${variant}`);
   await fs.mkdir(out, { recursive: true });
   const intent = { request_kind: 'execute', scope_relation: 'new', requires_state_change: true, requires_submission: true,
     messaging: { target_kind: 'named', recipients: [{ identity: 'gamze', role: 'to' }] },
@@ -36,7 +40,7 @@ async function runVariant(variant, answer, source, declared) {
     allows_planner_shaped_result: false, allows_app_state_tool_evidence: false, read_scope: 'visible_page',
     summary: 'Attach the downloaded photo in the Gamze conversation.', steps: [{ id: '1', action: 'Attach the photo and verify it was sent.' }],
     memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] };
-  const sends = [], providerRequests = [], clarifications = [];
+  const sends = [], providerRequests = [], clarifications = [], cards = [];
   let actionCalls = 0, judgeCalls = 0, blockedRemote = 0, base = '';
   const completionRecovery = { reads: 0 };
   const textOf = content => typeof content === 'string' ? content : Array.isArray(content)
@@ -53,9 +57,6 @@ async function runVariant(variant, answer, source, declared) {
     }
     return undefined;
   };
-  const steps = approved
-    ? ['download', 'list', 'upload', 'clarify', 'upload', 'tree', 'done']
-    : ['download', 'list', 'upload', 'clarify', 'upload', 'done'];
   const server = http.createServer(async (request, response) => {
     if (request.url === '/photo.png') {
       response.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': png.length,
@@ -79,8 +80,7 @@ async function runVariant(variant, answer, source, declared) {
       const call = kind === 'download' ? { name: 'download_files', args: { urls: [`${base}/photo.png`] } }
         : kind === 'list' ? { name: 'list_downloads', args: { limit: 5 } }
         : kind === 'upload' ? { name: 'upload_file', args: { selector, downloadId: downloadIdIn(input) } }
-          : kind === 'clarify' ? { name: 'clarify', args: { options: [recipient, 'Cancel'], question,
-            ...(declared ? { purpose: 'message_recipient' } : {}) } }
+          : kind === 'clarify' ? { name: 'clarify', args: { options: [recipient, 'Cancel'], question } }
             : kind === 'tree' ? { name: 'get_accessibility_tree', args: { filter: 'all' } }
               : { name: 'done', args: approved
                 ? { outcome: 'success', summary: `Sent the photo to ${recipient}.` }
@@ -160,7 +160,6 @@ async function runVariant(variant, answer, source, declared) {
       autoScreenshot: false, screenshotFallback: false, planBeforeActMode: 'off', planBeforeAct: false,
       planReviewMode: 'never', maxAgentSteps: 14, systemOneEnabled: false, agentAllowLocalNetwork: true,
       askBeforeConsequentialActions: false, openaiAskStreamingEnabled: false }));
-    if (declared) await harness.evaluate(() => chrome.storage.local.set({ researchEscalationEnabled: true }));
     assert.equal((await message('update_provider', { providerId: 'openrouter', config: { apiKey: 'owned-fixture-fake-key',
       baseUrl: `${base}/v1`, model: 'minimax/minimax-m3', enabled: true,
       contextWindow: 1000000, supportsAskStreaming: false } })).ok, true);
@@ -168,14 +167,21 @@ async function runVariant(variant, answer, source, declared) {
     await worker.evaluate(() => { recipientFixtureAgent.clarifyTimeoutSec = -1; });
     const page = await context.newPage(); await page.goto(threadUrl);
     const tabId = await harness.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, threadUrl);
-    // Answer each clarification card the way the user did in the trace.
+    // Answer the model's question the way the user did, and WebBrain's card
+    // with the variant's choice.
     let answering = true;
+    const answered = new Set();
     const answerer = (async () => {
       while (answering) {
         const pending = await worker.evaluate(tabId => [...(recipientFixtureAgent._pendingClarifications.get(tabId)?.keys() || [])], tabId);
         for (const clarifyId of pending) {
-          clarifications.push(clarifyId);
-          assert.equal((await message('clarify_response', { tabId, clarifyId, answer, source })).ok, true);
+          if (answered.has(clarifyId)) continue;
+          answered.add(clarifyId);
+          const card = clarifyId.startsWith('recipient_');
+          (card ? cards : clarifications).push(clarifyId);
+          const reply = card ? { answer: cardAnswer, source: 'option' } : { answer, source };
+          assert.ok(reply.answer, `Unexpected ${card ? 'card' : 'question'} in ${variant}`);
+          assert.equal((await message('clarify_response', { tabId, clarifyId, ...reply })).ok, true);
         }
         await new Promise(resolve => setTimeout(resolve, 100));
       }
@@ -187,28 +193,39 @@ async function runVariant(variant, answer, source, declared) {
       success: event.data?.result?.success, reasonCode: event.data?.result?.reasonCode || null,
       recipientBinding: event.data?.result?.recipientBinding || null, note: event.data?.result?.note || null,
       error: event.data?.result?.error || null }));
-    const questions = result.updates.filter(event => event.type === 'clarify').map(event => event.data?.question);
-    await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify({ toolResults, questions, clarifications, sends,
+    const prompts = result.updates.filter(event => event.type === 'clarify').map(event => ({ kind: event.data?.promptKind,
+      question: event.data?.question, recipientConfirmation: event.data?.recipientConfirmation || null }));
+    await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify({ toolResults, prompts, clarifications, cards, sends,
       judgeCalls, blockedRemote }, null, 2));
     const uploads = toolResults.filter(item => item.name === 'upload_file');
-    assert.equal(uploads[0]?.reasonCode, 'active_recipient_unverified', JSON.stringify(toolResults));
-    assert.equal(clarifications.length, 1, `Exactly one question: ${JSON.stringify(toolResults)}`);
-    const clarify = toolResults.find(item => item.name === 'clarify');
-    if (approved) {
-      assert.deepEqual(clarify?.recipientBinding, { required: true, bound: true }, JSON.stringify(clarify));
-      assert.equal(uploads[1]?.success, true, JSON.stringify(uploads[1]));
-      assert.deepEqual(sends, [{ method: 'POST', path: '/api/v1/direct_v2/threads/17848282661759097/items/configure_photo/', containsPhoto: true }]);
-      assert.equal(await page.locator('[data-message-direction="outgoing"]').count(), 1);
-    } else {
-      assert.equal(clarify?.recipientBinding?.bound, false, JSON.stringify(clarify));
-      assert.match(clarify?.note || '', /declining or correcting/);
-      assert.equal(uploads[1]?.reasonCode, 'active_recipient_unverified', JSON.stringify(uploads[1]));
-      assert.deepEqual(sends, []);
-      assert.equal(await page.locator('[data-message-direction="outgoing"]').count(), 0);
+    assert.equal(sends.length, expectedSends, `Sends: ${JSON.stringify(toolResults)}`);
+    assert.equal(await page.locator('[data-message-direction="outgoing"]').count(), expectedSends);
+    assert.equal(clarifications.length + cards.length, steps.includes('clarify') && cardAnswer ? 2 : 1,
+      `One question, except after a refusal: ${JSON.stringify(prompts)}`);
+    if (cards.length) {
+      const card = prompts.find(item => item.kind === 'recipientConfirmation');
+      assert.deepEqual(card.recipientConfirmation, { recipients: [{ identity: recipient, role: 'to' }],
+        requested: ['gamze'], host: 'www.instagram.com', offerAll: false });
+      assert.equal(card.question, `Send to ${recipient}?`);
     }
-    assert.match(uploads[0].error, /"Gamze Çömlekçi", which is not exactly the recipient named for this task \("gamze"\)/);
+    if (approved) {
+      assert.equal(uploads.length, 1, JSON.stringify(uploads));
+      assert.equal(uploads[0].success, true, JSON.stringify(uploads[0]));
+      assert.deepEqual(sends, [{ method: 'POST', path: '/api/v1/direct_v2/threads/17848282661759097/items/configure_photo/', containsPhoto: true }]);
+      if (clarifications.length) {
+        const clarify = toolResults.find(item => item.name === 'clarify');
+        assert.deepEqual(clarify?.recipientBinding, { required: true, bound: true }, JSON.stringify(clarify));
+      }
+    } else {
+      assert.equal(uploads.at(-1)?.reasonCode, 'recipient_declined', JSON.stringify(uploads));
+      if (clarifications.length) {
+        const clarify = toolResults.find(item => item.name === 'clarify');
+        assert.equal(clarify?.recipientBinding?.bound, false, JSON.stringify(clarify));
+      }
+    }
     console.log(JSON.stringify({ passed: true, installedMV3: true, variant, questions: clarifications.length,
-      sends: sends.length, uploads: uploads.map(item => item.success === true ? 'sent' : item.reasonCode), judgeCalls, blockedRemote }));
+      cards: cards.length, sends: sends.length, uploads: uploads.map(item => item.success === true ? 'sent' : item.reasonCode),
+      judgeCalls, blockedRemote }));
   } finally {
     await context?.close(); await new Promise(resolve => server.close(resolve));
     const resolved = path.resolve(profile);

@@ -296,18 +296,28 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   another approval question cannot repair missing evidence. Recipient
   clarifications report `recipientBinding` separately from general user
   authorization and suppress repeated questions for known technical blockers.
-- A recipient clarification approves the recipients the page addresses when
-  its question names each of them and asks about sending to them (or declares
-  a recipient purpose), and the user's answer picks those exact names; the
-  wording "instead" is not required. A question asked before any send was
-  blocked binds to a fresh read-only observation of the open conversation, and
-  the send itself is still checked against the page. A question that hides the
-  recipient, a reply that does not name it, and a refusal or redirect ("No, not
-  …", "Cancel all") approve nothing, and the clarify result tells the model why.
-  Only an affirmative grant ("Send all remaining messages…", "send all")
-  approves every remaining send. Icon-only attachment and picker launchers
-  beside a chat composer, named by their icon's label or title, are composer
-  utilities; Like, Send, mixed and unnamed icons stay guarded.
+- When a send would reach recipients other than the ones the task named, and
+  approval is the only thing missing (the plan authorizes sending, the body,
+  baseline and dispatch binding are present), WebBrain asks the user on its
+  own card: "Send to <recipients>?" with fixed choices (Send; on tasks with
+  several recipients also "Send, and don't ask again in this task"; Don't
+  send) and no free text. The card shows the recipients from the page probe
+  and the names the request used. Send approves those recipients for the rest
+  of the task and the guard runs again on a fresh observation before dispatch;
+  a conversation that changed meanwhile is not sent to. Don't send blocks
+  that send for the rest of the task without asking again. Stop cancels the
+  card. Unattended scheduled runs are not asked and send nothing. The model
+  is never told to obtain consent itself.
+- A model clarification still counts when its question names every observed
+  recipient and asks about sending to them (or declares a recipient purpose)
+  and the user's answer picks those exact names; a recipient question asked
+  before any send binds to a fresh read-only observation. Refusals and
+  redirects ("No, not …", "Cancel all") never approve, only an affirmative
+  grant ("Send all remaining messages…") approves every remaining send, and a
+  reply that names no recipient approves nothing; the model is told that
+  WebBrain will confirm the recipient itself. Icon-only attachment and picker
+  launchers beside a chat composer, named by their icon's label or title, are
+  composer utilities; Like, Send, mixed and unnamed icons stay guarded.
 - A cancelled `beforeinput` handled by a native chat editor can receive an
   exact read-only draft certificate while its original operation, document,
   identity nodes, editor, focus and selection remain current. The certificate
