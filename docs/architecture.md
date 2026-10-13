@@ -112,16 +112,35 @@ menu item borrows the record of its expanded aria-controls or popover launcher.
 A confirmation dialog borrows the record of the agent's own authorized click
 only when it opened after that click was checked, within 30 seconds, and holds
 that one deletion control. The latest request must ask for a deletion (not a
-text edit) and name the record by a whole word that appears in its text and in
-no sibling record. The authorization check receives the record and the dialog
-text as untrusted data, and its quoted evidence must contain such a word. The
-same record is never deleted twice at the same step in a task, even after a
-reload, and a changed record changes the checked action. Toolbar, bulk and
-selection deletions, menus without a linked launcher, records with permalink
-evidence, and confirmation dialogs that cannot be linked get no record and stay
-blocked. Matching is by whole words, so inflected forms and requests in
-languages without word spacing usually need the item's name as shown.
-Completion after such a deletion uses the ordinary post-submit checks.
+text edit; an unspaced Chinese, Japanese or Korean verb counts unless it is
+negated or descriptive) and name the record more specifically than any sibling
+record of the same kind. The agent gives the probe only the request's terms,
+never page text, and the probe ranks each term in the record and in its
+siblings: a whole word, or a whole Han, kana or Hangul token, ranks highest;
+then a shared stem of at least four letters left by one listed suffix of the
+request's own language (Turkish case, possessive and plural endings with their
+buffer letters and vowel harmony, English -s/-es/-ies, common German plural
+and case endings, and Spanish and French plural endings); then the longest
+shared CJK substring of two to eight characters. Text is compared in NFC with
+full-width forms folded,
+under both ordinary and Turkish case folding (I and ı, İ and i). A term names
+the record only when no sibling matches it as well, so "wool sock" names a
+"Wool Sock" row next to "Wool Socks", while a stem or CJK name that two rows
+share names neither, and a merely longer word never matches ("elma" is not
+"elmas", "cat" is not "catalog"). The agent recomputes the record's ranks from
+its text. The authorization check receives the record and the dialog text as
+untrusted data, and its quoted evidence must contain the request's naming word
+(for example "tişörtü") or the matched CJK characters. The same record is never
+deleted twice at the same step in a task, even after a reload, and a changed
+record or ranking changes the checked action. Toolbar, bulk and selection
+deletions, menus without a linked launcher, records with permalink evidence,
+and confirmation dialogs that cannot be linked get no record and stay blocked.
+Consonant softening ("kitabı" for "kitap"), irregular or umlaut plurals, and
+other languages' inflection (Russian, for example) are not matched, and German,
+Spanish, French and Russian deletion verbs are recognized in their listed forms
+only (such as "löschen", "eliminar", "supprimer"); such requests need the
+item's name as shown. Completion after such a deletion uses the ordinary
+post-submit checks.
 
 When a runtime check ends a run, the chat shows a plain-language answer: what
 happened and what to check next. The exact diagnostic stays in verbose tool
