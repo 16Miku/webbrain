@@ -101,6 +101,28 @@ result and authorization under the latest request, and a different target
 words or hashtags from a post is an edit; only removing the post or record
 makes deleting the original a prerequisite.
 
+A deletion of a record that has a permalink must name that URL in the latest
+request. A requested deletion of a record without one (a cart item, a mail or
+table row) is bound to the record instead. The page probe takes the nearest
+row, list item or article holding no other visible deletion control, or else a
+bounded container that stops at lists, landmarks, editors, headings, other
+records, other deletion controls (including hover-only ones) and 2,000
+characters, and keeps its visible text without the control's own caption. A
+menu item borrows the record of its expanded aria-controls or popover launcher.
+A confirmation dialog borrows the record of the agent's own authorized click
+only when it opened after that click was checked, within 30 seconds, and holds
+that one deletion control. The latest request must ask for a deletion (not a
+text edit) and name the record by a whole word that appears in its text and in
+no sibling record. The authorization check receives the record and the dialog
+text as untrusted data, and its quoted evidence must contain such a word. The
+same record is never deleted twice at the same step in a task, even after a
+reload, and a changed record changes the checked action. Toolbar, bulk and
+selection deletions, menus without a linked launcher, records with permalink
+evidence, and confirmation dialogs that cannot be linked get no record and stay
+blocked. Matching is by whole words, so inflected forms and requests in
+languages without word spacing usually need the item's name as shown.
+Completion after such a deletion uses the ordinary post-submit checks.
+
 When a runtime check ends a run, the chat shows a plain-language answer: what
 happened and what to check next. The exact diagnostic stays in verbose tool
 rows, later model turns and traces.
