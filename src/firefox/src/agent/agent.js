@@ -6796,7 +6796,10 @@ export class Agent extends LoopDetector {
       // A new contract describes the accepted revision. Old outcomes remain in
       // the receipt archive; they must neither authorize a duplicate nor veto a
       // separately authorized replacement by reusing an old action ID.
-      if (attemptedPublication) guard.steeringPriorPublication = structuredClone(attemptedPublication);
+      // Keep the latest attempted contract's outcomes for reconciliation and
+      // honest duplicate reports when a later revision attempts nothing new.
+      const priorPublication = attemptedPublication || previous?.steeringPriorPublication || null;
+      if (priorPublication) guard.steeringPriorPublication = structuredClone(priorPublication);
       this._setResponseLanguagePolicy(tabId, gate.responseLanguagePolicy, runOptions.locale || 'en', {
         approvedPlanLanguageOverride: gate.responseLanguageApprovedPlanOverride === true,
       });
@@ -6846,17 +6849,136 @@ export class Agent extends LoopDetector {
         || detectedSubmit?.resolvedPreparatoryTarget === true);
     if (!isNetworkMutation(name, args) && name !== 'chrome_web_store_publish'
         && !(detectedSubmit?.isSubmit || (!resolvedNonSubmit && this._isFormValidationCandidate(name, args)))) return null;
+    // Searches, dialog Cancel buttons and ordinary in-form toggles commit
+    // nothing, so they cannot repeat or build on the earlier submission.
+    if (!isNetworkMutation(name, args) && this._nonCommittingSubmission(detectedSubmit)) return null;
     if (guard.resourceMutationAuthorization?.key === this._resourceMutationActionKey(tabId, name, args, detectedSubmit)
         && guard.resourceMutationAuthorization.taskKey === guard.taskKey
         && guard.taskKey === this._progressTaskKeyHash(tabId) && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
         && guard.steeringPriorSubmissionReconciliation?.verified === true) return null;
+    // An unidentified target says nothing about the earlier effect; report
+    // what is actually missing instead of an unreconciled submission.
+    const unresolvedTarget = detectedSubmit?.isSubmit !== true && !isNetworkMutation(name, args) && name !== 'chrome_web_store_publish';
     return {
       success: false, blocked: true, noDispatch: true, dispatched: false,
       steeringPriorSubmission: true,
-      actionGuard: { stage: 'steering', reason: guard.steeringPriorSubmissionReconciliation?.verified === true ? 'authorization_required' : 'prior_effect_unreconciled',
+      actionGuard: { stage: 'steering', reason: unresolvedTarget ? 'target_unresolved'
+        : guard.steeringPriorSubmissionReconciliation?.verified === true ? 'authorization_required' : 'prior_effect_unreconciled',
         classification: detectedSubmit?.mutationKind === 'delete' ? 'delete' : detectedSubmit?.publicationControl === true ? 'publish' : 'unresolved' },
-      error: 'A submission was already attempted before the user revised this task. Inspect its exact result before another consequential action. A separately authorized deletion or replacement needs a current resource proof; never repeat an uncertain or already dispatched submission.',
+      error: unresolvedTarget
+        ? 'This action was not performed: its target could not be identified as a link, field, menu item or ordinary button. A submission was already made before the latest correction, and an unidentified control could repeat it. Read the page and target the specific control by its ref.'
+        : 'A submission was already attempted before the user revised this task. Inspect its exact result before another consequential action. A separately authorized deletion or replacement needs a current resource proof; never repeat an uncertain or already dispatched submission.',
     };
+  }
+
+  // A detected submission that cannot change server state by itself: a
+  // same-site GET search (the grouped-search permission uses the same
+  // classification), or an in-form/dialog control the probe proved ordinary.
+  _nonCommittingSubmission(detected) {
+    if (detected?.isSubmit !== true || detected.mutationKind === 'delete' || detected.publicationControl === true
+        || detected.semanticCommit === true) return false;
+    if (detected.nonCommittingControl === true) return true;
+    try {
+      return classifySubmitRisk(detected, detected.url || detected.host || '').risk === SubmitRisk.LOW_RISK_SEARCH;
+    } catch {
+      return false;
+    }
+  }
+
+  _steeringPriorPublicationOutcome(guard, receipt) {
+    const archive = guard?.steeringPriorPublication;
+    const attempt = receipt?.workflowBinding?.socialPublication;
+    return archive && attempt?.contractKey && archive.key === attempt.contractKey
+      ? String(archive.outcomes?.[attempt.actionId]?.status || '') : '';
+  }
+
+  // The live completion state keeps observing the same receipt after the
+  // correction; the archived copy holds what was seen before it.
+  _steeringPriorEffectObserved(tabId, prior) {
+    const live = this._completionSubmitStates.get(tabId);
+    const receipt = live && live.actionSequence === prior?.actionSequence
+      && (live.originatingDocument || null) === (prior?.originatingDocument || null) ? live : prior;
+    return receipt?.dispatched === true && receipt.observedAfterSubmit === true && receipt.formValidationFailed !== true;
+  }
+
+  // Outcome knowledge that does not depend on the current page: a cached
+  // reconciliation of this exact receipt, a job-verified publication outcome,
+  // or an explicit page observation after the dispatch.
+  _steeringPriorEffectKnown(tabId, guard, prior) {
+    const cached = guard?.steeringPriorSubmissionReconciliation;
+    return (cached?.verified === true && cached.actionSequence === prior?.actionSequence)
+      || this._steeringPriorPublicationOutcome(guard, prior) === 'verified'
+      || this._steeringPriorEffectObserved(tabId, prior);
+  }
+
+  _steeringPriorResourceMatches(tabId, guard, prior, fresh) {
+    const priorContext = guard.steeringPriorContext;
+    const binding = prior.workflowBinding;
+    const workflow = prior.mutationWorkflow || priorContext?.siteWorkflow;
+    const snapshot = prior.publicationSnapshot || binding?.socialPublication?.snapshot;
+    const expected = snapshot?.posts?.[0];
+    const baseline = binding?.preDispatchPublishedResourceIdentities;
+    return (fresh?.reconciliationResources || []).filter(resource => {
+      if (!resource.complete || !resource.url) return false;
+      if (!snapshot) {
+        const values = this._publicMutationFields(prior.submittedFields).map(field => field.value).filter(value => typeof value === 'string'
+          && value.length > 0 && !/^\[.*redacted.*\]$/i.test(value));
+        const observed = this._completionSubmitStates.get(tabId);
+        return values.length > 0 && Array.isArray(prior.resourceBaseline) && !prior.resourceBaseline.includes(resource.url)
+          && observed?.actionSequence === prior.actionSequence && observed?.observedAfterSubmit === true
+          && this._normalizeUrl(observed.currentUrl) === this._normalizeUrl(resource.url)
+          && values.every(value => resource.textValues.includes(value));
+      }
+      // This proves that the dispatched resource exists, not that its media
+      // satisfied the original task. Publication audits/completion own that.
+      if (!workflow || !snapshot?.complete || snapshot.posts?.length !== 1
+          || !expected?.complete || typeof expected.bodyText !== 'string' || !expected.bodyText.trim()
+          || !Array.isArray(baseline)) return false;
+      const identity = this._workflowPublishedResourceIdentity(workflow, resource.url);
+      if (!identity || baseline.includes(identity) || (binding.publishedResourceIdentity && binding.publishedResourceIdentity !== identity)) return false;
+      const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot.account);
+      const author = this._workflowSocialPublicationAccountIdentity(workflow, resource.url);
+      return !!account && account === author && resource.textValues.includes(expected.bodyText);
+    });
+  }
+
+  // "Remove the > characters" or "> işaretlerini kaldır" edits the post text;
+  // only a removal aimed at the post/record itself, or at an unstated object,
+  // makes deleting the original a prerequisite. The removal verb's nearest
+  // object in its clause decides: text parts and quoted or symbol literals
+  // are content edits; resource nouns and pronouns are deletions.
+  _correctionRequestsResourceDeletion(text) {
+    const verbs = 'delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제';
+    if (!new RegExp(`(?:^|[^\\p{L}])(?:${verbs})(?:[^\\p{L}]|$)`, 'iu').test(String(text || ''))) return false;
+    const textPart = /^(?:chars?|characters?|signs?|symbols?|marks?|markers?|hashtags?|tags?|emojis?|emoticons?|words?|letters?|lines?|linebreaks?|spaces?|whitespace|punctuation|quotes?|quotations?|brackets?|arrows?|prefix(?:es)?|typos?|mentions?|links?|urls?|sentences?|paragraphs?|text|formatting|bullets?|dashes?|asterisks?|commas?|periods?|dots?|newlines?|işaret\p{L}*|karakter\p{L}*|sembol\p{L}*|etiket\p{L}*|hashtag\p{L}*|kelime\p{L}*|sözcü\p{L}*|harf\p{L}*|satır\p{L}*|boşluk\p{L}*|emoji\p{L}*|bağlantı\p{L}*|link\p{L}*|cümle\p{L}*|paragraf\p{L}*|noktalama\p{L}*|tırnak\p{L}*|caractères?|signes?|symboles?|mots?|lettres?|lignes?|espaces?|liens?|caracteres|carácter|signos?|símbolos?|palabras?|letras?|líneas?|espacios?|enlaces?|zeichen|wörter|wort|buchstaben?|zeilen?|leerzeichen|символ\p{L}*|знак\p{L}*|хэштег\p{L}*|хештег\p{L}*|слов\p{L}*|строк\p{L}*|ссылк\p{L}*)$/iu;
+    const resource = /^(?:posts?|tweets?|status(?:es)?|threads?|toots?|skeets?|records?|entry|entries|items?|messages?|comments?|replies|publications?|duplicates?|it|them|gönderi\p{L}*|tweet\p{L}*|paylaşım\p{L}*|ileti\p{L}*|mesaj\p{L}*|kayıt\p{L}*|kayd\p{L}*|yorum\p{L}*|yanıt\p{L}*|onu|bunu|şunu|message|publicación|publicacion|mensaje|beitrag\p{L}*|nachricht\p{L}*|пост\p{L}*|твит\p{L}*|сообщени\p{L}*|запис\p{L}*|его)$/iu;
+    const negation = /^(?:not|don't|dont|never|no|without|nicht|kein\p{L}*|ne|не)$/iu;
+    const clauses = String(text || '').normalize('NFC').replace(/[’`]/g, "'")
+      .split(/[.;!?\n,]+|(?:^|\s)(?:and|then|but|also|ve|sonra|ama|ayrıca|et|puis|mais|y|luego|pero|und|dann|aber|и|затем|но)(?=\s|$)/iu);
+    return clauses.some(clause => {
+      if (/(?:删除|刪除|削除|삭제)/u.test(clause)) {
+        // Without word spacing, the object's head noun is the last noun of
+        // the clause in both verb-first and verb-final orders.
+        const nouns = [...clause.matchAll(/(符号|符號|字符|字元|标签|標籤|话题|話題|标记|標記|文字|記号|ハッシュタグ|기호|문자|해시태그|단어|이모지|表情|链接|連結|リンク|링크|[「『"'«>#@])|(帖子|推文|贴文|貼文|动态|動態|投稿|ポスト|ツイート|게시물|게시글|트윗|记录|記錄|消息|訊息)/gu)];
+        return !nouns.length || !nouns.at(-1)[1];
+      }
+      const tokens = clause.split(/\s+/).filter(Boolean);
+      return tokens.some((token, index) => {
+        if (!new RegExp(`(?:^|[^\\p{L}])(?:${verbs})(?:[^\\p{L}]|$)`, 'iu').test(token)) return false;
+        if (tokens.slice(Math.max(0, index - 3), index).some(word => negation.test(word.replace(/[^\p{L}']/gu, '')))) return false;
+        let nearest = '', distance = Infinity;
+        tokens.forEach((word, position) => {
+          if (position === index) return;
+          const gap = Math.abs(position - index);
+          const bare = word.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, '');
+          const kind = !/[\p{L}\p{N}]/u.test(word) || /^[#@'"“”‘«「『]/u.test(word) || textPart.test(bare) ? 'text'
+            : resource.test(bare) ? 'resource' : '';
+          // Ties keep the conservative resource reading.
+          if (kind && (gap < distance || (gap === distance && kind === 'resource'))) { nearest = kind; distance = gap; }
+        });
+        return nearest !== 'text';
+      });
+    });
   }
 
   _publicMutationFields(fields) {
@@ -6880,22 +7002,37 @@ export class Agent extends LoopDetector {
     const guard = this._planExecutionGuards.get(tabId);
     const deletion = detected?.mutationKind === 'delete';
     const publication = detected?.publicationControl === true;
-    const genericCommit = !publication && !deletion && detected?.isSubmit === true;
+    const genericCommit = !publication && !deletion && detected?.isSubmit === true && !this._nonCommittingSubmission(detected);
     if (!deletion && !(guard?.steeringPriorSubmission && (publication || genericCommit))) return null;
-    const blocked = reason => ({ success: false, blocked: true, dispatched: false, noDispatch: true,
+    const blocked = (reason, guidance = '', extra = {}) => ({ success: false, blocked: true, dispatched: false, noDispatch: true,
       actionGuard: { stage: 'resource_mutation', reason, classification: deletion ? 'delete' : publication ? 'publish' : 'submit' },
-      error: `The consequential action was not dispatched (${reason}). Read the exact resource and follow the latest accepted user request; do not repeat an uncertain mutation.` });
+      ...extra,
+      error: `The consequential action was not dispatched (${reason}). ${guidance || 'Read the exact resource and follow the latest accepted user request; do not repeat an uncertain mutation.'}` });
     const key = this._resourceMutationActionKey(tabId, name, args, detected);
     const current = () => this._planExecutionGuards.get(tabId) === guard && guard?.enabled
       && guard.requestKind === 'execute' && guard.taskKey === this._progressTaskKeyHash(tabId)
       && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId) && !this._hasUnvalidatedSteering(tabId);
-    if (!key || !current()) return blocked('task_or_target_changed');
-    if ((deletion || genericCommit) && (!detected.actionResource?.complete || !detected.actionResource.url)) return blocked('resource_unresolved');
+    if (!current()) return blocked('task_or_target_changed');
+    // Coordinates, keys, field submission and scripts cannot be bound to the
+    // checked control and payload; a commit after a correction needs its own
+    // identified control.
+    if (!key) return blocked('click_required', 'Activate the specific control with a ref or selector click; coordinate, keyboard, field and script submissions cannot be bound to the checked resource and payload.');
+    const formAction = value => (/^https?:\/\//i.test(String(value || '')) ? String(value) : '');
+    // A form without record identity (settings, profile, preferences) is
+    // bound to its form action and public values instead of a permalink.
+    const formCommit = genericCommit && !detected.actionResource?.complete && !!formAction(detected.actionUrl);
+    if ((deletion || (genericCommit && !formCommit)) && (!detected.actionResource?.complete || !detected.actionResource.url)) return blocked('resource_unresolved');
     const prior = guard.steeringPriorSubmission;
     const task = this._activeTaskBinding(this.conversations.get(tabId) || []);
     const latest = task.updates?.filter(update => update.kind === 'steering').at(-1)?.text || task.text;
     const priorSnapshot = prior?.publicationSnapshot || prior?.workflowBinding?.socialPublication?.snapshot;
-    if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account) {
+    // An account belongs to its platform's namespace. A post on another
+    // platform is a separate publication bound to its own contract action,
+    // not a replacement of the earlier post under a changed account.
+    const platformOf = account => String(account || '').split(':')[0];
+    const crossPlatform = publication && !!priorSnapshot?.account && !!detected.publicationSnapshot?.account
+      && platformOf(priorSnapshot.account) !== platformOf(detected.publicationSnapshot.account);
+    if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform) {
       const account = String(detected.publicationSnapshot?.account || '').split(':').slice(1).join(':');
       if (!account || !latest.toLowerCase().includes(account.toLowerCase())) return blocked('replacement_account_changed');
     }
@@ -6905,44 +7042,49 @@ export class Agent extends LoopDetector {
     if (publication && (archivedAttempts.some(receipt => samePublication(receipt.publicationSnapshot
           || receipt.workflowBinding?.socialPublication?.snapshot))
         || samePublication(priorSnapshot)
-        || (guard.resourceMutationDispatches || []).some(attempt => samePublication(attempt.publicationSnapshot)))) return blocked('duplicate_publication');
+        || (guard.resourceMutationDispatches || []).some(attempt => samePublication(attempt.publicationSnapshot)))) {
+      // Never dispatch it again, but say whether the earlier post is known to
+      // exist, so the revised run can report it instead of looping.
+      let verifiedUrl = '';
+      let verified = false;
+      if (prior && samePublication(priorSnapshot) && prior.mutationKind !== 'delete') {
+        const cached = guard.steeringPriorSubmissionReconciliation;
+        if (cached?.verified === true && cached.actionSequence === prior.actionSequence && cached.resourceUrl) {
+          verified = true; verifiedUrl = cached.resourceUrl;
+        } else {
+          const fresh = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true }).catch(() => null);
+          const matching = current() && fresh && this._resourceMutationActionKey(tabId, name, args, fresh) === key
+            ? this._steeringPriorResourceMatches(tabId, guard, prior, fresh) : [];
+          if (matching.length === 1 && prior.dispatched === true) {
+            verified = true; verifiedUrl = matching[0].url;
+            guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
+              actionSequence: prior.actionSequence, resourceUrl: matching[0].url, resourceScopeToken: matching[0].scopeToken || '',
+              deleted: false, document: fresh.frameDocumentIdentity };
+          }
+        }
+        if (!verified && this._steeringPriorPublicationOutcome(guard, prior) === 'verified') verified = true;
+      }
+      return blocked('duplicate_publication', verified
+        ? `This exact post was already published under the user's earlier instruction${verifiedUrl ? ` (${verifiedUrl})` : ''}; it was not published again. Do not retry it. Tell the user it was already published under their earlier instruction, and if nothing else in the latest request remains, finish with done outcome "partial".`
+        : 'This exact post was already submitted under the user\'s earlier instruction and that attempt is not verified; it was not published again. Do not retry it. Read the account\'s recent posts to verify the earlier attempt and report what you find.',
+      { priorPublication: { status: verified ? 'verified' : 'unverified', ...(verifiedUrl ? { url: verifiedUrl } : {}) } });
+    }
     if (deletion && (guard.resourceMutationDispatches || []).some(attempt => attempt.mutationKind === 'delete'
         && attempt.resourceUrl === detected.actionResource.url)) return blocked('duplicate_deletion');
-    if (genericCommit && prior?.submittedActionUrl && prior.submittedActionUrl === detected.actionUrl
-        && JSON.stringify(this._publicMutationFields(prior.submittedFields)) === JSON.stringify(this._publicMutationFields(detected.fields))) return blocked('duplicate_submission');
+    const sameSubmission = receipt => !!formAction(receipt?.submittedActionUrl) && receipt.submittedActionUrl === detected.actionUrl
+      && JSON.stringify(this._publicMutationFields(receipt.submittedFields)) === JSON.stringify(this._publicMutationFields(detected.fields));
+    if (genericCommit && [prior, ...archivedAttempts].some(sameSubmission)) {
+      const observed = !!prior && sameSubmission(prior) && this._steeringPriorEffectObserved(tabId, prior);
+      return blocked('duplicate_submission', observed
+        ? 'The same form submission (same destination and values) was already made under the user\'s earlier instruction and its result was observed; it was not submitted again. Do not retry it. Tell the user it was already submitted under their earlier instruction, and if nothing else in the latest request remains, finish with done outcome "partial".'
+        : 'The same form submission (same destination and values) was already attempted under the user\'s earlier instruction; it was not submitted again. Do not retry it. Read the page to verify the earlier result and report what you find.');
+    }
     // Reads refresh the original attempt, without overwriting its immutable
     // receipt or adopting a success assertion from a model/tool result.
     const fresh = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true });
     if (!current() || !fresh || this._resourceMutationActionKey(tabId, name, args, fresh) !== key) return blocked('resource_changed');
     if (prior) {
-      const priorContext = guard.steeringPriorContext;
-      const binding = prior.workflowBinding;
-      const workflow = prior.mutationWorkflow || priorContext?.siteWorkflow;
-      const snapshot = priorSnapshot;
-      const expected = snapshot?.posts?.[0];
-      const baseline = binding?.preDispatchPublishedResourceIdentities;
-      const matching = (fresh.reconciliationResources || []).filter(resource => {
-        if (!resource.complete || !resource.url) return false;
-        if (!snapshot) {
-          const values = this._publicMutationFields(prior.submittedFields).map(field => field.value).filter(value => typeof value === 'string'
-            && value.length > 0 && !/^\[.*redacted.*\]$/i.test(value));
-          const observed = this._completionSubmitStates.get(tabId);
-          return values.length > 0 && Array.isArray(prior.resourceBaseline) && !prior.resourceBaseline.includes(resource.url)
-            && observed?.actionSequence === prior.actionSequence && observed?.observedAfterSubmit === true
-            && this._normalizeUrl(observed.currentUrl) === this._normalizeUrl(resource.url)
-            && values.every(value => resource.textValues.includes(value));
-        }
-        // This proves that the dispatched resource exists, not that its media
-        // satisfied the original task. Publication audits/completion own that.
-        if (!workflow || !snapshot?.complete || snapshot.posts?.length !== 1
-            || !expected?.complete || typeof expected.bodyText !== 'string' || !expected.bodyText.trim()
-            || !Array.isArray(baseline)) return false;
-        const identity = this._workflowPublishedResourceIdentity(workflow, resource.url);
-        if (!identity || baseline.includes(identity) || (binding.publishedResourceIdentity && binding.publishedResourceIdentity !== identity)) return false;
-        const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot.account);
-        const author = this._workflowSocialPublicationAccountIdentity(workflow, resource.url);
-        return !!account && account === author && resource.textValues.includes(expected.bodyText);
-      });
+      const matching = this._steeringPriorResourceMatches(tabId, guard, prior, fresh);
       const reconciled = guard.steeringPriorSubmissionReconciliation;
       const submitted = this._completionSubmitStates.get(tabId);
       const deletedVerifiedResource = reconciled?.verified === true && submitted?.mutationKind === 'delete'
@@ -6954,14 +7096,42 @@ export class Agent extends LoopDetector {
             && fresh.reconciliationScope.url === reconciled.resourceUrl
             && submitted.actionResource?.scopeToken === reconciled.resourceScopeToken))
         && !(fresh.reconciliationResources || []).some(resource => resource.url === reconciled.resourceUrl);
-      if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource)) return blocked('prior_effect_unreconciled');
-      guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
-        actionSequence: prior.actionSequence, resourceUrl: matching[0]?.url || reconciled.resourceUrl,
-        resourceScopeToken: matching[0]?.scopeToken || reconciled?.resourceScopeToken || '',
-        deleted: deletedVerifiedResource, document: fresh.frameDocumentIdentity };
+      // A different target cannot duplicate the earlier effect, so its known
+      // outcome suffices: another platform's post, another form, or a form
+      // commit after a publication. Re-saving the same in-place form with
+      // corrected values needs its observed result on the same page. A
+      // deletion receipt keeps its own (deferred) reconciliation rules.
+      let observedKind = '';
+      if (prior.mutationKind !== 'delete' && matching.length !== 1 && !deletedVerifiedResource) {
+        const priorForm = formAction(prior.submittedActionUrl);
+        const differentTarget = publication ? crossPlatform
+          : genericCommit && (!!priorSnapshot || !priorForm || priorForm !== detected.actionUrl);
+        const live = submitted && submitted.actionSequence === prior.actionSequence ? submitted : prior;
+        const inPlace = !!live.currentUrl && this._normalizeUrl(live.currentUrl) === this._normalizeUrl(live.originatingUrl || '');
+        if (differentTarget && this._steeringPriorEffectKnown(tabId, guard, prior)) observedKind = publication ? 'cross_platform' : 'distinct_target';
+        else if (formCommit && priorForm && priorForm === detected.actionUrl && inPlace
+            && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
+      }
+      if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind)) {
+        return blocked('prior_effect_unreconciled', publication && !crossPlatform
+          ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
+          : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
+      }
+      if (matching.length === 1 || deletedVerifiedResource) {
+        guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
+          actionSequence: prior.actionSequence, resourceUrl: matching[0]?.url || reconciled.resourceUrl,
+          resourceScopeToken: matching[0]?.scopeToken || reconciled?.resourceScopeToken || '',
+          deleted: deletedVerifiedResource, document: fresh.frameDocumentIdentity };
+      } else if (!(reconciled?.verified === true && reconciled.actionSequence === prior.actionSequence)) {
+        // Outcome knowledge without resource identity; never a resource URL
+        // that a later deletion could treat as verified.
+        guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: observedKind, taskKey: guard.taskKey,
+          actionSequence: prior.actionSequence, resourceUrl: '', resourceScopeToken: '', deleted: false,
+          document: fresh.frameDocumentIdentity };
+      }
       // Removal in the accepted replacement request is a prerequisite, not
       // permission to create another copy while the original is still present.
-      if ((publication || genericCommit) && /(?:^|[^\p{L}])(?:delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(latest)
+      if ((publication || genericCommit) && this._correctionRequestsResourceDeletion(latest)
           && !deletedVerifiedResource) return blocked('deletion_prerequisite_unverified');
     }
     if (deletion && !latest.includes(detected.actionResource.url)
@@ -6973,6 +7143,8 @@ export class Agent extends LoopDetector {
       { role: 'user', content: this._wrapUntrusted('read_page', JSON.stringify({ key, action: deletion ? 'delete' : publication ? 'publish' : 'submit',
         resource: detected.actionResource || null, proposedPublication: detected.publicationSnapshot || null,
         proposedSubmission: genericCommit ? { fields: this._publicMutationFields(detected.fields), destination: detected.actionUrl } : null,
+        ...(genericCommit && prior && !priorSnapshot ? { previousSubmission: { fields: this._publicMutationFields(prior.submittedFields),
+          destination: prior.submittedActionUrl || '' } } : {}),
         verifiedPreviousResource: guard.steeringPriorSubmissionReconciliation?.resourceUrl || null,
         previousResourceState: guard.steeringPriorSubmissionReconciliation?.deleted === true ? 'deleted' : prior ? 'present' : 'unbound' })) }];
     if (JSON.stringify(messages).length > 120000) return blocked('authorization_evidence_too_large');
@@ -19881,7 +20053,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // probes, and unresolved controls cannot claim this exemption.
     if (detected?.isSubmit === true && detected.publicationControl === false
         && ['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys'].includes(name)) return null;
-    if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
+    if (detected?.isSubmit !== true) {
+      // Say which evidence is missing: a stale task, an unidentified key
+      // target, or an unidentified control. None of them is a publication.
+      if (detected?.isSubmit === false && (detected.resolvedOrdinaryActivationTarget === true || detected.resolvedPreparatoryTarget === true)) {
+        return blocked('The task changed while this control was being checked, so it was not activated. Continue under the latest request and read the page again before retrying.');
+      }
+      if (name === 'press_keys') return { ...blocked('Enter was not pressed: outside the post editor, a key activation on X or Bluesky could publish. Click the specific control instead; to publish, verify the draft and use the composer\'s Post button.'), targetUnresolved: true };
+      return { ...blocked('This control was not clicked: it could not be identified as a link, field, menu item or ordinary button, and an unidentified control on X or Bluesky could publish. Read the page and target the specific control by its ref; to publish, verify the draft and use the composer\'s Post button. Do not run arbitrary JavaScript or bundle editing and submission.'), targetUnresolved: true };
+    }
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
     await this._adoptLiveSocialPublishWorkflow(tabId, provider, detected);
@@ -25615,6 +25795,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           action: String(detected.action || '').slice(0, 300),
           actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
+          // Ordinary in-form controls keep their submit confirmation; this only
+          // tells post-correction guards they are not consequential commits.
+          ...(detected.nonCommittingControl === true ? { nonCommittingControl: true } : {}),
           ...(githubReleaseReview ? { githubReleaseReview } : {}),
           semanticCommit: detected.semanticCommit === true,
           ...(Array.isArray(detected.resourceBaseline) ? { resourceBaseline: detected.resourceBaseline } : {}),
@@ -25657,7 +25840,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       const nonSubmit = rawResults.find(item => item?.resolvedNonSubmitTarget === true);
-      if (nonSubmit) return { isSubmit: false, resolvedNonSubmitTarget: true };
+      if (nonSubmit) return { isSubmit: false, resolvedNonSubmitTarget: true,
+        ...(nonSubmit.resolvedDraftControl === true ? { resolvedDraftControl: true } : {}) };
       const ordinaryActivations = rawResults.filter(item => item?.isSubmit === false
         && item.resolvedOrdinaryActivationTarget === true);
       if (ordinaryActivations.length === 1 && ['click', 'click_ax', 'iframe_click'].includes(name)) {
@@ -25674,8 +25858,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // still blocking unresolvable clicks. Never a submit: isSubmit stays false.
       const resolvedEditable = (Array.isArray(rawResults) ? rawResults : [])
         .find(item => item && item.isSubmit !== true && item.resolvedEditableTarget === true);
+      // Keys go to the one focused document; only an unambiguous single frame
+      // reporting the post editor may classify an unmodified Enter as typing.
+      const editableKeyFrames = name === 'press_keys'
+        ? rawResults.filter(item => item?.isSubmit !== true && item?.resolvedEditableTarget === true).length : 0;
       if (resolvedEditable
-          && (name === 'click' || name === 'click_ax' || name === 'iframe_click')) {
+          && (name === 'click' || name === 'click_ax' || name === 'iframe_click' || editableKeyFrames === 1)) {
         return {
           isSubmit: false,
           host: normalizeHost(resolvedEditable.host || resolvedEditable.url || args?.urlFilter || currentUrl) || 'this site',
@@ -26495,11 +26683,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (String(el.tagName || '').toLowerCase() !== 'a') return false;
         const href = String(el.getAttribute?.('href') || '').trim();
         if (!href || /^(?:javascript|data|vbscript)\s*:/i.test(href)) return false;
+        // Framework-declared link methods (Rails UJS/Turbo, htmx writes) turn
+        // activation into a mutating request; they are handlers, not navigation.
+        const linkMethod = String(el.getAttribute?.('data-method') || el.getAttribute?.('data-turbo-method') || '').trim().toLowerCase();
+        if ((linkMethod && linkMethod !== 'get') || ['hx-post', 'hx-put', 'hx-patch', 'hx-delete'].some(name => el.hasAttribute?.(name))) return false;
         return !isSubmitControl(el);
       } catch {
         return false;
       }
     };
+    // Coordinate and descendant-ref clicks usually land on a link's text or
+    // icon, not on the anchor. The enclosing anchor owns that activation
+    // unless an interactive element between them receives it first.
+    const enclosingNavigationLink = (el) => {
+      try {
+        if (!el || el.nodeType !== 1) return null;
+        const link = el.closest?.('a[href]');
+        if (!link || link === el) return null;
+        for (let node = el; node && node !== link; node = node.parentElement) {
+          if (node.matches?.('button,input,select,textarea,summary,label,[contenteditable="true"],[role="button"],[role="link"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"],[role="treeitem"],[onclick],[data-action]')) return null;
+        }
+        return isNavigationLinkTarget(link) ? link : null;
+      } catch {
+        return null;
+      }
+    };
+    const navigationLinkFor = el => (isNavigationLinkTarget(el) ? el : enclosingNavigationLink(el));
     const formForSubmitControl = (el) => {
       const target = labelControlFor(el) || el;
       const candidate = target?.closest?.('button,input') || target;
@@ -26635,7 +26844,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const rememberResourceScope = (record, resourceUrl) => {
       let token = scopeRegistry.nodes.get(record);
       const remembered = token && scopeRegistry.scopes.get(token);
-      if (remembered?.runToken === args.__wbResourceRunToken && remembered.until > Date.now()) {
+      // An evicted or never-recorded scope is absent. Comparing its missing
+      // run token with an absent argument must not dereference it: the throw
+      // would void the whole probe and leave a real publish control unresolved.
+      if (remembered && remembered.runToken === args.__wbResourceRunToken && remembered.until > Date.now()) {
         remembered.until = Date.now() + 120000;
         return token;
       }
@@ -26879,38 +27091,111 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         control?.getAttribute?.('title'), control?.getAttribute?.('data-action')];
       const consequentialCaption = value => /(?:^|[^\p{L}])(?:post|publish|reply|submit|send|save|confirm|commit|pay|purchase|checkout|delete|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
       const removalCaption = value => /(?:^|[^\p{L}])(?:remove|kaldır)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
+      // Removing a filter, sort or search term changes what the page shows; it
+      // does not destroy a record. Only the weak removal verbs qualify: delete,
+      // trash and their translations keep their deletion meaning.
+      const weakRemovalWord = /(?:^|[^\p{L}])(?:remove|clear|kaldır)(?=[^\p{L}]|$)/giu;
+      const viewStateRemoval = value => {
+        const text = String(value || '');
+        return /(?:^|[^\p{L}])(?:remove|clear|kaldır)(?:[^\p{L}]|$)/iu.test(text)
+          && /(?:^|[^\p{L}])(?:filters?|filtre\p{L}*|filtro\p{L}*|фильтр\p{L}*|facets?|sort(?:ing)?|search(?:es)?|quer(?:y|ies)|selection|formatting)(?:[^\p{L}]|$)/iu.test(text)
+          && !/(?:^|[^\p{L}])(?:delete|trash|erase|destroy|sil|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(text);
+      };
+      const withoutViewStateRemoval = value => (viewStateRemoval(value) ? String(value).replace(weakRemovalWord, ' ') : value);
+      // A typeless button outside any form does nothing natively, so its
+      // caption can decide. On X and Bluesky an app control id the probe does
+      // not recognize outranks that caption, as for the recovery controls.
+      const typelessOrdinaryButton = el => el.getAttribute('type') == null && !el.form && !el.hasAttribute('form')
+        && !el.closest('form') && !(socialPublishAdapterName() && el.hasAttribute('data-testid'));
+      // Native activation of these controls cannot submit a form: an explicit
+      // type=button, a typeless button with no form owner, or an ARIA button.
+      const nonSubmittingButton = el => {
+        const tag = String(el?.tagName || '').toLowerCase();
+        const type = el?.getAttribute?.('type');
+        if (tag === 'button') return type == null ? typelessOrdinaryButton(el) : String(type).toLowerCase() === 'button';
+        if (tag === 'input') return String(type || '').toLowerCase() === 'button';
+        return tag !== 'a' && String(el?.getAttribute?.('role') || '').toLowerCase() === 'button' && type == null;
+      };
+      const sendMarker = el => {
+        const marker = String(el?.getAttribute?.('data-testid') || '');
+        return /^(?:tweetButton(?:Inline)?|composerPublish(?:Btn|Button)|dmComposerSendButton|send(?:Message)?(?:Button|Btn)|send-message)$/i.test(marker)
+          || marker.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/u).some(word => /^send$/i.test(word));
+      };
+      // A composer's own tools edit the unsent draft. Ownership is structural:
+      // the nearest container holding exactly one visible editor, reached
+      // without crossing a record, collection item or the page's main region.
+      const draftComposerFor = el => {
+        for (let node = el?.parentElement, depth = 0; node && depth < 12; node = node.parentElement, depth += 1) {
+          if (node.matches('article,[role="article"],[itemid],[role="listitem"],li,tr,[role="row"],main,[role="main"],body')) return null;
+          const editors = [...node.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(isVisible);
+          if (editors.length) return editors.length === 1 && !editors[0].contains(el) ? node : null;
+        }
+        return null;
+      };
+      // Removing an attachment edits the draft only when the removed item is
+      // visibly an attachment: named as one, or shown as media or a file name.
+      const draftAttachmentEvidence = (el, composer) => {
+        if (actionWords.some(value => /(?:^|[^\p{L}])(?:attachments?|attached|files?|images?|photos?|pictures?|media|videos?|gifs?|uploads?|documents?|ek(?:i|ler\p{L}*)?|dosya\p{L}*|görsel\p{L}*|resim\p{L}*|fotoğraf\p{L}*|medya\p{L}*)(?:[^\p{L}]|$)/iu.test(String(value || '')))) return true;
+        for (let node = el.parentElement; node && node !== composer; node = node.parentElement) {
+          if (node.querySelector('img,video,picture,canvas,audio')) return true;
+          const text = String(node.textContent || '').replace(String(el.textContent || ''), ' ');
+          if (/[^\s\\/:*?"<>|]+\.[a-z0-9]{2,5}(?=\s|$|[),;])/i.test(text)) return true;
+        }
+        return false;
+      };
       const draftLocalControl = (() => {
-        if (!control || String(control.getAttribute('type') || '').toLowerCase() !== 'button'
+        if (!control || !nonSubmittingButton(control)
             || !isVisible(control) || control.disabled || control.getAttribute('aria-disabled') === 'true'
             || control.matches('[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
-            || socialPublishControlEvidence(control).isSubmit
+            || socialPublishControlEvidence(control).isSubmit || sendMarker(control)
             || actionWords.some(consequentialCaption)) return false;
         // A saved-record control cannot borrow an editor elsewhere on the page.
         if (control.closest('article,[role="article"],[role="listitem"],[itemid]')) return false;
         if (control.closest('[contenteditable="true"]') && !actionWords.some(removalCaption)) return true;
-        const toolbar = control.closest('[role="toolbar"]');
-        const root = toolbar?.closest('form,dialog,[role="dialog"],section,[role="region"]')
-          || control.closest('dialog,[role="dialog"],fieldset');
-        if (!root) return false;
-        const editors = [...root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(isVisible);
-        if (editors.length !== 1) return false;
-        if (toolbar) {
-          const ids = String(toolbar.getAttribute('aria-controls') || control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
-          // The editor target proves a local formatting operation, but it
-          // cannot turn a resource-removal caption into a formatting command.
-          const formattingRemoval = !actionWords.some(value => removalCaption(value) && !/format(?:ting)?/iu.test(String(value || '')));
-          return formattingRemoval && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
-        }
-        const preview = control.closest('figure,[role="group"]');
-        const staged = [...root.querySelectorAll('input[type="file"]')].some(input => input.files?.length > 0);
-        return staged && !!preview && root.contains(preview)
-          && [...preview.querySelectorAll('img,video')].some(media => /^blob:/i.test(media.currentSrc || media.src || ''));
+        const toolbarDraft = (() => {
+          const toolbar = control.closest('[role="toolbar"]');
+          const root = toolbar?.closest('form,dialog,[role="dialog"],section,[role="region"]')
+            || control.closest('dialog,[role="dialog"],fieldset');
+          if (!root) return false;
+          const editors = [...root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(isVisible);
+          if (editors.length !== 1) return false;
+          if (toolbar) {
+            const ids = String(toolbar.getAttribute('aria-controls') || control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
+            // The editor target proves a local formatting operation, but it
+            // cannot turn a resource-removal caption into a formatting command.
+            const formattingRemoval = !actionWords.some(value => removalCaption(value) && !/format(?:ting)?/iu.test(String(value || '')));
+            return formattingRemoval && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
+          }
+          const preview = control.closest('figure,[role="group"]');
+          const staged = [...root.querySelectorAll('input[type="file"]')].some(input => input.files?.length > 0);
+          return staged && !!preview && root.contains(preview)
+            && [...preview.querySelectorAll('img,video')].some(media => /^blob:/i.test(media.currentSrc || media.src || ''));
+        })();
+        if (toolbarDraft) return true;
+        const composer = draftComposerFor(control);
+        if (!composer) return false;
+        if (actionWords.some(removalCaption)) return draftAttachmentEvidence(control, composer);
+        // Other composer tools (emoji, media pickers, polls) are local only in
+        // an app-identified post composer; a generic "Add" or "Create" button
+        // beside a text field may itself be the commit.
+        return !!socialPublishAdapterName() && [...composer.querySelectorAll('button,[role="button"]')]
+          .some(other => other !== control && socialPublishControlEvidence(other).strong === true);
       })();
       if (draftLocalControl && ['click', 'click_ax', 'iframe_click'].includes(toolName)) return {
         isSubmit: false, resolvedNonSubmitTarget: true, resolvedDraftControl: true, host, url,
         frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
       };
       const deleteAction = value => /(?:^|[^\p{L}])(?:delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
+      const deletionCaption = value => deleteAction(withoutViewStateRemoval(value));
+      // A link with a real destination navigates even when its caption names
+      // a folder such as Trash. A placeholder href or an explicit button role
+      // marks a scripted command drawn as a link, which keeps its caption.
+      const navigationOwnsActivation = (() => {
+        const link = target && ['click', 'click_ax', 'iframe_click'].includes(toolName) ? navigationLinkFor(target) : null;
+        if (!link) return false;
+        return !String(link.getAttribute('href') || '').trim().startsWith('#')
+          && String(link.getAttribute('role') || '').toLowerCase() !== 'button';
+      })();
       if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName)
           && nativeResourceVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
           && !control.form && !control.closest('form')) {
@@ -26938,7 +27223,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       const nativeDeletionConfirmation = nativeConfirmationCommit(control) && resourceProofFor(control)?.nativeAdapter === 'mastodon';
-      if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName) && (actionWords.some(deleteAction) || nativeDeletionConfirmation)
+      if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName) && !navigationOwnsActivation
+          && (actionWords.some(deletionCaption) || nativeDeletionConfirmation)
           && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true') {
         const info = submitInfo(control.form || control.closest('form'), 'resource deletion activation', null, null, 'strong', control);
         return { ...info, mutationKind: 'delete', publicationControl: false,
@@ -26966,11 +27252,71 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         const field = isFormField(target) ? target : null;
         const form = field?.form || field?.closest?.('form') || null;
-        return form ? submitInfo(form, 'Enter key in a form field', null, null, 'strong', field) : null;
+        if (form) return submitInfo(form, 'Enter key in a form field', null, null, 'strong', field);
+        // X and Bluesky publish from the keyboard only with a modifier, which
+        // press_keys cannot send. An unmodified Enter in the app-marked post
+        // editor edits the draft (a line break or a typeahead choice).
+        const postEditor = !!field && !!socialPublishAdapterName()
+          && (field.isContentEditable || String(field.tagName || '').toUpperCase() === 'TEXTAREA')
+          && !!field.closest?.('[data-testid^="tweetTextarea_"],[data-testid="composerTextInput"]');
+        return postEditor ? { isSubmit: false, host, url, tool: toolName,
+          reason: 'Enter in the post editor edits the draft', resolvedEditableTarget: true } : null;
       }
+      // Ordinary-control evidence shared by standalone activations and by
+      // in-form controls whose submit classification is only heuristic.
+      const commitWordList = 'submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال';
+      const captionHas = (value, words) => new RegExp(`(?:^|[^\\p{L}])(?:${words})(?:[^\\p{L}]|$)`, 'iu')
+        .test(String(withoutViewStateRemoval(value) || '').trim());
+      const ordinaryControlFor = el => {
+        const owner = labelControlFor(el) || el;
+        return owner?.closest?.('button,input,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],summary') || null;
+      };
+      const ordinaryControlEvidence = (ordinary, labels) => {
+        const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(ordinary.getAttribute('aria-haspopup') || '')
+          || ordinary.hasAttribute('popovertarget');
+        // An app's own control name decides publication capability on X and
+        // Bluesky (socialPublishControlEvidence). A non-publish test id
+        // disproves publication words such as Reply or Schedule post, while
+        // deletion, send, save and payment words still mark a commit.
+        const appNamedNonPublish = !!socialPublishAdapterName() && !!ordinary.getAttribute('data-testid') && !sendMarker(ordinary);
+        // A popup launcher may mention the resource it operates on. Actual
+        // composer submits are identified above; other commit words stay gated.
+        const words = popupTarget || appNamedNonPublish
+          ? `${appNamedNonPublish ? '' : 'publish|'}${commitWordList}` : `post|publish|reply|${commitWordList}`;
+        let uniqueTarget = true;
+        if (args.text) {
+          const needle = compact(args.text).toLowerCase();
+          const choices = interactiveElements().map(el => ({el,
+            text: compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase()}));
+          const exact = choices.filter(item => item.text === needle);
+          const prefix = choices.filter(item => item.text.startsWith(needle));
+          const matches = args.textMatch === 'exact' ? exact : args.textMatch === 'prefix' ? prefix
+            : args.textMatch === 'contains' ? choices.filter(item => item.text.includes(needle))
+            : exact.length ? exact : prefix.length ? prefix : choices.filter(item => item.text.includes(needle));
+          const controls = new Set(matches.map(item => ordinaryControlFor(item.el)));
+          uniqueTarget = controls.size === 1 && controls.has(ordinary);
+        }
+        return uniqueTarget && labels.some(value => String(value || '').trim())
+          && !ordinary.disabled && ordinary.getAttribute('aria-disabled') !== 'true'
+          && !ordinary.closest('[hidden],[inert],[aria-hidden="true"]')
+          && !ordinary.matches('[form],[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action],[onchange],[oninput]')
+          // A nested plain file input only opens the file chooser.
+          && ![...ordinary.querySelectorAll('[onclick],[data-action],button,input,[role="button"],a[href]')]
+            .some(child => !child.matches('input[type="file"]:not([onclick]):not([data-action]):not([onchange]):not([oninput])'))
+          && !sendMarker(ordinary) && !labels.some(value => captionHas(value, words))
+          && !socialPublishControlEvidence(ordinary).isSubmit;
+      };
+      const ordinaryLabels = ordinary => {
+        const labels = [ordinary?.textContent, ordinary?.getAttribute?.('aria-label'), ordinary?.getAttribute?.('title')];
+        if (String(ordinary?.tagName || '').toLowerCase() === 'input') {
+          if (/^(?:button|submit|reset)$/i.test(ordinary.type || '')) labels.push(ordinary.value);
+          try { for (const label of ordinary.labels || []) labels.push(label.textContent); } catch {}
+        }
+        return labels;
+      };
       if (target && isSubmitControl(target)) {
         const evidence = submitControlEvidence(target);
-        return submitInfo(
+        const info = submitInfo(
           formForSubmitControl(target),
           'submit button/control activation',
           null,
@@ -26978,6 +27324,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           evidence.strong ? 'strong' : 'heuristic',
           target,
         );
+        // In-form type=button toggles, steppers and disclosure headers, and
+        // buttons of a method=dialog form, send nothing to a server by
+        // themselves. They keep the submit confirmation, but post-correction
+        // guards can tell them apart from commits by ordinary evidence.
+        if (info.publicationControl !== true && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+            && (!evidence.strong || String(info.method || '').toUpperCase() === 'DIALOG')) {
+          const owner = labelControlFor(target) || target;
+          const submitter = owner.closest?.('button,input,[role="button"],[onclick],[data-action]') || owner;
+          if (isVisible(submitter) && ordinaryControlEvidence(submitter, ordinaryLabels(submitter))) info.nonCommittingControl = true;
+        }
+        return info;
       }
       const blueskyComposerLauncher = socialPublishAdapterName() === 'bluesky'
         ? target?.closest?.('button,[role="button"]') : null;
@@ -27028,7 +27385,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (target
           && (toolName === 'click' || toolName === 'click_ax' || toolName === 'iframe_click')
-          && isNavigationLinkTarget(target)) {
+          && navigationLinkFor(target)) {
         return {
           isSubmit: false,
           host,
@@ -27039,42 +27396,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         };
       }
       if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)) {
-        const control = target.closest?.('button,input,[role="button"]');
+        const control = ordinaryControlFor(target);
         const tag = String(control?.tagName || '').toLowerCase();
         const type = String(control?.getAttribute?.('type') || '').toLowerCase();
+        const role = String(control?.getAttribute?.('role') || '').toLowerCase();
         const ordinaryButton = ((tag === 'button' || tag === 'input') && type === 'button')
-          || (!['button', 'input'].includes(tag) && control?.getAttribute?.('role') === 'button' && !type);
-        const labels = [control?.textContent, control?.getAttribute?.('aria-label'), control?.getAttribute?.('title')];
-        const commitName = value => /(?:^|[^\p{L}])(?:post|publish|reply|submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-        const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(control?.getAttribute('aria-haspopup') || '')
-          || !!control?.hasAttribute('popovertarget');
-        // A popup launcher may mention the resource it operates on. Actual
-        // composer submits are identified above; other commit words stay gated.
-        const popupCommit = value => /(?:^|[^\p{L}])(?:publish|submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-        const marker = String(control?.getAttribute?.('data-testid') || '');
-        const markerWords = marker.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/u);
-        const commitMarker = /^(?:tweetButton(?:Inline)?|composerPublish(?:Btn|Button)|dmComposerSendButton|send(?:Message)?(?:Button|Btn)|send-message)$/i.test(marker)
-          || markerWords.some(word => /^send$/i.test(word));
-        let uniqueTarget = true;
-        if (args.text) {
-          const needle = compact(args.text).toLowerCase();
-          const choices = interactiveElements().map(el => ({el,
-            text: compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase()}));
-          const exact = choices.filter(item => item.text === needle);
-          const prefix = choices.filter(item => item.text.startsWith(needle));
-          const matches = args.textMatch === 'exact' ? exact : args.textMatch === 'prefix' ? prefix
-            : args.textMatch === 'contains' ? choices.filter(item => item.text.includes(needle))
-            : exact.length ? exact : prefix.length ? prefix : choices.filter(item => item.text.includes(needle));
-          const controls = new Set(matches.map(item => item.el.closest('button,input,[role="button"]')));
-          uniqueTarget = controls.size === 1 && controls.has(control);
-        }
-        if (uniqueTarget && ordinaryButton && labels.some(value => String(value || '').trim())
-            && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
-            && !control.form && !control.closest('form,[hidden],[inert],[aria-hidden="true"]')
-            && !control.matches('[form],[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
-            && !control.querySelector('[onclick],[data-action],button,input,[role="button"],a[href]')
-            && !commitMarker && !(popupTarget ? labels.some(popupCommit) : labels.some(commitName))
-            && !socialPublishControlEvidence(control).isSubmit) {
+          || (!['button', 'input'].includes(tag) && role === 'button' && !type)
+          // A typeless button without a form owner has no default action.
+          || (tag === 'button' && typelessOrdinaryButton(control));
+        // Menu items, tabs, options, native toggles and disclosure summaries
+        // choose or reveal content; their native activation never submits,
+        // even inside a form. Their captions still decide commit meaning.
+        const selectionControl = (!['button', 'input'].includes(tag) && !(tag === 'a' && control.hasAttribute('href'))
+            && ['menuitem', 'menuitemradio', 'menuitemcheckbox', 'tab', 'option', 'treeitem', 'switch', 'checkbox', 'radio'].includes(role))
+          || (tag === 'input' && ['checkbox', 'radio'].includes(type))
+          || (tag === 'summary' && String(control.parentElement?.tagName || '').toUpperCase() === 'DETAILS');
+        const labels = ordinaryLabels(control);
+        if (control && (ordinaryButton || selectionControl)
+            && (isVisible(control) || (selectionControl && isVisible(target)))
+            && (selectionControl || (!control.form && !control.closest('form')))
+            && ordinaryControlEvidence(control, labels)) {
+          const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(control.getAttribute('aria-haspopup') || '')
+            || control.hasAttribute('popovertarget');
           const actionResource = resourceProofFor(target);
           return { isSubmit: false, host, url, resolvedOrdinaryActivationTarget: true,
             resolvedPreparatoryTarget: popupTarget,
