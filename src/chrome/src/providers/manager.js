@@ -77,6 +77,11 @@ import {
 } from './connection-test-assets.js';
 
 const WEBBRAIN_CLOUD_PROVIDER_ID = 'webbrain_cloud';
+const WEBBRAIN_CLOUD_MAX_PROVIDER_ID = 'webbrain_cloud_max';
+const WEBBRAIN_CLOUD_PROVIDER_IDS = new Set([
+  WEBBRAIN_CLOUD_PROVIDER_ID,
+  WEBBRAIN_CLOUD_MAX_PROVIDER_ID,
+]);
 const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
 const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth', 'freebuff2api'];
@@ -359,7 +364,7 @@ export class ProviderManager {
     for (const [id, config] of Object.entries(defaults)) {
       const storedConfig = stored[id];
       const hasConfiguredMarker = !!storedConfig && Object.hasOwn(storedConfig, 'configured');
-      const configured = id !== WEBBRAIN_CLOUD_PROVIDER_ID && (
+      const configured = !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && (
         storedConfig?.configured === true ||
         (!hasConfiguredMarker && !!storedConfig && (
           id === legacyActiveProviderId ||
@@ -391,7 +396,7 @@ export class ProviderManager {
         const hasConfiguredMarker = Object.hasOwn(config, 'configured');
         configs[id] = {
           ...config,
-          configured: id !== WEBBRAIN_CLOUD_PROVIDER_ID && (config.configured === true || !hasConfiguredMarker),
+          configured: !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && (config.configured === true || !hasConfiguredMarker),
         };
         if (!hasConfiguredMarker) providerStateMigrated = true;
       }
@@ -410,13 +415,15 @@ export class ProviderManager {
     // token bundle here — otherwise a previously-signed-in user's raw
     // access/refresh tokens would sit in storage with no UI path to clear them.
     if (hadLegacyClaudeSubscription) await signOutClaude();
-    if (configs[WEBBRAIN_CLOUD_PROVIDER_ID]) {
-      configs[WEBBRAIN_CLOUD_PROVIDER_ID].deviceGuid = await this._getDeviceGuid(data[WEBBRAIN_DEVICE_GUID_KEY]);
-      configs[WEBBRAIN_CLOUD_PROVIDER_ID].helpImproveWebBrain = data[HELP_IMPROVE_WEBBRAIN_KEY] !== false;
+    const deviceGuid = await this._getDeviceGuid(data[WEBBRAIN_DEVICE_GUID_KEY]);
+    for (const id of WEBBRAIN_CLOUD_PROVIDER_IDS) {
+      if (!configs[id]) continue;
+      configs[id].deviceGuid = deviceGuid;
+      configs[id].helpImproveWebBrain = data[HELP_IMPROVE_WEBBRAIN_KEY] !== false;
     }
     this.activeProviderId = legacyActiveProviderId || WEBBRAIN_CLOUD_PROVIDER_ID;
     if (!configs[this.activeProviderId]) this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
-    if (this.activeProviderId !== WEBBRAIN_CLOUD_PROVIDER_ID && configs[this.activeProviderId]?.configured !== true) {
+    if (!WEBBRAIN_CLOUD_PROVIDER_IDS.has(this.activeProviderId) && configs[this.activeProviderId]?.configured !== true) {
       this.activeProviderId = WEBBRAIN_CLOUD_PROVIDER_ID;
       providerStateMigrated = true;
     }
@@ -511,6 +518,24 @@ export class ProviderManager {
         omitToolsWhenImagesPresent: false,
         apiKey: '',
         enabled: true,
+      },
+      webbrain_cloud_max: {
+        type: 'openai',
+        category: 'cloud',
+        label: 'WebBrain Compass XL',
+        providerName: 'webbrain-cloud',
+        baseUrl: 'https://api.webbrain.one/v1',
+        model: 'max',
+        contextWindow: WEBBRAIN_CLOUD_CONTEXT_WINDOW,
+        inputCostPerMillionUsd: 1.00,
+        outputCostPerMillionUsd: 5.75,
+        supportsStreamUsageOptions: true,
+        supportsAskStreaming: true,
+        supportsVision: true,
+        omitToolsWhenImagesPresent: false,
+        apiKey: '',
+        enabled: true,
+        sidepanelOnly: true,
       },
       llamacpp: {
         type: 'llamacpp',
@@ -1275,7 +1300,7 @@ export class ProviderManager {
   }
 
   _canDuplicateProvider(id, config = this.providers.get(id)?.config) {
-    return !!config && this._providerDefinitionId(id, config) !== WEBBRAIN_CLOUD_PROVIDER_ID && config.type !== 'webgpu';
+    return !!config && !WEBBRAIN_CLOUD_PROVIDER_IDS.has(this._providerDefinitionId(id, config)) && config.type !== 'webgpu';
   }
 
   _isValidDuplicateConfig(id, config, configs) {
@@ -1980,7 +2005,7 @@ export class ProviderManager {
     const merged = {
       ...current,
       ...updates,
-      configured: id !== WEBBRAIN_CLOUD_PROVIDER_ID && (markConfigured || current.configured === true),
+      configured: !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && (markConfigured || current.configured === true),
     };
     if (id === 'webgpu' && Object.hasOwn(updates, 'model')) {
       merged.model = normalizeWebgpuModelId(merged.model);
@@ -2105,7 +2130,7 @@ export class ProviderManager {
     this.providers.delete(id);
     if (previousActiveProviderId === id) {
       const source = this.providers.get(sourceId);
-      this.activeProviderId = source && (sourceId === WEBBRAIN_CLOUD_PROVIDER_ID || source.config?.configured === true)
+      this.activeProviderId = source && (WEBBRAIN_CLOUD_PROVIDER_IDS.has(sourceId) || source.config?.configured === true)
         ? sourceId
         : WEBBRAIN_CLOUD_PROVIDER_ID;
     }
@@ -2131,7 +2156,7 @@ export class ProviderManager {
    * `category` field ('local' | 'cloud' | 'router') so the UI can filter
    * without re-deriving the classification.
    */
-  getAll() {
+  getAll({ includeSidepanelOnly = false } = {}) {
     const result = {};
     const duplicatedSourceIds = new Set(
       [...this.providers.values()].map(provider => provider.config?.duplicateOf).filter(Boolean),
@@ -2158,6 +2183,7 @@ export class ProviderManager {
     }
     for (const [id, provider] of orderedEntries) {
       const config = provider.config;
+      if (config.sidepanelOnly === true && !includeSidepanelOnly) continue;
       const isDuplicate = !!config.duplicateOf;
       const hasDuplicate = !isDuplicate && duplicatedSourceIds.has(id);
       result[id] = {
