@@ -2665,6 +2665,22 @@ function queueUnconsumedSteeringMessages(tabId, messages, { held = false } = {})
   if (incoming.length) setQueuedComposerMessages(tabId, [...incoming, ...queue]);
 }
 
+// A background restart can interrupt a run after it accepted a correction and
+// before applying it. A resumed run applies it itself; once no run can, the
+// background returns it here and it is held exactly like after Stop.
+async function reclaimUnappliedSteering(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId) || isConversationClearInProgress(numericTabId)) return;
+  let response = null;
+  try {
+    response = await sendToBackground('chat_steer_reclaim', { tabId: numericTabId });
+  } catch { return; }
+  if (isConversationClearInProgress(numericTabId)) return;
+  const messages = (Array.isArray(response?.messages) ? response.messages : [])
+    .filter(item => !clearedConversationRunRequestIds.has(String(item?.requestId || '')));
+  queueUnconsumedSteeringMessages(numericTabId, messages, { held: true });
+}
+
 // After Stop nothing may start on its own. Held items stay visible in the
 // queue until the user edits (then sends), steers or deletes them; messages
 // queued during a later run still drain normally. Browser-menu prompts queued
@@ -5436,6 +5452,13 @@ async function restoreActiveRunState(tabId = currentTabId) {
   if (!state) return;
   const snapshotStillActive = await applyActiveRunState(numericTabId, state);
   if (!snapshotStillActive) return;
+  if (Number(state.unappliedSteeringCount) > 0 && !state.running && !state.starting) {
+    // An interrupted run that is about to resume applies its own corrections.
+    const runUi = state.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+    const resumable = !!runUi?.requestId && !isTerminalRunUiStatus(runUi.status)
+      && runUi.status !== 'awaiting_plan' && !cancelledRunRecoveryRequestIds.has(String(runUi.requestId));
+    if (!resumable) await reclaimUnappliedSteering(numericTabId);
+  }
   void adoptRestoredRunState(numericTabId, state);
 }
 
@@ -13822,10 +13845,15 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   });
   const follower = { requestId, promise };
   localRunFollowers.set(tabId, follower);
+  let backgroundInterrupted = true;
   try {
-    return await promise;
+    const result = await promise;
+    // Without a reconnect the run's own inbox returned whatever it left unapplied.
+    backgroundInterrupted = result?.reconnected === true || result?.resumed === true;
+    return result;
   } finally {
     if (localRunFollowers.get(tabId) === follower) localRunFollowers.delete(tabId);
+    if (backgroundInterrupted && shouldContinueRunRecovery()) await reclaimUnappliedSteering(tabId);
   }
 }
 
@@ -14105,6 +14133,8 @@ async function abortRun(tabId = currentTabId) {
       syncSendButtonState();
       hideActivity();
       currentAssistantEl = null;
+      // A stopped run that a restart had interrupted returns its corrections.
+      if (Number(state?.unappliedSteeringCount) > 0) await reclaimUnappliedSteering(tabId);
       // Messages queued while "Stopping…" are held too; nothing runs on its own.
       holdQueuedComposerMessages(tabId);
       setTabAbortRequested(tabId, false);

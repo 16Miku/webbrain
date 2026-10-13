@@ -21,6 +21,7 @@ import { calculateExpression, calculationResultInText } from './calculator.js';
 import { isLiteralCalculationTask, literalCalculationSummaryFormatMatches, isPassivePageFeedback } from './page-feedback-policy.js';
 import { chatRecoveryDisplayText, terminalRecoveryFinalText } from './chat-recovery-text.js';
 import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSATION_BUDGET_BYTES, SESSION_CONVERSATION_RETRY_BUDGET_BYTES } from './conversation-persistence.js';
+import { SteeringJournal } from './steering-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { retryModelCall, retryModelStream } from '../providers/model-retry.js';
 import { isQwenConfig } from '../providers/provider-compatibility.js';
@@ -1277,6 +1278,8 @@ export class Agent extends LoopDetector {
     this._recentSubmitClicks = new Map(); // tabId -> recent submit click timestamps
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._steeringRuns = new Map(); // tabId -> inbox owned by one interactive run
+    // Accepted, not yet durably applied corrections; survives a worker restart.
+    this._steeringJournal = new SteeringJournal(() => chrome.storage?.session);
     this._runningTabs = new Set(); // tabIds with an active processMessage/Stream in flight
     this._runStartGuard = null;
     // Ordinary runs capture and act in their original tab without activating
@@ -6939,23 +6942,87 @@ export class Agent extends LoopDetector {
     }
     const id = String(messageId);
     if (!run.acceptedIds.has(id)) {
-      this._invalidateMonitoringRetry?.(tabId, 'task_changed');
       run.acceptedIds.add(id);
       run.messages.push({ id, text: text.trim() });
-      // A reviewed plan belongs to the task before this correction. Wake the
-      // planner so it can review the new revision without approving stale work.
-      this._cancelPendingPlans(tabId, 'superseded by steering');
-      // A queued human correction replaces the question's old task too.
-      // Wake its waiter without inventing an answer or granting permission.
-      this._cancelClarifications(tabId, 'superseded by steering');
-      // A cached fast-path action was prepared before this correction.
-      const session = this._jevSessions?.get(tabId);
-      if (session) { session.disabled = true; session.queue = []; }
-      // The in-flight main inference answers the superseded task and has no
-      // browser side effects. Stop waiting for it so the correction applies now.
-      this._interruptSteeredInference(run);
+      // Journaled before the panel learns it was accepted (flushSteeringJournal):
+      // a background restart before the next boundary must not drop it.
+      void this._steeringJournal.accept(tabId, run.requestId, { id, text: text.trim() });
+      this._supersedeTaskForSteering(tabId, run);
     }
     return { accepted: true, messageId: id };
+  }
+
+  _supersedeTaskForSteering(tabId, run) {
+    this._invalidateMonitoringRetry?.(tabId, 'task_changed');
+    // A reviewed plan belongs to the task before this correction. Wake the
+    // planner so it can review the new revision without approving stale work.
+    this._cancelPendingPlans(tabId, 'superseded by steering');
+    // A queued human correction replaces the question's old task too.
+    // Wake its waiter without inventing an answer or granting permission.
+    this._cancelClarifications(tabId, 'superseded by steering');
+    // A cached fast-path action was prepared before this correction.
+    const session = this._jevSessions?.get(tabId);
+    if (session) { session.disabled = true; session.queue = []; }
+    // The in-flight main inference answers the superseded task and has no
+    // browser side effects. Stop waiting for it so the correction applies now.
+    this._interruptSteeredInference(run);
+  }
+
+  // Resolves once every accepted correction of this tab reached the journal.
+  flushSteeringJournal(tabId) {
+    return this._steeringJournal.settled(tabId);
+  }
+
+  // A run resumed after a background restart (same request) takes back the
+  // corrections it had accepted but not durably applied, ahead of any accepted
+  // since, so its first boundary applies them in acceptance order. Corrections
+  // already in the saved conversation stay applied once. Those of another
+  // request belong to an interrupted run that can no longer resume: they are
+  // never applied here and return to the panel held, as after Stop.
+  async _restoreJournaledSteering(tabId) {
+    const run = this._steeringRuns.get(tabId);
+    if (!run) return;
+    const journaled = await this._steeringJournal.list(tabId);
+    if (!journaled.length || this._steeringRuns.get(tabId) !== run) return;
+    const applied = new Set((this.conversations.get(tabId) || [])
+      .map(message => message?.webbrainSteering?.messageId).filter(Boolean).map(String));
+    const restored = [], orphaned = [], settled = [];
+    for (const entry of journaled) {
+      if (run.acceptedIds.has(entry.id)) continue;
+      if (applied.has(entry.id)) settled.push(entry.id);
+      else if (entry.requestId === run.requestId) restored.push({ id: entry.id, text: entry.text });
+      else orphaned.push({ id: entry.id, text: entry.text });
+    }
+    if (orphaned.length) run.onUpdate('steering_queued', { messages: orphaned, stopped: true });
+    if (settled.length || orphaned.length) {
+      void this._steeringJournal.forget(tabId, [...settled, ...orphaned.map(item => item.id)]);
+    }
+    if (!restored.length) return;
+    for (const item of restored) run.acceptedIds.add(item.id);
+    run.messages.unshift(...restored);
+    this._supersedeTaskForSteering(tabId, run);
+  }
+
+  // A correction durable in the saved conversation is applied for good: a
+  // restart must neither apply it again nor hand it back to the panel.
+  _forgetPersistedSteering(tabId, messages) {
+    const ids = (messages || []).map(message => message?.webbrainSteering?.messageId).filter(Boolean);
+    if (ids.length) void this._steeringJournal.forget(tabId, ids);
+  }
+
+  // Journaled corrections that no live run owns any more.
+  async unappliedSteeringCount(tabId) {
+    if (this.isRunning(tabId) || this._steeringRuns.has(tabId)) return 0;
+    return (await this._steeringJournal.list(tabId)).length;
+  }
+
+  // Hands journaled corrections back to the panel once no live or starting run
+  // can apply them (the run that accepted them was interrupted and is not
+  // resuming). The panel keeps them held: nothing is sent on its own.
+  async reclaimUnappliedSteering(tabId, { isBusy = () => false } = {}) {
+    const entries = await this._steeringJournal.release(tabId,
+      () => !this.isRunning(tabId) && !this._steeringRuns.has(tabId) && !isBusy());
+    return { ok: true, messages: entries.map(({ requestId, id, text }) => ({ requestId, id, text })) };
   }
 
   _interruptSteeredInference(run) {
@@ -7524,6 +7591,9 @@ export class Agent extends LoopDetector {
       // corrections queued for an explicit send instead of draining them.
       run.onUpdate('steering_queued', { messages: run.messages, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
     }
+    // Applied or just handed back: the journal no longer owns what this run
+    // accepted. Entries it never restored stay for the panel to reclaim.
+    if (run?.acceptedIds.size) void this._steeringJournal.forget(tabId, [...run.acceptedIds]);
   }
 
   async _completeInitialResponseOnlyTurn(tabId, messages, onUpdate, mode, provider, costState, runId, runOptions, gate, enriched, priorMessages) {
@@ -19604,12 +19674,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!entry) return { ok: false, degraded: false, reason: 'no_conversation' };
     try {
       await chrome.storage.session.set({ [this._convKey(tabId)]: entry });
+      this._forgetPersistedSteering(tabId, entry.messages);
       return { ok: true, degraded: entry.sessionSnapshotCompacted === true, reason: entry.sessionSnapshotCompacted ? 'sanitized' : null };
     } catch (error) {
       if (isSessionQuotaError(error)) {
         const compactEntry = this._conversationStorageEntry(tabId, { maxBytes: SESSION_CONVERSATION_RETRY_BUDGET_BYTES });
         try {
           await chrome.storage.session.set({ [this._convKey(tabId)]: compactEntry });
+          this._forgetPersistedSteering(tabId, compactEntry.messages);
           return { ok: true, degraded: true, reason: 'quota_compacted' };
         } catch (retryError) {
           return this._markPersistenceDegraded(tabId, isSessionQuotaError(retryError) ? 'quota' : 'unavailable', retryError);
@@ -31252,6 +31324,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     if (!preserveRunGuard) {
       this._uncertainTextMutations.delete(tabId);
       this._recentTextMutationDocuments.delete(tabId);
+      // A closed tab's run can never resume or show held corrections.
+      void this._steeringJournal.discard(tabId);
     }
     this._verifiedTextReplacements.delete(tabId);
     this._lastCdpClickIdent?.delete(tabId);
@@ -32311,14 +32385,16 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this.temporaryApiAllowedTabs.delete(tabId);
     this.apiAllowedInjected.delete(tabId);
     this._cleanupTab(tabId, { preserveRunGuard: true });
+    // Corrections of the cleared conversation must never apply or return.
+    const steeringDiscarded = this._steeringJournal.discard(tabId);
     const t = this.persistTimers.get(tabId);
     if (t) { clearTimeout(t); this.persistTimers.delete(tabId); }
     try {
       const removed = chrome.storage.session.remove(this._convKey(tabId));
       if (this._nativeCaptchaSolutions?.has(tabId)) {
-        return removed.then(() => this._persistNow(tabId)).catch(() => {});
+        return Promise.all([removed.then(() => this._persistNow(tabId)).catch(() => {}), steeringDiscarded]);
       }
-      return removed.catch(() => {});
+      return Promise.all([removed.catch(() => {}), steeringDiscarded]);
     } catch (e) { /* ignore */ }
   }
 
@@ -48043,6 +48119,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // cannot outlive the run that cleared them. The outer finally releases
     // the run even if this first storage read fails.
     await this._hydrate(tabId);
+    // Before any model or tool boundary, so a run resumed after a background
+    // restart applies the corrections it had accepted before the old task acts.
+    await this._restoreJournaledSteering(tabId);
     const hadContinuationResponseLanguagePolicy = this._continuationResponseLanguagePolicies.has(tabId);
     const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
       ? this._takeContinuationResponseLanguagePolicy(tabId)
@@ -49858,6 +49937,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // cannot outlive the run that cleared them. The outer finally releases
     // the run even if this first storage read fails.
     await this._hydrate(tabId);
+    // Before any model or tool boundary, so a run resumed after a background
+    // restart applies the corrections it had accepted before the old task acts.
+    await this._restoreJournaledSteering(tabId);
     const hadContinuationResponseLanguagePolicy = this._continuationResponseLanguagePolicies.has(tabId);
     const trustedContinuationResponseLanguagePolicy = runOptions?.trustedContinuation === true
       ? this._takeContinuationResponseLanguagePolicy(tabId)

@@ -3002,9 +3002,21 @@ async function handleMessage(msg, sender) {
     if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
       throw new Error('Steering is available from the chat panel only.');
     }
-    return agent.steerMessage(Number(msg.tabId), msg.text, {
+    const result = agent.steerMessage(Number(msg.tabId), msg.text, {
       requestId: msg.requestId, messageId: msg.messageId,
     });
+    // Acknowledge only once the correction would survive a background restart.
+    if (result?.accepted) await agent.flushSteeringJournal?.(Number(msg.tabId));
+    return result;
+  }
+  if (msg.action === 'chat_steer_reclaim') {
+    // Corrections an interrupted, not resumed run accepted but never applied
+    // return to the same chat panel that alone could send them.
+    if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+      throw new Error('Steering is available from the chat panel only.');
+    }
+    const tabId = Number(msg.tabId);
+    return agent.reclaimUnappliedSteering(tabId, { isBusy: () => detachedRunStarts.has(tabId) });
   }
 
   // Only Settings may start OAuth or change the user's remote-memory choice.
@@ -3911,6 +3923,9 @@ async function handleMessage(msg, sender) {
       }
       const runUiDurable = !runUiSnapshot
         || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || '');
+      // Accepted corrections no live run owns (a restart interrupted their run).
+      const unappliedSteeringCount = activeState.running || starting
+        ? 0 : Number(await agent.unappliedSteeringCount?.(tabId)) || 0;
       return {
         ok: true,
         ...conversationState,
@@ -3924,6 +3939,7 @@ async function handleMessage(msg, sender) {
         persistenceDegradedReason: activeState.persistenceDegradedReason || (!runUiDurable ? 'run_ui' : null),
         detachedError,
         runUi: requestedRunUi,
+        unappliedSteeringCount,
       };
     }
 
