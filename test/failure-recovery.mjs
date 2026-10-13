@@ -38,6 +38,124 @@ for (const browser of ['chrome', 'firefox']) {
     return social;
   }
 
+  function monitoringFixture(agent) {
+    agent.conversationModes.set(tabId, 'act');
+    agent._pageFeedbackRuns ??= new Map();
+    agent._pageFeedbackRuns.set(tabId, { url: 'https://owned.example.test/', token: 'old-run',
+      frames: new Map([[0, { token: 'owned-document', id: 'browser-document' }]]),
+      documents: new Map([[0, { id: 'browser-document' }]]), events: new Map(), gestures: new Set(), gestureLeases: new Map() });
+    return agent._offerFailureRecovery(tabId, { stage: 'action_preparation', code: 'action_context_unverified',
+      message: 'The current control has no certified owner.' });
+  }
+
+  test(`${browser}: context Retry reserves a private grant for exactly its accepted request`, () => {
+    const agent = setup(), offer = monitoringFixture(agent);
+    assert.equal(offer.retryMode, 'action_monitoring_relaxed');
+    assert.equal(agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry').ok, false);
+    assert.equal(agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry', 'owned-retry').ok, true);
+    const retry = agent._failureRecovery.monitoringRetries.get(tabId);
+    assert.equal(agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry', 'owned-retry').ok, true);
+    assert.equal(agent._failureRecovery.monitoringRetries.get(tabId).grantToken, retry.grantToken);
+    assert.equal(agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry', 'different-retry').ok, false);
+    assert.doesNotMatch(JSON.stringify(offer), /owned-document|browser-document|grantToken|taskSignature/);
+    assert.equal(agent._failureRecovery.takeMonitoringRetry(agent._failureRecoveryBinding(tabId), 'different-retry'), null);
+    assert.equal(agent._failureRecovery.takeMonitoringRetry(agent._failureRecoveryBinding(tabId), 'owned-retry'), retry);
+    assert.equal(agent._failureRecovery.takeMonitoringRetry(agent._failureRecoveryBinding(tabId), 'owned-retry'), null);
+    assert.equal(agent._pendingFailureRecoveryForUi(tabId), null);
+  });
+
+  test(`${browser}: rejected startup restores the monitoring Retry option with fresh UI authority`, async () => {
+    const agent = setup(), offer = monitoringFixture(agent), updates = [];
+    agent._finishPageFeedbackRun(tabId);
+    agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry', 'failed-start');
+    agent.setRunStartGuard(() => { throw new Error('fixture startup denied'); });
+    await assert.rejects(agent._claimRunEntry(tabId, 'interactive', {
+      trustedContinuation: true, detachedRequestId: 'failed-start' }, (type, data) => updates.push({ type, data })), /startup denied/);
+    const restored = agent._pendingFailureRecoveryForUi(tabId);
+    assert.equal(agent.isRunning(tabId), false);
+    assert.equal(restored.retryMode, 'action_monitoring_relaxed');
+    assert.notEqual(restored.recoveryId, offer.recoveryId);
+    assert.equal(updates.filter(update => update.type === 'failure_recovery').length, 1);
+    assert.equal(agent.requestFailureRecovery(tabId, restored.recoveryId, 'retry', 'another-start').ok, true);
+  });
+
+  test(`${browser}: monitoring grant expires on intervention, navigation and exact task changes`, () => {
+    for (const change of ['input', 'navigation', 'task', 'document']) {
+      const agent = setup(), offer = monitoringFixture(agent);
+      agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry', 'retry-request');
+      const retry = agent._failureRecovery.takeMonitoringRetry(agent._failureRecoveryBinding(tabId), 'retry-request');
+      const run = agent._pageFeedbackRuns.get(tabId);
+      run.monitoringRetry = retry; retry.started = true;
+      agent._runningTabs.add(tabId);
+      agent._beginSteeringRun(tabId, () => {}, { detachedRequestId: 'retry-request' });
+      assert.equal(agent._monitoringRetryCurrent(tabId), retry);
+      agent._queuePageFeedback(tabId, { kind: 'dom', source: 'unknown', frameId: 0, target: 'span' });
+      assert.equal(agent._monitoringRetryCurrent(tabId), retry, 'Unowned DOM-only counters are tolerated in the approved retry.');
+      if (change === 'input') agent._queuePageFeedback(tabId, { kind: 'input', source: 'user', frameId: 0 });
+      if (change === 'navigation') agent.observePageNavigation({ tabId, frameId: 0, url: run.url }, 'history');
+      if (change === 'task') agent.conversations.get(tabId).push({ role: 'user', content: 'A changed exact task.' });
+      if (change === 'document') run.frames.get(0).token = 'replacement-document';
+      assert.equal(agent._monitoringRetryCurrent(tabId), null, change);
+      assert.equal(retry.invalidated, true, change);
+      agent._releaseRunEntry(tabId);
+      assert.equal(agent._pendingFailureRecoveryForUi(tabId), null);
+    }
+  });
+
+  test(`${browser}: accepted startup correction permanently expires a retry even if startup subsequently rejects`, async () => {
+    const agent = setup(), offer = monitoringFixture(agent);
+    agent._finishPageFeedbackRun(tabId);
+    agent.requestFailureRecovery(tabId, offer.recoveryId, 'retry', 'corrected-start');
+    let rejectGuard, entered;
+    const ready = new Promise(resolve => { entered = resolve; });
+    agent.setRunStartGuard(() => { entered(); return new Promise((_resolve, reject) => { rejectGuard = reject; }); });
+    const attempt = agent._claimRunEntry(tabId, 'interactive', { trustedContinuation: true, detachedRequestId: 'corrected-start' }, () => {});
+    await ready;
+    assert.equal(agent.steerMessage(tabId, 'Cancel this task.', { requestId: 'corrected-start', messageId: 'correction' }).accepted, true);
+    rejectGuard(new Error('startup rejected after correction'));
+    await assert.rejects(attempt, /startup rejected after correction/);
+    assert.equal(agent._pendingFailureRecoveryForUi(tabId), null);
+    assert.equal(agent._monitoringRetryStarts.has(tabId), false);
+  });
+
+  test(`${browser}: grant metadata is finite and its token stays private`, () => {
+    const metadata = projectTraceEventData('note', { note: 'page_action_validation', extra: {
+      retryMode: 'action_monitoring_relaxed', certificationFailure: 'owner_unresolved', predicate: 'target_changed',
+      monitoringRelaxed: true, targetCount: 30, captureMs: 100, grantToken: 'private-token', text: 'private-body' } });
+    assert.equal(metadata.extra.retryMode, 'action_monitoring_relaxed');
+    assert.equal(metadata.extra.certificationFailure, 'owner_unresolved');
+    assert.equal(metadata.extra.monitoringRelaxed, true);
+    assert.doesNotMatch(JSON.stringify(metadata), /private-token|private-body/);
+    const bad = projectTraceEventData('note', { note: 'page_action_validation', extra: {
+      certificationFailure: 'private-body', predicate: 'private-secret', monitoringRelaxed: 'private-mode', captureMs: 'private-time' } });
+    assert.doesNotMatch(JSON.stringify(bad), /private-body|private-secret|private-mode|private-time/);
+  });
+
+  test(`${browser}: preparation-only passive veto retains the context failure after original-target revalidation`, async () => {
+    const agent = setup(); monitoringFixture(agent);
+    const run = agent._pageFeedbackRuns.get(tabId);
+    const state = run.modelState = { token: run.token, url: run.url, frames: new Map(run.frames), steeringRevision: 0,
+      actionBinding: { runToken: run.token, documentToken: 'owned-document', snapshotToken: 'original-observation' } };
+    const previous = extensionApi.tabs.sendMessage;
+    let changed = false, validations = 0;
+    extensionApi.tabs.sendMessage = async (_tab, message) => {
+      assert.equal(message.action, 'page_monitor_validate_model'); validations++;
+      return { ready: false, runToken: run.token, documentToken: 'owned-document', snapshotToken: 'original-observation',
+        ...(changed ? { reason: 'target_changed' } : { uncertified: true, certificationFailure: 'owner_unresolved' }) };
+    };
+    try {
+      run.actionContextUnverified = true;
+      const honest = await agent._pageFeedbackPreparationFailure(tabId, 'click_ax', { ref_id: 'ref_original' }, state);
+      assert.equal(honest.noDispatch, true);
+      assert.equal(honest.errorCode, 'action_context_unverified');
+      assert.equal(honest.actionContextUnverified, true);
+      changed = true;
+      const drift = await agent._pageFeedbackPreparationFailure(tabId, 'click_ax', { ref_id: 'ref_original' }, state);
+      assert.equal(drift.actionContextUnverified, undefined, 'Real target changes cannot be reported as the bypassable certificate failure.');
+      assert.equal(validations, 2);
+    } finally { extensionApi.tabs.sendMessage = previous; agent._finishPageFeedbackRun(tabId); }
+  });
+
   test(`${browser}: recovery registry expires private task signatures even when normalized task keys match`, () => {
     const registry = new FailureRecoveryRegistry();
     const binding = { tabId, conversationId: 'c', taskKey: 'tk_same', taskSignature: 'exact-first' };

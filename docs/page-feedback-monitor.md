@@ -197,6 +197,18 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   its unverified fingerprint. Five unsuccessful attempts end with
   `action_context_unverified`; real target, document and user changes keep their
   existing invalidation behavior.
+- Its explicit Retry offers `action_monitoring_relaxed` for one accepted
+  continuation on the same exact task and document. Only the background's
+  authenticated monitor-state reply establishes the private grant. The retry
+  captures the currently observed original control and checks its node,
+  ancestor chain, parent/form, authored semantics, form destination, visibility
+  and actionability at preparation and dispatch. Passive DOM counters may
+  change; agent-owned focus/scroll and native input continuation remain allowed.
+  Target changes, navigation, human intervention, corrections and completion
+  expire the grant. Ordinary Continue cannot grant it. Failed startup restores
+  a fresh recovery option; repeated delivery of one request follows one run.
+  Permission, publication, recipient and duplicate-delivery checks remain
+  active. The UI keeps one failure explanation and adds the explicit retry note.
 - `calculate` is independent of passive DOM changes. A genuine arithmetic-only
   task can retain its terminal answer after an unavailable AX refresh only when
   an actual successful literal-result receipt still matches the current task,

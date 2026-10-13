@@ -218,11 +218,13 @@ export async function beforePageAgentDispatch(api, tabId, details = {}) {
   let acknowledgement;
   let preparationAcknowledgement;
   const expectedModelSnapshot = owner.expectedModelSnapshot?.();
+  const relaxedMonitorGrantToken = owner.relaxedMonitorGrantToken?.();
   try {
     if (!details.release && details.fenceOnly && prepareMonitor) {
       preparationAcknowledgement = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_prepare',
         params: { ...monitorParams, tool: dispatchDetails.tool || dispatchDetails.kind,
           allowPassiveRebase: owner.allowPassiveRebase?.() === true,
+          ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}),
           ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}) } }, { frameId: Number(details.frameId) || 0 });
     }
     acknowledgement = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_dispatch',
@@ -312,11 +314,39 @@ function sameOriginPath(expected, actual) {
 }
 
 export const pageFeedbackMethods = {
-  async _beginPageFeedbackRun(tabId, kind, signal = null) {
+  _isPassiveMonitoringFeedback(tabId, events, run = this._pageFeedbackRuns?.get(tabId)) {
+    return isPassivePageFeedback(events) || (!!events?.length && !!this._monitoringRetryCurrent(tabId, run)
+      && events.every(event => event.kind === 'dom' && ['page', 'unknown'].includes(event.source)
+        && event.frameId === 0 && !/^(?:base|style|link)(?:$|[\s#.])/.test(event.target || '')));
+  },
+
+  _monitoringRetryCurrent(tabId, run = this._pageFeedbackRuns?.get(tabId)) {
+    const retry = run?.monitoringRetry;
+    if (!retry || retry.invalidated || this._checkAbort(tabId) || this._hasPendingSteering?.(tabId)) return null;
+    const binding = retry.offer.binding, page = binding.monitoringPage;
+    const current = this._failureRecoveryBinding?.(tabId);
+    const matches = this.isRunning(tabId) && page && run.url === page.url
+      && run.frames.get(0)?.token === page.documentToken
+      && (!page.documentId || run.documents.get(0)?.id === page.documentId)
+      && this._steeringRuns?.get(tabId)?.requestId === retry.requestId
+      && ['conversationId', 'taskKey', 'taskSignature'].every(key => current?.[key] === binding[key]);
+    if (!matches) this._invalidateMonitoringRetry(tabId, 'binding_changed');
+    return matches ? retry : null;
+  },
+
+  _invalidateMonitoringRetry(tabId, reason) {
+    const run = this._pageFeedbackRuns?.get(tabId), retry = run?.monitoringRetry || this._monitoringRetryStarts?.get(tabId);
+    if (!retry || retry.invalidated) return;
+    retry.invalidated = true;
+    const runId = this.currentRunId?.get(tabId);
+    if (runId) trace.recordNote(runId, 0, 'monitoring_retry', { status: 'expired', reason });
+  },
+
+  async _beginPageFeedbackRun(tabId, kind, signal = null, monitoringRetry = null) {
     this._pageFeedbackRuns ??= new Map();
     const run = { token: token(), kind, events: new Map(), frames: new Map(), documents: new Map(),
       revision: 0, lastUserAt: 0, lastActivityAt: 0, gestures: new Set(), gestureLeases: new Map(),
-      navigation: null, url: '', onUpdate: null };
+      navigation: null, url: '', onUpdate: null, monitoringRetry };
     this._pageFeedbackRuns.set(tabId, run);
     const assertCurrent = () => {
       if (signal) this._throwIfAborted(signal);
@@ -331,6 +361,7 @@ export const pageFeedbackMethods = {
       pending: () => this._pageFeedbackBlocksCall(tabId, run.dispatchCall?.name, run.dispatchCall?.args),
       allowPassiveRebase: () => run.dispatchCall?.allowPassiveRebase === true,
       expectedModelSnapshot: () => run.dispatchCall?.dispatchState?.started ? undefined : run.dispatchCall?.expectedModelSnapshot,
+      relaxedMonitorGrantToken: () => this._monitoringRetryCurrent(tabId, run)?.grantToken,
       clearNavigation: () => { run.navigation = null; },
       frameForDocument: documentToken => [...run.frames].find(([, frame]) => frame.token === documentToken)?.[0],
       dispatched: details => {
@@ -400,7 +431,9 @@ export const pageFeedbackMethods = {
       run.frames.set(frameId, { token: documentToken, id: sender.documentId || '', seq: 0,
         name: clean(frameName, 256) });
     } else previous.name = clean(frameName, 256);
-    return { active: true, runToken: run.token, documentToken };
+    const retry = frameId === 0 ? this._monitoringRetryCurrent(tabId, run) : null;
+    return { active: true, runToken: run.token, documentToken,
+      ...(retry ? { relaxedMonitorGrant: { grantToken: retry.grantToken, runToken: run.token, documentToken } } : {}) };
   },
 
   observePageFeedback(sender, feedback) {
@@ -479,6 +512,7 @@ export const pageFeedbackMethods = {
     const run = this._pageFeedbackRuns?.get(details.tabId);
     if (!run || !this.isRunning(details.tabId) || this._checkAbort(details.tabId)) return;
     const frameId = Number(details.frameId) || 0;
+    if (frameId === 0) this._invalidateMonitoringRetry(details.tabId, 'navigation');
     if (type === 'committed') {
       run.frames.delete(frameId);
       clearGestureLease(run, frameId);
@@ -526,6 +560,7 @@ export const pageFeedbackMethods = {
   _queuePageFeedback(tabId, item) {
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run) return;
+    if (!this._isPassiveMonitoringFeedback(tabId, [item], run)) this._invalidateMonitoringRetry(tabId, 'intervention');
     run.revision++;
     const key = `${item.frameId}:${item.kind}:${item.target || ''}`;
     const previous = run.events.get(key);
@@ -794,15 +829,18 @@ export const pageFeedbackMethods = {
     // one content task. A snapshot taken after an older observation could bind
     // a new recipient to a model decision that still saw the previous one.
     const actionCaptureStarted = Date.now();
-    let actionCaptureStatus = 'unavailable', actionTargetCount = 0;
+    let actionCaptureStatus = 'unavailable', actionTargetCount = 0, actionMonitoringRelaxed = false;
     // Adapter proof is private and app-owned; unsupported pages return no
     // preparation. Keep its owner bound across the same capture await.
     const nativeChatOwner = this._nativeChatOwnerScope?.(tabId) || '';
+    const monitoringRetry = this._monitoringRetryCurrent(tabId, run);
+    if (monitoringRetry) monitoringRetry.started = true;
     if (Array.isArray(messages) && /^https?:\/\//i.test(url) && state.frames.get(0)?.token) {
       try {
         const api = apiFor();
         const capture = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_capture_model',
           params: { runToken: run.token, includeTree: true,
+            ...(monitoringRetry ? { relaxedMonitorGrantToken: monitoringRetry.grantToken } : {}),
             ...(nativeChatOwner ? { nativeChatOwner } : {}),
             ...(run.uploadObservationScope?.documentToken === state.frames.get(0)?.token
               && run.uploadObservationScope.url === url ? { uploadTargets: run.uploadObservationScope.selectors } : {}),
@@ -820,9 +858,13 @@ export const pageFeedbackMethods = {
             && (!nativeChatOwner || nativeChatOwner === this._nativeChatOwnerScope?.(tabId))
             && this._pageFeedbackRuns?.get(tabId) === run && this._pageFeedbackStateCurrent(tabId, run, state, url)) {
           actionCaptureStatus = 'ready';
+          actionMonitoringRelaxed = capture.monitoringRelaxed === true;
+          if (monitoringRetry && capture.monitoringRelaxed === false) this._invalidateMonitoringRetry(tabId, 'grant_expired');
           actionTargetCount = Number.isSafeInteger(capture.targetCount) ? Math.max(0, Math.min(512, capture.targetCount)) : 0;
           state.actionBinding = { snapshotToken: capture.snapshotToken, runToken: run.token, documentToken: capture.documentToken,
-            focusedTargetAvailable: capture.focusedTargetAvailable === true };
+            focusedTargetAvailable: capture.focusedTargetAvailable === true,
+            ...(monitoringRetry && this._monitoringRetryCurrent(tabId, run) === monitoringRetry
+              ? { relaxedMonitorGrantToken: monitoringRetry.grantToken } : {}) };
           if (capture.observationScopeCaptured === false) run.actionObservationScope = null;
           run.actionCaptureTarget = null;
           state.page = run.latestPage = capture.page;
@@ -844,6 +886,7 @@ export const pageFeedbackMethods = {
         status: actionCaptureStatus, targetCount: actionTargetCount,
         focusedTargetAvailable: state.actionBinding?.focusedTargetAvailable === true,
         captureMs: Date.now() - actionCaptureStarted,
+        monitoringRelaxed: actionMonitoringRelaxed,
       });
     }
   },
@@ -885,16 +928,35 @@ export const pageFeedbackMethods = {
     const binding = state?.actionBinding;
     if (run) { run.actionBindingUnavailable = null; run.actionContextUnverified = false; }
     if (!run || !binding || run.modelState !== state || !this._pageFeedbackStateCurrent(tabId, run, state)
-        || (run.events.size && !isPassivePageFeedback([...run.events.values()]))) return false;
+        || (run.events.size && !this._isPassiveMonitoringFeedback(tabId, [...run.events.values()], run))) return false;
     try {
+      const retry = this._monitoringRetryCurrent(tabId, run);
+      const relaxedMonitorGrantToken = retry && retry.grantToken === binding.relaxedMonitorGrantToken ? retry.grantToken : null;
       const response = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_validate_model',
-        params: { ...safeAction(name, args), runToken: run.token, snapshotToken: binding.snapshotToken } }, { frameId: 0 });
+        params: { ...safeAction(name, args), runToken: run.token, snapshotToken: binding.snapshotToken,
+          ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}) } }, { frameId: 0 });
       const owned = response?.runToken === binding.runToken
         && response.documentToken === binding.documentToken && response.snapshotToken === binding.snapshotToken
         && this._pageFeedbackRuns?.get(tabId) === run && run.modelState === state
         && this._pageFeedbackStateCurrent(tabId, run, state)
-        && (!run.events.size || isPassivePageFeedback([...run.events.values()]));
-      const valid = owned && response.ready === true;
+        && (!run.events.size || this._isPassiveMonitoringFeedback(tabId, [...run.events.values()], run));
+      const valid = owned && response.ready === true
+        && (response.relaxed !== true || (relaxedMonitorGrantToken && this._monitoringRetryCurrent(tabId, run) === retry));
+      const certificationFailure = ['owner_unresolved', 'identity_unobserved', 'capture_limit', 'identity_limit',
+        'target_uncovered', 'context_uncertified'].includes(response?.certificationFailure) ? response.certificationFailure : null;
+      if (owned) {
+        const runId = this.currentRunId?.get(tabId);
+        if (runId) trace.recordNote(runId, 0, 'page_action_validation', {
+          status: valid ? 'ready' : 'blocked', monitoringRelaxed: valid && response.relaxed === true,
+          ...(certificationFailure ? { certificationFailure } : {}),
+          ...(response.uncertified === true ? { certificationFailure: certificationFailure || 'context_uncertified' } : {}),
+          ...(typeof response.reason === 'string' && ['target_changed', 'target_unresolved', 'target_uncovered',
+            'focus_changed', 'intervention_changed', 'model_snapshot_invalid', 'model_snapshot_expired',
+            'pending_feedback', 'target_hidden', 'target_disabled', 'target_detached', 'parent_changed', 'form_changed',
+            'relaxed_grant_expired', 'relaxed_target_changed', 'target_not_actionable'].includes(response.reason) ? { predicate: response.reason } : {}),
+        });
+        if (retry && !valid && response.uncertified !== true) this._invalidateMonitoringRetry(tabId, 'target_changed');
+      }
       if (valid) {
         run.validatedActionBindings ??= new Map();
         run.validatedActionBindings.set(`${name}:${JSON.stringify(args)}`, binding.snapshotToken);
@@ -925,8 +987,10 @@ export const pageFeedbackMethods = {
           || !this._pageFeedbackStateCurrent(tabId, run, run.dispatchCall.modelState))) return true;
     if (!run?.events.size) return false;
     const events = [...run.events.values()];
-    if (!isPassivePageFeedback(events) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState)) return true;
-    const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, events);
+    if (!this._isPassiveMonitoringFeedback(tabId, events, run) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState)) return true;
+    const policyEvents = this._monitoringRetryCurrent(tabId, run)
+      ? events.map(event => event.source === 'unknown' && event.kind === 'dom' ? { ...event, source: 'page' } : event) : events;
+    const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, policyEvents);
     // Targets need a fresh comparison first; the content monitor then checks
     // their immutable node and action context at the actual dispatch boundary.
     if (policy.kind === 'bound_target') return run.dispatchCall?.allowPassiveRebase !== true
@@ -960,8 +1024,8 @@ export const pageFeedbackMethods = {
     this._flushPageFeedbackMessages(tabId, messages);
     const recovery = run?.recoveryResult;
     if (!recovery) return null;
-    // Retry observes the current page through the normal gates. A context
-    // failure never grants the publication-audit bypass reserved for that audit.
+    // A context retry relaxes monitoring through a private one-run grant;
+    // publication-audit recovery remains a separate authorization.
     this._offerFailureRecovery?.(tabId, { stage: 'action_preparation', code: recovery.code,
       message: recovery.message }, onUpdate);
     onUpdate(this._effectiveRunMode?.(tabId, null) === 'ask' ? 'error' : 'warning', { message: recovery.message, code: recovery.code });
@@ -976,6 +1040,21 @@ export const pageFeedbackMethods = {
     if (messages) for (let index = messages.length - 1; index >= 0; index--) {
       if (messages[index]?.webbrainAppOwnedKind === 'page_feedback_recovery') messages.splice(index, 1);
     }
+  },
+
+  async _pageFeedbackPreparationFailure(tabId, name, args, state, diagnostic = {}) {
+    const run = this._pageFeedbackRuns?.get(tabId);
+    // Legacy preparation can hit passive churn after an uncertified original
+    // target was allowed with no queued feedback. Preserve the honest reason
+    // only if a new validation still proves that original target unchanged.
+    if (run?.actionContextUnverified && run.modelState === state) {
+      await this._validatePageFeedbackAction(tabId, name, args, state);
+      if (run.actionContextUnverified && this._pageFeedbackStateCurrent(tabId, run, state)) {
+        return { ...pageFeedbackPendingResult(), ...diagnostic, actionContextUnverified: true,
+          errorCode: 'action_context_unverified' };
+      }
+    }
+    return { ...pageFeedbackPendingResult(), ...diagnostic };
   },
 
   _accountPageFeedbackNoDispatch(tabId, name, result) {
@@ -998,7 +1077,7 @@ export const pageFeedbackMethods = {
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run?.events.size) return false;
     if (await this._retainIndependentAskAnswer(tabId, [call], false, '', 'preparation')) return false;
-    if (!isPassivePageFeedback([...run.events.values()])) {
+    if (!this._isPassiveMonitoringFeedback(tabId, [...run.events.values()], run)) {
       if (askAnswerCandidate([call], false, '').trim() && automaticAnswerFeedback([...run.events.values()])
           && this._pageFeedbackAskOwnerCurrent(tabId, run, run.modelState)) {
         const messages = [];
@@ -1072,7 +1151,9 @@ export const pageFeedbackMethods = {
         && this._pageFeedbackStateCurrent(tabId, run, state, url)));
     const canRetain = (feedback, options) => readonlyResponse
       ? isPassivePageFeedback(feedback)
-      : canRetainPageFeedbackCalls(responseToolCalls, state, page, feedback, options);
+      : canRetainPageFeedbackCalls(responseToolCalls, state, page,
+        this._monitoringRetryCurrent(tabId, run) ? feedback.map(event => event.source === 'unknown' && event.kind === 'dom'
+          ? { ...event, source: 'page' } : event) : feedback, options);
     let unverifiedActionContext = false;
     let retained = sameDocument && canRetain(events)
       && (!pending.length || canRetain(pending, { pending: true }));
@@ -1222,7 +1303,9 @@ export function installPageFeedback(Agent) {
     const operationId = run && mutation ? token() : '';
     let noDispatch = false;
     const expectedModelSnapshot = modelBound ? modelState.actionBinding.snapshotToken : undefined;
-    if (run) run.dispatchCall = { name, args, allowPassiveRebase: false, dispatchState, expectedModelSnapshot, modelState };
+    const relaxedMonitorGrantToken = expectedModelSnapshot && this._monitoringRetryCurrent(tabId, run)?.grantToken;
+    if (run) run.dispatchCall = { name, args, allowPassiveRebase: false, dispatchState, expectedModelSnapshot, modelState,
+      ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}) };
     if (run && mutation && owner) {
       owner.operationId = operationId;
       owner.operationFrames.set(operationId, new Set([0]));
@@ -1231,6 +1314,7 @@ export function installPageFeedback(Agent) {
       try {
         prepared = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_prepare',
           params: { ...safeAction(name, args), runToken: run.token, operationId, allowPassiveRebase: allowPassiveRebase === true,
+            ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}),
             ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}) } }, { frameId: 0 });
       } catch {}
       // Certified targets keep their pre-inference footprint across passive
@@ -1270,14 +1354,18 @@ export function installPageFeedback(Agent) {
         }
       }
       if (run && mutation && this._hasPendingPageFeedback(tabId) && result?.noDispatch === true
-          && !result.denied && !result.cancelled && !result.outcomeUnknown) return { ...result, pageFeedbackPending: true };
+          && !result.denied && !result.cancelled && !result.outcomeUnknown) {
+        const preparation = await this._pageFeedbackPreparationFailure(tabId, name, args, modelState);
+        return { ...result, pageFeedbackPending: true,
+          ...(preparation.actionContextUnverified ? { actionContextUnverified: true, errorCode: preparation.errorCode } : {}) };
+      }
       return result;
     } catch (error) {
       noDispatch = !dispatchState.started;
       if (error?.code === 'page_feedback_pending') {
         const facts = preparationVetoDiagnostics(error.pagePreparationVeto);
         const diagnostic = Object.keys(facts).length ? { preparationVeto: facts } : {};
-        if (!dispatchState.started) return { ...pageFeedbackPendingResult(), ...diagnostic };
+        if (!dispatchState.started) return this._pageFeedbackPreparationFailure(tabId, name, args, modelState, diagnostic);
         const interrupted = { success: false, dispatched: true, outcomeUnknown: true, retryable: false,
           pageFeedbackPending: true, ...diagnostic, error: 'The browser changed after this action began. Inspect its outcome before attempting another mutation.' };
         return this._finalizeToolResultOnce(tabId, name, args, interrupted, dispatchState);

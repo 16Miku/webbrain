@@ -6816,6 +6816,12 @@ export class Agent extends LoopDetector {
     // Claim synchronously before awaiting the external guard so teacher-mode
     // startup cannot race a run whose persisted teacher-state check is pending.
     this._runningTabs.add(tabId);
+    const monitoringRetry = runOptions.trustedContinuation === true
+      ? this._failureRecovery.takeMonitoringRetry(this._failureRecoveryBinding(tabId), String(runOptions.detachedRequestId || ''))
+      : null;
+    this._monitoringRetryStarts ??= new Map();
+    if (monitoringRetry) this._monitoringRetryStarts.set(tabId, monitoringRetry);
+    else this._monitoringRetryStarts.delete(tabId);
     this._failureRecovery.clear(tabId);
     this._jevSessions?.delete(tabId);
     for (const [id, pending] of this._jevPendingCalls || []) if (pending.tabId === tabId) this._jevPendingCalls.delete(id);
@@ -6840,19 +6846,25 @@ export class Agent extends LoopDetector {
         await this.assertRunStartAllowed(tabId, defaultKind, runOptions);
         this._throwIfAborted(signal);
         if (!this._isStandaloneChatRun(runOptions)) {
-          await this._beginPageFeedbackRun(tabId, this._runEntryKind(defaultKind, runOptions), signal);
+          await this._beginPageFeedbackRun(tabId, this._runEntryKind(defaultKind, runOptions), signal, monitoringRetry);
         }
         this._throwIfAborted(signal);
         const feedbackRun = this._pageFeedbackRuns?.get(tabId);
         if (feedbackRun && typeof onUpdate === 'function') feedbackRun.onUpdate = onUpdate;
       }, 'Browser startup', RUN_STARTUP_TIMEOUT_MS, controller.signal);
     } catch (error) {
+      this._restoreFailureRecoveryStart(tabId, monitoringRetry?.requestId, onUpdate, monitoringRetry);
       try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
       throw error;
     }
   }
 
   _releaseRunEntry(tabId) {
+    const feedbackRun = this._pageFeedbackRuns?.get(tabId);
+    if (feedbackRun?.monitoringRetry && !feedbackRun.monitoringRetry.started) {
+      this._restoreFailureRecoveryStart(tabId, feedbackRun.monitoringRetry.requestId, feedbackRun.onUpdate, feedbackRun.monitoringRetry);
+    }
+    this._monitoringRetryStarts?.delete(tabId);
     this._ownedNativeChatReadRepairs.delete(tabId);
     this._finishPageFeedbackRun(tabId);
     cdpClient.stopDialogHandling(tabId);
@@ -6901,6 +6913,7 @@ export class Agent extends LoopDetector {
     }
     const id = String(messageId);
     if (!run.acceptedIds.has(id)) {
+      this._invalidateMonitoringRetry?.(tabId, 'task_changed');
       run.acceptedIds.add(id);
       run.messages.push({ id, text: text.trim() });
       // A reviewed plan belongs to the task before this correction. Wake the
@@ -7393,12 +7406,18 @@ export class Agent extends LoopDetector {
     if (this._checkAbort(tabId) || this._hasPendingSteering(tabId)) return null;
     const binding = this._failureRecoveryBinding(tabId);
     const recoveryId = 'recovery_' + secureRandomBase36Token(24);
+    const feedbackRun = this._pageFeedbackRuns?.get(tabId);
+    const monitoringPage = details.stage === 'action_preparation' && details.code === 'action_context_unverified'
+      && this._isActionMode(this._effectiveRunMode(tabId)) && feedbackRun?.frames.get(0)?.token
+      ? { url: feedbackRun.url, documentToken: feedbackRun.frames.get(0).token,
+        documentId: feedbackRun.documents.get(0)?.id || '' } : null;
     const descriptor = { recoveryId, stage: details.stage || 'model',
       code: details.code || 'request_failed', message: String(details.message || 'The task could not finish.').slice(0,2000),
-      retryMode: details.stage === 'publication_audit' ? 'publication_without_audit' : 'resume',
+      retryMode: details.stage === 'publication_audit' ? 'publication_without_audit'
+        : monitoringPage ? 'action_monitoring_relaxed' : 'resume',
       retryLabel: 'Retry', giveUpLabel: 'Give up',
       ...(details.diagnostics ? { diagnostics: String(details.diagnostics).slice(0,6000) } : {}) };
-    this._failureRecovery.offer({ ...binding,
+    this._failureRecovery.offer({ ...binding, ...(monitoringPage ? { monitoringPage } : {}),
       ...(details.publicationKey ? { publicationKey: details.publicationKey,
         publicationTaskKey: details.taskKey } : {}) }, descriptor);
     onUpdate?.('failure_recovery', descriptor);
@@ -7482,12 +7501,32 @@ export class Agent extends LoopDetector {
     return { content: details.message, status: postAction ? 'partial' : 'error' };
   }
 
-  requestFailureRecovery(tabId, recoveryId, choice) {
+  _restoreFailureRecoveryStart(tabId, requestId, onUpdate = null, retry = this._failureRecovery.monitoringRetries.get(tabId)) {
+    if (!retry || retry.requestId !== requestId || retry.started || retry.invalidated || retry.restored || this._checkAbort(tabId)) return false;
+    if (this._hasPendingSteering(tabId)) { retry.invalidated = true; return false; }
+    const current = this._failureRecoveryBinding(tabId), binding = retry.offer.binding;
+    if (!['conversationId', 'taskKey', 'taskSignature'].every(key => binding[key] === current[key])) return false;
+    retry.restored = true;
+    const descriptor = { ...retry.offer.descriptor, recoveryId: 'recovery_' + secureRandomBase36Token(24) };
+    this._failureRecovery.offer(binding, descriptor);
+    onUpdate?.('failure_recovery', descriptor);
+    return true;
+  }
+
+  requestFailureRecovery(tabId, recoveryId, choice, requestId = '') {
     if (!['retry', 'give_up'].includes(choice)) return { ok: false, error: 'Invalid recovery choice.' };
     if (this.isRunning(tabId)) return { ok: false, error: 'Wait for the current run to finish before choosing recovery.' };
     const offer = this._failureRecovery.current(this._failureRecoveryBinding(tabId));
     if (!offer || offer.descriptor.recoveryId !== recoveryId) {
       return { ok: false, error: 'This retry has expired. Start or continue the current task.' };
+    }
+    if (choice === 'retry' && offer.descriptor.retryMode === 'action_monitoring_relaxed') {
+      if (typeof requestId !== 'string' || !requestId.trim() || requestId.length > 200
+          || !this._failureRecovery.reserveMonitoringRetry(this._failureRecoveryBinding(tabId), recoveryId,
+            requestId, secureRandomBase36Token(24))) {
+        return { ok: false, error: 'This recovery requires its own current retry request.' };
+      }
+      return { ok: true, continue: true, retryMode: offer.descriptor.retryMode };
     }
     if (choice === 'retry' && offer.descriptor.retryMode === 'publication_without_audit') {
       const granted = this._grantSocialPublicationAuditRetry(tabId, { ...offer.binding,
@@ -18329,7 +18368,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       preparationStage = 'reprobe_after_pointer';
       const current = await chrome.tabs.sendMessage(tabId, { target: 'content', action: 'click_ax',
         params: { ...contentArgs, _prepareTrustedNativeButton: true, _requireTrustedNativeButton: true,
-          expectedModelSnapshot: dispatchCall.expectedModelSnapshot, allowPassiveRebase: dispatchCall.allowPassiveRebase === true } }, messageOptions);
+          expectedModelSnapshot: dispatchCall.expectedModelSnapshot, allowPassiveRebase: dispatchCall.allowPassiveRebase === true,
+          ...(dispatchCall.relaxedMonitorGrantToken && this._monitoringRetryCurrent(tabId, run)?.grantToken === dispatchCall.relaxedMonitorGrantToken
+            ? { relaxedMonitorGrantToken: dispatchCall.relaxedMonitorGrantToken } : {}) } }, messageOptions);
       assertCurrent();
       if (current?.success !== true || current.trustedButtonRequired !== true) {
         return failure(typeof current?.error === 'string' && current.error
@@ -18625,7 +18666,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const prepared = await chrome.tabs.sendMessage(tabId, { target: 'content', action: 'click_ax',
           params: { ...contentArgs, _prepareTrustedNativeButton: true,
             _requireTrustedNativeButton: false, expectedModelSnapshot: certifiedCall.expectedModelSnapshot,
-            allowPassiveRebase: certifiedCall.allowPassiveRebase === true },
+            allowPassiveRebase: certifiedCall.allowPassiveRebase === true,
+            ...(certifiedCall.relaxedMonitorGrantToken && this._monitoringRetryCurrent(tabId, certifiedRun)?.grantToken === certifiedCall.relaxedMonitorGrantToken
+              ? { relaxedMonitorGrantToken: certifiedCall.relaxedMonitorGrantToken } : {}) },
           ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
         }, messageOptions);
         throwIfAborted();
@@ -46336,6 +46379,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const sendContent = message => chrome.tabs.sendMessage(tabId, {
       ...message, ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
     }, { frameId });
+    const monitoringPreparation = () => {
+      const run = this._pageFeedbackRuns?.get(tabId), call = run?.dispatchCall;
+      if (frameId !== 0 || !call?.expectedModelSnapshot || call.args?.ref_id !== args.ref_id
+          || !call.relaxedMonitorGrantToken || this._monitoringRetryCurrent(tabId, run)?.grantToken !== call.relaxedMonitorGrantToken) return {};
+      return { expectedModelSnapshot: call.expectedModelSnapshot,
+        relaxedMonitorGrantToken: call.relaxedMonitorGrantToken, allowPassiveRebase: true };
+    };
     const finishPreparationFailure = async failure => {
       if (!trustedDispatched || trustedTextAttempted || !beforePreparation?.documentToken || abortSignal?.aborted) return failure;
       const afterPreparation = await this._textMutationValueDigest(tabId, digestTarget);
@@ -46363,7 +46413,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       let prepared = await sendContent({
         target: 'content',
         action: 'ax_prepare_field_for_trusted_type',
-        params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
+        params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode, ...monitoringPreparation() },
       });
       this._throwIfAborted(abortSignal);
       if (!prepared?.success) {
@@ -46402,7 +46452,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         const reselected = await sendContent({
           target: 'content',
           action: 'ax_prepare_field_for_trusted_type',
-          params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode },
+          params: { ref_id: args.ref_id, selectionMode: contentEditableSelectionMode, ...monitoringPreparation() },
         });
         this._throwIfAborted(abortSignal);
         if (!reselected?.success) {

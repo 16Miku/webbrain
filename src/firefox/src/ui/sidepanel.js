@@ -39,7 +39,7 @@ import {
 } from './chat-history-store.js';
 import { historyTextFromElement } from './history-text.js';
 import { claimRunError } from './run-error-dedupe.js';
-import { createFailureRecoveryCard } from './failure-recovery.js';
+import { createFailureRecoveryCard, syncFailureRecoveryMessages } from './failure-recovery.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX } from '../run-capture.js';
 import { runUiUnavailableBeforeSeq, runUiUpdatesForCurrentTask } from '../run-ui-journal.js';
 import { formatErrorMessage } from '../error-format.js';
@@ -2219,6 +2219,8 @@ function syncAssistantMessageElementVisibility(msgEl) {
     'assistant-awaiting-content',
     !assistantMessageHasRenderableContent(msgEl),
   );
+  // Terminal and direct responses also write text outside the stream renderer.
+  if (msgEl?.querySelector?.('.failure-recovery-card')) syncFailureRecoveryMessages(msgEl);
 }
 
 function syncAssistantMessageVisibility() {
@@ -7450,6 +7452,7 @@ function renderFailureRecoveryCard(assistantEl, data, { tabId = currentTabId, re
   const existing = assistantEl.querySelector(`.failure-recovery-card[data-recovery-id="${CSS.escape(recoveryId)}"]`);
   if (existing) {
     if (existing.dataset.recoveryChosen !== 'true') existing.dataset.recoveryCurrent = 'true';
+    syncFailureRecoveryMessages(assistantEl);
     bindFailureRecoveryCard(existing);
     syncFailureRecoveryButtons();
     return true;
@@ -7462,6 +7465,7 @@ function renderFailureRecoveryCard(assistantEl, data, { tabId = currentTabId, re
   card.dataset.foreground = assistantEl.dataset.retryForeground || 'false';
   card.dataset.recoveryCurrent = 'true';
   assistantEl.querySelector('.message-content')?.appendChild(card);
+  syncFailureRecoveryMessages(assistantEl);
   bindFailureRecoveryCard(card);
   syncFailureRecoveryButtons();
   scrollToBottom();
@@ -7488,6 +7492,7 @@ function rebindFailureRecoveryCards() {
     card.dataset.recoveryCurrent = 'unknown';
     delete card.dataset.recoveryBusy;
     card.removeAttribute('aria-busy');
+    syncFailureRecoveryMessages(card.closest('.message.assistant'));
     bindFailureRecoveryCard(card);
   }
   syncFailureRecoveryButtons();

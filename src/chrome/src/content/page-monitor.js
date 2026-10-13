@@ -42,6 +42,23 @@
   let lastFeedbackDelivery = Promise.resolve();
   let agentTurn = null, userTurn = null, lastUserTarget = null;
   let identityPreparationCapture = null;
+  // Only the authenticated background state response can establish this grant.
+  // Model/page metadata and ordinary action parameters cannot create one.
+  let relaxedMonitorGrant = null;
+  const revokedRelaxedGrants = new Set();
+  const relaxedObservedBindings = new Set();
+  function revokeRelaxedGrant() {
+    if (relaxedMonitorGrant) revokedRelaxedGrants.add(relaxedMonitorGrant.grantToken);
+    relaxedMonitorGrant = null;
+    relaxedObservedBindings.clear();
+  }
+  function currentRelaxedGrant(token) {
+    return active && !!relaxedMonitorGrant && typeof token === 'string'
+      && token === relaxedMonitorGrant.grantToken && relaxedMonitorGrant.runToken === runToken
+      && relaxedMonitorGrant.documentToken === documentToken
+      && !revokedRelaxedGrants.has(token)
+      && relaxedMonitorGrant.url === location.href && relaxedMonitorGrant.baseURI === document.baseURI;
+  }
   let matchedEvents = new WeakMap();
   const activePointers = new Set();
   const fenceAttribute = 'data-webbrain-page-revision';
@@ -120,6 +137,7 @@
   };
   const send = event => {
     if (!active || disposed) return;
+    if (event.source !== 'agent' && (event.kind !== 'dom' || event.source === 'user')) revokeRelaxedGrant();
     publishRevision();
     const feedback = { ...event, runToken, documentToken, seq: ++seq, revision };
     const pending = event.source !== 'agent';
@@ -157,8 +175,18 @@
           || proof.runToken !== runToken || proof.documentToken !== documentToken
           || proof.userAt !== lastUserAt || proof.interventionRevision !== interventionRevision
           || deepActiveElement() !== op.preparedBinding.target) continue;
-      const before = proof.binding, after = actionFootprint(before.target, before.readonlyPreparation);
+      const before = proof.binding, after = before.relaxed
+        ? relaxedTargetBinding(before.target, before.grantToken) : actionFootprint(before.target, before.readonlyPreparation);
       if (!after) continue;
+      if (before.relaxed) {
+        const original = proof.viewport;
+        if (!original || !sameRelaxedBinding(before, after)
+            || ![original, viewport].every(value => value.scale === 1 && value.visualWidth === value.width
+              && value.visualHeight === value.height && Math.abs(value.offsetX) < 1 && Math.abs(value.offsetY) < 1)
+            || ['width', 'height', 'visualWidth', 'visualHeight', 'scale', 'dpr'].some(key => original[key] !== viewport[key])) continue;
+        ownedPreparationBindings.set(op.preparedBinding, { ...proof, binding: after, viewportNotificationPending: false });
+        return true;
+      }
       const originalContext = JSON.parse(before.context), currentContext = JSON.parse(after.context);
       const original = originalContext[2];
       if (![original, viewport].every(value => value.scale === 1 && value.visualWidth === value.width
@@ -205,6 +233,7 @@
   const interact = (kind, el, { completeGesture = false, ...extra } = {}) => {
     const isIgnored = ignored(el);
     if (!active || (isIgnored && !completeGesture)) return;
+    revokeRelaxedGrant();
     lastUserAt = Date.now(); lastUserTarget = isIgnored ? null : el; revision++;
     const marker = {}; userTurn = marker;
     setTimeout(() => { if (userTurn === marker) userTurn = null; }, 0);
@@ -371,9 +400,15 @@
         const allowedEvent = data.kind === 'input'
           ? ['keydown', 'beforeinput', 'input', 'change', 'compositionstart', 'compositionend'].includes(event.type)
           : data.kind === 'click' ? ['pointerover', 'mouseover', 'pointermove', 'pointerdown', 'mousedown', 'click'].includes(event.type) : false;
-        const fresh = op && data.revision === op.preparedRevision && op.preparedRevision === revision
-          && !domTimer && !unreported && lastUserAt <= op.userAt;
         const signed = op && nativeMarkerSignature(op.nativeSecret, data) === data.signature;
+        const markerRevisionMatches = op && data.revision === op.preparedRevision;
+        const relaxedFresh = markerRevisionMatches && signed && markerTarget && nextSequence && allowedEvent
+          && data.documentToken === documentToken && data.runToken === runToken && op.preparedBinding?.relaxed === true
+          && (flushPendingMutations(op), sampleFormControls(op.target),
+            !nativeReceiverPredicate(op, { kind: data.kind }) && rebasePassivePreparation(op, { documentToken: data.documentToken }));
+        if (relaxedFresh) op.relaxedNativeRevision = data.revision;
+        const fresh = markerRevisionMatches && (op.preparedBinding?.relaxed ? relaxedFresh : (op.preparedRevision === revision
+          && !domTimer && !unreported && lastUserAt <= op.userAt));
         if (data.documentToken === documentToken && data.runToken === runToken && op && markerTarget && nextSequence
             && fresh && signed && allowedEvent && ['input', 'click'].includes(data.kind)) {
           // The capability is bound to the isolated-world prepared node and consumed once.
@@ -602,6 +637,7 @@
       currentViewport(), window.scrollX, window.scrollY]) };
   }
   function samePreparedBinding(before, after) {
+    if (before?.relaxed || after?.relaxed) return sameRelaxedBinding(before, after);
     if (!before || !after || before.target !== after.target || before.scope !== after.scope || before.hit !== after.hit || before.context !== after.context) return false;
     return ['ancestors', 'nodes'].every(key => before[key].length === after[key].length
       && before[key].every((item, index) => item.node === after[key][index].node && item.value === after[key][index].value
@@ -616,6 +652,7 @@
       ? proof.binding : before;
   }
   function samePreparationSemantics(before, after) {
+    if (before?.relaxed) return sameRelaxedBinding(before, after);
     if (!before?.model || !after?.model) return false;
     if (![before, after].every(binding => binding.hit === binding.target || binding.target.contains?.(binding.hit))) return false;
     const original = JSON.parse(before.context), current = JSON.parse(after.context);
@@ -1511,6 +1548,7 @@
       ...(readonlyPreparation ? { readonlyPreparation } : {}) };
   }
   function operationBinding(op, target = op?.preparedBinding?.target) {
+    if (op?.preparedBinding?.relaxed) return relaxedTargetBinding(target, op.preparedBinding.grantToken);
     return op?.preparedBinding?.model === true ? actionFootprint(target, op.preparedBinding.readonlyPreparation) : preparedBinding(target);
   }
   function inputContinuationValue(item, target) {
@@ -1530,6 +1568,8 @@
   }
   function inputContinuationBindingMatches(op, after) {
     const before = preparedBindingFor(op?.preparedBinding);
+    if (before?.relaxed) return op?.dispatched && op.kind === 'input'
+      && sameRelaxedBinding(before, after, true);
     if (!op?.dispatched || op.kind !== 'input' || before?.model !== true || !after
         || before.target !== after.target || before.scope !== after.scope || before.hit !== after.hit || before.context !== after.context) return false;
     return ['ancestors', 'nodes'].every(key => before[key].length === after[key].length
@@ -1543,7 +1583,11 @@
   }
   function operationBindingMatches(op, target = op?.preparedBinding?.target) {
     const current = operationBinding(op, target);
-    return samePreparedBinding(preparedBindingFor(op?.preparedBinding), current) || inputContinuationBindingMatches(op, current);
+    const matches = samePreparedBinding(preparedBindingFor(op?.preparedBinding), current) || inputContinuationBindingMatches(op, current);
+    if (op?.preparedBinding?.relaxed && (!matches || !relaxedActionability(target, { input: kindFor(op.modelBindingTool || op.tool) === 'input' }))) {
+      revokeRelaxedGrant(); return false;
+    }
+    return matches;
   }
   function modelTarget(params = {}) {
     if (!modelActionTools.has(params.tool) || Number.isFinite(params.x) || Number.isFinite(params.y)
@@ -1573,20 +1617,125 @@
       value]);
     return { value: identity, parent: bindingParent(target), form: target.form || target.closest('form,[role="form"]') };
   }
+  function relaxedTargetBinding(target, grantToken) {
+    if (!currentRelaxedGrant(grantToken) || !(target instanceof Element) || !target.isConnected
+        || target.ownerDocument !== document || !modelCandidateIdentity(target)) return null;
+    const ancestors = [];
+    for (let node = bindingParent(target); node; node = bindingParent(node)) {
+      if (ancestors.length >= 64) return null;
+      ancestors.push({ node, value: '' });
+    }
+    // Focus/scroll decoration and extension transport markers do not change
+    // the control's meaning. All other authored attributes remain exact.
+    const attributes = [...target.attributes].filter(attribute => !['class', 'style',
+      'data-webbrain-native-target', 'data-webbrain-native-action'].includes(attribute.name))
+      .map(attribute => [attribute.name, attribute.value]).sort(([a], [b]) => a.localeCompare(b));
+    const nativeControl = /^(INPUT|TEXTAREA|SELECT|OPTION)$/.test(target.tagName);
+    const fixed = [target.tagName, attributes, target.disabled === true, target.readOnly === true,
+      target.isContentEditable === true, target.type || null];
+    const content = [nativeControl ? target.value : null, target.textContent,
+      nativeControl ? [target.checked === true, target.selected === true, target.selectedIndex ?? null] : null];
+    const form = target.form || target.closest('form,[role="form"]');
+    if (form && (form.attributes.length > 64 || [...form.attributes].some(attribute => attribute.value.length > 8192))) return null;
+    const formIdentity = form ? JSON.stringify([[...form.attributes].filter(attribute => !['class', 'style'].includes(attribute.name))
+      .map(attribute => [attribute.name, attribute.value]).sort(([a], [b]) => a.localeCompare(b)),
+      form.action || null, form.method || null, form.target || null, form.enctype || null]) : null;
+    return { model: true, relaxed: true, grantToken, target, scope: bindingParent(target), form, formIdentity,
+      clickHandler: target.onclick, submitHandler: form?.onsubmit,
+      identity: JSON.stringify([fixed, content]),
+      continuationIdentity: JSON.stringify([fixed, target.isContentEditable ? null : target.textContent]),
+      ancestors, nodes: [], hit: target, context: JSON.stringify([location.href, document.baseURI]) };
+  }
+  function sameRelaxedBinding(before, after, continuingInput = false) {
+    return !!before?.relaxed && !!after?.relaxed && currentRelaxedGrant(before.grantToken)
+      && before.grantToken === after.grantToken && before.target === after.target && before.scope === after.scope
+      && before.form === after.form && before.formIdentity === after.formIdentity && before.context === after.context
+      && before.clickHandler === after.clickHandler && before.submitHandler === after.submitHandler
+      && (continuingInput ? before.continuationIdentity === after.continuationIdentity : before.identity === after.identity)
+      && before.ancestors.length === after.ancestors.length
+      && before.ancestors.every((item, index) => item.node === after.ancestors[index].node);
+  }
+  function sealRelaxedOwnedInput(op) {
+    const original = op?.preparedBinding;
+    if (!original?.relaxed || !op.dispatched || op.kind !== 'input' || op.typingPreparationOnly
+        || !currentRelaxedGrant(original.grantToken) || lastUserAt !== op.userAt) return;
+    const current = relaxedTargetBinding(original.target, original.grantToken);
+    if (!sameRelaxedBinding(original, current, true)) { revokeRelaxedGrant(); return; }
+    // Preserve the immutable inference/dispatch certificate. Only the local
+    // drift baseline advances to this exact owned input's completed body;
+    // otherwise its delayed observer checkpoint would expire the next action.
+    for (const binding of relaxedObservedBindings) if (binding.target === original.target) relaxedObservedBindings.delete(binding);
+    relaxedObservedBindings.add(current);
+  }
+  function finishRelaxedOwnedAction(op) {
+    sealRelaxedOwnedInput(op);
+    if (!op?.preparedBinding?.relaxed || !op.dispatched || op.kind !== 'click'
+        || op.pointerPreparationOnly || op.selectorPreparationOnly || !currentRelaxedGrant(op.preparedBinding.grantToken)
+        || lastUserAt !== op.userAt) return;
+    // A completed click can open its menu or remove its own control. The
+    // old snapshot stays immutable; the next action needs a fresh capture.
+    for (const binding of relaxedObservedBindings) if (binding.target === op.preparedBinding.target) relaxedObservedBindings.delete(binding);
+  }
+  function relaxedSemanticMutation(binding, record) {
+    if (record.type === 'attributes') return [binding.target, binding.form].includes(record.target)
+      && !['class', 'style', 'data-webbrain-native-target', 'data-webbrain-native-action'].includes(record.attributeName)
+      && record.oldValue !== record.target.getAttribute(record.attributeName);
+    if (record.type === 'childList' && [...record.removedNodes].some(node => node === binding.target
+        || node.contains?.(binding.target) || binding.ancestors.some(item => item.node === node))) return true;
+    const node = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+    return ['characterData', 'childList'].includes(record.type)
+      && (node === binding.target || binding.target.contains(node));
+  }
+  function relaxedActionability(target, { hit = false, input = false } = {}) {
+    if (!(target instanceof Element) || !target.isConnected || target.ownerDocument !== document || !visible(target)
+        || !target.matches(modelControlSelector) || target.disabled === true || (input && target.readOnly === true)) return false;
+    for (let node = target; node; node = bindingParent(node)) {
+      const style = getComputedStyle(node);
+      if (node.inert || node.getAttribute('aria-hidden') === 'true' || node.getAttribute('aria-disabled') === 'true'
+          || node.matches('fieldset[disabled]') || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+          || style.contentVisibility === 'hidden' || Number(style.opacity) === 0) return false;
+    }
+    const rect = target.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    if (!hit) return true;
+    const receiver = deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return !!receiver && (receiver === target || target.contains(receiver));
+  }
   function modelBindingResult(params = {}) {
     const snapshot = modelSnapshots.get(params.snapshotToken || params.expectedModelSnapshot);
     if (!active || params.runToken !== runToken || snapshot?.runToken !== runToken) return { reason: 'model_snapshot_invalid' };
     if (!snapshot || snapshot.until < Date.now()) return { reason: 'model_snapshot_expired' };
-    if (snapshot.interventionRevision !== interventionRevision || snapshot.userAt !== lastUserAt || interventionUnreported)
+    const relaxed = snapshot.relaxedGrantToken && snapshot.relaxedGrantToken === params.relaxedMonitorGrantToken
+      && currentRelaxedGrant(params.relaxedMonitorGrantToken);
+    if (snapshot.relaxedGrantToken && !relaxed) return { reason: 'relaxed_grant_expired' };
+    if (snapshot.userAt !== lastUserAt || (!relaxed && (snapshot.interventionRevision !== interventionRevision || interventionUnreported)))
       return { reason: 'intervention_changed' };
-    if (pendingDOM && pendingDOM.source !== 'page') return { reason: 'pending_feedback' };
+    if (!relaxed && pendingDOM && pendingDOM.source !== 'page') return { reason: 'pending_feedback' };
     const target = modelTarget(params);
-    if (!target) return params.ref_id && snapshot.refs.has(params.ref_id) ? {} : { reason: 'target_unresolved' };
+    if (!target) {
+      if (relaxed) { revokeRelaxedGrant(); return { reason: 'target_unresolved' }; }
+      return params.ref_id && snapshot.refs.has(params.ref_id) ? {} : { reason: 'target_unresolved' };
+    }
     const before = snapshot.targets.get(target), previous = snapshot.uncertified.get(target);
-    if (!before && !previous) return { reason: 'target_uncovered' };
-    if (params.ref_id && snapshot.hasRefs && snapshot.refs.get(params.ref_id) !== target) return { reason: 'target_changed' };
+    if (!relaxed && !before && !previous) return { reason: 'target_uncovered', certificationFailure: snapshot.captureFailures.get(target) || 'identity_unobserved' };
+    if (params.ref_id && snapshot.hasRefs && snapshot.refs.get(params.ref_id) !== target) {
+      if (relaxed) revokeRelaxedGrant();
+      return { reason: 'target_changed' };
+    }
     if (!params.ref_id && !params.selector && !params.nativeTarget && !params.textMatch && modelFocusTools.has(params.tool)
         && snapshot.focusTarget !== target) return { reason: 'focus_changed' };
+    if (relaxed) {
+      const original = snapshot.relaxedTargets.get(target);
+      const current = relaxedTargetBinding(target, params.relaxedMonitorGrantToken);
+      if (!original) return { reason: 'target_uncovered', certificationFailure: snapshot.captureFailures.get(target) || 'identity_unobserved' };
+      if (snapshot.relaxedInvalidated.has(target) || !sameRelaxedBinding(original, current)) { revokeRelaxedGrant(); return { reason: 'target_changed' }; }
+      if (!relaxedActionability(target, { input: kindFor(params.tool) === 'input' })) {
+        revokeRelaxedGrant(); return { reason: 'target_not_actionable' };
+      }
+      for (const binding of relaxedObservedBindings) if (binding.target === target) relaxedObservedBindings.delete(binding);
+      relaxedObservedBindings.add(original);
+      return { binding: original, relaxed: true, certificationFailure: snapshot.captureFailures.get(target) || undefined };
+    }
     if (before?.readonlyPreparation && params.tool !== 'click_ax') return {};
     if (before) {
       const reason = bindingPredicate(preparedBindingFor(before), actionFootprint(target, before.readonlyPreparation));
@@ -1594,7 +1743,7 @@
     }
     const current = modelCandidateIdentity(target);
     return current && previous.value === current.value && previous.parent === current.parent && previous.form === current.form
-      ? { uncertified: true } : {};
+      ? { uncertified: true, certificationFailure: snapshot.captureFailures.get(target) || 'owner_unresolved' } : {};
   }
   function captureModel(params = {}) {
     if (!active || params.runToken !== runToken) return { ready: false, runToken, documentToken };
@@ -1700,6 +1849,8 @@
       } catch { return { ready: false, runToken, documentToken, reason: 'observation_unavailable' }; }
     }
     const targets = new Map(), uncertified = new WeakMap(), refs = new Map(), seen = new Set(), publicNodes = new Set();
+    const relaxedGrantToken = page && currentRelaxedGrant(params.relaxedMonitorGrantToken) ? params.relaxedMonitorGrantToken : null;
+    const relaxedTargets = new Map(), relaxedInvalidated = new WeakSet(), captureFailures = new WeakMap();
     if (page) for (const { ref, end } of observedRefs) {
       if (end > page.pageContent.length) continue;
       const node = window.__wb_ax_lookup?.(ref);
@@ -1844,13 +1995,20 @@
       // inputs still need the existing structural owner proof.
       if (page && !publicNodes.has(node) && !(node.tagName === 'INPUT' && node.type === 'file')) return;
       seen.add(node);
-      const footprint = targets.size < MODEL_TARGET_LIMIT ? actionFootprint(node, node === readonlyPreparation?.target ? readonlyPreparation : null) : null;
-      if (footprint && !observedFootprint(footprint)) return;
+      const identity = modelCandidateIdentity(node);
+      if (!identity) captureFailures.set(node, 'capture_limit');
+      if (relaxedGrantToken && publicNodes.has(node) && node.matches(modelControlSelector)) {
+        const binding = relaxedTargetBinding(node, relaxedGrantToken);
+        if (binding) relaxedTargets.set(node, binding);
+      }
+      const limitReached = targets.size >= MODEL_TARGET_LIMIT;
+      const footprint = !limitReached ? actionFootprint(node, node === readonlyPreparation?.target ? readonlyPreparation : null) : null;
+      if (footprint && !observedFootprint(footprint)) { captureFailures.set(node, 'identity_unobserved'); return; }
       if (!footprint && page && !publicNodes.has(node)) return;
       if (footprint) targets.set(node, footprint);
       else {
-        const identity = modelCandidateIdentity(node);
         if (identity) uncertified.set(node, identity);
+        if (!captureFailures.has(node)) captureFailures.set(node, limitReached ? 'capture_limit' : 'owner_unresolved');
       }
     };
     // Recovery observes this target's current semantic owner in the same task
@@ -1888,10 +2046,13 @@
     // Metadata-only tests/integration use an existing AX lookup without a new
     // tree. Record those refs lazily only when they resolve to an original node.
     modelSnapshots.set(snapshotToken, { runToken, until: Date.now() + MODEL_SNAPSHOT_MS, targets, uncertified, refs,
+      relaxedGrantToken, relaxedTargets, relaxedInvalidated, captureFailures,
       hasRefs: !!page || !!window.__wbElementMap, focusTarget, userAt: lastUserAt, interventionRevision });
     for (const [key, snapshot] of modelSnapshots) if (snapshot.until < Date.now()) modelSnapshots.delete(key);
     while (modelSnapshots.size > 2) modelSnapshots.delete(modelSnapshots.keys().next().value);
     return { ready: true, runToken, documentToken, snapshotToken, targetCount: targets.size, focusedTargetAvailable,
+      monitoringRelaxed: !!relaxedGrantToken && currentRelaxedGrant(relaxedGrantToken),
+      ...(priorityTarget && captureFailures.has(priorityTarget) ? { certificationFailure: captureFailures.get(priorityTarget) } : {}),
       ...(params.observationRef ? { observationScopeCaptured } : {}),
       ...(page ? { page } : {}) };
   }
@@ -1903,6 +2064,15 @@
       && !operationBindingMatches(op);
   }
   function nativeReceiverPredicate(op, params) {
+    if (op?.preparedBinding?.relaxed && (params.ref_id || params.selector || params.textMatch)
+        && resolveTarget(params) !== op.preparedBinding.target) {
+      revokeRelaxedGrant(); return 'target_changed';
+    }
+    if (op?.preparedBinding?.relaxed && ['click', 'input'].includes(params.kind)
+        && params.pointerPreparationOnly !== true
+        && !relaxedActionability(op.preparedBinding.target, { hit: true, input: params.kind === 'input' })) {
+      revokeRelaxedGrant(); return 'target_not_actionable';
+    }
     if (!params.nativeTarget || op?.preparedBinding?.model !== true) return '';
     // Resolve the actual transport marker alone; a stale marker cannot fall
     // back to the requested selector or ref and borrow its certificate.
@@ -1920,12 +2090,13 @@
     return 'target_changed';
   }
   function rebasePassivePreparation(op, params = {}) {
+    const relaxed = op?.preparedBinding?.relaxed === true && currentRelaxedGrant(op.preparedBinding.grantToken);
     const continuingInput = op?.dispatched && op.kind === 'input' && op.preparedBinding?.model === true;
     const continuingPreparation = op?.dispatched && (op.pointerPreparationOnly === true || op.typingPreparationOnly === true) && op.preparedBinding?.model === true;
     if (!active || !op || op.allowPassiveRebase !== true || (op.dispatched && !continuingInput && !continuingPreparation) || op.coordinateSensitive || op.layoutInvalidated
-        || op.until < Date.now() || lastUserAt > op.userAt || interventionUnreported
-        || op.preparedInterventionRevision !== interventionRevision
-        || (pendingDOM && pendingDOM.source !== 'page')
+        || op.until < Date.now() || lastUserAt > op.userAt || (!relaxed && interventionUnreported)
+        || (!relaxed && op.preparedInterventionRevision !== interventionRevision)
+        || (!relaxed && pendingDOM && pendingDOM.source !== 'page')
         || (params.documentToken && params.documentToken !== documentToken)) return false;
     const independentNavigation = op.tool === 'navigate';
     if (independentNavigation) {
@@ -2199,6 +2370,32 @@
   }
   function onMutations(records) {
     if (!active) return;
+    // Every captured candidate retains its own tombstone, even before the
+    // model selects it. Churn on an unselected control does not expire the
+    // run; selecting a target changed during inference does.
+    if (relaxedMonitorGrant) for (const snapshot of modelSnapshots.values()) {
+      if (!snapshot.relaxedGrantToken || !currentRelaxedGrant(snapshot.relaxedGrantToken)) continue;
+      for (const binding of snapshot.relaxedTargets.values()) if (!snapshot.relaxedInvalidated.has(binding.target)
+          && (records.some(record => relaxedSemanticMutation(binding, record))
+            || (records.some(record => record.type === 'control' && record.target === binding.target)
+              && !sameRelaxedBinding(binding, relaxedTargetBinding(binding.target, binding.grantToken))))) snapshot.relaxedInvalidated.add(binding.target);
+    }
+    // Mutation history also fences an observed node that was changed and then
+    // restored before dispatch. Unrelated live-page churn does not spend the
+    // grant; input continuation can edit only its original editable contents.
+    if (relaxedMonitorGrant) for (const binding of relaxedObservedBindings) {
+      const owned = [...operations.values()].find(op => op.preparedBinding?.relaxed && op.preparedBinding.target === binding.target
+        && op.dispatched && !op.finished && op.kind === 'input' && lastUserAt <= op.userAt);
+      const ownedClick = agentTurn && lastUserAt <= agentTurn.userAt && [...operations.values()].some(op => op.preparedBinding?.relaxed
+        && op.preparedBinding.target === binding.target && op.dispatched && !op.finished && op.kind === 'click'
+        && !op.pointerPreparationOnly && !op.selectorPreparationOnly && op.userAt === agentTurn.userAt);
+      if (ownedClick) continue;
+      const material = records.some(record => relaxedSemanticMutation(binding, record)
+        && !(owned && ['characterData', 'childList'].includes(record.type)));
+      if (material || !sameRelaxedBinding(binding, relaxedTargetBinding(binding.target, binding.grantToken), !!owned)) {
+        revokeRelaxedGrant(); break;
+      }
+    }
     let changed = false, attributed = false, source = 'page', target = '';
     let diagnosticRecord = null;
     const diagnostic = el => {
@@ -2387,9 +2584,20 @@
   }
   function start(state) {
     if (disposed || !state?.active || state.documentToken !== documentToken) return;
-    if (active && runToken === state.runToken) return;
+    const grant = state.relaxedMonitorGrant;
+    const authorizedGrant = grant && typeof grant.grantToken === 'string' && grant.grantToken.length >= 16
+      && grant.grantToken.length <= 256 && grant.runToken === state.runToken && grant.documentToken === documentToken
+      && !revokedRelaxedGrants.has(grant.grantToken)
+      ? Object.freeze({ ...grant, url: location.href, baseURI: document.baseURI }) : null;
+    if (active && runToken === state.runToken) {
+      if (relaxedMonitorGrant && (relaxedMonitorGrant.grantToken !== authorizedGrant?.grantToken
+          || !currentRelaxedGrant(relaxedMonitorGrant.grantToken))) revokeRelaxedGrant();
+      relaxedMonitorGrant = authorizedGrant && !revokedRelaxedGrants.has(authorizedGrant.grantToken) ? authorizedGrant : null;
+      return;
+    }
     stop();
     active = true; runToken = state.runToken; seq = 0; revision = 0; interventionRevision = 0; interventionDiagnostic = ''; publishRevision();
+    relaxedMonitorGrant = authorizedGrant;
     observer = new MutationObserver(onMutations);
     observeRoot(document);
     controlTimer = setInterval(() => { sampleFormControls(); samplePreparedTargets(); }, 250);
@@ -2415,10 +2623,16 @@
         event.stopImmediatePropagation();
         flushPendingMutations(op);
         sampleFormControls(op?.target);
-        if (!active || guard.runToken !== runToken || guard.documentToken !== documentToken || guard.revision !== revision
+        const relaxed = op?.preparedBinding?.relaxed === true && guard.revision === op.preparedRevision
+          && guard.runToken === runToken && guard.documentToken === documentToken
+          && !phaseAlreadyConsumed && op.kind === phaseKind
+          && !nativeReceiverPredicate(op, { kind: phaseKind }) && rebasePassivePreparation(op, { documentToken: guard.documentToken });
+        if (relaxed) op.relaxedNativeRevision = guard.revision;
+        if (!active || guard.runToken !== runToken || guard.documentToken !== documentToken || (!relaxed && guard.revision !== revision)
+            || (op?.preparedBinding?.relaxed && !relaxed)
             || !op || phaseAlreadyConsumed || op.kind !== phaseKind
             || (phase === 'input' && elementFor(event) !== op.target && elementFor(event) !== op.focusTarget)
-            || op.preparedRevision !== revision || domTimer || unreported || lastUserAt > op.userAt) {
+            || op.preparedRevision !== revision || (!relaxed && (domTimer || unreported)) || lastUserAt > op.userAt) {
           event.preventDefault(); return;
         }
         if (actionPhase) {
@@ -2641,6 +2855,7 @@
     listen(window, 'pagehide', () => stop());
   }
   function stop() {
+    revokeRelaxedGrant();
     active = false; runToken = ''; activePointers.clear(); pointerHeld = false; composing = false;
     clearTimeout(agentResize?.timer); agentResize = null;
     lastUserAt = 0; lastViewport = ''; userTurn = null; lastUserTarget = null; matchedEvents = new WeakMap(); controlIterator = null; preparedOperationCursor = 0;
@@ -2692,8 +2907,9 @@
     const bindingResult = expected ? modelBindingResult(params) : null;
     const certified = expected ? bindingResult.binding : inherited
       && previous.runToken === runToken && previous.until >= Date.now()
-      && previous.preparedInterventionRevision === interventionRevision && lastUserAt === previous.userAt
-      && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page')
+      && lastUserAt === previous.userAt
+      && (previous.preparedBinding.relaxed ? currentRelaxedGrant(previous.preparedBinding.grantToken)
+        : previous.preparedInterventionRevision === interventionRevision && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page'))
       && !previous.modelBindingInvalid && !previous.layoutInvalidated
       && operationTarget === previous.preparedBinding.target
       && operationBindingMatches(previous, operationTarget) ? previous.preparedBinding : null;
@@ -2717,7 +2933,10 @@
       coordinatePoint: coordinateSensitive ? { x: params.x, y: params.y } : null,
       coordinateRect: rectFor(coordinateTarget),
       until: Date.now() + 30000, dispatched: false, pointerPreparationOnly: false, selectorPreparationOnly: false, consequentialInputPending: false, userAt: lastUserAt, preparedRevision: revision });
-    return proofRequired ? { modelBindingValid: !!certified } : {};
+    return proofRequired ? { modelBindingValid: !!certified,
+      ...(certified?.relaxed ? { relaxed: true, bindingKind: 'relaxed_target' } : {}),
+      ...(bindingResult?.reason ? { reason: bindingResult.reason } : {}),
+      ...(bindingResult?.certificationFailure ? { certificationFailure: bindingResult.certificationFailure } : {}) } : {};
   }
   // The second argument is private producer provenance, never message/model params.
   function dispatch(params, selectorPreparationOnly = false, typingPreparationOnly = false) {
@@ -2773,7 +2992,9 @@
     const layoutChanged = coordinatePreparationShifted(op);
     const bindingChanged = preparedBindingChanged(op);
     const rebased = !layoutChanged && rebasePassivePreparation(op, params);
+    const receiverPredicate = nativeReceiverPredicate(op, params);
     if (!active || !op || op.modelBindingInvalid || layoutChanged || bindingChanged || (!rebased && (domTimer || unreported))
+        || receiverPredicate
         || (params.element && op.target !== params.element)
         || lastUserAt > op.userAt
         || (Number.isFinite(op.preparedRevision) && op.preparedRevision !== revision)) {
@@ -2794,6 +3015,9 @@
     const currentFocus = deepActiveElement();
     const rebindingFocus = params.rebindFocus === true;
     const fileAssignment = op?.target?.tagName === 'INPUT' && op.target.type === 'file';
+    if (op?.preparedBinding?.relaxed && !relaxedActionability(op.preparedBinding.target, {
+      hit: ['click', 'input'].includes(op.kind), input: op.kind === 'input',
+    })) { revokeRelaxedGrant(); return false; }
     // A companion validates once before writing its marker and again before
     // the native key. Revalidating the same consumed Tab rebind is safe only
     // while its native sequence and exact deeply focused node remain current.
@@ -2805,7 +3029,9 @@
     const shifted = coordinatePreparationShifted(op);
     const bindingChanged = preparedBindingChanged(op, { allowFocusRebind: focusRebindAvailable });
     const preparedRevision = op?.preparedRevision;
-    const suppliedRevisionMatches = Number(params.revision) === preparedRevision;
+    const suppliedRevisionMatches = Number(params.revision) === preparedRevision
+      || (op?.preparedBinding?.relaxed && currentRelaxedGrant(op.preparedBinding.grantToken)
+        && Number(params.revision) === op.relaxedNativeRevision);
     const rebased = suppliedRevisionMatches && !shifted && rebasePassivePreparation(op, params);
     if (!active || params.runToken !== runToken || params.documentToken !== documentToken || !op || op.modelBindingInvalid || shifted || bindingChanged
         || !suppliedRevisionMatches || op.preparedRevision !== revision
@@ -2845,15 +3071,20 @@
     const previous = localOperation;
     const target = resolveTarget({ ...params, textMatch: action === 'click' ? params.text : undefined })
       || (kindFor(action) === 'input' ? deepActiveElement() : null);
+    const bindingTool = action === 'ax_prepare_field_for_trusted_type' && params.expectedModelSnapshot
+      && currentRelaxedGrant(params.relaxedMonitorGrantToken) ? 'set_field' : action;
     const approved = [...operations.values()].reverse().find(op => op.allowPassiveRebase === true && !op.dispatched
       && op.preparedBinding?.target === target && op.until >= Date.now()
-      && op.preparedInterventionRevision === interventionRevision && lastUserAt <= op.userAt && !interventionUnreported
-      && (!pendingDOM || pendingDOM.source === 'page')
+      && lastUserAt <= op.userAt
+      && (op.preparedBinding.relaxed ? currentRelaxedGrant(op.preparedBinding.grantToken)
+        : op.preparedInterventionRevision === interventionRevision && !interventionUnreported && (!pendingDOM || pendingDOM.source === 'page'))
       && operationBindingMatches(op, target));
     prepare({ selector: params.selector, ref_id: params.ref_id, x: params.x, y: params.y,
-      textMatch: action === 'click' ? params.text : undefined, tool: action, operationId, runToken,
+      textMatch: action === 'click' ? params.text : undefined, tool: bindingTool, operationId, runToken,
       ...(params.expectedModelSnapshot !== undefined || approved?.expectedModelSnapshot !== undefined
         ? { expectedModelSnapshot: params.expectedModelSnapshot ?? approved.expectedModelSnapshot } : {}),
+      ...(approved?.preparedBinding?.relaxed ? { relaxedMonitorGrantToken: approved.preparedBinding.grantToken } : {}),
+      ...(bindingTool !== action ? { relaxedMonitorGrantToken: params.relaxedMonitorGrantToken } : {}),
       allowPassiveRebase: params.allowPassiveRebase === true || !!approved });
     if (approved?.preparedBinding?.model === true) {
       const local = operations.get(operationId);
@@ -2873,7 +3104,7 @@
     if (!params._bidiPrepare) beforeLocalDispatch({ preparation: true });
     return () => {
       const op = operations.get(operationId);
-      if (op) { op.until = Date.now() + 200; op.finished = true; }
+      if (op) { finishRelaxedOwnedAction(op); op.until = Date.now() + 200; op.finished = true; }
       localOperation = previous;
     };
   }
@@ -2885,8 +3116,9 @@
     const layoutChanged = coordinatePreparationShifted(operation);
     const bindingChanged = preparedBindingChanged(operation);
     const rebased = !layoutChanged && rebasePassivePreparation(operation, { element: target });
+    const receiverPredicate = !preparation ? nativeReceiverPredicate(operation, { kind: kind || localOperation.kind }) : '';
     if (rebased) localOperation.revision = operation.preparedRevision;
-    if (operation?.modelBindingInvalid || layoutChanged || bindingChanged || (!rebased && (domTimer || unreported)) || lastUserAt > localOperation.userAt || revision !== localOperation.revision) {
+    if (operation?.modelBindingInvalid || layoutChanged || bindingChanged || receiverPredicate || (!rebased && (domTimer || unreported)) || lastUserAt > localOperation.userAt || revision !== localOperation.revision) {
       const error = new Error('Browser changed during action preparation. Re-observe before acting.');
       error.code = 'page_feedback_pending'; error.dispatched = localOperation.started === true;
       error.pagePreparationVeto = preparationVetoFacts(operation, { layoutChanged, bindingChanged, target });
@@ -2918,7 +3150,7 @@
     beforeLocalDispatch({ preparation: true, kind, target });
     const before = preparedBindingFor(op.preparedBinding);
     const previousProof = ownedPreparationBindings.get(op.preparedBinding);
-    const previousScrollX = window.scrollX, previousScrollY = window.scrollY;
+    const previousScrollX = window.scrollX, previousScrollY = window.scrollY, preparationViewport = currentViewport();
     const preparedIntervention = interventionRevision, preparedUserAt = lastUserAt, preparedRun = runToken;
     dispatch({ ...localOperation, runToken, kind, element: target, scrollIntoView: kind === 'scroll' || op.windowScroll,
       addScrollTarget: true,
@@ -2928,9 +3160,9 @@
     try {
       const result = callback();
       flushPendingMutations(op); sampleFormControls(target);
-      const after = actionFootprint(target, before.readonlyPreparation);
+      const after = before.relaxed ? relaxedTargetBinding(target, before.grantToken) : actionFootprint(target, before.readonlyPreparation);
       const changedAuthority = !active || runToken !== preparedRun || lastUserAt !== preparedUserAt
-        || interventionRevision !== preparedIntervention || interventionUnreported;
+        || (before.relaxed ? !currentRelaxedGrant(before.grantToken) : interventionRevision !== preparedIntervention || interventionUnreported);
       const changedFocus = kind === 'focus' && deepActiveElement() !== target;
       if (changedAuthority || changedFocus || !samePreparationSemantics(before, after)) {
         const error = new Error('Browser changed during action preparation. Re-observe before acting.');
@@ -2942,6 +3174,7 @@
       // derived geometry proof for this original node is shared with its owner.
       ownedPreparationBindings.set(op.preparedBinding, { binding: after, runToken, documentToken,
         userAt: lastUserAt, interventionRevision,
+        ...(before.relaxed ? { viewport: preparationViewport } : {}),
         scrollPreparationUntil: kind === 'scroll' && (previousScrollX !== window.scrollX || previousScrollY !== window.scrollY)
           ? Date.now() + 200 : previousProof?.scrollPreparationUntil || 0,
         viewportNotificationPending: kind === 'scroll' && (previousScrollX !== window.scrollX || previousScrollY !== window.scrollY)
@@ -3020,6 +3253,8 @@
       flushPendingMutations(); sampleFormControls();
       const result = modelBindingResult(params);
       respond({ ready: !!result.binding, ...(result.uncertified ? { uncertified: true } : {}),
+        ...(result.relaxed ? { relaxed: true, bindingKind: 'relaxed_target' } : {}),
+        ...(result.certificationFailure ? { certificationFailure: result.certificationFailure } : {}),
         ...(result.reason ? { reason: result.reason } : {}), runToken, documentToken, snapshotToken: params.snapshotToken });
     }
     else if (msg.action === 'page_monitor_prepare') { respond({ ready: true, ...prepare(msg.params || {}) }); }
@@ -3077,7 +3312,7 @@
           && (!active || params.runToken !== runToken || params.documentToken !== documentToken || !op)) {
         respond({ ready: false }); return;
       }
-      if (op) { op.until = Date.now() + 200; op.finished = true; }
+      if (op) { finishRelaxedOwnedAction(op); op.until = Date.now() + 200; op.finished = true; }
       respond({ ready: true });
     }
   };

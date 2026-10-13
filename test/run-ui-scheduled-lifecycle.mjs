@@ -608,6 +608,19 @@ for (const item of builds) {
     assert.equal(h.context.terminalRunUiStatus('Owned task completed.', revised), 'completed');
   });
 
+  test(`${item.build}: context and page-instability recovery are failed terminal runs rather than completed tasks`, () => {
+    const h = backgroundHarness(item);
+    for (const code of ['action_context_unverified', 'page_unstable']) {
+      const failure = { type: 'failure_recovery', data: { stage: 'action_preparation', code,
+        retryMode: code === 'action_context_unverified' ? 'action_monitoring_relaxed' : 'resume' } };
+      assert.equal(h.context.terminalRunUiStatus('The task is incomplete. Choose Retry.', [failure]), 'failed');
+      assert.equal(h.context.runUpdatesSucceeded([failure]), false);
+      assert.equal(h.context.askCompletionSucceededForBadge('The task is incomplete.', [failure]), false);
+      const revised = [failure, { type: 'steering_applied', data: { id: 'new-task' } }, { type: 'tool_result', data: done }];
+      assert.equal(h.context.terminalRunUiStatus('Completed the corrected task.', revised), 'completed');
+    }
+  });
+
   test(`${item.build}: actual sidebar corrected Ask succeeds only without a current error, limit or Stop`, () => {
     const panel = panelCompletionHarness(item);
     const error = { type: 'error', data: { message: 'Previous task failed.' } };

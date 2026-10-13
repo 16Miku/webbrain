@@ -147,7 +147,9 @@ async function modelMessage(page, action, params = {}) {
 }
 
 function assertOpaqueModelMetadata(result) {
-  const allowed = new Set(['ready', 'runToken', 'documentToken', 'snapshotToken', 'targetCount', 'revision', 'code', 'reason', 'uncertified', 'focusedTargetAvailable']);
+  const allowed = new Set(['ready', 'runToken', 'documentToken', 'snapshotToken', 'targetCount', 'revision', 'code', 'reason', 'uncertified', 'focusedTargetAvailable', 'certificationFailure', 'monitoringRelaxed']);
+  if (result.certificationFailure) assert.ok(['owner_unresolved', 'identity_unobserved', 'capture_limit'].includes(result.certificationFailure),
+    'Certificate diagnostics contain only an enumerated failure predicate');
   assert.ok(Object.keys(result).every(key => allowed.has(key)), 'Only opaque ownership metadata and counts may cross the content boundary');
   assert.ok(Object.values(result).every(value => value === null || ['string', 'number', 'boolean'].includes(typeof value)),
     'No node footprint, control values, file objects, or DOM arrays may be serialized');

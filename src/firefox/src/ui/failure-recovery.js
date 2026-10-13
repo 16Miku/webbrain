@@ -15,13 +15,25 @@ export function failureRecoveryMessage(data = {}) {
   return STAGE_MESSAGES[data.stage] || 'The task stopped before it could finish. You can retry from the saved progress.';
 }
 
+export function syncFailureRecoveryMessages(assistantEl) {
+  const normalize = value => String(value || '').replace(/\s+/g, ' ').trim();
+  const textEl = assistantEl?.querySelector('.message-text');
+  const assistantText = normalize(textEl?.innerText || textEl?.textContent);
+  for (const card of assistantEl?.querySelectorAll('.failure-recovery-card') || []) {
+    const message = card.querySelector('.failure-recovery-message');
+    // Keep transcript text for Copy and history; only hide repeated offer copy.
+    if (message) message.hidden = !!assistantText && assistantText === normalize(message.textContent);
+  }
+}
+
 export function createFailureRecoveryCard(data, { document = globalThis.document, retryLabel = 'Retry' } = {}) {
   if (!data?.recoveryId) return null;
   const card = document.createElement('div');
   card.className = 'failure-recovery-card';
   card.dataset.recoveryId = String(data.recoveryId);
   card.dataset.recoveryStage = String(data.stage || 'inference');
-  card.dataset.retryMode = data.retryMode === 'publication_without_audit' ? 'publication_without_audit' : 'resume';
+  card.dataset.retryMode = ['publication_without_audit', 'action_monitoring_relaxed'].includes(data.retryMode)
+    ? data.retryMode : 'resume';
   card.setAttribute('role', 'alert');
 
   const message = document.createElement('div');
@@ -29,10 +41,12 @@ export function createFailureRecoveryCard(data, { document = globalThis.document
   message.textContent = failureRecoveryMessage(data);
   card.appendChild(message);
 
-  if (card.dataset.retryMode === 'publication_without_audit') {
+  if (['publication_without_audit', 'action_monitoring_relaxed'].includes(card.dataset.retryMode)) {
     const note = document.createElement('div');
     note.className = 'failure-recovery-note';
-    note.textContent = 'Retry skips the publication audit once for this unchanged draft.';
+    note.textContent = card.dataset.retryMode === 'action_monitoring_relaxed'
+      ? 'Retry relaxes page-change monitoring once for this task.'
+      : 'Retry skips the publication audit once for this unchanged draft.';
     card.appendChild(note);
   }
   if (typeof data.diagnostics === 'string' && data.diagnostics.trim()) {

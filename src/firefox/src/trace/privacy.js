@@ -40,6 +40,7 @@ const NOTE_METADATA_FIELDS = [
   'success', 'approved', 'outcome', 'verification', 'count',
   'adapter', 'revision', 'notesInjected', 'workflowSchema', 'job', 'template',
   'validationFailure', 'candidateAttempt', 'stage', 'retryMode',
+  'certificationFailure', 'monitoringRelaxed', 'predicate', 'targetCount', 'focusedTargetAvailable', 'captureMs',
 ];
 
 // Checker diagnostics are finite protocol labels, never arbitrary model text
@@ -73,7 +74,13 @@ const RECOVERY_STAGES = new Set([
   'completion_verification', 'verification', 'action_preparation',
   'response_generation', 'browser_interaction',
 ]);
-const RECOVERY_RETRY_MODES = new Set(['resume', 'publication_without_audit', 'publication_audit_bypass']);
+const RECOVERY_RETRY_MODES = new Set(['resume', 'publication_without_audit', 'publication_audit_bypass', 'action_monitoring_relaxed']);
+const CERTIFICATION_FAILURES = new Set(['owner_unresolved', 'identity_unobserved', 'capture_limit', 'identity_limit',
+  'target_uncovered', 'context_uncertified']);
+const ACTION_PREDICATES = new Set(['target_changed', 'target_unresolved', 'target_uncovered', 'focus_changed',
+  'intervention_changed', 'model_snapshot_invalid', 'model_snapshot_expired', 'pending_feedback',
+  'target_hidden', 'target_disabled', 'target_detached', 'parent_changed', 'form_changed',
+  'relaxed_grant_expired', 'relaxed_target_changed', 'target_not_actionable']);
 
 function validationFailureMetadata(value) {
   if (VALIDATION_FAILURE_CODES.has(value) || PUBLICATION_CONTRACT_CODES.has(value)) return value;
@@ -149,6 +156,17 @@ function projectNoteExtra(value) {
   if (Object.hasOwn(output, 'stage')) output.stage = RECOVERY_STAGES.has(output.stage) ? output.stage : 'model';
   if (Object.hasOwn(output, 'retryMode')) {
     output.retryMode = RECOVERY_RETRY_MODES.has(output.retryMode) ? output.retryMode : 'resume';
+  }
+  if (Object.hasOwn(output, 'certificationFailure') && !CERTIFICATION_FAILURES.has(output.certificationFailure)) delete output.certificationFailure;
+  if (Object.hasOwn(output, 'predicate') && !ACTION_PREDICATES.has(output.predicate)) delete output.predicate;
+  for (const key of ['monitoringRelaxed', 'focusedTargetAvailable']) {
+    if (Object.hasOwn(output, key) && typeof output[key] !== 'boolean') delete output[key];
+  }
+  for (const key of ['targetCount', 'captureMs']) {
+    if (Object.hasOwn(output, key)) {
+      if (typeof output[key] !== 'number' || !Number.isFinite(output[key]) || output[key] < 0) delete output[key];
+      else output[key] = Math.min(key === 'targetCount' ? 512 : 120000, output[key]);
+    }
   }
   if (Object.hasOwn(output, 'candidateAttempt') && !Number.isSafeInteger(output.candidateAttempt)) {
     delete output.candidateAttempt;

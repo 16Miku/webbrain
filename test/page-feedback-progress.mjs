@@ -244,13 +244,18 @@ for (const build of ['chrome', 'firefox']) {
             const offer = updates.find(u => u.type === 'failure_recovery')?.data;
             assert.equal(offer?.stage, 'action_preparation');
             assert.equal(offer.code, condition === 'unsupported' ? 'action_context_unverified' : 'page_unstable');
-            assert.equal(offer.retryMode, 'resume');
+            const retryMode = condition === 'unsupported' ? 'action_monitoring_relaxed' : 'resume';
+            assert.equal(offer.retryMode, retryMode);
             assert.equal(offer.message, result);
             assert.match(result, /choose Retry/);
             assert.equal(agent._pendingFailureRecoveryForUi(tab).recoveryId, offer.recoveryId);
-            assert.deepEqual(agent.requestFailureRecovery(tab, offer.recoveryId, streaming ? 'retry' : 'give_up'),
-              { ok: true, continue: streaming, retryMode: 'resume' });
-            assert.equal(agent._pendingFailureRecoveryForUi(tab), null);
+            assert.deepEqual(agent.requestFailureRecovery(tab, offer.recoveryId, streaming ? 'retry' : 'give_up', 'owned-recovery-' + tab),
+              { ok: true, continue: streaming, retryMode });
+            if (streaming && condition === 'unsupported') {
+              assert.equal(agent._pendingFailureRecoveryForUi(tab).recoveryId, offer.recoveryId,
+                'Keep recovery until its reserved continuation actually claims the run.');
+              agent._failureRecovery.clear(tab);
+            } else assert.equal(agent._pendingFailureRecoveryForUi(tab), null);
           }
           assert.equal(agent._pageFeedbackRuns.size, 0);
         } finally { api.tabs.sendMessage = oldSend; documents.delete(tab); }

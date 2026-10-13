@@ -1989,12 +1989,18 @@ function isPublicationAuditFailureUpdate(update) {
     || (update?.type === 'failure_recovery' && update?.data?.stage === 'publication_audit');
 }
 
+function isActionPreparationFailureUpdate(update) {
+  return update?.type === 'failure_recovery' && update?.data?.stage === 'action_preparation'
+    && ['action_context_unverified', 'page_unstable'].includes(update?.data?.code);
+}
+
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
     update?.type === 'error' || update?.type === 'quota'
     || isClarificationRequiredRunUpdate(update)
     || isPersistenceDegradedRunUpdate(update)
     || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || isPlannerRequestFailureUpdate(update)
   ));
 }
@@ -2008,6 +2014,7 @@ function terminalRunUiStatus(content, updates = [], error = null) {
   if (updates.some(update => update?.type === 'error'
     || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update)
     || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || update?.type === 'quota')) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
@@ -2031,6 +2038,7 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
     update?.type === 'error' || update?.type === 'quota'
     || isPersistenceDegradedRunUpdate(update)
     || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -2282,6 +2290,7 @@ function launchDetachedRun(action, msg, sender) {
   });
   entry.promise = task;
   task.catch((error) => {
+    agent._restoreFailureRecoveryStart?.(tabId, requestId);
     rememberDetachedRunFailure(tabId, requestId, error);
     console.warn(`[WebBrain] detached ${action} run failed:`, error);
   }).finally(() => {
@@ -2962,9 +2971,14 @@ async function handleFailureRecoveryResponse(msg, sender) {
     }
   }
   assertNoActiveTabRun(tabId);
-  const result = agent.requestFailureRecovery(tabId, recoveryId, choice);
+  const result = agent.requestFailureRecovery(tabId, recoveryId, choice, msg.requestId);
   if (!result?.ok || choice === 'give_up' || result.continue !== true) return result;
-  return launchDetachedRun('continue', msg, sender);
+  try {
+    return launchDetachedRun('continue', msg, sender);
+  } catch (error) {
+    agent._restoreFailureRecoveryStart?.(tabId, msg.requestId);
+    throw error;
+  }
 }
 
 async function handleMessage(msg, sender) {
