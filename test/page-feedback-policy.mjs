@@ -192,10 +192,12 @@ for (const build of ['chrome', 'firefox']) {
     test(`${build}: self-validating ${name} does not starve under unrelated DOM feedback`, () => {
       assert.notEqual(pageFeedbackCallPolicy(name, args, state, page).kind, 'unsafe');
       assert.equal(canRetainPageFeedbackCalls([call(name, args)], state, page, passive, { pending: true }), true);
-      for (const event of [{ kind: 'pointer', source: 'user', frameId: 0 }, { kind: 'navigation', source: 'page', frameId: 0 },
-        { kind: 'dom', source: 'unknown', frameId: 0 }]) {
+      for (const event of [{ kind: 'pointer', source: 'user', frameId: 0 }, { kind: 'navigation', source: 'page', frameId: 0 }]) {
         assert.equal(canRetainPageFeedbackCalls([call(name, args)], state, page, [event]), false);
       }
+      // Unknown-attribution DOM is automatic churn (no human gesture), so a
+      // self-validating tool proceeds; the supersession budget no longer resets.
+      assert.equal(canRetainPageFeedbackCalls([call(name, args)], state, page, [{ kind: 'dom', source: 'unknown', frameId: 0 }]), true);
     });
   }
   for (const outcome of ['partial', 'failed']) {

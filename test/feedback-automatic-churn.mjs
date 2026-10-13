@@ -1,0 +1,370 @@
+// Real Agent loop and page-feedback methods with mocked browser/content APIs
+// (unit level, both builds). Automatic page churn must not hard-supersede
+// revalidatable decisions, and every supersession it causes is bounded.
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+const PAGE_URL = 'https://shop.example/item/1';
+const TREE = 'main [ref_main]\n heading "Blue shoes" [ref_h]\n button "Add to cart" [ref_add]';
+const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+const pages = new Map();
+let snapshots = 0;
+const api = {
+  storage: { local: area, session: area },
+  runtime: { getURL: value => `extension://test/${value}`, sendMessage: async () => ({}) },
+  tabs: {
+    get: async id => ({ id, url: PAGE_URL, title: 'Shop' }),
+    sendMessage: async (id, message) => {
+      const page = pages.get(id) || {};
+      if (message.action === 'page_monitor_capture_model') {
+        return { ready: true, runToken: message.params.runToken, documentToken: 'main-token', snapshotToken: 'snapshot-' + (++snapshots),
+          targetCount: 2, focusedTargetAvailable: false, page: { success: true, url: PAGE_URL, pageContent: TREE } };
+      }
+      if (message.action === 'page_monitor_validate_model') {
+        (page.validations ??= []).push(message.params.snapshotToken);
+        const changed = page.targetChanged === true;
+        return { ready: !changed, ...(changed ? { reason: 'target_changed' } : {}), runToken: message.params.runToken,
+          documentToken: 'main-token', snapshotToken: message.params.snapshotToken };
+      }
+      if (message.action === 'page_monitor_prepare') return { ready: true, modelBindingValid: true };
+      return { ready: true };
+    },
+  },
+  webNavigation: { getAllFrames: async () => [{ frameId: 0, parentFrameId: -1, documentId: 'main-document', url: PAGE_URL },
+    { frameId: 1, parentFrameId: 0, documentId: 'ad-document', url: 'https://ads.example/slot' }] },
+  scripting: { executeScript: async () => [{ result: null }] },
+};
+globalThis.chrome = api;
+globalThis.browser = api;
+let nextTab = 7400;
+
+function makeAgent(Agent, next) {
+  const provider = { name: 'automatic churn test', model: 'test', promptTier: 'full', contextWindow: 128000,
+    supportsTools: true, supportsVision: false,
+    chat: messages => next(messages),
+    async *chatStream(messages) {
+      const response = await next(messages);
+      if (response.content) yield { type: 'text', content: response.content };
+      if (response.toolCalls) yield { type: 'tool_call', content: response.toolCalls.map((call, index) => ({ ...call, index })) };
+      yield { type: 'done' };
+    } };
+  const agent = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
+  Object.assign(agent, {
+    _hydrate: async () => {}, _persist: () => {}, _persistNow: async () => ({ ok: true }), _persistSubmittedTurn: async () => {},
+    _startTraceRun: async () => null, _endTraceRun: async () => {}, _beginReadCompleteness: async () => null,
+    _manageContext: async () => {}, _checkCostAllowance: async () => null, _recordCostUsage: async () => null,
+    _currentUrl: async () => PAGE_URL, _getTabUrlTitle: async () => ({ tabUrl: PAGE_URL, tabTitle: 'Shop' }),
+    _maybeEmitAskModeHandoff: async () => {}, _maybeReinjectAdapter: async () => {}, _ensureProgressSessionForCurrentTask: async () => {},
+    _plannerMode: () => 'off',
+    _runPlannerIntentGate: async () => ({ proceed: true, requestKind: 'execute', requiresStateChange: false, requiresSubmission: false }),
+    _skipPermissionGate: true, _ensureGateSetting: async () => true, _adoptLiveSocialPublishWorkflow: async () => false,
+    _isFormValidationCandidate: () => false, _preflightRichTextToolbarTarget: async () => ({ block: null }),
+    _auditRichTextToolbarTarget: async () => {}, _shouldAutoScreenshot: () => false, _pageFeedbackIdleMs: 0,
+    _completionDoneBlock: () => null,
+  });
+  for (const name of ['_chromeProtectedPageFailure', '_captchaMutationPreflight', '_workflowPreSubmitDispatchBlock',
+    '_messageRecipientGuardBlock', '_detectLikelySubmitAction', '_socialPublicationPreSubmitBlock']) agent[name] = async () => null;
+  return agent;
+}
+
+// Content monitors for the main document and an embedded ad frame.
+function bindFrames(agent, tab) {
+  const make = (frameId, documentId, documentToken, url) => {
+    const from = { tab: { id: tab }, frameId, documentId, url };
+    const state = agent.pageMonitorState(from, documentToken);
+    assert.equal(state.active, true);
+    let seq = 0;
+    return value => assert.equal(agent.observePageFeedback(from, { ...state, seq: ++seq, revision: seq,
+      kind: 'dom', source: 'page', target: 'span#price', ...value }).accepted, true);
+  };
+  return { main: make(0, 'main-document', 'main-token', PAGE_URL), child: make(1, 'ad-document', 'ad-token', 'https://ads.example/slot') };
+}
+
+const call = (id, name, args) => ({ toolCalls: [{ id, function: { name, arguments: JSON.stringify(args) } }] });
+const AUTOMATIC = {
+  child_frame_dom: (agent, tab, frames) => frames.child({ kind: 'dom', source: 'page', target: 'div#ad' }),
+  page_focus: (agent, tab, frames) => frames.main({ kind: 'activity', source: 'page', target: 'input#search' }),
+  iframe_focus: (agent, tab, frames) => frames.main({ kind: 'activity', source: 'page', target: 'iframe#ad' }),
+  unknown_scroll: (agent, tab, frames) => frames.main({ kind: 'scroll', source: 'unknown', target: 'div#carousel', viewport: { x: 400, y: 0 } }),
+  unknown_dom: (agent, tab, frames) => frames.main({ kind: 'dom', source: 'unknown', target: 'div#feed' }),
+  synthetic_input: (agent, tab, frames) => frames.main({ kind: 'input', source: 'page', target: 'input#q' }),
+  child_navigation: (agent, tab) => agent.observePageNavigation({ tabId: tab, frameId: 1, parentFrameId: 0, documentId: 'ad-document-2',
+    url: 'https://ads.example/slot?r=' + Math.random(), transitionType: 'auto_subframe', transitionQualifiers: [] }, 'committed'),
+};
+
+for (const build of ['chrome', 'firefox']) {
+  const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+  const policy = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+
+  test(`${build}: automatic classifier separates page churn from intervention and unknown navigation`, () => {
+    const automatic = [
+      { kind: 'dom', source: 'page', frameId: 0, target: 'span' }, { kind: 'dom', source: 'unknown', frameId: 0, target: 'div' },
+      { kind: 'dom', source: 'page', frameId: 3, target: 'div' }, { kind: 'activity', source: 'page', frameId: 0, target: 'input#q' },
+      { kind: 'activity', source: 'page', frameId: 0, target: 'iframe#editor' }, { kind: 'input', source: 'page', frameId: 0, target: 'input#q' },
+      { kind: 'scroll', source: 'unknown', frameId: 0, target: 'html' }, { kind: 'scroll', source: 'page', frameId: 2, target: 'div' },
+      { kind: 'resize', source: 'page', frameId: 2, target: 'viewport' }, { kind: 'resize', source: 'unknown', frameId: 2, target: 'viewport' },
+      { kind: 'navigation', source: 'unknown', frameId: 1 }, { kind: 'navigation', source: 'page', frameId: 4 },
+    ];
+    const strict = [
+      ...['click', 'input', 'selection', 'scroll', 'activity', 'dom', 'navigation'].map(kind => ({ kind, source: 'user', frameId: 0, target: 'a' })),
+      { kind: 'navigation', source: 'unknown', frameId: 0 }, { kind: 'navigation', source: 'page', frameId: 0 },
+      { kind: 'resize', source: 'unknown', frameId: 0, target: 'viewport' },
+      { kind: 'dom', source: 'page', frameId: 0, target: 'style' }, { kind: 'dom', source: 'unknown', frameId: 1, target: 'link#theme' },
+      { kind: 'activity', source: 'page', frameId: 0, target: 'base' }, { kind: 'activity', source: 'unknown', frameId: 0, target: 'input' },
+      { kind: 'input', source: 'unknown', frameId: 0, target: 'input' }, { kind: 'click', source: 'page', frameId: 0, target: 'button' },
+      { kind: 'selection', source: 'page', frameId: 0, target: 'p' }, { kind: 'constructor', source: 'page', frameId: 0 }, null,
+    ];
+    for (const event of automatic) assert.equal(policy.isAutomaticPageFeedbackEvent(event), true, JSON.stringify(event));
+    for (const event of strict) assert.equal(policy.isAutomaticPageFeedbackEvent(event), false, JSON.stringify(event));
+    assert.equal(policy.isAutomaticPageFeedback(automatic), true);
+    assert.equal(policy.isAutomaticPageFeedback([...automatic, strict[0]]), false, 'One user event makes the batch an intervention');
+    assert.equal(policy.isAutomaticPageFeedback([]), false);
+  });
+
+  test(`${build}: automatic churn retains reads and independent tools but keeps unsafe, legacy non-DOM and terminal fences`, () => {
+    const page = { success: true, pageContent: TREE };
+    const state = { url: PAGE_URL, page };
+    const keep = (name, args, events, current = page, scope = state) =>
+      policy.canRetainPageFeedbackCalls([{ function: { name, arguments: JSON.stringify(args) } }], scope, current, events);
+    const childDom = [{ kind: 'dom', source: 'page', frameId: 1, target: 'div' }];
+    const focus = [{ kind: 'activity', source: 'page', frameId: 0, target: 'input#search' }];
+    const scroll = [{ kind: 'scroll', source: 'unknown', frameId: 0, target: 'div#feed' }];
+    for (const events of [childDom, focus, scroll]) {
+      assert.equal(keep('read_page', {}, events), true);
+      assert.equal(keep('calculate', { expression: '2 + 2' }, events), true);
+      assert.equal(keep('click', { x: 10, y: 20 }, events), false, 'Coordinates stay fenced');
+      assert.equal(keep('execute_js', { code: 'save()' }, events), false, 'Scripts stay fenced');
+      assert.equal(keep('done', { summary: 'Done', outcome: 'success' }, events), false, 'Terminal answers keep passive-only retention');
+    }
+    assert.equal(keep('chat_observe', {}, focus), false, 'Read preparation stays fenced after page focus changes');
+    assert.equal(keep('chat_observe', {}, scroll), true);
+    // Legacy AX comparison (no private footprint) certifies text only.
+    assert.equal(keep('click_ax', { ref_id: 'ref_add' }, childDom), true);
+    assert.equal(keep('click_ax', { ref_id: 'ref_add' }, [{ kind: 'dom', source: 'unknown', frameId: 0, target: 'div' }]), true);
+    assert.equal(keep('click_ax', { ref_id: 'ref_add' }, scroll), false);
+    assert.equal(keep('click_ax', { ref_id: 'ref_add' }, [{ kind: 'navigation', source: 'unknown', frameId: 1 }]), false);
+    assert.equal(keep('click_ax', { ref_id: 'ref_add' }, childDom, { ...page, pageContent: TREE.replace('Blue shoes', 'Red shoes') }), false,
+      'A changed owner/entity still supersedes a legacy target');
+    const bound = { ...state, actionBinding: { snapshotToken: 'private', runToken: 'run', documentToken: 'doc' } };
+    for (const events of [childDom, focus, scroll]) assert.equal(keep('click_ax', { ref_id: 'ref_add' }, events, page, bound), true,
+      'A private footprint is a revalidation candidate under automatic churn');
+    for (const event of [{ kind: 'click', source: 'user', frameId: 0, target: 'button' }, { kind: 'navigation', source: 'unknown', frameId: 0 },
+      { kind: 'resize', source: 'unknown', frameId: 0, target: 'viewport' }]) {
+      assert.equal(keep('read_page', {}, [event]), false);
+      assert.equal(keep('click_ax', { ref_id: 'ref_add' }, [event], page, bound), false);
+    }
+  });
+
+  for (const [name, emit] of Object.entries(AUTOMATIC)) {
+    test(`${build}: a bound action revalidates through ${name} and dispatches on the first decision`, async () => {
+      const tab = nextTab++, updates = [], dispatched = [];
+      let agent, frames, requests = 0;
+      pages.set(tab, {});
+      agent = makeAgent(Agent, async () => {
+        requests++;
+        if (requests === 1) { emit(agent, tab, frames); return call('add-1', 'click_ax', { ref_id: 'ref_add' }); }
+        return call('finished', 'done', { summary: 'Added to cart', outcome: 'success' });
+      });
+      agent.maxSteps = 6;
+      agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { frames = bindFrames(agent, tab); return { role: 'user', content }; };
+      agent._executeToolWithLifecycle = async (_tab, tool, args) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        dispatched.push(tool);
+        return tool === 'done' ? { done: true, success: true, summary: args.summary, outcome: args.outcome }
+          : { success: true, dispatched: true, verified: true };
+      };
+      try {
+        const result = await agent.processMessage(tab, 'Add the blue shoes to the cart', (type, data) => updates.push({ type, data }), 'act', [],
+          { detachedRequestId: 'automatic-' + tab, askStreamingEnabled: false });
+        assert.equal(result, 'Added to cart');
+        assert.deepEqual(dispatched, ['click_ax', 'done'], 'Automatic churn must not discard the revalidated decision');
+        assert.equal(requests, 2);
+        assert.ok(pages.get(tab).validations.length >= 1, 'The private footprint was revalidated');
+        assert.equal(agent._pageFeedbackRuns.size, 0);
+      } finally { pages.delete(tab); }
+    });
+  }
+
+  for (const streaming of [false, true]) {
+    test(`${build}: ${streaming ? 'stream' : 'chat'} continuous churn with a changed bound target stops at the bounded budget`, async () => {
+      const tab = nextTab++, updates = [], dispatched = [];
+      let agent, frames, requests = 0, terminal = null;
+      pages.set(tab, { targetChanged: true });
+      agent = makeAgent(Agent, async () => {
+        requests++;
+        assert.ok(requests <= 5, 'Automatic churn must count toward page_unstable instead of resetting it');
+        frames.child({ kind: 'dom', source: 'page', target: 'div#ad' });
+        return call('add-' + requests, 'click_ax', { ref_id: 'ref_add' });
+      });
+      agent.maxSteps = 9;
+      agent._endTraceRun = async (_tab, _run, status) => { terminal = status; };
+      agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { frames = bindFrames(agent, tab); return { role: 'user', content }; };
+      agent._executeToolWithLifecycle = async (_tab, tool) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        dispatched.push(tool); return { success: true, dispatched: true };
+      };
+      try {
+        const options = { detachedRequestId: 'bounded-' + tab, askStreamingEnabled: false };
+        const update = (type, data) => updates.push({ type, data });
+        const result = streaming ? await agent.processMessageStream(tab, 'Add the blue shoes', update, 'act', options)
+          : await agent.processMessage(tab, 'Add the blue shoes', update, 'act', [], options);
+        assert.match(result, /page kept changing/);
+        assert.equal(terminal, 'page_unstable');
+        assert.equal(requests, 5);
+        assert.deepEqual(dispatched, [], 'A changed bound target is never dispatched');
+        assert.ok(pages.get(tab).validations.length >= 5, 'Each automatic batch consulted the private footprint');
+      } finally { pages.delete(tab); }
+    });
+  }
+
+  for (const [kind, target] of [['click', 'button#other'], ['input', 'input#q'], ['activity', 'textarea#note']]) {
+    test(`${build}: a genuine user ${kind === 'activity' ? 'keypress' : kind} during inference still supersedes and waits for idle`, async () => {
+      const tab = nextTab++, dispatched = [], starts = [];
+      let agent, frames, requests = 0, userAt = 0;
+      pages.set(tab, {});
+      agent = makeAgent(Agent, async messages => {
+        starts.push(Date.now()); requests++;
+        if (requests === 1) {
+          frames.main({ kind, source: 'user', target }); userAt = Date.now();
+          return call('add-1', 'click_ax', { ref_id: 'ref_add' });
+        }
+        if (requests === 2) {
+          assert.doesNotMatch(JSON.stringify(messages), /PAGE KEEPS CHANGING/, 'User intervention starts a fresh budget');
+          return call('add-2', 'click_ax', { ref_id: 'ref_add' });
+        }
+        return call('finished', 'done', { summary: 'Added to cart', outcome: 'success' });
+      });
+      agent._pageFeedbackIdleMs = 120; agent.maxSteps = 6;
+      agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { frames = bindFrames(agent, tab); return { role: 'user', content }; };
+      agent._executeToolWithLifecycle = async (_tab, tool, args, _update, context) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        dispatched.push(tool);
+        return tool === 'done' ? { done: true, success: true, summary: args.summary } : { success: true, dispatched: true };
+      };
+      try {
+        assert.equal(await agent.processMessage(tab, 'Add the blue shoes', () => {}, 'act', [], { detachedRequestId: 'user-' + tab }), 'Added to cart');
+        assert.equal(requests, 3, 'The stale decision is reconsidered after the user intervention');
+        assert.deepEqual(dispatched, ['click_ax', 'done'], 'Only the fresh decision is dispatched');
+        assert.ok(starts[1] - userAt >= 100, 'The next decision waited for the user idle gate');
+      } finally { pages.delete(tab); }
+    });
+  }
+
+  test(`${build}: unknown DOM fences new input unless it is the current call's own post-input effect`, async () => {
+    const { beforePageAgentDispatch } = await import(`../src/${build}/src/agent/page-feedback.js`);
+    const tab = nextTab++, agent = makeAgent(Agent, async () => assert.fail('No inference'));
+    pages.set(tab, {});
+    await agent._claimRunEntry(tab, 'interactive');
+    try {
+      const frames = bindFrames(agent, tab);
+      const messages = [{ role: 'system', content: '' }, { role: 'user', content: 'Search for blue shoes' }];
+      agent.conversations.set(tab, messages);
+      await agent._capturePageFeedbackModelState(tab, messages);
+      const fence = () => beforePageAgentDispatch(api, tab, { kind: 'input', fenceOnly: true });
+      const vetoed = error => error?.code === 'page_feedback_pending';
+      const typeahead = target => frames.main({ kind: 'dom', source: 'unknown', target });
+      const calls = [];
+      agent._executeToolWithLifecycle = async (_tab, tool, _args, _update, context) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        const phase = calls.shift();
+        if (phase === 'own') {
+          await fence(); // First key: only inference-time churn is pending.
+          context._contentActionDispatchState.started = true;
+          typeahead('ul#suggestions'); // The first key's own render.
+          await fence(); // The next key of the same call continues.
+          return { success: true, dispatched: true };
+        }
+        // A change during this call's preparation fences its first input.
+        assert.equal(phase, 'preparation', `unexpected ${tool}`);
+        typeahead('ul#late');
+        await assert.rejects(fence(), vetoed, phase);
+        return { success: false, dispatched: false, noDispatch: true };
+      };
+      const bound = { ref_id: 'ref_add', text: 'blue shoes' };
+      // Unknown DOM observed while no action is in flight is page churn.
+      typeahead('div#live-table');
+      calls.push('own');
+      assert.equal((await agent.executeTool(tab, 'type_ax', bound)).success, true,
+        'The current call types through its own typeahead renders');
+      // A later action in the same batch must not inherit those effects: it is
+      // refused before any input (at its own dispatch gate).
+      const next = await agent.executeTool(tab, 'click_ax', { ref_id: 'ref_add' });
+      assert.equal(next.noDispatch, true); assert.equal(next.pageFeedbackPending, true);
+      // After a fresh observation the queue is clear; a change during the next
+      // call's preparation fences it again.
+      await agent._applyPendingPageFeedback(tab, messages);
+      await agent._capturePageFeedbackModelState(tab, messages);
+      calls.push('preparation');
+      assert.equal((await agent.executeTool(tab, 'type_ax', bound)).noDispatch, true);
+      assert.deepEqual(calls, []);
+    } finally { pages.delete(tab); agent._releaseRunEntry(tab); }
+  });
+
+  test(`${build}: coalesced feedback keeps the strongest attribution and storms cannot evict intervention evidence`, async () => {
+    const agent = makeAgent(Agent, async () => assert.fail('No inference')), tab = nextTab++;
+    await agent._claimRunEntry(tab, 'interactive');
+    try {
+      const run = agent._pageFeedbackRuns.get(tab);
+      const source = key => run.events.get(key)?.source;
+      agent._queuePageFeedback(tab, { kind: 'dom', source: 'unknown', frameId: 0, target: 'div#feed' });
+      agent._queuePageFeedback(tab, { kind: 'dom', source: 'page', frameId: 0, target: 'div#feed' });
+      assert.equal(source('0:dom:div#feed'), 'unknown', 'Unknown attribution is not downgraded to page churn');
+      agent._queuePageFeedback(tab, { kind: 'scroll', source: 'user', frameId: 0, target: 'html' });
+      agent._queuePageFeedback(tab, { kind: 'scroll', source: 'unknown', frameId: 0, target: 'html' });
+      assert.equal(source('0:scroll:html'), 'user', 'A later momentum scroll cannot hide the user gesture');
+      agent._queuePageFeedback(tab, { kind: 'navigation', source: 'user', frameId: 2, before: '', after: 'https://a.example/' });
+      agent._queuePageFeedback(tab, { kind: 'navigation', source: 'unknown', frameId: 2, before: '', after: 'https://a.example/next' });
+      assert.equal(source('2:navigation:'), 'user');
+      agent._queuePageFeedback(tab, { kind: 'dom', source: 'page', frameId: 0, target: 'span#late' });
+      agent._queuePageFeedback(tab, { kind: 'dom', source: 'unknown', frameId: 0, target: 'span#late' });
+      assert.equal(source('0:dom:span#late'), 'unknown', 'Stronger later evidence still upgrades the key');
+      run.events.clear();
+      agent._queuePageFeedback(tab, { kind: 'click', source: 'user', frameId: 0, target: 'button#buy' });
+      for (let index = 0; index < 60; index++) agent._queuePageFeedback(tab, { kind: 'dom', source: 'page', frameId: 1, target: `div#ad${index}` });
+      assert.equal(run.events.size, 32);
+      assert.equal(source('0:click:button#buy'), 'user', 'A DOM storm cannot evict the user intervention');
+    } finally { agent._releaseRunEntry(tab); }
+  });
+
+  test(`${build}: a terminal receipt and its verifier reads do not reset the supersession budget`, async () => {
+    const tab = nextTab++, agent = makeAgent(Agent, async () => assert.fail('No inference'));
+    pages.set(tab, {});
+    await agent._claimRunEntry(tab, 'interactive');
+    try {
+      const frames = bindFrames(agent, tab);
+      const messages = [{ role: 'system', content: '' }, { role: 'user', content: 'Add the blue shoes' }];
+      agent.conversations.set(tab, messages);
+      await agent._capturePageFeedbackModelState(tab, messages);
+      const run = agent._pageFeedbackRuns.get(tab);
+      const args = { summary: 'Added to cart', outcome: 'success' };
+      const doneCall = { id: 'done', function: { name: 'done', arguments: JSON.stringify(args) } };
+      agent._executeToolWithLifecycle = async (_tab, tool) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        assert.equal(tool, 'done');
+        // Completion verification reads through the same wrapper while an ad frame churns.
+        assert.equal((await agent.executeTool(tab, 'get_accessibility_tree', { maxChars: 5500 })).success, true);
+        frames.child({ kind: 'dom', source: 'page', target: 'div#ad' });
+        return { done: true, success: true, summary: args.summary };
+      };
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        assert.equal((await agent.executeTool(tab, 'done', args, () => {}, {})).done, true);
+        agent._resetPageFeedbackProgress(tab); // the batch's successful-dispatch hook
+        assert.equal(await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: [doneCall] }), true);
+        assert.equal(run.passiveSupersessionStreak, attempt, 'A superseded terminal candidate is not page progress');
+      }
+      assert.equal(run.recoveryResult?.code, 'page_unstable');
+      const stop = agent._pageFeedbackRecoveryResult(tab, messages, () => {});
+      assert.equal(stop?.status, 'page_unstable');
+      // Genuine progress and user intervention still restart the budget.
+      run.passiveSupersessionStreak = 3; delete run.recoveryResult;
+      agent._executeToolWithLifecycle = async () => ({ success: true, pageContent: TREE });
+      await agent.executeTool(tab, 'get_accessibility_tree', {});
+      agent._resetPageFeedbackProgress(tab);
+      assert.equal(run.passiveSupersessionStreak, 0, 'A successful read is progress');
+      run.passiveSupersessionStreak = 3;
+      frames.main({ kind: 'click', source: 'user', target: 'button#other' });
+      assert.equal(agent._pageFeedbackRecoveryResult(tab, messages, () => {}), null);
+      assert.equal(run.passiveSupersessionStreak, 0, 'User intervention starts fresh');
+    } finally { pages.delete(tab); agent._releaseRunEntry(tab); }
+  });
+}

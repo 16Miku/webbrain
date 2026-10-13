@@ -163,7 +163,10 @@ for (const build of ['chrome', 'firefox']) {
   }
 
   for (const change of ['feed', 'label', 'href', 'ancestor', 'user', 'unknown', 'iframe', 'base', 'truncated', 'missing', 'submit', 'coordinates']) {
-    test(`${build}: response navigation ${change === 'feed' ? 'survives' : 'rejects'} ${change} feedback`, async () => {
+    // Unknown-attribution and child-frame DOM are automatic content churn; the
+    // legacy AX comparison still certifies an unchanged target context.
+    const survives = ['feed', 'unknown', 'iframe'].includes(change);
+    test(`${build}: response navigation ${survives ? 'survives' : 'rejects'} ${change} feedback`, async () => {
       const agent = setup(Agent), tab = nextTab++;
       const original = 'region "Timeline" [ref_1]\n article "News A" [ref_2]\n time "1m" [ref_3]\nregion "Account" [ref_4]\n link "Yeni Gönderi" [ref_5] href="/publish"\nform [ref_7]\n button "Publish" [ref_8] type="submit"';
       let page = { success: true, pageContent: original };
@@ -186,7 +189,7 @@ for (const build of ['chrome', 'firefox']) {
         const call = { function: { name: change === 'coordinates' ? 'click' : 'click_ax',
           arguments: JSON.stringify(change === 'coordinates' ? { x: 50, y: 50 } : { ref_id: change === 'submit' ? 'ref_8' : 'ref_5' }) } };
         const superseded = await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: [call] });
-        assert.equal(superseded, change !== 'feed');
+        assert.equal(superseded, !survives);
         assert.equal(agent._activeTaskBinding(messages).text, 'Post about WebBrain');
       } finally { agent._releaseRunEntry(tab); }
     });
@@ -456,8 +459,8 @@ for (const build of ['chrome', 'firefox']) {
         assert.ok(updates.some(update => update.type === 'page_feedback'), 'The current page observation should be delivered');
         assert.match(final, /page changed before the task was verified/i, 'The handoff must be based on the refreshed page context');
         assert.ok(recoveryPrompt.includes('BROWSER STATE UPDATE'), 'The bounded recovery receives the page feedback in its model context');
-        assert.ok((agent.conversations.get(tab) || []).some(message => String(message.content || '').includes('BROWSER STATE UPDATE')),
-          'The changed page state should be appended to the active model context');
+        assert.equal((agent.conversations.get(tab) || []).some(message => String(message.content || '').includes('BROWSER STATE UPDATE')), false,
+          'A finished run\'s page observation must not carry into the next run');
       } finally {
         release.resolve();
         if (agent._pageFeedbackRuns.has(tab)) agent._finishPageFeedbackRun(tab);
@@ -591,7 +594,8 @@ for (const build of ['chrome', 'firefox']) {
       for (const frameId of [0, 3, 2]) agent.observePageNavigation({ tabId: tab, frameId,
         url: `https://example.com/frame-${frameId}`, transitionType: 'link' }, 'history');
       const events = [...agent._pageFeedbackRuns.get(tab).events.values()];
-      assert.deepEqual(events.map(event => event.frameId), [0, 3, 2], 'A click without a known destination cannot suppress any navigation');
+      assert.deepEqual(events.map(event => event.frameId), [0, 3],
+        'A click without a known destination explains only its own frame\'s same-document route update');
       agent._pageFeedbackRuns.get(tab).events.clear();
       child.send({ kind: 'activity', source: 'agent', operation: 'click', navigationTarget: '_top',
         navigationUrl: 'https://example.com/top' });
@@ -602,7 +606,9 @@ for (const build of ['chrome', 'firefox']) {
       agent._pageFeedbackRuns.get(tab).events.clear();
       child.send({ kind: 'activity', source: 'agent', operation: 'click', navigationUrl: 'https://example.com/expected' });
       agent.observePageNavigation({ tabId: tab, frameId: 2, url: 'https://example.com/unrelated', transitionType: 'link' }, 'history');
-      assert.equal(agent._hasPendingPageFeedback(tab), true, 'A same-frame navigation to a different URL remains visible');
+      assert.equal(agent._hasPendingPageFeedback(tab), false, 'The clicked frame\'s own same-document route update is the click\'s effect');
+      agent.observePageNavigation({ tabId: tab, frameId: 3, url: 'https://example.com/unrelated-sibling', transitionType: 'link' }, 'history');
+      assert.equal(agent._hasPendingPageFeedback(tab), true, 'A route update in another frame remains visible');
       agent._pageFeedbackRuns.get(tab).events.clear();
       child.send({ kind: 'activity', source: 'agent', operation: 'click', navigationTarget: '_parent',
         navigationUrl: 'https://example.com/parent' });
@@ -626,6 +632,12 @@ for (const build of ['chrome', 'firefox']) {
       child.send({ kind: 'activity', source: 'agent', operation: 'click', navigationTarget: '_top', navigationUrl: 'javascript:alert(1)' });
       agent.observePageNavigation({ tabId: tab, frameId: 0, url: 'https://example.com/safe', transitionType: 'link' }, 'history');
       assert.equal(agent._hasPendingPageFeedback(tab), true, 'Non-web click targets cannot correlate browser navigation');
+      agent._pageFeedbackRuns.get(tab).events.clear();
+      const main = bind(agent, tab, 0, 'main-before', 'main-before-token');
+      main.send({ kind: 'activity', source: 'agent', operation: 'click', navigationUrl: 'https://example.com/expected' });
+      agent.observePageNavigation({ tabId: tab, frameId: 0, documentId: 'main-unrelated',
+        url: 'https://example.com/unrelated', transitionType: 'link' }, 'committed');
+      assert.equal(agent._hasPendingPageFeedback(tab), true, 'A full-document navigation to a different URL remains visible');
     } finally { agent._releaseRunEntry(tab); }
   });
 
@@ -1348,7 +1360,8 @@ for (const build of ['chrome', 'firefox']) {
         const details = note.data.extra;
         assert.deepEqual(note.metadata.extra.context, details.context, 'Safe causal details survive the actual metadata-only trace projection');
         assert.equal(superseded, change !== 'passive', `Diagnostic fields must not change existing retention decisions: ${change}`);
-        assert.equal(details.reason, change === 'passive' ? 'passive_dom' : 'intervention_or_document');
+        assert.equal(details.reason, change === 'passive' ? 'passive_dom'
+          : ['page_focus', 'page_input', 'child'].includes(change) ? 'automatic_page' : 'intervention_or_document');
         assert.equal(details.disposition, change === 'passive' ? 'retained' : 'superseded');
         assert.equal(stateChecks, ['document', 'run'].includes(change) ? 0 : 1, 'Preserve the original state-check short circuit and call count');
         assert.deepEqual(details.context.bindingAtRefresh, { documentMatches: change !== 'document', currentRun: change !== 'run',
@@ -1518,7 +1531,9 @@ for (const build of ['chrome', 'firefox']) {
         const calls = [{ function: { name, arguments: change === 'malformed' ? '{' : JSON.stringify(args) } }];
         if (change === 'mixed') calls.push({ function: { name: 'type_text', arguments: '{"text":"new value"}' } });
         const superseded = await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: calls });
-        assert.equal(superseded, !['focus', 'pending_focus'].includes(change), change);
+        // Page input, child-frame focus and iframe focus are automatic; pure readers
+        // and independent tools stay current while action fences remain.
+        assert.equal(superseded, !['focus', 'pending_focus', 'page_input', 'child', 'frame_focus', 'calculate'].includes(change), change);
       } finally { api.webNavigation = navigation; agent._releaseRunEntry(tab); }
     }
   });

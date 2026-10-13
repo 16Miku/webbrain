@@ -535,7 +535,10 @@ for (const build of ['chrome', 'firefox']) {
     }
 
     for (const phase of ['model', 'preflight']) for (const change of ['human_input', 'unknown', 'navigation', 'task_steering']) {
-      test(`${build}: ${streaming ? 'stream' : 'chat'} fresh reads still supersede after ${change} during ${phase}`, async () => {
+      // Unknown-attribution DOM is automatic churn, not an intervention: the
+      // proposed read still reads the current page and needs no new decision.
+      const retained = change === 'unknown';
+      test(`${build}: ${streaming ? 'stream' : 'chat'} fresh reads ${retained ? 'proceed through' : 'still supersede after'} ${change} during ${phase}`, async () => {
         const tab = nextTab++, updates = [], dispatched = [];
         let agent, send, requests = 0;
         const intervene = () => {
@@ -575,7 +578,7 @@ for (const build of ['chrome', 'firefox']) {
         };
         const result = await finish(agent, tab, streaming, updates, { detachedRequestId: 'progress-run', askStreamingEnabled: false });
         assert.equal(result, ANSWER, JSON.stringify(updates.filter(update => ['tool_result', 'warning'].includes(update.type))));
-        assert.deepEqual(dispatched, [{ type: 'images' }]);
+        assert.deepEqual(dispatched, retained ? [{ type: 'headings' }, { type: 'images' }] : [{ type: 'images' }]);
         assert.equal(requests, 3);
         assert.equal(agent._pageFeedbackRuns.size, 0);
       });
