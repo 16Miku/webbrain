@@ -498,7 +498,10 @@ for (const build of ['chrome', 'firefox']) {
         const blocked = await agent._applyPendingPageFeedback(tab, messages, callback,
           { responseToolCalls: call('actual-terminal-check', 'done', { summary: answer, outcome: 'success' }).toolCalls });
         assert.equal(callbackObserved, true);
-        assert.equal(blocked, change !== 'none');
+        // An Act completion survives automatic page activity (page focus,
+        // synthetic input, focus moved to an iframe), with or without a
+        // receipt. Authority, document, user and unknown changes still block.
+        assert.equal(blocked, !['none', 'no_receipt', 'page_input', 'iframe_focus'].includes(change));
         assert.equal(messages.filter(message => message.role === 'tool').length, 0,
           'Retention is not a synthesized tool result or terminal completion.');
       } finally {

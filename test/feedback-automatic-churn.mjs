@@ -121,7 +121,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(policy.isAutomaticPageFeedback([]), false);
   });
 
-  test(`${build}: automatic churn retains reads and independent tools but keeps unsafe, legacy non-DOM and terminal fences`, () => {
+  test(`${build}: automatic churn retains reads, independent tools and Act completions but keeps unsafe and legacy non-DOM fences`, () => {
     const page = { success: true, pageContent: TREE };
     const state = { url: PAGE_URL, page };
     const keep = (name, args, events, current = page, scope = state) =>
@@ -134,7 +134,16 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(keep('calculate', { expression: '2 + 2' }, events), true);
       assert.equal(keep('click', { x: 10, y: 20 }, events), false, 'Coordinates stay fenced');
       assert.equal(keep('execute_js', { code: 'save()' }, events), false, 'Scripts stay fenced');
-      assert.equal(keep('done', { summary: 'Done', outcome: 'success' }, events), false, 'Terminal answers keep passive-only retention');
+      // An Act completion survives automatic churn; its batch verifies it.
+      assert.equal(keep('done', { summary: 'Done', outcome: 'success' }, events), true, 'Act completion survives automatic churn');
+      // Ask answers keep their own scope classification and passive-only fence.
+      assert.equal(keep('done', { summary: 'The price is 12' }, events, page, { ...state, runMode: 'ask' }), false,
+        'Ask answers keep passive-only retention');
+      // A user gesture during inference still supersedes the completion.
+      assert.equal(keep('done', { summary: 'Done', outcome: 'success' },
+        [...events, { kind: 'click', source: 'user', frameId: 0, target: 'button#other' }]), false, 'User input supersedes a completion');
+      assert.equal(keep('done', { summary: 'Done', outcome: 'success' },
+        [...events, { kind: 'navigation', source: 'unknown', frameId: 0 }]), false, 'Main-frame navigation supersedes a completion');
     }
     assert.equal(keep('chat_observe', {}, focus), false, 'Read preparation stays fenced after page focus changes');
     assert.equal(keep('chat_observe', {}, scroll), true);
@@ -213,6 +222,40 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(requests, 5);
         assert.deepEqual(dispatched, [], 'A changed bound target is never dispatched');
         assert.ok(pages.get(tab).validations.length >= 5, 'Each automatic batch consulted the private footprint');
+      } finally { pages.delete(tab); }
+    });
+  }
+
+  for (const streaming of [false, true]) {
+    test(`${build}: ${streaming ? 'stream' : 'chat'} a finished task under continuous ad-frame churn ends with its answer`, async () => {
+      const tab = nextTab++, dispatched = [];
+      let agent, frames, requests = 0, terminal = null;
+      pages.set(tab, {});
+      agent = makeAgent(Agent, async () => {
+        requests++;
+        // The ad frame ticks during every inference, as on many real pages.
+        frames.child({ kind: 'dom', source: 'page', target: 'div#ad' });
+        frames.main({ kind: 'scroll', source: 'unknown', target: 'div#carousel', viewport: { x: 100 * requests, y: 0 } });
+        return requests === 1 ? call('add-1', 'click_ax', { ref_id: 'ref_add' })
+          : call('finished-' + requests, 'done', { summary: 'Added to cart', outcome: 'success' });
+      });
+      agent.maxSteps = 8;
+      agent._endTraceRun = async (_tab, _run, status) => { terminal = status; };
+      agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { frames = bindFrames(agent, tab); return { role: 'user', content }; };
+      agent._executeToolWithLifecycle = async (_tab, tool, args) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        dispatched.push(tool);
+        return tool === 'done' ? { done: true, success: true, summary: args.summary, outcome: args.outcome }
+          : { success: true, dispatched: true, verified: true };
+      };
+      try {
+        const options = { detachedRequestId: 'finished-' + tab, askStreamingEnabled: false };
+        const result = streaming ? await agent.processMessageStream(tab, 'Add the blue shoes', () => {}, 'act', options)
+          : await agent.processMessage(tab, 'Add the blue shoes', () => {}, 'act', [], options);
+        assert.equal(result, 'Added to cart');
+        assert.equal(requests, 2, 'Automatic churn must not send a finished answer back to the model');
+        assert.deepEqual(dispatched, ['click_ax', 'done']);
+        assert.notEqual(terminal, 'page_unstable');
       } finally { pages.delete(tab); }
     });
   }
@@ -344,6 +387,20 @@ for (const build of ['chrome', 'firefox']) {
         // Completion verification reads through the same wrapper while an ad frame churns.
         assert.equal((await agent.executeTool(tab, 'get_accessibility_tree', { maxChars: 5500 })).success, true);
         frames.child({ kind: 'dom', source: 'page', target: 'div#ad' });
+        return { done: true, success: true, summary: args.summary };
+      };
+      // Automatic ad-frame churn alone no longer supersedes the completion.
+      assert.equal((await agent.executeTool(tab, 'done', args, () => {}, {})).done, true);
+      agent._resetPageFeedbackProgress(tab);
+      assert.equal(await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: [doneCall] }), false,
+        'An Act completion survives automatic churn');
+      // An unattributed top-level viewport change is strict but not user input:
+      // each superseded completion counts toward the bounded budget.
+      agent._executeToolWithLifecycle = async (_tab, tool) => {
+        if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+        assert.equal(tool, 'done');
+        assert.equal((await agent.executeTool(tab, 'get_accessibility_tree', { maxChars: 5500 })).success, true);
+        frames.main({ kind: 'resize', source: 'unknown', target: 'viewport', viewport: { width: 1000 + run.revision, height: 700 } });
         return { done: true, success: true, summary: args.summary };
       };
       for (let attempt = 1; attempt <= 5; attempt++) {

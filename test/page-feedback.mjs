@@ -130,9 +130,12 @@ for (const build of ['chrome', 'firefox']) {
     });
   }
 
+  // An Act completion also survives automatic churn (unknown-attribution and
+  // child-frame DOM); its batch still runs the completion verifier.
+  const completionSurvives = change => ['feed', 'partial', 'unknown', 'iframe'].includes(change);
   for (const change of ['feed', 'user', 'unknown', 'iframe', 'navigation', 'viewport', 'style', 'failed_read',
     'partial', 'missing_outcome', 'malformed', 'mixed', 'duplicate', 'pending']) {
-    test(`${build}: explicit completion ${['feed', 'partial'].includes(change) ? 'survives' : 'rejects'} ${change} feedback`, async () => {
+    test(`${build}: explicit completion ${completionSurvives(change) ? 'survives' : 'rejects'} ${change} feedback`, async () => {
       const agent = setup(Agent), tab = nextTab++;
       let page = { success: true, pageContent: 'article "Published WebBrain post" [ref_1]' };
       agent.executeTool = async () => page;
@@ -156,7 +159,7 @@ for (const build of ['chrome', 'firefox']) {
         const call = { function: { name: 'done', arguments: change === 'malformed' ? '{' : JSON.stringify(args) } };
         const calls = change === 'duplicate' ? [call, call] : change === 'mixed'
           ? [call, { function: { name: 'click_ax', arguments: '{"ref_id":"ref_1"}' } }] : [call];
-        assert.equal(await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: calls }), !['feed', 'partial'].includes(change));
+        assert.equal(await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: calls }), !completionSurvives(change));
         assert.equal(agent._activeTaskBinding(messages).text, 'Publish a WebBrain post');
       } finally { agent._releaseRunEntry(tab); }
     });
@@ -1359,10 +1362,12 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(note.kind, 'note'); assert.equal(note.data.note, 'page_feedback_decision'); assert.equal(note.data.step, 0);
         const details = note.data.extra;
         assert.deepEqual(note.metadata.extra.context, details.context, 'Safe causal details survive the actual metadata-only trace projection');
-        assert.equal(superseded, change !== 'passive', `Diagnostic fields must not change existing retention decisions: ${change}`);
+        // An Act completion survives passive and automatic page activity.
+        const retained = ['passive', 'page_focus', 'page_input', 'child'].includes(change);
+        assert.equal(superseded, !retained, `Diagnostic fields must not change existing retention decisions: ${change}`);
         assert.equal(details.reason, change === 'passive' ? 'passive_dom'
           : ['page_focus', 'page_input', 'child'].includes(change) ? 'automatic_page' : 'intervention_or_document');
-        assert.equal(details.disposition, change === 'passive' ? 'retained' : 'superseded');
+        assert.equal(details.disposition, retained ? 'retained' : 'superseded');
         assert.equal(stateChecks, ['document', 'run'].includes(change) ? 0 : 1, 'Preserve the original state-check short circuit and call count');
         assert.deepEqual(details.context.bindingAtRefresh, { documentMatches: change !== 'document', currentRun: change !== 'run',
           stateCurrent: ['document', 'run'].includes(change) ? null : change !== 'steering',
@@ -1531,9 +1536,10 @@ for (const build of ['chrome', 'firefox']) {
         const calls = [{ function: { name, arguments: change === 'malformed' ? '{' : JSON.stringify(args) } }];
         if (change === 'mixed') calls.push({ function: { name: 'type_text', arguments: '{"text":"new value"}' } });
         const superseded = await agent._applyPendingPageFeedback(tab, messages, () => {}, { responseToolCalls: calls });
-        // Page input, child-frame focus and iframe focus are automatic; pure readers
-        // and independent tools stay current while action fences remain.
-        assert.equal(superseded, !['focus', 'pending_focus', 'page_input', 'child', 'frame_focus', 'calculate'].includes(change), change);
+        // Page input, child-frame focus and iframe focus are automatic; pure readers,
+        // independent tools and Act completions stay current while action fences remain.
+        assert.equal(superseded, !['focus', 'pending_focus', 'page_input', 'child', 'frame_focus', 'calculate',
+          'success_done', 'partial_done', 'failed_done'].includes(change), change);
       } finally { api.webNavigation = navigation; agent._releaseRunEntry(tab); }
     }
   });

@@ -226,9 +226,9 @@ export function isPassivePageFeedback(events) {
 }
 
 // Automatic feedback is an observed page consequence with no evidence of a
-// human gesture. Every 'user' event, main-frame navigation, a top-level
-// viewport change of unknown origin and base/style/link updates keep the
-// strict fence. Focus moved to an <iframe> is page-script focus: Chromium and
+// human gesture. Every 'user' event, main-frame navigation, any top-level
+// viewport change (the monitor reports those as unknown) and base/style/link
+// updates keep the strict fence. Focus moved to an <iframe> is page-script focus: Chromium and
 // Firefox fire no parent focusin for a click or Tab inside a frame (a Tab
 // reaches the parent monitor as user keydown activity).
 const AUTOMATIC_SOURCES = new Map([['dom', ['page', 'unknown']], ['scroll', ['page', 'unknown']],
@@ -237,7 +237,7 @@ export function isAutomaticPageFeedbackEvent(event) {
   if (!AUTOMATIC_SOURCES.get(event?.kind)?.includes(event.source)
       || BASE_STYLE_LINK.test(typeof event.target === 'string' ? event.target : '')) return false;
   const childFrame = Number.isSafeInteger(event.frameId) && event.frameId > 0;
-  return event.kind === 'navigation' || (event.kind === 'resize' && event.source === 'unknown') ? childFrame : true;
+  return event.kind === 'navigation' || event.kind === 'resize' ? childFrame : true;
 }
 
 export function isAutomaticPageFeedback(events) {
@@ -364,7 +364,8 @@ export function canRetainPageFeedbackCalls(calls, state, currentPage, events, { 
   if (!calls?.length) return false;
   const passive = isPassivePageFeedback(events);
   const calculation = isPageIndependentCalculationCompletion(calls, state, events);
-  if (!passive && !calculation && !isAutomaticPageFeedback(events)) return false;
+  const automatic = !passive && isAutomaticPageFeedback(events);
+  if (!passive && !calculation && !automatic) return false;
   const interactive = !passive && events.some(event => ['activity', 'input'].includes(event?.kind));
   return calls.every(call => {
     let args;
@@ -372,9 +373,12 @@ export function canRetainPageFeedbackCalls(calls, state, currentPage, events, { 
     if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
     const policy = pageFeedbackCallPolicy(call.function?.name, args, state, currentPage, events);
     if (policy.terminal && calls.length !== 1) return false;
-    // A terminal answer keeps its established fences (passive churn or an owned
-    // literal calculation); Ask scope and the completion verifier own the rest.
-    if (policy.terminal) return passive || calculation;
+    // An Act completion survives automatic churn (ad frames, page focus,
+    // unattributed scroll or DOM): superseding it on every tick would end a
+    // finished task as page_unstable. Its batch still runs the completion
+    // verifier on fresh evidence, and user input still supersedes it. Ask
+    // answers keep their own scope classification and passive-only fence.
+    if (policy.terminal) return passive || calculation || (automatic && state?.runMode !== 'ask');
     if (interactive && policy.kind === 'observe' && !PAGE_ACTIVITY_READS.has(call.function?.name)) return false;
     // A target comparison only certifies the snapshot just read. Further DOM
     // changes require local revalidation; fresh readers/media have their own fences.
