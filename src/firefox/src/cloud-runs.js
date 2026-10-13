@@ -12,6 +12,7 @@ const PRIVATE_RESULT_PLACEHOLDER = '[Private final answer encrypted for this wor
 
 const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
 const CLOUD_RUN_STORAGE_KEY = 'webbrainCloudRunSnapshots';
+const CLOUD_HANDOFF_GUARD_KEY = 'webbrainCloudHandoffGuards';
 const CLOUD_UPDATE_LIMIT = 200;
 const CLOUD_RUN_LIMIT = 50;
 const CLOUD_STRING_LIMIT = 16 * 1024;
@@ -713,6 +714,21 @@ export function buildCloudPersistenceRows(runs) {
   return rows;
 }
 
+// Session snapshots disappear on extension reload and browser restart. Keep
+// only the identity needed to reserve manual ownership in durable storage.
+function normalizeCloudHandoffGuard(row) {
+  const timestamp = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value)
+    && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+  // Cloud callers may supply correlation IDs containing punctuation or
+  // Unicode. Match the existing start API rather than changing that contract.
+  if (!row || typeof row.runId !== 'string' || !row.runId.trim() || row.runId.length > CLOUD_STRING_LIMIT
+    || !Number.isSafeInteger(row.tabId) || row.tabId < 0 || row.tabId > 2147483647
+    || !timestamp(row.createdAt) || !timestamp(row.updatedAt)
+    || row.pausedAt != null && !timestamp(row.pausedAt)) throw new Error('Browser handoff guard could not be reconciled.');
+  return { runId: row.runId, tabId: row.tabId, createdAt: row.createdAt,
+    updatedAt: row.updatedAt, pausedAt: row.pausedAt || null };
+}
+
 function cloudSnapshot(run, { includeUpdates = true } = {}) {
   if (!run) return null;
   return {
@@ -772,6 +788,7 @@ export function createCloudRunController({
   const startingRunIds = new Set();
   let pendingStarts = 0;
   const handoffGates = new Map();
+  const activeExecutions = new Set();
   const startingConversations = new Set();
   const runAbortControllers = new Map();
   // Private envelopes live only for the active handle, outside snapshots and
@@ -780,8 +797,23 @@ export function createCloudRunController({
   let hydratePromise = null;
   let persistQueue = Promise.resolve();
   let persistTimer = null;
+  const durableHandoffGuards = new Map();
+  let storedHandoffGuard = false;
 
   const isoNow = () => now().toISOString();
+
+  function snapshot(run, options) {
+    const result = cloudSnapshot(run, options);
+    // Handler errors and cancellation can assign a terminal status before
+    // asynchronous cleanup finishes. A retained guard remains authoritative
+    // for pollers and streamers until confirmed removal releases ownership.
+    if (result && durableHandoffGuards.has(run.runId) && TERMINAL_STATUSES.has(result.status)) {
+      result.status = run.handoff ? 'paused' : 'aborting';
+      result.handoff = run.handoff ? { ...run.handoff, state: 'paused', resumable: false, interrupted: true } : null;
+      result.completedAt = null;
+    }
+    return result;
+  }
 
   // Firefox uses a persistent background page, but the same ping is harmless
   // and keeps the Chrome MV3 service worker alive during resume waits. A bare
@@ -805,12 +837,39 @@ export function createCloudRunController({
     }
   }
 
-  async function persist() {
-    if (!api.storage?.session?.set) return;
-    const rows = buildCloudPersistenceRows(runs);
+  async function persist({ clearHandoffRunId = null } = {}) {
     persistQueue = persistQueue
       .catch(() => {})
-      .then(() => api.storage.session.set({ [CLOUD_RUN_STORAGE_KEY]: rows }));
+      .then(async () => {
+        // Build inside the queue so an older ordinary checkpoint cannot put
+        // back a reservation already cleared by confirmed reconciliation.
+        const cancellationPending = id => activeExecutions.has(id) && runAbortControllers.get(id)?.signal.aborted;
+        const clearing = [...durableHandoffGuards.entries()].filter(([id]) => {
+          const run = runs.get(id);
+          return !cancellationPending(id) && (id === clearHandoffRunId
+            || (run && TERMINAL_STATUSES.has(run.status) && !activeExecutions.has(id)));
+        });
+        const clearedIds = new Set(clearing.map(([id]) => id));
+        const guards = [...durableHandoffGuards.values()].filter(row => !clearedIds.has(row.runId));
+        // A failed session write must not remove the durable reservation.
+        await api.storage?.session?.set?.({ [CLOUD_RUN_STORAGE_KEY]: buildCloudPersistenceRows(runs) });
+        if (guards.length || storedHandoffGuard || clearing.length) {
+          if (!api.storage?.local?.set) throw new Error('Durable browser handoff storage is unavailable.');
+          await api.storage.local.set({ [CLOUD_HANDOFF_GUARD_KEY]: guards });
+          // Cancellation can arrive during an awaited handback clear. Keep
+          // the in-memory reservation and restore its durable row before this
+          // checkpoint can acknowledge anything or allow another actor in.
+          const retained = clearing.filter(([id]) => cancellationPending(id));
+          if (retained.length) {
+            await api.storage.local.set({ [CLOUD_HANDOFF_GUARD_KEY]: [
+              ...guards, ...retained.map(([id, row]) => durableHandoffGuards.get(id) || row),
+            ] });
+          }
+          storedHandoffGuard = guards.length > 0 || retained.length > 0;
+          const retainedIds = new Set(retained.map(([id]) => id));
+          for (const [id, row] of clearing) if (!retainedIds.has(id) && durableHandoffGuards.get(id) === row) durableHandoffGuards.delete(id);
+        }
+      });
     await persistQueue;
   }
 
@@ -825,9 +884,26 @@ export function createCloudRunController({
   async function hydrate() {
     if (hydratePromise) return hydratePromise;
     hydratePromise = (async () => {
-      if (!api.storage?.session?.get) return;
-      const stored = await api.storage.session.get(CLOUD_RUN_STORAGE_KEY);
+      const local = await api.storage?.local?.get?.(CLOUD_HANDOFF_GUARD_KEY) || {};
+      const guardRows = local[CLOUD_HANDOFF_GUARD_KEY] === undefined ? [] : local[CLOUD_HANDOFF_GUARD_KEY];
+      if (!Array.isArray(guardRows) || guardRows.length > CLOUD_RUN_LIMIT) throw new Error('Browser handoff guard could not be reconciled.');
+      for (const row of guardRows) {
+        const guard = normalizeCloudHandoffGuard(row);
+        if (durableHandoffGuards.has(guard.runId)) throw new Error('Browser handoff guard could not be reconciled.');
+        durableHandoffGuards.set(guard.runId, guard);
+      }
+      storedHandoffGuard = durableHandoffGuards.size > 0;
+      // Preserve main's fail-closed session read. Read failures are not proof
+      // that no run owns this profile.
+      const stored = await api.storage?.session?.get?.(CLOUD_RUN_STORAGE_KEY) || {};
       const rows = Array.isArray(stored?.[CLOUD_RUN_STORAGE_KEY]) ? stored[CLOUD_RUN_STORAGE_KEY] : [];
+      for (const guard of durableHandoffGuards.values()) {
+        const old = rows.findIndex(row => row?.runId === guard.runId);
+        const restored = { ...(old < 0 ? { updates: [] } : rows[old]), ...guard, status: 'paused',
+          handoff: { state: 'paused', resumable: false, interrupted: true,
+            ...(guard.pausedAt ? { pausedAt: guard.pausedAt } : {}) }, completedAt: null };
+        if (old < 0) rows.push(restored); else rows[old] = restored;
+      }
       let changed = false;
       for (const row of rows) {
         if (!row?.runId) continue;
@@ -848,6 +924,11 @@ export function createCloudRunController({
           // Keep the browser reserved for its owner; never replay this run.
           restored.status = 'paused';
           restored.handoff = { ...restored.handoff, state: 'paused', resumable: false, interrupted: true };
+          durableHandoffGuards.set(restored.runId, normalizeCloudHandoffGuard({
+            runId: restored.runId, tabId: restored.tabId,
+            createdAt: durableHandoffGuards.get(restored.runId)?.createdAt || isoNow(),
+            updatedAt: isoNow(), pausedAt: restored.handoff.pausedAt || null,
+          }));
           restored.error = 'WebBrain restarted during browser handoff. Inspect the page and explicitly stop this interrupted run before starting further work.';
           startingTabs.add(restored.tabId);
           pushUpdate(restored, 'handoff', restored.handoff);
@@ -1143,7 +1224,7 @@ export function createCloudRunController({
   }
 
   function assertNoHandoff() {
-    if (activeHandoff()) {
+    if (durableHandoffGuards.size || activeHandoff()) {
       throw cloudRunError('Browser control belongs to an active handoff. Return control or explicitly reconcile the interrupted run before starting another task.', 409);
     }
   }
@@ -1193,6 +1274,7 @@ export function createCloudRunController({
       ? null : await importPrivateResultRecipient(msg.private_result_public_key);
     const suppliedRunId = msg.runId ?? msg.run_id;
     const requestedRunId = suppliedRunId == null ? '' : String(suppliedRunId).trim();
+    if (requestedRunId.length > CLOUD_STRING_LIMIT) throw cloudRunError('Cloud run ID exceeds the supported length.', 400);
     const parentRunId = String(msg.parentRunId || msg.parent_run_id || '').trim() || null;
     const savedParent = parentRunId ? runs.get(parentRunId) : null;
     if (parentRunId) assertMemoryContinuation(savedParent, memoryOwner);
@@ -1331,17 +1413,41 @@ export function createCloudRunController({
     };
     const handoffGate = new CloudHandoffGate({
       async onState(state) {
+        const checkpoint = async options => {
+          try { await persist(options); } catch (error) {
+            // An abort may close the gate while this write is pending. Keep
+            // cancellation pending until cleanup; never resurrect its pause.
+            if (!handoffGate.closed && !cancelled()) {
+              run.status = 'paused';
+              run.handoff = { state: 'paused', resumable: false, interrupted: true };
+              run.error = 'Browser handoff could not be saved safely. Keep the browser read-only and explicitly stop this run.';
+              pushUpdate(run, 'handoff', run.handoff);
+            }
+            throw error;
+          }
+        };
         if (state === 'running') {
+          await checkpoint({ clearHandoffRunId: run.runId });
+          if (handoffGate.closed || cancelled()) return;
           run.handoff = null;
           run.status = run.pendingInput ? 'needs_user_input' : 'running';
         } else {
+          if (handoffGate.closed || cancelled()) return;
+          // Guard ownership from the pause request onwards. Neither polling
+          // nor streaming may see writable paused state before this write.
+          durableHandoffGuards.set(run.runId, normalizeCloudHandoffGuard({
+            runId: run.runId, tabId: run.tabId, createdAt: run.createdAt, updatedAt: isoNow(),
+            pausedAt: state === 'paused' ? isoNow() : run.handoff?.pausedAt || null,
+          }));
+          await checkpoint();
+          if (handoffGate.closed || cancelled()) return;
           run.status = state;
           run.handoff = { state, resumable: true, interrupted: false,
             ...(state === 'paused' ? { pausedAt: isoNow() } : run.handoff?.pausedAt ? { pausedAt: run.handoff.pausedAt } : {}) };
         }
         run.updatedAt = isoNow();
         pushUpdate(run, 'handoff', run.handoff || { state: null });
-        await persist();
+        await checkpoint();
       },
       keepAlive() {
         const ping = () => { try { const p = api.runtime?.getPlatformInfo?.(() => { void api.runtime.lastError; }); p?.catch?.(() => {}); } catch {} };
@@ -1379,6 +1485,7 @@ export function createCloudRunController({
       throw error;
     }
 
+    activeExecutions.add(run.runId);
     (async () => {
       let recordingId = null;
       const strictSecretMode = !!recipient || agent.strictSecretMode === true;
@@ -1659,6 +1766,23 @@ export function createCloudRunController({
         strictSecretOverflowRuns.delete(run.runId);
         strictTraceOverflowRuns.delete(run.runId);
         memoryConfigurations.delete(run.runId);
+        activeExecutions.delete(run.runId);
+        if (run.status === 'aborted' && durableHandoffGuards.has(run.runId)) {
+          // The handler and recording cleanup have settled. Clear the durable
+          // reservation before publicly acknowledging terminal cancellation.
+          run.status = 'aborting';
+          run.completedAt = null;
+          try {
+            await persist({ clearHandoffRunId: run.runId });
+            run.status = 'aborted';
+            run.completedAt = isoNow();
+          } catch {
+            run.status = 'paused';
+            run.handoff = { state: 'paused', resumable: false, interrupted: true };
+            run.error = 'Browser handoff cancellation could not be saved. Keep the browser read-only and explicitly stop this run again.';
+            pushUpdate(run, 'handoff', run.handoff);
+          }
+        }
         sendIndicator(tabId, 'WB_HIDE_AGENT_INDICATORS');
         // Recording flush is still owned by this run. Keep the tab reserved
         // through all cleanup so aborting a nonterminal capture cannot cancel
@@ -1668,7 +1792,7 @@ export function createCloudRunController({
       }
     })();
 
-    return cloudSnapshot(run, { includeUpdates: false });
+    return snapshot(run, { includeUpdates: false });
   }
 
   async function startWorkflowRun(msg = {}) {
@@ -1745,17 +1869,18 @@ export function createCloudRunController({
     // has finished writing; a poll cannot race a pending storage write.
     await persistQueue;
     const runId = msg.runId || msg.run_id;
-    if (!runId) return { runs: [...runs.values()].map(run => cloudSnapshot(run, { includeUpdates: false })) };
+    if (!runId) return { runs: [...runs.values()].map(run => snapshot(run, { includeUpdates: false })) };
     const run = runs.get(runId);
     if (!run) throw new Error('Unknown cloud run.');
-    return cloudSnapshot(run);
+    return snapshot(run);
   }
 
   async function abort(msg = {}) {
     await hydrate();
     const run = runs.get(msg.runId || msg.run_id);
     if (!run) throw new Error('Unknown cloud run.');
-    if (run.handoff?.interrupted) {
+    if (run.handoff?.interrupted && !activeExecutions.has(run.runId)) {
+      await persist({ clearHandoffRunId: run.runId });
       run.status = 'aborted';
       run.handoff = null;
       pushUpdate(run, 'handoff', { state: null });
@@ -1775,19 +1900,20 @@ export function createCloudRunController({
       runAbortControllers.get(run.runId)?.abort();
       agent.abort(run.tabId);
       await persist();
-    }
-    return cloudSnapshot(run);
+    } else if (run.status === 'aborted') await persist();
+    return snapshot(run);
   }
 
   async function pause(msg = {}) {
     await hydrate();
+    await persistQueue;
     const run = runs.get(msg.runId || msg.run_id);
     if (!run) throw cloudRunError('Unknown cloud run.', 404);
     if (run.workflowId) throw cloudRunError('Saved workflow replay does not support browser handoff.', 409);
     if (run.handoff) {
       // A duplicate pause must not expose a checkpoint still being written.
       await persistQueue;
-      return cloudSnapshot(run);
+      return snapshot(run);
     }
     if (!['running', 'needs_user_input'].includes(run.status)) throw cloudRunError('Only a running browser task can be paused.', 409);
     if (pendingStarts || [...runs.values()].some(other => other !== run && !TERMINAL_STATUSES.has(other.status))
@@ -1812,21 +1938,22 @@ export function createCloudRunController({
       }
       await gate.acknowledge();
     }
-    return cloudSnapshot(run);
+    return snapshot(run);
   }
 
   async function resume(msg = {}) {
     await hydrate();
+    await persistQueue;
     const run = runs.get(msg.runId || msg.run_id);
     if (!run) throw cloudRunError('Unknown cloud run.', 404);
-    if (!run.handoff?.resumable || run.handoff.interrupted) {
+    if (run.status !== 'paused' || run.handoff?.state !== 'paused' || !run.handoff.resumable || run.handoff.interrupted) {
       throw cloudRunError('This handoff was interrupted. Inspect the browser and explicitly stop the interrupted run; it cannot safely resume.', 409);
     }
     if (typeof (msg.note ?? '') !== 'string' || (msg.note || '').length > 2000) throw cloudRunError('The handoff note must be text of at most 2000 characters.', 400);
     const gate = handoffGates.get(run.runId);
     if (!gate) throw cloudRunError('The browser handoff is no longer resumable.', 409);
     await gate.resume((msg.note || '').trim());
-    return cloudSnapshot(run);
+    return snapshot(run);
   }
 
   async function respond(msg = {}) {
@@ -1852,7 +1979,7 @@ export function createCloudRunController({
     run.error = '';
     pushUpdate(run, 'clarify_response', { clarifyId, source: 'cloud_api' });
     await persist();
-    return cloudSnapshot(run);
+    return snapshot(run);
   }
 
   // Persistent bridge identity (chrome.storage.local). The token is the Cloud
@@ -1919,11 +2046,11 @@ export function createCloudRunController({
       const owner = activeHandoff();
       const settlingOwner = kind === 'cloud' && owner?.tabId === tabId
         && owner.handoff?.state === 'pausing' && !owner.handoff.interrupted;
-      if (owner && !settlingOwner) {
+      if ((durableHandoffGuards.size || owner) && !settlingOwner) {
         throw cloudRunError('The browser is reserved for manual control. Return control or reconcile the interrupted handoff before starting an agent.', 409);
       }
     },
-    isRunning: (tabId) => startingTabs.has(tabId),
+    isRunning: (tabId) => startingTabs.has(tabId) || [...durableHandoffGuards.values()].some(row => row.tabId === tabId),
     startRun,
     startWorkflowRun,
     compileWorkflow,
