@@ -8,21 +8,27 @@ import { conformFixtureCompletionCall } from './completion-provider-contract.mjs
 
 // A requested Remove on an ordinary cart row (no permalink) runs through the
 // installed MV3 extension: real probe, guards, dispatch and completion gates,
-// once directly and once through a confirmation dialog. The provider and the
-// site are owned local fixtures; nothing leaves the host.
+// once directly, once through a confirmation dialog, and once for a Turkish
+// request that names the row in its inflected form ("tişörtü" for "Tişört").
+// The provider and the site are owned local fixtures; nothing leaves the host.
 const pageUrl = 'https://shop.example/cart';
-const task = 'Remove the Wool socks from my cart. Keep everything else.';
-const intent = { request_kind: 'execute', scope_relation: 'new', requires_state_change: true,
-  requires_submission: true, messaging: null, deliverables: ['The Wool socks are removed from the cart.'],
-  allows_planner_shaped_result: false, allows_app_state_tool_evidence: false,
-  completion_requirements: { download: false }, read_scope: 'visible_page',
-  summary: 'Remove only the Wool socks cart row.', steps: [{ id: '1', action: 'Remove the Wool socks row and verify it is gone.' }],
-  memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] };
-for (const confirmation of [false, true]) await runVariant(confirmation);
+const english = { task: 'Remove the Wool socks from my cart. Keep everything else.', evidence: 'Remove the Wool socks from my cart.',
+  target: 'Wool socks', kept: 'Hat', rows: ['Wool socks, size L, $12', 'Hat, size M, $20'] };
+const turkish = { task: 'Sepetten mavi tişörtü kaldır, diğerlerine dokunma.', evidence: 'mavi tişörtü kaldır',
+  target: 'Mavi Tişört', kept: 'Mavi Kot Pantolon', rows: ['Mavi Tişört, beden L, 129 TL', 'Mavi Kot Pantolon, beden M, 349 TL'] };
+for (const [name, confirmation, language] of [['direct', false, english], ['confirmation', true, english], ['turkish', false, turkish]]) {
+  await runVariant(name, confirmation, language);
+}
 
-async function runVariant(confirmation) {
+async function runVariant(variant, confirmation, { task, evidence, target, kept, rows }) {
+  const intent = { request_kind: 'execute', scope_relation: 'new', requires_state_change: true,
+    requires_submission: true, messaging: null, deliverables: [`The ${target} row is removed from the cart.`],
+    allows_planner_shaped_result: false, allows_app_state_tool_evidence: false,
+    completion_requirements: { download: false }, read_scope: 'visible_page',
+    summary: `Remove only the ${target} cart row.`, steps: [{ id: '1', action: `Remove the ${target} row and verify it is gone.` }],
+    memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] };
   const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS
-    || `ci/artifacts/quality-audit-2026-10-07/unbound-deletion-mv3/${confirmation ? 'confirmation' : 'direct'}`);
+    || `ci/artifacts/quality-audit-2026-10-07/unbound-deletion-mv3/${variant}`);
   await fs.mkdir(out, { recursive: true });
   let actionCalls = 0, judgeCalls = 0, blockedRemote = 0;
   const completionRecovery = { reads: 0 };
@@ -43,8 +49,8 @@ async function runVariant(confirmation) {
     throw new Error(`Owned fixture did not observe ${name}`);
   };
   const steps = confirmation
-    ? [['tree'], ['click', 'Remove Wool socks'], ['tree'], ['click', 'Confirm removal'], ['tree'], ['done']]
-    : [['tree'], ['click', 'Remove Wool socks'], ['tree'], ['done']];
+    ? [['tree'], ['click', `Remove ${target}`], ['tree'], ['click', 'Confirm removal'], ['tree'], ['done']]
+    : [['tree'], ['click', `Remove ${target}`], ['tree'], ['done']];
   const server = http.createServer(async (request, response) => {
     if (request.url !== '/v1/chat/completions') { response.writeHead(404).end(); return; }
     let raw = ''; for await (const part of request) raw += part;
@@ -54,7 +60,7 @@ async function runVariant(confirmation) {
     if (system.startsWith('Evaluate only the observable requirements of the genuine user task')) {
       judgeCalls++;
       completion = { role: 'assistant', content: JSON.stringify({ outcome: 'succeeded',
-        reason: 'The Wool socks row is no longer in the fresh cart observation and the Hat row remains.' }) };
+        reason: `The ${target} row is no longer in the fresh cart observation and the ${kept} row remains.` }) };
     } else if (system.startsWith('Check one separately proposed consequential action')) {
       const untrusted = textOf(input.messages.at(-1).content);
       const proposed = JSON.parse(untrusted.slice(untrusted.indexOf('{'), untrusted.lastIndexOf('}') + 1));
@@ -62,14 +68,14 @@ async function runVariant(confirmation) {
       authorizations.push({ resource: proposed.resource, latest: authority.latestAcceptedRequest });
       completion = { role: 'assistant', content: JSON.stringify({ key: proposed.key,
         authorized: proposed.action === 'delete' && proposed.resource?.kind === 'record'
-          && /Wool socks/.test(proposed.resource.text) && authority.latestAcceptedRequest === task,
-        latestRequestEvidence: 'Remove the Wool socks from my cart.' }) };
+          && proposed.resource.text.startsWith(target) && authority.latestAcceptedRequest === task,
+        latestRequestEvidence: evidence }) };
     } else if (!input.tools?.length) completion = { role: 'assistant', content: JSON.stringify(intent) };
     else {
       const step = actionCalls++;
       const [kind, name] = steps[Math.min(step, steps.length - 1)];
       const call = kind === 'click' ? { name: 'click_ax', args: { ref_id: refFor(input, name) } }
-        : kind === 'done' ? { name: 'done', args: { outcome: 'success', summary: 'Removed the Wool socks from the cart once; the Hat remains.' } }
+        : kind === 'done' ? { name: 'done', args: { outcome: 'success', summary: `Removed the ${target} from the cart once; the ${kept} remains.` } }
         : { name: 'get_accessibility_tree', args: { filter: 'all' } };
       const emitted = conformFixtureCompletionCall(input, call, completionRecovery);
       completion = { role: 'assistant', content: '', tool_calls: [{ id: `owned-unbound-${step}`, type: 'function',
@@ -82,8 +88,8 @@ async function runVariant(confirmation) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const pageBody = `<!doctype html><meta charset="utf-8"><title>Owned cart fixture</title>
   <style>body{font:18px sans-serif;margin:25px}li{margin:12px}button{padding:8px}[role=dialog]{position:fixed;inset:120px 250px;background:white;border:2px solid black;padding:30px}</style>
-  <main><h1>Your cart</h1><ul id="cart"><li data-id="1">Wool socks, size L, $12 <button type="button" aria-label="Remove Wool socks">Remove</button></li>
-  <li data-id="2">Hat, size M, $20 <button type="button" aria-label="Remove Hat">Remove</button></li></ul></main><div id="modal"></div>
+  <main><h1>Your cart</h1><ul id="cart"><li data-id="1">${rows[0]} <button type="button" aria-label="Remove ${target}">Remove</button></li>
+  <li data-id="2">${rows[1]} <button type="button" aria-label="Remove ${kept}">Remove</button></li></ul></main><div id="modal"></div>
   <script>
   const remove = async row => { const r = await fetch('/api/cart/items/' + row.dataset.id, { method: 'DELETE' }); if (r.ok) row.remove(); };
   for (const button of document.querySelectorAll('#cart button')) button.onclick = () => {
@@ -156,12 +162,12 @@ async function runVariant(confirmation) {
     assert.equal(authorizations.length, confirmation ? 2 : 1);
     if (confirmation) assert.match(authorizations[1].resource.confirmationDialog, /Remove this item from your cart\?/);
     assert.equal(await page.locator('#cart li').count(), 1);
-    assert.match(await page.locator('#cart').innerText(), /Hat/);
+    assert.ok((await page.locator('#cart').innerText()).includes(kept));
     const done = result.updates.findLast(event => event.type === 'tool_result' && event.data?.name === 'done')?.data?.result;
     assert.equal(done?.done, true, JSON.stringify(done));
     assert.equal(done?.outcome, 'success', JSON.stringify(done));
     assert.ok(judgeCalls > 0);
-    console.log(JSON.stringify({ passed: true, installedMV3: true, confirmation, deletes: deletes.length,
+    console.log(JSON.stringify({ passed: true, installedMV3: true, variant, confirmation, deletes: deletes.length,
       receipts: diagnostic.receipts.length, authorizations: authorizations.length, judgeCalls, blockedRemote }));
   } finally {
     await context?.close(); await new Promise(resolve => server.close(resolve));

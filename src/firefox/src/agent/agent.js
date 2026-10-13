@@ -7019,24 +7019,39 @@ export class Agent extends LoopDetector {
     });
   }
 
+  // Deletion verbs by language. A request names a record by words of these
+  // languages' own inflection (see _unboundRecordNamingKit).
+  static _resourceDeletionVerbs = { en: 'delete|remove|trash|erase|destroy', tr: 'sil|kaldır', fr: 'supprimer',
+    es: 'eliminar|borrar', de: 'löschen', ru: 'удалить', cjk: '删除|刪除|削除|삭제' };
+
   // "Remove the > characters" or "> işaretlerini kaldır" edits the post text;
   // only a removal aimed at the post/record itself, or at an unstated object,
   // makes deleting the original a prerequisite. The removal verb's nearest
   // object in its clause decides: text parts and quoted or symbol literals
-  // are content edits; resource nouns and pronouns are deletions.
+  // are content edits; resource nouns and pronouns are deletions. The text is
+  // read under ordinary and Turkish case folding ("KALDIR" is kaldır), and a
+  // Han, kana or Hangul verb counts inside an unspaced run ("删除蓝色T恤")
+  // unless it is negated or descriptive ("不要删除", "已删除", "削除しないで",
+  // "삭제하지 마세요", "삭제된").
   _correctionRequestsResourceDeletion(text) {
-    const verbs = 'delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제';
-    if (!new RegExp(`(?:^|[^\\p{L}])(?:${verbs})(?:[^\\p{L}]|$)`, 'iu').test(String(text || ''))) return false;
+    const verbs = Object.values(Agent._resourceDeletionVerbs).join('|');
+    const naming = this._unboundRecordNaming();
+    const variants = [...new Set([naming.fold(text, false), naming.fold(text, true)])];
+    const cjkVerb = /删除|刪除|削除|삭제/u;
+    if (!variants.some(value => new RegExp(`(?:^|[^\\p{L}])(?:${verbs})(?:[^\\p{L}]|$)`, 'iu').test(value)
+        || cjkVerb.test(value))) return false;
     const textPart = /^(?:chars?|characters?|signs?|symbols?|marks?|markers?|hashtags?|tags?|emojis?|emoticons?|words?|letters?|lines?|linebreaks?|spaces?|whitespace|punctuation|quotes?|quotations?|brackets?|arrows?|prefix(?:es)?|typos?|mentions?|links?|urls?|sentences?|paragraphs?|text|formatting|bullets?|dashes?|asterisks?|commas?|periods?|dots?|newlines?|işaret\p{L}*|karakter\p{L}*|sembol\p{L}*|etiket\p{L}*|hashtag\p{L}*|kelime\p{L}*|sözcü\p{L}*|harf\p{L}*|satır\p{L}*|boşluk\p{L}*|emoji\p{L}*|bağlantı\p{L}*|link\p{L}*|cümle\p{L}*|paragraf\p{L}*|noktalama\p{L}*|tırnak\p{L}*|caractères?|signes?|symboles?|mots?|lettres?|lignes?|espaces?|liens?|caracteres|carácter|signos?|símbolos?|palabras?|letras?|líneas?|espacios?|enlaces?|zeichen|wörter|wort|buchstaben?|zeilen?|leerzeichen|символ\p{L}*|знак\p{L}*|хэштег\p{L}*|хештег\p{L}*|слов\p{L}*|строк\p{L}*|ссылк\p{L}*)$/iu;
     const resource = /^(?:posts?|tweets?|status(?:es)?|threads?|toots?|skeets?|records?|entry|entries|items?|messages?|comments?|replies|publications?|duplicates?|it|them|gönderi\p{L}*|tweet\p{L}*|paylaşım\p{L}*|ileti\p{L}*|mesaj\p{L}*|kayıt\p{L}*|kayd\p{L}*|yorum\p{L}*|yanıt\p{L}*|onu|bunu|şunu|message|publicación|publicacion|mensaje|beitrag\p{L}*|nachricht\p{L}*|пост\p{L}*|твит\p{L}*|сообщени\p{L}*|запис\p{L}*|его)$/iu;
     const negation = /^(?:not|don't|dont|never|no|without|nicht|kein\p{L}*|ne|не)$/iu;
-    const clauses = String(text || '').normalize('NFC').replace(/[’`]/g, "'")
-      .split(/[.;!?\n,]+|(?:^|\s)(?:and|then|but|also|ve|sonra|ama|ayrıca|et|puis|mais|y|luego|pero|und|dann|aber|и|затем|но)(?=\s|$)/iu);
+    const cjkNegated = /(?:不要|不用|不必|不需要|不想|不能|不可|不准|不许|不許|别|別|勿|无需|無需|毋须|毋須|禁止)[^删刪]*(?:删除|刪除)|(?:不|没有|沒有|没|沒|未|已经|已經|已|被)\s*(?:再|要|去)?\s*(?:删除|刪除)|削除\s*(?:は|を|も)?\s*(?:しな(?!さい)|しません|せず|するな|禁止|不要|済|され|やめ|止め)|삭제\s*(?:는|를|은|도)?\s*(?:하지\s*(?:마|말|않)|안\s*(?:해|하|함)|하면\s*안|금지|된|됨|되었|됐|되어|돼|말)/gu;
+    const clauses = variants.join('\n').replace(/[’`]/g, "'")
+      .split(/[.;!?\n,，。；！？]+|(?:^|\s)(?:and|then|but|also|ve|sonra|ama|ayrıca|et|puis|mais|y|luego|pero|und|dann|aber|и|затем|но)(?=\s|$)/iu);
     return clauses.some(clause => {
-      if (/(?:删除|刪除|削除|삭제)/u.test(clause)) {
+      if (cjkVerb.test(clause)) {
+        if (!cjkVerb.test(clause.replace(cjkNegated, ' '))) return false;
         // Without word spacing, the object's head noun is the last noun of
         // the clause in both verb-first and verb-final orders.
-        const nouns = [...clause.matchAll(/(符号|符號|字符|字元|标签|標籤|话题|話題|标记|標記|文字|記号|ハッシュタグ|기호|문자|해시태그|단어|이모지|表情|链接|連結|リンク|링크|[「『"'«>#@])|(帖子|推文|贴文|貼文|动态|動態|投稿|ポスト|ツイート|게시물|게시글|트윗|记录|記錄|消息|訊息)/gu)];
+        const nouns = [...clause.matchAll(/(删除线|刪除線|符号|符號|字符|字元|标签|標籤|话题|話題|标记|標記|文字|記号|ハッシュタグ|기호|문자|해시태그|단어|이모지|表情|链接|連結|リンク|링크|[「『"'«>#@])|(帖子|推文|贴文|貼文|动态|動態|投稿|ポスト|ツイート|게시물|게시글|트윗|记录|記錄|消息|訊息)/gu)];
         return !nouns.length || !nouns.at(-1)[1];
       }
       const tokens = clause.split(/\s+/).filter(Boolean);
@@ -7064,6 +7079,173 @@ export class Agent extends LoopDetector {
       .map(field => ({ label: String(field.label || '').slice(0, 200), type: String(field.type || '').slice(0, 40), value: field.value.slice(0, 25000) }));
   }
 
+  // How a request names a record without a permalink, shared by the agent and
+  // the page probe (which is serialized, so it embeds an identical copy;
+  // test/guards-unbound-deletion.mjs checks that). Text is NFC with
+  // full-width forms folded, lower-cased once ordinarily and once the Turkish
+  // way (I to ı, İ to i); a term matches when either folding does. A request
+  // term ranks 100 in a text where it is a whole word, or a whole Han, kana or
+  // Hangul token; 50 where it shares a stem of at least four letters, left by
+  // one listed suffix of the request's own language on either side; and 2 to
+  // 8 where its longest shared CJK substring (with a CJK character) has that
+  // many characters. Open-ended prefixes never match ("elma" is not "elmas",
+  // "cat" is not "catalog"). A term is shared when a sibling record matches it
+  // at least as well, so the most specific record keeps it.
+  static _unboundRecordNamingKit = function _unboundRecordNamingKit() {
+    const cjkClass = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
+    const cjk = new RegExp(`[${cjkClass}]`, 'u');
+    const scripts = new RegExp(`[${cjkClass}]+|[^${cjkClass}]+`, 'gu');
+    const prepare = value => String(value ?? '').normalize('NFC')
+      .replace(/[\uFF01-\uFF5E\uFF61-\uFFDC]+/g, part => part.normalize('NFKC')).normalize('NFC');
+    const lower = (value, turkish) => (turkish ? value.replace(/I/g, 'ı').replace(/İ/g, 'i') : value.replace(/İ/g, 'i'))
+      .toLowerCase().replace(/i\u0307/g, 'i');
+    const fold = (value, turkish) => lower(prepare(value), turkish);
+    const runs = value => value.match(/[\p{L}\p{N}\p{M}]+/gu) || [];
+    const points = value => Array.from(value);
+    const vowels = 'aeıioöuü';
+    const turkishSuffixes = new Set(['lar', 'ler', 'ları', 'leri', 'lara', 'lere', 'larda', 'lerde', 'lardan', 'lerden',
+      'ların', 'lerin', 'larla', 'lerle', 'larını', 'lerini', 'larına', 'lerine', 'larında', 'lerinde', 'larından',
+      'lerinden', 'larının', 'lerinin', 'ı', 'i', 'u', 'ü', 'a', 'e', 'ın', 'in', 'un', 'ün', 'da', 'de', 'ta', 'te',
+      'dan', 'den', 'tan', 'ten', 'la', 'le', 'yı', 'yi', 'yu', 'yü', 'ya', 'ye', 'nın', 'nin', 'nun', 'nün', 'yla', 'yle',
+      'sı', 'si', 'su', 'sü', 'sını', 'sini', 'sunu', 'sünü', 'sına', 'sine', 'suna', 'süne', 'sında', 'sinde', 'sunda',
+      'sünde', 'sından', 'sinden', 'sundan', 'sünden', 'sının', 'sinin', 'sunun', 'sünün', 'sıyla', 'siyle', 'suyla',
+      'süyle', 'ını', 'ini', 'unu', 'ünü', 'ına', 'ine', 'una', 'üne', 'ında', 'inde', 'unda', 'ünde', 'ından', 'inden',
+      'undan', 'ünden', 'ının', 'inin', 'unun', 'ünün', 'ıyla', 'iyle', 'uyla', 'üyle', 'daki', 'deki', 'taki', 'teki']);
+    const plurals = { de: ['nen', 'ern', 'en', 'er', 'es', 'em', 'e', 'n', 's'], es: ['es', 's'], fr: ['es', 's', 'x'] };
+    // Turkish vowel harmony between a stem's last vowel and a suffix's first.
+    const harmonic = (stem, suffix) => {
+      const last = [...stem].reverse().find(letter => vowels.includes(letter));
+      const first = [...suffix].find(letter => vowels.includes(letter));
+      if (!last || !first) return false;
+      if (first === 'a' || first === 'e') return first === ('aıou'.includes(last) ? 'a' : 'e');
+      return first === { a: 'ı', ı: 'ı', o: 'u', u: 'u', e: 'i', i: 'i', ö: 'ü', ü: 'ü' }[last];
+    };
+    // A word and the stems that one listed suffix of the request's languages
+    // leaves, with at least four letters. No consonant softening.
+    const stemsOf = (word, languages) => {
+      const stems = new Set();
+      if (!/^[\p{L}\p{M}]+$/u.test(word) || cjk.test(word)) return stems;
+      const add = stem => { if ((stem.match(/\p{L}/gu) || []).length >= 4) stems.add(stem); };
+      add(word);
+      for (const language of languages) {
+        if (language === 'en') {
+          if (word.endsWith('ies')) add(`${word.slice(0, -3)}y`);
+          if (/(?:[sxz]|ch|sh)es$/.test(word)) add(word.slice(0, -2));
+          if (word.endsWith('s') && !/(?:ss|us|is)$/.test(word)) add(word.slice(0, -1));
+        } else if (language === 'tr') {
+          for (let size = 1; size <= 8 && size < word.length; size += 1) {
+            const suffix = word.slice(-size), stem = word.slice(0, -size);
+            if (!turkishSuffixes.has(suffix)) continue;
+            // A suffix that opens with a vowel follows a consonant; one that
+            // opens with the buffer letters y, n or s follows a vowel.
+            const vowelStem = vowels.includes(stem.at(-1));
+            if (vowels.includes(suffix[0]) ? vowelStem : 'yns'.includes(suffix[0]) && !vowelStem) continue;
+            if (harmonic(stem, suffix)) add(stem);
+          }
+        } else {
+          for (const suffix of plurals[language] || []) {
+            if (word.length > suffix.length && word.endsWith(suffix)) add(word.slice(0, -suffix.length));
+          }
+        }
+      }
+      return stems;
+    };
+    // Words (split where CJK meets other scripts) with their stems, whole CJK
+    // tokens (also without glued numbers, as in "會議記錄10"), and the text
+    // under both foldings.
+    const index = (text, languages) => {
+      const words = new Set(), stems = new Set(), tokens = new Set(), folded = [];
+      const base = prepare(text);
+      for (const turkish of [false, true]) {
+        const value = lower(base, turkish);
+        folded.push(value);
+        for (const run of runs(value)) {
+          if (cjk.test(run)) for (const token of [run, ...run.split(/\p{N}+/u)]) if (cjk.test(token)) tokens.add(token);
+          for (const part of run.match(scripts) || []) {
+            if (cjk.test(part) || words.has(part)) continue;
+            words.add(part);
+            for (const stem of stemsOf(part, languages)) stems.add(stem);
+          }
+        }
+      }
+      return { words, stems, tokens, folded: folded.join('\n') };
+    };
+    // Substrings of a CJK term (two to eight characters, with a CJK one),
+    // longest first.
+    const grams = term => {
+      const letters = points(term), result = [];
+      for (let size = Math.min(8, letters.length); size >= 2; size -= 1) {
+        for (let start = 0; start + size <= letters.length; start += 1) {
+          const gram = letters.slice(start, start + size).join('');
+          if (cjk.test(gram)) result.push(gram);
+        }
+      }
+      return result;
+    };
+    // The longest wanted gram in the CJK runs of a folded text, per term; null
+    // past the scan limit.
+    const reach = (folded, wanted, seen = null, limit = Infinity) => {
+      const found = new Map();
+      let scanned = 0;
+      for (const run of runs(folded)) {
+        if (!cjk.test(run)) continue;
+        const letters = points(run);
+        if ((scanned += letters.length) > limit) return null;
+        for (let start = 0; start + 1 < letters.length; start += 1) {
+          let gram = letters[start];
+          for (let size = 2; size <= 8 && start + size <= letters.length; size += 1) {
+            gram += letters[start + size - 1];
+            const terms = wanted.get(gram);
+            if (!terms) continue;
+            seen?.add(gram);
+            for (const term of terms) found.set(term, Math.max(found.get(term) || 0, size));
+          }
+        }
+      }
+      return found;
+    };
+    // Each request term's rank in the record text, the request words or CJK
+    // characters that matched (witness), and whether a sibling record of the
+    // same kind matches it at least as well (shared). Siblings too large to
+    // scan share every CJK term.
+    const naming = (query, recordText, peerText) => {
+      const languages = (Array.isArray(query?.languages) ? query.languages : [])
+        .filter(language => ['en', 'tr', 'de', 'es', 'fr'].includes(language));
+      const terms = [...new Set((Array.isArray(query?.terms) ? query.terms : [])
+        .filter(term => typeof term === 'string' && term.length > 0 && term.length <= 64))].slice(0, 32);
+      if (!terms.length) return [];
+      const own = index(recordText, languages), peers = index(peerText, languages);
+      const wanted = new Map();
+      for (const term of terms) {
+        if (!cjk.test(term)) continue;
+        for (const gram of grams(term)) wanted.set(gram, [...(wanted.get(gram) || []), term]);
+      }
+      const seen = new Set();
+      const ownReach = reach(own.folded, wanted, seen), peerReach = reach(peers.folded, wanted, null, 400000);
+      return terms.map(term => {
+        let rank = 0, peerRank = 0, witness = '';
+        if (cjk.test(term)) {
+          rank = own.tokens.has(term) ? 100 : ownReach.get(term) || 0;
+          peerRank = peers.tokens.has(term) || !peerReach ? 100 : peerReach.get(term) || 0;
+          witness = rank === 100 ? term : grams(term).find(gram => points(gram).length === rank && seen.has(gram)) || '';
+        } else {
+          const stems = stemsOf(term, languages);
+          const shares = set => [...stems].some(stem => set.has(stem));
+          rank = own.words.has(term) ? 100 : shares(own.stems) ? 50 : 0;
+          peerRank = peers.words.has(term) ? 100 : shares(peers.stems) ? 50 : 0;
+          witness = rank ? term : '';
+        }
+        return { term, rank, shared: rank > 0 && peerRank >= rank, witness };
+      });
+    };
+    return { cjk, scripts, prepare, lower, fold, runs, points, naming };
+  };
+
+  _unboundRecordNaming() {
+    this._unboundRecordNamingCache ||= Agent._unboundRecordNamingKit();
+    return this._unboundRecordNamingCache;
+  }
+
   // The probe's record evidence for a deletion without a permalinked
   // resource. The footprint is recomputed here from the probed document, the
   // owner kind and the bounded text; the identity leaves out the document so
@@ -7087,6 +7269,12 @@ export class Agent extends LoopDetector {
       complete: record.complete === true && !!text && full.length <= 2000 && !!scopeToken && !!document, scopeToken, document,
       distinctiveTokens: Array.isArray(record.distinctiveTokens)
         ? [...new Set(record.distinctiveTokens.filter(token => typeof token === 'string' && token.length <= 80))].slice(0, 400) : [],
+      // Per request term: its rank in this row and whether a sibling row
+      // matches it as well. Request words only, never the siblings' text.
+      naming: Array.isArray(record.naming) ? record.naming.filter(entry => entry && typeof entry.term === 'string'
+          && entry.term.length > 0 && entry.term.length <= 64 && Number.isInteger(entry.rank) && entry.rank >= 0
+          && entry.rank <= 100 && typeof entry.shared === 'boolean')
+        .slice(0, 32).map(({ term, rank, shared }) => ({ term, rank, shared })) : [],
       footprint: this._sha256TextSync(JSON.stringify({ document, owner, text })),
       identity: this._sha256TextSync(JSON.stringify({ origin, owner, text })),
     } };
@@ -7103,28 +7291,110 @@ export class Agent extends LoopDetector {
     return { token: last.recordScopeToken, document: last.recordDocument || '', dispatchedAt: Number(last.dispatchedAt) };
   }
 
-  // Same tokenizer as the page probe's record tokens: NFC, lower case,
-  // Unicode letters/digits (with marks), at least three letters or digits.
-  _unboundDeletionTokens(value) {
-    return (String(value || '').normalize('NFC').toLowerCase().match(/[\p{L}\p{N}\p{M}]+/gu) || [])
-      .filter(token => (token.match(/[\p{L}\p{N}]/gu) || []).length >= 3);
-  }
-
-  // Words of the latest request that can name a record: not function words,
-  // positions, deletion verbs, or generic record and container nouns.
+  // Terms of the latest request that can name a record. Words (split where
+  // CJK meets other scripts) need three letters or digits and are neither
+  // function words, positions, deletion verbs nor generic record or container
+  // nouns under either case folding; a word with a capital I also yields its
+  // Turkish folding. Han, kana and Hangul runs yield the names they hold.
   _unboundDeletionRequestTerms(text) {
     const stop = /^(?:the|and|for|from|with|without|this|that|these|those|then|than|there|here|into|onto|out|off|all|any|each|every|some|both|only|just|also|please|can|could|would|will|shall|should|must|may|might|you|your|yours|our|ours|mine|its|his|her|hers|their|theirs|them|they|she|him|was|were|are|been|being|have|has|had|not|but|now|one|ones|two|three|first|second|third|last|next|previous|other|another|same|selected|checked|current|above|below|top|bottom|left|right|called|named|titled|labeled|labelled|about|which|what|who|whose|where|when|how|thing|things|bir|iki|ilk|son|olan|için|ile|veya|ama|tüm|hepsi|lütfen|adlı|isimli|sonra|önce|benim|bizim|les|des|une|pour|avec|dans|sur|mon|mes|ton|tes|ses|notre|nos|votre|vos|leur|leurs|qui|que|cette|ces|tout|tous|los|las|una|uno|del|por|para|con|sin|mis|tus|sus|este|esta|estos|estas|ese|esa|todo|todos|der|die|das|den|dem|ein|eine|einen|einem|und|oder|mit|von|aus|für|mein|meine|meinen|dein|bitte|alle|diese|dieser|dieses|это|этот|эту|эти|мой|мою|мои|все|для|пожалуйста)$/u;
     const verb = /^(?:delete|deletes|deleted|deleting|deletion|deletions|remove|removes|removed|removing|removal|trash|trashes|trashed|trashing|erase|erases|erased|erasing|destroy|destroys|destroyed|destroying|discard|discards|discarded|discarding|sil|silin|silinsin|silme|silmek|sildim|kaldır\p{L}*|supprim\p{L}*|effac\p{L}*|elimin\p{L}*|borrar|borra|borre|borren|lösch\p{L}*|gelösch\p{L}*|entfern\p{L}*|удал\p{L}*|删除|刪除|削除|삭제\p{L}*)$/u;
     const generic = /^(?:items?|rows?|entry|entries|records?|e?mails?|messages?|posts?|products?|orders?|files?|lines?|comments?|notes?|tasks?|cart|carts|basket|bag|inbox|folder|list|table|page|öğe\p{L}*|ürün\p{L}*|satır\p{L}*|kayıt\p{L}*|kayd\p{L}*|mesaj\p{L}*|ileti\p{L}*|posta\p{L}*|dosya\p{L}*|sipariş\p{L}*|gönderi\p{L}*|sepet\p{L}*|artículos?|productos?|mensajes?|correos?|archivos?|pedidos?|carrito|articles?|produits?|courriels?|fichiers?|commandes?|panier|artikel|produkte?|nachricht(?:en)?|datei(?:en)?|bestellung(?:en)?|eintrag|einträge|warenkorb|товар\p{L}*|письм\p{L}*|сообщени\p{L}*|файл\p{L}*|заказ\p{L}*|запис\p{L}*|корзин\p{L}*)$/u;
-    return [...new Set(this._unboundDeletionTokens(text).filter(token => !stop.test(token) && !verb.test(token) && !generic.test(token)))];
+    const naming = this._unboundRecordNaming();
+    const terms = [];
+    for (const run of naming.runs(naming.prepare(text))) {
+      for (const part of run.match(naming.scripts) || []) {
+        if (naming.cjk.test(part) || part.length > 64) continue;
+        const forms = [...new Set([naming.lower(part, false), naming.lower(part, true)])];
+        if ((forms[0].match(/[\p{L}\p{N}]/gu) || []).length < 3
+            || forms.some(form => stop.test(form) || verb.test(form) || generic.test(form))) continue;
+        terms.push(...forms);
+      }
+      if (naming.cjk.test(run)) terms.push(...this._unboundDeletionCjkTerms(run));
+    }
+    return [...new Set(terms)];
   }
 
-  // Request terms that name this record: a whole word of its visible text
-  // that no sibling record of the same kind also shows.
+  // The names in a Han, kana or Hangul run of the request: the run without
+  // the deletion verb and its inflection, also cut at conjunctions and object
+  // or attributive particles, then without leading or trailing politeness
+  // words, demonstratives and particles (one particle for Hangul), never
+  // below two characters. Function words and generic nouns alone name nothing.
+  _unboundDeletionCjkTerms(run) {
+    const naming = this._unboundRecordNaming();
+    const leading = /^(?:请|請|麻烦|麻煩|帮我|幫我|帮忙|幫忙|给我|給我|替我|把|将|將|从|從|这个|這個|那个|那個|这条|這條|那条|那條|这件|這件|那件|这些|這些|那些|这|這|那|该|該|此|我的|我|您|你|この|その|あの|これ|それ|あれ|どうか|ぜひ|私の|僕の)/u;
+    const trailing = /(?:的|了|吧|掉|一下|呢|啊|吗|嗎|里|裡|中|を|は|が|も|の|に|で|と|へ|から|まで|ください|下さい|してください|して|お願いします|お願い|ね|よ)$/u;
+    const particle = /(?:에서|으로|하고|이랑|을|를|은|는|이|가|의|에|도|만|로|와|과|랑)$/u;
+    // Courtesy and function words, alone or strung together ("请帮我", "谢谢").
+    const functionWord = /^(?:请|請|你|您|我|吧|了|的|呢|啊|麻烦|麻煩|帮我|幫我|帮忙|幫忙|给我|給我|替我|这个|這個|那个|那個|这条|這條|那条|那條|这件|這件|那件|这些|這些|那些|我的|一下|谢谢|謝謝|你好|您好|この|その|あの|これ|それ|あれ|どうか|ぜひ|私の|僕の|ください|下さい|してください|して|お願いします|お願い|ありがとう|から|まで|주세요|줘|주십시오|해주세요|해줘|하세요|좀|제발|부탁해|부탁합니다|부탁해요|감사합니다|고마워|이것|그것|저것|이거|그거|저거|나의|저의)+$/u;
+    const generic = /^(?:商品|产品|產品|物品|项目|項目|条目|條目|记录|記錄|文件|檔案|消息|訊息|邮件|郵件|信息|帖子|订单|訂單|购物车|購物車|列表|表格|页面|頁面|アイテム|製品|ファイル|メッセージ|メール|投稿|注文|カート|リスト|ページ|レコード|항목|파일|메시지|메일|게시물|게시글|주문|장바구니|목록|페이지|상품|기록|제품)$/u;
+    const names = [];
+    for (const variant of new Set([naming.lower(run, false), naming.lower(run, true)])) {
+      // The verb with its inflection and politeness ("削除をお願いします",
+      // "削除して頂けますか", "삭제해주세요").
+      for (const segment of variant.split(/(?:删除|刪除)(?:掉|了|吧|一下)*|削除[\p{scx=Hiragana}願下頂戴致]*|삭제\p{scx=Hangul}*/u)) {
+        for (const piece of [segment, ...segment.split(/的|把|和|与|與|跟|或者|を/u)]) {
+          if (functionWord.test(piece)) continue;
+          let name = piece;
+          for (let changed = true; changed;) {
+            changed = false;
+            for (const edge of [leading, trailing]) {
+              const next = name.replace(edge, '');
+              if (next !== name && naming.points(next).length >= 2) { name = next; changed = true; }
+            }
+          }
+          if (/\p{scx=Hangul}/u.test(name)) {
+            const next = name.replace(particle, '');
+            if (naming.points(next).length >= 2) name = next;
+          }
+          if (naming.points(name).length >= 2 && naming.cjk.test(name) && !functionWord.test(name) && !generic.test(name)) {
+            names.push(naming.points(name).slice(0, 32).join(''));
+          }
+        }
+      }
+    }
+    return names;
+  }
+
+  // The request's languages, from its deletion verbs: only their suffix
+  // lists apply, so a Turkish request never strips an English plural.
+  _unboundDeletionLanguages(text) {
+    const naming = this._unboundRecordNaming();
+    const value = `${naming.fold(text, false)}\n${naming.fold(text, true)}`;
+    return ['en', 'tr', 'de', 'es', 'fr'].filter(language =>
+      new RegExp(`(?:^|[^\\p{L}])(?:${Agent._resourceDeletionVerbs[language]})(?:[^\\p{L}]|$)`, 'u').test(value));
+  }
+
+  // What the page probe needs to rank the latest request's terms in a record
+  // and its siblings: bounded request words, never page text. Only a request
+  // that asks for a deletion names a record.
+  _unboundDeletionNamingQuery(latest) {
+    if (!this._correctionRequestsResourceDeletion(latest)) return null;
+    const terms = this._unboundDeletionRequestTerms(latest).slice(0, 32);
+    return terms.length ? { languages: this._unboundDeletionLanguages(latest), terms } : null;
+  }
+
+  // Request terms that name this record: its row matches the term (rank
+  // recomputed here from the row text and equal to the probe's), and no
+  // sibling record of the same kind matches it as well.
   _unboundDeletionMatchedTerms(latest, record) {
-    const words = new Set(this._unboundDeletionTokens(record?.text));
-    const distinctive = new Set(Array.isArray(record?.distinctiveTokens) ? record.distinctiveTokens : []);
-    return this._unboundDeletionRequestTerms(latest).filter(term => words.has(term) && distinctive.has(term));
+    const query = this._unboundDeletionNamingQuery(latest);
+    if (!query || typeof record?.text !== 'string' || !Array.isArray(record.naming)) return [];
+    const reported = new Map(record.naming.map(entry => [entry.term, entry]));
+    return this._unboundRecordNaming().naming(query, record.text, '')
+      .filter(({ term, rank }) => rank > 0 && reported.get(term)?.rank === rank && reported.get(term)?.shared === false)
+      .map(({ term, witness }) => ({ term, witness }));
+  }
+
+  // The authorization evidence must contain a request term that names the
+  // record: the request's own word ("tişörtü"), or the CJK characters that
+  // matched the row.
+  _unboundDeletionEvidenceNames(evidence, matched) {
+    const naming = this._unboundRecordNaming();
+    const folded = [false, true].map(turkish => naming.fold(evidence, turkish));
+    const words = new Set(folded.flatMap(value => naming.runs(value).flatMap(run => run.match(naming.scripts) || [])));
+    return matched.some(({ term, witness }) => naming.cjk.test(term)
+      ? !!witness && folded.some(value => value.includes(witness)) : words.has(term));
   }
 
   _resourceMutationActionKey(tabId, name, args, detected) {
@@ -7141,7 +7411,13 @@ export class Agent extends LoopDetector {
       // re-detection nor a cached authorization can carry over to it.
       ...(record ? { record: { footprint: record.footprint || '', stage: record.stage || '', scopeToken: record.scopeToken || '',
         complete: record.complete === true, distinctive: Array.isArray(record.distinctiveTokens) ? record.distinctiveTokens : [],
+        naming: Array.isArray(record.naming) ? record.naming : [],
         confirmation: record.confirmationText || '' } } : {}) }));
+  }
+
+  // The latest accepted request: the last steering correction, else the task.
+  _latestAcceptedRequestText(task) {
+    return task?.updates?.filter(update => update.kind === 'steering').at(-1)?.text || task?.text;
   }
 
   async _resourceMutationPreSubmitBlock(tabId, name, args, detected, provider = this._activeProvider(tabId)) {
@@ -7178,7 +7454,7 @@ export class Agent extends LoopDetector {
     if (genericCommit && !formCommit && !permalinked) return blocked('resource_unresolved');
     const prior = guard.steeringPriorSubmission;
     const task = this._activeTaskBinding(this.conversations.get(tabId) || []);
-    const latest = task.updates?.filter(update => update.kind === 'steering').at(-1)?.text || task.text;
+    const latest = this._latestAcceptedRequestText(task);
     const priorSnapshot = prior?.publicationSnapshot || prior?.workflowBinding?.socialPublication?.snapshot;
     // An account belongs to its platform's namespace. A post on another
     // platform is a separate publication bound to its own contract action,
@@ -7297,9 +7573,11 @@ export class Agent extends LoopDetector {
     }
     if (deletion && permalinked && !latest.includes(detected.actionResource.url)
         && guard.steeringPriorSubmissionReconciliation?.resourceUrl !== detected.actionResource.url) return blocked('resource_not_bound_to_request');
-    // An unbound record needs an explicit deletion request that names it by a
-    // word only this record shows; a text edit ("remove the > characters"),
-    // a position ("the first one") or a generic noun cannot select it.
+    // An unbound record needs an explicit deletion request that names it more
+    // specifically than any sibling record: by a word (or its inflected form)
+    // or CJK name that no sibling matches as well. A text edit ("remove the >
+    // characters"), a position ("the first one") or a generic noun cannot
+    // select it.
     let recordTerms = [];
     if (record) {
       if (!this._correctionRequestsResourceDeletion(latest)) {
@@ -7307,7 +7585,7 @@ export class Agent extends LoopDetector {
       }
       recordTerms = this._unboundDeletionMatchedTerms(latest, record);
       if (!recordTerms.length) {
-        return blocked('record_not_named_in_request', 'The latest request does not name this item by a word that appears only in its row, so it was not deleted. Ask the user to name the item to delete as it is shown on the page; do not guess between similar items.');
+        return blocked('record_not_named_in_request', 'The latest request does not name this item by a word or name that only its row shows, so it was not deleted. Ask the user to name the item to delete as it is shown on the page; do not guess between similar items.');
       }
     }
     if (guard.resourceMutationAuthorization?.key === key && guard.resourceMutationAuthorization.taskKey === guard.taskKey) return null;
@@ -7339,7 +7617,7 @@ export class Agent extends LoopDetector {
       if (verdict?.key !== key || verdict.authorized !== true || typeof verdict.latestRequestEvidence !== 'string'
           || !verdict.latestRequestEvidence.trim() || !latest.includes(verdict.latestRequestEvidence)
           // A record's evidence must quote the request words that name it.
-          || (record && !this._unboundDeletionTokens(verdict.latestRequestEvidence).some(token => recordTerms.includes(token)))) {
+          || (record && !this._unboundDeletionEvidenceNames(verdict.latestRequestEvidence, recordTerms))) {
         return blocked('latest_request_not_authorized');
       }
       const final = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true });
@@ -25914,6 +26192,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         __wbNativeResourceAdapter: getActiveAdapter(currentUrl)?.name || '' };
       const unboundDeletionLaunch = this._unboundDeletionLaunch(tabId);
       if (unboundDeletionLaunch) probeArgs = { ...probeArgs, __wbUnboundDeletionLaunch: unboundDeletionLaunch };
+      // The terms of a requested deletion, so the isolated probe can rank them
+      // in the record and its siblings (bounded request words only). Without
+      // them no record is named.
+      let unboundDeletionNaming = null;
+      try {
+        if (['click', 'click_ax', 'iframe_click'].includes(name)) {
+          unboundDeletionNaming = this._unboundDeletionNamingQuery(
+            this._latestAcceptedRequestText(this._activeTaskBinding(this.conversations.get(tabId) || [])));
+        }
+      } catch {}
+      if (unboundDeletionNaming) probeArgs = { ...probeArgs, __wbUnboundDeletionNaming: unboundDeletionNaming };
       let rawResults = [];
       if (globalThis.chrome?.scripting?.executeScript) {
         rawResults = await chrome.scripting.executeScript({
@@ -27454,11 +27743,162 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const recordEditorSelector = 'textarea,[contenteditable=""],[contenteditable="true"],[contenteditable="plaintext-only"],[role="textbox"]';
       const recordControlSelector = 'button,[role="button"],input,select,textarea,[role="menuitem"],[role="menuitemcheckbox"],'
         + '[role="menuitemradio"],[role="switch"],[role="checkbox"],[role="radio"],[role="tab"],[role="option"]';
-      // Same tokenizer as the agent-side request terms: NFC, lower case,
-      // Unicode letters/digits (with marks), at least three letters/digits.
+      // Words of a record's identity and its distinctiveTokens: NFC, lower
+      // case, Unicode letters/digits (with marks), at least three letters/digits.
       const recordTokens = value => (String(value || '').normalize('NFC').toLowerCase().match(/[\p{L}\p{N}\p{M}]+/gu) || [])
         .filter(token => (token.match(/[\p{L}\p{N}]/gu) || []).length >= 3);
       const recordHasIdentity = text => recordTokens(text).some(token => !deleteAction(token));
+      // An identical copy of Agent._unboundRecordNamingKit (the probe is
+      // serialized and cannot call it): how request terms name this record.
+      const recordNaming = (function _unboundRecordNamingKit() {
+        const cjkClass = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
+        const cjk = new RegExp(`[${cjkClass}]`, 'u');
+        const scripts = new RegExp(`[${cjkClass}]+|[^${cjkClass}]+`, 'gu');
+        const prepare = value => String(value ?? '').normalize('NFC')
+          .replace(/[\uFF01-\uFF5E\uFF61-\uFFDC]+/g, part => part.normalize('NFKC')).normalize('NFC');
+        const lower = (value, turkish) => (turkish ? value.replace(/I/g, 'ı').replace(/İ/g, 'i') : value.replace(/İ/g, 'i'))
+          .toLowerCase().replace(/i\u0307/g, 'i');
+        const fold = (value, turkish) => lower(prepare(value), turkish);
+        const runs = value => value.match(/[\p{L}\p{N}\p{M}]+/gu) || [];
+        const points = value => Array.from(value);
+        const vowels = 'aeıioöuü';
+        const turkishSuffixes = new Set(['lar', 'ler', 'ları', 'leri', 'lara', 'lere', 'larda', 'lerde', 'lardan', 'lerden',
+          'ların', 'lerin', 'larla', 'lerle', 'larını', 'lerini', 'larına', 'lerine', 'larında', 'lerinde', 'larından',
+          'lerinden', 'larının', 'lerinin', 'ı', 'i', 'u', 'ü', 'a', 'e', 'ın', 'in', 'un', 'ün', 'da', 'de', 'ta', 'te',
+          'dan', 'den', 'tan', 'ten', 'la', 'le', 'yı', 'yi', 'yu', 'yü', 'ya', 'ye', 'nın', 'nin', 'nun', 'nün', 'yla', 'yle',
+          'sı', 'si', 'su', 'sü', 'sını', 'sini', 'sunu', 'sünü', 'sına', 'sine', 'suna', 'süne', 'sında', 'sinde', 'sunda',
+          'sünde', 'sından', 'sinden', 'sundan', 'sünden', 'sının', 'sinin', 'sunun', 'sünün', 'sıyla', 'siyle', 'suyla',
+          'süyle', 'ını', 'ini', 'unu', 'ünü', 'ına', 'ine', 'una', 'üne', 'ında', 'inde', 'unda', 'ünde', 'ından', 'inden',
+          'undan', 'ünden', 'ının', 'inin', 'unun', 'ünün', 'ıyla', 'iyle', 'uyla', 'üyle', 'daki', 'deki', 'taki', 'teki']);
+        const plurals = { de: ['nen', 'ern', 'en', 'er', 'es', 'em', 'e', 'n', 's'], es: ['es', 's'], fr: ['es', 's', 'x'] };
+        // Turkish vowel harmony between a stem's last vowel and a suffix's first.
+        const harmonic = (stem, suffix) => {
+          const last = [...stem].reverse().find(letter => vowels.includes(letter));
+          const first = [...suffix].find(letter => vowels.includes(letter));
+          if (!last || !first) return false;
+          if (first === 'a' || first === 'e') return first === ('aıou'.includes(last) ? 'a' : 'e');
+          return first === { a: 'ı', ı: 'ı', o: 'u', u: 'u', e: 'i', i: 'i', ö: 'ü', ü: 'ü' }[last];
+        };
+        // A word and the stems that one listed suffix of the request's languages
+        // leaves, with at least four letters. No consonant softening.
+        const stemsOf = (word, languages) => {
+          const stems = new Set();
+          if (!/^[\p{L}\p{M}]+$/u.test(word) || cjk.test(word)) return stems;
+          const add = stem => { if ((stem.match(/\p{L}/gu) || []).length >= 4) stems.add(stem); };
+          add(word);
+          for (const language of languages) {
+            if (language === 'en') {
+              if (word.endsWith('ies')) add(`${word.slice(0, -3)}y`);
+              if (/(?:[sxz]|ch|sh)es$/.test(word)) add(word.slice(0, -2));
+              if (word.endsWith('s') && !/(?:ss|us|is)$/.test(word)) add(word.slice(0, -1));
+            } else if (language === 'tr') {
+              for (let size = 1; size <= 8 && size < word.length; size += 1) {
+                const suffix = word.slice(-size), stem = word.slice(0, -size);
+                if (!turkishSuffixes.has(suffix)) continue;
+                // A suffix that opens with a vowel follows a consonant; one that
+                // opens with the buffer letters y, n or s follows a vowel.
+                const vowelStem = vowels.includes(stem.at(-1));
+                if (vowels.includes(suffix[0]) ? vowelStem : 'yns'.includes(suffix[0]) && !vowelStem) continue;
+                if (harmonic(stem, suffix)) add(stem);
+              }
+            } else {
+              for (const suffix of plurals[language] || []) {
+                if (word.length > suffix.length && word.endsWith(suffix)) add(word.slice(0, -suffix.length));
+              }
+            }
+          }
+          return stems;
+        };
+        // Words (split where CJK meets other scripts) with their stems, whole CJK
+        // tokens (also without glued numbers, as in "會議記錄10"), and the text
+        // under both foldings.
+        const index = (text, languages) => {
+          const words = new Set(), stems = new Set(), tokens = new Set(), folded = [];
+          const base = prepare(text);
+          for (const turkish of [false, true]) {
+            const value = lower(base, turkish);
+            folded.push(value);
+            for (const run of runs(value)) {
+              if (cjk.test(run)) for (const token of [run, ...run.split(/\p{N}+/u)]) if (cjk.test(token)) tokens.add(token);
+              for (const part of run.match(scripts) || []) {
+                if (cjk.test(part) || words.has(part)) continue;
+                words.add(part);
+                for (const stem of stemsOf(part, languages)) stems.add(stem);
+              }
+            }
+          }
+          return { words, stems, tokens, folded: folded.join('\n') };
+        };
+        // Substrings of a CJK term (two to eight characters, with a CJK one),
+        // longest first.
+        const grams = term => {
+          const letters = points(term), result = [];
+          for (let size = Math.min(8, letters.length); size >= 2; size -= 1) {
+            for (let start = 0; start + size <= letters.length; start += 1) {
+              const gram = letters.slice(start, start + size).join('');
+              if (cjk.test(gram)) result.push(gram);
+            }
+          }
+          return result;
+        };
+        // The longest wanted gram in the CJK runs of a folded text, per term; null
+        // past the scan limit.
+        const reach = (folded, wanted, seen = null, limit = Infinity) => {
+          const found = new Map();
+          let scanned = 0;
+          for (const run of runs(folded)) {
+            if (!cjk.test(run)) continue;
+            const letters = points(run);
+            if ((scanned += letters.length) > limit) return null;
+            for (let start = 0; start + 1 < letters.length; start += 1) {
+              let gram = letters[start];
+              for (let size = 2; size <= 8 && start + size <= letters.length; size += 1) {
+                gram += letters[start + size - 1];
+                const terms = wanted.get(gram);
+                if (!terms) continue;
+                seen?.add(gram);
+                for (const term of terms) found.set(term, Math.max(found.get(term) || 0, size));
+              }
+            }
+          }
+          return found;
+        };
+        // Each request term's rank in the record text, the request words or CJK
+        // characters that matched (witness), and whether a sibling record of the
+        // same kind matches it at least as well (shared). Siblings too large to
+        // scan share every CJK term.
+        const naming = (query, recordText, peerText) => {
+          const languages = (Array.isArray(query?.languages) ? query.languages : [])
+            .filter(language => ['en', 'tr', 'de', 'es', 'fr'].includes(language));
+          const terms = [...new Set((Array.isArray(query?.terms) ? query.terms : [])
+            .filter(term => typeof term === 'string' && term.length > 0 && term.length <= 64))].slice(0, 32);
+          if (!terms.length) return [];
+          const own = index(recordText, languages), peers = index(peerText, languages);
+          const wanted = new Map();
+          for (const term of terms) {
+            if (!cjk.test(term)) continue;
+            for (const gram of grams(term)) wanted.set(gram, [...(wanted.get(gram) || []), term]);
+          }
+          const seen = new Set();
+          const ownReach = reach(own.folded, wanted, seen), peerReach = reach(peers.folded, wanted, null, 400000);
+          return terms.map(term => {
+            let rank = 0, peerRank = 0, witness = '';
+            if (cjk.test(term)) {
+              rank = own.tokens.has(term) ? 100 : ownReach.get(term) || 0;
+              peerRank = peers.tokens.has(term) || !peerReach ? 100 : peerReach.get(term) || 0;
+              witness = rank === 100 ? term : grams(term).find(gram => points(gram).length === rank && seen.has(gram)) || '';
+            } else {
+              const stems = stemsOf(term, languages);
+              const shares = set => [...stems].some(stem => set.has(stem));
+              rank = own.words.has(term) ? 100 : shares(own.stems) ? 50 : 0;
+              peerRank = peers.words.has(term) ? 100 : shares(peers.stems) ? 50 : 0;
+              witness = rank ? term : '';
+            }
+            return { term, rank, shared: rank > 0 && peerRank >= rank, witness };
+          });
+        };
+        return { cjk, scripts, prepare, lower, fold, runs, points, naming };
+      })();
       const recordRendered = element => {
         try {
           if (typeof element.checkVisibility === 'function') {
@@ -27586,17 +28026,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
         // Words both as joined text and per text node, so adjacent cells that
-        // textContent glues together still count as shared.
-        const tokens = new Set();
+        // textContent glues together still count as shared. The same text,
+        // one part per line, is the corpus that request terms are ranked in.
+        const tokens = new Set(), corpus = [];
         for (const peer of peers.slice(0, 2000)) {
-          for (const token of recordTokens(String(peer.textContent || '').slice(0, 4000))) tokens.add(token);
+          const joined = String(peer.textContent || '').slice(0, 4000);
+          corpus.push(joined);
+          for (const token of recordTokens(joined)) tokens.add(token);
           let walker = null;
           try { walker = doc.createTreeWalker(peer, NodeFilter.SHOW_TEXT); } catch { continue; }
           for (let node = walker.nextNode(), count = 0; node && count < 500; node = walker.nextNode(), count += 1) {
+            corpus.push(String(node.nodeValue || ''));
             for (const token of recordTokens(node.nodeValue)) tokens.add(token);
           }
         }
-        return { tokens, count: peers.length, complete: peers.length <= 2000 };
+        return { tokens, corpus: corpus.join('\n'), count: peers.length, complete: peers.length <= 2000 };
       };
       const recordRandomToken = () => {
         try { if (typeof crypto.randomUUID === 'function') return crypto.randomUUID(); } catch {}
@@ -27716,6 +28160,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             complete: complete && text.length <= 2000 && peers.complete && recordDeletionControls(activation.getRootNode()).complete,
             scopeToken: rememberUnboundRecord(resolved.owner),
             distinctiveTokens: [...new Set(recordTokens(text.slice(0, 2000)))].filter(token => !peers.tokens.has(token) && !deleteAction(token)).slice(0, 400),
+            // The agent's request terms ranked in this row and its siblings;
+            // only terms and ranks leave the page, never the siblings' text.
+            naming: recordNaming.naming(args.__wbUnboundDeletionNaming, text.slice(0, 2000), peers.corpus)
+              .map(({ term, rank, shared }) => ({ term, rank, shared })),
             peerCount: peers.count };
           rememberUnboundLaunch(activation, record);
           return record;
