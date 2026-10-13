@@ -178,7 +178,6 @@ const changes = [
   }],
   ['account owner identity', () => { document.getElementById('owner').setAttribute('data-account-id', 'other-owned-account'); }],
   ['action label', () => { document.getElementById('action').setAttribute('aria-label', 'Different account action'); }],
-  ['action geometry', () => { document.getElementById('action').style.left = '40px'; }],
   ['action node', () => { const action = document.getElementById('action'); action.replaceWith(action.cloneNode(true)); }],
   ['scope node', () => { const owner = document.getElementById('owner'); owner.replaceWith(owner.cloneNode(true)); }],
 ];
@@ -312,6 +311,22 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           assert.equal(executed.result?.success, true, JSON.stringify(executed));
           assert.equal(executed.clicks, 1);
           await page.evaluate(() => clearInterval(decorativeTimer));
+        } finally { await context.close(); }
+      });
+
+      // A ref decision binds the node, not its coordinates: a pure move whose
+      // hit is the same normalized node keeps the decision (rebased before
+      // preparation). Replaced or non-decorative hits below still block.
+      await t.test('action geometry alone keeps the old model action for the same node', async () => {
+        const { context, page } = await fixture(browser, build);
+        try {
+          const captured = await capture(page);
+          await page.evaluate(() => { document.getElementById('action').style.left = '40px'; });
+          assert.equal((await validate(page, captured)).ready, true);
+          const executed = await dispatch(page, captured);
+          assert.equal(executed.fence.ready, true, JSON.stringify(executed));
+          assert.equal(executed.result?.success, true, JSON.stringify(executed));
+          assert.equal(executed.clicks, 1);
         } finally { await context.close(); }
       });
 

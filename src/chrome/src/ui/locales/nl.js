@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "Bericht in wachtrij zetten",
   'sp.queue.label': 'In wachtrij',
   'sp.queue.label_numbered': 'In wachtrij {index}',
+  'sp.queue.held': 'Gepauzeerd na stoppen',
   'sp.queue.edit': 'Wachtend bericht bewerken',
   'sp.queue.delete': 'Wachtend bericht verwijderen',
   'sp.inspection': 'WebBrain is begonnen met het inspecteren van deze pagina',

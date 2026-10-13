@@ -219,9 +219,29 @@ const httpUrl = value => {
   } catch { return null; }
 };
 
+const BASE_STYLE_LINK = /^(?:base|style|link)(?:$|[\s#.])/;
 export function isPassivePageFeedback(events) {
   return !!events?.length && events.every(event => event.kind === 'dom' && event.source === 'page'
-    && event.frameId === 0 && !/^(?:base|style|link)(?:$|[\s#.])/.test(event.target || ''));
+    && event.frameId === 0 && !BASE_STYLE_LINK.test(event.target || ''));
+}
+
+// Automatic feedback is an observed page consequence with no evidence of a
+// human gesture. Every 'user' event, main-frame navigation, any top-level
+// viewport change (the monitor reports those as unknown) and base/style/link
+// updates keep the strict fence. Focus moved to an <iframe> is page-script focus: Chromium and
+// Firefox fire no parent focusin for a click or Tab inside a frame (a Tab
+// reaches the parent monitor as user keydown activity).
+const AUTOMATIC_SOURCES = new Map([['dom', ['page', 'unknown']], ['scroll', ['page', 'unknown']],
+  ['resize', ['page', 'unknown']], ['navigation', ['page', 'unknown']], ['activity', ['page']], ['input', ['page']]]);
+export function isAutomaticPageFeedbackEvent(event) {
+  if (!AUTOMATIC_SOURCES.get(event?.kind)?.includes(event.source)
+      || BASE_STYLE_LINK.test(typeof event.target === 'string' ? event.target : '')) return false;
+  const childFrame = Number.isSafeInteger(event.frameId) && event.frameId > 0;
+  return event.kind === 'navigation' || event.kind === 'resize' ? childFrame : true;
+}
+
+export function isAutomaticPageFeedback(events) {
+  return !!events?.length && events.every(isAutomaticPageFeedbackEvent);
 }
 
 function axTargetContext(page, refId) {
@@ -306,7 +326,10 @@ export function pageFeedbackCallPolicy(name, args = {}, state = {}, currentPage 
     }
   }
   if (hasBoundTarget(name, args, state)) return { kind: 'bound_target' };
-  if (!AX_ACTIONS.has(name) || !currentPage || events.some(event => /^(?:form|input|textarea|select|option)(?:$|[\s#.])/.test(event.target || ''))) return { kind: 'unsafe' };
+  // Without a private footprint the AX text comparison certifies content only.
+  // It cannot revalidate focus, input, scroll, geometry or a child document.
+  if (!AX_ACTIONS.has(name) || !currentPage || events.some(event => event?.kind !== 'dom'
+      || /^(?:form|input|textarea|select|option)(?:$|[\s#.])/.test(event.target || ''))) return { kind: 'unsafe' };
   const before = axTargetContext(state.page && { ...state.page, url: state.page.url || state.url }, args.ref_id);
   const after = axTargetContext({ ...currentPage, url: currentPage.url || state.url }, args.ref_id);
   if (!before || before.context !== after?.context) return { kind: 'unsafe' };
@@ -331,28 +354,32 @@ export function isPageIndependentCalculationCompletion(calls, state, events) {
 }
 
 // These tools inspect the current top-level document without acting on focus.
-// Read-preparation tools that can click a profile or wait/scroll remain excluded.
+// Read-preparation tools that can click a profile or wait/scroll remain excluded
+// after page focus or synthetic input changed the interactive page state.
 const PAGE_ACTIVITY_READS = new Set([
   'get_accessibility_tree', 'get_interactive_elements', 'read_page', 'read_page_source', 'verify_form',
 ]);
-function isPageOwnedActivityRead(calls, events) {
-  return !!calls?.length && calls.every(call => PAGE_ACTIVITY_READS.has(call.function?.name))
-    && !!events?.length && events.every(event => isPassivePageFeedback([event])
-      || (event?.kind === 'activity' && event.source === 'page' && event.frameId === 0
-        && typeof event.target === 'string'
-        && !/^(?:iframe|frame|base|style|link)(?:$|[\s#.])/i.test(event.target)));
-}
 
 export function canRetainPageFeedbackCalls(calls, state, currentPage, events, { pending = false } = {}) {
-  if (!calls?.length || (!isPassivePageFeedback(events)
-      && !isPageIndependentCalculationCompletion(calls, state, events)
-      && !isPageOwnedActivityRead(calls, events))) return false;
+  if (!calls?.length) return false;
+  const passive = isPassivePageFeedback(events);
+  const calculation = isPageIndependentCalculationCompletion(calls, state, events);
+  const automatic = !passive && isAutomaticPageFeedback(events);
+  if (!passive && !calculation && !automatic) return false;
+  const interactive = !passive && events.some(event => ['activity', 'input'].includes(event?.kind));
   return calls.every(call => {
     let args;
     try { args = JSON.parse(call.function?.arguments); } catch { return false; }
     if (!args || typeof args !== 'object' || Array.isArray(args)) return false;
     const policy = pageFeedbackCallPolicy(call.function?.name, args, state, currentPage, events);
     if (policy.terminal && calls.length !== 1) return false;
+    // An Act completion survives automatic churn (ad frames, page focus,
+    // unattributed scroll or DOM): superseding it on every tick would end a
+    // finished task as page_unstable. Its batch still runs the completion
+    // verifier on fresh evidence, and user input still supersedes it. Ask
+    // answers keep their own scope classification and passive-only fence.
+    if (policy.terminal) return passive || calculation || (automatic && state?.runMode !== 'ask');
+    if (interactive && policy.kind === 'observe' && !PAGE_ACTIVITY_READS.has(call.function?.name)) return false;
     // A target comparison only certifies the snapshot just read. Further DOM
     // changes require local revalidation; fresh readers/media have their own fences.
     if (pending && policy.kind === 'target') return false;

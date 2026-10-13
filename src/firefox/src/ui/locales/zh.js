@@ -853,6 +853,7 @@ export default {
   "sp.queue.send": "将消息加入队列",
   "sp.queue.label": "已排队",
   "sp.queue.label_numbered": "已排队 {index}",
+  "sp.queue.held": "停止后已暂停",
   "sp.queue.edit": "编辑排队消息",
   "sp.queue.delete": "删除排队消息",
   "sp.slash.check_progress": "显示当前进度日志",

@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "Colocar mensagem na fila",
   'sp.queue.label': "Na fila",
   'sp.queue.label_numbered': "Na fila {index}",
+  'sp.queue.held': "Pausado após parar",
   'sp.queue.edit': "Editar mensagem na fila",
   'sp.queue.delete': "Excluir mensagem na fila",
 

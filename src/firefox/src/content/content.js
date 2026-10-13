@@ -7416,6 +7416,20 @@
   }
 
   // --- Message handler ---
+  // Stop finishes the owning page-feedback run (page_monitor_state
+  // active:false for that run) while a compound content action may still be
+  // in an asynchronous settle wait. Count those run endings so a later phase,
+  // such as the submit after a field write, never runs for a stopped task.
+  // A stale stop for another run leaves the current monitor active.
+  // The counter lives on this isolated world's window, shared by reinjected
+  // copies of this script and invisible to the page's own scripts.
+  browser.runtime.onMessage.addListener((msg) => {
+    if (msg?.target === 'content' && msg.action === 'page_monitor_state' && msg.active === false
+        && window.__wbPageMonitor?.active !== true) {
+      window.__wbContentRunStopEpoch = (Number(window.__wbContentRunStopEpoch) || 0) + 1;
+    }
+  });
+
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.target !== 'content' || msg.action?.startsWith('page_monitor_')) return;
     if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)) return;
@@ -8336,6 +8350,11 @@
         }
       },
       'set_field': async () => {
+        // Captured synchronously when the action begins (see the run-stop listener).
+        const runOwner = { monitored: window.__wbPageMonitor?.active === true,
+          stopEpoch: Number(window.__wbContentRunStopEpoch) || 0 };
+        const runStopped = () => (Number(window.__wbContentRunStopEpoch) || 0) !== runOwner.stopEpoch
+          || (runOwner.monitored && window.__wbPageMonitor?.active !== true);
         let dispatched = false;
         let submissionDispatched = false;
         let submissionBlockedBeforeDispatch = false;
@@ -8479,6 +8498,15 @@
           let nativeSubmitAttempted = false;
           let submissionOutcomeUnknown = false;
 
+          // The field write already happened; report it honestly and send no
+          // submit for a run that was stopped during the settle wait.
+          const stoppedBeforeSubmit = () => failure(
+            'Stopped before submitting. The field value was written, but no submit was sent.',
+            { cancelled: true, ref_id, rect, verified, fieldMeta, submitted: false, submissionDispatched: false,
+              submissionBlockedBeforeDispatch: true, submissionBlockReason: 'run_stopped',
+              outcomeUnknown: !verified, retryable: false },
+          );
+          if (submit && verified && runStopped()) return stoppedBeforeSubmit();
           if (submit && verified) {
             if (actionDeadlineExpired()) return deadlineFailure();
             submissionOutcomeUnknown = true;
@@ -8597,11 +8625,14 @@
                   if (isCombobox) {
                     await new Promise(r => setTimeout(r, 80));
                     if (actionDeadlineExpired()) return deadlineFailure();
+                    if (runStopped()) return stoppedBeforeSubmit();
                     const arrowResult = dispatchKeySequence('ArrowDown', 40);
                     if (!arrowResult.completedWithinDeadline) return deadlineFailure();
                     await new Promise(r => setTimeout(r, 30));
                     if (actionDeadlineExpired()) return deadlineFailure();
                   }
+                  // The ArrowDown above was a pre-submit key; Enter is the submit.
+                  if (runStopped()) return stoppedBeforeSubmit();
                   if (actionDeadlineExpired()) return deadlineFailure();
                   const enterResult = dispatchKeySequence('Enter', 13, true);
                   submissionDispatched = enterResult.dispatched;

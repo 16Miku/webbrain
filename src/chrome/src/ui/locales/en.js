@@ -137,6 +137,7 @@ export default {
   'sp.queue.send': 'Queue message',
   'sp.queue.label': 'Queued',
   'sp.queue.label_numbered': 'Queued {index}',
+  'sp.queue.held': 'Paused after Stop',
   'sp.queue.edit': 'Edit queued message',
   'sp.queue.delete': 'Delete queued message',
 

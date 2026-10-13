@@ -853,6 +853,7 @@ export default {
   "sp.queue.send": "Antrekan pesan",
   "sp.queue.label": "Dalam antrean",
   "sp.queue.label_numbered": "Dalam antrean {index}",
+  "sp.queue.held": "Dijeda setelah Berhenti",
   "sp.queue.edit": "Edit pesan antrean",
   "sp.queue.delete": "Hapus pesan antrean",
   "sp.slash.check_progress": "Tampilkan catatan progres saat ini",

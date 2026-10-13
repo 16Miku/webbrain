@@ -3108,6 +3108,16 @@ html[data-ui-scale="175"] .conversation-action-label {
   grid-template-columns: auto minmax(0, 1fr) auto auto auto;
 }
 
+/* Held after Stop: nothing sends it automatically; edit, steer or delete it. */
+.queued-message[data-held="true"] {
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.queued-message[data-held="true"] .queued-message-label {
+  color: var(--text-secondary);
+}
+
 .queued-message-label {
   color: var(--accent);
   font-size: 11px;
@@ -3442,6 +3452,13 @@ html[data-ui-scale="175"] .conversation-action-label {
 .message-content h4,
 .message-content h5,
 .message-content h6 { font-size: 13px; }
+
+.message-content blockquote {
+  margin: 6px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 3px solid var(--border);
+  color: inherit;
+}
 
 .markdown-table-wrapper {
   max-width: 100%;

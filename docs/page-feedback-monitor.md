@@ -7,12 +7,22 @@ active tab does not move the run. Standalone chat has no browser monitor.
 User click, typing, selection, scrolling and navigation invalidate prepared
 actions. After one second of inactivity, the runtime reads the current URL and
 accessibility tree and continues the original task. Pointer gestures and IME
-composition keep the gate closed until they finish. External scroll/navigation
-with uncertain attribution also get the idle delay; automatic DOM observations
-do not extend it. Stop interrupts the wait.
+composition keep the gate closed until they finish. Main-frame navigation of
+uncertain origin and top-level viewport changes also get the idle delay.
+Automatic page activity (DOM updates in any frame, page-script focus, synthetic
+input, unattributed scroll, child-frame resize or navigation, and same-document
+route updates without user activity) does not extend it. A navigation close to
+user input is attributed to the user but does not renew the user's activity
+time. Stop interrupts the wait.
 Window and visual-viewport size, zoom and offset changes invalidate prepared
 coordinates. Top-level viewport activity waits for geometry to settle; embedded
 frame size changes are page layout observations and do not extend the user gate.
+A full-size, unzoomed visual viewport cannot pan by itself, so a sub-pixel
+offset change with the same size, scale and DPR is the remainder of a
+fractional layout scroll (Firefox reports it, Chromium does not). It is
+reported as that scroll, with the document scroll's attribution, and counts as
+scroll geometry in footprint comparisons, so both browsers treat a page's own
+scrolling the same way.
 
 `composerDeliveryMode` only controls typed chat messages (Queue/Steer). Automatic
 page feedback uses its own bounded queue and cannot promote a queued message to
@@ -60,6 +70,19 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   document scroll, full-size viewport, scale and DPR remain unchanged. This
   handles delayed browser rounding; larger, later, synthetic or unrelated
   viewport changes retain the normal invalidation path.
+- Only genuine user input and top-level window/zoom changes invalidate
+  certified decisions by themselves. Unknown DOM attribution, page focus,
+  untrusted page events, non-user scrolling and frame resizes are still
+  reported and still fence coordinates, scripts and legacy bindings; a
+  certified action's private footprint decides whether it changed. The agent's
+  own selector scroll and pointer hover refresh only the exact target's
+  geometry proof (same node, semantics and hit node). A pure scroll or layout
+  move before preparation keeps a ref/selector decision when the same node
+  still receives the hit; geometry is exact from preparation to dispatch.
+  Finishing an operation delivers its own pending page reactions before its
+  tool returns. Trusted key and pointer presses during content-script
+  operations are user input. A monitor whose run the background no longer
+  owns stops observing.
 - Native input also validates the actual receiving node against the private
   action certificate. Passive descendants can receive their owner's input;
   unrelated controls and nested activators, including shadow-root controls,
@@ -71,6 +94,19 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   and cannot certify a remote save, publication or deletion. Lost input
   acknowledgements, interrupted authority and unresolved reads retain repeat
   locks; observing effects never sends a second click or clears queued feedback.
+  The agent's own hover may move a certified native button by up to 8 px
+  (lift, border or scale); it is then pressed at its re-verified current
+  centre, and any other change refuses before input.
+- Trusted CDP input is marked dispatched only at the transport boundary, after
+  the receiving-node and page-feedback fences pass. A rejection before the
+  protocol call means nothing was sent; any later failure means the input was
+  delivered with an unknown outcome. Such input is never resent and never
+  followed by a DOM, script or content-script fallback. For `click_ax`, only
+  the browser's missing-receiver error proves that the click was not
+  delivered. A possibly delivered, unverified trusted click locks its exact
+  document and ref for the rest of the task, including Continue and Retry; a
+  verified effect or a new task releases it. Stop between a field write and
+  its submit or Enter prevents the submit and reports the write as it happened.
 - Meaningful visible content, control state, visibility and geometry changes are
   coalesced. Visible subtree identity changes invalidate targets even when the
   replacement has identical text and geometry. CSS animation and extension
@@ -252,14 +288,35 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   later dispatch retains its fresh observation and recipient checks. An
   uncertain send remains pending until actual delivery is verified or the
   user answers its exact app-owned reconciliation confirmation manually.
-- A single explicit `done` candidate survives passive DOM updates before and
-  after its tool batch. Success still requires the completion verifier's fresh
-  evidence; partial/failure outcomes remain incomplete. The summary does not
-  establish success.
-- Five consecutive passive invalidations without dispatch/progress end the run
-  with `page_unstable` and an explicit incomplete result. A recovery nudge is sent
-  after two. Successful reads/actions reset this budget; user intervention starts
-  fresh. This also covers preparation/transport failures and text-format tool
+- A single explicit `done` candidate survives passive DOM updates before its
+  tool batch. In Act mode it also survives automatic page activity, such as ad
+  frames, page focus and unattributed scroll or DOM changes; user input,
+  main-frame navigation and top-level viewport changes still supersede it. Ask
+  answers keep their own scope classification. Once a `done` has executed
+  (success, partial or failed), page feedback no longer reopens it; only an
+  accepted correction can. Success still requires the completion verifier's
+  fresh evidence; partial/failure outcomes remain incomplete. The summary does
+  not establish success. Pending feedback after other batches is observed at the
+  next step without discarding a completion-recovery turn.
+- Under automatic-only feedback, reads, independent tools and targets whose
+  private footprint revalidates proceed; legacy AX targets without a footprint
+  proceed only for DOM changes. Coordinates, scripts and unbound actions stay
+  fenced. An automatic child-document replacement unbinds only that frame.
+- An agent click explains a same-document route update in its own frame within
+  three seconds when no user activity followed it; full-document navigation
+  keeps the exact-URL rule.
+- A run's app-owned observations, captures and recovery nudges are removed
+  when it ends, so the next request observes the current page instead. Stop
+  interrupts page capture and the refresh read.
+- A read-only Ask answer survives the user's scrolling, selection and key or
+  pointer activity; clicks, input, navigation and the DOM changes they cause
+  still invalidate it.
+- Five consecutive invalidations without dispatch/progress end the run
+  with `page_unstable` and an explicit incomplete result. Invalidations count
+  unless a genuine user event, steering or a run-mode change explains them;
+  automatic churn and unknown attribution count. A recovery nudge is sent
+  after two. Successful reads/actions reset this budget; a `done` receipt and
+  its verifier reads do not. User intervention starts fresh. This also covers preparation/transport failures and text-format tool
   responses. App-owned feedback trees and captures are replaced by the latest
   observation, preserving user instructions and tool results instead of growing
   the prompt with repeated copies. Trace notes record disposition, reason,

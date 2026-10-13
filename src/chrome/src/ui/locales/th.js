@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "เพิ่มข้อความเข้าคิว",
   "sp.queue.label": "อยู่ในคิว",
   "sp.queue.label_numbered": "อยู่ในคิว {index}",
+  "sp.queue.held": "หยุดชั่วคราวหลังจากหยุด",
   "sp.queue.edit": "แก้ไขข้อความในคิว",
   "sp.queue.delete": "ลบข้อความในคิว",
   "sp.slash.check_progress": "แสดงบันทึกความคืบหน้าปัจจุบัน",

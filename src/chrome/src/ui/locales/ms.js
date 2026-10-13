@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "Bariskan mesej",
   "sp.queue.label": "Dalam baris gilir",
   "sp.queue.label_numbered": "Dalam baris gilir {index}",
+  "sp.queue.held": "Dijeda selepas Henti",
   "sp.queue.edit": "Edit mesej dalam baris gilir",
   "sp.queue.delete": "Padam mesej dalam baris gilir",
   "sp.slash.check_progress": "Tunjukkan lejar kemajuan semasa",

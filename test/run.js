@@ -22441,10 +22441,11 @@ test('sidepanels wire highlighting and heading rendering into fenced Markdown', 
   ]) {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, cssRel), 'utf8');
-    assert.match(panel, /import \{ codeFenceLanguage, highlightCode, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences \} from '\.\/markdown-render\.js';/, `${label}: renderer helpers should be imported`);
+    assert.match(panel, /import \{ codeFenceLanguage, highlightCode, renderMarkdownBlockquotes, renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences \} from '\.\/markdown-render\.js';/, `${label}: renderer helpers should be imported`);
     assert.match(panel, /const lang = codeFenceLanguage\(info\);/, `${label}: fenced code should tolerate metadata after its language token`);
     assert.match(panel, /const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);/, `${label}: completed fenced code should be highlighted by its language while live code stays lightweight`);
-    assert.match(panel, /text = renderMarkdownTables\(text\);\s*text = renderMarkdownHeadings\(text\);/, `${label}: pipe tables must render before headings swallow the following newline`);
+    assert.match(panel, /text = renderMarkdownTables\(text\);\s*text = renderMarkdownBlockquotes\(text\);\s*text = renderMarkdownHeadings\(text\);/, `${label}: pipe tables and quotes must render before headings swallow the following newline`);
+    assert.match(css, /\.message-content blockquote \{[\s\S]*?border-left: 3px solid var\(--border\);/, `${label}: rendered quotes should be visually distinct`);
     assert.match(css, /\.message-content table \{[\s\S]*?border-collapse: collapse;/, `${label}: rendered tables should have readable borders`);
     assert.match(css, /\.syntax-keyword[\s\S]*?var\(--syntax-keyword\)/, `${label}: token colors should be styled`);
     assert.match(css, /\.syntax-variable \{ color: var\(--syntax-variable\); \}/, `${label}: variables should use their dedicated theme color`);
@@ -51326,7 +51327,11 @@ test('sidepanel queued composer messages expose edit and delete controls', () =>
     assert.notEqual(drainEnd, -1, `${label}: queued composer drain helper boundary should exist`);
     const drainBody = panel.slice(drainStart, drainEnd);
     const draftGuardIdx = drainBody.indexOf("if (inputEl.value !== '') return false;");
-    const queuePeekIdx = drainBody.indexOf('const item = getQueuedComposerMessages(tabId)[0];');
+    // After Stop, held items stay queued for manual send; the drain takes the
+    // first item that may run automatically.
+    const queuePeekIdx = drainBody.indexOf('const item = nextAutomaticQueuedComposerMessage(tabId);');
+    assert.match(panel, /function nextAutomaticQueuedComposerMessage\(tabId\) \{\s*return getQueuedComposerMessages\(tabId\)\.find\(item => !item\.held\) \|\| null;/,
+      `${label}: the automatic drain must skip messages held after Stop`);
     assert.notEqual(draftGuardIdx, -1, `${label}: queued composer drain should preserve newly typed drafts`);
     assert.notEqual(queuePeekIdx, -1, `${label}: queued composer drain should inspect its owned next message before preflight`);
     assert.equal(draftGuardIdx < queuePeekIdx, true, `${label}: queued composer drain must preserve drafts before preparing queued messages`);
@@ -54752,7 +54757,7 @@ test('status-strip clicks hide default compact history while verbose restores fu
     );
     assert.match(
       panel,
-      /function startThinkingActivity\(\) \{[\s\S]*?if \(activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning'\) return;[\s\S]*?function showActivity\(text\)[\s\S]*?clearThinkingActivityTimers\(\);[\s\S]*?activityDisplayMode = 'concrete';[\s\S]*?function hideActivity\(\) \{\s*clearThinkingActivityTimers\(\);/,
+      /function startThinkingActivity\(\) \{[\s\S]*?if \(activityDisplayMode !== 'idle' && activityDisplayMode !== 'planning'\s*&& activityDisplayMode !== 'terminal'\) return;[\s\S]*?function showActivity\(text\)[\s\S]*?clearThinkingActivityTimers\(\);[\s\S]*?activityDisplayMode = 'concrete';[\s\S]*?function hideActivity\(\) \{\s*clearThinkingActivityTimers\(\);/,
       `${label}: concrete and terminal activity should stop pending generic rotations`,
     );
     assert.doesNotMatch(
@@ -55978,7 +55983,8 @@ test('schedule_resume pauses unfinished chat work without running success comple
     assert.equal(premature.action, 'continue');
     assert.equal(h.jobs()[0].status, 'pending', `${label}: a rejected done cancelled needed work`);
     const failed = await h.batch([['done', { summary: 'The support answer is complete.', outcome: 'success' }]]);
-    assert.equal(failed.status, 'plan_only_output');
+    // The done path keeps the guard's own status (as the plain-final path does).
+    assert.equal(failed.status, 'required_evidence_missing');
     assert.equal(h.jobs()[0].status, 'cancelled', `${label}: terminal failure left a continuation behind`);
   }
 });
@@ -81697,7 +81703,7 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
     assert.ok(branchStart >= 0 && branchEnd > branchStart && blockStart > branchStart && blockEnd > blockStart && blockEnd < branchEnd, `${label}: submit block must remain inside the set_field handler`);
     const block = source.slice(blockStart, blockEnd);
     const runner = vm.runInNewContext(`async (stubs) => {
-      const { el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, ref_id, rect } = stubs;
+      const { el, msg, failure, isCombobox, _setFieldUsesNativeSubmit, _consumeMessageRecipientDispatchBinding, actionDeadlineExpired, deadlineFailure, runStopped, stoppedBeforeSubmit, ref_id, rect } = stubs;
       let nativeSubmitAttempted = false;
       let submissionOutcomeUnknown = true;
       let submissionDispatched = false;
@@ -81769,6 +81775,9 @@ test('set_field submit chooses exactly one native or page-owned commit path', as
         _consumeMessageRecipientDispatchBinding: () => ({ success: true }),
         actionDeadlineExpired: () => false,
         deadlineFailure: () => { throw new Error('unexpected deadline failure'); },
+        // The submit block now rechecks Stop before each commit key.
+        runStopped: () => false,
+        stoppedBeforeSubmit: () => { throw new Error('unexpected run stop'); },
         ref_id: 'ref_1',
         rect: { x: 0, y: 0, w: 1, h: 1 },
       });
@@ -89435,7 +89444,8 @@ test('max-step exits clear open completion debt', async () => {
     agent.executeTool = async () => ({ success: true, verified: true });
 
     const final = await agent.processMessage(tabId, 'click the target', () => { }, 'act');
-    assert.match(final, /Step limit reached/i, `${AgentClass.name}: max-step path did not run`);
+    assert.match(final, /reached the step limit/i, `${AgentClass.name}: max-step path did not run`);
+    assert.doesNotMatch(final, /\[|\]/, `${AgentClass.name}: the step-limit answer must be plain language`);
     assert.equal(agent.completionInvariants.has(tabId), false, `${AgentClass.name}: max-step exit leaked completion state`);
   }
 });
@@ -91637,9 +91647,10 @@ test('Act fails transparently when a stale cancellation echo repeats', async () 
 
     const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => { }, 'act');
 
-    assert.match(final, /repeated a stale cancellation status/, `${AgentClass.name}: repeated stale cancellation was misreported`);
-    assert.match(final, /No current user stop was received/, `${AgentClass.name}: failure implied the user cancelled`);
-    assert.match(final, /no successful action was verified/i, `${AgentClass.name}: failure claimed execution evidence`);
+    // The chat answer is plain language; the guard diagnostic stays in traces.
+    assert.match(final, /stopped without completing the task/i, `${AgentClass.name}: repeated stale cancellation was misreported`);
+    assert.doesNotMatch(final, /stopped by user|you stopped|\[|\]/i, `${AgentClass.name}: failure implied the user cancelled`);
+    assert.match(final, /Nothing was changed/, `${AgentClass.name}: failure claimed execution evidence`);
   }
 });
 
@@ -91671,10 +91682,10 @@ test('Act preserves successful tool evidence when a stale cancellation echo repe
 
     const final = await agent.processMessage(tabId, 'Read the open email and draft a reply.', () => { }, 'act');
 
-    assert.match(final, /repeated a stale cancellation status/, `${AgentClass.name}: repeated stale cancellation was misreported`);
-    assert.match(final, /Some task tools completed/, `${AgentClass.name}: successful tool evidence was discarded`);
-    assert.match(final, /Inspect the current state before retrying/, `${AgentClass.name}: retry warning was omitted`);
-    assert.doesNotMatch(final, /no successful action was verified/i, `${AgentClass.name}: failure contradicted verified tool evidence`);
+    assert.match(final, /couldn't confirm the task finished/, `${AgentClass.name}: repeated stale cancellation was misreported`);
+    assert.match(final, /Some steps were completed/, `${AgentClass.name}: successful tool evidence was discarded`);
+    assert.match(final, /check the page before trying again/, `${AgentClass.name}: retry warning was omitted`);
+    assert.doesNotMatch(final, /Nothing was changed|\[|\]/, `${AgentClass.name}: failure contradicted verified tool evidence`);
   }
 });
 
@@ -91823,7 +91834,7 @@ test('Act reports failure when plan-only output repeats after its recovery nudge
 
     const final = await agent.processMessage(tabId, 'Read the current page and summarize it.', () => { }, 'act');
 
-    assert.match(final, /No successful action was verified/, `${AgentClass.name}: repeated plan was accepted as success`);
+    assert.match(final, /Nothing was changed, submitted, or sent/, `${AgentClass.name}: repeated plan was accepted as success`);
     assert.equal(ended?.status, 'plan_only_output', `${AgentClass.name}: repeated plan retained a successful trace status`);
   }
 });
@@ -103800,7 +103811,7 @@ test('streamed repeated plan-only output replaces rejected deltas with the failu
     );
 
     assert.equal(provider.calls, 2, `${AgentClass.name}: repeated plan did not consume the recovery turn`);
-    assert.match(final, /No successful action was verified/, `${AgentClass.name}: repeated streamed plan was accepted`);
+    assert.match(final, /Nothing was changed, submitted, or sent/, `${AgentClass.name}: repeated streamed plan was accepted`);
     const finalText = updates.filter(update => update.type === 'text').at(-1);
     assert.equal(finalText?.data?.content, final, `${AgentClass.name}: streamed failure did not replace rejected plan deltas`);
     assert.equal(finalText?.data?.replace, true, `${AgentClass.name}: streamed failure lacked a forced-replace signal`);
@@ -114493,7 +114504,9 @@ test('Chrome primary selector clicks classify deadline expiry at mouse dispatch'
       const delayedClick = new Promise(resolve => { releaseClick = resolve; });
       cdpClientCh.clickElement = async (_tabId, _selector, options) => {
         assert.ok(options.abortSignal instanceof AbortSignal);
-        if (dispatchStarted) await options.beforeDispatch({ x: 10, y: 20 });
+        // Authorization precedes the press; dispatch is recorded when the
+        // press reaches the transport boundary (onDispatch).
+        if (dispatchStarted) { await options.beforeDispatch({ x: 10, y: 20 }); options.onDispatch?.(); }
         markClickStarted();
         await delayedClick;
         return { success: false, dispatched: dispatchStarted, noDispatch: !dispatchStarted };

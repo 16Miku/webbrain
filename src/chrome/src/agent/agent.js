@@ -56,7 +56,7 @@ import { buildGithubStargazerProgressItems } from './observers/github-stargazers
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
 import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
-import { cdpClient } from '../cdp/cdp-client.js';
+import { cdpClient, isCdpCommandNotSentError } from '../cdp/cdp-client.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, isPublicComposerRoute, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
 import {
@@ -158,6 +158,7 @@ import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, 
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
 import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
+import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpRedactRefs, otpServiceDisplay, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
 import { publicMediaUrlNeedsExplicitTarget } from './public-media-url.js';
@@ -505,6 +506,30 @@ const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
 // Only this module can attest that its exact ref stayed unchanged before any
 // trusted text command was attempted; page/model data cannot forge this proof.
 const TRUSTED_FIELD_PREPARATION_UNCHANGED = Symbol('trustedFieldPreparationUnchanged');
+// Sends one trusted CDP input command through `send(options)`. `onSent` runs
+// once the page-feedback fence has passed, immediately before the command can
+// reach the page, and also for any rejection the transport cannot place before
+// that point (a lost acknowledgement can follow delivery). After that, callers
+// never resend, re-dispatch or fall back.
+async function sendTrustedCdpInput(send, { beforeSend = null, onSent = null } = {}) {
+  let sent = false, checked = false;
+  const markSent = () => {
+    if (sent) return;
+    onSent?.();
+    sent = true;
+  };
+  try {
+    const result = await send({ beforeSend: () => { checked = true; beforeSend?.(); markSent(); } });
+    markSent();
+    return result;
+  } catch (error) {
+    // A rejection from our own last check, or one the transport places
+    // before the protocol call, sent nothing; any other may follow delivery.
+    if (!checked && !isCdpCommandNotSentError(error)) markSent();
+    throw error;
+  }
+}
+
 const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
@@ -1122,6 +1147,7 @@ export class Agent extends LoopDetector {
     this._lastCdpClickIdent = new Map(); // tabId -> string
     this._lastClickProgress = new Map(); // tabId -> { ident, snapshot }
     this._clickAxCdpFallbacks = new Map(); // tabId -> Set(documentToken|ref_id), one trusted attempt per certified action; unresolved input locks its target
+    this._taskClickLocks = new Map(); // tabId -> { taskToken, keys:Set }, possibly delivered trusted clicks still unresolved for this task
     this._lastAxScopes = new Map(); // tabId -> { documentToken, pageUrl }, captured by the latest AX read
     this._uncertainTextMutations = new Map(); // tabId -> Map(target -> unresolved, potentially applied text write; no raw text)
     this._verifiedTextReplacements = new Map(); // tabId -> exact replacement digest bound to the live document
@@ -6925,8 +6951,42 @@ export class Agent extends LoopDetector {
       // A cached fast-path action was prepared before this correction.
       const session = this._jevSessions?.get(tabId);
       if (session) { session.disabled = true; session.queue = []; }
+      // The in-flight main inference answers the superseded task and has no
+      // browser side effects. Stop waiting for it so the correction applies now.
+      this._interruptSteeredInference(run);
     }
     return { accepted: true, messageId: id };
+  }
+
+  _interruptSteeredInference(run) {
+    const controller = run?.inferenceInterrupt;
+    if (!controller || controller.signal.aborted) return;
+    const error = new Error('The model response was superseded by an accepted correction.');
+    error.name = 'AbortError';
+    controller.abort(error);
+  }
+
+  // Bind one main inference to this run's correction inbox (Stop keeps its own
+  // run signal). Returns null for runs without steering (cloud/scheduled).
+  _armSteeringInterrupt(tabId) {
+    const run = this._steeringRuns.get(tabId);
+    if (!run) return null;
+    const controller = new AbortController();
+    run.inferenceInterrupt = controller;
+    if (run.messages.length) this._interruptSteeredInference(run);
+    return controller;
+  }
+
+  _disarmSteeringInterrupt(tabId, controller) {
+    const run = this._steeringRuns.get(tabId);
+    if (controller && run?.inferenceInterrupt === controller) run.inferenceInterrupt = null;
+  }
+
+  // A pending correction supersedes a main inference that was interrupted or
+  // failed meanwhile: retrying or recovering the old request is pointless. Stop
+  // and cost limits keep their own handling.
+  _steeringSupersedesInference(tabId, error) {
+    return this._hasPendingSteering(tabId) && !this._checkAbort(tabId) && !this._isCostAllowanceError(error);
   }
 
   _hasPendingSteering(tabId) {
@@ -7058,7 +7118,10 @@ export class Agent extends LoopDetector {
       // A new contract describes the accepted revision. Old outcomes remain in
       // the receipt archive; they must neither authorize a duplicate nor veto a
       // separately authorized replacement by reusing an old action ID.
-      if (attemptedPublication) guard.steeringPriorPublication = structuredClone(attemptedPublication);
+      // Keep the latest attempted contract's outcomes for reconciliation and
+      // honest duplicate reports when a later revision attempts nothing new.
+      const priorPublication = attemptedPublication || previous?.steeringPriorPublication || null;
+      if (priorPublication) guard.steeringPriorPublication = structuredClone(priorPublication);
       this._setResponseLanguagePolicy(tabId, gate.responseLanguagePolicy, runOptions.locale || 'en', {
         approvedPlanLanguageOverride: gate.responseLanguageApprovedPlanOverride === true,
       });
@@ -7108,17 +7171,136 @@ export class Agent extends LoopDetector {
         || detectedSubmit?.resolvedPreparatoryTarget === true);
     if (!isNetworkMutation(name, args) && name !== 'chrome_web_store_publish'
         && !(detectedSubmit?.isSubmit || (!resolvedNonSubmit && this._isFormValidationCandidate(name, args)))) return null;
+    // Searches, dialog Cancel buttons and ordinary in-form toggles commit
+    // nothing, so they cannot repeat or build on the earlier submission.
+    if (!isNetworkMutation(name, args) && this._nonCommittingSubmission(detectedSubmit)) return null;
     if (guard.resourceMutationAuthorization?.key === this._resourceMutationActionKey(tabId, name, args, detectedSubmit)
         && guard.resourceMutationAuthorization.taskKey === guard.taskKey
         && guard.taskKey === this._progressTaskKeyHash(tabId) && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId)
         && guard.steeringPriorSubmissionReconciliation?.verified === true) return null;
+    // An unidentified target says nothing about the earlier effect; report
+    // what is actually missing instead of an unreconciled submission.
+    const unresolvedTarget = detectedSubmit?.isSubmit !== true && !isNetworkMutation(name, args) && name !== 'chrome_web_store_publish';
     return {
       success: false, blocked: true, noDispatch: true, dispatched: false,
       steeringPriorSubmission: true,
-      actionGuard: { stage: 'steering', reason: guard.steeringPriorSubmissionReconciliation?.verified === true ? 'authorization_required' : 'prior_effect_unreconciled',
+      actionGuard: { stage: 'steering', reason: unresolvedTarget ? 'target_unresolved'
+        : guard.steeringPriorSubmissionReconciliation?.verified === true ? 'authorization_required' : 'prior_effect_unreconciled',
         classification: detectedSubmit?.mutationKind === 'delete' ? 'delete' : detectedSubmit?.publicationControl === true ? 'publish' : 'unresolved' },
-      error: 'A submission was already attempted before the user revised this task. Inspect its exact result before another consequential action. A separately authorized deletion or replacement needs a current resource proof; never repeat an uncertain or already dispatched submission.',
+      error: unresolvedTarget
+        ? 'This action was not performed: its target could not be identified as a link, field, menu item or ordinary button. A submission was already made before the latest correction, and an unidentified control could repeat it. Read the page and target the specific control by its ref.'
+        : 'A submission was already attempted before the user revised this task. Inspect its exact result before another consequential action. A separately authorized deletion or replacement needs a current resource proof; never repeat an uncertain or already dispatched submission.',
     };
+  }
+
+  // A detected submission that cannot change server state by itself: a
+  // same-site GET search (the grouped-search permission uses the same
+  // classification), or an in-form/dialog control the probe proved ordinary.
+  _nonCommittingSubmission(detected) {
+    if (detected?.isSubmit !== true || detected.mutationKind === 'delete' || detected.publicationControl === true
+        || detected.semanticCommit === true) return false;
+    if (detected.nonCommittingControl === true) return true;
+    try {
+      return classifySubmitRisk(detected, detected.url || detected.host || '').risk === SubmitRisk.LOW_RISK_SEARCH;
+    } catch {
+      return false;
+    }
+  }
+
+  _steeringPriorPublicationOutcome(guard, receipt) {
+    const archive = guard?.steeringPriorPublication;
+    const attempt = receipt?.workflowBinding?.socialPublication;
+    return archive && attempt?.contractKey && archive.key === attempt.contractKey
+      ? String(archive.outcomes?.[attempt.actionId]?.status || '') : '';
+  }
+
+  // The live completion state keeps observing the same receipt after the
+  // correction; the archived copy holds what was seen before it.
+  _steeringPriorEffectObserved(tabId, prior) {
+    const live = this._completionSubmitStates.get(tabId);
+    const receipt = live && live.actionSequence === prior?.actionSequence
+      && (live.originatingDocument || null) === (prior?.originatingDocument || null) ? live : prior;
+    return receipt?.dispatched === true && receipt.observedAfterSubmit === true && receipt.formValidationFailed !== true;
+  }
+
+  // Outcome knowledge that does not depend on the current page: a cached
+  // reconciliation of this exact receipt, a job-verified publication outcome,
+  // or an explicit page observation after the dispatch.
+  _steeringPriorEffectKnown(tabId, guard, prior) {
+    const cached = guard?.steeringPriorSubmissionReconciliation;
+    return (cached?.verified === true && cached.actionSequence === prior?.actionSequence)
+      || this._steeringPriorPublicationOutcome(guard, prior) === 'verified'
+      || this._steeringPriorEffectObserved(tabId, prior);
+  }
+
+  _steeringPriorResourceMatches(tabId, guard, prior, fresh) {
+    const priorContext = guard.steeringPriorContext;
+    const binding = prior.workflowBinding;
+    const workflow = prior.mutationWorkflow || priorContext?.siteWorkflow;
+    const snapshot = prior.publicationSnapshot || binding?.socialPublication?.snapshot;
+    const expected = snapshot?.posts?.[0];
+    const baseline = binding?.preDispatchPublishedResourceIdentities;
+    return (fresh?.reconciliationResources || []).filter(resource => {
+      if (!resource.complete || !resource.url) return false;
+      if (!snapshot) {
+        const values = this._publicMutationFields(prior.submittedFields).map(field => field.value).filter(value => typeof value === 'string'
+          && value.length > 0 && !/^\[.*redacted.*\]$/i.test(value));
+        const observed = this._completionSubmitStates.get(tabId);
+        return values.length > 0 && Array.isArray(prior.resourceBaseline) && !prior.resourceBaseline.includes(resource.url)
+          && observed?.actionSequence === prior.actionSequence && observed?.observedAfterSubmit === true
+          && this._normalizeUrl(observed.currentUrl) === this._normalizeUrl(resource.url)
+          && values.every(value => resource.textValues.includes(value));
+      }
+      // This proves that the dispatched resource exists, not that its media
+      // satisfied the original task. Publication audits/completion own that.
+      if (!workflow || !snapshot?.complete || snapshot.posts?.length !== 1
+          || !expected?.complete || typeof expected.bodyText !== 'string' || !expected.bodyText.trim()
+          || !Array.isArray(baseline)) return false;
+      const identity = this._workflowPublishedResourceIdentity(workflow, resource.url);
+      if (!identity || baseline.includes(identity) || (binding.publishedResourceIdentity && binding.publishedResourceIdentity !== identity)) return false;
+      const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot.account);
+      const author = this._workflowSocialPublicationAccountIdentity(workflow, resource.url);
+      return !!account && account === author && resource.textValues.includes(expected.bodyText);
+    });
+  }
+
+  // "Remove the > characters" or "> işaretlerini kaldır" edits the post text;
+  // only a removal aimed at the post/record itself, or at an unstated object,
+  // makes deleting the original a prerequisite. The removal verb's nearest
+  // object in its clause decides: text parts and quoted or symbol literals
+  // are content edits; resource nouns and pronouns are deletions.
+  _correctionRequestsResourceDeletion(text) {
+    const verbs = 'delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제';
+    if (!new RegExp(`(?:^|[^\\p{L}])(?:${verbs})(?:[^\\p{L}]|$)`, 'iu').test(String(text || ''))) return false;
+    const textPart = /^(?:chars?|characters?|signs?|symbols?|marks?|markers?|hashtags?|tags?|emojis?|emoticons?|words?|letters?|lines?|linebreaks?|spaces?|whitespace|punctuation|quotes?|quotations?|brackets?|arrows?|prefix(?:es)?|typos?|mentions?|links?|urls?|sentences?|paragraphs?|text|formatting|bullets?|dashes?|asterisks?|commas?|periods?|dots?|newlines?|işaret\p{L}*|karakter\p{L}*|sembol\p{L}*|etiket\p{L}*|hashtag\p{L}*|kelime\p{L}*|sözcü\p{L}*|harf\p{L}*|satır\p{L}*|boşluk\p{L}*|emoji\p{L}*|bağlantı\p{L}*|link\p{L}*|cümle\p{L}*|paragraf\p{L}*|noktalama\p{L}*|tırnak\p{L}*|caractères?|signes?|symboles?|mots?|lettres?|lignes?|espaces?|liens?|caracteres|carácter|signos?|símbolos?|palabras?|letras?|líneas?|espacios?|enlaces?|zeichen|wörter|wort|buchstaben?|zeilen?|leerzeichen|символ\p{L}*|знак\p{L}*|хэштег\p{L}*|хештег\p{L}*|слов\p{L}*|строк\p{L}*|ссылк\p{L}*)$/iu;
+    const resource = /^(?:posts?|tweets?|status(?:es)?|threads?|toots?|skeets?|records?|entry|entries|items?|messages?|comments?|replies|publications?|duplicates?|it|them|gönderi\p{L}*|tweet\p{L}*|paylaşım\p{L}*|ileti\p{L}*|mesaj\p{L}*|kayıt\p{L}*|kayd\p{L}*|yorum\p{L}*|yanıt\p{L}*|onu|bunu|şunu|message|publicación|publicacion|mensaje|beitrag\p{L}*|nachricht\p{L}*|пост\p{L}*|твит\p{L}*|сообщени\p{L}*|запис\p{L}*|его)$/iu;
+    const negation = /^(?:not|don't|dont|never|no|without|nicht|kein\p{L}*|ne|не)$/iu;
+    const clauses = String(text || '').normalize('NFC').replace(/[’`]/g, "'")
+      .split(/[.;!?\n,]+|(?:^|\s)(?:and|then|but|also|ve|sonra|ama|ayrıca|et|puis|mais|y|luego|pero|und|dann|aber|и|затем|но)(?=\s|$)/iu);
+    return clauses.some(clause => {
+      if (/(?:删除|刪除|削除|삭제)/u.test(clause)) {
+        // Without word spacing, the object's head noun is the last noun of
+        // the clause in both verb-first and verb-final orders.
+        const nouns = [...clause.matchAll(/(符号|符號|字符|字元|标签|標籤|话题|話題|标记|標記|文字|記号|ハッシュタグ|기호|문자|해시태그|단어|이모지|表情|链接|連結|リンク|링크|[「『"'«>#@])|(帖子|推文|贴文|貼文|动态|動態|投稿|ポスト|ツイート|게시물|게시글|트윗|记录|記錄|消息|訊息)/gu)];
+        return !nouns.length || !nouns.at(-1)[1];
+      }
+      const tokens = clause.split(/\s+/).filter(Boolean);
+      return tokens.some((token, index) => {
+        if (!new RegExp(`(?:^|[^\\p{L}])(?:${verbs})(?:[^\\p{L}]|$)`, 'iu').test(token)) return false;
+        if (tokens.slice(Math.max(0, index - 3), index).some(word => negation.test(word.replace(/[^\p{L}']/gu, '')))) return false;
+        let nearest = '', distance = Infinity;
+        tokens.forEach((word, position) => {
+          if (position === index) return;
+          const gap = Math.abs(position - index);
+          const bare = word.replace(/^[\p{P}\p{S}]+|[\p{P}\p{S}]+$/gu, '');
+          const kind = !/[\p{L}\p{N}]/u.test(word) || /^[#@'"“”‘«「『]/u.test(word) || textPart.test(bare) ? 'text'
+            : resource.test(bare) ? 'resource' : '';
+          // Ties keep the conservative resource reading.
+          if (kind && (gap < distance || (gap === distance && kind === 'resource'))) { nearest = kind; distance = gap; }
+        });
+        return nearest !== 'text';
+      });
+    });
   }
 
   _publicMutationFields(fields) {
@@ -7142,22 +7324,37 @@ export class Agent extends LoopDetector {
     const guard = this._planExecutionGuards.get(tabId);
     const deletion = detected?.mutationKind === 'delete';
     const publication = detected?.publicationControl === true;
-    const genericCommit = !publication && !deletion && detected?.isSubmit === true;
+    const genericCommit = !publication && !deletion && detected?.isSubmit === true && !this._nonCommittingSubmission(detected);
     if (!deletion && !(guard?.steeringPriorSubmission && (publication || genericCommit))) return null;
-    const blocked = reason => ({ success: false, blocked: true, dispatched: false, noDispatch: true,
+    const blocked = (reason, guidance = '', extra = {}) => ({ success: false, blocked: true, dispatched: false, noDispatch: true,
       actionGuard: { stage: 'resource_mutation', reason, classification: deletion ? 'delete' : publication ? 'publish' : 'submit' },
-      error: `The consequential action was not dispatched (${reason}). Read the exact resource and follow the latest accepted user request; do not repeat an uncertain mutation.` });
+      ...extra,
+      error: `The consequential action was not dispatched (${reason}). ${guidance || 'Read the exact resource and follow the latest accepted user request; do not repeat an uncertain mutation.'}` });
     const key = this._resourceMutationActionKey(tabId, name, args, detected);
     const current = () => this._planExecutionGuards.get(tabId) === guard && guard?.enabled
       && guard.requestKind === 'execute' && guard.taskKey === this._progressTaskKeyHash(tabId)
       && !this._checkAbort(tabId) && !this._hasPendingSteering(tabId) && !this._hasUnvalidatedSteering(tabId);
-    if (!key || !current()) return blocked('task_or_target_changed');
-    if ((deletion || genericCommit) && (!detected.actionResource?.complete || !detected.actionResource.url)) return blocked('resource_unresolved');
+    if (!current()) return blocked('task_or_target_changed');
+    // Coordinates, keys, field submission and scripts cannot be bound to the
+    // checked control and payload; a commit after a correction needs its own
+    // identified control.
+    if (!key) return blocked('click_required', 'Activate the specific control with a ref or selector click; coordinate, keyboard, field and script submissions cannot be bound to the checked resource and payload.');
+    const formAction = value => (/^https?:\/\//i.test(String(value || '')) ? String(value) : '');
+    // A form without record identity (settings, profile, preferences) is
+    // bound to its form action and public values instead of a permalink.
+    const formCommit = genericCommit && !detected.actionResource?.complete && !!formAction(detected.actionUrl);
+    if ((deletion || (genericCommit && !formCommit)) && (!detected.actionResource?.complete || !detected.actionResource.url)) return blocked('resource_unresolved');
     const prior = guard.steeringPriorSubmission;
     const task = this._activeTaskBinding(this.conversations.get(tabId) || []);
     const latest = task.updates?.filter(update => update.kind === 'steering').at(-1)?.text || task.text;
     const priorSnapshot = prior?.publicationSnapshot || prior?.workflowBinding?.socialPublication?.snapshot;
-    if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account) {
+    // An account belongs to its platform's namespace. A post on another
+    // platform is a separate publication bound to its own contract action,
+    // not a replacement of the earlier post under a changed account.
+    const platformOf = account => String(account || '').split(':')[0];
+    const crossPlatform = publication && !!priorSnapshot?.account && !!detected.publicationSnapshot?.account
+      && platformOf(priorSnapshot.account) !== platformOf(detected.publicationSnapshot.account);
+    if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform) {
       const account = String(detected.publicationSnapshot?.account || '').split(':').slice(1).join(':');
       if (!account || !latest.toLowerCase().includes(account.toLowerCase())) return blocked('replacement_account_changed');
     }
@@ -7167,44 +7364,49 @@ export class Agent extends LoopDetector {
     if (publication && (archivedAttempts.some(receipt => samePublication(receipt.publicationSnapshot
           || receipt.workflowBinding?.socialPublication?.snapshot))
         || samePublication(priorSnapshot)
-        || (guard.resourceMutationDispatches || []).some(attempt => samePublication(attempt.publicationSnapshot)))) return blocked('duplicate_publication');
+        || (guard.resourceMutationDispatches || []).some(attempt => samePublication(attempt.publicationSnapshot)))) {
+      // Never dispatch it again, but say whether the earlier post is known to
+      // exist, so the revised run can report it instead of looping.
+      let verifiedUrl = '';
+      let verified = false;
+      if (prior && samePublication(priorSnapshot) && prior.mutationKind !== 'delete') {
+        const cached = guard.steeringPriorSubmissionReconciliation;
+        if (cached?.verified === true && cached.actionSequence === prior.actionSequence && cached.resourceUrl) {
+          verified = true; verifiedUrl = cached.resourceUrl;
+        } else {
+          const fresh = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true }).catch(() => null);
+          const matching = current() && fresh && this._resourceMutationActionKey(tabId, name, args, fresh) === key
+            ? this._steeringPriorResourceMatches(tabId, guard, prior, fresh) : [];
+          if (matching.length === 1 && prior.dispatched === true) {
+            verified = true; verifiedUrl = matching[0].url;
+            guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
+              actionSequence: prior.actionSequence, resourceUrl: matching[0].url, resourceScopeToken: matching[0].scopeToken || '',
+              deleted: false, document: fresh.frameDocumentIdentity };
+          }
+        }
+        if (!verified && this._steeringPriorPublicationOutcome(guard, prior) === 'verified') verified = true;
+      }
+      return blocked('duplicate_publication', verified
+        ? `This exact post was already published under the user's earlier instruction${verifiedUrl ? ` (${verifiedUrl})` : ''}; it was not published again. Do not retry it. Tell the user it was already published under their earlier instruction, and if nothing else in the latest request remains, finish with done outcome "partial".`
+        : 'This exact post was already submitted under the user\'s earlier instruction and that attempt is not verified; it was not published again. Do not retry it. Read the account\'s recent posts to verify the earlier attempt and report what you find.',
+      { priorPublication: { status: verified ? 'verified' : 'unverified', ...(verifiedUrl ? { url: verifiedUrl } : {}) } });
+    }
     if (deletion && (guard.resourceMutationDispatches || []).some(attempt => attempt.mutationKind === 'delete'
         && attempt.resourceUrl === detected.actionResource.url)) return blocked('duplicate_deletion');
-    if (genericCommit && prior?.submittedActionUrl && prior.submittedActionUrl === detected.actionUrl
-        && JSON.stringify(this._publicMutationFields(prior.submittedFields)) === JSON.stringify(this._publicMutationFields(detected.fields))) return blocked('duplicate_submission');
+    const sameSubmission = receipt => !!formAction(receipt?.submittedActionUrl) && receipt.submittedActionUrl === detected.actionUrl
+      && JSON.stringify(this._publicMutationFields(receipt.submittedFields)) === JSON.stringify(this._publicMutationFields(detected.fields));
+    if (genericCommit && [prior, ...archivedAttempts].some(sameSubmission)) {
+      const observed = !!prior && sameSubmission(prior) && this._steeringPriorEffectObserved(tabId, prior);
+      return blocked('duplicate_submission', observed
+        ? 'The same form submission (same destination and values) was already made under the user\'s earlier instruction and its result was observed; it was not submitted again. Do not retry it. Tell the user it was already submitted under their earlier instruction, and if nothing else in the latest request remains, finish with done outcome "partial".'
+        : 'The same form submission (same destination and values) was already attempted under the user\'s earlier instruction; it was not submitted again. Do not retry it. Read the page to verify the earlier result and report what you find.');
+    }
     // Reads refresh the original attempt, without overwriting its immutable
     // receipt or adopting a success assertion from a model/tool result.
     const fresh = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true });
     if (!current() || !fresh || this._resourceMutationActionKey(tabId, name, args, fresh) !== key) return blocked('resource_changed');
     if (prior) {
-      const priorContext = guard.steeringPriorContext;
-      const binding = prior.workflowBinding;
-      const workflow = prior.mutationWorkflow || priorContext?.siteWorkflow;
-      const snapshot = priorSnapshot;
-      const expected = snapshot?.posts?.[0];
-      const baseline = binding?.preDispatchPublishedResourceIdentities;
-      const matching = (fresh.reconciliationResources || []).filter(resource => {
-        if (!resource.complete || !resource.url) return false;
-        if (!snapshot) {
-          const values = this._publicMutationFields(prior.submittedFields).map(field => field.value).filter(value => typeof value === 'string'
-            && value.length > 0 && !/^\[.*redacted.*\]$/i.test(value));
-          const observed = this._completionSubmitStates.get(tabId);
-          return values.length > 0 && Array.isArray(prior.resourceBaseline) && !prior.resourceBaseline.includes(resource.url)
-            && observed?.actionSequence === prior.actionSequence && observed?.observedAfterSubmit === true
-            && this._normalizeUrl(observed.currentUrl) === this._normalizeUrl(resource.url)
-            && values.every(value => resource.textValues.includes(value));
-        }
-        // This proves that the dispatched resource exists, not that its media
-        // satisfied the original task. Publication audits/completion own that.
-        if (!workflow || !snapshot?.complete || snapshot.posts?.length !== 1
-            || !expected?.complete || typeof expected.bodyText !== 'string' || !expected.bodyText.trim()
-            || !Array.isArray(baseline)) return false;
-        const identity = this._workflowPublishedResourceIdentity(workflow, resource.url);
-        if (!identity || baseline.includes(identity) || (binding.publishedResourceIdentity && binding.publishedResourceIdentity !== identity)) return false;
-        const account = this._workflowSocialPublicationAccountIdentity(workflow, snapshot.account);
-        const author = this._workflowSocialPublicationAccountIdentity(workflow, resource.url);
-        return !!account && account === author && resource.textValues.includes(expected.bodyText);
-      });
+      const matching = this._steeringPriorResourceMatches(tabId, guard, prior, fresh);
       const reconciled = guard.steeringPriorSubmissionReconciliation;
       const submitted = this._completionSubmitStates.get(tabId);
       const deletedVerifiedResource = reconciled?.verified === true && submitted?.mutationKind === 'delete'
@@ -7216,14 +7418,42 @@ export class Agent extends LoopDetector {
             && fresh.reconciliationScope.url === reconciled.resourceUrl
             && submitted.actionResource?.scopeToken === reconciled.resourceScopeToken))
         && !(fresh.reconciliationResources || []).some(resource => resource.url === reconciled.resourceUrl);
-      if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource)) return blocked('prior_effect_unreconciled');
-      guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
-        actionSequence: prior.actionSequence, resourceUrl: matching[0]?.url || reconciled.resourceUrl,
-        resourceScopeToken: matching[0]?.scopeToken || reconciled?.resourceScopeToken || '',
-        deleted: deletedVerifiedResource, document: fresh.frameDocumentIdentity };
+      // A different target cannot duplicate the earlier effect, so its known
+      // outcome suffices: another platform's post, another form, or a form
+      // commit after a publication. Re-saving the same in-place form with
+      // corrected values needs its observed result on the same page. A
+      // deletion receipt keeps its own (deferred) reconciliation rules.
+      let observedKind = '';
+      if (prior.mutationKind !== 'delete' && matching.length !== 1 && !deletedVerifiedResource) {
+        const priorForm = formAction(prior.submittedActionUrl);
+        const differentTarget = publication ? crossPlatform
+          : genericCommit && (!!priorSnapshot || !priorForm || priorForm !== detected.actionUrl);
+        const live = submitted && submitted.actionSequence === prior.actionSequence ? submitted : prior;
+        const inPlace = !!live.currentUrl && this._normalizeUrl(live.currentUrl) === this._normalizeUrl(live.originatingUrl || '');
+        if (differentTarget && this._steeringPriorEffectKnown(tabId, guard, prior)) observedKind = publication ? 'cross_platform' : 'distinct_target';
+        else if (formCommit && priorForm && priorForm === detected.actionUrl && inPlace
+            && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
+      }
+      if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind)) {
+        return blocked('prior_effect_unreconciled', publication && !crossPlatform
+          ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
+          : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
+      }
+      if (matching.length === 1 || deletedVerifiedResource) {
+        guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
+          actionSequence: prior.actionSequence, resourceUrl: matching[0]?.url || reconciled.resourceUrl,
+          resourceScopeToken: matching[0]?.scopeToken || reconciled?.resourceScopeToken || '',
+          deleted: deletedVerifiedResource, document: fresh.frameDocumentIdentity };
+      } else if (!(reconciled?.verified === true && reconciled.actionSequence === prior.actionSequence)) {
+        // Outcome knowledge without resource identity; never a resource URL
+        // that a later deletion could treat as verified.
+        guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: observedKind, taskKey: guard.taskKey,
+          actionSequence: prior.actionSequence, resourceUrl: '', resourceScopeToken: '', deleted: false,
+          document: fresh.frameDocumentIdentity };
+      }
       // Removal in the accepted replacement request is a prerequisite, not
       // permission to create another copy while the original is still present.
-      if ((publication || genericCommit) && /(?:^|[^\p{L}])(?:delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(latest)
+      if ((publication || genericCommit) && this._correctionRequestsResourceDeletion(latest)
           && !deletedVerifiedResource) return blocked('deletion_prerequisite_unverified');
     }
     if (deletion && !latest.includes(detected.actionResource.url)
@@ -7235,6 +7465,8 @@ export class Agent extends LoopDetector {
       { role: 'user', content: this._wrapUntrusted('read_page', JSON.stringify({ key, action: deletion ? 'delete' : publication ? 'publish' : 'submit',
         resource: detected.actionResource || null, proposedPublication: detected.publicationSnapshot || null,
         proposedSubmission: genericCommit ? { fields: this._publicMutationFields(detected.fields), destination: detected.actionUrl } : null,
+        ...(genericCommit && prior && !priorSnapshot ? { previousSubmission: { fields: this._publicMutationFields(prior.submittedFields),
+          destination: prior.submittedActionUrl || '' } } : {}),
         verifiedPreviousResource: guard.steeringPriorSubmissionReconciliation?.resourceUrl || null,
         previousResourceState: guard.steeringPriorSubmissionReconciliation?.deleted === true ? 'deleted' : prior ? 'present' : 'unbound' })) }];
     if (JSON.stringify(messages).length > 120000) return blocked('authorization_evidence_too_large');
@@ -7288,7 +7520,9 @@ export class Agent extends LoopDetector {
     const run = this._steeringRuns.get(tabId);
     this._steeringRuns.delete(tabId);
     if (run?.messages.length) {
-      run.onUpdate('steering_queued', { messages: run.messages });
+      // After Stop nothing may start on its own: the panel keeps these
+      // corrections queued for an explicit send instead of draining them.
+      run.onUpdate('steering_queued', { messages: run.messages, ...(this._checkAbort(tabId) ? { stopped: true } : {}) });
     }
   }
 
@@ -10663,55 +10897,22 @@ export class Agent extends LoopDetector {
   }
 
   /**
-   * Synthesize a transparent summary when the agent hits the step limit
-   * without producing a final answer. Walks the conversation to count
-   * tool usage and surface the last non-empty assistant message and the
-   * last tool call, so the user sees WHY the run ended instead of an
-   * empty `done` event. Pure deterministic — no extra LLM call.
+   * Plain-language account of a run that hit the step limit without a final
+   * answer. The tool inventory and arguments remain in the trace and verbose
+   * rows; the chat explains the limit and quotes the last thing the agent
+   * said, if anything. Pure deterministic — no extra LLM call.
    */
   _buildStepLimitSummary(messages, steps) {
-    const toolCounts = new Map();
     let lastAssistantText = '';
-    let lastToolCall = null;
     const binding = this._activeTaskBinding(messages);
     // Earlier attempts remain in history, but this handoff describes the
     // latest authorized revision rather than quoting its superseded answer.
     const summaryMessages = binding.updates?.some(update => update.kind === 'steering')
       ? messages.slice(binding.index + 1) : messages;
     for (const m of summaryMessages) {
-      if (m.role === 'assistant') {
-        if (Array.isArray(m.tool_calls)) {
-          for (const tc of m.tool_calls) {
-            const name = tc?.function?.name || tc?.name;
-            if (name) {
-              toolCounts.set(name, (toolCounts.get(name) || 0) + 1);
-              lastToolCall = { name, args: tc?.function?.arguments || tc?.arguments || '' };
-            }
-          }
-        }
-        if (typeof m.content === 'string' && m.content.trim()) {
-          lastAssistantText = m.content;
-        }
-      }
+      if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) lastAssistantText = m.content;
     }
-    const sortedTools = [...toolCounts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6)
-      .map(([n, c]) => `${n} ×${c}`)
-      .join(', ');
-    const lastActionLine = lastToolCall
-      ? `Last tool attempted: ${lastToolCall.name}${lastToolCall.args ? ' (' + String(lastToolCall.args).slice(0, 120) + ')' : ''}`
-      : '';
-    const lastTextSnippet = lastAssistantText
-      ? `Last thing I said: "${lastAssistantText.slice(0, 280).replace(/\s+/g, ' ').trim()}${lastAssistantText.length > 280 ? '…' : ''}"`
-      : '';
-    return [
-      `[Step limit reached after ${steps} steps without completing the task.`,
-      sortedTools ? `Tools attempted: ${sortedTools}.` : '',
-      lastActionLine,
-      lastTextSnippet,
-      'This usually means: (a) the task is too complex for the current model — try a stronger one, (b) the step limit is too low — raise it in Settings, or (c) the strategy was wrong — try breaking it into smaller parts.]',
-    ].filter(Boolean).join('\n\n');
+    return stepLimitUserMessage(steps, lastAssistantText);
   }
 
   _stepLimitRecoveryEligible(provider, runOptions = {}) {
@@ -15651,12 +15852,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         if (planOnlyDecision?.failure) {
           await cancelPendingResumes();
+          // The tool result keeps the guard's diagnostic for verbose rows,
+          // traces and later model turns; the chat shows the plain account.
           const failedResult = {
             success: false,
             done: true,
             outcome: 'failed',
             planOnlyTerminal: true,
-            summary: planOnlyDecision.failure,
+            summary: planOnlyDecision.userMessage || planOnlyDecision.failure,
             error: planOnlyDecision.failure,
           };
           onUpdate('tool_result', { name: fnName, result: failedResult });
@@ -15671,7 +15874,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             () => ({ success: false, skipped: true, error: 'skipped: plan-only completion failed' })
           );
           this._persist(tabId);
-          return { action: 'return', value: planOnlyDecision.failure, status: 'plan_only_output' };
+          return { action: 'return', value: planOnlyDecision.userMessage || planOnlyDecision.failure,
+            status: planOnlyDecision.status || 'plan_only_output' };
         }
         let rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
         if (!scheduledResume && this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
@@ -16417,10 +16621,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   async _autoSelectOption(tabId, cdpClient, optionText, abortSignal = null, beforeDispatch = null) {
     const throwIfAborted = () => this._throwIfAborted(abortSignal);
-    const markDispatch = () => {
-      throwIfAborted();
-      if (typeof beforeDispatch === 'function') beforeDispatch();
-    };
+    // Key input is marked dispatched only once its fence passed (see
+    // sendTrustedCdpInput); focusing the exact select is preparation.
+    const sendKeyDown = params => sendTrustedCdpInput(
+      options => cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', params, '', options),
+      { beforeSend: throwIfAborted, onSent: typeof beforeDispatch === 'function' ? beforeDispatch : null },
+    );
     throwIfAborted();
     const needle = (optionText || '').trim();
     if (!needle) return null;
@@ -16575,11 +16781,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Escape must belong to the exact select found by the modal-scoped,
       // ambiguity-checked scan. Sending it to the previously focused control
       // can close a dialog or cancel unrelated UI before this select is used.
-      markDispatch();
+      throwIfAborted();
       if (!await focusExactTarget()) return null;
-      await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-        type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
-      });
+      await sendKeyDown({ type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
       await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
         type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
       });
@@ -16593,10 +16797,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const arrowKey = delta > 0 ? 'ArrowDown' : 'ArrowUp';
       const arrowVK = delta > 0 ? 40 : 38;
       for (let i = 0; i < Math.abs(delta); i++) {
-        markDispatch();
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-          type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
-        });
+        await sendKeyDown({ type: 'keyDown', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK });
         await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyUp', key: arrowKey, code: arrowKey, windowsVirtualKeyCode: arrowVK,
         });
@@ -18340,7 +18541,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       dispatched: uncertain, ...(uncertain ? { outcomeUnknown: true, retryable: false }
         : { noDispatch: true, outcomeUnknown: false, retryable: false }),
       ...(timing?.preparationVeto ? { preparationVeto: { ...timing.preparationVeto } } : {}), error });
-    if (attempted.has(actionKey) || attempted.has(pendingKey)) return failure('This observed button action was already attempted or its input outcome remains unresolved. Do not repeat it; a verified effect and a new current observation are required for another action.');
+    if (attempted.has(actionKey) || attempted.has(pendingKey) || this._taskClickLockKeys(tabId)?.has(pendingKey)) return failure('This observed button action was already attempted or its input outcome remains unresolved. Do not repeat it; a verified effect and a new current observation are required for another action.');
     // Store only short certificate/target keys; never retain model snapshots.
     if (attempted.size > 4094) return failure('The trusted input bookkeeping limit for this run was reached. No input was sent.');
     let pressed = false, pressAttempted = false, released = false, clickUserAt;
@@ -18378,9 +18579,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (current.documentToken !== prepared.documentToken
           || current.refScopeUrl !== prepared.refScopeUrl || current.ref_id !== args.ref_id
-          || current.x !== prepared.x || current.y !== prepared.y) {
+          || current.tag !== prepared.tag || current.name !== prepared.name
+          || current.buttonStrongState !== prepared.buttonStrongState || current.buttonDisabled !== prepared.buttonDisabled
+          || !Number.isFinite(current.x) || !Number.isFinite(current.y)
+          // Only small hover geometry (lift, border, scale) is the same
+          // physical decision; a larger move needs a new observation.
+          || Math.abs(current.x - prepared.x) > 8 || Math.abs(current.y - prepared.y) > 8) {
         return failure('The native button changed during trusted input preparation. Re-observe before acting.');
       }
+      // The agent's own hover may lift or resize this exact certified button
+      // (:hover transform, border or size). The re-probe hit-tested its current
+      // centre on the same node; the monitor fence below rechecks the certified
+      // binding, and the press transport hit-tests the pressed point against
+      // that node immediately before the press. Never press the stale
+      // pre-hover point, which could now hit another node.
+      const pressPoint = { x: current.x, y: current.y };
       preparationStage = 'after_pointer_before_press';
       const inputGuard = await beforePageAgentDispatch(chrome, tabId, { kind: 'click', tool: 'click_ax', ref_id: args.ref_id,
         documentToken: dispatchCall.modelState.actionBinding.documentToken, fenceOnly: true, prepareMonitor: true });
@@ -18389,16 +18602,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!finishInput) return failure('The current owned native input operation could not be captured. Re-observe before acting.');
       // Reserve before the consequential protocol call: a lost acknowledgement
       // is not permission to replay either a trusted or a synthetic click.
-      if (attempted.has(actionKey) || attempted.has(pendingKey)) return failure('A trusted input attempt for this action is already pending. Do not repeat it.');
+      if (attempted.has(actionKey) || attempted.has(pendingKey) || this._taskClickLockKeys(tabId)?.has(pendingKey)) return failure('A trusted input attempt for this action is already pending. Do not repeat it.');
       attempted.add(actionKey); attempted.add(pendingKey);
       clickUserAt = run.lastUserAt;
-      pressAttempted = true; dispatchState.started = true; baseline.startedAt = Date.now();
       preparationStage = 'press';
-      await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', prepared.x, prepared.y);
+      // Dispatch starts when the press passes its fence and final owner check.
+      await sendTrustedCdpInput(
+        options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', pressPoint.x, pressPoint.y, 'left', options),
+        { beforeSend: assertCurrent, onSent: () => {
+          pressAttempted = true; dispatchState.started = true; baseline.startedAt = Date.now();
+          this._rememberTaskClickLock(tabId, pendingKey);
+        } },
+      );
       pressed = true; if (timing) timing.trustedInputEvents++;
       assertCurrent();
       preparationStage = 'release';
-      await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', prepared.x, prepared.y);
+      await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', pressPoint.x, pressPoint.y);
       released = true; pressed = false; if (timing) timing.trustedInputEvents++;
       assertNotAborted();
       const blocked = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -18459,8 +18678,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // may follow, even if its page effect is unverified. This proves delivery,
       // not a business save. Lost or aborted input never reaches this release.
       attempted.delete(pendingKey);
+      this._releaseTaskClickLock(tabId, pendingKey);
       return { success: true, method: 'cdp-native-button', initialTrustedNativeButton: true,
-        ref_id: args.ref_id, tag: prepared.tag, name: String(current.name || '').slice(0, 160), rect: prepared.rect, dispatched: true,
+        ref_id: args.ref_id, tag: prepared.tag, name: String(current.name || '').slice(0, 160), rect: current.rect || prepared.rect, dispatched: true,
         trusted: true, verified: verifiedLocalEffect,
         nativeInputAcknowledged: true, observationInterrupted: false,
         effectVerificationPending: !verifiedLocalEffect,
@@ -18471,7 +18691,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     } catch (error) {
       if (pressed || (pressAttempted && !released)) await this._cancelTrustedClickPress(tabId);
       // The dispatch fence rejects before the protocol command is sent.
-      const uncertain = pressed || released || (pressAttempted && error?.code !== 'page_feedback_pending');
+      const uncertain = pressed || released || (pressAttempted && !isCdpCommandNotSentError(error));
       if (!uncertain) { dispatchState.started = false; attempted.delete(pendingKey); }
       if (timing) {
         const veto = error?.pagePreparationVeto;
@@ -18647,6 +18867,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messageOptions = dispatchBinding?.token && Number.isInteger(dispatchBinding.frameId)
       ? { frameId: dispatchBinding.frameId }
       : undefined;
+    // An earlier trusted click on this exact document|ref may have landed
+    // without a verified effect (lost acknowledgement or interrupted
+    // observation). It stays locked across Continue/Retry of the same task,
+    // for the synthetic path as well; a re-rendered target or another
+    // document has a different key.
+    const taskLocks = this._taskClickLockKeys(tabId);
+    if (taskLocks?.size && axScope?.documentToken && typeof args?.ref_id === 'string'
+        && (taskLocks.has(`native-button-pending:${axScope.documentToken}|${args.ref_id}`)
+          || taskLocks.has(`${axScope.documentToken}|${args.ref_id}`))) {
+      return { success: false, dispatched: false, noDispatch: true, retryable: false, repeatBlocked: true,
+        error: 'An earlier trusted click on this exact target in this task may already have taken effect and was never verified. Inspect the page to reconcile its outcome instead of clicking it again.' };
+    }
     const actionDeadlineAt = [upstreamAbortSignal, deadlineAbortSignal]
       .map(signal => Number(CONTENT_ACTION_SIGNAL_DEADLINES.get(signal)?.deadlineAt))
       .filter(deadlineAt => Number.isFinite(deadlineAt) && deadlineAt > 0)
@@ -18712,10 +18944,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         throwIfAborted();
       } catch (error) {
         if (error?.code === 'content_action_timeout') {
-          return this._contentActionTimeoutResult('click_ax', error);
+          return dispatchState.started ? this._contentActionTimeoutResult('click_ax', error)
+            : this._contentActionPreparationTimeoutResult('click_ax', error, 'click preparation');
         }
-        // A rejected first message is the no-receiver path that triggers
-        // injection; no page click was delivered unless the retry starts.
+        // Stop keeps the real dispatch state for the lifecycle wrapper.
+        if (error?.name === 'AbortError') throw error;
+        throwIfAborted();
+        // Only the browser's explicit missing-receiver error proves that the
+        // click message reached no listener. A closed response channel can
+        // follow a delivered el.click() that navigated or replaced its
+        // document; resending would click twice or misreport the delivery.
+        if (!this._isMissingContentReceiverError(error)) {
+          return this._contentActionCommunicationFailure('click_ax', error, dispatchState.started);
+        }
         dispatchState.started = false;
         try {
           throwIfAborted();
@@ -18729,9 +18970,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           throwIfAborted();
         } catch (retryError) {
           if (retryError?.code === 'content_action_timeout') {
-            return this._contentActionTimeoutResult('click_ax', retryError);
+            return dispatchState.started ? this._contentActionTimeoutResult('click_ax', retryError)
+              : this._contentActionPreparationTimeoutResult('click_ax', retryError, 'content-script injection');
           }
-          return { error: `Failed to communicate with page: ${retryError.message}` };
+          if (retryError?.name === 'AbortError') throw retryError;
+          if (this._isMissingContentReceiverError(retryError)) dispatchState.started = false;
+          return this._contentActionCommunicationFailure('click_ax', retryError, dispatchState.started);
         }
       }
       const syntheticClickStartedAt = Number(response?._syntheticClickStartedAt);
@@ -19683,7 +19927,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _clarificationAuthorizationStopMessage() {
-    return '[Agent stopped before dispatching another action or accepting a success completion because the latest clarification answer was auto-selected after a timeout and was not user authorization. Please answer the clarification explicitly and retry.]';
+    // The block itself (a timeout-selected answer is not authorization) is
+    // recorded on the refused tool result; the chat asks for a real answer.
+    return terminalGuardUserMessage('clarification_required');
   }
 
   _clarificationAuthorizationPlainFinalDecision(tabId) {
@@ -22085,6 +22331,25 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return progress.missing.map(id => social.contract.actions.find(a => a.id === id)?.platform || id);
   }
 
+  /** Platform names only: which destinations were verified, dispatched but unconfirmed, or never published. */
+  _socialPublicationOutcomeFacts(guard) {
+    const social = guard?.socialPublication;
+    const facts = { verified: [], unconfirmed: [], notStarted: [] };
+    if (!social?.contract || social.contract.status !== 'ready') {
+      facts.notStarted.push(guard?.siteWorkflow?.adapterName || 'unresolved_intent');
+      return facts;
+    }
+    const missing = new Set(publicationProgress(social.contract, social.outcomes).missing);
+    for (const action of social.contract.actions || []) {
+      const status = social.outcomes?.[action.id]?.status;
+      if (status === 'verified') facts.verified.push(action.platform);
+      else if (!missing.has(action.id)) continue;
+      else if (status === 'pending') facts.unconfirmed.push(action.platform);
+      else facts.notStarted.push(action.platform);
+    }
+    return facts;
+  }
+
   async _adoptLiveSocialPublishWorkflow(tabId, provider, detected = null) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled) return false;
@@ -22228,7 +22493,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // probes, and unresolved controls cannot claim this exemption.
     if (detected?.isSubmit === true && detected.publicationControl === false
         && ['click', 'click_ax', 'iframe_click', 'set_field', 'press_keys'].includes(name)) return null;
-    if (detected?.isSubmit !== true) return blocked('Publication-capable action could not be identified. Use a resolved page control; do not run arbitrary JavaScript or bundle editing and submission.');
+    if (detected?.isSubmit !== true) {
+      // Say which evidence is missing: a stale task, an unidentified key
+      // target, or an unidentified control. None of them is a publication.
+      if (detected?.isSubmit === false && (detected.resolvedOrdinaryActivationTarget === true || detected.resolvedPreparatoryTarget === true)) {
+        return blocked('The task changed while this control was being checked, so it was not activated. Continue under the latest request and read the page again before retrying.');
+      }
+      if (name === 'press_keys') return { ...blocked('Enter was not pressed: outside the post editor, a key activation on X or Bluesky could publish. Click the specific control instead; to publish, verify the draft and use the composer\'s Post button.'), targetUnresolved: true };
+      return { ...blocked('This control was not clicked: it could not be identified as a link, field, menu item or ordinary button, and an unidentified control on X or Bluesky could publish. Read the page and target the specific control by its ref; to publish, verify the draft and use the composer\'s Post button. Do not run arbitrary JavaScript or bundle editing and submission.'), targetUnresolved: true };
+    }
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return blocked('Write and verify the draft first, then activate its publish control in a separate click.');
     if (detected.publicationControl !== true) return blocked('Publication composer ownership could not be observed. Read the current page and use its resolved publish control.');
     await this._adoptLiveSocialPublishWorkflow(tabId, provider, detected);
@@ -22781,6 +23054,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!m || (m.role !== 'user' && m.role !== 'assistant')) continue;
       if (this._isPinnedAgentStateMessage(m)) continue;
       if (this._isLocalConversationStatusMessage(m)) continue;
+      // App-owned runtime notes (browser observations with wrapped page data,
+      // recovery nudges) are not user-authored and must never reach the
+      // planner as "User:" history.
+      if (m.role === 'user' && this._isAgentInjectedUserMessage(m)) continue;
       const rawText = userMessageToText(m);
       const taskText = m.role === 'user' ? this._plannerUserAuthoredText(m) : rawText;
       const text = sanitizePlannerText(taskText, 300, { collapseWhitespace: true });
@@ -28043,6 +28320,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           action: String(detected.action || '').slice(0, 300),
           actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
+          // Ordinary in-form controls keep their submit confirmation; this only
+          // tells post-correction guards they are not consequential commits.
+          ...(detected.nonCommittingControl === true ? { nonCommittingControl: true } : {}),
           ...(githubReleaseReview ? { githubReleaseReview } : {}),
           semanticCommit: detected.semanticCommit === true,
           ...(Array.isArray(detected.resourceBaseline) ? { resourceBaseline: detected.resourceBaseline } : {}),
@@ -28085,7 +28365,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         };
       }
       const nonSubmit = rawResults.find(item => item?.resolvedNonSubmitTarget === true);
-      if (nonSubmit) return { isSubmit: false, resolvedNonSubmitTarget: true };
+      if (nonSubmit) return { isSubmit: false, resolvedNonSubmitTarget: true,
+        ...(nonSubmit.resolvedDraftControl === true ? { resolvedDraftControl: true } : {}) };
       const ordinaryActivations = rawResults.filter(item => item?.isSubmit === false
         && item.resolvedOrdinaryActivationTarget === true);
       if (ordinaryActivations.length === 1 && ['click', 'click_ax', 'iframe_click'].includes(name)) {
@@ -28102,8 +28383,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       // still blocking unresolvable clicks. Never a submit: isSubmit stays false.
       const resolvedEditable = (Array.isArray(rawResults) ? rawResults : [])
         .find(item => item && item.isSubmit !== true && item.resolvedEditableTarget === true);
+      // Keys go to the one focused document; only an unambiguous single frame
+      // reporting the post editor may classify an unmodified Enter as typing.
+      const editableKeyFrames = name === 'press_keys'
+        ? rawResults.filter(item => item?.isSubmit !== true && item?.resolvedEditableTarget === true).length : 0;
       if (resolvedEditable
-          && (name === 'click' || name === 'click_ax' || name === 'iframe_click')) {
+          && (name === 'click' || name === 'click_ax' || name === 'iframe_click' || editableKeyFrames === 1)) {
         return {
           isSubmit: false,
           host: normalizeHost(resolvedEditable.host || resolvedEditable.url || args?.urlFilter || currentUrl) || 'this site',
@@ -29011,11 +29296,32 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         if (String(el.tagName || '').toLowerCase() !== 'a') return false;
         const href = String(el.getAttribute?.('href') || '').trim();
         if (!href || /^(?:javascript|data|vbscript)\s*:/i.test(href)) return false;
+        // Framework-declared link methods (Rails UJS/Turbo, htmx writes) turn
+        // activation into a mutating request; they are handlers, not navigation.
+        const linkMethod = String(el.getAttribute?.('data-method') || el.getAttribute?.('data-turbo-method') || '').trim().toLowerCase();
+        if ((linkMethod && linkMethod !== 'get') || ['hx-post', 'hx-put', 'hx-patch', 'hx-delete'].some(name => el.hasAttribute?.(name))) return false;
         return !isSubmitControl(el);
       } catch {
         return false;
       }
     };
+    // Coordinate and descendant-ref clicks usually land on a link's text or
+    // icon, not on the anchor. The enclosing anchor owns that activation
+    // unless an interactive element between them receives it first.
+    const enclosingNavigationLink = (el) => {
+      try {
+        if (!el || el.nodeType !== 1) return null;
+        const link = el.closest?.('a[href]');
+        if (!link || link === el) return null;
+        for (let node = el; node && node !== link; node = node.parentElement) {
+          if (node.matches?.('button,input,select,textarea,summary,label,[contenteditable="true"],[role="button"],[role="link"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="checkbox"],[role="radio"],[role="switch"],[role="treeitem"],[onclick],[data-action]')) return null;
+        }
+        return isNavigationLinkTarget(link) ? link : null;
+      } catch {
+        return null;
+      }
+    };
+    const navigationLinkFor = el => (isNavigationLinkTarget(el) ? el : enclosingNavigationLink(el));
     const formForSubmitControl = (el) => {
       const target = labelControlFor(el) || el;
       const candidate = target?.closest?.('button,input') || target;
@@ -29186,7 +29492,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     const rememberResourceScope = (record, resourceUrl) => {
       let token = scopeRegistry.nodes.get(record);
       const remembered = token && scopeRegistry.scopes.get(token);
-      if (remembered?.runToken === args.__wbResourceRunToken && remembered.until > Date.now()) {
+      // An evicted or never-recorded scope is absent. Comparing its missing
+      // run token with an absent argument must not dereference it: the throw
+      // would void the whole probe and leave a real publish control unresolved.
+      if (remembered && remembered.runToken === args.__wbResourceRunToken && remembered.until > Date.now()) {
         remembered.until = Date.now() + 120000;
         return token;
       }
@@ -29430,38 +29739,127 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         control?.getAttribute?.('title'), control?.getAttribute?.('data-action')];
       const consequentialCaption = value => /(?:^|[^\p{L}])(?:post|publish|reply|submit|send|save|confirm|commit|pay|purchase|checkout|delete|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
       const removalCaption = value => /(?:^|[^\p{L}])(?:remove|kaldır)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
+      // Removing a filter, sort or search term changes what the page shows; it
+      // does not destroy a record. Only the weak removal verbs qualify: delete,
+      // trash and their translations keep their deletion meaning.
+      const weakRemovalWord = /(?:^|[^\p{L}])(?:remove|clear|kaldır)(?=[^\p{L}]|$)/giu;
+      const viewStateRemoval = value => {
+        const text = String(value || '');
+        return /(?:^|[^\p{L}])(?:remove|clear|kaldır)(?:[^\p{L}]|$)/iu.test(text)
+          && /(?:^|[^\p{L}])(?:filters?|filtre\p{L}*|filtro\p{L}*|фильтр\p{L}*|facets?|sort(?:ing)?|search(?:es)?|quer(?:y|ies)|selection|formatting)(?:[^\p{L}]|$)/iu.test(text)
+          && !/(?:^|[^\p{L}])(?:delete|trash|erase|destroy|sil|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(text);
+      };
+      const withoutViewStateRemoval = value => (viewStateRemoval(value) ? String(value).replace(weakRemovalWord, ' ') : value);
+      // A typeless button outside any form does nothing natively, so its
+      // caption can decide. On X and Bluesky an app control id the probe does
+      // not recognize outranks that caption, as for the recovery controls.
+      const typelessOrdinaryButton = el => el.getAttribute('type') == null && !el.form && !el.hasAttribute('form')
+        && !el.closest('form') && !(socialPublishAdapterName() && el.hasAttribute('data-testid'));
+      // Native activation of these controls cannot submit a form: an explicit
+      // type=button, a typeless button with no form owner, or an ARIA button.
+      const nonSubmittingButton = el => {
+        const tag = String(el?.tagName || '').toLowerCase();
+        const type = el?.getAttribute?.('type');
+        if (tag === 'button') return type == null ? typelessOrdinaryButton(el) : String(type).toLowerCase() === 'button';
+        if (tag === 'input') return String(type || '').toLowerCase() === 'button';
+        return tag !== 'a' && String(el?.getAttribute?.('role') || '').toLowerCase() === 'button' && type == null;
+      };
+      const sendMarker = el => {
+        const marker = String(el?.getAttribute?.('data-testid') || '');
+        return /^(?:tweetButton(?:Inline)?|composerPublish(?:Btn|Button)|dmComposerSendButton|send(?:Message)?(?:Button|Btn)|send-message)$/i.test(marker)
+          || marker.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/u).some(word => /^send$/i.test(word));
+      };
+      // A composer's own tools edit the unsent draft. Ownership is structural:
+      // the nearest container holding exactly one visible editor, reached
+      // without crossing a record, collection item or the page's main region.
+      const draftComposerFor = el => {
+        for (let node = el?.parentElement, depth = 0; node && depth < 12; node = node.parentElement, depth += 1) {
+          if (node.matches('article,[role="article"],[itemid],[role="listitem"],li,tr,[role="row"],main,[role="main"],body')) return null;
+          const editors = [...node.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(isVisible);
+          if (editors.length) return editors.length === 1 && !editors[0].contains(el) ? node : null;
+        }
+        return null;
+      };
+      // Removing an attachment edits the draft only when the removed item is
+      // visibly an attachment: named as one, or shown as media or a file name.
+      const draftAttachmentEvidence = (el, composer) => {
+        if (actionWords.some(value => /(?:^|[^\p{L}])(?:attachments?|attached|files?|images?|photos?|pictures?|media|videos?|gifs?|uploads?|documents?|ek(?:i|ler\p{L}*)?|dosya\p{L}*|görsel\p{L}*|resim\p{L}*|fotoğraf\p{L}*|medya\p{L}*)(?:[^\p{L}]|$)/iu.test(String(value || '')))) return true;
+        for (let node = el.parentElement; node && node !== composer; node = node.parentElement) {
+          if (node.querySelector('img,video,picture,canvas,audio')) return true;
+          const text = String(node.textContent || '').replace(String(el.textContent || ''), ' ');
+          if (/[^\s\\/:*?"<>|]+\.[a-z0-9]{2,5}(?=\s|$|[),;])/i.test(text)) return true;
+        }
+        return false;
+      };
       const draftLocalControl = (() => {
-        if (!control || String(control.getAttribute('type') || '').toLowerCase() !== 'button'
+        if (!control || !nonSubmittingButton(control)
             || !isVisible(control) || control.disabled || control.getAttribute('aria-disabled') === 'true'
             || control.matches('[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
-            || socialPublishControlEvidence(control).isSubmit
+            || socialPublishControlEvidence(control).isSubmit || sendMarker(control)
             || actionWords.some(consequentialCaption)) return false;
         // A saved-record control cannot borrow an editor elsewhere on the page.
         if (control.closest('article,[role="article"],[role="listitem"],[itemid]')) return false;
         if (control.closest('[contenteditable="true"]') && !actionWords.some(removalCaption)) return true;
-        const toolbar = control.closest('[role="toolbar"]');
-        const root = toolbar?.closest('form,dialog,[role="dialog"],section,[role="region"]')
-          || control.closest('dialog,[role="dialog"],fieldset');
-        if (!root) return false;
-        const editors = [...root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(isVisible);
-        if (editors.length !== 1) return false;
-        if (toolbar) {
-          const ids = String(toolbar.getAttribute('aria-controls') || control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
-          // The editor target proves a local formatting operation, but it
-          // cannot turn a resource-removal caption into a formatting command.
-          const formattingRemoval = !actionWords.some(value => removalCaption(value) && !/format(?:ting)?/iu.test(String(value || '')));
-          return formattingRemoval && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
-        }
-        const preview = control.closest('figure,[role="group"]');
-        const staged = [...root.querySelectorAll('input[type="file"]')].some(input => input.files?.length > 0);
-        return staged && !!preview && root.contains(preview)
-          && [...preview.querySelectorAll('img,video')].some(media => /^blob:/i.test(media.currentSrc || media.src || ''));
+        const toolbarDraft = (() => {
+          const toolbar = control.closest('[role="toolbar"]');
+          const root = toolbar?.closest('form,dialog,[role="dialog"],section,[role="region"]')
+            || control.closest('dialog,[role="dialog"],fieldset');
+          if (!root) return false;
+          const editors = [...root.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].filter(isVisible);
+          if (editors.length !== 1) return false;
+          if (toolbar) {
+            const ids = String(toolbar.getAttribute('aria-controls') || control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
+            // The editor target proves a local formatting operation, but it
+            // cannot turn a resource-removal caption into a formatting command.
+            const formattingRemoval = !actionWords.some(value => removalCaption(value) && !/format(?:ting)?/iu.test(String(value || '')));
+            return formattingRemoval && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
+          }
+          const preview = control.closest('figure,[role="group"]');
+          const staged = [...root.querySelectorAll('input[type="file"]')].some(input => input.files?.length > 0);
+          return staged && !!preview && root.contains(preview)
+            && [...preview.querySelectorAll('img,video')].some(media => /^blob:/i.test(media.currentSrc || media.src || ''));
+        })();
+        if (toolbarDraft) return true;
+        const composer = draftComposerFor(control);
+        if (!composer) return false;
+        if (actionWords.some(removalCaption)) return draftAttachmentEvidence(control, composer);
+        // Other composer tools (emoji, media pickers, polls) are local only in
+        // an app-identified post composer; a generic "Add" or "Create" button
+        // beside a text field may itself be the commit.
+        return !!socialPublishAdapterName() && [...composer.querySelectorAll('button,[role="button"]')]
+          .some(other => other !== control && socialPublishControlEvidence(other).strong === true);
       })();
       if (draftLocalControl && ['click', 'click_ax', 'iframe_click'].includes(toolName)) return {
         isSubmit: false, resolvedNonSubmitTarget: true, resolvedDraftControl: true, host, url,
         frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
       };
       const deleteAction = value => /(?:^|[^\p{L}])(?:delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
+      const deletionCaption = value => deleteAction(withoutViewStateRemoval(value));
+      // A GET link whose query names a destructive action (WordPress
+      // action=trash, admin panels' action=delete, _method=DELETE) mutates
+      // when followed. Path segments such as /trash or /delete/ usually name a
+      // folder or a confirmation page, so they stay navigation.
+      const destructiveLinkQuery = link => {
+        try {
+          const destructive = /^(?:delete|destroy|remove|trash|erase|purge)(?:$|[._-])/i;
+          for (const [name, value] of new URL(link.href).searchParams) {
+            if (/^(?:delete|destroy|remove|trash|erase|purge)$/i.test(name)) return true;
+            if (/^(?:action|do|op|operation|task|cmd|command|act|a|_method|method|mode)$/i.test(name) && destructive.test(value)) return true;
+          }
+        } catch {}
+        return false;
+      };
+      // A link with a real destination navigates even when its caption names
+      // a folder such as Trash. A placeholder href or an explicit button role
+      // marks a scripted command drawn as a link, which keeps its caption, as
+      // does a link whose query performs a destructive action.
+      const navigationOwnsActivation = (() => {
+        const link = target && ['click', 'click_ax', 'iframe_click'].includes(toolName) ? navigationLinkFor(target) : null;
+        if (!link) return false;
+        return !String(link.getAttribute('href') || '').trim().startsWith('#')
+          && String(link.getAttribute('role') || '').toLowerCase() !== 'button'
+          && !destructiveLinkQuery(link);
+      })();
       if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName)
           && nativeResourceVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
           && !control.form && !control.closest('form')) {
@@ -29489,7 +29887,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         }
       }
       const nativeDeletionConfirmation = nativeConfirmationCommit(control) && resourceProofFor(control)?.nativeAdapter === 'mastodon';
-      if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName) && (actionWords.some(deleteAction) || nativeDeletionConfirmation)
+      if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName) && !navigationOwnsActivation
+          && (actionWords.some(deletionCaption) || nativeDeletionConfirmation)
           && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true') {
         const info = submitInfo(control.form || control.closest('form'), 'resource deletion activation', null, null, 'strong', control);
         return { ...info, mutationKind: 'delete', publicationControl: false,
@@ -29517,11 +29916,71 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         }
         const field = isFormField(target) ? target : null;
         const form = field?.form || field?.closest?.('form') || null;
-        return form ? submitInfo(form, 'Enter key in a form field', null, null, 'strong', field) : null;
+        if (form) return submitInfo(form, 'Enter key in a form field', null, null, 'strong', field);
+        // X and Bluesky publish from the keyboard only with a modifier, which
+        // press_keys cannot send. An unmodified Enter in the app-marked post
+        // editor edits the draft (a line break or a typeahead choice).
+        const postEditor = !!field && !!socialPublishAdapterName()
+          && (field.isContentEditable || String(field.tagName || '').toUpperCase() === 'TEXTAREA')
+          && !!field.closest?.('[data-testid^="tweetTextarea_"],[data-testid="composerTextInput"]');
+        return postEditor ? { isSubmit: false, host, url, tool: toolName,
+          reason: 'Enter in the post editor edits the draft', resolvedEditableTarget: true } : null;
       }
+      // Ordinary-control evidence shared by standalone activations and by
+      // in-form controls whose submit classification is only heuristic.
+      const commitWordList = 'submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال';
+      const captionHas = (value, words) => new RegExp(`(?:^|[^\\p{L}])(?:${words})(?:[^\\p{L}]|$)`, 'iu')
+        .test(String(withoutViewStateRemoval(value) || '').trim());
+      const ordinaryControlFor = el => {
+        const owner = labelControlFor(el) || el;
+        return owner?.closest?.('button,input,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],summary') || null;
+      };
+      const ordinaryControlEvidence = (ordinary, labels) => {
+        const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(ordinary.getAttribute('aria-haspopup') || '')
+          || ordinary.hasAttribute('popovertarget');
+        // An app's own control name decides publication capability on X and
+        // Bluesky (socialPublishControlEvidence). A non-publish test id
+        // disproves publication words such as Reply or Schedule post, while
+        // deletion, send, save and payment words still mark a commit.
+        const appNamedNonPublish = !!socialPublishAdapterName() && !!ordinary.getAttribute('data-testid') && !sendMarker(ordinary);
+        // A popup launcher may mention the resource it operates on. Actual
+        // composer submits are identified above; other commit words stay gated.
+        const words = popupTarget || appNamedNonPublish
+          ? `${appNamedNonPublish ? '' : 'publish|'}${commitWordList}` : `post|publish|reply|${commitWordList}`;
+        let uniqueTarget = true;
+        if (args.text) {
+          const needle = compact(args.text).toLowerCase();
+          const choices = interactiveElements().map(el => ({el,
+            text: compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase()}));
+          const exact = choices.filter(item => item.text === needle);
+          const prefix = choices.filter(item => item.text.startsWith(needle));
+          const matches = args.textMatch === 'exact' ? exact : args.textMatch === 'prefix' ? prefix
+            : args.textMatch === 'contains' ? choices.filter(item => item.text.includes(needle))
+            : exact.length ? exact : prefix.length ? prefix : choices.filter(item => item.text.includes(needle));
+          const controls = new Set(matches.map(item => ordinaryControlFor(item.el)));
+          uniqueTarget = controls.size === 1 && controls.has(ordinary);
+        }
+        return uniqueTarget && labels.some(value => String(value || '').trim())
+          && !ordinary.disabled && ordinary.getAttribute('aria-disabled') !== 'true'
+          && !ordinary.closest('[hidden],[inert],[aria-hidden="true"]')
+          && !ordinary.matches('[form],[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action],[onchange],[oninput]')
+          // A nested plain file input only opens the file chooser.
+          && ![...ordinary.querySelectorAll('[onclick],[data-action],button,input,[role="button"],a[href]')]
+            .some(child => !child.matches('input[type="file"]:not([onclick]):not([data-action]):not([onchange]):not([oninput])'))
+          && !sendMarker(ordinary) && !labels.some(value => captionHas(value, words))
+          && !socialPublishControlEvidence(ordinary).isSubmit;
+      };
+      const ordinaryLabels = ordinary => {
+        const labels = [ordinary?.textContent, ordinary?.getAttribute?.('aria-label'), ordinary?.getAttribute?.('title')];
+        if (String(ordinary?.tagName || '').toLowerCase() === 'input') {
+          if (/^(?:button|submit|reset)$/i.test(ordinary.type || '')) labels.push(ordinary.value);
+          try { for (const label of ordinary.labels || []) labels.push(label.textContent); } catch {}
+        }
+        return labels;
+      };
       if (target && isSubmitControl(target)) {
         const evidence = submitControlEvidence(target);
-        return submitInfo(
+        const info = submitInfo(
           formForSubmitControl(target),
           'submit button/control activation',
           null,
@@ -29529,6 +29988,17 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           evidence.strong ? 'strong' : 'heuristic',
           target,
         );
+        // In-form type=button toggles, steppers and disclosure headers, and
+        // buttons of a method=dialog form, send nothing to a server by
+        // themselves. They keep the submit confirmation, but post-correction
+        // guards can tell them apart from commits by ordinary evidence.
+        if (info.publicationControl !== true && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+            && (!evidence.strong || String(info.method || '').toUpperCase() === 'DIALOG')) {
+          const owner = labelControlFor(target) || target;
+          const submitter = owner.closest?.('button,input,[role="button"],[onclick],[data-action]') || owner;
+          if (isVisible(submitter) && ordinaryControlEvidence(submitter, ordinaryLabels(submitter))) info.nonCommittingControl = true;
+        }
+        return info;
       }
       const blueskyComposerLauncher = socialPublishAdapterName() === 'bluesky'
         ? target?.closest?.('button,[role="button"]') : null;
@@ -29579,7 +30049,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
       if (target
           && (toolName === 'click' || toolName === 'click_ax' || toolName === 'iframe_click')
-          && isNavigationLinkTarget(target)) {
+          && navigationLinkFor(target)) {
         return {
           isSubmit: false,
           host,
@@ -29590,42 +30060,28 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         };
       }
       if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)) {
-        const control = target.closest?.('button,input,[role="button"]');
+        const control = ordinaryControlFor(target);
         const tag = String(control?.tagName || '').toLowerCase();
         const type = String(control?.getAttribute?.('type') || '').toLowerCase();
+        const role = String(control?.getAttribute?.('role') || '').toLowerCase();
         const ordinaryButton = ((tag === 'button' || tag === 'input') && type === 'button')
-          || (!['button', 'input'].includes(tag) && control?.getAttribute?.('role') === 'button' && !type);
-        const labels = [control?.textContent, control?.getAttribute?.('aria-label'), control?.getAttribute?.('title')];
-        const commitName = value => /(?:^|[^\p{L}])(?:post|publish|reply|submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-        const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(control?.getAttribute('aria-haspopup') || '')
-          || !!control?.hasAttribute('popovertarget');
-        // A popup launcher may mention the resource it operates on. Actual
-        // composer submits are identified above; other commit words stay gated.
-        const popupCommit = value => /(?:^|[^\p{L}])(?:publish|submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-        const marker = String(control?.getAttribute?.('data-testid') || '');
-        const markerWords = marker.replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/u);
-        const commitMarker = /^(?:tweetButton(?:Inline)?|composerPublish(?:Btn|Button)|dmComposerSendButton|send(?:Message)?(?:Button|Btn)|send-message)$/i.test(marker)
-          || markerWords.some(word => /^send$/i.test(word));
-        let uniqueTarget = true;
-        if (args.text) {
-          const needle = compact(args.text).toLowerCase();
-          const choices = interactiveElements().map(el => ({el,
-            text: compact(el.innerText || el.value || el.placeholder || el.ariaLabel).toLowerCase()}));
-          const exact = choices.filter(item => item.text === needle);
-          const prefix = choices.filter(item => item.text.startsWith(needle));
-          const matches = args.textMatch === 'exact' ? exact : args.textMatch === 'prefix' ? prefix
-            : args.textMatch === 'contains' ? choices.filter(item => item.text.includes(needle))
-            : exact.length ? exact : prefix.length ? prefix : choices.filter(item => item.text.includes(needle));
-          const controls = new Set(matches.map(item => item.el.closest('button,input,[role="button"]')));
-          uniqueTarget = controls.size === 1 && controls.has(control);
-        }
-        if (uniqueTarget && ordinaryButton && labels.some(value => String(value || '').trim())
-            && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
-            && !control.form && !control.closest('form,[hidden],[inert],[aria-hidden="true"]')
-            && !control.matches('[form],[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
-            && !control.querySelector('[onclick],[data-action],button,input,[role="button"],a[href]')
-            && !commitMarker && !(popupTarget ? labels.some(popupCommit) : labels.some(commitName))
-            && !socialPublishControlEvidence(control).isSubmit) {
+          || (!['button', 'input'].includes(tag) && role === 'button' && !type)
+          // A typeless button without a form owner has no default action.
+          || (tag === 'button' && typelessOrdinaryButton(control));
+        // Menu items, tabs, options, native toggles and disclosure summaries
+        // choose or reveal content; their native activation never submits,
+        // even inside a form. Their captions still decide commit meaning.
+        const selectionControl = (!['button', 'input'].includes(tag) && !(tag === 'a' && control.hasAttribute('href'))
+            && ['menuitem', 'menuitemradio', 'menuitemcheckbox', 'tab', 'option', 'treeitem', 'switch', 'checkbox', 'radio'].includes(role))
+          || (tag === 'input' && ['checkbox', 'radio'].includes(type))
+          || (tag === 'summary' && String(control.parentElement?.tagName || '').toUpperCase() === 'DETAILS');
+        const labels = ordinaryLabels(control);
+        if (control && (ordinaryButton || selectionControl)
+            && (isVisible(control) || (selectionControl && isVisible(target)))
+            && (selectionControl || (!control.form && !control.closest('form')))
+            && ordinaryControlEvidence(control, labels)) {
+          const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(control.getAttribute('aria-haspopup') || '')
+            || control.hasAttribute('popovertarget');
           const actionResource = resourceProofFor(target);
           return { isSubmit: false, host, url, resolvedOrdinaryActivationTarget: true,
             resolvedPreparatoryTarget: popupTarget,
@@ -30801,6 +31257,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     this._lastCdpClickIdent?.delete(tabId);
     this._lastClickProgress?.delete(tabId);
     this._clickAxCdpFallbacks?.delete(tabId);
+    // Task-scoped click locks: a cleared conversation starts a new task anyway.
+    this._taskClickLocks?.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
     this.progressExpectedItems.delete(tabId);
@@ -35234,6 +35692,11 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
   _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (!state?.enabled) return null;
+    // The bracketed diagnostic stays in tool results and traces; the chat
+    // shows a plain-language account of what happened.
+    const terminal = (kind, failure, status, facts = {}) => ({ failure, status,
+      userMessage: terminalGuardUserMessage(kind, { consequential: state.successfulConsequentialToolCalls > 0,
+        readOnly: state.successfulTaskToolCalls > 0, ...facts }) });
     if (state.taskKey && this._progressTaskKeyHash(tabId) !== state.taskKey) state.taskDrifted = true;
     const recoveryAnchor = this._executionTaskRecoveryAnchor(state);
     if (!viaDone && this._isSafetyRefusalTerminal(content)) return null;
@@ -35339,91 +35802,76 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       };
     }
     if (state.taskDrifted) {
-      return {
-        failure: 'The user task changed after this run was authorized, so WebBrain discarded its execution evidence and stopped. Start a fresh run for the current task.',
-        status: 'task_binding_changed',
-      };
+      return terminal('task_changed',
+        'The user task changed after this run was authorized, so WebBrain discarded its execution evidence and stopped. Start a fresh run for the current task.',
+        'task_binding_changed');
     }
     if (missingRequiredSchedulingTool) {
-      return {
-        failure: `[Agent stopped because the approved plan required ${state.requiredSchedulingTool}, but no successful matching scheduling call was verified after one recovery nudge. The task may have performed one-time actions, but the requested future work was not scheduled.]`,
-        status: 'required_tool_missing',
-      };
+      return terminal('schedule_missing',
+        `[Agent stopped because the approved plan required ${state.requiredSchedulingTool}, but no successful matching scheduling call was verified after one recovery nudge. The task may have performed one-time actions, but the requested future work was not scheduled.]`,
+        'required_tool_missing');
     }
     if (missingRequiredDownload) {
-      return {
-        failure: '[Agent stopped because the approved task required a downloaded file, but no successful DOWNLOAD-capability tool result was verified after one recovery nudge. A URL, link, media-resolution result, or unrelated page action does not prove that a file was saved.]',
-        status: 'required_tool_missing',
-      };
+      return terminal('download_missing',
+        '[Agent stopped because the approved task required a downloaded file, but no successful DOWNLOAD-capability tool result was verified after one recovery nudge. A URL, link, media-resolution result, or unrelated page action does not prove that a file was saved.]',
+        'required_tool_missing');
     }
     if (missingSocialPublishTargets.length) {
-      return {
-        failure: `[Agent stopped because job-bound terminal evidence was still missing for these requested social destinations after one recovery nudge: ${missingSocialPublishTargets.map(name => name === 'twitter' ? 'X' : name === 'bluesky' ? 'Bluesky' : name).join(', ')}. A post may already exist on another destination; inspect each missing destination before retrying to avoid duplicate publication.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('social_missing',
+        `[Agent stopped because job-bound terminal evidence was still missing for these requested social destinations after one recovery nudge: ${missingSocialPublishTargets.map(name => name === 'twitter' ? 'X' : name === 'bluesky' ? 'Bluesky' : name).join(', ')}. A post may already exist on another destination; inspect each missing destination before retrying to avoid duplicate publication.]`,
+        'required_evidence_missing', this._socialPublicationOutcomeFacts(state));
     }
     if (missingRequiredSubmission) {
-      return {
-        failure: this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
+      return terminal('submission_missing', this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch. ${this._workflowPublicationRecoveryInstruction(state)}]`
           : state.siteWorkflow?.job?.id
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`
           : '[Agent stopped because the approved task required verified terminal evidence after its submit/send/publish dispatch, but no structured site workflow was bound and generic submission evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]',
-        status: 'required_evidence_missing',
-      };
+        'required_evidence_missing', { submitted: this._completionSubmitStates.get(tabId)?.dispatched === true
+          && this._completionSubmitStates.get(tabId)?.taskKey === state.taskKey });
     }
     if (forbiddenSubmission) {
-      return {
-        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job was authorized to prepare the form and leave it unsubmitted, but a submit action was dispatched. The submission may have gone through; inspect the page before doing anything else.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('forbidden_submission',
+        `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job was authorized to prepare the form and leave it unsubmitted, but a submit action was dispatched. The submission may have gone through; inspect the page before doing anything else.]`,
+        'required_evidence_missing');
     }
     if (missingJobEvidence) {
-      return {
-        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires its own terminal evidence — a deterministic count for the verified query, or trusted conversation coverage through the terminal page — and that evidence was still missing after one recovery nudge. Any figure or summary produced so far is unverified.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('job_evidence_missing',
+        `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job requires its own terminal evidence — a deterministic count for the verified query, or trusted conversation coverage through the terminal page — and that evidence was still missing after one recovery nudge. Any figure or summary produced so far is unverified.]`,
+        'required_evidence_missing');
     }
     if (missingDraftEvidence) {
-      return {
-        failure: `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required a verified saved draft — the intended recipients, the requested subject, the complete body, and the provider's own saved-draft state — but that evidence was still missing after one recovery nudge. The composer may still hold unsaved text; inspect it before retrying.]`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('draft_missing',
+        `[Agent stopped because the selected ${state.siteWorkflow?.job?.id || 'workflow'} job required a verified saved draft — the intended recipients, the requested subject, the complete body, and the provider's own saved-draft state — but that evidence was still missing after one recovery nudge. The composer may still hold unsaved text; inspect it before retrying.]`,
+        'required_evidence_missing');
     }
     if (missingRequiredLedger) {
-      return {
-        failure: `The selected ${state.siteWorkflow.job.id} site workflow ended without exact reconciliation against a complete app-owned inventory after one recovery nudge, so full item-level completion was not verified.`,
-        status: 'required_evidence_missing',
-      };
+      return terminal('ledger_incomplete',
+        `The selected ${state.siteWorkflow.job.id} site workflow ended without exact reconciliation against a complete app-owned inventory after one recovery nudge, so full item-level completion was not verified.`,
+        'required_evidence_missing');
     }
     const hasSuccessfulToolEvidence = state.successfulTaskToolCalls > 0;
     const hasSuccessfulConsequentialEvidence = state.successfulConsequentialToolCalls > 0;
     if (staleCancellation && state.staleCancellationRecoveryAttempted) {
-      return {
-        failure: hasSuccessfulToolEvidence
+      return terminal('stale_cancellation', hasSuccessfulToolEvidence
           ? '[Agent stopped because the model repeated a stale cancellation status after one recovery nudge. No current user stop was received. Some task tools completed, but final completion was not verified. Inspect the current state before retrying to avoid duplicate side effects.]'
           : '[Agent stopped because the model repeated a stale cancellation status after one recovery nudge. No current user stop was received and no successful action was verified.]',
-        status: 'plan_only_output',
-      };
+        'plan_only_output', { toolsCompleted: hasSuccessfulToolEvidence });
     }
     if (runtimeModeContradiction) {
-      return {
-        failure: hasSuccessfulConsequentialEvidence
+      return terminal('mode_contradiction', hasSuccessfulConsequentialEvidence
           ? 'The model still claimed Ask mode after a runtime-mode correction even though this was an Act/Dev run. Some consequential tools may already have completed, but final completion was not verified. Inspect the current page before retrying to avoid duplicate side effects.'
           : hasSuccessfulToolEvidence
           ? 'The model still claimed Ask mode after a runtime-mode correction instead of using the available Act/Dev tools. Only read-only task evidence was recorded; no consequential page action was recorded, and nothing was verified as changed, submitted, or sent.'
           : 'The model still claimed Ask mode after a runtime-mode correction instead of using the available Act/Dev tools. No successful page action was verified, and nothing was verified as changed, submitted, or sent.',
-        status: 'plan_only_output',
-      };
+        'plan_only_output');
     }
-    return {
-      failure: hasSuccessfulConsequentialEvidence
+    return terminal('default', hasSuccessfulConsequentialEvidence
         ? 'Some task tools completed, but I could not verify a valid completion after the recovery attempt. Please inspect the current page before retrying to avoid duplicate side effects.'
         : hasSuccessfulToolEvidence
         ? 'Some read-only task tools completed, but I could not verify the requested action after the recovery attempt. No consequential page action was recorded, and nothing was verified as changed, submitted, or sent.'
         : 'I could not verify any requested page action after the recovery attempt, so I stopped without claiming completion. No successful action was verified, and nothing was verified as submitted or sent.',
-      status: 'plan_only_output',
-    };
+      'plan_only_output');
   }
 
   _buildAutoProgressResumeInstruction(tabId) {
@@ -38680,6 +39128,40 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     };
   }
 
+  // A possibly delivered trusted click whose effect was not verified locks
+  // its exact document|ref for the rest of the task. The per-run lock set is
+  // cleared at every run boundary, including trusted Continue and recovery
+  // Retry, which reuse the task token; a new task (new token) drops these.
+  _taskClickLockKeys(tabId) {
+    const token = this._taskTokens?.get(tabId);
+    const entry = this._taskClickLocks?.get(tabId);
+    if (!entry) return null;
+    if (typeof token !== 'string' || !token || entry.taskToken !== token) {
+      // A different task must re-observe; it does not inherit old locks.
+      if (typeof token === 'string' && token) this._taskClickLocks?.delete(tabId);
+      return null;
+    }
+    return entry.keys;
+  }
+
+  _rememberTaskClickLock(tabId, key) {
+    const token = this._taskTokens?.get(tabId);
+    if (typeof token !== 'string' || !token || !key) return;
+    this._taskClickLocks ??= new Map();
+    let entry = this._taskClickLocks.get(tabId);
+    if (!entry || entry.taskToken !== token) {
+      entry = { taskToken: token, keys: new Set() };
+      this._taskClickLocks.set(tabId, entry);
+    }
+    // Bounded: the oldest lock yields only after many distinct unresolved clicks.
+    if (entry.keys.size >= 256) entry.keys.delete(entry.keys.values().next().value);
+    entry.keys.add(key);
+  }
+
+  _releaseTaskClickLock(tabId, key) {
+    this._taskClickLocks?.get(tabId)?.keys.delete(key);
+  }
+
   async _readTextMutationEnrichment(operation, signal) {
     if (!signal) return operation();
     this._throwIfAborted(signal);
@@ -38893,15 +39375,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         } catch {}
       };
       throwIfEarlyCdpAborted();
-      markEarlyCdpDispatched();
       try {
-        await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+        // Dispatch starts only once the fence passed; a vetoed key is unsent.
+        await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
           type: 'keyDown',
           ...keyParams,
           ...(commands.length ? { commands } : {}),
-        });
+        }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
       } catch (error) {
-        if (earlyCdpAbortSignal?.aborted) {
+        if (earlyCdpAbortSignal?.aborted && !isCdpCommandNotSentError(error)) {
           await releaseKey();
           throwIfEarlyCdpAborted();
         }
@@ -44245,19 +44727,20 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (recipientValidation?.success !== true) return recipientValidation;
           }
           throwIfEarlyCdpAborted();
-          markEarlyCdpDispatched();
-          let textPointerPressed = false;
+          let textPressSent = false;
+          let textPointerReleased = false;
           try {
-            await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y);
-            textPointerPressed = true;
+            // Dispatch starts only once the press passed its fence; a vetoed
+            // press leaves this click undispatched.
+            await sendTrustedCdpInput(options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', info.x, info.y, 'left', options),
+              { beforeSend: throwIfEarlyCdpAborted, onSent: () => { textPressSent = true; markEarlyCdpDispatched(); } });
             throwIfEarlyCdpAborted();
             await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', info.x, info.y);
-            textPointerPressed = false;
+            textPointerReleased = true;
             throwIfEarlyCdpAborted();
           } catch (error) {
-            if (earlyCdpAbortSignal?.aborted && textPointerPressed) {
-              await cancelEarlyCdpPressedPointer();
-            }
+            // A press whose release was not acknowledged may still be held.
+            if (textPressSent && !textPointerReleased) await cancelEarlyCdpPressedPointer();
             throw error;
           }
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -44371,9 +44854,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                 if (validation?.success !== true) return validation;
               }
               throwIfEarlyCdpAborted();
-              markEarlyCdpDispatched();
               return { success: true };
             },
+            // Marked at the transport boundary, after the press fence passed.
+            onDispatch: markEarlyCdpDispatched,
           });
           if ((selResult?.noDispatch === true || selResult?.dispatched === false) && selResult?.outcomeUnknown !== true) {
             earlyCdpDispatchState.started = false;
@@ -44556,19 +45040,18 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (recipientValidation?.success !== true) return recipientValidation;
           }
           throwIfEarlyCdpAborted();
-          markEarlyCdpDispatched();
-          let coordinatePointerPressed = false;
+          let coordinatePressSent = false;
+          let coordinatePointerReleased = false;
           try {
-            await cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY);
-            coordinatePointerPressed = true;
+            await sendTrustedCdpInput(options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', clickX, clickY, 'left', options),
+              { beforeSend: throwIfEarlyCdpAborted, onSent: () => { coordinatePressSent = true; markEarlyCdpDispatched(); } });
             throwIfEarlyCdpAborted();
             await cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', clickX, clickY);
-            coordinatePointerPressed = false;
+            coordinatePointerReleased = true;
             throwIfEarlyCdpAborted();
           } catch (error) {
-            if (earlyCdpAbortSignal?.aborted && coordinatePointerPressed) {
-              await cancelEarlyCdpPressedPointer();
-            }
+            // A press whose release was not acknowledged may still be held.
+            if (coordinatePressSent && !coordinatePointerReleased) await cancelEarlyCdpPressedPointer();
             throw error;
           }
           const blockedFileInput = await cdpClient.consumeFileInputClickGuard(tabId);
@@ -44628,6 +45111,25 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         // index-based: fall through to content-script path which knows the
         // interactive-elements ordering.
       } catch (e) {
+        if (e?.code === 'content_action_timeout' || e?.name === 'AbortError') throw e;
+        // A fence veto before any press reached the page is an undispatched
+        // action; the page-feedback wrapper reports it with its diagnostics.
+        if (e?.code === 'page_feedback_pending' && earlyCdpDispatchState.started !== true) throw e;
+        if (earlyCdpDispatchState.started === true) {
+          // Input was sent (or its acknowledgement was lost): a later failure,
+          // such as a post-click read on a navigated document, cannot make it
+          // undispatched. Observe before any further click.
+          return this._withCoordinateReconciliation({
+            success: false,
+            dispatched: true,
+            outcomeUnknown: true,
+            mutationMayHaveOccurred: true,
+            verified: false,
+            retryable: false,
+            ...(e?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}),
+            error: `The click input was sent but its outcome is unknown (${e.message}). Inspect the page before deciding whether to click again.`,
+          }, coordinateDiagnostic);
+        }
         return this._withCoordinateReconciliation(
           { success: false, error: `Click failed: ${e.message}` },
           coordinateDiagnostic,
@@ -44636,7 +45138,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     }
 
     if (name === 'type_text') {
-      let dispatched = false;
       try {
         await cdpClient.attach(tabId);
         throwIfEarlyCdpAborted();
@@ -44687,7 +45188,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                   error: 'Focused select target could not be prepared.',
                 };
               }
-              dispatched = true;
               await dispatchEarlyCdpKeyPress({
                 key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
               });
@@ -44738,7 +45238,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               if (args.clear) {
                 const selectAllModifiers = await cdpClient.selectAllModifier(tabId);
                 throwIfEarlyCdpAborted();
-                dispatched = true;
                 await dispatchEarlyCdpKeyPress({
                   key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
                 });
@@ -44762,10 +45261,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
                 }
                 throwIfEarlyCdpAborted();
               }
-              dispatched = true;
-              markEarlyCdpDispatched();
               const nativeText = String(args.text ?? '').replace(/\r\n?/g, '\n');
-              await cdpClient.sendCommand(tabId, 'Input.insertText', { text: nativeText });
+              await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.insertText',
+                { text: nativeText }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
               throwIfEarlyCdpAborted();
               const verification = await sendFocusedTarget('verify_focused_type_dispatch', {
                 text: nativeText,
@@ -44802,12 +45300,16 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               };
             } finally { await clearReceipt?.dispose(); }
           } catch (error) {
+            // Dispatch state comes from the transport boundary: a fence veto
+            // before any key or text reached the page is not an uncertain write.
+            const inputSent = earlyCdpDispatchState.started === true;
+            if (error?.code === 'page_feedback_pending' && !inputSent) throw error;
             return {
               success: false,
-              dispatched,
-              ...(dispatched ? {} : { noDispatch: true }),
-              retryable: !dispatched,
-              error: dispatched
+              dispatched: inputSent,
+              ...(inputSent ? {} : { noDispatch: true }),
+              retryable: !inputSent,
+              error: inputSent
                 ? `Focused typing outcome became uncertain: ${error?.message || String(error)}`
                 : `Focused typing was not dispatched: ${error?.message || String(error)}`,
             };
@@ -44971,7 +45473,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             }
 
             // Close any open native dropdown first
-            dispatched = true;
             await dispatchEarlyCdpKeyPress({
               key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27,
             });
@@ -45046,7 +45547,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (args.clear) {
               const selectAllModifiers = await cdpClient.selectAllModifier(tabId);
               throwIfEarlyCdpAborted();
-              dispatched = true;
               await dispatchEarlyCdpKeyPress({
                 key: 'a', code: 'KeyA', modifiers: selectAllModifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
               });
@@ -45069,10 +45569,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               }
               throwIfEarlyCdpAborted();
             }
-            dispatched = true;
-            markEarlyCdpDispatched();
             const nativeText = String(args.text ?? '').replace(/\r\n?/g, '\n');
-            await cdpClient.sendCommand(tabId, 'Input.insertText', { text: nativeText });
+            await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.insertText',
+              { text: nativeText }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
             throwIfEarlyCdpAborted();
             const verified = await cdpClient.verifyTextEntry(tabId, {
               focused: true,
@@ -45112,9 +45611,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           error: 'type_text: internal — no branch matched. Provide {text} (with focused field) or {selector, text}.',
         };
       } catch (e) {
+        // Keys and text mark dispatch at the transport boundary. A fence veto
+        // before any input reached the page stays undispatched (no text debt).
+        const typeDispatched = earlyCdpDispatchState.started === true;
+        if (e?.code === 'page_feedback_pending' && !typeDispatched) throw e;
         return {
           success: false,
-          ...(dispatched
+          ...(typeDispatched
             ? { dispatched: true }
             : { dispatched: false, noDispatch: true }),
           error: `Type failed: ${e.message}`,
@@ -45151,6 +45654,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       let guardedTargetConsumed = false;
       let messageRecipientConsumed = false;
       let keyDispatchAttempted = false;
+      let deliveredKeys = 0;
       try {
         await cdpClient.attach(tabId);
         throwIfEarlyCdpAborted();
@@ -45198,21 +45702,19 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           ';': { code: 'Semicolon', windowsVirtualKeyCode: 186 },
         }[key];
 
+        const keyEvent = (type, options) => cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          type,
+          key,
+          code: keyMeta.code,
+          windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
+        }, '', options);
         for (let i = 0; i < repeat; i++) {
-          keyDispatchAttempted = true;
-          markEarlyCdpDispatched();
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-            type: 'keyDown',
-            key,
-            code: keyMeta.code,
-            windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
+          await sendTrustedCdpInput(options => keyEvent('keyDown', options), {
+            beforeSend: throwIfEarlyCdpAborted,
+            onSent: () => { keyDispatchAttempted = true; markEarlyCdpDispatched(); },
           });
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
-            type: 'keyUp',
-            key,
-            code: keyMeta.code,
-            windowsVirtualKeyCode: keyMeta.windowsVirtualKeyCode,
-          });
+          await keyEvent('keyUp');
+          deliveredKeys++;
           throwIfEarlyCdpAborted();
         }
 
@@ -45226,16 +45728,41 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           earlyCdpAbortSignal,
         );
       } catch (e) {
-        if (guardedTargetConsumed || messageRecipientConsumed) {
+        const guarded = guardedTargetConsumed || messageRecipientConsumed;
+        if (keyDispatchAttempted) {
+          // A trusted key may already have reached the page. Replaying the
+          // requested keys synthetically would repeat them, so report how many
+          // complete key presses were acknowledged and leave the outcome open.
+          if (e?.code === 'content_action_timeout' || e?.name === 'AbortError') throw e;
           return {
             success: false,
-            dispatched: keyDispatchAttempted,
-            ...(keyDispatchAttempted ? {} : { noDispatch: true, retryable: true }),
-            error: keyDispatchAttempted
-              ? `Keyboard dispatch became uncertain after the guarded target was revalidated: ${e.message || e}`
-              : `Keyboard dispatch failed after the guarded target was revalidated: ${e.message || e}`,
+            dispatched: true,
+            outcomeUnknown: true,
+            mutationMayHaveOccurred: true,
+            verified: false,
+            retryable: false,
+            method: 'cdp-key',
+            key,
+            repeat,
+            deliveredKeys,
+            ...(e?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}),
+            error: guarded
+              ? `Keyboard dispatch became uncertain after the guarded target was revalidated (${deliveredKeys} of ${repeat} key presses acknowledged): ${e.message || e}`
+              : `Keyboard input became uncertain after ${deliveredKeys} of ${repeat} ${key} key presses were acknowledged (${e.message || e}). Inspect the page before sending more keys.`,
           };
         }
+        if (guarded) {
+          return {
+            success: false,
+            dispatched: false,
+            noDispatch: true,
+            retryable: true,
+            error: `Keyboard dispatch failed after the guarded target was revalidated: ${e.message || e}`,
+          };
+        }
+        // A fence veto before any key stays undispatched; the page-feedback
+        // wrapper reports it. It is never converted into synthetic keys.
+        if (e?.code === 'page_feedback_pending') throw e;
         // Fall through to content-script path if CDP is unavailable.
       }
     }
@@ -46386,6 +46913,14 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       return { expectedModelSnapshot: call.expectedModelSnapshot,
         relaxedMonitorGrantToken: call.relaxedMonitorGrantToken, allowPassiveRebase: true };
     };
+    // Trusted input is marked only once its fence passed (or its rejection
+    // cannot be placed before the protocol call); a vetoed command is unsent.
+    const markTrustedDispatched = () => { trustedDispatched = true; };
+    const markTextAttempted = () => { trustedDispatched = true; trustedTextAttempted = true; };
+    const sendTrusted = (method, params, onSent) => sendTrustedCdpInput(
+      options => cdpClient.sendCommand(tabId, method, params, '', options),
+      { beforeSend: () => this._throwIfAborted(abortSignal), onSent },
+    );
     const finishPreparationFailure = async failure => {
       if (!trustedDispatched || trustedTextAttempted || !beforePreparation?.documentToken || abortSignal?.aborted) return failure;
       const afterPreparation = await this._textMutationValueDigest(tabId, digestTarget);
@@ -46437,10 +46972,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           type: 'mouseMoved', x, y, button: 'none', buttons: 0,
         });
         this._throwIfAborted(abortSignal);
-        trustedDispatched = true;
-        await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
+        await sendTrusted('Input.dispatchMouseEvent', {
           type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1,
-        });
+        }, markTrustedDispatched);
         await cdpClient.sendCommand(tabId, 'Input.dispatchMouseEvent', {
           type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1,
         });
@@ -46467,7 +47001,6 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         }
         prepared = reselected;
       }
-      trustedDispatched = true;
       const appendingContentEditable = prepared.contentEditable && !clearsExisting;
       // Canonicalize before native insertion as well as readback: raw CRLF
       // becomes CR spaces plus LF paragraphs in browser-managed editors.
@@ -46475,12 +47008,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         ? (typeof args?.text === 'string' ? args.text : '')
         : expected).replace(/\r\n?/g, '\n');
       this._throwIfAborted(abortSignal);
-      // A lost response can precede a delayed applied write. After this
-      // boundary an unchanged sample cannot make the text command retry-safe.
-      trustedTextAttempted = true;
+      // A lost response can precede a delayed applied write. Once the first
+      // text-changing command passes its fence, an unchanged sample cannot
+      // make it retry-safe; a vetoed command leaves the editor untouched.
       const pageHandledPaste = prepared.editorKind === 'draftjs' && /[\r\n]/.test(trustedText);
       let verification;
       if (pageHandledPaste) {
+        markTextAttempted();
         verification = await sendContent({
           target: 'content', action: 'ax_paste_draft',
           params: { ref_id: args.ref_id, text: trustedText, clear: clearsExisting },
@@ -46492,7 +47026,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         }
       } else {
         if (trustedText || appendingContentEditable) {
-          await cdpClient.sendCommand(tabId, 'Input.insertText', { text: trustedText });
+          await sendTrusted('Input.insertText', { text: trustedText }, markTextAttempted);
         } else {
           // Native chat knows that an explicitly deleted caret is an empty
           // message. Keep that proof private and scoped; generic BRs stay LF.
@@ -46507,9 +47041,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               if (nativeClearReceipt) {
                 const modifiers = await cdpClient.selectAllModifier(tabId);
                 this._throwIfAborted(abortSignal);
-                await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+                await sendTrusted('Input.dispatchKeyEvent', {
                   type: 'keyDown', key: 'a', code: 'KeyA', modifiers, windowsVirtualKeyCode: 65, commands: ['selectAll'],
-                });
+                }, markTextAttempted);
                 await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
                   type: 'keyUp', key: 'a', code: 'KeyA', modifiers, windowsVirtualKeyCode: 65,
                 });
@@ -46517,9 +47051,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             }
           }
           this._throwIfAborted(abortSignal);
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          await sendTrusted('Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
-          });
+          }, markTextAttempted);
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46,
           });
@@ -46618,10 +47152,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         this._throwIfAborted(abortSignal);
         let enterDispatched = false;
         try {
-          await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
+          await sendTrusted('Input.dispatchKeyEvent', {
             type: 'keyDown', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
-          });
-          enterDispatched = true;
+          }, () => { enterDispatched = true; });
           await cdpClient.sendCommand(tabId, 'Input.dispatchKeyEvent', {
             type: 'keyUp', key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13,
           });
@@ -46920,7 +47453,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
     const fallbackKey = `${target.documentToken || 'document'}|${args?.ref_id || ''}`;
     const attempted = this._clickAxCdpFallbacks.get(tabId) || new Set();
-    if (attempted.has(fallbackKey)) {
+    if (attempted.has(fallbackKey) || this._taskClickLockKeys(tabId)?.has(fallbackKey)) {
       if (timing) timing.duplicateFallbackBlocked = true;
       return withSnapshot({
         ...response,
@@ -46960,6 +47493,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     let dispatchStage = 'attach';
     let dispatchedEvents = 0;
     let pressedDelivered = false;
+    let pointerReleased = false;
     try {
       this._throwIfAborted(abortSignal);
       await this._measureClickAxStage(timing, 'fallbackPreparationMs', () => cdpClient.attach(tabId));
@@ -46984,27 +47518,29 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       await this._measureClickAxStage(
         timing,
         'fallbackDispatchMs',
-        () => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', target.x, target.y),
+        () => sendTrustedCdpInput(
+          options => cdpClient.dispatchMouseEvent(tabId, 'mousePressed', target.x, target.y, 'left', options),
+          { beforeSend: () => this._throwIfAborted(abortSignal), onSent: () => {
+            // Reserve the one-shot slot before the press can reach the page:
+            // a press is partial user input, and a lost acknowledgement is not
+            // permission to replay it or the synthetic click before it.
+            pressedDelivered = true;
+            attempted.add(fallbackKey);
+            this._clickAxCdpFallbacks.set(tabId, attempted);
+            this._rememberTaskClickLock(tabId, fallbackKey);
+          } },
+        ),
       );
       dispatchedEvents++;
       if (timing) timing.trustedInputEvents = dispatchedEvents;
-      pressedDelivered = true;
-      // A confirmed press is partial user input; from this point onward a
-      // retry could double-activate or leave mismatched pointer state.
-      attempted.add(fallbackKey);
-      this._clickAxCdpFallbacks.set(tabId, attempted);
-      try {
-        this._throwIfAborted(abortSignal);
-      } catch (error) {
-        await this._cancelTrustedClickPress(tabId);
-        throw error;
-      }
+      this._throwIfAborted(abortSignal);
       dispatchStage = 'mouseReleased';
       await this._measureClickAxStage(
         timing,
         'fallbackDispatchMs',
         () => cdpClient.dispatchMouseEvent(tabId, 'mouseReleased', target.x, target.y),
       );
+      pointerReleased = true;
       dispatchedEvents++;
       if (timing) timing.trustedInputEvents = dispatchedEvents;
       this._throwIfAborted(abortSignal);
@@ -47030,12 +47566,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
       dispatchStage = 'complete';
     } catch (error) {
+      // A press whose release was not acknowledged may still be held.
+      if (pressedDelivered && !pointerReleased) await this._cancelTrustedClickPress(tabId);
       if (error?.code === 'content_action_timeout') throw error;
-      const fallbackAttempted = dispatchedEvents > 0;
+      const fallbackAttempted = dispatchedEvents > 0 || pressedDelivered;
       return withSnapshot({
         ...response,
         success: false,
         dispatched: true,
+        ...(pressedDelivered ? { outcomeUnknown: true } : {}),
         noProgress: pressedDelivered || undefined,
         fallback: 'cdp_after_synthetic_no_progress',
         fallbackAttempted,
@@ -47092,6 +47631,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       );
     }
     if (trustedTargetStateChanged || trustedTargetWeakStateChanged) {
+      this._releaseTaskClickLock(tabId, fallbackKey);
       return withSnapshot({
         ...response,
         success: true,
@@ -47144,6 +47684,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }, trustedObservation);
     }
 
+    // A verified effect reconciles the trusted click for later runs of this
+    // task; the per-run one-shot slot still stays used for this run.
+    this._releaseTaskClickLock(tabId, fallbackKey);
     return withSnapshot({
       ...response,
       success: true,
@@ -48309,6 +48852,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
     const chatMainTurn = async (chatMessages, chatOptions, requestContext) => {
       const startedAt = Date.now();
+      const steeringInterrupt = this._armSteeringInterrupt(tabId);
+      if (steeringInterrupt) chatOptions = { ...chatOptions, signal: steeringInterrupt.signal };
       let result;
       try {
         // Retain the exact request for voluntary research sharing (see
@@ -48317,7 +48862,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         currentNonStreamRequestMessages = chatMessages;
         result = await chatMainTurnRaw(chatMessages, chatOptions, requestContext);
       } catch (error) {
-        if (error?.webbrainOutputEmitted === true) throw error;
+        if (error?.webbrainOutputEmitted === true || this._steeringSupersedesInference(tabId, error)) throw error;
         const fallbackMessages = await this._visionFallbackMessages(tabId, chatMessages, costState, error);
         if (!fallbackMessages) throw error;
         onUpdate('warning', {
@@ -48326,6 +48871,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         });
         currentNonStreamRequestMessages = fallbackMessages;
         result = await chatMainTurnRaw(fallbackMessages, chatOptions, requestContext);
+      } finally {
+        this._disarmSteeringInterrupt(tabId, steeringInterrupt);
       }
       messageCompletion = aggregateMessageCompletion(
         messageCompletion,
@@ -48379,6 +48926,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
     // provider before producing a 'done' outcome, so research sharing may
     // consider this run. Failures/cancels are still excluded via _traceStatus.
     shareHadProviderCompletion = true;
+    const supersedeInferenceForSteering = error => {
+      if (!this._steeringSupersedesInference(tabId, error)) return false;
+      if (runId) trace.recordStepEnd(runId, steps, { ok: true, status: 'steering_superseded' });
+      onUpdate('text', { content: '', replace: true });
+      return true;
+    };
 
     while (steps < this.maxSteps || this._hasUnvalidatedSteering(tabId)) {
       const handoff = await runOptions.handoffBoundary?.();
@@ -48486,7 +49039,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
       steps++;
       lastTraceStep = steps;
-      await this._applyPendingPageFeedback(tabId, messages, onUpdate);
+      // A pending correction is applied first; the refresh read (and idle
+      // wait) still runs before the next inference on the following pass.
+      if (!this._hasPendingSteering(tabId)) await this._applyPendingPageFeedback(tabId, messages, onUpdate);
       if (this._hasPendingSteering(tabId)) { steps--; continue; }
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
@@ -48570,6 +49125,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           onUpdate('warning', { message: finalResponse });
           break;
         }
+        if (supersedeInferenceForSteering(e)) continue;
         // If context overflow, trim aggressively and retry once
         if (this._isContextOverflow(e.message)) {
           onUpdate('thinking', { step: steps, note: 'Context too large, trimming...' });
@@ -48601,6 +49157,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            if (supersedeInferenceForSteering(e2)) continue;
             const retryCode = this._traceErrorCodeFor(e2);
             traceFailureCode = retryCode;
             _traceStatus = 'error';
@@ -48648,7 +49205,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               ...(completionToolChoice ? { toolChoice: completionToolChoice } : {}),
             };
             result = await retryModelCall(e, () => chatMainTurn(this._pruneOldImages(modelMessagesForRun(), provider), chatOpts2, { tabId, generationName: 'main' }), {
-              isAborted: () => this._checkAbort(tabId),
+              // A correction also ends the retry delay; it supersedes the old request.
+              isAborted: () => this._checkAbort(tabId) || this._hasPendingSteering(tabId),
               onRetry: async ({ error, delayMs, attempt }) => {
                 this._logDebug({ type: 'llm_error_retrying', step: steps, error: error.message, delayMs, attempt });
                 if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
@@ -48670,6 +49228,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
               onUpdate('warning', { message: finalResponse });
               break;
             }
+            if (supersedeInferenceForSteering(e2)) continue;
             traceFailureCode = this._traceErrorCodeFor(e2);
             _traceStatus = 'error';
             if (runId) trace.recordStepEnd(runId, steps, { ok: false, code: traceFailureCode });
@@ -48702,9 +49261,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
       const feedbackCalls = result?.toolCalls?.length ? result.toolCalls
         : !this._containsProviderReplayState(result?.responseItems) ? this._tryParseToolCallsFromText(result?.content || '', allowedToolNames) : [];
-      if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
-        responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: result.content,
-      }))
+      // A pending correction supersedes this response anyway; do not first
+      // wait for a page-feedback refresh read (the next pass still applies it).
+      if (this._hasPendingSteering(tabId)
+          || (await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
+            responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: result.content,
+          }))
           || this._applyPendingSteering(tabId, messages, onUpdate)) {
         const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
         if (recovery) {
@@ -48814,9 +49376,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         const batchResult = await this._executeToolBatch(
           tabId, result.toolCalls, messages, onUpdate, provider, assistantToolContent, allowedToolNames, steps, runOptions, toolSchemas
         );
+        // An executed done (success, partial or failed) is terminal: page
+        // activity, including the user's own clicks, cannot reopen it. Only an
+        // accepted correction can. After a non-terminal batch, pending page
+        // feedback is applied at the next step without discarding its
+        // completion-recovery turn.
         if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
-            && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: batchResult.action === 'return' ? [result.toolCalls.at(-1)] : null }))
-              || this._applyPendingSteering(tabId, messages, onUpdate))) {
+            && this._applyPendingSteering(tabId, messages, onUpdate)) {
           onUpdate('text', { content: '', replace: true });
           continue;
         }
@@ -48824,9 +49390,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           if (typeof runOptions.afterVerifiedCompletion === 'function') {
             await this._settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions);
             this._throwIfAborted(this._runAbortSignal(tabId));
-            const superseded = !batchResult.status
-              && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: [result.toolCalls.at(-1)] }))
-                || this._applyPendingSteering(tabId, messages, onUpdate));
+            const superseded = !batchResult.status && this._applyPendingSteering(tabId, messages, onUpdate);
             this._throwIfAborted(this._runAbortSignal(tabId));
             if (superseded) {
               onUpdate('text', { content: '', replace: true });
@@ -48933,8 +49497,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           this._persist(tabId);
           break;
         }
-        finalResponse = '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]';
+        finalResponse = terminalGuardUserMessage('placeholder_output');
         _traceStatus = 'placeholder_output';
+        if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: _traceStatus,
+          detail: '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]' });
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -48958,16 +49524,20 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           this._persist(tabId);
           break;
         }
-        // Second empty in a row: give up with a transparent message.
-        finalResponse = emptyOutputFailureMessage(modelOutputDiagnostics(result, {
+        // Second empty in a row: give up with a plain message. The provider
+        // diagnosis stays in the recovery card's technical details and trace.
+        const emptyDiagnostics = modelOutputDiagnostics(result, {
           requestedMaxTokens: mainMaxTokens,
           recoveryAttempt: 2,
-        }));
+        });
+        const emptyDetail = emptyOutputFailureMessage(emptyDiagnostics);
+        finalResponse = terminalGuardUserMessage('empty_output', { reason: emptyDiagnostics.emptyReason });
         _traceStatus = 'empty_output';
         traceFailureCode = 'EMPTY_RESPONSE';
+        if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: _traceStatus, detail: emptyDetail });
         this._offerFailureRecovery(tabId, { stage: 'model', code: 'empty_response',
           message: 'Failed while getting a usable model response. The model returned no answer after a recovery attempt.',
-          diagnostics: finalResponse }, onUpdate);
+          diagnostics: emptyDetail }, onUpdate);
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -49124,8 +49694,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         continue;
       }
       if (planOnlyDecision?.failure) {
-        finalResponse = planOnlyDecision.failure;
+        finalResponse = planOnlyDecision.userMessage || planOnlyDecision.failure;
         _traceStatus = planOnlyDecision.status || 'plan_only_output';
+        if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: _traceStatus, detail: planOnlyDecision.failure });
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
@@ -49794,7 +50365,20 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
       steps++;
       lastTraceStep = steps;
-      if (await this._applyPendingPageFeedback(tabId, messages, onUpdate)) pendingVisionFallbackMessages = null;
+      const messagesBeforeFeedback = pendingVisionFallbackMessages ? new Set(messages) : null;
+      // A pending correction is applied first; the refresh read (and idle
+      // wait) still runs before the next inference on the following pass.
+      if (!this._hasPendingSteering(tabId) && await this._applyPendingPageFeedback(tabId, messages, onUpdate)
+          && pendingVisionFallbackMessages) {
+        // Keep the one-shot fallback: a fresh request would resend the image
+        // the provider just rejected. Swap its superseded browser observations
+        // (the same kinds feedback compaction replaces) for the new text ones.
+        pendingVisionFallbackMessages = [
+          ...pendingVisionFallbackMessages.filter(message => !['page_feedback', 'page_feedback_capture', 'page_action_observation']
+            .includes(message?.webbrainAppOwnedKind)),
+          ...messages.filter(message => !messagesBeforeFeedback.has(message) && !this._messagesContainImageBlocks([message])),
+        ];
+      }
       if (this._hasPendingSteering(tabId)) { steps--; continue; }
       onUpdate('thinking', { step: steps });
       if (runId) trace.recordStepStart(runId, steps, {});
@@ -49804,6 +50388,8 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         traceStepClosed = true;
         return runId ? trace.recordStepEnd(runId, steps, payload) : Promise.resolve();
       };
+      let releaseSteeringInterrupt = () => {};
+      let inferenceOpen = true;
 
       try {
         streamEmittedOutput = false;
@@ -49857,6 +50443,16 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         const _llmStart = Date.now();
         let costStopMessage = '';
 
+        const steeringInterrupt = fastResult ? null : this._armSteeringInterrupt(tabId);
+        if (steeringInterrupt) {
+          // Stop keeps the run signal; an accepted correction aborts only this request.
+          const inferenceSignal = this._linkAbortSignals(streamOpts.signal, steeringInterrupt.signal);
+          streamOpts.signal = inferenceSignal.signal;
+          releaseSteeringInterrupt = () => {
+            inferenceSignal.dispose();
+            this._disarmSteeringInterrupt(tabId, steeringInterrupt);
+          };
+        }
         this._throwIfAborted(streamOpts.signal);
         let streamAttempt = 0;
         const modelStream = fastResult ? this._jevToolStream(fastResult) : retryModelStream(async () => {
@@ -49869,7 +50465,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           }, { messages: prunedMessages, tools: streamOpts.tools || [], runtimeMode: mode });
           return provider.chatStream(prunedMessages, streamOpts);
         }, {
-          isAborted: () => this._checkAbort(tabId),
+          isAborted: () => this._checkAbort(tabId) || this._hasPendingSteering(tabId),
           onRetry: async ({ error, delayMs, attempt }) => {
             onUpdate('thinking', { step: steps, note: `The model service could not start the response. Retrying (${attempt})…` });
             if (runId) await trace.recordLLMRetry(runId, steps, { delayMs, code: this._traceErrorCodeFor(error) });
@@ -49932,6 +50528,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           }
         }
         this._throwIfAborted(streamOpts.signal);
+        // From here a correction is handled at the existing response boundary.
+        inferenceOpen = false;
+        releaseSteeringInterrupt();
 
         fullText = Agent._stripReasoningTags(fullText);
         // Capture the completion before local-search or presentation rewrites.
@@ -49966,9 +50565,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
 
         const feedbackCalls = streamedToolCalls?.length ? streamedToolCalls
           : !this._containsProviderReplayState(responseItems) ? this._tryParseToolCallsFromText(fullText || '', allowedToolNames) : [];
-        if ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
-          responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: fullText,
-        }))
+        // A pending correction supersedes this response anyway; do not first
+        // wait for a page-feedback refresh read (the next pass still applies it).
+        if (this._hasPendingSteering(tabId)
+            || (await this._applyPendingPageFeedback(tabId, messages, onUpdate, {
+              responseToolCalls: feedbackCalls, responseWithoutTools: feedbackCalls.length === 0, responseContent: fullText,
+            }))
             || this._applyPendingSteering(tabId, messages, onUpdate)) {
           const recovery = this._pageFeedbackRecoveryResult(tabId, messages, onUpdate);
           if (recovery) {
@@ -50070,9 +50672,13 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           const batchResult = await this._executeToolBatch(
             tabId, toolCalls, messages, onUpdate, provider, fullText, allowedToolNames, steps, runOptions, toolSchemas
           );
+          // An executed done (success, partial or failed) is terminal: page
+          // activity, including the user's own clicks, cannot reopen it. Only
+          // an accepted correction can. After a non-terminal batch, pending
+          // page feedback is applied at the next step without discarding its
+          // completion-recovery turn.
           if (['continue', 'return'].includes(batchResult.action) && !batchResult.status
-              && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: batchResult.action === 'return' ? [toolCalls.at(-1)] : null }))
-                || this._applyPendingSteering(tabId, messages, onUpdate))) {
+              && this._applyPendingSteering(tabId, messages, onUpdate)) {
             onUpdate('text', { content: '', replace: true });
             continue;
           }
@@ -50080,9 +50686,7 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             if (typeof runOptions.afterVerifiedCompletion === 'function') {
               await this._settleVerifiedScheduledCompletion(tabId, messages, batchResult, runOptions);
               this._throwIfAborted(this._runAbortSignal(tabId));
-              const superseded = !batchResult.status
-                && ((await this._applyPendingPageFeedback(tabId, messages, onUpdate, { responseToolCalls: [toolCalls.at(-1)] }))
-                  || this._applyPendingSteering(tabId, messages, onUpdate));
+              const superseded = !batchResult.status && this._applyPendingSteering(tabId, messages, onUpdate);
               this._throwIfAborted(this._runAbortSignal(tabId));
               if (superseded) {
                 onUpdate('text', { content: '', replace: true });
@@ -50173,10 +50777,12 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             this._persist(tabId);
             return finish(scheduledResume.message, 'scheduled_resume');
           }
-          const failMsg = emptyOutputFailureMessage(outputDiagnostics);
+          const emptyDetail = emptyOutputFailureMessage(outputDiagnostics);
+          const failMsg = terminalGuardUserMessage('empty_output', { reason: outputDiagnostics?.emptyReason });
+          if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: 'empty_output', detail: emptyDetail });
           this._offerFailureRecovery(tabId, { stage: 'model', code: 'empty_response',
             message: 'Failed while getting a usable model response. The model returned no answer after a recovery attempt.',
-            diagnostics: failMsg }, onUpdate);
+            diagnostics: emptyDetail }, onUpdate);
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
@@ -50202,7 +50808,9 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
             this._persist(tabId);
             return finish(scheduledResume.message, 'scheduled_resume');
           }
-          const failMsg = '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]';
+          const failMsg = terminalGuardUserMessage('placeholder_output');
+          if (runId) trace.recordNote(runId, steps, 'terminal_guard', { status: 'placeholder_output',
+            detail: '[Agent stopped because the model returned a context-compression placeholder instead of a tool call or real final answer, even after a recovery nudge.]' });
           messages.push({ role: 'assistant', content: failMsg });
           onUpdate('warning', { message: failMsg });
           this._persist(tabId);
@@ -50338,13 +50946,16 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           continue;
         }
         if (planOnlyDecision?.failure) {
-          messages.push({ role: 'assistant', content: planOnlyDecision.failure });
+          const visibleFailure = planOnlyDecision.userMessage || planOnlyDecision.failure;
+          if (runId) trace.recordNote(runId, steps, 'terminal_guard', {
+            status: planOnlyDecision.status || 'plan_only_output', detail: planOnlyDecision.failure });
+          messages.push({ role: 'assistant', content: visibleFailure });
           // Replace any rejected plan text already emitted as streaming deltas
           // so the visible terminal content matches the failed run result.
-          onUpdate('text', { content: planOnlyDecision.failure, replace: true });
-          onUpdate('warning', { message: planOnlyDecision.failure });
+          onUpdate('text', { content: visibleFailure, replace: true });
+          onUpdate('warning', { message: visibleFailure });
           this._persist(tabId);
-          return finish(planOnlyDecision.failure, planOnlyDecision.status || 'plan_only_output');
+          return finish(visibleFailure, planOnlyDecision.status || 'plan_only_output');
         }
         if (this._isClearlyIncompleteStandaloneAnswer(fullText, runOptions)) {
           if (!standaloneIncompleteAnswerRecoveryAttempted) {
@@ -50399,7 +51010,15 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
         return finish(fullText);
 
       } catch (e) {
+        releaseSteeringInterrupt();
         if (this._checkAbort(tabId)) throw e;
+        // Only the inference itself is superseded; tool-batch errors keep
+        // their normal handling.
+        if (inferenceOpen && this._steeringSupersedesInference(tabId, e)) {
+          await closeTraceStep({ ok: true, status: 'steering_superseded' });
+          onUpdate('text', { content: '', replace: true });
+          continue;
+        }
         const caughtMessage = formatErrorMessage(e);
         const stepErrorCode = this._traceErrorCodeFor(e);
         await closeTraceStep({ ok: false, code: stepErrorCode });

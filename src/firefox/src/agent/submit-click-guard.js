@@ -22,8 +22,15 @@ export async function guardRecentSubmitClick(
 ) {
   if (!args?.text) return null;
   // Only app-observed preflight evidence can exempt a control. A label such
-  // as "Add post" adds a thread editor; it does not publish the thread.
-  if (detectedTarget?.isSubmit === false && detectedTarget.resolvedNonSubmitTarget === true) return null;
+  // as "Add post" adds a thread editor; it does not publish the thread. Popup
+  // launchers, links, fields and draft tools ("Add emoji") are repeatable.
+  // Other ordinary activations ("Add to cart", "Create") keep the window:
+  // their caption, not their structure, is what can make a second click a
+  // duplicate.
+  if (detectedTarget?.isSubmit === false && (detectedTarget.resolvedNonSubmitTarget === true
+      || detectedTarget.resolvedPreparatoryTarget === true
+      || detectedTarget.resolvedNavigationTarget === true
+      || detectedTarget.resolvedEditableTarget === true)) return null;
 
   const rawText = String(args.text).trim();
   if (!SUBMIT_LIKE_CLICK_RE.test(rawText)) return null;

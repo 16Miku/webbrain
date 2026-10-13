@@ -853,6 +853,7 @@ export default {
   "sp.queue.send": "Добавить сообщение в очередь",
   "sp.queue.label": "В очереди",
   "sp.queue.label_numbered": "В очереди {index}",
+  "sp.queue.held": "Приостановлено после остановки",
   "sp.queue.edit": "Редактировать сообщение в очереди",
   "sp.queue.delete": "Удалить сообщение из очереди",
   "sp.slash.check_progress": "Показать текущий журнал прогресса",

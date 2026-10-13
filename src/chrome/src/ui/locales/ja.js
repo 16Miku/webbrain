@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "メッセージを待機列に追加",
   "sp.queue.label": "キュー済み",
   "sp.queue.label_numbered": "キュー済み {index}",
+  "sp.queue.held": "停止後に保留中",
   "sp.queue.edit": "キュー内のメッセージを編集",
   "sp.queue.delete": "キュー内のメッセージを削除",
   "sp.slash.check_progress": "現在の進行ログを表示",

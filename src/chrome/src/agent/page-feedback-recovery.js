@@ -31,7 +31,7 @@ export function feedbackSupersessionMetadata({ stage, toolNames, streak, reason 
   };
 }
 
-/** Call after accepted dispatch/progress, user steering, or a hard browser intervention. */
+/** Call after accepted dispatch/progress, user steering, or genuine user intervention. */
 export function resetFeedbackSupersession(run) {
   if (run && typeof run === 'object') {
     run.passiveSupersessionStreak = 0;
@@ -40,8 +40,9 @@ export function resetFeedbackSupersession(run) {
 }
 
 /**
- * Count only consecutive no-dispatch retries caused by passive page changes.
- * Tool/stage changes do not reset the budget. Accepted observations and actions
+ * Count consecutive no-dispatch supersessions that no user intervention or
+ * task-authority change explains (`passive: true`): passive or other automatic
+ * page churn and unknown attribution. Tool/stage changes do not reset the budget. Accepted observations and actions
  * reset it explicitly; elapsed time is irrelevant, so productive watch tasks
  * and intentionally long runs retain their normal lifetime.
  */

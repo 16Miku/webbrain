@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "إضافة الرسالة إلى قائمة الانتظار",
   "sp.queue.label": "في قائمة الانتظار",
   "sp.queue.label_numbered": "في قائمة الانتظار {index}",
+  "sp.queue.held": "متوقف مؤقتًا بعد الإيقاف",
   "sp.queue.edit": "تعديل الرسالة في قائمة الانتظار",
   "sp.queue.delete": "حذف الرسالة من قائمة الانتظار",
   "sp.slash.check_progress": "إظهار سجل التقدم الحالي",

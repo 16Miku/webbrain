@@ -1,4 +1,4 @@
-import { resolvePublicationText } from './social-publish-contract.js';
+import { publicationBodyText, resolvePublicationText } from './social-publish-contract.js';
 
 // A receipt verifies a dispatch; it grants no permission to publish. Natural
 // language remains with the selected provider, and exact bytes come only from
@@ -31,7 +31,7 @@ export function normalizeMastodonPublicationIntent(raw, task, origin) {
   if (raw.kind !== 'exact_plain_public_post') return null;
   try {
     if (raw.body?.source !== 'task' || (raw.account !== null && raw.account?.source !== 'task')) return null;
-    const body = resolvePublicationText(raw.body, { task });
+    const body = publicationBodyText(resolvePublicationText(raw.body, { task }));
     const account = raw.account === null ? '' : mastodonAccountIdentity(resolvePublicationText(raw.account, { task }), origin);
     if (!body || body.length > 25000 || (raw.account !== null && !account)) return null;
     return { body, account };

@@ -136,6 +136,7 @@ export default {
   "sp.queue.send": "قرار دادن پیام در صف",
   'sp.queue.label': "در صف",
   'sp.queue.label_numbered': "در صف {index}",
+  'sp.queue.held': "پس از توقف نگه داشته شد",
   'sp.queue.edit': "ویرایش پیام در صف",
   'sp.queue.delete': "حذف پیام در صف",
 

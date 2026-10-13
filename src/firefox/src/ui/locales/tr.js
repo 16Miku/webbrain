@@ -863,6 +863,7 @@ export default {
   "sp.queue.send": "Mesajı kuyruğa al",
   "sp.queue.label": "Kuyrukta",
   "sp.queue.label_numbered": "Kuyrukta {index}",
+  "sp.queue.held": "Durdurmadan sonra bekletiliyor",
   "sp.queue.edit": "Kuyruktaki mesajı düzenle",
   "sp.queue.delete": "Kuyruktaki mesajı sil",
   "sp.slash.check_progress": "Geçerli ilerleme günlüğünü göster",

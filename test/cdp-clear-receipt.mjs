@@ -59,7 +59,10 @@ test('native generic editor clear receipts preserve literal breaks and reject in
     const session = await context.newCDPSession(page);
     let intervention = null, insertions = 0, nativeMarkers = false;
     cdpClient.attach = async () => ({ attached: true });
-    cdpClient.sendCommand = async (_tab, method, params) => {
+    cdpClient.sendCommand = async (_tab, method, params, _sessionId, options) => {
+      // Like the real transport, run the caller's last pre-protocol check
+      // (dispatch marking and owner validation) before the command is sent.
+      options?.beforeSend?.();
       if (method === 'Input.insertText') insertions++;
       if (nativeMarkers && method.startsWith('Input.')) {
         const active = await session.send('Runtime.evaluate', { expression: 'document.activeElement' });

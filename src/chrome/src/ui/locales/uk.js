@@ -869,6 +869,7 @@ export default {
   "sp.queue.send": "Додати повідомлення до черги",
   "sp.queue.label": "У черзі",
   "sp.queue.label_numbered": "У черзі {index}",
+  "sp.queue.held": "Призупинено після зупинки",
   "sp.queue.edit": "Редагувати повідомлення в черзі",
   "sp.queue.delete": "Видалити повідомлення з черги",
   "sp.slash.check_progress": "Показати поточний журнал прогресу",
