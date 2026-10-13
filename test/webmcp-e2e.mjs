@@ -244,12 +244,9 @@ async function runProtocolSmoke(context, fixtureUrl) {
       assert.equal(failed.status, 'Error');
       const failureText = failed.errorText || failed.exception?.description || '';
       assert.match(failureText, /fixture failure/);
-      await waitForEntry(
-        page,
-        pageErrors,
-        error => error.includes('fixture failure'),
-        'fixture page error',
-      );
+      // The WebMCP response is the authoritative exception signal. Recent
+      // Chrome versions report tool exceptions through WebMCP.toolResponded
+      // without duplicating them as Playwright pageerror events.
 
       await page.evaluate(() => window.webMCPFixture.unregister());
       // Chrome can emit one toolsRemoved event per registration. Wait for the
@@ -275,6 +272,8 @@ async function initializeExtensionAgent(harness, tabId) {
     const { Agent } = await import(chrome.runtime.getURL('src/agent/agent.js'));
     const agent = new Agent({});
     globalThis.__webMCPAgentSmoke = agent;
+    // Explicitly exercise the disabled gate before running the enabled flow.
+    agent.setWebMCPEnabled(false);
     const disabledCatalog = await agent.executeTool(targetTabId, 'list_webmcp_tools', {});
     agent.setWebMCPEnabled(true);
     return disabledCatalog;

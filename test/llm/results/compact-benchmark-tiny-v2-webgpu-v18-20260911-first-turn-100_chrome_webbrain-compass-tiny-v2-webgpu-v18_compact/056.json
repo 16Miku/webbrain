@@ -1,0 +1,28 @@
+{
+  "id": "056",
+  "user": "save this youtube thumbnail",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    "title": "Rick Astley — YouTube"
+  },
+  "latencyMs": 6073,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t save a YouTube thumbnail from this browser because the available Compact tools don’t include a thumbnail-upload or save-theme action. Please use the browser’s thumbnail-upload control or the YouTube Studio thumbnail editor, then let me know when it’s saved."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t save a YouTube thumbnail from this browser because the available Compact tools don’t include a thumbnail-upload or save-theme action. Please use the browser’s thumbnail-upload control or the YouTube Studio thumbnail editor, then let me know when it’s saved.</param></function>",
+  "usage": {
+    "prompt_tokens": 10008,
+    "completion_tokens": 73,
+    "total_tokens": 10081
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

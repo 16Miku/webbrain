@@ -11,8 +11,20 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  test:
+    name: test (${{ matrix.shard }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        shard:
+          - quick
+          - runtime-unit
+          - browser-a
+          - browser-b1
+          - browser-b2
+          - browser-c
+          - tail
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,10 +33,60 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium firefox
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Bump patch version
+        run: node scripts/bump-version.mjs
+
+      - name: Update changelog
+        run: |
+          version=$(node -p "require('./package.json').version")
+          mkdir -p .release
+          previous_tag=$(git describe --tags --abbrev=0 2>/dev/null || true)
+          if [ -n "$previous_tag" ]; then
+            base_ref="$previous_tag"
+          else
+            base_ref=$(git rev-list --max-parents=0 HEAD)
+          fi
+          git log --no-merges --pretty=format:'- %s' "$base_ref..HEAD" > .release/changelog-body.md
+          if [ ! -s .release/changelog-body.md ]; then
+            printf '%s\n' '- Packaged the current extension fixes for browser stores.' > .release/changelog-body.md
+          fi
+          node scripts/update-changelog.mjs \
+            --version "$version" \
+            --date "$(date -u +%F)" \
+            --notes-file .release/changelog-body.md
+
+      - name: Run ${{ matrix.shard }} shard
+        run: npm run test:shard:${{ matrix.shard }}
+
+      - name: Run fixtures (tail shard)
+        if: matrix.shard == 'tail'
+        run: npm run test:fixtures
+
+  release:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Configure git author
         run: |
@@ -70,11 +132,21 @@ jobs:
           version=$(node -p "require('./package.json').version")
           git commit -m "dist: rebuild submission zips for v${version}"
 
-      - name: Test
-        run: npm test
-
       - name: Push release commits
-        run: git push origin HEAD:${{ github.ref_name }}
+        run: |
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}"; then
+              pushed=true
+              break
+            fi
+            echo "Push attempt $attempt failed, retrying..."
+            sleep 10
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "Push failed after 5 attempts" >&2
+            exit 1
+          fi
 
       - name: Get release metadata
         id: release_meta
@@ -90,7 +162,7 @@ jobs:
           tag_name: v${{ steps.release_meta.outputs.VERSION }}
           target_commitish: ${{ steps.release_meta.outputs.SHA }}
           name: Release v${{ steps.release_meta.outputs.VERSION }}
-          generate_release_notes: true
+          body_path: .release/changelog-body.md
           fail_on_unmatched_files: true
           files: |
             dist/*.zip

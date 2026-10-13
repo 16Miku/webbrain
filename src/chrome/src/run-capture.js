@@ -1,3 +1,4 @@
+import { filenameInConfiguredDownloadDirectory } from './download-directory.js';
 import { resolveSavedDownload } from './download-result.js';
 
 export const RUN_CAPTURE_START_ERROR_PREFIX = 'Run capture could not start: ';
@@ -62,6 +63,7 @@ export async function captureAndSaveRunScreenshot(api, tabId, filename) {
     throw new Error('The run tab could not be activated for capture.');
   }
   const dataUrl = await api.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  filename = await filenameInConfiguredDownloadDirectory(api, filename);
   const downloadId = await api.downloads.download({
     url: dataUrl,
     filename,

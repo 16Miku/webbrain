@@ -1,6 +1,18 @@
+import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
+import { d1Request } from './providers/d1.js';
+import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
+import { D1_CONSENT_KEY, D1_CONSENT_VERSION } from './providers/d1-config.js';
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
+});
+import { probeDecisionVision } from './agent/decision-vision-probe.js';
+import { installSafeSocialBackground } from './safesocial/background.js';
+import { createFeedbackHandoff } from './feedback-handoff.js';
+const feedbackHandoff = createFeedbackHandoff(chrome);
 import { ProviderManager } from './providers/manager.js';
 import {
-  WEBGPU_MODEL_ID,
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_VISION_DOWNLOAD_STATE_KEY,
   WEBGPU_VISION_DOWNLOAD_STATE_MESSAGE,
   WEBGPU_VISION_MODEL_ID,
@@ -40,6 +52,13 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { testImageGenProvider } from './agent/fal-media.js';
+import { IMAGE_GEN_MODEL_KEY } from './agent/media-config.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { createCaptchaBridgeRegistration } from './agent/captcha-bridge-registration.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
+import { createSystemOneJudge } from './agent/systemone-judge.js';
 import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
 import { ensureOffscreen } from './offscreen/ensure.js';
 import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
@@ -78,7 +97,7 @@ import {
 } from './recorder/host.js';
 import { RUN_CAPTURE_START_ERROR_PREFIX, createRunCaptureController } from './run-capture.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
-import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
+import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest, runUiUpdatesForCurrentTask } from './run-ui-journal.js';
 import {
   USER_MEMORY_AUTO_CAPTURE_KEY,
   USER_MEMORY_ENABLED_KEY,
@@ -97,6 +116,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { createMemcodeRecall } from './agent/memcode-recall.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   CONFIG_STORAGE_KEYS,
@@ -105,7 +125,6 @@ import {
   parseConfigImport,
   parseConfigPatchImport,
 } from './config-transfer.js';
-import { installDownloadDirectoryRouting } from './download-directory.js';
 import {
   getChromeWebStoreOAuthStatus,
   signOutChromeWebStoreOAuth,
@@ -116,6 +135,21 @@ import {
  * WebBrain Service Worker (Background Script)
  * Routes messages between side panel, content scripts, and the agent.
  */
+
+// SafeSocial never creates an inference worker until an opted-in request arrives.
+let safeSocialHostOpening;
+installSafeSocialBackground(chrome, async (command, payload = {}) => {
+  if (command === 'stop') {
+    if (safeSocialHostOpening) await safeSocialHostOpening;
+    if (!await chrome.offscreen.hasDocument()) return { status: 'idle' };
+  } else {
+    safeSocialHostOpening ||= ensureOffscreen().finally(() => { safeSocialHostOpening = null; });
+    await safeSocialHostOpening;
+  }
+  const result = await chrome.runtime.sendMessage({ target: 'safesocial-host', command, ...payload });
+  if (!result?.ok) throw new Error(result?.error || 'Classifier host unavailable.');
+  return result;
+});
 
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(chrome);
@@ -191,14 +225,16 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode startup work could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.strictSecretMode = false;
 agent.setStandaloneOfflineRagService(createOffscreenOfflineRetrievalService());
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = chrome.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
   })
   .catch(() => {
+    // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
@@ -211,6 +247,8 @@ agent.setConversationScopeChangeListener((tabId, state) => {
   }).catch(() => {});
 });
 const userMemoryStore = createUserMemoryStore(chrome.storage.local);
+const memcodeRecall = createMemcodeRecall({ storage: chrome.storage.local, identity: chrome.identity });
+agent.memcodeRecall = memcodeRecall;
 const savedWorkflowStore = createSavedWorkflowStore(chrome.storage.local);
 const teacherSessionStore = createTeacherSessionStore(chrome.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
@@ -219,9 +257,11 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
     || scheduler.isRunning(tabId)
     || cloudRunController.isRunning(tabId),
 });
-agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
+agent.setRunStartGuard(async (tabId, context) => {
+  await cloudRunController.guardRunStart(tabId, context);
+  return teacherRunInterlock.guardRunStart(tabId);
+});
 const profileSync = new ProfileSyncManager(chrome.storage.local);
-installDownloadDirectoryRouting(chrome);
 
 async function playWatchAlert({ style = 'default' } = {}) {
   const stored = await chrome.storage.local.get('notifySound');
@@ -239,12 +279,20 @@ async function playWatchAlert({ style = 'default' } = {}) {
 const scheduler = new ScheduledJobManager({
   api: chrome,
   agent,
+  systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
+    await imageGenConfigReady;
+    await webMcpEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
-  sendUpdate: (tabId, type, data) => {
+  sendUpdate: (tabId, type, data, owner) => {
+    if (owner?.executionId) {
+      sendScheduledAgentUpdate(tabId, type, data, owner);
+      return;
+    }
     chrome.runtime.sendMessage({
       target: 'sidepanel',
       action: 'agent_update',
@@ -289,10 +337,107 @@ const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const CONTEXT_MENU_ASK_SELECTION_ID = 'webbrain-ask-selection';
 const CONTEXT_MENU_OPEN_CHAT_ID = 'webbrain-selection-open-chat';
+const CONTEXT_MENU_OPEN_PDF_VIEWER_ID = 'webbrain-open-pdf-viewer';
 const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+const PDF_VIEWER_ENABLED_KEY = 'pdfViewerEnabled';
+const PDF_MIME_TYPE = 'application/pdf';
+const PDF_MIME_HANDLER_INSTALL_SYNC_DELAY_MS = 500;
+const pdfResponseTabs = new Set();
+const pdfOcrRequests = new Map();
+
+function safeOnlinePdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function isPdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) && /\.pdf$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function trackPdfResponse(details) {
+  if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
+  agent.noteDocumentMime(details);
+  const contentType = (details.responseHeaders || [])
+    .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
+  if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
+  else pdfResponseTabs.delete(details.tabId);
+}
+
+async function setNativePdfMimeHandlerEnabled(enabled) {
+  if (typeof chrome.mimeHandler?.setMimeHandlerOptions !== 'function') return false;
+  await chrome.mimeHandler.setMimeHandlerOptions(PDF_MIME_TYPE, {
+    enabled: enabled === true,
+  });
+  return true;
+}
+
+async function syncNativePdfMimeHandlerFromStorage() {
+  const stored = await chrome.storage.local.get({ [PDF_VIEWER_ENABLED_KEY]: true });
+  return setNativePdfMimeHandlerEnabled(stored?.[PDF_VIEWER_ENABLED_KEY] === true);
+}
+
+function reportPdfMimeHandlerSyncFailure(error) {
+  console.warn('[WebBrain] Could not synchronize the native PDF MIME handler option:', error);
+}
+
+function scheduleNativePdfMimeHandlerSync(delayMs = 0) {
+  setTimeout(() => {
+    syncNativePdfMimeHandlerFromStorage().catch(reportPdfMimeHandlerSyncFailure);
+  }, delayMs);
+}
+
+function setPdfContextMenuVisibility(visible) {
+  chrome.contextMenus?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible: Boolean(visible) }, () => {
+    void chrome.runtime.lastError;
+  });
+}
+
+async function syncPdfContextMenuForActiveTab() {
+  if (!chrome.contextMenus?.update || !chrome.tabs?.query) return;
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tabId = Number(tab?.id);
+  const visible = Number.isInteger(tabId) && tabId >= 0
+    && (pdfResponseTabs.has(tabId) || isPdfUrl(tab?.url));
+  setPdfContextMenuVisibility(visible);
+}
+
+function getPdfHandlerBaseUrl() {
+  try {
+    return chrome.runtime.getURL('src/ui/pdf-handler.html');
+  } catch {
+    return '';
+  }
+}
+
+// The PDF viewer is an extension page, so sender.tab is empty. Scope the
+// request to the handler that sent it: the sender must be our viewer and,
+// when the sender URL carries an explicit tabId, it must match msg.tabId.
+function isPdfHandlerSender(sender, tabId) {
+  if (!sender || sender.id !== chrome.runtime.id) return false;
+  const senderUrl = String(sender?.url || '');
+  const base = getPdfHandlerBaseUrl();
+  if (!base || !senderUrl.startsWith(base)) return false;
+  try {
+    const senderTabId = new URL(senderUrl).searchParams.get('tabId');
+    if (senderTabId != null && Number(senderTabId) !== tabId) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 function resolveStoredSelectionShortcutLocale(value) {
   return normalizeSelectionShortcutLocale(
     value || (typeof navigator !== 'undefined' ? navigator.language : 'en'),
@@ -339,6 +484,9 @@ async function createContextMenus() {
       if (err && !/duplicate/i.test(String(err.message || err))) {
         console.warn('[WebBrain] Failed to create context menu:', err.message || err);
       }
+      if (item.id === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+        syncPdfContextMenuForActiveTab().catch(() => {});
+      }
     });
   };
 
@@ -371,6 +519,12 @@ async function createContextMenus() {
     }
     create({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
     create({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
+    create({
+      id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
+      title: 'Open PDF with WebBrain',
+      contexts: ['page'],
+      visible: false,
+    });
   });
 }
 
@@ -460,16 +614,24 @@ async function loadImageBudget() {
 const imageBudgetReady = loadImageBudget().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await chrome.storage.local.get('strictSecretMode');
-  if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
+  const stored = await chrome.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode === true;
 }
-loadStrictSecretMode();
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
+
+async function loadImageGenConfig() {
+  const stored = await chrome.storage.local.get(IMAGE_GEN_MODEL_KEY).catch(() => ({}));
+  agent.setImageGenConfig(stored?.[IMAGE_GEN_MODEL_KEY]);
+}
+const imageGenConfigReady = loadImageGenConfig();
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
-  agent.setWebMCPEnabled(stored.webMcpEnabled === true);
+  agent.setWebMCPEnabled(stored.webMcpEnabled !== false);
 }
-const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {});
+const webMcpEnabledReady = loadWebMCPEnabled().catch(() => {
+  agent.setWebMCPEnabled(false);
+});
 
 // Profile auto-fill: user-provided text (name, email, etc.) that gets
 // appended to the system prompt when enabled. Plaintext in storage —
@@ -604,16 +766,16 @@ async function saveUserMemoryExtractionQueue(queue) {
 }
 
 async function isUserMemoryExtractionEnabled() {
-  const stored = await chrome.storage.local.get([
-    USER_MEMORY_ENABLED_KEY,
-    USER_MEMORY_AUTO_CAPTURE_KEY,
-  ]);
+  const stored = await chrome.storage.local.get({
+    [USER_MEMORY_ENABLED_KEY]: true,
+    [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  });
   return stored[USER_MEMORY_ENABLED_KEY] !== false
     && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
-  const stored = await chrome.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
+  const stored = await chrome.storage.local.get({ [USER_MEMORY_FORM_CAPTURE_KEY]: true });
   return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
 }
 
@@ -951,17 +1113,17 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// A valid key plus explicit consent enables CapSolver. Requiring the existing
-// boolean preserves legacy profiles that saved a key while the old switch was
-// off; pressing Save Key in the new UI sets consent to true.
+// Local browsers require a valid key and explicit consent. Managed Cloud
+// browsers use the broker flag and never use a CapSolver key from storage.
+const captchaBridgeRegistration = createCaptchaBridgeRegistration(chrome);
 async function loadCaptchaSolver() {
-  const stored = await chrome.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-  agent.captchaSolverEnabled = isCapsolverEnabled(
-    stored.capsolverApiKey,
-    stored.captchaSolverEnabled,
-  );
+  const stored = await chrome.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
+  await captchaBridgeRegistration.sync(agent.captchaSolverEnabled);
 }
-loadCaptchaSolver();
+loadCaptchaSolver().catch(error => console.warn('[WebBrain] CAPTCHA settings could not be loaded', error));
 
 function normalizePlanBeforeActMode(stored = {}) {
   if (stored.planBeforeActMode === 'try' || stored.planBeforeActMode === 'strict' || stored.planBeforeActMode === 'off') {
@@ -1048,12 +1210,19 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   await loadClarifyTimeout();
   await syncAgentUserMemoryFromStorage().catch(() => {});
   await cloudRunController.syncBridge().catch(() => {});
+  // Chrome registers the manifest handler with enabled=true after install.
+  // Reconcile now and once more after registration settles so the native
+  // default cannot overwrite the extension's opt-in default. The in-handler
+  // storage guard covers the short installation window between these calls.
+  await syncNativePdfMimeHandlerFromStorage().catch(reportPdfMimeHandlerSyncFailure);
+  scheduleNativePdfMimeHandlerSync(PDF_MIME_HANDLER_INSTALL_SYNC_DELAY_MS);
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
 
 // Also load on startup
 chrome.runtime.onStartup?.addListener(async () => {
+  await syncNativePdfMimeHandlerFromStorage().catch(reportPdfMimeHandlerSyncFailure);
   await createContextMenus();
   await providerManager.load();
   await loadMaxSteps();
@@ -1064,14 +1233,20 @@ chrome.runtime.onStartup?.addListener(async () => {
 });
 
 // Listen for setting changes
-chrome.storage.onChanged.addListener((changes) => {
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'local' && changes[PDF_VIEWER_ENABLED_KEY]) {
+    const value = changes[PDF_VIEWER_ENABLED_KEY].newValue;
+    setNativePdfMimeHandlerEnabled(value === undefined || value === true)
+      .catch(reportPdfMimeHandlerSyncFailure);
+  }
   if (changes.wbLocale) {
     selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
     createContextMenus().catch(() => {});
   }
   if (PROFILE_SYNC_DATA_KEYS.some((key) => changes[key])) profileSync.noteChanges(changes).catch(() => {});
   if (changes.providers || changes.activeProvider || changes.helpImproveWebBrain) providerManager.load().catch(() => {});
-  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl) {
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
     cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.maxAgentSteps) {
@@ -1087,8 +1262,12 @@ chrome.storage.onChanged.addListener((changes) => {
   // already-open conversations so the next turn sees the update — without
   // wiping the chat history.
   let refreshPrompts = false;
+  if (areaName === 'local' && changes[IMAGE_GEN_MODEL_KEY]) {
+    agent.setImageGenConfig(changes[IMAGE_GEN_MODEL_KEY].newValue);
+  }
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
+    agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
@@ -1115,16 +1294,17 @@ chrome.storage.onChanged.addListener((changes) => {
     });
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue === true);
+    const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
+    setApiMutationObserverEnabled(value === undefined || value === true);
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = !!changes.strictSecretMode.newValue;
+    agent.strictSecretMode = changes.strictSecretMode.newValue === true;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;
   }
   if (changes.webMcpEnabled) {
-    agent.setWebMCPEnabled(changes.webMcpEnabled.newValue === true);
+    agent.setWebMCPEnabled(changes.webMcpEnabled.newValue !== false);
   }
   if (changes.profileEnabled) {
     agent.profileEnabled = !!changes.profileEnabled.newValue;
@@ -1165,10 +1345,10 @@ chrome.storage.onChanged.addListener((changes) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -1255,10 +1435,8 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // an already-open panel — it only prevents future opens. With a per-tab Set
 // the panel was visible on every tab the user had ever clicked the action
 // on, which mounted up across a session. Group membership is observable to
-// the user (they see the colored group label) and matches the agent's own
-// `_addToWebBrainGroup` behaviour for `new_tab` calls — so a sidebar
-// session, an explicitly-opened new_tab, and a target=_blank redirect all
-// land in the same group.
+// the user (they see the colored group label) and matches the agent's grouping
+// of internal helper tabs and target=_blank redirects.
 //
 // `panelTabs` survives as a fallback for old Chromes without `tabGroups`
 // (pre-89, very rare). On modern Chrome the group map is the source of truth.
@@ -1323,16 +1501,12 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch(() =>
 // would re-enable the panel on every tab and recreate the "Cmd+T opens a
 // new tab and the running agent's progress paints into it" bug.
 //
-// Enablement happens only on explicit user/agent intent:
+// Enablement happens only on explicit user intent:
 //
 //   * `chrome.action.onClicked`  — user clicked the toolbar icon on tab X.
 //     The handler fires a fire-and-forget `setOptions({tabId:X, enabled:true})`
 //     and `sidePanel.open({tabId:X})` back-to-back to keep the user gesture
 //     alive for `open()`.
-//   * `agent.new_tab`            — agent created tab Y. The tool handler
-//     also calls `setOptions({tabId:Y, enabled:true})` so if the user
-//     switches to Y manually, the panel is there.
-//
 // We do NOT have a "tab left the WebBrain group → disable panel" path,
 // even though the WB group is still maintained for visual cohesion. That
 // path is exactly what raced with `action.onClicked` in the original
@@ -1465,6 +1639,15 @@ function openSidePanelForContextMenu(tab) {
 async function handleContextMenuAsk(info, tab) {
   if (!tab?.id) return;
   const menuItemId = String(info?.menuItemId || '');
+  if (menuItemId === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+    const pdfUrl = safeOnlinePdfUrl(tab.url);
+    if (!pdfUrl || (!pdfResponseTabs.has(tab.id) && !isPdfUrl(pdfUrl))) return;
+    const viewerUrl = chrome.runtime.getURL(
+      `src/ui/pdf-handler.html?url=${encodeURIComponent(pdfUrl)}&tabId=${encodeURIComponent(tab.id)}`,
+    );
+    await chrome.tabs.update(tab.id, { url: viewerUrl });
+    return;
+  }
   if (menuItemId === CONTEXT_MENU_OPEN_CHAT_ID) {
     openSidePanelForContextMenu(tab);
     return;
@@ -1524,9 +1707,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // Selection-shortcut clicks originate in a content script. Keep this listener
 // synchronous until sidePanel.open() so Chrome preserves the originating user
 // gesture; prompt recovery storage can finish afterward.
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
-  const tab = sender?.tab;
+function queueSelectionShortcutPrompt(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1545,7 +1726,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid selection shortcut request.' });
-    return;
+    return false;
   }
   const payload = {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1569,6 +1750,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })().then(sendResponse).catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: error?.message || String(error) });
   });
+  return true;
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
+  return queueSelectionShortcutPrompt(msg, sender?.tab, sendResponse);
+});
+
+// PDF handler pages are extension pages, so Chrome does not populate
+// sender.tab. The handler carries the tab id returned by getStreamInfo();
+// resolve the live tab before building the prompt so its scope cannot be
+// forged or reused after the tab has gone away.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
+  const tabId = Number(msg.tabId);
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid PDF selection tab.' });
+    return;
+  }
+  if (!isPdfHandlerSender(sender, tabId)) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: false, error: 'Invalid PDF selection sender.' });
+    return;
+  }
+  // sidePanel.open() must run synchronously in this handler to preserve the
+  // click gesture; chrome.tabs.get() would lose it. Open for the claimed tab
+  // now (stub is enough for setOptions/open), then verify the live tab.
+  try {
+    openSidePanelForContextMenu({ id: tabId });
+  } catch {}
+  chrome.tabs.get(tabId)
+    .then(tab => queueSelectionShortcutPrompt(msg, tab, sendResponse))
+    .catch(error => sendResponse({
+      ok: false,
+      queued: false,
+      requiresManualOpen: false,
+      error: error?.message || 'The PDF tab is no longer available.',
+    }));
   return true;
 });
 
@@ -1651,6 +1869,14 @@ function reassertIndicatorIfActive(tabId) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  // Do not clear pdfResponseTabs here: onHeadersReceived records the PDF
+  // content type while the response is still in flight and the tab's URL only
+  // changes once that navigation commits, so deleting on changeInfo.url would
+  // discard the entry it just recorded. trackPdfResponse() already replaces
+  // the entry on the next main-frame response, and onRemoved clears it.
+  if (changeInfo?.url || changeInfo?.status) {
+    syncPdfContextMenuForActiveTab().catch(() => {});
+  }
   if (changeInfo?.status === 'complete') {
     reassertIndicatorIfActive(tabId);
   }
@@ -1682,11 +1908,11 @@ function persistRunUiSnapshot(tabId, snapshot) {
   const write = previous.catch(() => false).then(async () => {
     if (runUiPersistenceFailures.get(tabId) === requestId) return false;
     try {
-      await chrome.storage.session?.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
+      await chrome.storage.session.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
       return true;
     } catch {
       try {
-        await chrome.storage.session?.set({
+        await chrome.storage.session.set({
           [RUN_UI_PREFIX + tabId]: compactRunUiSnapshotForPersist(stableSnapshot, { tight: true }),
         });
         return true;
@@ -1722,8 +1948,10 @@ const runUiJournal = new RunUiJournal({
     void runUiSnapshotPersistence.persistNow(tabId, snapshot);
   },
 });
+const runUiSnapshotReads = new Map();
 
 function beginRunUiSnapshot(tabId, requestId, metadata = {}) {
+  runUiSnapshotReads.delete(tabId);
   runUiPersistenceFailures.delete(tabId);
   return runUiJournal.begin(tabId, requestId, metadata);
 }
@@ -1751,32 +1979,50 @@ function isPlannerRequestFailureUpdate(update) {
     && update?.data?.code === 'planner_request_failed';
 }
 
+function isPersistenceDegradedRunUpdate(update) {
+  return update?.type === 'run_status'
+    && update?.data?.status === 'persistence_degraded';
+}
+
+function isPublicationAuditFailureUpdate(update) {
+  return (update?.type === 'run_status' && update?.data?.status === 'publication_audit_failed')
+    || (update?.type === 'failure_recovery' && update?.data?.stage === 'publication_audit');
+}
+
+function isActionPreparationFailureUpdate(update) {
+  return update?.type === 'failure_recovery' && update?.data?.stage === 'action_preparation'
+    && ['action_context_unverified', 'page_unstable'].includes(update?.data?.code);
+}
+
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
     || isClarificationRequiredRunUpdate(update)
+    || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || isPlannerRequestFailureUpdate(update)
   ));
 }
 
 function terminalRunUiStatus(content, updates = [], error = null) {
   if (error) return 'failed';
+  updates = runUiUpdatesForCurrentTask(updates);
   const text = String(content || '');
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
-  if (updates.some(update => update?.type === 'error' || isPlannerRequestFailureUpdate(update))) return 'failed';
+  if (updates.some(update => update?.type === 'error'
+    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
+    || update?.type === 'quota')) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false) {
-  const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
-  if (snapshot) {
-    // The journal carries an exact successful-'done' predicate for Act runs;
-    // Ask replies are classified by the caller and OR-ed in for badge styling.
-    snapshot.runSucceeded = snapshot.successfulDone === true || askSucceeded === true;
-  }
-  return snapshot;
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false, allowSuccess = true) {
+  // Keep classification in the journal's atomic terminal persistence update.
+  return runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId), { askSucceeded, allowSuccess });
 }
 
 // Mirror the sidepanel's successful-Ask classification for badge styling
@@ -1787,8 +2033,12 @@ const BADGE_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain 
 const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
+  updates = runUiUpdatesForCurrentTask(updates);
   if (updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
+    || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -1804,18 +2054,36 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
 async function getRunUiSnapshot(tabId) {
   const live = runUiJournal.get(tabId);
   if (live) return live;
-  try {
-    const key = RUN_UI_PREFIX + tabId;
-    const stored = await chrome.storage.session?.get(key);
-    const snapshot = stored?.[key];
-    if (snapshot && typeof snapshot === 'object') {
-      return runUiJournal.restore(tabId, snapshot);
-    }
-  } catch {}
-  return null;
+  const pendingRead = runUiSnapshotReads.get(tabId);
+  if (pendingRead) return pendingRead.promise;
+  const read = {};
+  // Cold readers share ownership; only begin/clear may invalidate this read.
+  read.promise = Promise.resolve().then(async () => {
+    try {
+      const pending = runUiPersistenceQueues.get(tabId);
+      if (pending) await pending;
+      const current = runUiJournal.get(tabId);
+      if (current) return current;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const key = RUN_UI_PREFIX + tabId;
+      const stored = await chrome.storage.session?.get(key);
+      const latest = runUiJournal.get(tabId);
+      if (latest) return latest;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const snapshot = stored?.[key];
+      if (snapshot && typeof snapshot === 'object') {
+        return runUiJournal.restore(tabId, snapshot);
+      }
+    } catch {}
+    finally { if (runUiSnapshotReads.get(tabId) === read) runUiSnapshotReads.delete(tabId); }
+    return null;
+  });
+  runUiSnapshotReads.set(tabId, read);
+  return read.promise;
 }
 
 function clearRunUiSnapshot(tabId) {
+  runUiSnapshotReads.delete(tabId);
   runUiSnapshotPersistence.cancel(tabId);
   runUiJournal.clear(tabId);
   runUiPersistenceFailures.delete(tabId);
@@ -1830,6 +2098,7 @@ function clearRunUiSnapshot(tabId) {
 function sendAgentUpdate(tabId, requestId, type, data) {
   const event = recordRunUiEvent(tabId, requestId, type, data);
   if (!event) return;
+  if (type === 'clarify') agent._capturePendingClarificationForUi?.(tabId, requestId, event.data ?? data, event);
   chrome.runtime.sendMessage({
     target: 'sidepanel',
     action: 'agent_update',
@@ -1840,6 +2109,37 @@ function sendAgentUpdate(tabId, requestId, type, data) {
     type,
     data: event?.data ?? data,
   }).catch(() => {});
+}
+
+function sendScheduledAgentUpdate(tabId, type, data, owner) {
+  if (tabId == null || !owner?.jobId || !owner?.executionId) return;
+  const requestId = `scheduled:${owner.jobId}:${owner.executionId}`;
+  const terminal = new Set(['completed', 'stopped', 'failed', 'cancelled', 'clarification_required']);
+  let snapshot = runUiJournal.get(tabId);
+  if (type === 'scheduled_job' && data?.event === 'running') {
+    if (snapshot?.requestId === requestId && terminal.has(snapshot.status)) return;
+    // A foreground request owns its tab even before provider preparation ends.
+    // A restored scheduled journal can instead be replaced by a new execution.
+    if (snapshot && snapshot.requestId !== requestId && !terminal.has(snapshot.status)
+        && !snapshot.scheduledJobId) return;
+    if (snapshot?.requestId !== requestId) snapshot = beginRunUiSnapshot(tabId, requestId, {
+      mode: owner.mode || 'act', kind: owner.kind === 'resume' ? 'continue' : 'chat',
+      scheduledJobId: owner.jobId, scheduledExecutionId: owner.executionId,
+    });
+  }
+  if (!snapshot || snapshot.requestId !== requestId || terminal.has(snapshot.status)
+      || snapshot.scheduledJobId !== owner.jobId || snapshot.scheduledExecutionId !== owner.executionId) return;
+  sendAgentUpdate(tabId, requestId, type, data);
+  if (type !== 'scheduled_job') return;
+  const event = data?.event, job = data?.job;
+  if (!['completed', 'failed', 'cancelled', 'paused', 'clarification_required', 'polled', 'triggered', 'queued'].includes(event)) return;
+  const finalContent = String(job?.lastResult || job?.lastError || '');
+  const status = ['cancelled', 'paused'].includes(event) ? 'stopped'
+    : event === 'failed' ? 'failed' : event === 'clarification_required' ? 'clarification_required'
+      : terminalRunUiStatus(finalContent, snapshot.events || []);
+  const finished = finishRunUiSnapshot(tabId, requestId, status, finalContent,
+    owner.mode === 'ask' && job?.lastOutcome === 'success', job?.lastOutcome === 'success');
+  if (finished) void sendAgentRunComplete(tabId, finished).catch(() => {});
 }
 
 function assertNoActiveTabRun(tabId) {
@@ -1990,6 +2290,7 @@ function launchDetachedRun(action, msg, sender) {
   });
   entry.promise = task;
   task.catch((error) => {
+    agent._restoreFailureRecoveryStart?.(tabId, requestId);
     rememberDetachedRunFailure(tabId, requestId, error);
     console.warn(`[WebBrain] detached ${action} run failed:`, error);
   }).finally(() => {
@@ -2004,14 +2305,12 @@ async function standaloneRunProviderId(msg) {
   if (providerId !== 'webgpu' || msg.standaloneChat !== true) {
     throw new Error('WebGPU is available only through the standalone chat control.');
   }
-  const apocalypse = await apocalypseController.handle('status');
-  if (apocalypse?.enabled !== true) {
-    throw new Error('Enable Apocalypse Mode before using WebGPU in standalone chat.');
-  }
+  // Compass Tiny v2.1 works independently of Apocalypse Mode: Apocalypse can
+  // still host the download, but its enabled toggle is no longer required.
   const config = providerManager.getAll().webgpu;
   const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
   if (!isShippedWebgpuPreset(config?.model) || download?.ready !== true) {
-    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_MODEL_ID)} in Apocalypse Mode before using WebGPU in standalone chat.`);
+    throw new Error(`Download ${webgpuModelDisplayName(config?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID)} in Settings > Providers > WebGPU or Apocalypse Mode > WebGPU before using WebGPU in standalone chat.`);
   }
   return providerId;
 }
@@ -2033,27 +2332,33 @@ function standaloneRagFilterOptions(msg) {
 }
 
 async function sendAgentRunComplete(tabId, snapshot = null) {
-  if (tabId == null || !snapshot) return;
+  if (tabId == null || !snapshot || runUiJournal.get(tabId) !== snapshot) return;
+  const { requestId, status, endedAt, seq } = snapshot;
+  const isCurrent = () => runUiJournal.get(tabId) === snapshot
+    && snapshot.requestId === requestId && snapshot.status === status
+    && snapshot.endedAt === endedAt && snapshot.seq === seq;
+  if (endedAt == null || !['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(status)) return;
+  await flushRunUiSnapshot(tabId, snapshot.requestId);
+  if (!isCurrent()) return;
   // Live runs continue in the background even if their side panel is closed
   // or reloaded mid-run (and continuations settle here too), so terminal
   // attention flashes are owned here rather than by the panel. User stops
   // and cancellations never flash; the setting is honored inside
   // flashTabAttention.
   const liveStatus = String(snapshot.status || '');
-  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
-    // Badge styling uses the run's recorded outcome (successful done update
-    // or successful Ask reply), not just the terminal status — a completed
-    // status alone can still mean max-steps were reached without success.
-    flashTabAttention({
-      tabId,
-      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
-    }).catch(() => {});
-  }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  if (!isCurrent()) return;
+  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
+    // The classified snapshot still owns the tab after durable-turn lookup.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
+  }
   const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
   const attachmentDeliveryState = attachmentCount
     ? (snapshot.attachmentDeliveryState === 'not-sent'
@@ -2067,6 +2372,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       attachmentDeliveryState,
     ) || snapshot;
     await flushRunUiSnapshot(tabId, snapshot.requestId);
+    if (!isCurrent()) return;
   }
   chrome.runtime.sendMessage({
     target: 'sidepanel',
@@ -2079,6 +2385,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     data: {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
+      quota: snapshot.quota || null,
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
       attachmentDeliveryState,
@@ -2209,6 +2516,7 @@ const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
 ]);
 
 chrome.webNavigation?.onHistoryStateUpdated?.addListener((details) => {
+  agent.observePageNavigation(details, 'history');
   if (details.frameId !== 0) return;
   agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordNav(details.tabId, 'history', details.url);
@@ -2216,12 +2524,14 @@ chrome.webNavigation?.onHistoryStateUpdated?.addListener((details) => {
   invalidateContextMenuForTab(details.tabId);
 });
 chrome.webNavigation?.onReferenceFragmentUpdated?.addListener((details) => {
+  agent.observePageNavigation(details, 'fragment');
   if (details.frameId !== 0) return;
   agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordNav(details.tabId, 'fragment', details.url);
   invalidateContextMenuForTab(details.tabId);
 });
 chrome.webNavigation?.onCommitted?.addListener((details) => {
+  agent.observePageNavigation(details, 'committed');
   if (details.frameId !== 0) return;
   agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
   recordNav(details.tabId, 'committed', details.url);
@@ -2242,6 +2552,8 @@ chrome.webNavigation?.onCompleted?.addListener((details) => {
 // challenge-platform requests alone are not sufficient because ordinary bot
 // detection and embedded widgets may use the same managed endpoint.
 const observeCloudflareManagedChallengeResponse = details => {
+  trackPdfResponse(details);
+  syncPdfContextMenuForActiveTab().catch(() => {});
   agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
 };
 const observeCloudflareChallengePlatformRequest = details => {
@@ -2258,6 +2570,7 @@ chrome.webRequest?.onBeforeRequest?.addListener?.(
 );
 
 chrome.tabs.onRemoved.addListener((tabId) => lastNavByTab.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => pdfResponseTabs.delete(tabId));
 
 // Background API call observer (issue #189). Watches XHR/fetch requests the
 // page itself fires — e.g. clicking "Next Page" — so the agent can later spot
@@ -2267,7 +2580,7 @@ chrome.tabs.onRemoved.addListener((tabId) => lastNavByTab.delete(tabId));
 // tokens and form bodies do not get printed into model context.
 const API_REQUESTS_PER_TAB_LIMIT = 40;
 const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';
-const API_MUTATION_OBSERVER_DEFAULT = false;
+const API_MUTATION_OBSERVER_DEFAULT = true;
 const API_REPLAY_BODY_LIMIT = 16000;
 const apiRequestsByTab = new Map(); // tabId -> [{ url, method, ts, replayRequestId, ... }]
 const apiRequestReplayById = new Map(); // replayRequestId -> captured same-origin replay options
@@ -2413,7 +2726,8 @@ async function loadApiMutationObserverSetting() {
     const stored = await chrome.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
     setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
   } catch (e) {
-    setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
+    // Do not capture requests when a stored opt-out cannot be read.
+    setApiMutationObserverEnabled(false);
   }
 }
 
@@ -2491,6 +2805,7 @@ async function showCompletionNotification(tabId, success) {
 
 chrome.tabs.onActivated.addListener(({ tabId } = {}) => {
   flashedBadgeTabs.delete(tabId);
+  syncPdfContextMenuForActiveTab().catch(() => {});
   // Clear unconditionally: the Set only lives in service-worker memory, but
   // a tab-scoped badge survives MV3 worker suspension/restarts. Resetting
   // the per-tab override is idempotent and restores any global badge.
@@ -2508,6 +2823,7 @@ chrome.windows.onFocusChanged.addListener(async (windowId) => {
     const [activeTab] = await chrome.tabs.query({ active: true, windowId });
     const activeTabId = Number(activeTab?.id);
     if (!Number.isInteger(activeTabId)) return;
+    setPdfContextMenuVisibility(pdfResponseTabs.has(activeTabId) || isPdfUrl(activeTab?.url));
     flashedBadgeTabs.delete(activeTabId);
     await chrome.action.setBadgeText({ tabId: activeTabId, text: '' });
   } catch { /* best-effort cleanup */ }
@@ -2611,12 +2927,82 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   handleMessage(msg, sender)
     .then(sendResponse)
-    .catch(e => sendResponse({ error: e.message, status: e.status || 500 }));
+    .catch(e => sendResponse({ error: e.message, status: e.status || 500, quota: e.quota }));
 
   return true; // async response
 });
 
+function assertChatRequestInput(msg) {
+  const validTextType = msg.text == null || typeof msg.text === 'string';
+  const hasText = typeof msg.text === 'string' && msg.text.trim().length > 0;
+  const structuredInputAllowed = msg.action !== 'chat_stream';
+  const hasWorkflow = structuredInputAllowed && typeof msg.workflowId === 'string' && msg.workflowId.trim().length > 0;
+  const hasAttachment = structuredInputAllowed && Array.isArray(msg.attachments) && msg.attachments.some(attachment =>
+    attachment && typeof attachment === 'object'
+    && ['image', 'document', 'text', 'video'].includes(attachment.kind)
+    && ((typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith('data:') && attachment.dataUrl.includes(','))
+      || (attachment.kind === 'text' && typeof attachment.textContent === 'string')));
+  if (validTextType && (hasText || hasWorkflow || hasAttachment)) return;
+  const error = new Error('A new chat request requires non-empty text, a supported attachment, or a saved workflow. Use continue_start for an explicit continuation.');
+  error.code = 'invalid_chat_input';
+  error.status = 400;
+  throw error;
+}
+
+async function handleFailureRecoveryResponse(msg, sender) {
+  if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+    return { ok: false, error: 'Recovery choices are available from the chat panel only.' };
+  }
+  const tabId = Number(msg.tabId);
+  const recoveryId = typeof msg.recoveryId === 'string' ? msg.recoveryId : '';
+  const choice = msg.choice;
+  if (!Number.isSafeInteger(tabId) || tabId <= 0 || !recoveryId || !['retry', 'give_up'].includes(choice)) {
+    return { ok: false, error: 'Invalid recovery choice.' };
+  }
+  if (choice === 'retry' && typeof msg.requestId === 'string' && msg.requestId) {
+    // An acknowledgement may be lost while its run already started. Repeated
+    // delivery follows that same request rather than consuming a second offer.
+    if (detachedRunStarts.get(tabId)?.requestId === msg.requestId) {
+      return { ok: true, accepted: true, requestId: msg.requestId };
+    }
+    const snapshot = await getRunUiSnapshot(tabId);
+    if (snapshot?.requestId === msg.requestId && snapshot.kind === 'continue') {
+      return { ok: true, accepted: true, requestId: msg.requestId };
+    }
+  }
+  assertNoActiveTabRun(tabId);
+  const result = agent.requestFailureRecovery(tabId, recoveryId, choice, msg.requestId);
+  if (!result?.ok || choice === 'give_up' || result.continue !== true) return result;
+  try {
+    return launchDetachedRun('continue', msg, sender);
+  } catch (error) {
+    agent._restoreFailureRecoveryStart?.(tabId, msg.requestId);
+    throw error;
+  }
+}
+
 async function handleMessage(msg, sender) {
+  if (msg.action === 'failure_recovery_response') return handleFailureRecoveryResponse(msg, sender);
+  if (['chat_start', 'chat', 'chat_stream'].includes(msg.action)) assertChatRequestInput(msg);
+  if (msg.action === 'get_page_monitor_state') return agent.pageMonitorState(sender, msg.documentToken, msg.frameName);
+  if (msg.action === 'page_feedback') return agent.observePageFeedback(sender, msg.feedback);
+  if (String(msg.action || '').startsWith('feedback_')) return feedbackHandoff.handle(msg, sender);
+  if (msg.action === 'chat_steer') {
+    // Content scripts must never turn page text into a trusted human correction.
+    if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+      throw new Error('Steering is available from the chat panel only.');
+    }
+    return agent.steerMessage(Number(msg.tabId), msg.text, {
+      requestId: msg.requestId, messageId: msg.messageId,
+    });
+  }
+
+  // Only Settings may start OAuth or change the user's remote-memory choice.
+  // Content scripts share this message bus and must not control the connection.
+  if (String(msg.action || '').startsWith('memcode_recall_')
+    && sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/settings.html')) {
+    return { ok: false, error: 'MemCode connection controls are available in Settings only.' };
+  }
   const lightweightAction = [
     'get_recording_state',
     'persist_tab_chat',
@@ -2624,6 +3010,7 @@ async function handleMessage(msg, sender) {
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
+    'cancel_pdf_ocr',
     'ensure_offscreen_offline_rag_host',
     EMERGENCY_DOWNLOAD_ACTION,
     'flash_tab_attention',
@@ -2636,8 +3023,9 @@ async function handleMessage(msg, sender) {
     // Agent toggles and prompt add-ons hydrate once at SW boot — await those
     // promises so the first chat can't race ahead of hydration, without a
     // storage round-trip on every message.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await webMcpEnabledReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
@@ -2715,6 +3103,10 @@ async function handleMessage(msg, sender) {
     }
     case 'cloud_respond':
       return await cloudRunController.respond(msg);
+    case 'cloud_pause':
+      return await cloudRunController.pause(msg);
+    case 'cloud_resume':
+      return await cloudRunController.resume(msg);
     case 'cloud_abort':
       return await cloudRunController.abort(msg);
     case 'cloud_bridge_start':
@@ -2781,12 +3173,12 @@ async function handleMessage(msg, sender) {
 
     case 'get_user_memory': {
       const store = await userMemoryStore.load();
-      const settings = await chrome.storage.local.get([
-        USER_MEMORY_ENABLED_KEY,
-        USER_MEMORY_AUTO_CAPTURE_KEY,
-        USER_MEMORY_FORM_CAPTURE_KEY,
-        USER_MEMORY_MAX_PROMPT_CHARS_KEY,
-      ]);
+      const settings = await chrome.storage.local.get({
+        [USER_MEMORY_ENABLED_KEY]: true,
+        [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+        [USER_MEMORY_FORM_CAPTURE_KEY]: true,
+        [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: normalizeUserMemoryMaxPromptChars(),
+      });
       return {
         ok: true,
         store,
@@ -2796,6 +3188,16 @@ async function handleMessage(msg, sender) {
         formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
+    }
+
+    case 'memcode_recall_status':
+      return { ok: true, ...(await memcodeRecall.status()) };
+    case 'memcode_recall_connect':
+      return { ok: true, ...(await memcodeRecall.connect()) };
+    case 'memcode_recall_disconnect':
+      return { ok: true, ...(await memcodeRecall.disconnect()) };
+    case 'memcode_recall_enable': {
+      return { ok: true, ...(await memcodeRecall.setRecallEnabled(msg.enabled === true)) };
     }
 
     case 'add_user_memory': {
@@ -3002,6 +3404,20 @@ async function handleMessage(msg, sender) {
         ok: true,
         ...(await agent.getConversationState(tabId, msg.mode || 'ask')),
       };
+    }
+
+    case 'fork_standalone_conversation': {
+      const sourceTabId = Number(msg.sourceTabId);
+      const forkTabId = Number(msg.forkTabId || sender.tab?.id);
+      if (!Number.isFinite(sourceTabId) || !Number.isFinite(forkTabId)) {
+        throw new Error('No source or fork tab ID');
+      }
+      const fork = await agent.forkConversation(sourceTabId, forkTabId);
+      if (!fork?.resumed) {
+        const sourceChat = await tabChatHandoff.load(sourceTabId, { waitForHandoff: true });
+        if (sourceChat?.found) await tabChatHandoff.save(forkTabId, sourceChat.html);
+      }
+      return { ok: true, ...fork };
     }
 
     case 'chat_start': {
@@ -3394,7 +3810,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         chrome.runtime.sendMessage({
           target: 'sidepanel',
@@ -3439,7 +3855,7 @@ async function handleMessage(msg, sender) {
         const sourceTabId = agent.researchEscalationSourceTab(tabId);
         cancelDetachedRunStart(tabId);
         if (sourceTabId) cancelDetachedRunStart(sourceTabId);
-        agent.abort(tabId);
+        agent.abort(sourceTabId || tabId);
       }
       return { ok: true };
     }
@@ -3462,12 +3878,23 @@ async function handleMessage(msg, sender) {
           : false);
       const conversationState = await agent.getConversationState(tabId);
       const activeState = agent.activeRunState(tabId);
+      const pendingFailureRecovery = agent._pendingFailureRecoveryForUi?.(tabId) || null;
+      const pendingClarification = activeState.pendingCurrentClarification;
+      const currentRunUi = runUiJournal.get(tabId);
+      if (pendingClarification && (!activeState.running || currentRunUi !== runUiSnapshot
+          || !requestedRunUi || pendingClarification.requestId !== requestedRunUi.requestId
+          || pendingClarification.runId !== activeState.runId
+          || (requestedRunUi.runId && pendingClarification.runId !== requestedRunUi.runId)
+          || ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(requestedRunUi.status))) {
+        activeState.pendingCurrentClarification = null;
+      }
       const runUiDurable = !runUiSnapshot
         || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || '');
       return {
         ok: true,
         ...conversationState,
         ...activeState,
+        pendingFailureRecovery,
         starting: !!starting,
         startingRequestId: starting?.requestId || null,
         submittedTurnDurable,
@@ -3494,7 +3921,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {
@@ -3534,6 +3961,7 @@ async function handleMessage(msg, sender) {
         loadResearchEscalation(),
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
+        loadImageGenConfig(),
         loadWebMCPEnabled(),
         loadProfile(),
         syncAgentUserMemoryFromStorage(),
@@ -3768,12 +4196,13 @@ async function handleMessage(msg, sender) {
     }
 
     case 'get_standalone_webgpu_status': {
-      const apocalypse = await apocalypseController.handle('status');
       const config = providerManager.getAll().webgpu;
       const download = await providerManager.getWebgpuDownloadStatus().catch(() => null);
       return {
         ok: true,
-        enabled: apocalypse?.enabled === true,
+        // Compass Tiny v2.1 is usable without Apocalypse Mode; the control
+        // stays enabled and only tracks download readiness.
+        enabled: true,
         ready: isShippedWebgpuPreset(config?.model) && download?.ready === true,
         status: download?.status || 'not-downloaded',
       };
@@ -3790,9 +4219,6 @@ async function handleMessage(msg, sender) {
     }
 
     case 'set_active_provider': {
-      if (msg.providerId === 'webgpu') {
-        throw new Error('Use the nuclear WebGPU control in standalone chat.');
-      }
       await providerManager.setActive(msg.providerId);
       return { ok: true };
     }
@@ -3801,7 +4227,7 @@ async function handleMessage(msg, sender) {
       await providerManager.updateProvider(msg.providerId, msg.config, {
         markConfigured: msg.markConfigured !== false,
       });
-      return { ok: true };
+      return { ok: true, activeProviderId: providerManager.activeProviderId };
     }
 
     case 'duplicate_provider':
@@ -3878,6 +4304,74 @@ async function handleMessage(msg, sender) {
       return await providerManager.testTranscriptionProvider();
     }
 
+    case 'test_image_gen_provider': {
+      return await testImageGenProvider();
+    }
+
+    case 'd1_control': {
+      const api = globalThis.browser || globalThis.chrome;
+      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'D1 model controls are available only from extension Settings.' };
+      try {
+        await strictSecretModeReady;
+        if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
+        if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
+        if (['download', 'load', 'consent'].includes(msg.command)) {
+          if (msg.consent !== true || msg.consentVersion !== D1_CONSENT_VERSION) throw new Error('Explicit D1 experimental-model consent is required.');
+          await api.storage.local.set({ [D1_CONSENT_KEY]: D1_CONSENT_VERSION });
+        }
+        return { success: true, result: msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION }) };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+    case 'list_decision_models': {
+      await strictSecretModeReady;
+      try {
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        const models = await listDecisionModels(resolveDecisionConfig(msg.settings || {}));
+        return { success: true, models };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+    case 'test_system_one': {
+      await strictSecretModeReady;
+      try {
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        if (Object.hasOwn(msg, 'localFixture')) {
+          const result = await evaluateD1LocalFixture({ fixture: msg.localFixture, sender, api: chrome, strictSecretMode: agent.strictSecretMode, agent, client: createSystemOneJudge({ maxRetries: 0 }) });
+          return { success: true, result };
+        }
+        let config = msg.settings ? resolveDecisionConfig(msg.settings) : undefined;
+        if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
+          try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}
+        }
+        const client = createSystemOneJudge({ maxRetries: 0 });
+        const evaluate = args => agent.evaluateSystemOne(null, client, { ...args, config, apiKey: msg.apiKey });
+        const result = await evaluate({ state: { color: 'blue' }, questions: { test: { type: 'noul', instructions: 'Is the color blue?' } } });
+        if (result.answers.test.noul < .9) throw new Error('Decision connection test was inconclusive.');
+        let visionVerified = false;
+        if (config?.supportsVision) try {
+          if (config.provider === 'openrouter') await new Promise(resolve => setTimeout(resolve, 1100));
+          visionVerified = await probeDecisionVision(config, args => agent.evaluateSystemOne(null, client, args));
+        } catch {}
+        return { success: true, model: result.model, visionTested: config?.supportsVision === true, visionVerified };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+
     case 'test_capsolver_balance': {
       // Settings UI "Check balance" button. Uses the key from the request
       // rather than re-reading storage so the user gets feedback before
@@ -3909,7 +4403,9 @@ async function handleMessage(msg, sender) {
     }
 
     case 'list_provider_models': {
-      return await providerManager.listProviderModels(msg.providerId);
+      return await providerManager.listProviderModels(msg.providerId, {
+        detectServerIdentity: msg.detectServerIdentity === true,
+      });
     }
 
     case 'list_ollama_models': {
@@ -3963,6 +4459,34 @@ async function handleMessage(msg, sender) {
     case 'capture_viewport_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);
+    }
+    case 'ocr_pdf_page': {
+      const tabId = Number(msg.tabId);
+      if (!Number.isInteger(tabId) || tabId < 0) {
+        return { success: false, error: 'Invalid PDF OCR tab.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { success: false, error: 'Invalid PDF OCR sender.' };
+      }
+      const tab = await chrome.tabs.get(tabId).catch(() => null);
+      if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
+      const requestId = String(msg.requestId || '').trim();
+      const controller = new AbortController();
+      if (requestId) pdfOcrRequests.set(requestId, controller);
+      try {
+        return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber, controller.signal);
+      } finally {
+        if (requestId && pdfOcrRequests.get(requestId) === controller) pdfOcrRequests.delete(requestId);
+      }
+    }
+    case 'cancel_pdf_ocr': {
+      const requestId = String(msg.requestId || '').trim();
+      const controller = pdfOcrRequests.get(requestId);
+      if (!controller) return { ok: false, error: 'The PDF OCR request is no longer active.' };
+      const reason = new Error('PDF OCR cancelled by the user.');
+      reason.code = 'pdf_ocr_cancelled';
+      controller.abort(reason);
+      return { ok: true };
     }
     case 'capture_screenshot_redaction_snapshot': {
       const tabId = msg.tabId || sender.tab?.id;

@@ -1,0 +1,42 @@
+{
+  "id": "009",
+  "category": "loop-bad-url",
+  "description": "Tenant URL but no auth/permission — refresh or retry won't help.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 5236,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t open or access a private workspace from this browser. Please log in to your Notion account and open the “My Tenant” workspace yourself."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "The Notion workspace at my-tenant.notion.site is saying \"You don't have access\". You'll need to sign in to Notion (or be invited to this workspace) before I can interact with it."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://my-tenant.notion.site/\"})",
+        "reason": "Refreshing won't produce a different result."
+      }
+    ],
+    "successRubric": "Report the access wall to the user, do not loop."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "ideal_name",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t open or access a private workspace from this browser. Please log in to your Notion account and open the “My Tenant” workspace yourself.</param></function>",
+  "usage": {
+    "prompt_tokens": 9833,
+    "completion_tokens": 52,
+    "total_tokens": 9885
+  }
+}

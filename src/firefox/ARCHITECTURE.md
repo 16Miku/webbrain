@@ -1,18 +1,33 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 34.1.0 · Manifest V2 · Background Page
+> Version 40.4.1 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
 Firefox uses Manifest V2 (background page, not service worker) and has **no access to the Chrome DevTools Protocol (CDP)**. Starting with v3.6.x, the Firefox build has been brought to functional parity with Chrome for the accessibility-tree (AX) subsystem — the same tree builder, the same four AX tools (`get_accessibility_tree`, `click_ax`, `type_ax`, `set_field`), and the same ref_id registry. What Firefox still lacks:
 
-- **No trusted events** — clicks and key presses are synthetic (`el.click()`, `new KeyboardEvent()`), and some sites reject `event.isTrusted === false`. All AX-tool click/type paths use synthetic dispatch in Firefox; the CDP-backed trusted-event path in Chrome has no Firefox equivalent.
+- **Optional trusted events** — standard mode uses synthetic events. The experimental [BiDi companion](../../firefox-companion/README.md) adds trusted click, hover, text, supported keys, file-input attachment, and native JavaScript-dialog handling. It requires a local helper and Firefox remote automation; other tools retain their existing implementations. This is a Firefox-specific transport, not a Chrome CDP adapter.
 - **No pixel-perfect / full-page screenshots** — uses `browser.tabs.captureTab()` instead of CDP `Page.captureScreenshot`; it can capture the run tab while that tab is inactive. Firefox has exposed `tabs.captureTab()` since Firefox 59, before WebBrain's current minimum, and the manifest declares the required `<all_urls>` permission.
 - **No shadow DOM piercing** — content script can read open shadow roots via `element.shadowRoot`, but cannot pierce closed roots.
+- **Cloud Bridge lives in the background page** — with no offscreen document, `src/cloud-bridge.js` holds the outbound WebSocket and hands `cloud_*` commands straight to `handleMessage`; `src/cloud-runs.js` mirrors the Chrome controller and receives the bridge as an injected dependency. The protocol and optional browser approval are identical to Chrome ([docs/cloud-bridge-browser-approval.md](../../docs/cloud-bridge-browser-approval.md)).
 - **No offscreen document** — no HTTP fetch proxy for localhost LLM servers with Private Network Access / CORS issues. User must ensure their local LLM server sends permissive CORS headers.
 - **Some Chrome-only tools/features remain absent** — no CDP full-page screenshot, CDP upload automation, tab recording, offscreen fetch proxy, Chrome-only `shadow_dom_query`, or closed-shadow-root traversal.
 
 Everything else — the agent loop, LLM providers, site adapters, Ask/Act/Dev mode routing, Plan before Act, loop detection, API shortcut observer, trace recorder, scheduler, context management — is architecturally identical to Chrome unless noted below.
+
+PDF handling is an intentional platform exception: Firefox has no equivalent
+to Chrome's global `mime_types_handler`/`chrome.mimeHandler` route in this
+extension. Firefox therefore keeps its native PDF viewer as the default and
+uses an explicit WebBrain PDF viewer context-menu entry when the user chooses
+it. The Chrome-only automatic PDF viewer setting (on by default) does not apply to
+Firefox; the explicit Firefox entry remains available independently.
+
+The explicit Firefox route is URL/GET based. It cannot replay an arbitrary
+POST navigation because the context-menu event does not expose the original
+request body; those documents remain in the native viewer unless a stable PDF
+URL is available. Chrome's MIME-handler route receives the browser's one-time
+stream and therefore also covers PDF responses that originated from POST
+navigations.
 
 ---
 
@@ -89,7 +104,7 @@ src/firefox/
 └── icons/
 ```
 
-Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `recorder/`, no `providers/fetch-with-fallback.js`.
+Notable absences vs Chrome: no `cdp/`, no `offscreen/`, no `recorder/`, no `providers/fetch-with-fallback.js`. The Cloud Bridge (`cloud-bridge.js`, `cloud-runs.js`) sits next to `background.js` instead of under `offscreen/`.
 
 ## Permissions
 
@@ -118,7 +133,7 @@ Notably **missing** vs Chrome: `debugger`, `sidePanel`, `scripting`, `offscreen`
 - No `debugger` → no CDP, no trusted events
 - No `offscreen` → no HTTP fetch proxy; direct fetch from background page only
 - No `privateNetworkAccess` → localhost LLM servers must send CORS headers themselves
-- `webRequest` is used for the same opt-in in-memory API shortcut observer as Chrome. The setting is off by default.
+- `webRequest` is used for the same in-memory API shortcut observer as Chrome. The setting is on by default and can be disabled in Settings.
 - Uses `sidebar_action` (MV2) instead of `side_panel` (MV3)
 - Uses `browser.tabs.executeScript()` / `browser.tabs.sendMessage()` instead of `chrome.scripting.executeScript()`
 
@@ -335,7 +350,7 @@ Legacy tier (kept for compatibility with older prompts and for non-AX flows):
 |---|---|
 | `read_page`, `screenshot`, `get_interactive_elements` | Page content / image / indexed elements |
 | `click`, `type_text`, `press_keys` | Text/selector/index-based interaction |
-| `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
+| `scroll`, `navigate`, `go_back`, `go_forward`, `promote_iframe`, `wait_for_element`, `wait_for_stable` | Page control. `promote_iframe` resolves one child frame and navigates the current run tab to its standalone URL. `wait_for_stable` polls MutationObserver + in-flight fetch/XHR — works identically to Chrome. |
 | `extract_data`, `get_selection` | Data extraction / selected text |
 | `get_shadow_dom`, `get_frames`, `iframe_read`, `iframe_click`, `iframe_type` | Frame / shadow DOM. Iframe reads enumerate labels, values, and per-selector `matchIndex` values; mutations fail before dispatch on ambiguity. An iframe type must be followed by same-scope `verify_form({urlFilter})` before successful completion. `get_shadow_dom` and `get_frames` are Full Act and Dev-extended for Mid Dev. |
 | `fetch_url`, `research_url` | HTTP / open-and-read |
@@ -559,9 +574,10 @@ Same end-to-end shape as Chrome, minus the CDP-trusted-event path and the offscr
 
 Planner prompts follow Chrome's token-minimal gating: the base planner prompt
 includes general repeated-task pacing, while API replay guidance is appended only
-when the tab conversation already has `/allow-api`. Both compact and full
-planner schemas carry a language-neutral messaging target only when the trusted
-request authorizes an external message.
+when API mutations are authorized by the persistent setting or the tab's
+`/allow-api` override. Both compact and full planner schemas carry a
+language-neutral messaging target only when the trusted request authorizes an
+external message.
 
 ---
 
@@ -589,8 +605,8 @@ Same as Chrome, minus CDP:
 - Cross-origin iframes accessible via extension privilege
 - Ask is read-only; Act and Dev are action modes. Dev adds source/style/page-inspection tools and is blocked for Compact-tier providers.
 - Plan before Act can require user approval before any action-mode tool executes
-- API shortcut observer is off by default; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
-- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`)
+- API shortcut observer is on by default and can be disabled in Settings; when enabled, it records bounded same-tab XHR/fetch replay metadata in memory only
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for API mutations (POST/PUT/PATCH/DELETE via `fetch_url` / `research_url`). If the persistent setting cannot be read from storage, it grants no authorization.
 - Finance adapters get extra safety warnings
 - Tool results capped at 8KB
 - No remote code execution: all providers called via `fetch()` with user-supplied keys; no eval of LLM responses

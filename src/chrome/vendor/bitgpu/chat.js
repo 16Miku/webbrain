@@ -2165,7 +2165,43 @@ function preprocess(template, options = {}) {
 	if (template.endsWith("\n")) template = template.slice(0, -1);
 	if (options.lstrip_blocks) template = template.replace(/^[ \t]*({[#%-])/gm, "$1");
 	if (options.trim_blocks) template = template.replace(/([#%-]})\n/g, "$1");
-	return template.replace(/(\s*){%(-?)\s*(?:end)?generation\s*(-?)%}(\s*)/gs, (_, before, lstrip, rstrip, after) => (lstrip ? "" : before) + (rstrip ? "" : after));
+	// Consume disjoint ranges instead of retrying a whitespace-prefixed regexp
+	// at every position when a template has no complete generation marker.
+	const parts = [];
+	let outputCursor = 0;
+	let searchCursor = 0;
+	const whitespace = (position) => position < template.length && /\s/.test(template[position]);
+	while (searchCursor < template.length) {
+		const start = template.indexOf("{%", searchCursor);
+		if (start === -1) break;
+		let cursor = start + 2;
+		const lstrip = template[cursor] === "-";
+		if (lstrip) cursor++;
+		while (whitespace(cursor)) cursor++;
+		if (template.startsWith("end", cursor)) cursor += 3;
+		if (!template.startsWith("generation", cursor)) {
+			searchCursor = start + 2;
+			continue;
+		}
+		cursor += 10;
+		while (whitespace(cursor)) cursor++;
+		const rstrip = template[cursor] === "-";
+		if (rstrip) cursor++;
+		if (!template.startsWith("%}", cursor)) {
+			searchCursor = start + 2;
+			continue;
+		}
+		const end = cursor + 2;
+		let before = start;
+		while (before > outputCursor && whitespace(before - 1)) before--;
+		let after = end;
+		while (whitespace(after)) after++;
+		parts.push(template.slice(outputCursor, lstrip ? before : start));
+		if (!rstrip) parts.push(template.slice(end, after));
+		outputCursor = searchCursor = after;
+	}
+	parts.push(template.slice(outputCursor));
+	return parts.join("");
 }
 function tokenize(source, options = {}) {
 	const tokens = [];
@@ -5655,51 +5691,66 @@ function parseToolCall(raw) {
 *  JSON.parse'd. Returns name '' if the block names an unknown tool/property, a required property is
 *  missing, or a non-string value is not valid JSON (so a surfaced call always conforms). */
 function parseToolCallXml(raw, tools) {
-	const fn = /<function=([^>]*)>/.exec(raw);
-	if (!fn) return {
-		name: "",
-		arguments: {},
-		raw
+	const failure = () => ({ name: "", arguments: {}, raw });
+	if (typeof raw !== "string" || !Array.isArray(tools)) return failure();
+	try {
+		validateTools(tools, "auto");
+	} catch {
+		return failure();
+	}
+	let cursor = 0;
+	const skipWhitespace = () => {
+		while (cursor < raw.length && /\s/.test(raw[cursor])) cursor++;
 	};
-	const name = fn[1];
+	skipWhitespace();
+	if (!raw.startsWith("<function=", cursor)) return failure();
+	const nameStart = cursor + 10;
+	const nameEnd = raw.indexOf(">", nameStart);
+	if (nameEnd === -1) return failure();
+	const name = raw.slice(nameStart, nameEnd);
 	const tool = tools.find((t) => t.function.name === name);
-	if (!tool) return {
-		name: "",
-		arguments: {},
-		raw
-	};
+	if (!tool) return failure();
 	const schema = tool.function.parameters;
 	const props = schema?.properties ?? {};
 	const args = {};
-	const re = /<parameter=([^>]*)>([\s\S]*?)<\/parameter>/g;
-	for (let m = re.exec(raw); m !== null; m = re.exec(raw)) {
-		const key = m[1];
-		const valText = m[2].replace(/^\n/, "").replace(/\n$/, "");
-		const pschema = props[key];
-		if (pschema?.oneOf !== void 0 || pschema?.type !== void 0 && pschema.type !== "string") try {
-			args[key] = JSON.parse(valText);
-		} catch {
-			return {
-				name: "",
-				arguments: {},
-				raw
-			};
+	cursor = nameEnd + 1;
+	while (true) {
+		skipWhitespace();
+		if (raw.startsWith("</function>", cursor)) {
+			cursor += 11;
+			skipWhitespace();
+			if (cursor !== raw.length) return failure();
+			break;
 		}
-		else args[key] = valText;
+		if (!raw.startsWith("<parameter=", cursor)) return failure();
+		const keyStart = cursor + 11;
+		const keyEnd = raw.indexOf(">", keyStart);
+		if (keyEnd === -1) return failure();
+		const key = raw.slice(keyStart, keyEnd);
+		const declared = Object.hasOwn(props, key);
+		if (schema?.additionalProperties === false && !declared) return failure();
+		const valueStart = keyEnd + 1;
+		const valueEnd = raw.indexOf("</parameter>", valueStart);
+		if (valueEnd === -1) return failure();
+		let valText = raw.slice(valueStart, valueEnd);
+		if (valText.startsWith("\n")) valText = valText.slice(1);
+		if (valText.endsWith("\n")) valText = valText.slice(0, -1);
+		const pschema = declared ? props[key] : void 0;
+		let value = valText;
+		if (pschema?.oneOf !== void 0 || pschema?.type !== void 0 && pschema.type !== "string") {
+			try {
+				value = JSON.parse(valText);
+			} catch {
+				return failure();
+			}
+		}
+		// Keep the public plain-object shape, including explicitly declared special
+		// keys, without invoking Object.prototype.__proto__ or inherited setters.
+		Object.defineProperty(args, key, { value, enumerable: true, writable: true, configurable: true });
+		cursor = valueEnd + 12;
 	}
 	if (schema) {
-		for (const req of schema.required ?? []) if (!(req in args)) return {
-			name: "",
-			arguments: {},
-			raw
-		};
-		if (schema.additionalProperties === false) {
-			for (const k of Object.keys(args)) if (!(k in props)) return {
-				name: "",
-				arguments: {},
-				raw
-			};
-		}
+		for (const req of schema.required ?? []) if (!Object.hasOwn(args, req)) return failure();
 	}
 	return {
 		name,

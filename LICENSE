@@ -7,15 +7,6 @@ modify it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or (at your
 option) any later version.
 
-WebBrain releases before 33.0.0 remain available under the MIT License that
-applied when they were published. That historical license text is retained at
-LICENSES/MIT.txt. Independently published subprojects and third-party files may
-carry their own license notices; those notices control those files.
-
-The 33.0.0 extension packages include the vendored Xapian/libzim WebAssembly
-runtime and are conveyed as combined works under GPL-3.0-or-later. Complete
-corresponding source for that runtime is published alongside each release.
-
 The unmodified GNU GPL version 3 license text follows.
 
                     GNU GENERAL PUBLIC LICENSE

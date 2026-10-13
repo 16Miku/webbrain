@@ -59,9 +59,21 @@ export function insertChangelogEntry(changelogText, { version, date, body }) {
   validateVersion(version);
   validateDate(date);
 
-  const duplicate = new RegExp(`^## \\[${escapeRegExp(version)}\\] - `, 'm');
+  const duplicate = new RegExp(`^## \\[${escapeRegExp(version)}\\] - \\d{4}-\\d{2}-\\d{2}$`, 'm');
   if (duplicate.test(changelogText)) {
     throw new Error(`CHANGELOG.md already contains a ${version} entry.`);
+  }
+
+  // A pre-drafted `## [x.y.z] - Unreleased` section is not a released entry.
+  // Promote it: stamp the release date and place the release notes above the
+  // drafted body so no drafted content is lost.
+  const unreleased = new RegExp(`^## \\[${escapeRegExp(version)}\\] - Unreleased\\s*$`, 'm');
+  const draftMatch = unreleased.exec(changelogText);
+  if (draftMatch) {
+    const heading = `## [${version}] - ${date}\n`;
+    const before = changelogText.slice(0, draftMatch.index);
+    const rest = changelogText.slice(draftMatch.index + draftMatch[0].length).replace(/^\n/, '');
+    return `${before}${heading}\n${normalizeChangelogBody(body)}\n${rest}`;
   }
 
   const section = buildChangelogSection(version, date, body);

@@ -1,4 +1,6 @@
+import { getRequestTimeoutMs } from './fetch-with-fallback.js';
 import { inferContextWindow, resolveMaxOutputTokens } from './context-windows.js';
+import { createResponseReader, readResponseText, responseAbortError } from '../network/response-body.js';
 import {
   addConfiguredMaxTokens,
   mapProviderMessages,
@@ -36,6 +38,27 @@ export class BaseLLMProvider {
    */
   async *chatStream(messages, options = {}) {
     throw new Error('chatStream() not implemented');
+  }
+
+  _rethrowAbortedChat(error, options = {}) {
+    if (options.signal?.aborted) throw responseAbortError(options.signal);
+    if (error?.name === 'AbortError' || error?.code === 'response_body_timeout') throw error;
+  }
+
+  async _openStreamReader(response, options = {}) {
+    return createResponseReader(response, {
+      signal: options.signal,
+      idleTimeoutMs: options.streamIdleTimeoutMs ?? await getRequestTimeoutMs(),
+    });
+  }
+
+  async _readErrorResponse(response, maxBytes = 1200, options = {}) {
+    const read = await readResponseText(response, {
+      maxBytes,
+      signal: options.signal,
+      idleTimeoutMs: options.streamIdleTimeoutMs ?? await getRequestTimeoutMs(),
+    });
+    return read.text;
   }
 
   /**
@@ -148,23 +171,7 @@ export class BaseLLMProvider {
   }
 
   _mapMessages(messages) {
-    const sanitized = (Array.isArray(messages) ? messages : []).map((message) => {
-      if (!message || typeof message !== 'object' || (
-        !Object.hasOwn(message, 'webbrainPlannerClarification')
-        && !Object.hasOwn(message, 'webbrainAppOwned')
-        && !Object.hasOwn(message, 'webbrainAppOwnedKind')
-      )) {
-        return message;
-      }
-      const {
-        webbrainPlannerClarification: _plannerClarification,
-        webbrainAppOwned: _appOwned,
-        webbrainAppOwnedKind: _appOwnedKind,
-        ...providerMessage
-      } = message;
-      return providerMessage;
-    });
-    return mapProviderMessages(sanitized, this.config);
+    return mapProviderMessages(messages, this.config);
   }
 
   _supportsReasoningContentReplay(_options = {}) {

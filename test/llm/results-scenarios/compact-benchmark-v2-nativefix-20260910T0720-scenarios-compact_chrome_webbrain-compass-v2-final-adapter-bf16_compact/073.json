@@ -1,0 +1,32 @@
+{
+  "id": "073",
+  "category": "cross-lingual",
+  "description": "Turkish user, English wiki article. Read + answer in Turkish.",
+  "mode": "ask",
+  "browser": "chrome",
+  "latencyMs": 300013,
+  "error": "timeout after 300000ms",
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "Kapanış (closure), bir fonksiyonun tanımlandığı leksik çevre ile birlikte paketlenmiş halidir — yani dış kapsamın değişkenlerine, o kapsam döndükten sonra bile erişebilir."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "done({summary:\"A closure is a function bundled with...\"})",
+        "reason": "User asked in Turkish — answer in Turkish."
+      }
+    ],
+    "successRubric": "Answer in the user's language. Read English source, translate gist into Turkish."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "error",
+  "scoreNote": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null
+}

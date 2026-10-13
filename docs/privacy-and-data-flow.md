@@ -47,7 +47,7 @@ inference stay on-device.
 The user chooses their provider in Settings. Options include:
 
 - **WebBrain Compass**: requests go through `api.webbrain.one`; selected interactions may be retained and used for evaluation, improvement, fine-tuning, and training while Help Improve WebBrain is enabled
-- **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials and are never collected by WebBrain
+- **Bring-your-own cloud providers**: OpenAI, Anthropic, Google Gemini, Mistral, DeepSeek, xAI, Groq, OpenRouter, etc. — requests go directly to the provider using the user's credentials; WebBrain receives a separate research copy only if the user enables that provider's **Share queries for research** switch
 - **Local model runtimes**: llama.cpp, Ollama, LM Studio, Jan, vLLM, SGLang,
   LocalAI, GPT4All, and Unsloth Studio — inference requests stay on the user's
   machine when Studio is configured with its loopback URL
@@ -57,7 +57,7 @@ The user chooses their provider in Settings. Options include:
   local gateway, but the gateway may forward the request context to an upstream
   account. Its configuration and privacy policy determine where data goes.
 
-Local-model and bring-your-own API requests are never collected by WebBrain. WebBrain Compass requests are processed and may be retained as described below.
+Local-model and bring-your-own API requests do not pass through WebBrain Compass. A separate, per-provider research-sharing switch is off by default; when enabled, bounded copies and diagnostic metadata are sent to WebBrain as described below. WebBrain Compass requests are processed and may be retained separately.
 
 ### Optional research escalation to ChatGPT
 
@@ -98,6 +98,100 @@ checked again before submission. The helper tab is left visible for inspection
 on login, layout, or timeout failures. Turning Research escalation off removes
 both the delegation tool and the Ask-mode consent schema from later model
 requests.
+
+### Decision models and completion verification
+
+Settings → Assistive Models → Decision models selects OpenRouter, TypeSafe or a
+local/custom System One endpoint. Completion verification, watch checks,
+scheduled completion checks, classifications and browser decisions share that
+selection and have separate switches. Existing TypeSafe credentials, opted-in
+features and scheduler thresholds are retained. New configurations default to
+OpenRouter Decider with completion verification enabled once outsourcing is
+configured. Compass completion uses its managed Cloud decision route by default;
+an explicitly enabled and consented D1 selection changes that decision route only.
+
+The optional experimental **D1 FP32 WebGPU** decision provider has no inference
+endpoint or API key. Its bounded text/JSON state, questions and inline screenshots
+stay in the local decision Worker. Explicit download consent permits only pinned
+ONNX/config/tokenizer downloads (about 1.9 GB) from Hugging Face, verified against
+the packaged manifest and checksums. The roughly 3.84 GB published package also
+contains a full checkpoint for external reproducibility, but the browser never
+downloads `model.safetensors`. JS/WASM stays bundled with the extension. Cache and
+consent are local and device-bound; no download is triggered by a decision call.
+Usage traces use the existing bounded model/provider/token/cost metadata, not an
+additional copy of D1 state or pixels. Existing separately configured trace and
+research-sharing policies remain applicable.
+
+A local decision provider does not make the main conversation provider local.
+In particular, D1 cannot be the sole positive completion authority: verification
+continues to the active LLM or existing checks. An active cloud LLM can still
+receive the existing bounded task and redacted screenshot/AX evidence through
+that fallback. Selecting D1 does not bypass Strict Secret Mode or consent,
+cancellation, permissions, recipient, payment, authorization or workflow gates.
+
+Successful action-mode `done` and `done_json` attempts send bounded original task,
+requirements, recent action/read evidence, document identity and fresh redacted
+pixels (when supported) or AX to the selected judge. Page content and pixels are
+untrusted data; an agent success summary is not proof. Text is bounded by
+serialized UTF-8 bytes; screenshots use the configured capture/redaction budgets.
+Local Kev uses `/v1/systemone`, requires no key by default and works offline.
+Keys stay in local storage; config exports include them in plaintext.
+
+If automatic page or iframe updates would discard a terminal Ask reply, a
+ten-second dependency check can send the current user task, qualified prior
+conversation text and the exact candidate answer to the active conversation
+provider. It uses that provider's normal cost, cancellation and privacy controls;
+it does not change the selected decision provider. An exact answer's result is
+cached only within its current task/run/provider/document scope. This check
+cannot authorize a browser action or retain an answer after a user correction.
+
+Decision requests have a five-second deadline and no transport retries; dedicated
+tool-free LLM checks have ten seconds. Visual uncertainty or unsupported images
+tries AX. Authentication/transport failures fall through to the active LLM, then
+existing checks. Confident pending/failed verdicts require recovery. Quota,
+cancellation and cost limits stop the run. Verdicts are bound to task, run, latest
+action, document, evidence digest and model configuration. A matching fresh verdict
+can be reused for scheduled completion without another model call. Generic
+publication can be verified despite an unrelated comment form; recipient, payment,
+download, authorization and workflow contracts remain required. Future votes and
+moderation outcomes are not certified.
+
+GitHub release verification may read the exact saved release's edit form with a
+bounded authenticated same-origin GET to compare its tag, title and raw Markdown
+notes with the reviewed form. These values remain in private execution state;
+verification diagnostics contain predicate names and status only. This readback
+does not submit or republish the release.
+
+The Cloud decision endpoint logs route, model, modality, latency, outcome, usage
+and fallback reasons without raw screenshots or page evidence. Consent and
+privacy-key selection follow the existing Compass policy. Reported decision cost
+is accounted separately, with configured rates as fallback.
+
+### Scheduled decision checks
+
+The watch and scheduled-completion switches remain separate opt-ins. The master
+switch preserves feature preferences when disabled; deleting keys resets those
+scheduler thresholds to 70%. Config import/export retains the original
+`systemOne*` and `typesafeApiKey` keys together with new decision settings.
+
+The scheduler sends bounded textual task and allowlisted tool observations to the
+selected endpoint, plus a bounded real previous observation for watches. Legacy
+TypeSafe uses `https://api.typesafe.ai/v1/systemone`, model `jev-1.13.0`. Scheduler
+sidecar state excludes agent success summaries, full history, screenshots, audio,
+attachments, raw request bodies and credential fields. Text is redacted and wrapped
+as untrusted data. Actions invalidate earlier observations. Missing evidence skips
+the check. Ordinary page text may contain personal data, so enabling outsourcing
+authorizes sending that limited evidence to the selected endpoint.
+
+The scheduled sidecar only downgrades an existing success. A low read-only watch
+judgment permits another poll. Dispatched actions or uncertain outcomes retain
+their record and require reconciliation instead of automatic repetition. Existing
+scheduled-check deadlines and 429/529 retries remain unchanged. Connection tests
+run only on button press and never retry; image-enabled tests additionally check
+two synthetic images. Reported cost takes precedence over configured model rates.
+Legacy TypeSafe input is estimated at $0.042 per million tokens with free output.
+Usage/model/reason metadata enters accounting and traces without raw evidence.
+Strict Secret Mode disables judging; offline loopback decisions remain available.
 
 ### WebBrain Compass improvement data
 
@@ -141,8 +235,9 @@ routed through an OpenRouter workspace where content logging is disabled. This
 does not prevent the minimal metadata-only operational logging required to
 provide the service, enforce quotas, prevent abuse, maintain security, or debug
 failures. Requests sent to local models or directly to providers using the
-user's own credentials never pass through WebBrain Compass and are never eligible
-for WebBrain training.
+user's own credentials never pass through WebBrain Compass for inference. They
+are not collected by WebBrain unless the user separately opts in to that
+provider's research sharing.
 
 For eligible completed generations, MySQL is WebBrain's canonical store. The
 service strips media, compresses the request/response payload, encrypts it with
@@ -165,6 +260,30 @@ selected for improvement are retained for no longer than 12 months before
 deletion or de-identification. De-identified datasets may be retained for up to
 5 years for model development, evaluation, security, and reproducibility.
 
+### Voluntary external/local provider research sharing
+
+**Share queries for research** is off by default for each local or bring-your-own
+provider. If the user turns it on, WebBrain sends a bounded copy of that
+provider's model-facing request and response to the Compass improvement service.
+It also sends a bounded diagnostic timeline for model-attempt runs, including
+failed ones: steps, tool names, outcomes, error codes, and timings. A failed run
+may include its bounded model-facing request and displayed blocker even when no
+response was produced. Screenshot and other binary bytes are stripped; raw tool
+arguments and results are not included in the diagnostic timeline. Text in the
+shared conversation can still contain sensitive personal information after
+truncation and automated de-identification, so users should not enable this
+switch for content they do not want to share.
+
+The extension records a local trace for an opted-in run even if the separate
+Record traces switch is off. The upload projects only metadata from that trace,
+including when the user independently selected local lossless tracing. Research
+shares use a durable, revocable local outbox and are retried after temporary
+delivery failures; the provider's live sharing consent is checked before each
+send. The Compass service admits these records only under explicit
+share-session consent, de-identifies and encrypts them, and applies its
+improvement-data retention rules. They are not counted as Compass inference
+requests.
+
 ---
 
 ## What Stays in the Browser
@@ -183,8 +302,19 @@ the stored copies are not separately synced to WebBrain.
 
 ### Trace Recorder
 
+**Local feedback diagnostics** is enabled by default under Settings → Display.
+When ordinary trace recording is off, it retains metadata-only diagnostics for
+up to ten completed runs, seven days, and 2 MiB (with a 128 KiB per-run cap).
+These automatic records never inherit lossless tracing and contain no raw
+conversation/tool text or screenshot bytes. Turning the setting off stops this
+recording and removes its automatic history; explicitly recorded traces remain.
+Retention and event-budget omissions are identified in feedback exports.
+
 When enabled (Settings → Display → "Record traces"), every agent run is written
-to the local `webbrain_traces` IndexedDB database in one of two privacy tiers:
+to the local `webbrain_traces` IndexedDB database in one of two privacy tiers.
+An external/local provider with **Share queries for research** enabled also
+records its run locally for the bounded diagnostic upload, even when this
+separate Record traces setting is off:
 
 - **Default metadata-only tier.** The `runs` store keeps run identifiers and
   lineage, model/provider identifiers, token and event totals, timestamps,
@@ -203,6 +333,11 @@ to the local `webbrain_traces` IndexedDB database in one of two privacy tiers:
   Lossless payloads have per-request, per-result, per-run, and aggregate
   storage bounds; old completed lossless runs may be evicted to remain within
   the aggregate limit. These runs are visibly marked in the Traces UI.
+
+`click_ax_timing` trace notes retain only bounded stage durations, input-event
+counts, outcome categories, and safety-status booleans. URL, target labels,
+accessibility references, and other page content are excluded in both tiers,
+including lossless traces.
 
 Default trace redaction does not disable `/workflow --save`. While a traced run
 is active, the recorder keeps bounded raw tool payloads in memory only. On
@@ -298,10 +433,17 @@ the v1 bridge for moving memory between browser profiles.
 
 ### Configuration Snapshot Transfer
 
+An optional MemCode connection is documented in [MemCode recall](memcode-recall.md).
+It is disabled by default and separate from local user memory. When enabled,
+short agent-selected search queries go to MemCode, and returned memories can be
+sent as untrusted tool context to the configured LLM provider. OAuth tokens stay
+in extension-local storage outside portable configuration snapshots; disconnect
+removes them locally. No local memory is automatically uploaded.
+
 `/export --config` creates a local plaintext `webbrain-config/1` JSON file, and
 `/import <json>` or `/import --file` reads that snapshot locally before writing
 the validated Settings values to extension storage. The snapshot intentionally
-includes provider, vision, transcription, and CapSolver API keys as well as
+includes provider, vision, transcription, and CAPTCHA provider API keys as well as
 profile text, user memory, custom skills, and saved permission choices. Users
 should treat the file like a credential backup and store it securely.
 
@@ -322,9 +464,14 @@ encrypts it in the browser with AES-256-GCM. Its key is derived from the sync
 password with PBKDF2-HMAC-SHA-256 (600,000 iterations). The password and derived
 key are retained in memory only for the browser session.
 
-WebBrain Compass receives only ciphertext and cryptographic/version metadata. It
-cannot decrypt the vault or recover a forgotten password. Authentication uses a
-separate email-approved, scoped token; the billing device GUID alone cannot read
+WebBrain Compass receives ciphertext, cryptographic/version metadata, and three
+counts supplied by the extension with each vault upload: configured portable
+providers, saved memory records, and whether the freeform profile text is
+nonempty (0 or 1). These counts support the authenticated admin stats page;
+provider names, memory text, profile text, and API keys remain inside the
+encrypted vault. Older vaults have unknown counts until a newer extension syncs.
+WebBrain Compass cannot decrypt the vault or recover a forgotten password.
+Authentication uses a separate email-approved, scoped token; the billing device GUID alone cannot read
 a vault. Sync is off by default, local writes continue while locked or offline,
 and chat history, traces, tasks, permissions, and extraction queues are excluded.
 
@@ -340,10 +487,10 @@ the URL + method to the active LLM conversation.
 
 ### Experimental WebMCP
 
-WebMCP is off by default. A user must enable **Experimental WebMCP** under
-Settings → General → Advanced before WebBrain sends its tool schemas or prompt
-guidance to the configured LLM. On supporting Chrome pages, WebBrain can then
-enable the experimental CDP `WebMCP` domain. Chrome reports the structured tools registered by the current page,
+WebMCP is on by default. A user can disable **Experimental WebMCP** under
+Settings → General → Advanced to prevent WebBrain from sending its tool schemas
+or prompt guidance to the configured LLM. On supporting Chrome pages, WebBrain
+can enable the experimental CDP `WebMCP` domain. Chrome reports the structured tools registered by the current page,
 including their page-supplied name, description, input schema, annotations, and
 registration frame. WebBrain keeps a bounded in-memory per-tab catalog, assigns
 opaque `wmcp_*` IDs, and removes it when the conversation/tab CDP session is
@@ -358,8 +505,9 @@ support this path.
 
 ## Telemetry / Analytics
 
-The extension does not include an analytics SDK, crash-reporting SDK, or a
-separate product-telemetry endpoint. When WebBrain Compass is selected, the model
+The extension does not include an analytics SDK or crash-reporting SDK. Opt-in
+research sharing uses separate improvement endpoints; it is not general product
+telemetry. When WebBrain Compass is selected, the model
 request itself goes to `api.webbrain.one` and is subject to the Compass data-use
 terms above. Operational request metadata is retained separately for quota,
 security, abuse prevention, and debugging.
@@ -367,15 +515,31 @@ security, abuse prevention, and debugging.
 The only outbound HTTP requests are:
 1. **WebBrain Compass model calls** to `https://api.webbrain.one/v1` (when WebBrain Compass is selected; the Help Improve WebBrain preference is sent with each request)
 2. **Other LLM provider API calls** (directly to URLs the user configured)
-3. **CapSolver API calls** (if the user enables CAPTCHA solving)
+3. **CAPTCHA provider API calls** (only for enabled services, or an explicit balance test)
 4. **Content fetches** via `fetch_url` / `research_url` tools (to URLs the agent is asked to fetch)
 5. **Skill tool calls** (to the HTTPS endpoint(s) declared by network-capable enabled skills — see "Bundled Skills" below; the default email verification-code helper declares no endpoint)
 6. **User memory extraction calls** (only if auto-learn is enabled; sent to the configured LLM provider after a completed turn)
 7. **Encrypted Cloud Sync calls** to `https://api.webbrain.one/v1/sync` (only after a subscriber explicitly enables sync; vault content is encrypted before upload)
 8. **Slash-driven tab/screen recording** creates no outbound traffic (the .webm is saved to the Downloads folder via `chrome.downloads.download`)
+9. **Voluntary research shares** to `https://api.webbrain.one/v1/improvement/generations` and `/v1/improvement/diagnostic-traces` (only for a local or bring-your-own provider with its separate sharing switch enabled)
+10. **Feedback trace attachments** uploaded by GitHub's native issue editor,
+    only after the user chooses **Upload trace and open GitHub** in the extension.
+    Preparing, viewing, and downloading the trace are local operations. The
+    attachment includes only recordings preceding the opening of the rating
+    prompt; later turns and screenshots in the same conversation are excluded.
+    The confirmation identifies the conversation, recorded content tier, run and
+    screenshot counts, size, and any fallback or omissions. GitHub makes the
+    attachment publicly accessible immediately, before the issue is submitted.
+    **Continue without trace** uploads no trace. Export scrubs credential-shaped
+    values, but conversation/page text and screenshots can still be sensitive.
+    Temporary exports expire after one hour and are removed after completion,
+    cancellation, or closing the destination tab. Failed handoffs can retry the
+    same authorized bytes. Full traces that exceed the attachment limit use an
+    explicitly disclosed diagnostic fallback; the original stays available as
+    a local download.
 
-The opt-in `webRequest` API shortcut observer is off by default and does not
-create outbound requests; when enabled, it observes replay metadata for requests
+The `webRequest` API shortcut observer is on by default and does not
+create outbound requests; it observes replay metadata for requests
 the page already made so repeated UI mutations can be diagnosed.
 
 ### Bundled Skills
@@ -417,8 +581,14 @@ configured LLM provider. The article fallback is limited to allowlisted
 `nytimes.com` URLs (including The Athletic paths) and sends only that URL
 without browser credentials or cookies. The transcript tool is limited to
 YouTube/youtu.be URLs, while the media tools are limited to public media hosts
-declared in the skill manifest. The read-only article, transcript, and resolver
-tools do not require
+declared in the skill manifest. Mastodon status URLs must use HTTPS and a
+known instance host or an instance verified through public NodeInfo metadata.
+For unknown hosts, WebBrain first reads `/.well-known/nodeinfo` and its
+same-origin metadata link without cookies or credentials, with redirects
+blocked. Those checks do not include the post path, query string, or fragment.
+Only the verified status origin and path are sent to FreeSkillz; Mastodon query
+strings and fragments are discarded. The read-only article, transcript, and
+resolver tools do not require
 `/allow-api`; `download_public_media` is available only in action modes and
 requires download permission because it creates a short-lived provider job,
 saves the completed file through the browser Downloads API, and then asks the
@@ -429,14 +599,26 @@ stop this data flow entirely.
 
 The "OTP / verification-code helper (email)" skill
 (`skills/otp-verification-code-helper.md`) is explicitly Ask/Act compatible,
-is prompt-only, and declares no external tool or endpoint. It guides WebBrain's
-existing page-reading tools to
-prefer selected text or a bounded, message-scoped accessibility-tree subtree on
-the active run tab when finding a recent, service-matching code. It cannot list
-or switch to background tabs, read SMS, phone notifications, native apps, or
-another device, and it forbids private mailbox APIs or sign-in bypasses. The
-skill itself creates no additional network request. When the user asks WebBrain
-to read a code, however, the scoped page content and extracted code are included
+and declares no external endpoint. It guides WebBrain's existing page-reading
+tools to prefer selected text or a bounded, message-scoped accessibility-tree
+subtree on the active run tab. On Mid/Full, and only after that exact skill is
+active, one fixed internal tool may inspect an already-open signed-in supported
+webmail tab. The runtime enumerates tabs locally but returns only a provider and
+bounded service-matching previews with opaque message references; disclosure
+requires the full normalized service identity or all sufficiently discriminative
+service tokens. It does not send the tab catalog, mailbox URL, or accessibility
+references to the model. A provider-verified already-open message is scoped and
+read directly across the supported providers. If an inbox candidate must be
+opened, the operation is unavailable in Ask because opening can mark the email
+read. In Act/Dev it receives the normal click permission for the mailbox host,
+clones the mailbox URL into a temporary inactive tab, consumes every exact bounded
+message-scoped continuation or fails closed without paginating the wider mailbox,
+and closes the clone.
+That clone can make ordinary authenticated requests to the same webmail origin;
+the helper does not call a mailbox API or external skill endpoint. Compact has
+no such tool. The skill cannot read SMS, phone notifications, native apps, or
+another device, and it forbids sign-in bypasses. When the user asks WebBrain to
+read a code, the scoped page content and extracted code are included
 in the normal request to the user's configured LLM provider as part of the
 current conversation. When Record traces is enabled, the raw page-reading tool
 result and model response are also retained locally in the `webbrain_traces`
@@ -456,6 +638,17 @@ in the skill manifest — not browsing history or unrelated chat — and treat
 responses as untrusted unless the manifest says otherwise. Removing or
 disabling a skill stops that data flow. See [Skills](skills.md#bundled-skills)
 for the full packaged catalog.
+
+The opt-in **Phone calls (Phonr)** skill uses ordinary `fetch_url` requests to
+`https://phonr.xyz/v1`. The selected phone number, purpose, language, and optional
+system message go to Phonr; Phonr uses its configured OpenAI and telephone
+provider accounts to conduct the call and retain call history and configured
+recordings. The bearer key is supplied by the user and included in tool arguments,
+which can be present in the configured LLM conversation and enabled traces; this
+skill does not provide a separate credential vault. Returned call details and
+transcripts enter the conversation as untrusted data. The skill ships without a
+key and does not send unrelated browsing content. POST requests keep WebBrain's
+existing API-mutation permission gate; merely enabling the skill does not dial.
 
 The packaged Wikipedia skill does not silently create an offline corpus.
 Apocalypse Mode is disabled by default and requires a separate opt-in under
@@ -567,7 +760,7 @@ CDP capture → JPEG/PNG data URL
 | Browser ↔ LLM provider | Chat messages, page content, screenshot | HTTPS; user chose the provider |
 | Browser ↔ LLM provider | Enabled user memory prompt block and optional extractor input | HTTPS; user chose the provider |
 | Browser ↔ ChatGPT | Exact, user-approved research prompt; returned answer and links | Off-by-default setting; visible fixed-origin tab; per-prompt explicit consent; one-use authorization; result treated as untrusted |
-| Browser ↔ CapSolver | CAPTCHA token requests | HTTPS; user opted in |
+| Browser ↔ enabled CAPTCHA providers | Supplied page/challenge metadata, image/audio and optional proxy/cookie inputs | HTTPS; per-provider opt-in; fallback may contact several services |
 | Extension ↔ Offscreen document | Fetch proxy, recording, and optional local model requests | Same extension, same origin |
 | Service worker ↔ IndexedDB | Trace data | Browser sandbox; never transmitted |
 | Service worker ↔ `chrome.storage.local` | API keys, settings | Browser sandbox (plaintext) |
@@ -581,7 +774,8 @@ CDP capture → JPEG/PNG data URL
 | Provider selection | Choose which LLM receives the data, or run locally |
 | Provider prompt/tool tier | Choose Compact, Mid, or Full tool exposure for non-cloud providers |
 | Ask / Act / Dev mode | Choose read-only, normal action, or developer/page-inspection mode |
-| Tracing toggle | Prevents any trace data from being stored |
+| Tracing toggle | Controls ordinary local trace recording; a separately opted-in provider research share records a run for metadata-only diagnostic upload even when this toggle is off |
+| Local feedback diagnostics | Keeps bounded metadata locally when ordinary tracing is off; disabling it clears automatic history. Uploading a feedback attachment requires separate confirmation. |
 | Screenshot fallback | Controls whether page images are sent to the LLM |
 | Auto-screenshot mode | Controls how frequently viewport captures are sent |
 | Strict secret handling | Keeps credentials out of assistant text and completion summaries: an instruction to the model, plus exact-match redaction in cloud runs of anything it typed, sent, or read from a labelled field |
@@ -590,8 +784,8 @@ CDP capture → JPEG/PNG data URL
 | User memory auto-learn | Controls whether post-turn extractor calls run |
 | Site adapters toggle | Controls whether site-specific guidance is prepended |
 | Research escalation | Off by default; when enabled, permits per-prompt consent requests for the visible ChatGPT helper flow |
-| `/allow-api` | Controls whether the agent can use API mutations |
-| CapSolver toggle | Controls whether CAPTCHA data is sent to a third-party solver |
+| Always allow API mutations / `/allow-api` | The persistent setting (on by default) or a per-conversation override waives permission prompts for write-method network egress |
+| CAPTCHA provider enabled checkboxes | Each controls whether that service participates in solving; a retained key alone does not enable it |
 
 ---
 
@@ -602,6 +796,32 @@ are present and identical to Chrome (`src/firefox/src/trace/recorder.js`). All
 data-flow patterns are otherwise the same, except:
 
 - No dedicated vision sub-call (screenshots go directly to the main provider if vision is supported)
+- Full-page screenshots use the optional local Firefox trusted-automation companion over native messaging and loopback BiDi. The PNG stays local until the user attaches it to a model request. Capture-time page-coordinate redaction scans must agree before a privacy-enabled capture can be staged; otherwise only local preview/save is offered.
 - No slash-driven tab/screen recording
 - Conversation, rendered chat, and detached-run UI journals use
   `browser.storage.session`, matching Chrome's session-scoped persistence.
+
+### Experimental browser decisions and classifications
+
+The two additional decision switches are independent opt-ins. Existing enabled keys
+or scheduler settings do not enable them. Fast classification sends bounded
+request context; fast browser decisions send the task, up to 24 structured AX
+controls, observed options and bounded prepared field values. These may include
+ordinary personal text explicitly supplied for a form. Credential-related tasks
+and pages containing credential, payment, OTP or file controls are excluded from
+the fast path as a whole. Redaction remains best effort. Initial and automatic
+browser screenshots do not disable the AX-only path, but their pixels are never
+sent to the fast decision model. A current user attachment, explicit screenshot-tool result or unknown
+non-text input keeps that decision on the active chat provider. That provider also
+prepares free text and gives the final answer; the fast decision path receives neither screenshots nor
+full conversation history for browser decisions. Separate requests use the same
+selected model, cost accounting and untrusted-data boundaries, with a one-second
+deadline and zero retries. Unsupported operations and their target questions are
+omitted rather than sending a one-option placeholder Choice. A malformed model,
+usage or answer response stops further Jev requests for that run; exported traces
+show only its bounded reason code along with Jev decisions and usage, never the
+response or bounded request evidence.
+
+### CAPTCHA provider integration details
+
+The seven-provider catalog, enabled-state controls, data sent during fallback, explicit host-only cookie application, and managed Cloud broker isolation are documented in [CAPTCHA provider coverage](captcha-provider-coverage.md#security-and-data-flow). Model-visible discovery does not expose saved provider keys. Native task inputs may include explicitly supplied proxies/cookies; the browser cookie jar is not automatically exported. Provider-returned scripts are never executed.

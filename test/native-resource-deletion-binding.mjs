@@ -1,0 +1,259 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { chromium, firefox } from 'playwright';
+
+const url = 'https://mastoturk.org/@ownedqa';
+const resource = `${url}/200`;
+const menu = '<div class="dropdown-menu"><div class="dropdown-menu__container"><ul class="dropdown-menu__container__list"><li class="dropdown-menu__item dropdown-menu__item--dangerous"><button data-index="0" id="delete">Sil</button></li></ul></div></div>';
+const confirmation = '<div role="dialog" aria-modal="true"><div class="modal-root__modal safety-action-modal"><div class="safety-action-modal__actions"><button type="button" class="link-button">İptal</button><button type="button" class="button" id="confirm">Sil</button></div></div></div>';
+const record = (id = '200', account = 'ownedqa') => `<div class="status" id="record-${id}"><a class="status__relative-time" href="/@${account}/${id}">Now</a><a class="status__display-name" href="/@${account}">@${account}</a><div class="status__content__text--visible"><p>Exact owned post ${id}</p></div><div class="status__action-bar"><button type="button" id="more-${id}" aria-label="More"><svg class="icon icon-ellipsis-h" aria-hidden="true"></svg></button></div></div>`;
+const html = `<!doctype html><style>button{padding:12px}.status{padding:10px}.dropdown-menu{padding:10px}.safety-action-modal{padding:20px}svg{width:12px;height:12px}</style>
+<script id="initial-state" type="application/json">{"meta":{"delete_modal":true}}</script>
+<div class="navigation-bar"><a class="account__display-name" href="/@ownedqa">@ownedqa</a></div><form class="compose-form"><textarea class="autosuggest-textarea__textarea"></textarea></form>
+<main>${record()}${record('201')}</main><div id="portal"></div><script>
+window.qaDeletes=0;window.qaMultiple=false;
+window.qaOpenMenu=()=>{portal.innerHTML=${JSON.stringify(menu)}+(qaMultiple?${JSON.stringify(menu.replace('id="delete"', 'id="other-delete"'))}:'');document.querySelector('#delete').onclick=()=>{portal.innerHTML=${JSON.stringify(confirmation)};document.querySelector('#confirm').onclick=()=>qaDeletes++;};};
+document.querySelector('#more-200').onclick=qaOpenMenu;document.querySelector('#more-201').onclick=qaOpenMenu;
+</script>`;
+
+for (const build of ['chrome', 'firefox']) {
+  const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+  test(`${build}: native resource launcher, menu and confirmation have exact ownership`, async t => {
+    const browser = await (build === 'chrome' ? chromium : firefox).launch({ headless: true });
+    try {
+      async function fixture() {
+        const page = await browser.newPage();
+        await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: html }));
+        await page.goto(url);
+        let scope;
+        const probe = (selector, overrides = {}) => page.evaluate(({ source, selector, scope, overrides }) =>
+          (0, eval)(`(${source})`)('click', { selector, __wbNativeResourceAdapter: 'mastodon',
+            __wbResourceRunToken: 'owned-run', __wbResourceTaskKey: 'owned-task',
+            ...(scope ? { __wbOwnedResourceScope: scope } : {}), ...overrides }),
+        { source: Agent._submitActionProbe.toString(), selector, scope, overrides });
+        const adopt = result => { scope = { ...result.actionResource, document: result.frameDocumentIdentity,
+          taskKey: 'owned-task', popupLauncherToken: result.popupLauncherToken, launcherDispatched: true }; };
+        const click = async selector => { await page.click(selector); await page.waitForTimeout(20); };
+        const open = async () => { const launcher = await probe('#more-200'); adopt(launcher); await click('#more-200'); return launcher; };
+        const showConfirmation = async () => { await open(); const next = await probe('#delete'); adopt(next); await click('#delete'); return next; };
+        return { page, probe, adopt, click, open, showConfirmation, get scope() { return scope; } };
+      }
+
+      await t.test('delivered native chain keeps the exact resource and defers deletion until confirmation', async () => {
+        const f = await fixture();
+        try {
+          const more = await f.open();
+          assert.equal(more.isSubmit, false); assert.equal(more.actionResource.url, resource);
+          const next = await f.probe('#delete');
+          assert.equal(next.isSubmit, false); assert.equal(next.resolvedPreparatoryTarget, true);
+          assert.equal(next.mutationKind, 'delete', 'Opening confirmation still requires exact task deletion authority.');
+          assert.equal(next.actionResource.url, resource); assert.ok(next.popupLauncherToken);
+          f.adopt(next); await f.click('#delete');
+          assert.equal(await f.page.evaluate(() => qaDeletes), 0);
+          const final = await f.probe('#confirm');
+          assert.equal(final.mutationKind, 'delete'); assert.equal(final.semanticCommit, true);
+          assert.equal(final.actionResource.url, resource); assert.equal(final.actionResource.account, url);
+          await f.click('#confirm'); assert.equal(await f.page.evaluate(() => qaDeletes), 1);
+        } finally { await f.page.close(); }
+      });
+
+      for (const preference of ['disabled', 'missing']) await t.test(`${preference} confirmation preference retains direct deletion`, async () => {
+        const f = await fixture();
+        try {
+          await f.page.evaluate(preference => {
+            if (preference === 'missing') document.querySelector('#initial-state').remove();
+            else document.querySelector('#initial-state').textContent = '{"meta":{"delete_modal":false}}';
+          }, preference);
+          await f.open();
+          const detected = await f.probe('#delete');
+          assert.equal(detected.isSubmit, true); assert.equal(detected.mutationKind, 'delete');
+          assert.equal(detected.actionResource.url, resource); assert.equal(detected.resolvedPreparatoryTarget, undefined);
+          await f.page.evaluate(() => { document.querySelector('#delete').onclick = () => qaDeletes++; });
+          await f.click('#delete'); assert.equal(await f.page.evaluate(() => qaDeletes), 1);
+          const agent = new Agent({ getActive: () => ({}) });
+          agent._progressTaskKeyHash = () => 'owned-task'; agent._beginCompletionInvariant(1);
+          agent._recordCompletionToolResult(1, 'click', { selector: '#delete' }, { success: true, dispatched: true }, { detectedSubmit: detected });
+          assert.ok(agent._recordCompletionSubmitAttempt(1, detected, 'click', { selector: '#delete' }, url, url,
+            { success: true, dispatched: true }, 'owned-document', 'owned-document'));
+          assert.equal(agent._completionSubmitStates.get(1)?.mutationKind, 'delete');
+        } finally { await f.page.close(); }
+      });
+
+      for (const variant of ['unsent', 'other-launcher', 'multiple-popups', 'already-open', 'changed-owner']) {
+        await t.test(`${variant} cannot bind a native menu`, async () => {
+          const f = await fixture();
+          try {
+            if (variant === 'already-open') await f.page.evaluate(() => qaOpenMenu());
+            const more = await f.probe('#more-200'); f.adopt(more);
+            if (variant === 'multiple-popups') await f.page.evaluate(() => { qaMultiple = true; });
+            if (variant === 'changed-owner') await f.page.evaluate(() =>
+              document.querySelector('#record-201 .status__action-bar').append(document.querySelector('#more-200')));
+            if (['unsent', 'already-open'].includes(variant)) await f.page.evaluate(() => qaOpenMenu());
+            else await f.click(variant === 'other-launcher' ? '#more-201' : '#more-200');
+            assert.equal((await f.probe('#delete'))?.actionResource, null);
+            assert.equal(await f.page.evaluate(() => qaDeletes), 0);
+          } finally { await f.page.close(); }
+        });
+      }
+
+      for (const variant of ['task', 'run', 'document', 'not-acknowledged', 'wrong-record', 'wrong-account', 'unrelated-modal', 'multiple-modals', 'unrelated-generic-dialog']) {
+        await t.test(`${variant} cannot borrow the native confirmation resource`, async () => {
+          const f = await fixture();
+          try {
+            await f.showConfirmation();
+            let overrides = {};
+            if (variant === 'task') overrides.__wbResourceTaskKey = 'different-task';
+            if (variant === 'run') overrides.__wbResourceRunToken = 'different-run';
+            if (variant === 'document') f.scope.document = 'different-document';
+            if (variant === 'not-acknowledged') f.scope.launcherDispatched = false;
+            if (variant === 'wrong-record') await f.page.evaluate(() =>
+              document.querySelector('#record-200 .status__relative-time').href = '/@ownedqa/202');
+            if (variant === 'wrong-account') await f.page.evaluate(() =>
+              document.querySelector('.navigation-bar .account__display-name').href = '/@otherqa');
+            if (variant === 'unrelated-modal') await f.page.evaluate(confirmation => {
+              document.querySelector('#portal').innerHTML = confirmation;
+            }, confirmation);
+            if (variant === 'multiple-modals') await f.page.evaluate(confirmation => {
+              document.querySelector('#portal').insertAdjacentHTML('beforeend', confirmation.replace('id="confirm"', 'id="other-confirm"'));
+            }, confirmation);
+            if (variant === 'unrelated-generic-dialog') await f.page.evaluate(() => {
+              document.body.insertAdjacentHTML('beforeend', '<div role="dialog"><p>Unrelated confirmation</p><button>Delete</button></div>');
+            });
+            assert.equal((await f.probe('#confirm', overrides))?.actionResource, null);
+            assert.equal(await f.page.evaluate(() => qaDeletes), 0);
+          } finally { await f.page.close(); }
+        });
+      }
+
+      await t.test('native classes without extension adapter evidence do not provide resource authority', async () => {
+        const f = await fixture();
+        try { assert.equal((await f.probe('#more-200', { __wbNativeResourceAdapter: '' }))?.actionResource, null); }
+        finally { await f.page.close(); }
+      });
+
+      await t.test('an unrelated saved record retains its own unknown identity', async () => {
+        const f = await fixture();
+        try {
+          await f.open();
+          await f.page.evaluate(() => {
+            const article = document.createElement('article'); article.innerHTML = '<p>Unrelated saved record</p><button type="button" id="other">Delete</button>';
+            document.querySelector('#portal').append(article);
+          });
+          assert.equal((await f.probe('#other'))?.actionResource, null);
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('neutral nested status classes retain generic article and cached-popup ownership', async () => {
+        const f = await fixture();
+        try {
+          const neutral = 'https://neutral-resource.invalid/records/200';
+          await f.page.goto('https://neutral-resource.invalid/records');
+          await f.page.setContent(`<!doctype html><article><a rel="bookmark" href="${neutral}">Exact generic resource</a>
+            <div class="status"><p>Exact neutral record</p><button type="button" id="generic-delete">Delete</button>
+            <button type="button" id="generic-more" aria-haspopup="menu" aria-controls="options">More</button></div></article>
+            <div id="options" role="menu"><div class="status"><button type="button" id="popup-delete">Delete</button></div></div>`);
+          const generic = { __wbNativeResourceAdapter: '' };
+          assert.equal((await f.probe('#generic-delete', generic)).actionResource?.url, neutral,
+            'A common neutral CSS class cannot override the containing saved article.');
+          const more = await f.probe('#generic-more', generic); f.adopt(more);
+          await f.click('#generic-more');
+          assert.equal((await f.probe('#popup-delete', generic)).actionResource?.url, neutral,
+            'The same class cannot override the explicitly linked generic menu ownership.');
+          await f.page.evaluate(() => document.querySelector('#options').id = 'unlinked');
+          assert.equal((await f.probe('#popup-delete', generic)).actionResource, null,
+            'An unrelated generic popup still cannot borrow a cached resource.');
+        } finally { await f.page.close(); }
+      });
+
+      await t.test('final deletion retains exact accepted-task authorization', async () => {
+        const f = await fixture();
+        try {
+          await f.showConfirmation();
+          const detected = await f.probe('#confirm');
+          for (const [request, reason] of [
+            [`Delete only ${resource}.`, null], ['Inspect the owned post.', 'resource_not_bound_to_request'],
+            [`Delete only ${url}/201.`, 'resource_not_bound_to_request'],
+          ]) {
+            const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+            agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+            agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+            agent._detectLikelySubmitAction = async () => structuredClone(detected);
+            agent._chatWithCostAllowance = async (_provider, messages) => {
+              const payload = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
+              return { content: JSON.stringify({ key: payload.key, authorized: true, latestRequestEvidence: request }) };
+            };
+            const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider);
+            assert.equal(result?.actionGuard?.reason || null, reason);
+            agent._planExecutionGuards.delete(1);
+            assert.equal((await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider)).actionGuard.reason,
+              'task_or_target_changed');
+          }
+        } finally { await f.page.close(); }
+      });
+
+      for (const variant of ['stable-confirmation', 'stable-direct', 'flip-before-authorization', 'flip-during-authorization']) {
+        await t.test(`${variant} is revalidated by production mutation preflight`, async () => {
+          const f = await fixture();
+          try {
+            const request = `Delete only ${resource}.`;
+            const provider = { chat() {} }, agent = new Agent({ getActive: () => provider });
+            agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
+            agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+            const disableConfirmation = () => f.page.evaluate(() => {
+              document.querySelector('#initial-state').textContent = '{"meta":{"delete_modal":false}}';
+            });
+            if (variant === 'stable-direct') await disableConfirmation();
+            await f.open();
+            const detected = await f.probe('#delete');
+            assert.equal(detected.isSubmit, variant === 'stable-direct');
+            let probes = 0, authorizations = 0;
+            agent._detectLikelySubmitAction = async () => {
+              if (++probes === 1 && variant === 'flip-before-authorization') await disableConfirmation();
+              return f.probe('#delete');
+            };
+            agent._chatWithCostAllowance = async (_provider, messages) => {
+              authorizations++;
+              if (variant === 'flip-during-authorization') await disableConfirmation();
+              const proposed = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
+              return { content: JSON.stringify({ key: proposed.key, authorized: true, latestRequestEvidence: request }) };
+            };
+            const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#delete' }, detected, provider);
+            const reason = variant === 'flip-before-authorization' ? 'resource_changed'
+              : variant === 'flip-during-authorization' ? 'resource_changed_after_authorization' : null;
+            assert.equal(result?.actionGuard?.reason || null, reason);
+            assert.equal(authorizations, variant === 'flip-before-authorization' ? 0 : 1);
+            assert.equal(await f.page.evaluate(() => qaDeletes), 0, 'Preflight never dispatches deletion.');
+            if (reason) {
+              assert.equal(result.noDispatch, true);
+              const fresh = await f.probe('#delete');
+              assert.equal(fresh.isSubmit, true); assert.equal(fresh.resolvedPreparatoryTarget, undefined);
+              assert.notEqual(agent._resourceMutationActionKey(1, 'click', { selector: '#delete' }, detected),
+                agent._resourceMutationActionKey(1, 'click', { selector: '#delete' }, fresh),
+                'A changed consequential meaning cannot reuse preparation authorization.');
+            } else {
+              agent._beginCompletionInvariant(1);
+              const receipt = agent._recordCompletionSubmitAttempt(1, detected, 'click', { selector: '#delete' }, url, url,
+                { success: true, dispatched: true }, 'owned-document', 'owned-document');
+              assert.equal(!!receipt, variant === 'stable-direct', 'Only direct deletion owns a submission receipt.');
+            }
+          } finally { await f.page.close(); }
+        });
+      }
+    } finally { await browser.close(); }
+  });
+
+  test(`${build}: rejected or uncertain launcher dispatch cannot arm popup ownership`, () => {
+    for (const result of [{ success: true, dispatched: false }, { success: true, noDispatch: true },
+      { success: false }, { success: true, outcomeUnknown: true }, { success: true, missingToolResponse: true }]) {
+      const agent = new Agent({ getActive: () => ({}) });
+      agent._progressTaskKeyHash = () => 'owned-task';
+      const guard = { enabled: true, taskKey: 'owned-task' }; agent._planExecutionGuards.set(1, guard);
+      agent._beginCompletionInvariant(1);
+      agent._recordCompletionToolResult(1, 'click', { selector: '#more' }, result, { detectedSubmit: {
+        isSubmit: false, resolvedPreparatoryTarget: true, actionResource: { complete: true, url: resource },
+        frameDocumentIdentity: 'owned-document', popupLauncherToken: 'owned-launcher' } });
+      assert.equal(guard.resolvedResourceScope, undefined, JSON.stringify(result));
+      assert.equal(agent._completionSubmitStates.get(1), undefined);
+    }
+  });
+}

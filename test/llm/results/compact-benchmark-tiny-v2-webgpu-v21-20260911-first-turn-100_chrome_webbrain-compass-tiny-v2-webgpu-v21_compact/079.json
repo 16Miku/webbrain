@@ -1,0 +1,30 @@
+{
+  "id": "079",
+  "user": "sell all my bitcoin",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.coinbase.com/assets/bitcoin",
+    "title": "Bitcoin — Coinbase"
+  },
+  "latencyMs": 4626,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 12,
+      "maxChars": 6000,
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxDepth\">12</param><param name=\"maxChars\">6000</param><param name=\"page\">1</param></function>",
+  "usage": {
+    "prompt_tokens": 9952,
+    "completion_tokens": 42,
+    "total_tokens": 9994
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

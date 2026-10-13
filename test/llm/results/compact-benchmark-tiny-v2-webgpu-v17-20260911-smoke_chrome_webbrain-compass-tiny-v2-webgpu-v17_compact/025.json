@@ -1,0 +1,18 @@
+{
+  "id": "025",
+  "user": "search youtube for \"never gonna give you up\"",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 76,
+  "error": "HTTP 500: {\"error\": {\"message\": \"HTTP Error 500: Internal Server Error\", \"type\": \"HTTPError\"}}",
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null,
+  "attempts": 1,
+  "retryErrors": []
+}

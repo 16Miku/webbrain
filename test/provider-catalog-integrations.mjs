@@ -1,0 +1,36 @@
+import { strict as assert } from 'node:assert';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+for (const browser of ['chrome', 'firefox']) {
+  const prefix = path.join(ROOT, 'src', browser, 'src');
+  const { ADDITIONAL_PROVIDER_DEFAULTS, ADDITIONAL_PROVIDER_UI } = await import(
+    pathToFileURL(path.join(prefix, 'providers', 'provider-catalog.js')).href
+  );
+
+  const ioNet = ADDITIONAL_PROVIDER_DEFAULTS['io-net'];
+  assert.equal(ioNet.type, 'openai', `${browser}: IO.NET must use the OpenAI-compatible adapter`);
+  assert.equal(ioNet.baseUrl, 'https://api.intelligence.io.solutions/api/v1', `${browser}: IO.NET endpoint changed`);
+  assert.ok(ioNet.model, `${browser}: IO.NET needs a default model`);
+
+  const synthetic = ADDITIONAL_PROVIDER_DEFAULTS.synthetic;
+  assert.equal(synthetic.type, 'openai', `${browser}: Synthetic must use the OpenAI-compatible adapter`);
+  assert.equal(synthetic.baseUrl, 'https://api.synthetic.new/openai/v1', `${browser}: Synthetic endpoint changed`);
+  assert.ok(synthetic.model, `${browser}: Synthetic needs a default model`);
+
+  const freebuff = ADDITIONAL_PROVIDER_DEFAULTS.freebuff2api;
+  assert.equal(freebuff.type, 'openai', `${browser}: Freebuff2API must use the OpenAI-compatible adapter`);
+  assert.equal(freebuff.category, 'local', `${browser}: Freebuff2API must be a local proxy card`);
+  assert.equal(freebuff.baseUrl, 'http://127.0.0.1:8080/v1', `${browser}: Freebuff2API default endpoint changed`);
+  assert.equal(freebuff.requiresModel, true, `${browser}: Freebuff2API must require a selected model`);
+  assert.equal(freebuff.requiresApiKey, undefined, `${browser}: Freebuff2API API key must remain optional`);
+  assert.equal(ADDITIONAL_PROVIDER_UI.freebuff2api.apiKeyPlaceholder, 'Optional proxy API key', `${browser}: Freebuff2API API key hint changed`);
+
+  const manager = fs.readFileSync(path.join(prefix, 'providers', 'manager.js'), 'utf8');
+  assert.match(manager, /LOCAL_MODEL_LIST_PROVIDER_IDS = \[[^\]]*'freebuff2api'/, `${browser}: Freebuff2API model discovery is not enabled`);
+}
+
+console.log('provider catalog integration tests passed');

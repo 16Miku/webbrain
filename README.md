@@ -47,9 +47,12 @@ git clone https://github.com/webbrain-one/webbrain.git
 
 **Chrome** — open `chrome://extensions/`, enable **Developer mode** (top
 right), click **Load unpacked**, and select the `webbrain/src/chrome` folder.
+For an isolated copy that won't pick up stray working-tree files, run
+`npm run build:chrome` first and load `webbrain/build/chrome` instead.
 
 **Firefox** — open `about:debugging#/runtime/this-firefox`, click **Load
-Temporary Add-on**, and select `src/firefox/manifest.json`. Temporary add-ons
+Temporary Add-on**, and select `src/firefox/manifest.json` (or
+`build/firefox/manifest.json` after `npm run build:firefox`). Temporary add-ons
 are removed when Firefox restarts; permanent installation requires signing via
 [addons.mozilla.org](https://addons.mozilla.org).
 
@@ -86,16 +89,22 @@ vllm serve your-model --port 8000                     # vLLM    → :8000/v1
 python -m sglang.launch_server --model-path your-model --port 30000
 ```
 
-LM Studio (`:1234/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
+LM Studio (`:1234/v1`), Osaurus (`:1337/v1`), Jan (`:1337/v1`), LocalAI (`:8080/v1`), and GPT4All
 (`:4891/v1`) work the same way. A generic **Local OpenAI-compatible Proxy** card
 also supports authenticated loopback gateways such as CLIProxyAPI; see the
 [secure subscription proxy setup](docs/providers-and-models.md#subscription-proxy-example-cliproxyapi).
 **Unsloth Studio (Local)** uses the same OpenAI-compatible path with the Studio
 port and `sk-unsloth-` API key configured by the user; see the
 [Unsloth Studio setup](docs/providers-and-models.md#unsloth-studio).
-Load a model with **at least a 16k-token context window** — 8k works only
-with the Compact tier, and 4k is too small for the system prompt plus tool
-schemas. WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
+**Osaurus (Local)** connects to the Mac's Osaurus server with model discovery,
+streaming, and tool calls; see the [Osaurus setup](docs/providers-and-models.md#osaurus).
+Size the loaded context window for the selected tier's system prompt and tool
+schemas, the page/history, and the requested output. **16k is a configuration
+fallback, not a guaranteed minimum; Compact is not guaranteed to fit 8k.**
+Mid and Full can exceed 16k before history accumulates, and compaction cannot
+shrink fixed instructions or schemas. The sizing estimate is not the model's
+exact tokenizer; see the [context guidance](docs/providers-and-models.md#local-providers).
+WebBrain auto-detects the real window for llama.cpp, Ollama, and LM
 Studio, and auto-compacts the conversation as it fills up. For Ollama,
 llama.cpp, LM Studio, and LocalAI, it also reads native server metadata before
 adding screenshots; Settings provides Auto, Force on, and Off overrides. When
@@ -107,10 +116,20 @@ preview `ollama launch webbrain --model <model>` handoff. Details:
 **Cloud APIs** — OpenAI, Anthropic Claude, Google Gemini, Azure OpenAI, AWS
 Bedrock, Mistral, DeepSeek, xAI Grok, MiniMax, Kimi, Qwen, z.ai GLM, Groq,
 Together, Cloudflare, Nvidia NIM, Hugging Face, Fireworks, OpenRouter, and more.
-Settings ships **106 built-in provider cards on Chromium** (105 on Firefox),
+Settings ships **112 built-in provider cards on Chromium** (111 on Firefox),
 including an endpoint-free local WebGPU option with the tested LFM2.5 2.6B
 preset and an experimental custom Hugging Face ONNX repository option —
 see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
+
+For a local or bring-your-own provider, the per-provider **Share queries for
+research** switch remains off by default. When enabled, it now shares a
+bounded, content-free diagnostic timeline for that provider's model attempts
+(including failed runs) alongside the existing scrubbed prompt/response share.
+The timeline includes tool names, outcomes, error codes, and timings, but not
+tool arguments, page content, or screenshots. If a run fails before a normal
+generation share, its bounded model-facing request and final blocker accompany
+the diagnostic record. No second sharing switch is
+required; turning the existing switch off also purges queued diagnostics.
 
 ## Features
 
@@ -131,6 +150,8 @@ see the [full catalog](docs/providers-and-models.md#extended-provider-catalog).
   emergency overflow recovery
 - **Per-tab conversations** — each tab keeps its own history; optional local
   user memory for stated preferences
+- **Optional cross-device recall** — connect MemCode with OAuth for read-only
+  lookup while local memory stays the default ([setup and privacy](docs/memcode-recall.md))
 - **Reading-first side panel** — streaming Ask replies, floating controls that
   keep your question in view as answers grow, copy buttons, a page-inspection
   banner, and a stop button that works mid-run
@@ -193,9 +214,10 @@ Chrome side panel shortcuts work when the WebBrain side panel has focus.
 | [Architecture](docs/architecture.md)                                                                                     | System overview, turn flow, subsystems                   |
 | [Agent tools](docs/agent-tools.md)                                                                                       | Tiers, modes, and the full tool matrix                   |
 | [Slash commands](docs/slash-commands.md)                                                                                 | Every command and flag                                   |
-| [Providers and models](docs/providers-and-models.md)                                                                     | All 105 provider cards, local setup, tiers               |
+| [Providers and models](docs/providers-and-models.md)                                                                     | All provider cards, local setup, tiers                   |
 | [Skills](docs/skills.md)                                                                                                 | Bundled skills, importing, skill tools                   |
 | [Security model](docs/security-model.md)                                                                                 | Permissions, credentials, trust boundaries               |
+| [Cloud Bridge approval](docs/cloud-bridge-browser-approval.md)                                                           | Opt-in browser registration and approval for backends    |
 | [Prompt-injection defense](docs/prompt-injection-defense.md)                                                             | Defense layers and known gaps                            |
 | [Privacy and data flow](docs/privacy-and-data-flow.md)                                                                   | What leaves the browser, and what doesn't                |
 | [Accessibility tree and refs](docs/accessibility-tree-and-refs.md)                                                       | How pages are read and targeted                          |
@@ -276,10 +298,14 @@ open (press `Ctrl+C` to stop it):
 npx -y @webbrain/mcp-server
 ```
 
-Once the server is running, open **WebBrain → Settings → General → Advanced →
-MCP**, set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
-**Chromium only** — the control and bridge runtime use the extension's off-screen
-document, which the Firefox build does not have.
+Once the server is running, open **WebBrain → Settings → Bridge**,
+set the URL to `ws://127.0.0.1:17374/extension`, and enable it.
+On Chromium browsers the bridge runs from the extension's off-screen document.
+Firefox hosts it in the background page and is configured under the same
+**Settings → Bridge** tab (not yet verified against the MCP server on a real Firefox
+install). A backend that needs to approve each browser before it can send
+commands can use the opt-in token handshake described in
+[Cloud Bridge browser approval](docs/cloud-bridge-browser-approval.md).
 
 If Settings reports **Connection error: WebSocket error**, nothing is normally
 listening at the configured URL. Start the MCP server, confirm that the URL uses
@@ -309,7 +335,7 @@ examples, safety boundaries, and troubleshooting guide live at
 
 > The extension holds **one** bridge socket at a time — WebBrain Cloud (17373),
 > the MCP server (17374), or the LM Studio plugin (17375). Switch by changing
-> the URL under **Settings → General → Advanced → MCP**.
+> the URL under **Settings → Bridge**.
 
 ## LM Studio plugin
 
@@ -329,15 +355,6 @@ tools keep working on Firefox.
 
 Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=webbrain-one%2Fwebbrain&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&theme=dark&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left&sealed_token=pEVOa2e14jxSLxQdCH2zPHJpjdCUYgWImET-_h_dgTuQYqEzR3f5pOzIyYGKN_gFHT-oZqKTM_yZfWHwwMtmM0Jb5YZvGgyuF6cF-w4vHVDdkJoUirCJjQ" />
- </picture>
-</a>
 
 ## Contributors
 
@@ -359,10 +376,8 @@ Source: [`lmstudio-plugin/`](lmstudio-plugin/).
 
 ## License
 
-WebBrain 33.0.0 and later is licensed under
+WebBrain is licensed under
 [GPL-3.0-or-later](LICENSE) because the distributed browser extension bundles
-and integrates the GPL-licensed Xapian/libzim WebAssembly runtime. Releases
-before 33.0.0 remain MIT-licensed under the license that applied when they were
-published; that historical text is preserved in [LICENSES/MIT.txt](LICENSES/MIT.txt).
+and integrates the GPL-licensed Xapian/libzim WebAssembly runtime.
 
-Built by [Emre Sokullu](https://emresokullu.com).
+Built with ❤️ by [Emre Sokullu](https://emresokullu.com) and [open-source contributors](https://github.com/webbrain-one/webbrain/graphs/contributors).

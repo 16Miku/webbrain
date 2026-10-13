@@ -68,7 +68,7 @@ packaged skill; only the defaults below are seeded enabled.
 
 ### Enabled by default
 
-All three can be removed from Settings → Skills. A removed default is not
+All defaults can be removed from Settings → Skills. A removed default is not
 silently restored, including by preactivation.
 
 #### FreeSkillz.xyz
@@ -79,12 +79,27 @@ On NYTimes / The Athletic tabs it is preactivated for the current run so a
 structured blocking `pageGate` can route directly to the credentialless article
 fallback.
 
+Public video downloads include Bluesky and Mastodon. Bluesky post permalinks
+are sent to FreeSkillz for server-side HLS assembly into one MP4 with audio.
+Mastodon status permalinks work across public instances. On feeds/profiles,
+first identify the visible target and obtain its exact post/status link.
+
 #### OTP / verification-code helper
 
-Loads only for relevant requests and declares no network tool. On the active run
-tab it prefers selected text or a bounded accessibility-tree subtree, matches
-the newest relevant service code, excludes SMS/native-app access, and honors
-Strict secret handling.
+Loads only for relevant requests and declares no external network tool. On Mid
+and Full it adds one narrow internal reader for an already open, signed-in
+supported webmail tab. A provider-verified already-open message is read directly.
+Candidate discovery otherwise leaves the mailbox untouched; candidate disclosure
+requires the full normalized service identity or all sufficiently discriminative
+service tokens. `inspect` remains read-only in Ask. Because opening can mark an
+email read, `open_message` requires Act/Dev and normal click permission for the
+mailbox host; the selected inbox item opens only in a temporary inactive duplicate
+that is closed after every bounded message-scoped continuation is consumed.
+Incomplete, changed, or unscoped continuations fail closed. The model receives opaque message
+references, not a tab catalog, mailbox URLs, or accessibility references. Compact
+keeps no skill or cross-tab tool surface. On the active run tab the skill still
+prefers selected text or a bounded accessibility-tree subtree, excludes
+SMS/native-app access, and honors Strict secret handling.
 
 When used, the scoped page content and the code are included in the normal
 request to your configured LLM provider. If **Record traces** is enabled, raw
@@ -117,6 +132,60 @@ It rewrites only prose being composed for a human reader. Quoted material,
 addresses, codes, prices, form-field values, and wording you supplied verbatim
 are left alone.
 
+#### WordPress REST API
+
+Loads through the catalog for relevant Act/Dev content tasks on Mid and Full;
+it is not preactivated for every WordPress page. It adds no tool or authentication
+bridge. Compact keeps skills disabled and receives short WordPress adapter
+guidance through the existing site-adapter path.
+
+For posts, pages, REST-enabled custom types, and their taxonomy, the recipe
+prefers the API when all requested fields and the signed-in session are supported
+and API mutations are authorized. If the API is viable but permission is missing,
+it asks once for `/allow-api`; existing grants are reused. Ask mode cannot write.
+It reuses existing record IDs, creates new content as a draft, verifies content
+and term IDs, then publishes that same record only when requested. Uncertain
+writes must be reconciled before retrying or creating through the editor.
+
+The recipe uses ordinary `fetch_url` with session cookies and a REST nonce in
+`X-WP-Nonce`. That nonce can enter the configured LLM conversation and recorded
+traces. **Strict secret handling uses the UI instead**, without requesting that
+the setting be disabled. Unsupported fields, missing sessions, denied access,
+or a declined API grant lead to existing Code/Text/Classic editor surfaces before
+considering a plugin. Installing plugins or changing site-wide editor settings
+still requires explicit authorization. See the
+[packaged recipe](../src/chrome/skills/wordpress-rest-api.md) and
+[WordPress authentication documentation](https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/).
+
+#### CMS content recipes (API-first)
+
+Nine separate instruction-only skills cover **Ghost, Drupal, Joomla, Webflow,
+Shopify, Wix, Strapi, Contentful and Sanity**. Each appears in the default catalog
+in Ask/Act/Dev on Mid/Full; only the recipe selected for the current content task
+is loaded. They add no HTTP tool manifest, credential store or OAuth integration.
+See [CMS API-first boundaries and validation](cms-api-first.md) for the service
+matrix and test coverage.
+
+For these CMS content tasks, WebBrain prefers the official API after read-only
+capability/auth discovery when the target, required fields, task scope, service
+rights and WebBrain mutation permission all permit it. Editor failure is not a
+prerequisite. An otherwise usable API with permission off prompts once for
+`/allow-api`; existing permission is reused and refusal is respected. Ask stays
+read-only. GraphQL/query POSTs remain subject to the same method-based gate.
+
+Compact still has no skill loader or skill prompt. Short CMS adapter notes guide
+its existing tools on supported CMS routes. Generic admin/Studio paths add no
+CMS adapter notes; custom editors require observed CMS evidence. The shared
+prompt contains only the conditional CMS rule, not nine endpoint recipes.
+A URL match is not evidence of API authentication or authorization; confirm the
+observed editor/API identity before applying a recipe.
+
+Startup uses the existing default-removal tombstones: newly introduced defaults
+are added when there is capacity, while a removed/disabled default stays removed
+across startup and bundled-content refresh. Disabling a skill currently means
+removing it from the enabled Settings list. No user skill is evicted when the
+20-skill limit is full; the new packages remain available to enable explicitly.
+
 ### Opt-in packaged skills
 
 These ship in the extension and appear under Settings → Skills as available to
@@ -130,6 +199,7 @@ enable. They are not seeded on by default.
 | Open Library | Ask, Act, Dev | Open Library search HTTPS |
 | Wikipedia | Ask, Act, Dev | Live Wikipedia APIs + explicitly installed Kiwix/ZIM archives |
 | Turkish deasciifier | Ask, Act, Dev | Instruction-only; uses ordinary verbatim form-entry tools |
+| Phone calls (Phonr) | Ask (instructed GET only), Act, Dev | Bearer-authenticated `fetch_url` to `https://phonr.xyz/v1`; POST requires the existing API-mutation permission |
 
 Enable a skill only when you want its tools and instructions available for
 `load_skill` on eligible runs.
@@ -141,8 +211,52 @@ lifecycle. It is independent from the interface language, disabled by default,
 and never downloads an archive merely because the Wikipedia skill is enabled.
 Installed archive passages retain canonical attribution and remain untrusted.
 
+### Phone calls (Phonr)
+
+Enable **Phone calls (Phonr)** under Settings → Skills, then ask WebBrain to call
+a person or business with a specific purpose and language. Supply your Phonr
+bearer key for that service; the packaged skill contains no credential and cannot
+read the server's `.env`. Act/Dev calls use `fetch_url` with the existing
+`/allow-api` or persistent API-mutation authorization. Ask mode can read call
+status and results through the skill's instructions; `fetch_url` does not enforce
+that restriction. Previewing uses POST but never places a call. The service
+address is `https://phonr.xyz/v1`; installing the skill does not deploy it.
+
+The skill preserves an idempotency key across interrupted starts, follows the
+same call through completion, handles uncertain provider status without
+redialing, and distinguishes a call ending from its purpose being fulfilled.
+Caller number, recording mode, and duration limit come from the Phonr server.
+It uses the default natural-conversation system message unless the user requests
+a change. Example: “Call this restaurant in Spanish and ask whether a table for
+four is available tonight at 7. Get the options; don't book yet.”
+
+This is an instruction-only API integration: its bearer header is part of
+model-generated `fetch_url` arguments, so the key may appear in the configured
+LLM conversation and enabled traces. Do not embed it in skill text, memory,
+scheduled instructions, or links. The skill can inspect transcript, result, and
+clip metadata; WebBrain's generic download tool cannot attach a bearer header,
+so actual audio retrieval uses the local Phonr dashboard or the authenticated
+curl example in the skill. It does not claim to play audio from metadata alone.
+
+## Service-specific API recipes
+
+Keep service details in separate skills so the always-present prompt only needs
+the routing and permission rules. WordPress's recipe covers content operations;
+Mail.tm documents disposable-mail signup and its API fallback; Phonr documents
+phone-call authorization, status, and interrupted-start reconciliation. These
+services have different authentication, capabilities, and retry behavior, so a
+generic instruction to use any available API is insufficient.
+
+A new recipe should describe discovery, supported operations/fields, permission
+requirements, credential exposure, verification, ambiguous-write recovery, and
+the UI fallback. Prefer existing tools; loading a skill never grants API mutation
+permission or broadens the user's requested outcome. Service-specific API-first
+exceptions must also agree with the shared prompts. Existing Mail.tm and Phonr
+workflows retain their own rules; the WordPress exception does not change them.
+
 ## See also
 
+- [Opt-in external memory proposal](memcode-memory-proposal.md) — why hosted MemCode needs an extension-owned OAuth flow before it can be packaged as a skill
 - [Agent tools](agent-tools.md) — tiers, modes, and the full tool matrix
 - [Privacy and data flow](privacy-and-data-flow.md#bundled-skills)
 - [Architecture](architecture.md) — skills and dynamic tool exposure in the turn

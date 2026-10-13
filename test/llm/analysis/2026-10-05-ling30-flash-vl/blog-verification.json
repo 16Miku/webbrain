@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-05",
+  "tableRows": [
+    4,
+    2,
+    5
+  ],
+  "comparisonMatchesReport": true,
+  "cachePricingMatchesReport": true,
+  "canonical": "https://webbrain.one/blog/ling30-flash-vl-vs-nex-n25-minimax-m3",
+  "jsonLdParsed": 1,
+  "internalLinksChecked": 3,
+  "mobile": {
+    "viewport": 390,
+    "page": 390,
+    "body": 390,
+    "tables": [
+      {
+        "width": 350,
+        "content": 599,
+        "overflow": "auto"
+      },
+      {
+        "width": 350,
+        "content": 560,
+        "overflow": "auto"
+      },
+      {
+        "width": 350,
+        "content": 560,
+        "overflow": "auto"
+      }
+    ]
+  },
+  "indexCardCount": 1,
+  "indexSearchPassed": true,
+  "pageErrors": []
+}

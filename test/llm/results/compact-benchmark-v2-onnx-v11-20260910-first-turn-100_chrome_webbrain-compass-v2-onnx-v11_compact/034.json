@@ -1,0 +1,28 @@
+{
+  "id": "034",
+  "user": "sign in",
+  "mode": "act",
+  "tab": {
+    "url": "https://github.com/",
+    "title": "GitHub"
+  },
+  "latencyMs": 3307,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The sign-in control is not visible in the current accessibility tree. Please provide the sign-in URL or the exact control text, or tell me if you want me to navigate to the sign-in page first.",
+      "reason": "The sign-in control is not present in the current page evidence, so I cannot safely proceed without knowing the exact target."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "I can’t safely sign in from this page because the sign-in control is not visible in the current accessibility tree. Please provide the sign-in URL or the exact control text, or tell me if you want me to navigate to the sign-in page first.\n<function name=\"clarify\"><param name=\"question\">The sign-in control is not visible in the current accessibility tree. Please provide the sign-in URL or the exact control text, or tell me if you want me to navigate to the sign-in page first.</param><param name=\"reason\">The sign-in control is not present in the current page evidence, so I cannot safely proceed without knowing the exact target.</param></function>",
+  "usage": {
+    "prompt_tokens": 10283,
+    "completion_tokens": 136,
+    "total_tokens": 10419
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

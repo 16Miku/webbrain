@@ -32,10 +32,13 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium firefox
 
       - name: Configure git author
         run: |
@@ -118,13 +121,13 @@ jobs:
             --arg ver "$VERSION" \
             --arg dt "$DATE" \
             '{
-              model: "gpt-5.4-nano-2026-03-17",
+              model: "gpt-5.6-luna",
               messages: [
                 {role: "system", content: $sys},
                 {role: "user", content: ($usr | gsub("\\{\\{version\\}\\}"; $ver) | gsub("\\{\\{date\\}\\}"; $dt) | gsub("\\{\\{release_context\\}\\}"; $ctx))}
               ],
               max_completion_tokens: 1200,
-              temperature: 0.2
+              temperature: 1
             }' > /tmp/payload.json
 
           RESPONSE=$(curl -s https://api.openai.com/v1/chat/completions \
@@ -169,8 +172,24 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Test fixtures
+        run: npm run test:fixtures
+
       - name: Push release commits
-        run: git push origin HEAD:${{ github.ref_name }}
+        run: |
+          pushed=false
+          for attempt in 1 2 3 4 5; do
+            if git pull --rebase origin "${{ github.ref_name }}" && git push origin "HEAD:${{ github.ref_name }}"; then
+              pushed=true
+              break
+            fi
+            echo "Push attempt $attempt failed, retrying..."
+            sleep 10
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "Push failed after 5 attempts" >&2
+            exit 1
+          fi
 
       - name: Get final release commit
         id: final_release

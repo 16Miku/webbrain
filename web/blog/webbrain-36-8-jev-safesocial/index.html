@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jev and SafeSocial in WebBrain 36.8.0 - WebBrain Blog</title>
+  <meta name="description" content="WebBrain 36.8.0 adds Jev for optional fast browser decisions and SafeSocial, our homegrown 13.6 MB local Instagram image classifier. Our results are deliberately mixed: Jev did not make our workloads faster, while the much smaller SafeSocial model works well for its narrow job.">
+  <meta name="keywords" content="WebBrain 36.8.0, Jev, SafeSocial, open model, Hugging Face, TypeSafe, browser agent, browser automation, image classifier, Instagram, local AI, EfficientNet-Lite0">
+  <meta property="og:title" content="Jev and SafeSocial arrive in WebBrain 36.8.0">
+  <meta property="og:description" content="Two small-model additions, two very different outcomes: Jev did not speed up our browser-agent workloads, while SafeSocial makes a compact local Instagram filter practical.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="https://webbrain.one/blog/webbrain-36-8-jev-safesocial">
+  <meta property="og:image" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:secure_url" content="https://webbrain.one/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="WebBrain — Open-source AI browser agent">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Jev and SafeSocial in WebBrain 36.8.0">
+  <meta name="twitter:description" content="Jev is a classifier plus LLM sidecar. SafeSocial is a 13.6 MB local Instagram image classifier. We shipped both, and the performance story is not the same.">
+  <meta name="twitter:image" content="https://webbrain.one/twitter-image.png">
+  <meta name="twitter:image:alt" content="WebBrain — Open-source AI browser agent">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="canonical" href="https://webbrain.one/blog/webbrain-36-8-jev-safesocial">
+  <!-- Blog is English-only; alternates point to locale homepages. -->
+  <link rel="alternate" hreflang="en" href="https://webbrain.one/">
+  <link rel="alternate" hreflang="es" href="https://webbrain.one/es/">
+  <link rel="alternate" hreflang="fr" href="https://webbrain.one/fr/">
+  <link rel="alternate" hreflang="tr" href="https://webbrain.one/tr/">
+  <link rel="alternate" hreflang="zh" href="https://webbrain.one/zh/">
+  <link rel="alternate" hreflang="ru" href="https://webbrain.one/ru/">
+  <link rel="alternate" hreflang="uk" href="https://webbrain.one/uk/">
+  <link rel="alternate" hreflang="ar" href="https://webbrain.one/ar/">
+  <link rel="alternate" hreflang="ja" href="https://webbrain.one/ja/">
+  <link rel="alternate" hreflang="ko" href="https://webbrain.one/ko/">
+  <link rel="alternate" hreflang="id" href="https://webbrain.one/id/">
+  <link rel="alternate" hreflang="th" href="https://webbrain.one/th/">
+  <link rel="alternate" hreflang="ms" href="https://webbrain.one/ms/">
+  <link rel="alternate" hreflang="tl" href="https://webbrain.one/tl/">
+  <link rel="alternate" hreflang="he" href="https://webbrain.one/he/">
+  <link rel="alternate" hreflang="x-default" href="https://webbrain.one/">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0b0e17;
+      --bg-card: #111827;
+      --bg-card-hover: #1a2233;
+      --surface: #161d2e;
+      --border: rgba(255,255,255,0.07);
+      --text: #e4e4ec;
+      --text-dim: #8b8fa4;
+      --accent: #6c63ff;
+      --accent-glow: rgba(108,99,255,0.25);
+      --accent2: #a78bfa;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+      --tint-soft: rgba(255,255,255,0.05);
+      --tint-soft-2: rgba(255,255,255,0.04);
+      --tint-medium: rgba(255,255,255,0.08);
+      --nav-bg: rgba(11,14,23,0.85);
+      --code-bg: #0a0e17;
+      --inline-code-bg: rgba(255,255,255,0.06);
+      --shadow-strong: rgba(0,0,0,0.40);
+      --radius: 12px;
+      --radius-lg: 16px;
+      --max-w: 760px;
+      color-scheme: dark;
+    }
+    :root[data-theme="light"] {
+      --bg: #f7f1e6;
+      --bg-card: #fffdf8;
+      --bg-card-hover: #f2e9d4;
+      --surface: #ede2cb;
+      --border: rgba(89,55,25,0.15);
+      --text: #2c1810;
+      --text-dim: #6b5b47;
+      --accent: #5b52e8;
+      --accent-glow: rgba(91,82,232,0.20);
+      --accent2: #7c6ce6;
+      --success: #2d8866;
+      --warning: #9a6500;
+      --danger: #b74747;
+      --tint-soft: rgba(89,55,25,0.05);
+      --tint-soft-2: rgba(89,55,25,0.07);
+      --tint-medium: rgba(89,55,25,0.10);
+      --nav-bg: rgba(247,241,230,0.85);
+      --code-bg: #fff7e6;
+      --inline-code-bg: rgba(89,55,25,0.08);
+      --shadow-strong: rgba(89,55,25,0.18);
+      color-scheme: light;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.75;
+      font-size: 17px;
+      overflow-x: hidden;
+    }
+    a { color: var(--accent2); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .glow-bg {
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .glow-bg::before,
+    .glow-bg::after {
+      content: '';
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(120px);
+      opacity: 0.26;
+    }
+    .glow-bg::before {
+      width: 500px;
+      height: 500px;
+      background: var(--accent);
+      top: -220px;
+      left: -160px;
+    }
+    .glow-bg::after {
+      width: 500px;
+      height: 500px;
+      background: var(--accent2);
+      right: -180px;
+      bottom: -230px;
+      opacity: 0.18;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--nav-bg);
+      backdrop-filter: saturate(160%) blur(12px);
+      -webkit-backdrop-filter: saturate(160%) blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-inner {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .nav-brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .nav-brand:hover { text-decoration: none; }
+    .nav-brand .brand-logo { width: 26px; height: 26px; border-radius: 7px; flex: 0 0 auto; }
+    .nav-brand .domain { opacity: 0.5; font-weight: 400; }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      min-width: 0;
+    }
+    .nav-links a {
+      position: relative;
+      color: var(--text-dim);
+      font-size: 14px;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+    .nav-links a[aria-current="page"] { color: var(--text); }
+    .nav-links a[aria-current="page"]::after {
+      content: '';
+      position: absolute;
+      left: 1px;
+      right: 1px;
+      bottom: -7px;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+    .lang-dropdown {
+      background: var(--tint-soft);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 13px;
+      max-width: 120px;
+    }
+    .lang-dropdown:focus { outline: 2px solid var(--accent-glow); outline-offset: 1px; }
+    .lang-dropdown option { background-color: var(--bg-card-hover); color: var(--text); }
+    .theme-toggle {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--tint-soft-2);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      color: var(--text-dim);
+      transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+    }
+    .theme-toggle:hover {
+      background: var(--tint-medium);
+      border-color: var(--accent);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+    .theme-toggle:focus-visible {
+      outline: 2px solid var(--accent2);
+      outline-offset: 2px;
+    }
+    .theme-toggle svg { width: 16px; height: 16px; display: block; }
+    .theme-toggle .icon-sun { display: block; }
+    .theme-toggle .icon-moon { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-sun { display: none; }
+    :root[data-theme="light"] .theme-toggle .icon-moon { display: block; }
+    main,
+    article {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 64px 24px 80px;
+    }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    h1 {
+      font-size: 38px;
+      line-height: 1.2;
+      font-weight: 700;
+      letter-spacing: 0;
+      margin-bottom: 16px;
+    }
+    .lede {
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+    .lede {
+      font-size: 19px;
+      margin-bottom: 40px;
+    }
+    .meta {
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-bottom: 12px;
+      letter-spacing: 0;
+    }
+    h2 {
+      font-size: 24px;
+      font-weight: 700;
+      margin-top: 48px;
+      margin-bottom: 14px;
+      letter-spacing: 0;
+    }
+    h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--text);
+    }
+    h4, h5, h6 {
+      color: var(--text);
+      margin-top: 28px;
+      margin-bottom: 10px;
+      line-height: 1.35;
+    }
+    p { margin-bottom: 16px; }
+    ul, ol { margin: 0 0 16px 20px; }
+    li { margin-bottom: 6px; }
+    code {
+      font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+      font-size: 0.88em;
+      background: var(--inline-code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: color-mix(in srgb, var(--accent2) 80%, var(--text));
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin: 20px 0;
+      font-size: 14px;
+      line-height: 1.55;
+      box-shadow: 0 18px 60px var(--shadow-strong);
+    }
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+      font-size: inherit;
+    }
+    blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 4px 0 4px 18px;
+      margin: 20px 0;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    blockquote p:last-child { margin-bottom: 0; }
+    hr {
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 36px 0;
+    }
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      margin: 24px 0;
+    }
+    .table-wrap { overflow-x: auto; margin: 24px 0; }
+    table {
+      width: 100%;
+      min-width: 560px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      color: var(--text-dim);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: var(--tint-soft-2);
+    }
+    td code { font-size: 12px; }
+    .win { color: var(--success); font-weight: 600; }
+    .lose { color: var(--danger); }
+    .meh { color: var(--warning); }
+    .callout {
+      background: color-mix(in srgb, var(--accent) 10%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin: 24px 0;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text-dim);
+    }
+    .callout strong { color: var(--text); }
+    .author-box {
+      margin-top: 64px;
+      padding-top: 32px;
+      border-top: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 14px;
+    }
+    .post-list { display: flex; flex-direction: column; gap: 18px; }
+    .post-card {
+      display: block;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 24px 26px;
+      transition: background 0.18s, border-color 0.18s, transform 0.18s;
+    }
+    .post-card:hover {
+      background: var(--bg-card-hover);
+      border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+      transform: translateY(-1px);
+      text-decoration: none;
+    }
+    .post-meta {
+      font-size: 12px;
+      color: var(--text-dim);
+      letter-spacing: 0;
+      margin-bottom: 8px;
+    }
+    .post-title {
+      font-size: 21px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: 0;
+      line-height: 1.35;
+    }
+    .post-excerpt {
+      color: var(--text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+    }
+    footer {
+      max-width: var(--max-w);
+      margin: 0 auto;
+      padding: 40px 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    footer a { color: var(--text-dim); }
+    footer a:hover { color: var(--text); }
+    @media (max-width: 700px) {
+      body { font-size: 16px; }
+      .nav-inner { padding: 14px 20px; align-items: flex-start; }
+      .nav-links { gap: 12px; flex-wrap: wrap; }
+      .lang-dropdown { display: none; }
+      h1 { font-size: 28px; }
+      .lede { font-size: 16px; }
+      main, article { padding: 48px 20px 64px; }
+      h2 { font-size: 20px; margin-top: 36px; }
+      .post-card { padding: 20px; }
+      .post-title { font-size: 19px; }
+      footer { flex-direction: column; padding: 32px 20px; }
+    }
+    @media (max-width: 420px) {
+      .nav-inner { gap: 12px; }
+      .nav-links a[href="https://github.com/webbrain-one/webbrain"] { display: none; }
+      .theme-toggle { width: 28px; height: 28px; }
+    }
+  </style>
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('webbrain-theme');
+        var theme = (saved === 'light' || saved === 'dark')
+          ? saved
+          : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (_) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
+  <!-- Plausible analytics: start -->
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
+  <!-- Plausible analytics: end -->
+  <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Jev and SafeSocial arrive in WebBrain 36.8.0",
+  "description": "WebBrain 36.8.0 adds Jev for optional fast browser decisions and SafeSocial, our homegrown 13.6 MB local Instagram image classifier. Our results are deliberately mixed: Jev did not make our workloads faster, while the much smaller SafeSocial model works well for its narrow job.",
+  "author": {
+    "@type": "Person",
+    "name": "Emre Sokullu",
+    "url": "https://emresokullu.com"
+  },
+  "datePublished": "2026-09-20",
+  "image": "https://webbrain.one/og-image.png",
+  "publisher": {
+    "@type": "Organization",
+    "name": "WebBrain",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https://webbrain.one/logo-github.png"
+    }
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://webbrain.one/blog/webbrain-36-8-jev-safesocial"
+  }
+}
+  </script>
+</head>
+<body>
+  <div class="glow-bg"></div>
+  <nav>
+    <div class="nav-inner">
+      <a href="/" class="nav-brand"><img class="brand-logo" src="/logo-github.png" alt="" aria-hidden="true"> WebBrain<span class="domain">.one</span></a>
+      <div class="nav-links">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog" aria-current="page">Blog</a>
+        <select class="lang-dropdown" id="lang-dropdown" aria-label="Select language" data-current="en"><option value="en">English</option><option value="es">Español</option><option value="fr">Français</option><option value="tr">Türkçe</option><option value="zh">中文</option><option value="ru">Русский</option><option value="uk">Українська</option><option value="ar">العربية</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="id">Bahasa Indonesia</option><option value="th">ไทย</option><option value="ms">Bahasa Melayu</option><option value="tl">Filipino</option><option value="he">עברית</option></select>
+        <button class="theme-toggle" type="button" id="theme-toggle" aria-label="Toggle light / dark theme" title="Toggle light / dark theme">
+          <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <article>
+    <div class="meta">September 20, 2026 &middot; 8 min read &middot; <a href="/blog">&larr; All posts</a></div>
+    <h1>Jev and SafeSocial arrive in WebBrain 36.8.0</h1>
+    <p class="lede">WebBrain 36.8.0 ships two optional features that both use a small model to keep a larger system focused: <strong>Jev</strong> helps choose a browser operation, while <strong>SafeSocial</strong> classifies Instagram images on your device. They sound like variations on the same idea. In practice, they taught us a useful lesson: a small model can be excellent when the question is narrow, but adding one to a general browser loop does not automatically make the loop faster.</p>
+<h2 id="two-small-models-two-very-different-jobs">Two small models, two very different jobs</h2>
+<p>The headline for 36.8.0 is easy to summarize: <strong>Jev and SafeSocial are now available in WebBrain.</strong> The more interesting story is that they solve almost opposite problems.</p>
+<p>Jev sits beside the main browser agent. It looks at a bounded, structured view of the page and can classify the next supported operation: click, fill, select, check, scroll, wait, or a possible completion. The larger model remains available for reasoning, visual input, unsupported controls, text generation, and verification. In other words, Jev is not a replacement brain. It is a fast decision layer around one.</p>
+<p>SafeSocial is much narrower. It looks at an Instagram image or video poster and answers a small set of classification questions: does this look like romance and jealousy, luxury and status, travel and lifestyle, social FOMO, or another selected social-comparison category? If the score crosses the configured threshold, WebBrain can blur, hide, dim, or warn before you decide whether to reveal the image.</p>
+<p>That difference matters. A classifier does not need to understand the whole task if the decision boundary is clear. A browser agent usually does.</p>
+<figure>
+  <img src="/assets/webbrain-36-8-jev.jpg" alt="Jev standing beside a much larger transformer classifier in a humorous comparison meme" loading="lazy">
+  <figcaption>Sometimes the small classifier is exactly the right tool. Sometimes the page is still a browser-agent problem.</figcaption>
+</figure>
+<h2 id="jev-a-classifier-plus-an-llm">Jev: a classifier plus an LLM</h2>
+<p>The simplest way to think about our Jev integration is <strong>classifier + LLM</strong>.</p>
+<p>The browser state is converted into a compact inventory of observed controls. Jev classifies the next operation and, when needed, the target control from that inventory. If the chosen operation is filling a field, a language model still prepares the text value. If the page requires visual understanding, an iframe, a canvas, a file upload, an arbitrary keyboard widget, or an action outside the supported set, WebBrain falls back to the main model. A selected target is also bound to the observed document state and checked again before execution.</p>
+<p>This arrangement is attractive for a reason: most browser steps are not open-ended writing. On a stable page, “click this visible button” is a much smaller question than “reason over the entire browser transcript, tool schema, and screenshot, then emit a valid tool call.” A specialist can answer that small question with a smaller output space.</p>
+<p>But the sidecar has to pay for its own existence. WebBrain still has to observe the page, construct the bounded state, make the Jev request, validate the result, and decide whether the main model is needed. On a workflow that frequently changes pages, asks for screenshots, needs verification, or falls back to the main model, those extra steps can dominate.</p>
+<h2 id="the-honest-performance-result">The honest performance result</h2>
+<p>This is where our experience differs from the excitement around Jev integrations in the community.</p>
+<p>The <a href="https://github.com/browser-use/jev-ultrafast" target="_blank" rel="noopener">Browser Use Jev Ultrafast project</a> reports a 25% lower median task time in a small matched Google Flights comparison: 9.450 seconds to 7.092 seconds. It also reports a large reduction in browser protocol calls, from a median of 1,092 to 101. The <a href="https://github.com/browser-use/jev-ultrafast/blob/main/docs/performance.md" target="_blank" rel="noopener">performance notes</a> are unusually clear about the boundaries: six alternating runs, one task, one Chrome profile, three pairs, and no claim that this is a broad agent benchmark. The <a href="https://x.com/Layton_Gott/status/2101031818413650111" target="_blank" rel="noopener">community discussion on X</a> captures the same basic promise: Jev can make browser agents dramatically faster when the loop is shaped around indexed actions and a small helper model.</p>
+<p>We did not get that performance gain from Jev in WebBrain.</p>
+<p>That is not a claim that Jev is slow, or that the Browser Use result is wrong. It is a report about our workload and our architecture. In WebBrain, the main model often has to handle more than a clean action selection: screenshots, page interpretation, values that depend on the task, safety gates, stale-page recovery, completion evidence, and sites that do not fit the narrow structured-control path. Jev is useful when it can confidently take a small, supported step. It is less useful when the system has already paid for the observation and still needs the main model immediately afterward.</p>
+<p>So the current 36.8.0 recommendation is modest: enable Jev if you want to experiment with a fast action sidecar and have a TypeSafe configuration available, but do not turn it on expecting a guaranteed speed multiplier. Measure your own tasks. The result may change as the state representation, fallback policy, and action coverage improve.</p>
+<h2 id="safesocial-the-small-model-that-fits-the-question">SafeSocial: the small model that fits the question</h2>
+<p>SafeSocial has a much friendlier performance story because its job is deliberately small.</p>
+<p>  It is an <strong>optional local multilabel image classifier</strong>, not a chat provider. SafeSocial is our homegrown model: we built the trigger classifier for WebBrain's social-comparison use case, then published it on <a href="https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0" target="_blank" rel="noopener">Hugging Face</a> so other projects can use it too. Enabling it downloads a 13.6 MB EfficientNet-Lite0 model from Hugging Face once and keeps it in the browser. The image classification runs on the device. It is off by default, and it only operates on Instagram images and video cover images.</p>
+<p>  This is an important distinction from a private feature checkpoint. The browser integration is ours, but the model is available as a standalone artifact. If you are building a feed filter, a browser extension, a batch-analysis tool, or another local-first experiment, you do not need to reproduce the WebBrain UI to try the classifier. Start with the <a href="https://huggingface.co/webbrain-one/safesocial-trigger-classifier-efficientnet-lite0" target="_blank" rel="noopener">public SafeSocial model</a>, then make your own decisions about labels, thresholds, and presentation.</p>
+<p>The current categories are designed around social-comparison triggers:</p>
+<ul><li>Romance and jealousy</li><li>Social FOMO</li><li>Luxury and status</li><li>Travel and lifestyle</li><li>Body and beauty comparison</li><li>Achievement and success</li><li>Popularity</li><li>Exclusivity and access</li></ul>
+<p>You choose which categories matter to you, adjust the score threshold, and choose what happens on a match. A filtered image can always be revealed. The classifier is not a safety guarantee; its scores are model estimates, and the feature is intentionally experimental.</p>
+<figure>
+  <img src="/assets/webbrain-36-8-safesocial-settings.png" alt="WebBrain SafeSocial settings showing the optional local Instagram image classifier, categories, and score threshold" loading="lazy">
+  <figcaption>SafeSocial is opt-in, configurable, and local after the one-time model download.</figcaption>
+</figure>
+<p>The model is only about 13.6 MB, but the important part is not the file size by itself. The important part is that the model asks a question with a small answer space, at the moment an image enters your feed. It does not need to write a paragraph, navigate a site, infer a multi-step goal, or decide whether a task is complete. It needs to produce a useful enough label quickly.</p>
+<p>For those moment-to-moment Instagram decisions, the simple classifier has been surprisingly effective in our hands. That is the kind of result we want from an optional feature: small enough to ignore if you do not need it, local enough to keep the classification on your device, and focused enough that we can explain what it does.</p>
+<figure>
+  <img src="/assets/webbrain-36-8-safesocial-instagram.png" alt="Instagram feed with an image softened by SafeSocial and a Show image button" loading="lazy">
+  <figcaption>When SafeSocial matches a selected category, the image is softened and can be revealed explicitly.</figcaption>
+</figure>
+<h2 id="why-the-contrast-is-useful">Why the contrast is useful</h2>
+<p>Jev and SafeSocial are both examples of the same broad engineering instinct: route a narrow decision to a smaller model instead of asking a general-purpose model to do everything.</p>
+<p>The instinct is sound, but the economics are different.</p>
+<p>For SafeSocial, the classifier replaces a decision that would otherwise require your attention. It runs at the edge of the feed, with a fixed set of labels and a local model that is small enough to download once. There is no need to wake a general LLM for every image.</p>
+<p>For Jev, the classifier is inserted into a larger agent loop. It can reduce the burden on the main model, but it also adds a remote decision, a state-extraction path, validation, and fallbacks. It wins when those costs are smaller than the reasoning work it avoids. It loses, or simply breaks even, when the workflow is dominated by visual reasoning, page transitions, or verification.</p>
+<p>This is also why “small model” is not a performance category by itself. The right questions are:</p>
+<ol><li>What is the exact decision boundary?</li><li>How often can the small model answer without a fallback?</li><li>Does preparing and validating its input cost less than the work it replaces?</li><li>What happens when it is uncertain?</li></ol>
+<p>SafeSocial has a clear answer to all four today. Jev is still an active experiment for our broader browser-agent workload.</p>
+<h2 id="what-to-expect-in-36-8-0">What to expect in 36.8.0</h2>
+<p>Both features are optional.</p>
+<p>Use Jev when you want to test the classifier-plus-LLM browser path on your own tasks. Keep the main model responsible for the parts that require reasoning, visual understanding, unsupported controls, and independent completion checks.</p>
+<p>Use SafeSocial when you want a configurable buffer against selected Instagram comparison themes. It starts disabled, downloads its small model only when you prepare it, classifies locally, and lets you reveal anything it filtered.</p>
+<p>The larger lesson from this release is pleasantly unglamorous: we shipped both features, measured them honestly, and got two different answers. Jev may become faster for WebBrain as the path gets narrower and more of the browser loop can be served by structured decisions. SafeSocial already demonstrates how far a simple, focused classifier can go when the question is small enough.</p>
+<p>That is a good place to start.</p>
+<p>Tags: #WebBrain #WebBrain368 #Jev #SafeSocial #TypeSafe #BrowserAgents #LocalAI #Instagram #ImageClassification</p>
+
+    <div class="author-box">
+      Written by <a href="https://emresokullu.com" target="_blank" rel="noopener">Emre Sokullu</a>. WebBrain 33.0.0 and later is GPL-3.0-or-later and open on <a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a>.
+    </div>
+  </article>
+
+  <footer>
+    <div>&copy; 2026 WebBrain &middot; <a href="/privacy">Privacy</a></div>
+    <div><a href="https://github.com/webbrain-one/webbrain" target="_blank" rel="noopener">GitHub</a></div>
+  </footer>
+  <script>
+    (function () {
+      const btn = document.getElementById('theme-toggle');
+      if (!btn) return;
+      const root = document.documentElement;
+
+      function setTheme(theme, persist) {
+        root.setAttribute('data-theme', theme);
+        if (persist) {
+          try { localStorage.setItem('webbrain-theme', theme); } catch (_) {}
+        }
+      }
+
+      btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        setTheme(next, true);
+      });
+
+      const mq = window.matchMedia('(prefers-color-scheme: light)');
+      function onMQ(e) {
+        try {
+          if (localStorage.getItem('webbrain-theme')) return;
+        } catch (_) {}
+        setTheme(e.matches ? 'light' : 'dark', false);
+      }
+      if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onMQ);
+      else if (typeof mq.addListener === 'function') mq.addListener(onMQ);
+    })();
+  </script>
+  <script>
+    (function () {
+      const LOCALES = ["en","es","fr","tr","zh","ru","uk","ar","ja","ko","id","th","ms","tl","he"];
+      const sel = document.getElementById('lang-dropdown');
+      if (!sel) return;
+      sel.value = sel.dataset.current || 'en';
+      sel.addEventListener('change', function () {
+        const target = sel.value;
+        if (!LOCALES.includes(target)) return;
+        window.location.href = target === 'en' ? '/' : '/' + target + '/';
+      });
+    })();
+  </script>
+</body>
+</html>

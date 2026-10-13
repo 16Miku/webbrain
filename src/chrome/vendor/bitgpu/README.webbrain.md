@@ -49,3 +49,19 @@ The dedicated worker loads Bonsai with:
 
 GPU-resident LFM and Bonsai sessions are never live at the same time. Disk
 caches may coexist.
+
+## Local security patches
+
+The bundled `chat.js` retains bitgpu 0.19.1's public API with two local parser
+patches. Jinja generation-marker preprocessing uses a forward cursor and
+disjoint whitespace ranges. Qwen XML tool-call parsing uses a forward cursor,
+rejects incomplete/malformed blocks, and checks required and declared properties
+as own properties. Arguments remain plain objects; explicitly declared keys
+such as `__proto__` are written as data properties without changing the object's
+prototype. These patches prevent quadratic malformed-input scans and inherited
+properties from satisfying the XML argument contract. They do not change the
+worker's generation limits or authorize tool dispatch.
+
+`test/bitgpu-chat-security.mjs` covers actual exported XML parsing, the bundled
+tokenizer/Jinja rendering path, whitespace compatibility, and bounded hostile
+input probes without loading a model or invoking WebGPU.

@@ -5,7 +5,7 @@
 
 import { escapeHtml } from './utils.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
-import { renderMarkdownHeadings, renderMarkdownTables } from './markdown-render.js';
+import { renderMarkdownHeadings, renderMarkdownTables, replaceMarkdownCodeFences } from './markdown-render.js';
 
 function renderEmphasis(text) {
   return text
@@ -38,7 +38,7 @@ function renderInlineMarkdown(value) {
 export function renderSkillMarkdown(content) {
   let text = String(content || '');
   const codeBlocks = [];
-  text = text.replace(/```[ \t]*([^`\r\n]*)\r?\n([\s\S]*?)```/g, (_match, _info, code) => {
+  text = replaceMarkdownCodeFences(text, (_info, code) => {
     const placeholder = `__SKILL_CODE_BLOCK_${codeBlocks.length}__`;
     codeBlocks.push(code);
     return placeholder;

@@ -40,7 +40,7 @@
   <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
   <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
-  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script async src="https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js"></script>
   <script>
     window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
     plausible.init()
@@ -78,6 +78,14 @@
     },
     {
       "@type": "Question",
+      "name": "WebBrain Compass ücretini zaten ödedim, ancak uzantı yeniden ödeme istiyor. İki kez mi ödemeliyim?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Hayır — yeniden ödeme yapmayın. Compass aboneliğiniz, uzantının oluşturduğu tarayıcı/cihaz tanımlayıcısına bağlıdır; bu tanımlayıcı değiştiyse (yeni tarayıcı veya cihaz, yeniden yüklenen tarayıcı, silinen tarayıcı profili ya da sıfırlanan uzantı depolaması) uzantı mevcut aboneliğinizi artık tanımaz ve ödeme ister. Mevcut aboneliğinizi api.webbrain.one/portal adresindeki self servis portalı üzerinden mevcut tarayıcınıza yeniden bağlayın ve erişimi geri kazanmak için oradaki talimatları izleyin. Makbuzlar ve diğer faturalandırma işlemleri için api.webbrain.one/account adresinden e-postanızla faturalandırmayı yönetin."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Şifreli Cloud Sync nasıl çalışır?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -94,6 +102,14 @@
     },
     {
       "@type": "Question",
+      "name": "Bir WebBrain iş akışını düzenleyebilir miyim?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Evet. Tarayıcınızda bir iş akışı JSON dosyasını incelemek, düzenlemek, doğrulamak ve dışa aktarmak için WebBrain İş Akışı Düzenleyicisi'ni kullanın."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "WebBrain'i tamamen çevrimdışı kullanabilir miyim?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -102,10 +118,10 @@
     },
     {
       "@type": "Question",
-      "name": "What is the Emergency Box, and how does offline RAG work?",
+      "name": "Acil Durum Kutusu nedir ve çevrimdışı RAG nasıl çalışır?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required. Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page. You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched."
+        "text": "Acil Durum Kutusu, WebBrain'in indirip yerel olarak dizine ekleyebildiği, kamu malı ~570 saha başvuru belgesinden (tıp, hayatta kalma, eğitim, iletişim) oluşan seçili bir koleksiyondur. Kurulduktan sonra internet bağlantısı gerekmeden çevrimdışı olgusal sorular sorabilir ve yanıtları bu belgelerden alabilirsiniz. WebBrain, Acil Durum Kutusu'nda ve yüklü Vikipedi arşivlerinde hızlı anahtar kelime araması için SQLite FTS5 kullanır; ayrıca yerel olarak indirilen çok dilli E5 modeliyle (~140 MB) isteğe bağlı anlamsal arama katmanı sunar. İki yöntemin sonuçları birleştirilir ve çeşitlendirilir, her yanıt tam kaynak pasajını alıntılar. Alıntılar, görüntülenmeden önce belge bütünlüğünü doğrulayan yerel bir okuyucuda açılır; hiçbir zaman canlı bir web sayfasına gitmez. Daha geniş bir çevrimdışı bilgi tabanı için Kıyamet Modu üzerinden Vikipedi arşivleri de kurabilirsiniz. Kaynak ve dil filtreleriyle hangi koleksiyonlarda arama yapılacağını denetleyebilirsiniz."
       }
     },
     {
@@ -193,7 +209,7 @@
       "name": "Bana çok fazla soru soruyor. Bunu devre dışı bırakabilir miyim?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Bu onay istemleri güvenliğiniz içindir. Güvendiğiniz sitelerde bile kötü niyetli kişiler LLM talimatlarını taklit edebilir veya ajanın sizin adınıza onaylamayacağınız şeyler yapmasını sağlamaya çalışan içerikler enjekte edebilir. Bu yüzden WebBrain sonuç doğuran eylemlerden önce onayınızı ister. Yine de bu istemlerden geçmek istemiyorsanız devre dışı bırakabilirsiniz: yan eklentiyi açın, başlıktaki tekerlek simgesine tıklayın, settings.html içindeki Permissions sekmesine gidin ve Ask before consequential actions seçeneğini kapatın."
+        "text": "Bu onay istemleri güvenliğiniz içindir. Güvendiğiniz sitelerde bile kötü niyetli kişiler LLM talimatlarını taklit edebilir veya ajanın sizin adınıza onaylamayacağınız şeyler yapmasını sağlamaya çalışan içerikler enjekte edebilir. Bu yüzden WebBrain sonuç doğuran eylemlerden önce onayınızı ister. Yine de bu istemlerden geçmek istemiyorsanız, yan panele /dangerously-skip-permissions yazın veya devre dışı bırakabilirsiniz: yan eklentiyi açın, başlıktaki tekerlek simgesine tıklayın, settings.html içindeki Permissions sekmesine gidin ve Ask before consequential actions seçeneğini kapatın."
       }
     },
     {
@@ -249,7 +265,7 @@
       "name": "Ekran görüntüsü sansürleme ayarı, özel verilerimin bir bulut görüntü modeline asla ulaşmayacağını garanti eder mi?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Hayır — maruziyeti azaltır, bir garanti değildir. Etkinleştirildiğinde (Ayarlar → Çok kipli → Ekran görüntüsü sansürleme, varsayılan olarak kapalı), WebBrain her ekran görüntüsündeki form alanlarını ve e-posta adresi ya da telefon numarasına benzeyen metni, bir görüntü modeline gönderilmeden önce pikselleştirir. Algılama tamamen cihazınızda DOM sezgisel yöntemleriyle çalışır; fazladan hiçbir şey iletilmez. En iyi çaba ilkesiyle çalışır ve fail-open'dır. Algılayıcı bir sayfada çalışamazsa — örneğin bir gezinmeden hemen sonra, PDF görüntüleyicilerde veya kısıtlı tarayıcı sayfalarında — görevinizi iptal etmek yerine ekran görüntüsü yine de sansürlenmeden gönderilir. DOM sezgisel yöntemlerinin göremediği içerikler (bir canvas üzerine çizilmiş metin, görsellerin içindeki kişisel veriler, alışılmadık bileşenler) de gözden kaçabilir. Ve bu ayar yalnızca ekran görüntülerini kapsar: modele gönderilen sayfa metni bu ayarla sansürlenmez. Tam görüntü gizliliği için yerel bir model kullanın. llama.cpp veya Ollama gibi çevrimdışı bir sağlayıcıyla, ekran görüntüleri ve sayfa metni hiçbir zaman makinenizden çıkmaz, dolayısıyla sansürlenecek bir şey baştan olmaz — gizliliğin garanti edildiği tek yapılandırma budur. Yukarıdaki \"WebBrain'i tamamen çevrimdışı kullanabilir miyim?\" bölümüne bakın. Görüntü destekli yerel bir model çalıştıramayacak kadar mütevazı bir makineniz mi var? İyi bir orta yol, planlama ve araç çağrıları için küçük bir yerel model (mütevazı bir CPU/GPU için yeterince hafif) ile görüntü alt çağrıları için bir bulut sağlayıcısını, Ekran görüntüsü sansürleme açıkken birlikte kullanmaktır. Konuşmanız ve sayfa metni yine cihazınızda kalır, bulut görüntüye giden her ekran görüntüsünde form alanları ve algılanan e-posta/telefonlar önceden bulanıklaştırılmış olur — tam bir yerel görüntü modeli için donanıma ihtiyaç duymadan azaltılmış bulut maruziyeti. Bu görüntü ayrımını Ayarlar → Görüntü altından yapılandırın (yukarıdaki \"WebBrain bulut LLM faturalarını nasıl kontrol altında tutar?\" bölümüne bakın)."
+        "text": "Hayır — maruziyeti azaltır, bir garanti değildir. Etkinleştirildiğinde (Ayarlar → Yardımcı Modeller → Görme → Ekran görüntüsü sansürleme, varsayılan olarak kapalı), WebBrain her ekran görüntüsündeki form alanlarını ve e-posta adresi ya da telefon numarasına benzeyen metni, bir görüntü modeline gönderilmeden önce pikselleştirir. Algılama tamamen cihazınızda DOM sezgisel yöntemleriyle çalışır; fazladan hiçbir şey iletilmez. En iyi çaba ilkesiyle çalışır ve fail-open'dır. Algılayıcı bir sayfada çalışamazsa — örneğin bir gezinmeden hemen sonra, PDF görüntüleyicilerde veya kısıtlı tarayıcı sayfalarında — görevinizi iptal etmek yerine ekran görüntüsü yine de sansürlenmeden gönderilir. DOM sezgisel yöntemlerinin göremediği içerikler (bir canvas üzerine çizilmiş metin, görsellerin içindeki kişisel veriler, alışılmadık bileşenler) de gözden kaçabilir. Ve bu ayar yalnızca ekran görüntülerini kapsar: modele gönderilen sayfa metni bu ayarla sansürlenmez. Tam görüntü gizliliği için yerel bir model kullanın. llama.cpp veya Ollama gibi çevrimdışı bir sağlayıcıyla, ekran görüntüleri ve sayfa metni hiçbir zaman makinenizden çıkmaz, dolayısıyla sansürlenecek bir şey baştan olmaz — gizliliğin garanti edildiği tek yapılandırma budur. Yukarıdaki \"WebBrain'i tamamen çevrimdışı kullanabilir miyim?\" bölümüne bakın. Görüntü destekli yerel bir model çalıştıramayacak kadar mütevazı bir makineniz mi var? İyi bir orta yol, planlama ve araç çağrıları için küçük bir yerel model (mütevazı bir CPU/GPU için yeterince hafif) ile görüntü alt çağrıları için bir bulut sağlayıcısını, Ekran görüntüsü sansürleme açıkken birlikte kullanmaktır. Konuşmanız ve sayfa metni yine cihazınızda kalır, bulut görüntüye giden her ekran görüntüsünde form alanları ve algılanan e-posta/telefonlar önceden bulanıklaştırılmış olur — tam bir yerel görüntü modeli için donanıma ihtiyaç duymadan azaltılmış bulut maruziyeti. Bu görüntü ayrımını Ayarlar → Yardımcı Modeller → Görme altından yapılandırın (yukarıdaki \"WebBrain bulut LLM faturalarını nasıl kontrol altında tutar?\" bölümüne bakın)."
       }
     },
     {
@@ -278,10 +294,10 @@
     },
     {
       "@type": "Question",
-      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
+      "name": "WebBrain 33.0.0 ve sonrası neden GPL lisanslı?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
+        "text": "WebBrain 33.0.0 ve sonrası, tam metin Vikipedi ZIM araması için GPL lisanslı Xapian/libzim WebAssembly çalışma ortamını paketleyip bütünleştirdiği için GPL-3.0-or-later ile dağıtılır. Uzantı paketleri ilgili GPL bildirimlerini içerir ve paketlenmiş çalışma ortamının eksiksiz kaynak kodu her sürümle birlikte yayımlanır. 33.0.0 öncesi sürümler MIT lisanslı kalır; bağımsız yayımlanan alt projeler ve üçüncü taraf bileşenler kendi beyan ettikleri lisanslarını korur. Ayrıntılar için lisans karar kaydına bakın."
       }
     },
     {
@@ -289,7 +305,7 @@
       "name": "WebBrain bulut LLM faturalarını nasıl kontrol altında tutar?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Üç bağımsız katman: Token bilincine sahip ekran görüntüleri. Herhangi bir görüntü makineden çıkmadan önce WebBrain onu yeniden boyutlandırır (kısa kenar sınırlanır, en-boy oranı korunur) ve tur başına görüntü token bütçesine sığana kadar yinelemeli olarak JPEG sıkıştırır. GPT-4o'da sana yaklaşık 1.500 giriş tokeni mal olacak 2000×1200 bir ekran görüntüsü, sayfa okuma görevlerinde pratik kayıp olmaksızın yaklaşık 300–500 tokene inerek sıkıştırılır. _fitImageDimensions içinde uygulanır, bütçe matematiği için birim testleri vardır. Akıllı bağlam kırpma. Konuşma geçmişi, araç çıktıları ve satır içi DOM dökümleri tur başına sınırlıdır ve aktif modelin bağlam penceresi dolmaya yaklaştığında önce en eskilerden kırpılır. Bir read_page roman uzunluğunda bir makale döndürdü diye bir çalışmanın 10 binden 100 bin token'a sessizce şişmesini görmezsin. Özel görme modeli. Planlama ve araç çağrıları için ucuz bir metin modelini (ör. GPT-4o-mini), yalnızca ekran görüntüleri için ayrı bir görme modeliyle (ör. GPT-4o) eşleştir; böylece her turda çok kipli model fiyatını ödemezsin. Ayarlar → Görme altında yapılandırılır. Net sonuç: bulut sağlayıcılarıyla uzun oturumlar öngörülebilir kalır. Tam kontrol için yerel llama.cpp'yi kullan — token başına sıfır maliyet."
+        "text": "Üç bağımsız katman: Token bilincine sahip ekran görüntüleri. Herhangi bir görüntü makineden çıkmadan önce WebBrain onu yeniden boyutlandırır (kısa kenar sınırlanır, en-boy oranı korunur) ve tur başına görüntü token bütçesine sığana kadar yinelemeli olarak JPEG sıkıştırır. GPT-4o'da sana yaklaşık 1.500 giriş tokeni mal olacak 2000×1200 bir ekran görüntüsü, sayfa okuma görevlerinde pratik kayıp olmaksızın yaklaşık 300–500 tokene inerek sıkıştırılır. _fitImageDimensions içinde uygulanır, bütçe matematiği için birim testleri vardır. Akıllı bağlam kırpma. Konuşma geçmişi, araç çıktıları ve satır içi DOM dökümleri tur başına sınırlıdır ve aktif modelin bağlam penceresi dolmaya yaklaştığında önce en eskilerden kırpılır. Bir read_page roman uzunluğunda bir makale döndürdü diye bir çalışmanın 10 binden 100 bin token'a sessizce şişmesini görmezsin. Özel görme modeli. Planlama ve araç çağrıları için ucuz bir metin modelini (ör. GPT-4o-mini), yalnızca ekran görüntüleri için ayrı bir görme modeliyle (ör. GPT-4o) eşleştir; böylece her turda çok kipli model fiyatını ödemezsin. Ayarlar → Yardımcı Modeller → Görme altında yapılandırılır. Net sonuç: bulut sağlayıcılarıyla uzun oturumlar öngörülebilir kalır. Tam kontrol için yerel llama.cpp'yi kullan — token başına sıfır maliyet."
       }
     },
     {
@@ -545,7 +561,7 @@
     <section class="faq-topic" id="topic-about" data-faq-topic>
       <header class="faq-topic-header">
         <h2>WebBrain hakkında</h2>
-        <span aria-label="6">6</span>
+        <span aria-label="7">7</span>
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>WebBrain, Claude&#39;un tarayıcı eklentisine ücretsiz bir alternatif mi?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -554,6 +570,10 @@
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>WebBrain; OpenClaw, Browser-Use ve diğer AI ajan çatılarından nasıl farklı?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Bunlar farklı kategoride araçlar. WebBrain bir tarayıcı uzantısı — Chrome veya Firefox'a kurar ve yan panelde sohbet edersin, kod gerekmez. OpenClaw ve Browser-Use gibi çatılar ise genellikle başlıksız tarayıcılar ve CDP kullanarak Python'da otomatik tarayıcı işlem hatları kuran geliştiriciler için SDK'dır. Kısaca: WebBrain, günlük gezinme için bir AI asistanı; ajan çatıları ise kazıma botları ve test otomasyonu inşa etmek içindir. İkisini de kullanabilirsin — birbirlerini tamamlarlar.</p></div>
+      </details>
+      <details class="faq-question" id="workflow-editor" data-faq-item>
+        <summary><span>Bir WebBrain iş akışını düzenleyebilir miyim?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Evet. Tarayıcınızda bir iş akışı JSON dosyasını incelemek, düzenlemek, doğrulamak ve dışa aktarmak için <a href="https://www.webbrain.one/workflow-editor">WebBrain İş Akışı Düzenleyicisi</a>'ni kullanın.</p></div>
       </details>
       <details class="faq-question" id="firefox" data-faq-item>
         <summary><span>WebBrain Firefox&#39;ta çalışıyor mu?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -575,7 +595,7 @@
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
       <header class="faq-topic-header">
         <h2>Bulut ve faturalandırma</h2>
-        <span aria-label="4">4</span>
+        <span aria-label="5">5</span>
       </header>
       <details class="faq-question" id="cloud-subscription" data-faq-item>
         <summary><span>WebBrain Compass aboneliği ne kadar?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -585,13 +605,17 @@
         <summary><span>Aboneliğimi nasıl yönetir veya iptal ederim?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Faturalandırmayı <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> adresinden yönetin ve e-posta adresinizle giriş yapın.</p></div>
       </details>
+      <details class="faq-question" id="subscription-unrecognized" data-faq-item>
+        <summary><span>WebBrain Compass ücretini zaten ödedim, ancak uzantı yeniden ödeme istiyor. İki kez mi ödemeliyim?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Hayır — yeniden ödeme yapmayın. Compass aboneliğiniz, uzantının oluşturduğu tarayıcı/cihaz tanımlayıcısına bağlıdır; bu tanımlayıcı değiştiyse (yeni tarayıcı veya cihaz, yeniden yüklenen tarayıcı, silinen tarayıcı profili ya da sıfırlanan uzantı depolaması) uzantı mevcut aboneliğinizi artık tanımaz ve ödeme ister.</p><p>Mevcut aboneliğinizi <a href="https://api.webbrain.one/portal" target="_blank" rel="noopener">api.webbrain.one/portal</a> adresindeki self servis portalı üzerinden mevcut tarayıcınıza yeniden bağlayın ve erişimi geri kazanmak için oradaki talimatları izleyin.</p><p>Makbuzlar ve diğer faturalandırma işlemleri için <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> adresinden e-postanızla faturalandırmayı yönetin.</p></div>
+      </details>
       <details class="faq-question" id="cloud-sync" data-faq-item>
         <summary><span>Şifreli Cloud Sync nasıl çalışır?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Cloud Sync, aktif WebBrain Compass aboneleri için isteğe bağlı bir özelliktir. WebBrain anılarınızı, Profil otomatik doldurma metnini ve API anahtarları dahil desteklenen sağlayıcı yapılandırmasını senkronize eder. Sohbet geçmişini, tarayıcı geçmişini, sayfa ekran görüntülerini veya eski OAuth erişim ve yenileme belirteçlerini <strong>senkronize etmez</strong>.</p><p>Tarayıcınız, senkron kasasını yüklemeden önce sizin seçtiğiniz bir parolayla şifreler. WebBrain Compass yalnızca şifreli kasayı saklar; anılarınızı, profil metnini, sağlayıcı ayarlarını veya API anahtarlarını okuyamaz ve senkron parolasını sizin yerinize kurtaramaz.</p><p>E-posta alanı, WebBrain Compass magic-link faturalama/abonelik kimlik doğrulaması içindir. Hesap parolası değildir. Arayüz Cloud Sync'te parola değiştirmeyi söylüyorsa, kastedilen <strong>senkron şifreleme parolası</strong>dır; WebBrain hesap parolası değil.</p><p>Senkron parolasını unutursanız, eski şifreli bulut kasası çözülemez. Bulut kasasını sıfırlayıp verileri hâlâ yerel olarak tutan bir cihazdan yeni bir şifreli kopya yükleyebilirsiniz.</p></div>
       </details>
       <details class="faq-question" id="token-conscious" data-faq-item>
         <summary><span>WebBrain bulut LLM faturalarını nasıl kontrol altında tutar?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Üç bağımsız katman:</p><p><strong>Token bilincine sahip ekran görüntüleri.</strong> Herhangi bir görüntü makineden çıkmadan önce WebBrain onu yeniden boyutlandırır (kısa kenar sınırlanır, en-boy oranı korunur) ve tur başına görüntü token bütçesine sığana kadar yinelemeli olarak JPEG sıkıştırır. GPT-4o'da sana yaklaşık 1.500 giriş tokeni mal olacak 2000×1200 bir ekran görüntüsü, sayfa okuma görevlerinde pratik kayıp olmaksızın yaklaşık 300–500 tokene inerek sıkıştırılır. <code>_fitImageDimensions</code> içinde uygulanır, bütçe matematiği için birim testleri vardır.</p><p><strong>Akıllı bağlam kırpma.</strong> Konuşma geçmişi, araç çıktıları ve satır içi DOM dökümleri tur başına sınırlıdır ve aktif modelin bağlam penceresi dolmaya yaklaştığında önce en eskilerden kırpılır. Bir <code>read_page</code> roman uzunluğunda bir makale döndürdü diye bir çalışmanın 10 binden 100 bin token'a sessizce şişmesini görmezsin.</p><p><strong>Özel görme modeli.</strong> Planlama ve araç çağrıları için ucuz bir metin modelini (ör. GPT-4o-mini), yalnızca ekran görüntüleri için ayrı bir görme modeliyle (ör. GPT-4o) eşleştir; böylece her turda çok kipli model fiyatını ödemezsin. <strong>Ayarlar → Görme</strong> altında yapılandırılır.</p><p>Net sonuç: bulut sağlayıcılarıyla uzun oturumlar öngörülebilir kalır. Tam kontrol için yerel llama.cpp'yi kullan — token başına sıfır maliyet.</p></div>
+        <div class="faq-answer"><p>Üç bağımsız katman:</p><p><strong>Token bilincine sahip ekran görüntüleri.</strong> Herhangi bir görüntü makineden çıkmadan önce WebBrain onu yeniden boyutlandırır (kısa kenar sınırlanır, en-boy oranı korunur) ve tur başına görüntü token bütçesine sığana kadar yinelemeli olarak JPEG sıkıştırır. GPT-4o'da sana yaklaşık 1.500 giriş tokeni mal olacak 2000×1200 bir ekran görüntüsü, sayfa okuma görevlerinde pratik kayıp olmaksızın yaklaşık 300–500 tokene inerek sıkıştırılır. <code>_fitImageDimensions</code> içinde uygulanır, bütçe matematiği için birim testleri vardır.</p><p><strong>Akıllı bağlam kırpma.</strong> Konuşma geçmişi, araç çıktıları ve satır içi DOM dökümleri tur başına sınırlıdır ve aktif modelin bağlam penceresi dolmaya yaklaştığında önce en eskilerden kırpılır. Bir <code>read_page</code> roman uzunluğunda bir makale döndürdü diye bir çalışmanın 10 binden 100 bin token'a sessizce şişmesini görmezsin.</p><p><strong>Özel görme modeli.</strong> Planlama ve araç çağrıları için ucuz bir metin modelini (ör. GPT-4o-mini), yalnızca ekran görüntüleri için ayrı bir görme modeliyle (ör. GPT-4o) eşleştir; böylece her turda çok kipli model fiyatını ödemezsin. <strong>Ayarlar → Yardımcı Modeller → Görme</strong> altında yapılandırılır.</p><p>Net sonuç: bulut sağlayıcılarıyla uzun oturumlar öngörülebilir kalır. Tam kontrol için yerel llama.cpp'yi kullan — token başına sıfır maliyet.</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-models" data-faq-topic>
@@ -604,8 +628,8 @@
         <div class="faq-answer"><p>Evet. WebBrain'in varsayılan sağlayıcısı llama.cpp'dir; bilgisayarında yerel bir AI modeli çalıştırır. API anahtarı gerekmez, AI için internet gerekmez ve hiçbir veri makinenden çıkmaz. Bir GGUF modeli indir, llama-server'ı başlat ve tamamen özel bir AI tarayıcı ajanın olsun. Ollama'yı OpenAI uyumlu uç noktasıyla da kullanabilirsin.</p></div>
       </details>
       <details class="faq-question" id="emergency-box" data-faq-item>
-        <summary><span>What is the Emergency Box, and how does offline RAG work?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required.</p><p>Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page.</p><p>You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched.</p></div>
+        <summary><span>Acil Durum Kutusu nedir ve çevrimdışı RAG nasıl çalışır?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Acil Durum Kutusu, WebBrain'in indirip yerel olarak dizine ekleyebildiği, kamu malı ~570 saha başvuru belgesinden (tıp, hayatta kalma, eğitim, iletişim) oluşan seçili bir koleksiyondur. Kurulduktan sonra internet bağlantısı gerekmeden çevrimdışı olgusal sorular sorabilir ve yanıtları bu belgelerden alabilirsiniz.</p><p>WebBrain, Acil Durum Kutusu'nda ve yüklü Vikipedi arşivlerinde hızlı anahtar kelime araması için SQLite FTS5 kullanır; ayrıca yerel olarak indirilen çok dilli E5 modeliyle (~140 MB) isteğe bağlı anlamsal arama katmanı sunar. İki yöntemin sonuçları birleştirilir ve çeşitlendirilir, her yanıt tam kaynak pasajını alıntılar. Alıntılar, görüntülenmeden önce belge bütünlüğünü doğrulayan yerel bir okuyucuda açılır; hiçbir zaman canlı bir web sayfasına gitmez.</p><p>Daha geniş bir çevrimdışı bilgi tabanı için Kıyamet Modu üzerinden Vikipedi arşivleri de kurabilirsiniz. Kaynak ve dil filtreleriyle hangi koleksiyonlarda arama yapılacağını denetleyebilirsiniz.</p></div>
       </details>
       <details class="faq-question" id="models-supported" data-faq-item>
         <summary><span>WebBrain hangi AI modellerini destekliyor?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -673,7 +697,7 @@
       </details>
       <details class="faq-question" id="disable-approval-questions" data-faq-item>
         <summary><span>Bana çok fazla soru soruyor. Bunu devre dışı bırakabilir miyim?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Bu onay istemleri güvenliğiniz içindir. Güvendiğiniz sitelerde bile kötü niyetli kişiler LLM talimatlarını taklit edebilir veya ajanın sizin adınıza onaylamayacağınız şeyler yapmasını sağlamaya çalışan içerikler enjekte edebilir. Bu yüzden WebBrain sonuç doğuran eylemlerden önce onayınızı ister. Yine de bu istemlerden geçmek istemiyorsanız devre dışı bırakabilirsiniz: yan eklentiyi açın, başlıktaki tekerlek simgesine tıklayın, <code>settings.html</code> içindeki <strong>Permissions</strong> sekmesine gidin ve <strong>Ask before consequential actions</strong> seçeneğini kapatın.</p></div>
+        <div class="faq-answer"><p>Bu onay istemleri güvenliğiniz içindir. Güvendiğiniz sitelerde bile kötü niyetli kişiler LLM talimatlarını taklit edebilir veya ajanın sizin adınıza onaylamayacağınız şeyler yapmasını sağlamaya çalışan içerikler enjekte edebilir. Bu yüzden WebBrain sonuç doğuran eylemlerden önce onayınızı ister. Yine de bu istemlerden geçmek istemiyorsanız, yan panele <code>/dangerously-skip-permissions</code> yazın veya devre dışı bırakabilirsiniz: yan eklentiyi açın, başlıktaki tekerlek simgesine tıklayın, <code>settings.html</code> içindeki <strong>Permissions</strong> sekmesine gidin ve <strong>Ask before consequential actions</strong> seçeneğini kapatın.</p></div>
       </details>
       <details class="faq-question" id="api-mutations" data-faq-item>
         <summary><span>WebBrain API&#39;leri doğrudan mı çağırır, yoksa her zaman arayüzden mi gider?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -685,15 +709,15 @@
       </details>
       <details class="faq-question" id="screenshot-redaction" data-faq-item>
         <summary><span>Ekran görüntüsü sansürleme ayarı, özel verilerimin bir bulut görüntü modeline asla ulaşmayacağını garanti eder mi?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Hayır — maruziyeti azaltır, bir garanti değildir. Etkinleştirildiğinde (<strong>Ayarlar → Çok kipli → Ekran görüntüsü sansürleme</strong>, varsayılan olarak kapalı), WebBrain her ekran görüntüsündeki form alanlarını ve e-posta adresi ya da telefon numarasına benzeyen metni, bir görüntü modeline gönderilmeden <em>önce</em> pikselleştirir. Algılama tamamen cihazınızda DOM sezgisel yöntemleriyle çalışır; fazladan hiçbir şey iletilmez.</p><p><strong>En iyi çaba ilkesiyle çalışır ve fail-open'dır.</strong> Algılayıcı bir sayfada çalışamazsa — örneğin bir gezinmeden hemen sonra, PDF görüntüleyicilerde veya kısıtlı tarayıcı sayfalarında — görevinizi iptal etmek yerine ekran görüntüsü yine de <em>sansürlenmeden</em> gönderilir. DOM sezgisel yöntemlerinin göremediği içerikler (bir canvas üzerine çizilmiş metin, görsellerin içindeki kişisel veriler, alışılmadık bileşenler) de gözden kaçabilir. Ve bu ayar yalnızca ekran görüntülerini kapsar: modele gönderilen sayfa <em>metni</em> bu ayarla sansürlenmez.</p><p><strong>Tam görüntü gizliliği için yerel bir model kullanın.</strong> llama.cpp veya Ollama gibi çevrimdışı bir sağlayıcıyla, ekran görüntüleri ve sayfa metni hiçbir zaman makinenizden çıkmaz, dolayısıyla sansürlenecek bir şey baştan olmaz — gizliliğin garanti edildiği tek yapılandırma budur. Yukarıdaki "WebBrain'i tamamen çevrimdışı kullanabilir miyim?" bölümüne bakın.</p><p><strong>Görüntü destekli yerel bir model çalıştıramayacak kadar mütevazı bir makineniz mi var?</strong> İyi bir orta yol, planlama ve araç çağrıları için küçük bir yerel model (mütevazı bir CPU/GPU için yeterince hafif) ile görüntü alt çağrıları için bir bulut sağlayıcısını, Ekran görüntüsü sansürleme açıkken birlikte kullanmaktır. Konuşmanız ve sayfa metni yine cihazınızda kalır, bulut görüntüye giden her ekran görüntüsünde form alanları ve algılanan e-posta/telefonlar önceden bulanıklaştırılmış olur — tam bir yerel görüntü modeli için donanıma ihtiyaç duymadan azaltılmış bulut maruziyeti. Bu görüntü ayrımını <strong>Ayarlar → Görüntü</strong> altından yapılandırın (yukarıdaki "WebBrain bulut LLM faturalarını nasıl kontrol altında tutar?" bölümüne bakın).</p></div>
+        <div class="faq-answer"><p>Hayır — maruziyeti azaltır, bir garanti değildir. Etkinleştirildiğinde (<strong>Ayarlar → Yardımcı Modeller → Görme → Ekran görüntüsü sansürleme</strong>, varsayılan olarak kapalı), WebBrain her ekran görüntüsündeki form alanlarını ve e-posta adresi ya da telefon numarasına benzeyen metni, bir görüntü modeline gönderilmeden <em>önce</em> pikselleştirir. Algılama tamamen cihazınızda DOM sezgisel yöntemleriyle çalışır; fazladan hiçbir şey iletilmez.</p><p><strong>En iyi çaba ilkesiyle çalışır ve fail-open'dır.</strong> Algılayıcı bir sayfada çalışamazsa — örneğin bir gezinmeden hemen sonra, PDF görüntüleyicilerde veya kısıtlı tarayıcı sayfalarında — görevinizi iptal etmek yerine ekran görüntüsü yine de <em>sansürlenmeden</em> gönderilir. DOM sezgisel yöntemlerinin göremediği içerikler (bir canvas üzerine çizilmiş metin, görsellerin içindeki kişisel veriler, alışılmadık bileşenler) de gözden kaçabilir. Ve bu ayar yalnızca ekran görüntülerini kapsar: modele gönderilen sayfa <em>metni</em> bu ayarla sansürlenmez.</p><p><strong>Tam görüntü gizliliği için yerel bir model kullanın.</strong> llama.cpp veya Ollama gibi çevrimdışı bir sağlayıcıyla, ekran görüntüleri ve sayfa metni hiçbir zaman makinenizden çıkmaz, dolayısıyla sansürlenecek bir şey baştan olmaz — gizliliğin garanti edildiği tek yapılandırma budur. Yukarıdaki "WebBrain'i tamamen çevrimdışı kullanabilir miyim?" bölümüne bakın.</p><p><strong>Görüntü destekli yerel bir model çalıştıramayacak kadar mütevazı bir makineniz mi var?</strong> İyi bir orta yol, planlama ve araç çağrıları için küçük bir yerel model (mütevazı bir CPU/GPU için yeterince hafif) ile görüntü alt çağrıları için bir bulut sağlayıcısını, Ekran görüntüsü sansürleme açıkken birlikte kullanmaktır. Konuşmanız ve sayfa metni yine cihazınızda kalır, bulut görüntüye giden her ekran görüntüsünde form alanları ve algılanan e-posta/telefonlar önceden bulanıklaştırılmış olur — tam bir yerel görüntü modeli için donanıma ihtiyaç duymadan azaltılmış bulut maruziyeti. Bu görüntü ayrımını <strong>Ayarlar → Yardımcı Modeller → Görme</strong> altından yapılandırın (yukarıdaki "WebBrain bulut LLM faturalarını nasıl kontrol altında tutar?" bölümüne bakın).</p></div>
       </details>
       <details class="faq-question" id="page-context" data-faq-item>
         <summary><span>WebBrain DOM’un tamamını yapay zekâ modeline gönderiyor mu?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Hayır. WebBrain varsayılan olarak ham HTML veya ham DOM dökümü göndermez. Sayfanın URL’si ve başlığı, eşleşen site yönergeleri ve görsel algılama etkinse isteğe bağlı bir görünüm alanı ekran görüntüsüyle başlar.</p><p>Bir görev sayfa içeriği gerektirdiğinde WebBrain bunu gerektiği kadar, küçültülmüş anlamsal bir erişilebilirlik ağacı veya çıkarılmış metin olarak okur. Okumalar uygun olduğunda görünürlüğe göre filtrelenir, karakter sınırları uygulanır ve büyük sonuçlar sayfalanır. Ham sayfa kaynağına erişim yalnızca Dev modunda kullanılabilir.</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>WebBrain 33.0.0 ve sonrası neden GPL lisanslı?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain 33.0.0 ve sonrası, tam metin Vikipedi ZIM araması için GPL lisanslı Xapian/libzim WebAssembly çalışma ortamını paketleyip bütünleştirdiği için GPL-3.0-or-later ile dağıtılır.</p><p>Uzantı paketleri ilgili GPL bildirimlerini içerir ve paketlenmiş çalışma ortamının eksiksiz kaynak kodu her sürümle birlikte yayımlanır. 33.0.0 öncesi sürümler MIT lisanslı kalır; bağımsız yayımlanan alt projeler ve üçüncü taraf bileşenler kendi beyan ettikleri lisanslarını korur. Ayrıntılar için <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">lisans karar kaydına</a> bakın.</p></div>
       </details>
     </section>
     </main>

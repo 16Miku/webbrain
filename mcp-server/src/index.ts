@@ -27,6 +27,7 @@ import { z } from "zod";
 import { BridgeError, WebBrainBridge, type CloudSnapshot } from "./bridge.js";
 import { bridgeUrl, config } from "./config.js";
 import { abort, awaitSettled, describeSnapshot, getStatus, respond, startRun } from "./runs.js";
+import { taskMemorySchema } from "./task-memory.js";
 
 const bridge = new WebBrainBridge();
 
@@ -64,6 +65,7 @@ server.registerTool(
       "If the run stops with status 'needs_user_input', relay the question to the user and " +
       "answer with webbrain_respond — never guess on their behalf.",
     inputSchema: {
+      task_memory: taskMemorySchema.optional().describe("Private run-scoped bot memory transport. Requires a browser advertising bot_memory_v1. Never include this envelope in task text."),
       task: z
         .string()
         .min(1)
@@ -113,7 +115,7 @@ server.registerTool(
         ),
     },
   },
-  async ({ task, mode, tab_id, allow_api_mutations, timeout_seconds, wait }): Promise<TextResult> => {
+  async ({ task, mode, tab_id, allow_api_mutations, timeout_seconds, wait, task_memory }): Promise<TextResult> => {
     const timeoutMs = timeout_seconds ? timeout_seconds * 1000 : config.defaultRunTimeoutMs;
     const deadline = Date.now() + timeoutMs;
     const runId = `mcp_${randomUUID()}`;
@@ -128,6 +130,7 @@ server.registerTool(
             mode,
             tabId: tab_id,
             apiMutationsAllowed: allow_api_mutations,
+            taskMemory: task_memory,
           },
           Math.max(1, deadline - Date.now()),
         );
@@ -293,11 +296,24 @@ server.registerTool(
     description:
       "Supply the user's answer to a run sitting at status 'needs_user_input', then keep " +
       "waiting for it to settle. The answer must come from the user — WebBrain pauses " +
-      "precisely because a human decision is required.",
+      "precisely because a human decision is required. For an ordinary clarification, pass " +
+      "the user's answer verbatim. For a structured permission prompt, map the user's explicit " +
+      "decision to the exact stable value shown by WebBrain: 'once', 'always', or 'deny'. Never " +
+      "infer permission, and use 'always' only when the user explicitly requests a persistent grant. " +
+      "Any other structured gate (form-submission confirmation, saved-workflow repair) lists its own " +
+      "stable values on a 'decisions:' line — send one of those exactly, never a localized label.",
     inputSchema: {
       run_id: z.string().describe("The run that is waiting."),
       clarify_id: z.string().describe("The clarify_id reported alongside the question."),
-      answer: z.string().min(1).describe("The user's answer, passed through verbatim."),
+      answer: z
+        .string()
+        .min(1)
+        .describe(
+          "For an ordinary clarification, the user's answer passed through verbatim. For a " +
+            "permission prompt, the exact stable decision 'once', 'always', or 'deny' after the " +
+            "user explicitly chooses it; a normal one-time approval maps to 'once'. For any other " +
+            "structured gate, one of the exact values listed on its 'decisions:' line.",
+        ),
       timeout_seconds: z
         .number()
         .int()
@@ -379,7 +395,7 @@ server.registerTool(
     return ok(
       `Not connected. Listening on ${bridgeUrl()}, but no extension has dialled in.\n\n` +
         "To connect: open a Chromium browser (Chrome, Edge, Brave), then in " +
-        "WebBrain → Settings → General → Advanced → MCP set the URL to\n" +
+        "WebBrain → Settings → Bridge set the URL to\n" +
         `  ${bridgeUrl()}\n` +
         "and enable it. The extension holds one bridge socket at a time, so this cannot " +
         "run at the same time as WebBrain Cloud on port 17373.\n\n" +

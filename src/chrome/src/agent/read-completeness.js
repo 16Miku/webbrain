@@ -8,6 +8,27 @@ export const EXPANDED_READ_CONTEXT_TOKENS = 65536;
 const EMAIL_ADAPTERS = new Set(['gmail', 'yahoo-mail', 'proton-mail', 'fastmail', 'zoho-mail', 'yandex-mail', 'outlook']);
 const EMAIL_HOST_RE = /(^|\.)(mail\.google\.com|gmail\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|icloud\.com|proton\.me|protonmail\.com|fastmail\.com|hey\.com|mail\.zoho\.com|mail\.yandex\.[a-z.]+)$/i;
 const DM_HOST_RE = /(^|\.)(instagram\.com|x\.com|twitter\.com|facebook\.com|messenger\.com|threads\.net|reddit\.com|linkedin\.com|discord\.com|slack\.com|web\.whatsapp\.com|messages\.google\.com|web\.telegram\.org)$/i;
+const TELEGRAM_WEB_HOST_RE = /^(?:web|webk|weba|webz|k)\.telegram\.org$/i;
+
+function isTelegramConversationRoute(parsed) {
+  if (!TELEGRAM_WEB_HOST_RE.test(parsed.hostname)) return false;
+  if (parsed.hostname.toLowerCase() === 'web.telegram.org' && !/^\/(?:a|k)\/?$/.test(parsed.pathname)) return false;
+  const fragment = parsed.hash.slice(1);
+  // WebA uses peer[_thread]; WebK uses peer?thread=... or /im?p=peer.
+  // Pinned/scheduled views and login/deep-link fragments are not a thread read.
+  if (/^-?\d+(?:_(?:thread|-?\d+(?:_thread)?))?$/.test(fragment)) return true;
+  const [peer, query = ''] = fragment.split('?');
+  const params = new URLSearchParams(query);
+  if (params.has('tgaddr') || params.has('story') || params.has('community')) return false;
+  const routePeer = peer === '/im' ? params.get('p') || '' : peer;
+  // WebK writes an active username instead of a numeric peer in normal hashes.
+  // This only classifies the read context; native recipient authority requires
+  // an independent, current username-to-numeric-peer DOM witness.
+  const usernameRoute = parsed.pathname !== '/a/' && parsed.pathname !== '/a'
+    && /^@[A-Za-z0-9_]{1,32}(?![\s\S])/.test(routePeer);
+  return (/^-?\d+$/.test(routePeer) || usernameRoute)
+    && (!params.has('thread') || /^\d+$/.test(params.get('thread') || ''));
+}
 
 function isGmailThreadIdentifier(value = '') {
   const segment = String(value || '').split('?')[0];
@@ -57,6 +78,7 @@ export function isCommunicationThreadContext(url = '', adapterName = '') {
   const host = parsed.hostname.replace(/^www\./i, '');
   const route = `${parsed.pathname || '/'}${parsed.search || ''}${parsed.hash || ''}`;
   const adapter = String(adapterName || '').trim().toLowerCase();
+  if (TELEGRAM_WEB_HOST_RE.test(host)) return isTelegramConversationRoute(parsed);
   if (EMAIL_HOST_RE.test(host) || EMAIL_ADAPTERS.has(adapter)) {
     if (/(?:^|\.)google\.com$/i.test(host) || host === 'gmail.com') {
       return isGmailConversationHash(parsed.hash);
@@ -136,10 +158,15 @@ function normalizedTreeMaxChars(args) {
 function updateExpansionEvidence(state, result) {
   let expansionConfirmed = state.expansionConfirmed === true;
   let expansionChanged = false;
-  if (result?.conversationExpansionState === 'expanded') {
+  const observed = result?.conversationExpansionState;
+  // 'not_applicable' means Gmail exposed no expansion control at all, which is
+  // what a single-message thread looks like. Nothing is collapsed there, so the
+  // coverage requirement is already met and demanding an Expand all click would
+  // block completion on a thread that was fully read.
+  if (observed === 'expanded' || observed === 'not_applicable') {
     expansionChanged = expansionConfirmed !== true;
     expansionConfirmed = true;
-  } else if (result?.conversationExpansionState === 'collapsed') {
+  } else if (observed === 'collapsed') {
     expansionChanged = expansionConfirmed !== false;
     expansionConfirmed = false;
   }

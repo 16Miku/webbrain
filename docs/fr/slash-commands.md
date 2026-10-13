@@ -18,6 +18,7 @@ d'une espace ouvre l'autocomplétion de ses options disponibles.
 | `/schedule --list` | Afficher les tâches planifiées |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition et action> [/beep]` | Interroger la page courante pour une condition ; s'arrête après la première correspondance sauf si `--keep` est défini, et peut jouer une alerte en arrière-plan |
 | `/progress` | Afficher le journal de progression actuel |
+| `/btw [invite]` | Ouvrir une conversation latérale rapide |
 | `/scratchpad` | Afficher le bloc-notes actuel |
 | `/scratchpad --append <texte>` | Ajouter du texte au bloc-notes actuel |
 | `/scratchpad --clear` | Effacer le bloc-notes actuel |

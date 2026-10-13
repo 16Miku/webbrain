@@ -24,6 +24,22 @@ Tier defaults and resolution rules are documented in
 
 ## Accessibility read budgets
 
+For complete HTML-table JSON, `extract_data({type:"tables", caption:"Exact caption",
+columns:[{name:"ID",index:0,type:"string"}]})` copies the selected cells directly
+from the document. Use `table_index` instead of `caption` when needed;
+`first_data_row` defaults to 1. An optional `row_filter:{column:0,equals:["ID-1"]}`
+selects exact values in document order and refuses missing requested values.
+
+The result contains a small preview and an app-issued `data_ref`. Pass that
+reference to `done({summary:"Table export",data_ref:"..."})` to deliver the full
+`{rowCount,rows}` JSON after a fresh source check. References expire with the
+owning task. String cells retain their literal Unicode and whitespace; numeric
+conversion refuses precision loss. The source scan is limited to 10,000 rows
+and 2,000,000 cell characters; the complete delivered JSON must fit within
+30,000 characters, including JSON escaping. Overlimits fail explicitly before
+issuing a complete data reference. Strict secret handling also checks
+native column headers, so renaming a credential column cannot bypass it.
+
 `get_accessibility_tree` normally uses a 6,000-character structured page inside
 an 8,000-character serialized result. Mid/Full providers with a detected
 context window of at least 65,536 tokens advertise the expanded 12,000 / 16,000
@@ -53,6 +69,7 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 
 | Tool | Ask | Compact | Mid | Full | Dev |
 |------|:---:|:-------:|:---:|:----:|:---:|
+| `calculate` | Yes | Yes | Yes | Yes | - |
 | `get_accessibility_tree` | Yes | Yes | Yes | Yes | - |
 | `read_page` | Yes | Yes | Yes | Yes | - |
 | `read_pdf` | Yes | No | Yes | Yes | - |
@@ -80,13 +97,14 @@ Legend: **Yes** = available · **-** = not available · **C** = Chrome only ·
 | `press_keys` | No | Yes | Yes | Yes | - |
 | `navigate` | No | Yes | Yes | Yes | - |
 | `wait_for_element` | No | Yes | Yes | Yes | - |
-| `new_tab` | No | Yes | Yes | Yes | - |
 | `promote_iframe` | No | No | Yes | Yes | - |
 | `scratchpad_write` | No | Yes | Yes | Yes | - |
 | `progress_update` | No | Yes | Yes | Yes | - |
 | `progress_read` | No | Yes | Yes | Yes | - |
 | `download_social_media` | No | No | Yes | Yes | - |
-| `solve_captcha` | No | No | Yes | Yes | - |
+| `get_captcha_capabilities` | No | No | Yes | Yes | Yes |
+| `solve_captcha` | No | No | Yes | Yes | Yes |
+| `apply_captcha_solution` | No | No | Yes | Yes | Yes |
 | `go_back` | No | No | Yes | Yes | - |
 | `go_forward` | No | No | Yes | Yes | - |
 | `schedule_resume` | No | No | Yes | Yes | - |
@@ -133,9 +151,9 @@ before the skill is loaded (or if it is removed), the tools are absent. Ask mode
 still filters out mutating and download tools even when their owning skill is
 loaded. See [skills](skills.md).
 
-**WebMCP (experimental, opt-in).** The `list_webmcp_tools` /
-`execute_webmcp_tool` rows apply only when **Experimental WebMCP** is enabled
-under Settings → General → Advanced. The setting is off by default; while off,
+**WebMCP (experimental, on by default).** The `list_webmcp_tools` /
+`execute_webmcp_tool` rows apply when **Experimental WebMCP** is enabled
+under Settings → General → Advanced. The setting is on by default; while off,
 the tools and their prompt guidance are omitted from model requests. WebMCP
 annotations such as `readOnly` are page-authored hints, not a security boundary.
 Every invocation requires Act or Dev, fresh per-call confirmation, and the
@@ -184,3 +202,7 @@ Compact-tier providers. Chrome's reversible editing tools return patch IDs:
 - [Accessibility tree and refs](accessibility-tree-and-refs.md)
 - [Security model](security-model.md) and
   [prompt-injection defense](prompt-injection-defense.md)
+
+## CAPTCHA providers
+
+See [CAPTCHA provider coverage](captcha-provider-coverage.md) for setup, weighted fallback, hCaptcha, browser identity requirements and answer application, and the [complete method reference](captcha-method-reference.md) for all seven providers’ native contracts. In Act/Dev Mid and Full, the agent reads `get_captcha_capabilities` before supplying `providerTasks` to `solve_captcha`; structured results remain available to `apply_captcha_solution`. Ask and Compact request manual completion. A result must still be verified on the page.

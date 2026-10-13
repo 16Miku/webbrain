@@ -1,3 +1,5 @@
+import { getActiveAdapter, isLikelyMastodonHost } from './adapters.js';
+
 const PUBLIC_MEDIA_HOSTS = [
   'youtube.com',
   'youtu.be',
@@ -14,6 +16,7 @@ const PUBLIC_MEDIA_HOSTS = [
   'pin.it',
   'linkedin.com',
   'threads.net',
+  'bsky.app',
 ];
 
 function hostMatches(host, domain) {
@@ -22,6 +25,23 @@ function hostMatches(host, domain) {
 
 function hasPathId(path, pattern) {
   return pattern.test(path);
+}
+
+export function isMastodonMediaPage(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { return false; }
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.port) return false;
+  const adapter = getActiveAdapter(rawUrl);
+  return adapter?.name === 'mastodon' || (!adapter && isLikelyMastodonHost(parsed.hostname));
+}
+
+export function isMastodonPublicMediaUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { return false; }
+  if (!isMastodonMediaPage(rawUrl)) return false;
+  return /^\/@[A-Za-z0-9_]+(?:@[A-Za-z0-9.-]+)?\/\d+\/?$/.test(parsed.pathname)
+    || /^\/users\/[A-Za-z0-9_]+\/statuses\/\d+\/?$/.test(parsed.pathname)
+    || /^\/web\/statuses\/\d+\/?$/.test(parsed.pathname);
 }
 
 /**
@@ -38,6 +58,8 @@ export function isDirectPublicMediaUrl(rawUrl) {
   }
   const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
   const path = parsed.pathname || '/';
+
+  if (isMastodonPublicMediaUrl(rawUrl)) return true;
 
   if (host === 'youtu.be') return hasPathId(path, /^\/[^/?#]+/);
   if (hostMatches(host, 'youtube.com')) {
@@ -60,6 +82,7 @@ export function isDirectPublicMediaUrl(rawUrl) {
   if (hostMatches(host, 'pinterest.com')) return hasPathId(path, /^\/pin\/[^/?#]+/i);
   if (hostMatches(host, 'linkedin.com')) return hasPathId(path, /^\/(?:posts|feed\/update)\/[^/?#]+/i);
   if (hostMatches(host, 'threads.net')) return hasPathId(path, /^\/@[^/]+\/post\/[^/?#]+/i);
+  if (host === 'bsky.app') return hasPathId(path, /^\/profile\/[^/]+\/post\/[^/]+\/?$/i);
   if (hostMatches(host, 'facebook.com') || hostMatches(host, 'fb.com')) {
     return (
       hasPathId(path, /^\/(?:reel|watch|videos)\/[^/?#]+/i) ||
@@ -80,6 +103,6 @@ export function publicMediaUrlNeedsExplicitTarget(rawUrl) {
   } catch {
     return false;
   }
-  if (!PUBLIC_MEDIA_HOSTS.some((domain) => hostMatches(host, domain))) return false;
+  if (!PUBLIC_MEDIA_HOSTS.some((domain) => hostMatches(host, domain)) && !isMastodonMediaPage(rawUrl)) return false;
   return !isDirectPublicMediaUrl(rawUrl);
 }

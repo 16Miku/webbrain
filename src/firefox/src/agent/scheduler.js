@@ -1,3 +1,18 @@
+import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
+import { createSystemOneEvidence, systemOneEvidenceState } from './systemone-evidence.js';
+import {
+  buildCompletionQuestions,
+  buildWatchQuestions,
+  shouldDowngradeSuccess,
+  normalizeSystemOneThreshold,
+  SYSTEM_ONE_API_KEY,
+  SYSTEM_ONE_COMPLETION_ENABLED_KEY,
+  SYSTEM_ONE_COMPLETION_THRESHOLD_KEY,
+  SYSTEM_ONE_ENABLED_KEY,
+  SYSTEM_ONE_WATCH_ENABLED_KEY,
+  SYSTEM_ONE_WATCH_THRESHOLD_KEY,
+} from './systemone-judge.js';
+
 export const SCHEDULED_JOBS_KEY = 'wb_scheduled_jobs';
 export const SCHEDULED_TASKS_ENABLED_KEY = 'scheduledTasksEnabled';
 export const SCHEDULED_REQUIRE_CONFIRMATION_KEY = 'scheduledRequireConsequentialConfirmation';
@@ -76,6 +91,7 @@ function normalizePendingClarify(data, now = Date.now()) {
   const clarifyId = String(obj.clarifyId || '').trim();
   if (!clarifyId) return null;
   const pending = {
+    promptKind: typeof obj.promptKind === 'string' ? obj.promptKind.slice(0, 80) : null,
     clarifyId: clarifyId.slice(0, 120),
     question: String(obj.question || '').slice(0, 1000),
     options: Array.isArray(obj.options)
@@ -99,6 +115,10 @@ function normalizePendingClarify(data, now = Date.now()) {
     pending.permission = {
       capability: String(permission.capability || '').slice(0, 80),
       host: String(permission.host || '').slice(0, 300),
+      ...(permission.grouped === true ? { grouped: true } : {}),
+      ...(Array.isArray(permission.groupedCapabilities)
+        ? { groupedCapabilities: permission.groupedCapabilities.map(value => String(value).slice(0, 80)).slice(0, 6) }
+        : {}),
     };
   }
   const submitConfirmation = asObject(obj.submitConfirmation);
@@ -136,10 +156,11 @@ function normalizeDoneOutcome(value) {
 }
 
 function doneOutcomeFromUpdate(type, data) {
-  if (type !== 'tool_result' || data?.name !== 'done') return null;
+  if (type !== 'tool_result' || !['done', 'done_json'].includes(data?.name)) return null;
   const result = data?.result;
+  if (result?.cloudFailed) return 'failed';
   if (!result?.done || result?.success === false || result?.blockedDone || result?.error) return null;
-  return normalizeDoneOutcome(result.outcome);
+  return normalizeDoneOutcome(result.outcome || (data.name === 'done_json' ? 'success' : null));
 }
 
 // Ask-mode scheduled runs never emit a done update, so their success verdict
@@ -287,6 +308,12 @@ function sameScheduledIntent(a, b) {
     String(a?.mode || 'act') === String(b?.mode || 'act') &&
     scheduledJobPayloadKey(a) === scheduledJobPayloadKey(b);
   if (!samePayload) return false;
+  if (a.kind === 'resume' && String(a.resumeTaskId || '') !== String(b.resumeTaskId || '')) return false;
+  // A future wait created by this actual running turn is its successor. The
+  // running alarm cannot execute that future wait after it completes. Keep
+  // this precise relation through restore without weakening future-job dedupe.
+  if (a.kind === 'resume' && ((a.predecessorJobId && a.predecessorJobId === b.id)
+      || (b.predecessorJobId && b.predecessorJobId === a.id))) return false;
   if (a?.source === 'watch' || b?.source === 'watch') {
     return a?.source === 'watch' && b?.source === 'watch';
   }
@@ -536,10 +563,12 @@ export function summarizeScheduledJob(job) {
     target: job.target || null,
     lastResult: job.lastResult || null,
     lastOutcome: job.lastOutcome || null,
+    systemOneVerdict: job.systemOneVerdict || null,
     lastError: job.lastError || null,
     needsUserInput: job.status === 'needs_user_input',
     clarificationRequired: job.clarificationRequired === true,
     pendingClarify: job.pendingClarify || null,
+    reconciliationRequired: job.reconciliationRequired === true,
     completedAt: job.completedAt || null,
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
@@ -555,6 +584,7 @@ export class ScheduledJobManager {
     showIndicator = () => {},
     hideIndicator = () => {},
     playWatchAlert = async () => {},
+    systemOneJudge = null,
     now = () => Date.now(),
   }) {
     this.api = api;
@@ -564,10 +594,13 @@ export class ScheduledJobManager {
     this.showIndicator = showIndicator;
     this.hideIndicator = hideIndicator;
     this.playWatchAlert = playWatchAlert;
+    this.systemOneJudge = systemOneJudge;
     this.now = now;
     this._started = false;
     this._waitingForInput = new Set();
     this._runningTabs = new Set();
+    this._executions = new Map();
+    this._creationHolds = new Set();
     this._jobMutation = Promise.resolve();
   }
 
@@ -610,12 +643,30 @@ export class ScheduledJobManager {
 
   async _getSettings() {
     const stored = await this.api.storage.local.get([
+      ...DECISION_SETTINGS_KEYS,
       SCHEDULED_TASKS_ENABLED_KEY,
       SCHEDULED_REQUIRE_CONFIRMATION_KEY,
+      SYSTEM_ONE_API_KEY,
+      SYSTEM_ONE_ENABLED_KEY,
+      SYSTEM_ONE_WATCH_ENABLED_KEY,
+      SYSTEM_ONE_COMPLETION_ENABLED_KEY,
+      SYSTEM_ONE_WATCH_THRESHOLD_KEY,
+      SYSTEM_ONE_COMPLETION_THRESHOLD_KEY,
+      'strictSecretMode',
     ]);
     return {
+      ...stored,
       enabled: stored[SCHEDULED_TASKS_ENABLED_KEY] !== false,
       requireConsequentialConfirmation: stored[SCHEDULED_REQUIRE_CONFIRMATION_KEY] !== false,
+      typesafeApiKey: typeof stored[SYSTEM_ONE_API_KEY] === 'string'
+        ? stored[SYSTEM_ONE_API_KEY].trim()
+        : '',
+      systemOneEnabled: stored[SYSTEM_ONE_ENABLED_KEY] === true,
+      systemOneWatchEnabled: stored[SYSTEM_ONE_WATCH_ENABLED_KEY] === true,
+      systemOneCompletionEnabled: stored[SYSTEM_ONE_COMPLETION_ENABLED_KEY] === true,
+      systemOneWatchThreshold: normalizeSystemOneThreshold(stored[SYSTEM_ONE_WATCH_THRESHOLD_KEY]),
+      systemOneCompletionThreshold: normalizeSystemOneThreshold(stored[SYSTEM_ONE_COMPLETION_THRESHOLD_KEY]),
+      strictSecretMode: stored.strictSecretMode === true,
     };
   }
 
@@ -663,7 +714,77 @@ export class ScheduledJobManager {
     return { jobs: next, alarmsToClear, changed };
   }
 
-  async _saveJobUnlessDuplicate(job) {
+  async _saveJobUnlessDuplicate(job, creation = null) {
+    if (typeof creation?.check === 'function') {
+      // Keep creation, its alarm, and any owned rollback in the same queue turn.
+      return this._withJobMutation(async () => {
+        let blocked = creation.check();
+        if (blocked) return { blocked };
+        const jobs = await this._getJobs();
+        blocked = creation.check();
+        if (blocked) return { blocked };
+        const duplicate = findDuplicateScheduledJob(job, jobs);
+        if (duplicate) return { job: duplicate, deduped: true };
+        jobs.push(job);
+        let writeAcknowledged = false;
+        let alarmAttempted = false;
+        let failure = null;
+        try {
+          creation.markDispatched?.();
+          await this._setJobs(jobs);
+          writeAcknowledged = true;
+          blocked = creation.check();
+          if (!blocked) {
+            alarmAttempted = true;
+            await this._setAlarm(job);
+            blocked = creation.check();
+          }
+          if (!blocked) return { job, deduped: false, alarmCreated: true };
+        } catch (error) {
+          failure = error;
+          blocked ||= creation.check();
+        }
+        const uncertain = () => {
+          // Only this new job is held; prior valid or duplicate jobs are untouched.
+          this._creationHolds.add(job.id);
+          this._cancelExecution(job.id);
+          return { blocked: {
+          success: false, scheduled: false, dispatched: true, noDispatch: false,
+          outcomeUnknown: true, mutationMayHaveOccurred: true, retryable: false,
+          cancelled: blocked?.cancelled === true, jobId: job.id,
+          reason: 'scheduled_creation_outcome_unknown',
+          recoveryRequired: 'verify_scheduled_job',
+          error: 'Scheduled job persistence or cancellation could not be verified. Check this job before creating another resume or task.',
+          } };
+        };
+        let rollbackAcknowledged = false;
+        let alarmCleared = !alarmAttempted;
+        try {
+          const current = await this._getJobs();
+          const owned = current.find(item => item.id === job.id);
+          if (owned && (owned.kind !== job.kind || owned.createdAt !== job.createdAt)) return uncertain();
+          if (owned || !writeAcknowledged) {
+            await this._setJobs(current.map(item => item.id === job.id
+              ? { ...item, status: 'cancelled', updatedAt: iso(this.now()),
+                lastError: blocked?.error || String(failure?.message || failure), pendingClarify: null }
+              : item));
+          }
+          rollbackAcknowledged = true;
+        } catch {}
+        if (alarmAttempted) {
+          try {
+            const cleared = await this.api.alarms.clear(this._alarmName(job.id));
+            alarmCleared = typeof cleared === 'boolean';
+          } catch {}
+        }
+        if (!rollbackAcknowledged || !alarmCleared) return uncertain();
+        return { blocked: { ...(blocked || { success: false, cancelled: false,
+          reason: 'scheduled_creation_failed', error: 'Scheduled job creation failed and its new job was cancelled.' }),
+          scheduled: false, dispatched: true, noDispatch: false, outcomeUnknown: false,
+          ...(blocked ? { error: 'Scheduling was interrupted; cancellation of the new job was verified.' } : {}),
+          retryable: false, schedulingCancelled: true, jobId: job.id } };
+      });
+    }
     return this._withJobMutation(async () => {
       const jobs = await this._getJobs();
       const duplicate = findDuplicateScheduledJob(job, jobs);
@@ -703,6 +824,19 @@ export class ScheduledJobManager {
         // live clarification interrupted by worker eviction, it must not be
         // retried unattended after restart.
         if (job.status === 'needs_user_input' && job.clarificationRequired === true) return job;
+        if (job.pendingToolCall || job.completedConsequentialAction) {
+          changed = true;
+          return {
+            ...job,
+            status: 'needs_user_input',
+            clarificationRequired: true,
+            clarificationAuthorizationRequired: true,
+            reconciliationRequired: true,
+            lastError: 'A scheduled run stopped after a page action. Check the page before choosing Run now; part of the task may already have completed.',
+            pendingClarify: null,
+            updatedAt: iso(this.now()),
+          };
+        }
         changed = true;
         this._waitingForInput.delete(job.id);
         return {
@@ -764,12 +898,19 @@ export class ScheduledJobManager {
     this.sendUpdate(job.tabId || job.target?.tabId || null, 'scheduled_job', {
       event,
       job: summarizeScheduledJob(job),
+    }, {
+      jobId: job.id, executionId: job.executionId || '',
+      mode: job.mode || 'act', kind: job.kind,
     });
   }
 
-  async createResumeJob({ tabId, conversationId, mode = 'act', args, currentUrl = '', currentTitle = '' }) {
+  async createResumeJob({ tabId, conversationId, resumeTaskId = null, mode = 'act', args, currentUrl = '', currentTitle = '' }, creation = null) {
     const parsed = validateResumeArgs(args, this.now());
     if (!parsed.ok) return { success: false, error: parsed.error };
+    const predecessor = [...this._executions.entries()].find(([id, execution]) => !execution.cancelled
+      && execution.tabId === tabId && execution.job?.kind === 'resume'
+      && execution.job.conversationId === conversationId
+      && String(execution.job.resumeTaskId || id) === String(resumeTaskId || ''));
     const createdAt = iso(this.now());
     const job = {
       id: makeScheduledJobId('resume', this.now()),
@@ -777,6 +918,8 @@ export class ScheduledJobManager {
       status: 'pending',
       tabId,
       conversationId,
+      resumeTaskId: String(resumeTaskId || '') || null,
+      ...(predecessor ? { predecessorJobId: predecessor[0] } : {}),
       mode,
       reason: parsed.reason,
       resumeInstruction: parsed.resumeInstruction,
@@ -789,9 +932,10 @@ export class ScheduledJobManager {
       queueDeferrals: 0,
       runCount: 0,
     };
-    const saved = await this._saveJobUnlessDuplicate(job);
+    const saved = await this._saveJobUnlessDuplicate(job, creation);
+    if (saved.blocked) return saved.blocked;
     if (!saved.deduped) {
-      await this._setAlarm(saved.job);
+      if (!saved.alarmCreated) await this._setAlarm(saved.job);
       this._emit(saved.job, 'created');
     }
     return {
@@ -805,7 +949,7 @@ export class ScheduledJobManager {
     };
   }
 
-  async createTaskJob({ tabId = null, conversationId = null, args, source = 'agent', currentUrl = '', currentTitle = '' }) {
+  async createTaskJob({ tabId = null, conversationId = null, args, source = 'agent', currentUrl = '', currentTitle = '' }, creation = null) {
     const parsed = validateTaskArgs(args, this.now());
     if (!parsed.ok) return { success: false, error: parsed.error };
     const createdAt = iso(this.now());
@@ -839,9 +983,10 @@ export class ScheduledJobManager {
       queueDeferrals: 0,
       runCount: 0,
     };
-    const saved = await this._saveJobUnlessDuplicate(job);
+    const saved = await this._saveJobUnlessDuplicate(job, creation);
+    if (saved.blocked) return saved.blocked;
     if (!saved.deduped) {
-      await this._setAlarm(saved.job);
+      if (!saved.alarmCreated) await this._setAlarm(saved.job);
       this._emit(saved.job, 'created');
     }
     const savedScheduleType = saved.job.schedule?.type || parsed.scheduleType;
@@ -929,7 +1074,39 @@ export class ScheduledJobManager {
     };
   }
 
+  async cancelPendingResumes({ tabId, conversationId, resumeTaskId }) {
+    if (tabId == null || !conversationId || !resumeTaskId) return;
+    // Persist the terminal state before clearing alarms, so an already queued
+    // alarm cannot revive a continuation after its originating task has finished.
+    const cancelled = await this._withJobMutation(async () => {
+      const jobs = await this._getJobs();
+      const changed = [];
+      const next = jobs.map(job => {
+        if (job.kind !== 'resume' || job.tabId !== tabId
+            || job.conversationId !== conversationId
+            || job.resumeTaskId !== resumeTaskId
+            || !['pending', 'queued', 'paused'].includes(job.status)) return job;
+        const updated = {
+          ...job,
+          status: 'cancelled',
+          nextRunAt: null,
+          lastError: 'The conversation task has finished.',
+          updatedAt: iso(this.now()),
+        };
+        changed.push(updated);
+        return updated;
+      });
+      if (changed.length) await this._setJobs(next);
+      return changed;
+    });
+    for (const job of cancelled) {
+      await this._clearAlarm(job.id);
+      this._emit(job, 'cancelled');
+    }
+  }
+
   async cancelJob(jobId, reason = 'cancelled') {
+    this._cancelExecution(jobId);
     const jobs = await this._getJobs();
     const existing = jobs.find((it) => it.id === jobId);
     if (existing && !['pending', 'queued', 'paused', 'running', 'needs_user_input'].includes(existing.status)) {
@@ -947,6 +1124,7 @@ export class ScheduledJobManager {
       ['pending', 'queued', 'paused', 'running', 'needs_user_input'].includes(prev.status)
     ), () => ({ status: 'cancelled', lastError: reason, pendingClarify: null }));
     if (job) {
+      this._creationHolds.delete(jobId);
       this._emit(job, 'cancelled');
       await this._closeWatchHelperTab(job);
     }
@@ -954,6 +1132,7 @@ export class ScheduledJobManager {
   }
 
   async deleteJob(jobId) {
+    this._cancelExecution(jobId);
     await this._clearAlarm(jobId);
     this._waitingForInput.delete(jobId);
     const { existing, removed } = await this._withJobMutation(async () => {
@@ -969,11 +1148,15 @@ export class ScheduledJobManager {
         try { this.agent.abort(tabId); } catch {}
       }
     }
-    if (removed) await this._closeWatchHelperTab(existing);
+    if (removed) {
+      this._creationHolds.delete(jobId);
+      await this._closeWatchHelperTab(existing);
+    }
     return { ok: removed };
   }
 
   async pauseJob(jobId) {
+    this._cancelExecution(jobId);
     await this._clearAlarm(jobId);
     let liveTabId = null;
     const job = await this._withJobMutation(async () => {
@@ -1007,18 +1190,30 @@ export class ScheduledJobManager {
 
   async resumeJob(jobId) {
     const job = await this._updateJobIf(jobId, (prev) => prev.status === 'paused', (prev) => ({
-      status: 'pending',
+      status: prev.pendingToolCall || prev.completedConsequentialAction ? 'needs_user_input' : 'pending',
+      ...(prev.pendingToolCall || prev.completedConsequentialAction ? {
+        reconciliationRequired: true,
+        clarificationRequired: true,
+        clarificationAuthorizationRequired: true,
+        lastError: 'Check the previous page action before choosing Run now; part of the task may already have completed.',
+      } : {}),
       nextRunAt: prev.nextRunAt || prev.scheduledAt || iso(this.now() + MIN_DELAY_MS),
       queueDeferrals: 0,
     }));
     if (job) {
-      await this._setAlarm(job);
-      this._emit(job, 'resumed');
+      if (job.status === 'pending') await this._setAlarm(job);
+      this._emit(job, job.status === 'needs_user_input' ? 'clarification_required' : 'resumed');
     }
     return { ok: !!job, job: summarizeScheduledJob(job) };
   }
 
   async runNow(jobId) {
+    const held = () => this._creationHolds.has(jobId) ? {
+      ok: false, jobId, outcomeUnknown: true, retryable: false,
+      recoveryRequired: 'verify_scheduled_job',
+      error: 'This new scheduled job has unverified persistence or cancellation. Verify or cancel it before running it.',
+    } : null;
+    if (held()) return held();
     if (this._waitingForInput.has(jobId)) {
       return {
         ok: false,
@@ -1026,8 +1221,8 @@ export class ScheduledJobManager {
       };
     }
     const job = await this._updateJobIf(jobId, (prev) => (
-      ['pending', 'queued'].includes(prev.status)
-      || (prev.status === 'needs_user_input' && prev.clarificationRequired === true)
+      !this._creationHolds.has(jobId) && (['pending', 'queued'].includes(prev.status)
+      || (prev.status === 'needs_user_input' && prev.clarificationRequired === true))
     ), (prev) => ({
       status: 'pending',
       nextRunAt: iso(this.now() + 1000),
@@ -1037,11 +1232,17 @@ export class ScheduledJobManager {
       clarificationRequired: false,
       pendingClarify: null,
     }));
+    if (held()) return held();
     if (job) await this._setAlarm(job);
     return { ok: !!job, job: summarizeScheduledJob(job) };
   }
 
   async cancelForTab(tabId, reason = 'tab closed') {
+    for (const [jobId, execution] of this._executions) {
+      if (execution.tabId === tabId || execution.job?.tabId === tabId || execution.job?.target?.tabId === tabId) {
+        this._cancelExecution(jobId);
+      }
+    }
     const { alarmsToSet, alarmsToClear, tabIdsToAbort } = await this._withJobMutation(async () => {
       const jobs = await this._getJobs();
       const next = [];
@@ -1113,6 +1314,13 @@ export class ScheduledJobManager {
   }
 
   async cancelForConversation(tabId, conversationId, reason = 'conversation cleared') {
+    for (const [jobId, execution] of this._executions) {
+      const job = execution.job;
+      if ((execution.tabId === tabId || job?.tabId === tabId || job?.target?.tabId === tabId)
+          && (!conversationId || job?.conversationId === conversationId || job?.target?.conversationId === conversationId)) {
+        this._cancelExecution(jobId);
+      }
+    }
     const alarmsToClear = await this._withJobMutation(async () => {
       const jobs = await this._getJobs();
       const next = [];
@@ -1121,7 +1329,7 @@ export class ScheduledJobManager {
       for (const job of jobs) {
         const matches = (job.tabId === tabId || job.target?.tabId === tabId) &&
           (!conversationId || job.conversationId === conversationId || job.target?.conversationId === conversationId);
-        if (matches && ['pending', 'queued', 'paused', 'needs_user_input'].includes(job.status)) {
+        if (matches && ['pending', 'queued', 'paused', 'running', 'needs_user_input'].includes(job.status)) {
           alarmsToClear.push(job.id);
           waitingJobIdsToClear.push(job.id);
           next.push({ ...job, status: 'cancelled', lastError: reason, pendingClarify: null, updatedAt: iso(this.now()) });
@@ -1243,7 +1451,7 @@ export class ScheduledJobManager {
     }
   }
 
-  async _resolveTab(job) {
+  async _resolveTab(job, execution = null) {
     if (job.kind === 'resume' || job.target?.type === 'current_tab') {
       const tabId = job.tabId || job.target?.tabId;
       if (tabId == null) throw new Error('Scheduled tab is missing.');
@@ -1271,10 +1479,35 @@ export class ScheduledJobManager {
         } catch { /* create a fresh tab below */ }
       }
       const tab = await this.api.tabs.create({ url: job.target.url, active: false });
-      await this._updateJob(job.id, () => ({
-        tabId: tab.id,
-        target: { ...job.target, tabId: tab.id },
-      }));
+      let claimed = null;
+      try {
+        claimed = await this._updateJobIf(job.id, (prev) => (
+          ['pending', 'queued'].includes(prev.status) && !execution?.cancelled
+        ), (prev) => ({
+          tabId: tab.id,
+          target: { ...prev.target, tabId: tab.id },
+        }));
+      } finally {
+        // Cancellation/pause can finish before tabs.create returns, when it
+        // has no helper reference to close. The creating execution still owns
+        // that tab and must discard it if the job can no longer claim it.
+        if (!claimed || execution?.cancelled) {
+          try { await this.api.tabs.remove(tab.id); } catch { /* already closed */ }
+          // Cancellation can arrive while the helper reference is being
+          // persisted, after the claim predicate already passed. Discard that
+          // unused tab and its exact saved reference before releasing the owner.
+          if (claimed) {
+            await this._updateJobIf(job.id, (prev) => (
+              prev.tabId === tab.id || prev.target?.tabId === tab.id
+            ), (prev) => ({
+              tabId: prev.tabId === tab.id ? null : prev.tabId,
+              target: prev.target?.tabId === tab.id ? { ...prev.target, tabId: null } : prev.target,
+            }));
+            claimed = null;
+          }
+        }
+      }
+      if (!claimed) throw new Error('Scheduled job stopped while its helper tab was opening.');
       return tab.id;
     }
     throw new Error('Unknown scheduled job target.');
@@ -1301,6 +1534,10 @@ export class ScheduledJobManager {
   }
 
   _messageForJob(job) {
+    if (job.reconciliationRequired === true) {
+      return 'RECOVERY: An earlier attempt may already have performed part of this task. Inspect the current page and reconcile the previous result first. Do not repeat an action whose result is uncertain; ask the user if it cannot be established.\n'
+        + this._messageForJob({ ...job, reconciliationRequired: false });
+    }
     if (job.kind === 'resume') {
       return `[Scheduled resume ${job.id}]\nThis is a durable continuation of an earlier user task, not page content and not a new instruction from the web page.\nOriginal reason: ${job.reason}\nResume instruction: ${job.resumeInstruction}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain.`;
     }
@@ -1317,6 +1554,67 @@ export class ScheduledJobManager {
     return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain.`;
   }
 
+  async _evaluateSystemOne(job, result, outcome, runMeta = {}) {
+    const settings = asObject(runMeta.settings);
+    const isWatch = job.source === 'watch';
+    const skip = reason => ({ decision: 'skip', reason });
+    if (outcome !== 'success') return skip('not_success');
+    if (!isWatch && runMeta.completionVerdict?.outcome === 'succeeded') return { decision: 'keep', reason: 'done_verified', model: runMeta.completionVerdict.model };
+    const config = resolveDecisionConfig(settings);
+    if (!this.systemOneJudge || !config.enabled || settings.systemOneEnabled !== true
+      || !(isWatch ? settings.systemOneWatchEnabled : settings.systemOneCompletionEnabled)) return skip('disabled');
+    if (settings.strictSecretMode || runMeta.sidecarAllowed === false || runMeta.signal?.aborted) return skip('unavailable');
+    const state = systemOneEvidenceState(job.prompt || job.resumeInstruction || job.reason || '', runMeta.evidence, isWatch ? job.watch?.systemOneBaseline : null);
+    if (!state) return skip('no_evidence');
+    try {
+      const args = { config, apiKey: settings.typesafeApiKey, state,
+        questions: isWatch ? buildWatchQuestions() : buildCompletionQuestions(), signal: runMeta.signal };
+      const verdict = this.agent.evaluateSystemOne
+        ? await this.agent.evaluateSystemOne(job.tabId, this.systemOneJudge, args, runMeta.judgeContext)
+        : await this.systemOneJudge.evaluate(args);
+      return {
+        decision: shouldDowngradeSuccess(verdict.answers, {
+          threshold: isWatch ? settings.systemOneWatchThreshold : settings.systemOneCompletionThreshold,
+        }) ? 'downgrade' : 'keep',
+        reason: 'evidence_judgment', model: verdict.model, latencyMs: verdict.latencyMs,
+        usage: verdict.usage, estimatedCostUsd: verdict.estimatedCostUsd,
+      };
+    } catch (error) {
+      return skip(runMeta.signal?.aborted ? 'cancelled' : error?.code === 'WB_COST_ALLOWANCE' ? 'cost_limit' : 'service_unavailable');
+    }
+  }
+
+  async _applySystemOne(job, result, outcome, runMeta) {
+    const verdict = await this._evaluateSystemOne(job, result, outcome, runMeta);
+    if (runMeta.signal?.aborted || runMeta.judgeContext?.isCurrent?.() === false) return { stop: true };
+    if (verdict.decision === 'skip') return { stop: false, outcome };
+    const current = await this._updateJobIf(job.id, prev => (
+      ['running', 'needs_user_input'].includes(prev.status)
+      && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+      && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
+    ), prev => ({
+      systemOneVerdict: verdict,
+      ...(prev.source === 'watch' && runMeta.evidence?.observations?.length ? {
+        watch: { ...prev.watch, systemOneBaseline: runMeta.evidence.observations.slice(-1) },
+      } : {}),
+    }));
+    if (!current) return { stop: true };
+    this.agent.recordSystemOneVerdict?.(job.tabId, verdict, runMeta.judgeContext);
+    if (verdict.decision === 'downgrade' && (runMeta.evidence?.sideEffect || current.completedConsequentialAction || current.pendingToolCall)) {
+      const waiting = await this._updateJobIf(job.id, prev => (
+        prev.executionId === current.executionId && ['running', 'needs_user_input'].includes(prev.status) && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
+      ), () => ({ status: 'needs_user_input', reconciliationRequired: true,
+        clarificationRequired: true, clarificationAuthorizationRequired: true,
+        lastOutcome: 'partial', lastResult: String(result || '').slice(0, 2000),
+        lastError: 'The decision model could not verify the completed action. Check its result before running this task again.',
+        nextRunAt: null, pendingClarify: null,
+      }));
+      if (waiting) this._emit(waiting, 'clarification_required');
+      return { stop: true };
+    }
+    return { stop: false, outcome: verdict.decision === 'downgrade' ? 'partial' : outcome };
+  }
+
   async _completeWatch(job, result, outcome = null, runMeta = {}) {
     const lastOutcome = normalizeDoneOutcome(outcome);
     const observation = String(result || '').slice(0, 2000);
@@ -1327,19 +1625,22 @@ export class ScheduledJobManager {
       && watchAlert.duplicate === true
       && !!eventKey
       && eventKey === job.watch?.lastTriggeredEventKey;
-    const freshAlert = lastOutcome === 'success'
+    let effectiveOutcome = duplicateAlert ? 'partial' : lastOutcome;
+    const judged = await this._applySystemOne(job, result, effectiveOutcome, runMeta);
+    if (judged.stop) return;
+    effectiveOutcome = judged.outcome;
+    const freshAlert = effectiveOutcome === 'success'
       && job.watch?.beep === true
       && watchAlert.armed === true
       && !!eventKey
       && !duplicateAlert
       && eventKey !== job.watch?.lastTriggeredEventKey;
-    const alertWarning = lastOutcome === 'success'
+    const alertWarning = effectiveOutcome === 'success'
       && job.watch?.beep === true
       && !duplicateAlert
       && !freshAlert
       ? 'Watch reported success without arming a fresh /beep event; the action succeeded without an alert.'
       : null;
-    const effectiveOutcome = duplicateAlert ? 'partial' : lastOutcome;
     if (!lastOutcome || lastOutcome === 'failed') {
       const lastError = lastOutcome === 'failed'
         ? (observation || 'Watch reported a failed check or action.')
@@ -1356,6 +1657,8 @@ export class ScheduledJobManager {
     if (keepWatching) {
       const updated = await this._updateJobIf(job.id, (prev) => (
         ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
       ), (prev) => {
         const nextRunAt = computeNextRunAt(prev, this.now());
         return {
@@ -1371,6 +1674,9 @@ export class ScheduledJobManager {
           lastError: nextRunAt ? null : 'Watch interval is invalid.',
           clarificationAuthorizationRequired: false,
           clarificationRequired: false,
+          reconciliationRequired: false,
+          completedConsequentialAction: null,
+          pendingToolCall: null,
           pendingClarify: null,
           watch: {
             ...prev.watch,
@@ -1408,8 +1714,13 @@ export class ScheduledJobManager {
 
     const completed = await this._updateJobIf(job.id, (prev) => (
       ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
     ), (prev) => ({
       status: 'completed',
+      reconciliationRequired: false,
+      completedConsequentialAction: null,
+      pendingToolCall: null,
       completedAt: iso(this.now()),
       runCount: Number(prev.runCount || 0) + 1,
       lastRunAt: iso(this.now()),
@@ -1448,14 +1759,39 @@ export class ScheduledJobManager {
   }
 
   async _complete(job, result, outcome = null, runMeta = {}) {
+    try {
+      return await this._completeCurrentExecution(job, result, outcome, runMeta);
+    } finally {
+      // Discard a stale judgment, but settle the scheduler execution we still
+      // own. Never overwrite cancellation, user input, or a newer execution.
+      if (runMeta.executionId && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() === false) {
+        const waiting = await this._updateJobIf(job.id, prev => (
+          prev.status === 'running' && prev.executionId === runMeta.executionId && !runMeta.signal?.aborted
+        ), () => ({
+          status: 'needs_user_input', reconciliationRequired: true,
+          clarificationRequired: true, clarificationAuthorizationRequired: true,
+          lastOutcome: 'partial', nextRunAt: null, pendingClarify: null,
+          lastError: 'The tab started another run while completion was being verified. Reconcile the earlier result before running this task again.',
+        }));
+        if (waiting) this._emit(waiting, 'clarification_required');
+      }
+    }
+  }
+
+  async _completeCurrentExecution(job, result, outcome = null, runMeta = {}) {
     if (job.source === 'watch') {
       await this._completeWatch(job, result, outcome, runMeta);
       return;
     }
-    const lastOutcome = normalizeDoneOutcome(outcome);
+    let lastOutcome = normalizeDoneOutcome(outcome);
+    const judged = await this._applySystemOne(job, result, lastOutcome, runMeta);
+    if (judged.stop) return;
+    lastOutcome = judged.outcome;
     if (job.kind === 'task' && job.schedule?.type === 'recurring') {
       const updated = await this._updateJobIf(job.id, (prev) => (
         ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
       ), (prev) => {
         const nextRunAt = computeNextRunAt(prev, this.now());
         return {
@@ -1471,6 +1807,9 @@ export class ScheduledJobManager {
           lastError: null,
           clarificationAuthorizationRequired: false,
           clarificationRequired: false,
+          reconciliationRequired: false,
+          completedConsequentialAction: null,
+          pendingToolCall: null,
           pendingClarify: null,
         };
       });
@@ -1482,8 +1821,13 @@ export class ScheduledJobManager {
     }
     const completed = await this._updateJobIf(job.id, (prev) => (
       ['running', 'needs_user_input'].includes(prev.status)
+        && (!runMeta.executionId || prev.executionId === runMeta.executionId)
+        && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
     ), (prev) => ({
       status: 'completed',
+      reconciliationRequired: false,
+      completedConsequentialAction: null,
+      pendingToolCall: null,
       completedAt: iso(this.now()),
       runCount: Number(prev.runCount || 0) + 1,
       lastRunAt: iso(this.now()),
@@ -1512,11 +1856,141 @@ export class ScheduledJobManager {
     if (waiting) this._emit(waiting, 'clarification_required');
   }
 
+  _cancelExecution(jobId) {
+    const execution = this._executions.get(jobId);
+    if (execution) {
+      execution.cancelled = true;
+      execution.controller.abort(new Error('Scheduled run cancelled.'));
+    }
+  }
+
+  async _markPersistenceUnavailable(job, result) {
+    const waiting = await this._updateJobIf(job.id, (prev) => (
+      ['running', 'needs_user_input'].includes(prev.status)
+    ), (prev) => ({
+      status: 'needs_user_input',
+      clarificationRequired: true,
+      clarificationAuthorizationRequired: true,
+      reconciliationRequired: !!prev.pendingToolCall || !!prev.completedConsequentialAction
+        || prev.reconciliationRequired === true,
+      lastOutcome: 'failed',
+      lastResult: String(result || '').slice(0, 2000),
+      lastError: 'The scheduled run stopped because its recovery checkpoint could not be saved. Restore extension storage, check any previous page action, then choose Run now.',
+      pendingClarify: null,
+    }));
+    if (waiting) this._emit(waiting, 'clarification_required');
+  }
+
+  async _settleVerifiedCompletionCheckpoint(jobId, execution, proof) {
+    const owner = execution.completionCheckpoint;
+    const binding = owner?.binding;
+    const current = () => !execution.cancelled && !execution.controller.signal.aborted
+      && this._executions.get(jobId) === execution && execution.completionCheckpoint === owner
+      && binding?.isCurrent?.() === true && proof?.isCurrent?.() === true
+      && proof.runToken === binding.runToken && proof.taskKey === binding.taskKey
+      && proof.sourceId === binding.sourceId
+      && Number(proof.actionSequence) > binding.previousActionSequence;
+    if (!owner?.operationId || typeof proof?.refresh !== 'function' || !current()) return false;
+    return this._withJobMutation(async () => {
+      const jobs = await this._getJobs();
+      const index = jobs.findIndex(job => job.id === jobId);
+      const job = jobs[index], pending = job?.pendingToolCall;
+      if (!job || !['running', 'needs_user_input'].includes(job.status)
+          || job.executionId !== execution.id || pending?.executionId !== execution.id
+          || pending?.operationId !== owner.operationId || pending.name !== proof.actionName
+          || !current() || !await proof.refresh() || !current()) return false;
+      const completed = { name: pending.name, completedAt: iso(this.now()),
+        operationId: owner.operationId, verification: 'independent_completion' };
+      const next = [...jobs];
+      next[index] = { ...job, pendingToolCall: null, completedConsequentialAction: completed, updatedAt: iso(this.now()) };
+      // Until the durable write and its post-write freshness check settle,
+      // teardown must retain a recovery boundary even if storage acknowledges
+      // a write but fails to return its result.
+      execution.completionSettlementUncertain = true;
+      await this._setJobs(next);
+      if (!current() || !await proof.refresh() || !current()) {
+        const latest = await this._getJobs();
+        const latestIndex = latest.findIndex(job => job.id === jobId);
+        const candidate = latest[latestIndex];
+        if (candidate?.executionId === execution.id
+            && ['running', 'needs_user_input'].includes(candidate.status)
+            && candidate.pendingToolCall == null
+            && candidate.completedConsequentialAction?.operationId === owner.operationId) {
+          latest[latestIndex] = { ...candidate, pendingToolCall: pending,
+            completedConsequentialAction: job.completedConsequentialAction || null, updatedAt: iso(this.now()) };
+          await this._setJobs(latest);
+        }
+        execution.completionSettlementUncertain = false;
+        return false;
+      }
+      execution.completionSettlementUncertain = false;
+      execution.completionCheckpoint = null;
+      return true;
+    });
+  }
+
+  async _markReconciliationRequired(job) {
+    const waiting = await this._updateJobIf(job.id, (prev) => (
+      ['running', 'needs_user_input'].includes(prev.status) && !!prev.pendingToolCall
+    ), () => ({
+      status: 'needs_user_input',
+      clarificationRequired: true,
+      clarificationAuthorizationRequired: true,
+      reconciliationRequired: true,
+      lastError: 'A scheduled page action has an unknown result. Check the page before choosing Run now; the action may already have completed.',
+      pendingClarify: null,
+    }));
+    if (waiting) this._emit(waiting, 'clarification_required');
+    return waiting;
+  }
+
   async _runJob(jobId) {
+    // One token owns setup as well as the agent call. A cancellation during
+    // provider loading must outlive Agent's reset of an old tab abort flag.
+    const owner = this._executions.get(jobId);
+    if (owner) {
+      // Pause/resume can deliver its new one-shot alarm before the cancelled
+      // owner finishes unwinding. Remember that delivery instead of losing it.
+      if (owner.cancelled) owner.rearmAfterRelease = true;
+      return;
+    }
+    const execution = { id: makeScheduledJobId('execution', this.now()), cancelled: false, controller: new AbortController(), tabId: null, job: null };
+    this._executions.set(jobId, execution);
+    try {
+      await this._runJobAttempt(jobId, execution);
+    } finally {
+      if (this._executions.get(jobId) === execution) {
+        this._executions.delete(jobId);
+        if (execution.rearmAfterRelease) await this._rearmPendingJob(jobId);
+      }
+    }
+  }
+
+  async _rearmPendingJob(jobId) {
+    await this._withJobMutation(async () => {
+      const job = (await this._getJobs()).find(candidate => candidate.id === jobId);
+      if (!job || !['pending', 'queued'].includes(job.status)) return;
+      const owner = this._executions.get(jobId);
+      if (owner) {
+        if (owner.cancelled) owner.rearmAfterRelease = true;
+        return;
+      }
+      const scheduled = Date.parse(job.nextRunAt || job.scheduledAt);
+      const when = Math.max(this.now() + 1000, Number.isFinite(scheduled) ? scheduled : 0);
+      await this._setAlarm({ ...job, nextRunAt: iso(when) });
+    });
+  }
+
+  async _runJobAttempt(jobId, execution) {
+    // An alarm can arrive before its creating API call acknowledges.
+    // Observe the creation commit or owned rollback before any tab setup.
+    await this._jobMutation.catch(() => {});
+    if (execution.cancelled || this._creationHolds.has(jobId)) return;
     const settings = await this._getSettings();
     const jobs = await this._getJobs();
     const job = jobs.find((it) => it.id === jobId);
-    if (!job || !['pending', 'queued'].includes(job.status)) return;
+    if (!job || execution.cancelled || !['pending', 'queued'].includes(job.status)) return;
+    execution.job = job;
     if (!settings.enabled) {
       const paused = await this._updateJob(job.id, () => ({ status: 'paused', lastError: 'Scheduled tasks are disabled in Settings.' }));
       if (paused) this._emit(paused, 'paused');
@@ -1539,6 +2013,7 @@ export class ScheduledJobManager {
       }
       this._runningTabs.add(resolvedTabId);
       reservedTabId = resolvedTabId;
+      execution.tabId = resolvedTabId;
       try {
         await this.agent.assertRunStartAllowed?.(resolvedTabId, 'scheduled', { scheduledRun: true });
       } catch (error) {
@@ -1551,15 +2026,20 @@ export class ScheduledJobManager {
         ? (job.tabId || job.target?.tabId)
         : job.target?.tabId;
       await reserveTab(candidateTabId);
-      tabId = await this._resolveTab(job);
+      if (execution.cancelled) { releaseReservation(); return; }
+      tabId = await this._resolveTab(job, execution);
+      execution.tabId = tabId;
+      if (execution.cancelled) { releaseReservation(); return; }
       if (reservedTabId !== tabId) {
         releaseReservation();
         await reserveTab(tabId);
       }
       await this._validateConversation(job, tabId);
       await this._validateTaskTarget(job, tabId);
+      if (execution.cancelled) { releaseReservation(); return; }
     } catch (e) {
       releaseReservation();
+      if (execution.cancelled) return;
       if (isActiveRunError(e) || e?.code === 'teacher_mode_active') {
         await this._requeue(job, 'The target tab already has an active WebBrain run.');
       } else {
@@ -1573,6 +2053,9 @@ export class ScheduledJobManager {
     ), () => ({
       status: 'running',
       tabId,
+      executionId: execution.id,
+      pendingToolCall: null,
+      completedConsequentialAction: null,
       queueDeferrals: 0,
       startedAt: iso(this.now()),
       lastError: null,
@@ -1580,19 +2063,40 @@ export class ScheduledJobManager {
       clarificationRequired: false,
       pendingClarify: null,
     }));
-    if (!running) {
+    if (!running || execution.cancelled) {
       this._runningTabs.delete(tabId);
       return;
     }
     this._emit(running, 'running');
 
     let runOutcome = null;
+    let completionVerdict = null;
     let runStatus = null;
     let watchAlert = null;
     let sawFailureLikeUpdate = false;
+    let judgeContext = null;
+    let evidence = createSystemOneEvidence(this.agent._wrapUntrusted?.bind(this.agent));
+    const uiOwner = Object.freeze({ jobId: job.id, executionId: execution.id,
+      mode: running.mode || 'act', kind: running.kind });
     const onUpdate = (type, data) => {
+      if (execution.cancelled || execution.controller.signal.aborted) return;
+      if (type === 'steering_applied') {
+        // This genuine correction starts a new task authority in the same
+        // execution. Earlier outcomes and observations cannot complete it.
+        runOutcome = completionVerdict = runStatus = watchAlert = null;
+        sawFailureLikeUpdate = false;
+        judgeContext = this.agent.systemOneContext?.(tabId) || null;
+        evidence = createSystemOneEvidence(this.agent._wrapUntrusted?.bind(this.agent));
+      } else {
+        judgeContext = this.agent.systemOneContext?.(tabId) || judgeContext;
+      }
+      evidence.observe(type, data);
       const doneOutcome = doneOutcomeFromUpdate(type, data);
-      if (doneOutcome) runOutcome = doneOutcome;
+      if (doneOutcome) {
+        runOutcome = doneOutcome;
+        completionVerdict = data?.result?.verification?.decision
+          || (data?.name === 'done_json' ? this.agent._completionVerdicts?.get(tabId) : null) || null;
+      }
       if (type === 'error' || type === 'attachment_rejected' || type === 'max_steps_reached'
         || data?.error || data?.data?.error) {
         sawFailureLikeUpdate = true;
@@ -1662,18 +2166,21 @@ export class ScheduledJobManager {
       }
       // Tag scheduled clarify prompts and planner fallbacks with the job id so
       // the sidepanel can bind them to the correct scheduled assistant turn.
-      const jobScopedUpdate = type === 'clarify'
+      const jobScopedUpdate = type === 'page_feedback' || type === 'clarify'
         || type === 'clarify_timeout_extended'
         || type === 'clarify_auto'
         || (type === 'warning' && data?.code === 'planner_failed_continue_act');
       const withJob = jobScopedUpdate
         ? { ...data, scheduledJobId: job.id }
         : data;
-      this.sendUpdate(tabId, type, withJob);
+      this.sendUpdate(tabId, type, withJob, uiOwner);
     };
 
     this.showIndicator(tabId);
     this.agent.setScheduledRunPolicy(tabId, {
+      // Legacy jobs have no recorded origin. Give their descendants a distinct
+      // lineage without adopting other unbound resumes in the conversation.
+      resumeTaskId: running.resumeTaskId || running.id,
       requireConsequentialConfirmation: settings.requireConsequentialConfirmation,
       autoApprovePlanReview: true,
       watch: running.source === 'watch' ? {
@@ -1684,8 +2191,10 @@ export class ScheduledJobManager {
     });
     try {
       await this.loadProviders();
+      if (execution.cancelled) return;
       if (running.clarificationAuthorizationRequired === true) {
         await this.agent.requireExplicitClarificationAuthorization(tabId);
+        if (execution.cancelled) return;
       }
       const result = await this.agent.processMessage(
         tabId,
@@ -1693,9 +2202,49 @@ export class ScheduledJobManager {
         onUpdate,
         running.mode || 'act',
         [],
-        { scheduledRun: true, independentRun: true },
+        {
+          scheduledRun: true,
+          independentRun: true,
+          scheduledResume: running.kind === 'resume',
+          isDetachedStartCancelled: () => execution.cancelled,
+          signal: execution.controller.signal,
+          beforeConsequentialTool: async ({ name } = {}) => {
+            if (execution.cancelled) return false;
+            const binding = this.agent._scheduledCompletionBinding?.(tabId) || null;
+            const operationId = makeScheduledJobId('operation', this.now());
+            const checkpoint = await this._updateJobIf(job.id, (prev) => (
+              prev.executionId === execution.id
+              && ['running', 'needs_user_input'].includes(prev.status)
+              && !prev.pendingToolCall
+              && !execution.cancelled
+            ), () => ({ pendingToolCall: { name: String(name || ''), executionId: execution.id, operationId, startedAt: iso(this.now()) } }));
+            if (checkpoint && !execution.cancelled) execution.completionCheckpoint = { operationId, binding };
+            return !!checkpoint && !execution.cancelled;
+          },
+          afterConsequentialTool: async ({ name, result, outcomeUnknown = false } = {}) => {
+            if (outcomeUnknown || result?.outcomeUnknown === true || result?.inconclusive === true) return false;
+            const checkpoint = await this._updateJobIf(job.id, (prev) => (
+              prev.executionId === execution.id
+              && prev.pendingToolCall?.executionId === execution.id
+              && (!name || prev.pendingToolCall.name === String(name))
+            ), (prev) => ({
+              pendingToolCall: null,
+              completedConsequentialAction: result?.noDispatch === true || result?.dispatched === false
+                ? prev.completedConsequentialAction || null
+                : { name: String(name || ''), completedAt: iso(this.now()) },
+            }));
+            return !!checkpoint;
+          },
+          afterVerifiedCompletion: proof => this._settleVerifiedCompletionCheckpoint(job.id, execution, proof),
+        },
       );
       this._waitingForInput.delete(job.id);
+      if (execution.cancelled) return;
+      if (runStatus === 'persistence_degraded' || execution.completionSettlementUncertain) {
+        await this._markPersistenceUnavailable(running, result);
+        return;
+      }
+      if (await this._markReconciliationRequired(running)) return;
       if (runStatus === 'clarification_required') {
         await this._markClarificationRequired(running, result);
       } else if (runStatus === 'delivery_recovery_failed') {
@@ -1708,13 +2257,24 @@ export class ScheduledJobManager {
         // update): downstream badge styling must not guess from null.
         const effectiveOutcome = runOutcome
           ?? normalizeDoneOutcome(runStatus)
-          ?? ((running.mode || 'act') === 'ask' && askRunSucceeded(result, sawFailureLikeUpdate)
+          ?? ((running.mode || 'act') === 'ask' && !['cancelled', 'stopped'].includes(runStatus)
+            && askRunSucceeded(result, sawFailureLikeUpdate)
             ? 'success'
             : null);
-        await this._complete(running, result, effectiveOutcome, { watchAlert });
+        await this._complete(running, result, effectiveOutcome, {
+          watchAlert, completionVerdict,
+          evidence: evidence.snapshot(),
+          judgeContext,
+          executionId: execution.id,
+          settings,
+          signal: execution.controller.signal,
+          sidecarAllowed: runStatus !== 'cost_limit',
+        });
       }
     } catch (e) {
       this._waitingForInput.delete(job.id);
+      if (execution.cancelled) return;
+      if (await this._markReconciliationRequired(running)) return;
       if (isActiveRunError(e)) {
         await this._requeue(running, 'The target tab already has an active WebBrain run.');
       } else {

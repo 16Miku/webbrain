@@ -11,7 +11,9 @@ import {
   USER_MEMORY_STORAGE_KEY,
 } from './agent/user-memory.js';
 import { AUTO_GROUP_TABS_KEY } from './tab-group-preference.js';
+import { normalizeSettings as normalizeSafeSocialSettings, SETTINGS_KEY as SAFE_SOCIAL_SETTINGS_KEY } from './safesocial/config.js';
 import { normalizeUiScale, UI_SCALE_STORAGE_KEY } from './ui/ui-scale.js';
+import { resolveDecisionConfig } from './agent/decision-config.js';
 
 export const CONFIG_SCHEMA = 'webbrain-config/1';
 export const MAX_CONFIG_IMPORT_CHARS = 10_000_000;
@@ -24,6 +26,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   themeMode: 'system',
   [UI_SCALE_STORAGE_KEY]: 100,
   verboseMode: false,
+  composerDeliveryMode: 'queue',
   selectionShortcutEnabled: true,
   [AUTO_GROUP_TABS_KEY]: true,
   helpImproveWebBrain: true,
@@ -37,9 +40,10 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   researchEscalationEnabled: false,
   researchEscalationEngine: 'chatgpt',
   voiceInputEnabled: true,
-  alwaysAllowApiMutations: false,
-  apiMutationObserverEnabled: false,
-  webMcpEnabled: false,
+  alwaysAllowApiMutations: true,
+  apiMutationObserverEnabled: true,
+  pdfViewerEnabled: true,
+  webMcpEnabled: true,
   openaiAskStreamingEnabled: true,
   planBeforeActMode: 'try',
   planBeforeAct: true,
@@ -50,6 +54,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   completionConfetti: true,
   completionFlashTab: true,
   tracingEnabled: false,
+  feedbackDiagnosticsEnabled: true,
   strictSecretMode: false,
   agentAllowLocalNetwork: false,
   scheduledTasksEnabled: true,
@@ -64,18 +69,49 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   activeProvider: 'webbrain_cloud',
   visionModel: null,
   transcriptionModel: null,
+  imageGenModel: null,
   profileEnabled: false,
   profileText: '',
   [USER_MEMORY_STORAGE_KEY]: { version: 1, records: [] },
   [USER_MEMORY_ENABLED_KEY]: true,
-  [USER_MEMORY_AUTO_CAPTURE_KEY]: false,
-  [USER_MEMORY_FORM_CAPTURE_KEY]: false,
+  [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  [USER_MEMORY_FORM_CAPTURE_KEY]: true,
   [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: USER_MEMORY_DEFAULT_MAX_PROMPT_CHARS,
   [CUSTOM_SKILLS_STORAGE_KEY]: [],
   [DEFAULT_SKILLS_REMOVED_STORAGE_KEY]: [],
   enableAllPackagedSkills: false,
   captchaSolverEnabled: false,
   capsolverApiKey: '',
+  twoCaptchaApiKey: '',
+  twoCaptchaEnabled: false,
+  capsolverWeight: 100,
+  twoCaptchaWeight: 99,
+  capmonsterApiKey: '',
+  capmonsterEnabled: false,
+  capmonsterWeight: 98,
+  solveCaptchaApiKey: '',
+  solveCaptchaEnabled: false,
+  solveCaptchaWeight: 97,
+  antiCaptchaApiKey: '',
+  antiCaptchaEnabled: false,
+  antiCaptchaWeight: 96,
+  nopechaApiKey: '',
+  nopechaEnabled: false,
+  nopechaWeight: 95,
+  nonecapApiKey: '',
+  nonecapEnabled: false,
+  nonecapWeight: 94,
+  systemOneEnabled: false,
+  systemOneWatchEnabled: false,
+  systemOneCompletionEnabled: false,
+  systemOneFastClassifications: false,
+  systemOneFastBrowser: false,
+  systemOneWatchThreshold: 0.7,
+  systemOneCompletionThreshold: 0.7,
+  decisionProvider: '', decisionModel: '', decisionApiKey: '', decisionLocalApiKey: '', decisionBaseUrl: '', decisionVisionMode: 'auto', decisionVisionSupported: false,
+  decisionInputRate: .04, decisionOutputRate: 0, systemOneDoneEnabled: true, systemOneDoneThreshold: .9,
+  typesafeApiKey: '',
+  [SAFE_SOCIAL_SETTINGS_KEY]: normalizeSafeSocialSettings(),
 });
 
 export const CONFIG_STORAGE_KEYS = Object.freeze(Object.keys(DEFAULT_CONFIG_SETTINGS));
@@ -93,6 +129,7 @@ const BOOLEAN_KEYS = new Set([
   'voiceInputEnabled',
   'alwaysAllowApiMutations',
   'apiMutationObserverEnabled',
+  'pdfViewerEnabled',
   'webMcpEnabled',
   'openaiAskStreamingEnabled',
   'planBeforeAct',
@@ -100,6 +137,7 @@ const BOOLEAN_KEYS = new Set([
   'completionConfetti',
   'completionFlashTab',
   'tracingEnabled',
+  'feedbackDiagnosticsEnabled',
   'strictSecretMode',
   'agentAllowLocalNetwork',
   'scheduledTasksEnabled',
@@ -112,8 +150,27 @@ const BOOLEAN_KEYS = new Set([
   USER_MEMORY_FORM_CAPTURE_KEY,
   'enableAllPackagedSkills',
   'captchaSolverEnabled',
+  'twoCaptchaEnabled',
+  'capmonsterEnabled',
+  'solveCaptchaEnabled',
+  'antiCaptchaEnabled',
+  'nopechaEnabled',
+  'nonecapEnabled',
+  'decisionVisionSupported', 'systemOneDoneEnabled',
+  'systemOneEnabled',
+  'systemOneWatchEnabled',
+  'systemOneCompletionEnabled',
+  'systemOneFastClassifications',
+  'systemOneFastBrowser',
 ]);
 const NUMBER_KEYS = new Set([
+  'capsolverWeight',
+  'twoCaptchaWeight',
+  'capmonsterWeight',
+  'solveCaptchaWeight',
+  'antiCaptchaWeight',
+  'nopechaWeight',
+  'nonecapWeight',
   'maxAgentSteps',
   'requestTimeoutMs',
   'clarifyTimeoutSec',
@@ -121,8 +178,12 @@ const NUMBER_KEYS = new Set([
   'costAllowanceSessionUsd',
   'costAllowanceTotalUsd',
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
+  'decisionInputRate', 'decisionOutputRate', 'systemOneDoneThreshold',
+  'systemOneWatchThreshold',
+  'systemOneCompletionThreshold',
 ]);
 const STRING_KEYS = new Set([
+  'composerDeliveryMode',
   'wbLocale',
   'themeMode',
   'autoScreenshot',
@@ -134,13 +195,21 @@ const STRING_KEYS = new Set([
   'activeProvider',
   'profileText',
   'capsolverApiKey',
+  'twoCaptchaApiKey',
+  'capmonsterApiKey',
+  'solveCaptchaApiKey',
+  'antiCaptchaApiKey',
+  'nopechaApiKey',
+  'nonecapApiKey',
+  'decisionProvider', 'decisionModel', 'decisionBaseUrl', 'decisionApiKey', 'decisionLocalApiKey', 'decisionVisionMode',
+  'typesafeApiKey',
 ]);
 const ARRAY_KEYS = new Set([
   'wb_permissions',
   CUSTOM_SKILLS_STORAGE_KEY,
   DEFAULT_SKILLS_REMOVED_STORAGE_KEY,
 ]);
-const NULLABLE_OBJECT_KEYS = new Set(['visionModel', 'transcriptionModel']);
+const NULLABLE_OBJECT_KEYS = new Set(['visionModel', 'transcriptionModel', 'imageGenModel']);
 
 function isPlainObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -167,12 +236,19 @@ function sanitizeProviders(value, { strict = false } = {}) {
 }
 
 function validSettingValue(key, value) {
+  if (key === 'decisionProvider') return ['', 'openrouter', 'typesafe', 'local', 'webgpu_d1'].includes(value);
+  if (key === 'decisionVisionMode') return ['auto', 'on', 'off'].includes(value);
+  if (key === 'decisionBaseUrl') {
+    if (typeof value !== 'string') return false;
+    try { resolveDecisionConfig({ decisionProvider: 'local', decisionBaseUrl: value }); return true; }
+    catch { return false; }
+  }
   if (BOOLEAN_KEYS.has(key)) return typeof value === 'boolean';
   if (NUMBER_KEYS.has(key)) return typeof value === 'number' && Number.isFinite(value);
   if (STRING_KEYS.has(key)) return typeof value === 'string';
   if (ARRAY_KEYS.has(key)) return Array.isArray(value);
   if (NULLABLE_OBJECT_KEYS.has(key)) return value === null || isPlainObject(value);
-  if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY) return isPlainObject(value);
+  if (key === 'providers' || key === USER_MEMORY_STORAGE_KEY || key === SAFE_SOCIAL_SETTINGS_KEY) return isPlainObject(value);
   return true;
 }
 
@@ -190,6 +266,14 @@ function normalizeSettings(source, { strict = false } = {}) {
       settings[key] = normalizeUiScale(value);
       continue;
     }
+    if (key === SAFE_SOCIAL_SETTINGS_KEY) {
+      if (!isPlainObject(value)) {
+        if (strict) throw new Error(`Invalid value for configuration setting "${key}".`);
+        continue;
+      }
+      settings[key] = normalizeSafeSocialSettings(value);
+      continue;
+    }
     if (!validSettingValue(key, value)) {
       if (strict) throw new Error(`Invalid value for configuration setting "${key}".`);
       continue;
@@ -197,6 +281,10 @@ function normalizeSettings(source, { strict = false } = {}) {
     settings[key] = clone(value);
   }
   settings.providers = sanitizeProviders(settings.providers, { strict });
+  if (!Object.hasOwn(source, 'decisionInputRate')) {
+    settings.decisionInputRate = source.decisionProvider === 'typesafe' || (!source.decisionProvider && source.typesafeApiKey)
+      ? .042 : ['local', 'webgpu_d1'].includes(source.decisionProvider) ? 0 : .04;
+  }
   return settings;
 }
 
@@ -269,6 +357,8 @@ export function parseConfigPatchImport(json) {
     }
     settings[key] = key === UI_SCALE_STORAGE_KEY
       ? normalizeUiScale(value)
+      : key === SAFE_SOCIAL_SETTINGS_KEY
+      ? normalizeSafeSocialSettings(value)
       : key === 'providers'
       ? sanitizeProviders(value, { strict: true })
       : clone(value);

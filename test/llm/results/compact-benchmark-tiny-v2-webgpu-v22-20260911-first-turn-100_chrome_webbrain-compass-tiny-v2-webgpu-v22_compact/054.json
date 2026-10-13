@@ -1,0 +1,28 @@
+{
+  "id": "054",
+  "user": "download this image",
+  "mode": "act",
+  "tab": {
+    "url": "https://example.com/photo.jpg",
+    "title": "photo.jpg"
+  },
+  "latencyMs": 9770,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t download or save the image from the current page. I can help you find the correct download link or use a different source if you provide it."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t download or save the image from the current page. I can help you find the correct download link or use a different source if you provide it.</param></function>",
+  "usage": {
+    "prompt_tokens": 9710,
+    "completion_tokens": 52,
+    "total_tokens": 9762
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -40,7 +40,7 @@
   <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
   <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
-  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script async src="https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js"></script>
   <script>
     window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
     plausible.init()
@@ -78,6 +78,14 @@
     },
     {
       "@type": "Question",
+      "name": "لقد دفعت اشتراك WebBrain Compass بالفعل، لكن الإضافة تطلب مني الدفع مرة أخرى. هل يجب أن أدفع مرتين؟",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "لا — لا تدفع مرة أخرى. اشتراك Compass مرتبط بمعرّف المتصفح/الجهاز الذي تُنشئه الإضافة، فإذا تغيّر هذا المعرّف (متصفح أو جهاز جديد، أو إعادة تثبيت المتصفح، أو حذف ملف تعريف المتصفح، أو إعادة تعيين تخزين الإضافة)، فلن تتعرّف الإضافة على اشتراكك الحالي وستطلب الدفع. أعِد ربط اشتراكك الحالي بالمتصفح الحالي عبر بوابة الخدمة الذاتية على api.webbrain.one/portal واتّبع التعليمات هناك لاستعادة الوصول. للإيصالات وتغييرات الفوترة الأخرى، أدر الفوترة على api.webbrain.one/account باستخدام بريدك الإلكتروني."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "كيف تعمل مزامنة السحابة المشفّرة؟",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -94,6 +102,14 @@
     },
     {
       "@type": "Question",
+      "name": "هل يمكنني تعديل سير عمل WebBrain؟",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "نعم. استخدم محرر سير عمل WebBrain لمراجعة ملف JSON لسير العمل وتعديله والتحقق منه وتصديره في متصفحك."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "هل يمكنني استخدام WebBrain بدون اتصال بالإنترنت بالكامل؟",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -102,10 +118,10 @@
     },
     {
       "@type": "Question",
-      "name": "What is the Emergency Box, and how does offline RAG work?",
+      "name": "ما هو صندوق الطوارئ، وكيف يعمل RAG دون اتصال بالإنترنت؟",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required. Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page. You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched."
+        "text": "صندوق الطوارئ مجموعة مختارة من نحو 570 مستندًا مرجعيًا ميدانيًا من الملكية العامة (الطب، والنجاة، والتعليم، والاتصالات) يمكن لـ WebBrain تنزيلها وفهرستها محليًا. بعد التثبيت، يمكنك طرح أسئلة واقعية دون اتصال بالإنترنت والحصول على إجابات من هذه المستندات. يستخدم WebBrain داخليًا SQLite FTS5 للبحث السريع بالكلمات المفتاحية في صندوق الطوارئ وأرشيفات ويكيبيديا المثبتة، إضافة إلى طبقة اختيارية للبحث الدلالي باستخدام نموذج E5 متعدد اللغات يُنزَّل محليًا (~140 م.ب). تُدمج نتائج الطريقتين وتُنوَّع، ويستشهد كل جواب بالمقطع المصدري بدقة. تُفتح الاستشهادات في قارئ محلي يتحقق من سلامة المستند قبل العرض — ولا تنتقل أبدًا إلى صفحة ويب مباشرة. يمكنك أيضًا تثبيت أرشيفات ويكيبيديا عبر وضع نهاية العالم لقاعدة معرفية أوسع دون اتصال. وتتيح لك مرشحات المصدر واللغة التحكم في المجموعات التي تُبحث."
       }
     },
     {
@@ -193,7 +209,7 @@
       "name": "إنه يطرح عليّ أسئلة كثيرة جدًا. هل يمكنني تعطيل ذلك؟",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "مطالبات الموافقة هذه موجودة من أجل سلامتك. حتى على المواقع التي تثق بها، يمكن للجهات الخبيثة أن تقلّد تعليمات LLM أو تحقن محتوى يحاول جعل الوكيل ينفّذ نيابةً عنك أشياء لن توافق عليها. لذلك يطلب WebBrain موافقتك قبل الإجراءات ذات العواقب. إذا كنت لا تزال لا تريد المرور بهذه المطالبات، يمكنك تعطيلها: افتح الإضافة الجانبية، وانقر أيقونة العجلة في الرأس، وانتقل إلى تبويب الأذونات في settings.html، ثم أوقف خيار السؤال قبل الإجراءات ذات العواقب."
+        "text": "مطالبات الموافقة هذه موجودة من أجل سلامتك. حتى على المواقع التي تثق بها، يمكن للجهات الخبيثة أن تقلّد تعليمات LLM أو تحقن محتوى يحاول جعل الوكيل ينفّذ نيابةً عنك أشياء لن توافق عليها. لذلك يطلب WebBrain موافقتك قبل الإجراءات ذات العواقب. إذا كنت لا تزال لا تريد المرور بهذه المطالبات، فاكتب /dangerously-skip-permissions في اللوحة الجانبية أو عطّلها: افتح الإضافة الجانبية، وانقر أيقونة العجلة في الرأس، وانتقل إلى تبويب الأذونات في settings.html، ثم أوقف خيار السؤال قبل الإجراءات ذات العواقب."
       }
     },
     {
@@ -249,7 +265,7 @@
       "name": "هل يضمن إعداد تعتيم لقطات الشاشة عدم وصول بياناتي الخاصة أبدًا إلى نموذج رؤية سحابي؟",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "لا — فهو يقلّل من التعرّض ولا يُعدّ ضمانًا. عند تفعيله (الإعدادات ← متعدّد الوسائط ← تعتيم لقطات الشاشة، معطّل افتراضيًا)، يقوم WebBrain بتغبيش حقول النماذج والنص الذي يبدو كعنوان بريد إلكتروني أو رقم هاتف في كل لقطة شاشة قبل إرسالها إلى نموذج رؤية. يعمل الكشف بالكامل على جهازك باستخدام استدلالات DOM؛ ولا يُنقل أي شيء إضافي. هذا تعتيم بأفضل جهد ومن نوع fail-open. إذا تعذّر على كاشف التعتيم العمل على صفحة ما — مثلًا مباشرة بعد التنقل، أو في عارضات PDF، أو على صفحات المتصفح المقيّدة — فستُرسل لقطة الشاشة كما هي دون تعتيم بدلًا من إلغاء مهمتك. المحتوى الذي لا تستطيع استدلالات DOM رؤيته (نص مرسوم على عنصر canvas، بيانات شخصية داخل الصور، عناصر واجهة غير معتادة) قد يفلت أيضًا. كما أن الإعداد يغطي لقطات الشاشة فقط: نص الصفحة المُرسل إلى النموذج لا يُعتَّم به. للحصول على خصوصية كاملة في الرؤية، استخدم نموذجًا محليًا. مع مزوّد دون اتصال مثل llama.cpp أو Ollama، لا تغادر لقطات الشاشة ونص الصفحة جهازك أبدًا، وبالتالي لا يوجد شيء لتعتيمه أصلًا — وهذا هو الإعداد الوحيد الذي تُضمن فيه الخصوصية. راجع \"هل يمكنني استخدام WebBrain بدون اتصال بالإنترنت بالكامل؟\" أعلاه. ليس لديك جهاز قادر على تشغيل نموذج محلي يدعم الرؤية؟ حلّ وسط جيد هو استخدام نموذج محلي صغير للتخطيط واستدعاء الأدوات (خفيف بما يكفي لمعالج/بطاقة رسومات متواضعة) مع مزوّد سحابي لاستدعاءات الرؤية الفرعية، مع تفعيل تعتيم لقطات الشاشة. يبقى حديثك ونص الصفحة على جهازك، وكل لقطة شاشة تُرسَل إلى الرؤية السحابية تكون قد غُبِّشت فيها حقول النماذج والبريد/الهاتف المكتشَف مسبقًا — تعرّض أقل في السحابة دون الحاجة إلى عتاد لنموذج رؤية محلي كامل. اضبط هذا التقسيم ضمن الإعدادات ← الرؤية (راجع \"كيف يُبقي WebBrain فواتير LLM السحابية تحت السيطرة؟\" أعلاه)."
+        "text": "لا — فهو يقلّل من التعرّض ولا يُعدّ ضمانًا. عند تفعيله (الإعدادات ← النماذج المساعدة ← الرؤية ← تعتيم لقطات الشاشة، معطّل افتراضيًا)، يقوم WebBrain بتغبيش حقول النماذج والنص الذي يبدو كعنوان بريد إلكتروني أو رقم هاتف في كل لقطة شاشة قبل إرسالها إلى نموذج رؤية. يعمل الكشف بالكامل على جهازك باستخدام استدلالات DOM؛ ولا يُنقل أي شيء إضافي. هذا تعتيم بأفضل جهد ومن نوع fail-open. إذا تعذّر على كاشف التعتيم العمل على صفحة ما — مثلًا مباشرة بعد التنقل، أو في عارضات PDF، أو على صفحات المتصفح المقيّدة — فستُرسل لقطة الشاشة كما هي دون تعتيم بدلًا من إلغاء مهمتك. المحتوى الذي لا تستطيع استدلالات DOM رؤيته (نص مرسوم على عنصر canvas، بيانات شخصية داخل الصور، عناصر واجهة غير معتادة) قد يفلت أيضًا. كما أن الإعداد يغطي لقطات الشاشة فقط: نص الصفحة المُرسل إلى النموذج لا يُعتَّم به. للحصول على خصوصية كاملة في الرؤية، استخدم نموذجًا محليًا. مع مزوّد دون اتصال مثل llama.cpp أو Ollama، لا تغادر لقطات الشاشة ونص الصفحة جهازك أبدًا، وبالتالي لا يوجد شيء لتعتيمه أصلًا — وهذا هو الإعداد الوحيد الذي تُضمن فيه الخصوصية. راجع \"هل يمكنني استخدام WebBrain بدون اتصال بالإنترنت بالكامل؟\" أعلاه. ليس لديك جهاز قادر على تشغيل نموذج محلي يدعم الرؤية؟ حلّ وسط جيد هو استخدام نموذج محلي صغير للتخطيط واستدعاء الأدوات (خفيف بما يكفي لمعالج/بطاقة رسومات متواضعة) مع مزوّد سحابي لاستدعاءات الرؤية الفرعية، مع تفعيل تعتيم لقطات الشاشة. يبقى حديثك ونص الصفحة على جهازك، وكل لقطة شاشة تُرسَل إلى الرؤية السحابية تكون قد غُبِّشت فيها حقول النماذج والبريد/الهاتف المكتشَف مسبقًا — تعرّض أقل في السحابة دون الحاجة إلى عتاد لنموذج رؤية محلي كامل. اضبط هذا التقسيم ضمن الإعدادات ← النماذج المساعدة ← الرؤية (راجع \"كيف يُبقي WebBrain فواتير LLM السحابية تحت السيطرة؟\" أعلاه)."
       }
     },
     {
@@ -278,10 +294,10 @@
     },
     {
       "@type": "Question",
-      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
+      "name": "لماذا يُوزَّع WebBrain 33.0.0 والإصدارات الأحدث بموجب رخصة GPL؟",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
+        "text": "يُوزَّع WebBrain 33.0.0 والإصدارات الأحدث بموجب GPL-3.0-or-later لأن إضافة المتصفح تحزم وتدمج بيئة تشغيل WebAssembly الخاصة بـ Xapian/libzim المرخصة بموجب GPL للبحث النصي الكامل في أرشيفات ZIM الخاصة بويكيبيديا. تتضمن حزم الإضافة إشعارات GPL المعمول بها، ويُنشر المصدر الكامل المقابل لبيئة التشغيل المدمجة مع كل إصدار. وتبقى الإصدارات السابقة لـ 33.0.0 بترخيص MIT، بينما تحتفظ المشاريع الفرعية المنشورة بشكل مستقل ومكونات الطرف الثالث بتراخيصها المعلنة. انظر سجل قرار الترخيص للتفاصيل."
       }
     },
     {
@@ -289,7 +305,7 @@
       "name": "كيف يُبقي WebBrain فواتير LLM السحابية تحت السيطرة؟",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "ثلاث طبقات مستقلة: لقطات شاشة موفّرة للرموز. قبل أن تغادر أي صورة جهازك، يُعيد WebBrain تحجيمها (الجانب الأقصر محدّد مع الحفاظ على نسبة الأبعاد) ويضغطها بصيغة JPEG تكراريًا حتى تتسع لميزانية رموز الصور لكل دور. لقطة شاشة 2000×1200 كانت ستكلّفك نحو 1500 رمز إدخال على GPT-4o يتمّ ضغطها إلى ~300–500 رمز دون خسارة عملية لمهمات قراءة الصفحات. مُنفّذ في _fitImageDimensions مع اختبارات وحدة لحسابات الميزانية. تقصّ ذكي للسياق. تاريخ المحادثة، مخرجات الأدوات، وعمليات تفريغ DOM المضمّنة، كلّها مقيّدة لكل دور وتُقصّ من الأقدم أولًا عندما تقترب نافذة سياق الموديل النشط من الامتلاء. لن ترى تشغيلًا يتضخّم بصمت من 10 آلاف رمز إلى 100 ألف لمجرد أن read_page أعاد مقالًا بطول رواية. نموذج رؤية مخصّص. اقرن نموذجًا نصيًا رخيصًا (مثل GPT-4o-mini) للتخطيط واستدعاء الأدوات بنموذج منفصل يدعم الرؤية (مثل GPT-4o) فقط للقطات الشاشة، فلا تدفع أسعار النماذج المتعدّدة الوسائط في كل دور. إعداده ضمن الإعدادات ← الرؤية. النتيجة: الجلسات الطويلة مع مزوّدي السحابة تبقى قابلة للتنبؤ. للسيطرة الكاملة، استخدم llama.cpp محليًا — تكلفة الرموز صفر."
+        "text": "ثلاث طبقات مستقلة: لقطات شاشة موفّرة للرموز. قبل أن تغادر أي صورة جهازك، يُعيد WebBrain تحجيمها (الجانب الأقصر محدّد مع الحفاظ على نسبة الأبعاد) ويضغطها بصيغة JPEG تكراريًا حتى تتسع لميزانية رموز الصور لكل دور. لقطة شاشة 2000×1200 كانت ستكلّفك نحو 1500 رمز إدخال على GPT-4o يتمّ ضغطها إلى ~300–500 رمز دون خسارة عملية لمهمات قراءة الصفحات. مُنفّذ في _fitImageDimensions مع اختبارات وحدة لحسابات الميزانية. تقصّ ذكي للسياق. تاريخ المحادثة، مخرجات الأدوات، وعمليات تفريغ DOM المضمّنة، كلّها مقيّدة لكل دور وتُقصّ من الأقدم أولًا عندما تقترب نافذة سياق الموديل النشط من الامتلاء. لن ترى تشغيلًا يتضخّم بصمت من 10 آلاف رمز إلى 100 ألف لمجرد أن read_page أعاد مقالًا بطول رواية. نموذج رؤية مخصّص. اقرن نموذجًا نصيًا رخيصًا (مثل GPT-4o-mini) للتخطيط واستدعاء الأدوات بنموذج منفصل يدعم الرؤية (مثل GPT-4o) فقط للقطات الشاشة، فلا تدفع أسعار النماذج المتعدّدة الوسائط في كل دور. إعداده ضمن الإعدادات ← النماذج المساعدة ← الرؤية. النتيجة: الجلسات الطويلة مع مزوّدي السحابة تبقى قابلة للتنبؤ. للسيطرة الكاملة، استخدم llama.cpp محليًا — تكلفة الرموز صفر."
       }
     },
     {
@@ -545,7 +561,7 @@
     <section class="faq-topic" id="topic-about" data-faq-topic>
       <header class="faq-topic-header">
         <h2>حول WebBrain</h2>
-        <span aria-label="6">6</span>
+        <span aria-label="7">7</span>
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>هل WebBrain بديل مجاني لإضافة Claude للمتصفح؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -554,6 +570,10 @@
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>كيف يقارن WebBrain بـ OpenClaw و Browser-Use وغيرهما من إطارات وكلاء الذكاء الاصطناعي؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>هما فئتان مختلفتان من الأدوات. WebBrain امتداد متصفح — تثبّته في Chrome أو Firefox وتتحدّث إليه في لوحة جانبية، دون أي برمجة. أمّا أُطر مثل OpenClaw و Browser-Use فهي SDKs للمطوّرين لبناء خطوط أتمتة متصفح بلغة Python، وعادةً عبر متصفحات headless و CDP. ببساطة: WebBrain للتصفّح اليومي مع مساعد ذكاء اصطناعي؛ وأُطر الوكلاء لبناء بوتات تجريف وأتمتة اختبارات. يمكنك استخدامهما معًا — يكملان بعضهما.</p></div>
+      </details>
+      <details class="faq-question" id="workflow-editor" data-faq-item>
+        <summary><span>هل يمكنني تعديل سير عمل WebBrain؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>نعم. استخدم <a href="https://www.webbrain.one/workflow-editor">محرر سير عمل WebBrain</a> لمراجعة ملف JSON لسير العمل وتعديله والتحقق منه وتصديره في متصفحك.</p></div>
       </details>
       <details class="faq-question" id="firefox" data-faq-item>
         <summary><span>هل يعمل WebBrain على Firefox؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -575,7 +595,7 @@
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
       <header class="faq-topic-header">
         <h2>السحابة والفوترة</h2>
-        <span aria-label="4">4</span>
+        <span aria-label="5">5</span>
       </header>
       <details class="faq-question" id="cloud-subscription" data-faq-item>
         <summary><span>كم تبلغ تكلفة اشتراك WebBrain Compass؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -585,13 +605,17 @@
         <summary><span>كيف أدير اشتراكي أو ألغيه؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>أدِر الفوترة عبر <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> وسجّل الدخول باستخدام بريدك الإلكتروني.</p></div>
       </details>
+      <details class="faq-question" id="subscription-unrecognized" data-faq-item>
+        <summary><span>لقد دفعت اشتراك WebBrain Compass بالفعل، لكن الإضافة تطلب مني الدفع مرة أخرى. هل يجب أن أدفع مرتين؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>لا — لا تدفع مرة أخرى. اشتراك Compass مرتبط بمعرّف المتصفح/الجهاز الذي تُنشئه الإضافة، فإذا تغيّر هذا المعرّف (متصفح أو جهاز جديد، أو إعادة تثبيت المتصفح، أو حذف ملف تعريف المتصفح، أو إعادة تعيين تخزين الإضافة)، فلن تتعرّف الإضافة على اشتراكك الحالي وستطلب الدفع.</p><p>أعِد ربط اشتراكك الحالي بالمتصفح الحالي عبر بوابة الخدمة الذاتية على <a href="https://api.webbrain.one/portal" target="_blank" rel="noopener">api.webbrain.one/portal</a> واتّبع التعليمات هناك لاستعادة الوصول.</p><p>للإيصالات وتغييرات الفوترة الأخرى، أدر الفوترة على <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> باستخدام بريدك الإلكتروني.</p></div>
+      </details>
       <details class="faq-question" id="cloud-sync" data-faq-item>
         <summary><span>كيف تعمل مزامنة السحابة المشفّرة؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Cloud Sync ميزة اختيارية لمشتركي WebBrain Compass النشطين. تزامن ذكريات WebBrain ونص الملء التلقائي للملف الشخصي وإعدادات المزوّدين المدعومة بما في ذلك مفاتيح API. وهي <strong>لا</strong> تزامن سجل الدردشة أو سجل المتصفح أو لقطات الصفحات أو رموز OAuth القديمة للوصول والتحديث.</p><p>يشفّر متصفحك خزنة المزامنة قبل الرفع بكلمة مرور تختارها. يخزّن WebBrain Compass الخزنة المشفّرة فقط؛ ولا يمكنه قراءة ذكرياتك أو نص ملفك الشخصي أو إعدادات المزوّدين أو مفاتيح API، ولا يمكنه استعادة كلمة مرور المزامنة نيابة عنك.</p><p>حقل البريد الإلكتروني لمصادقة الفوترة/الاشتراك عبر رابط سحري من WebBrain Compass. وليس كلمة مرور حساب. إذا قالت الواجهة بتغيير كلمة المرور في Cloud Sync، فهي تعني <strong>كلمة مرور تشفير المزامنة</strong>، وليس كلمة مرور حساب WebBrain.</p><p>إذا نسيت كلمة مرور المزامنة، فلا يمكن فك تشفير الخزنة السحابية القديمة. يمكنك إعادة تعيين الخزنة السحابية ورفع نسخة مشفّرة جديدة من جهاز لا تزال بياناته محلية.</p></div>
       </details>
       <details class="faq-question" id="token-conscious" data-faq-item>
         <summary><span>كيف يُبقي WebBrain فواتير LLM السحابية تحت السيطرة؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>ثلاث طبقات مستقلة:</p><p><strong>لقطات شاشة موفّرة للرموز.</strong> قبل أن تغادر أي صورة جهازك، يُعيد WebBrain تحجيمها (الجانب الأقصر محدّد مع الحفاظ على نسبة الأبعاد) ويضغطها بصيغة JPEG تكراريًا حتى تتسع لميزانية رموز الصور لكل دور. لقطة شاشة 2000×1200 كانت ستكلّفك نحو 1500 رمز إدخال على GPT-4o يتمّ ضغطها إلى ~300–500 رمز دون خسارة عملية لمهمات قراءة الصفحات. مُنفّذ في <code>_fitImageDimensions</code> مع اختبارات وحدة لحسابات الميزانية.</p><p><strong>تقصّ ذكي للسياق.</strong> تاريخ المحادثة، مخرجات الأدوات، وعمليات تفريغ DOM المضمّنة، كلّها مقيّدة لكل دور وتُقصّ من الأقدم أولًا عندما تقترب نافذة سياق الموديل النشط من الامتلاء. لن ترى تشغيلًا يتضخّم بصمت من 10 آلاف رمز إلى 100 ألف لمجرد أن <code>read_page</code> أعاد مقالًا بطول رواية.</p><p><strong>نموذج رؤية مخصّص.</strong> اقرن نموذجًا نصيًا رخيصًا (مثل GPT-4o-mini) للتخطيط واستدعاء الأدوات بنموذج منفصل يدعم الرؤية (مثل GPT-4o) فقط للقطات الشاشة، فلا تدفع أسعار النماذج المتعدّدة الوسائط في كل دور. إعداده ضمن <strong>الإعدادات ← الرؤية</strong>.</p><p>النتيجة: الجلسات الطويلة مع مزوّدي السحابة تبقى قابلة للتنبؤ. للسيطرة الكاملة، استخدم llama.cpp محليًا — تكلفة الرموز صفر.</p></div>
+        <div class="faq-answer"><p>ثلاث طبقات مستقلة:</p><p><strong>لقطات شاشة موفّرة للرموز.</strong> قبل أن تغادر أي صورة جهازك، يُعيد WebBrain تحجيمها (الجانب الأقصر محدّد مع الحفاظ على نسبة الأبعاد) ويضغطها بصيغة JPEG تكراريًا حتى تتسع لميزانية رموز الصور لكل دور. لقطة شاشة 2000×1200 كانت ستكلّفك نحو 1500 رمز إدخال على GPT-4o يتمّ ضغطها إلى ~300–500 رمز دون خسارة عملية لمهمات قراءة الصفحات. مُنفّذ في <code>_fitImageDimensions</code> مع اختبارات وحدة لحسابات الميزانية.</p><p><strong>تقصّ ذكي للسياق.</strong> تاريخ المحادثة، مخرجات الأدوات، وعمليات تفريغ DOM المضمّنة، كلّها مقيّدة لكل دور وتُقصّ من الأقدم أولًا عندما تقترب نافذة سياق الموديل النشط من الامتلاء. لن ترى تشغيلًا يتضخّم بصمت من 10 آلاف رمز إلى 100 ألف لمجرد أن <code>read_page</code> أعاد مقالًا بطول رواية.</p><p><strong>نموذج رؤية مخصّص.</strong> اقرن نموذجًا نصيًا رخيصًا (مثل GPT-4o-mini) للتخطيط واستدعاء الأدوات بنموذج منفصل يدعم الرؤية (مثل GPT-4o) فقط للقطات الشاشة، فلا تدفع أسعار النماذج المتعدّدة الوسائط في كل دور. إعداده ضمن <strong>الإعدادات ← النماذج المساعدة ← الرؤية</strong>.</p><p>النتيجة: الجلسات الطويلة مع مزوّدي السحابة تبقى قابلة للتنبؤ. للسيطرة الكاملة، استخدم llama.cpp محليًا — تكلفة الرموز صفر.</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-models" data-faq-topic>
@@ -604,8 +628,8 @@
         <div class="faq-answer"><p>نعم. المزوّد الافتراضي لـ WebBrain هو llama.cpp، الذي يُشغّل نموذج ذكاء اصطناعي محلي على حاسوبك. لا تحتاج إلى مفاتيح API، ولا إلى الإنترنت لتشغيل الذكاء الاصطناعي، ولا تغادر بياناتك جهازك أبدًا. نزّل نموذج GGUF، شغّل llama-server، وسيكون لديك وكيل تصفّح ذكي خاص بالكامل. يمكنك أيضًا استخدام Ollama عبر نقطة نهايته المتوافقة مع OpenAI.</p></div>
       </details>
       <details class="faq-question" id="emergency-box" data-faq-item>
-        <summary><span>What is the Emergency Box, and how does offline RAG work?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required.</p><p>Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page.</p><p>You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched.</p></div>
+        <summary><span>ما هو صندوق الطوارئ، وكيف يعمل RAG دون اتصال بالإنترنت؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>صندوق الطوارئ مجموعة مختارة من نحو 570 مستندًا مرجعيًا ميدانيًا من الملكية العامة (الطب، والنجاة، والتعليم، والاتصالات) يمكن لـ WebBrain تنزيلها وفهرستها محليًا. بعد التثبيت، يمكنك طرح أسئلة واقعية دون اتصال بالإنترنت والحصول على إجابات من هذه المستندات.</p><p>يستخدم WebBrain داخليًا SQLite FTS5 للبحث السريع بالكلمات المفتاحية في صندوق الطوارئ وأرشيفات ويكيبيديا المثبتة، إضافة إلى طبقة اختيارية للبحث الدلالي باستخدام نموذج E5 متعدد اللغات يُنزَّل محليًا (~140 م.ب). تُدمج نتائج الطريقتين وتُنوَّع، ويستشهد كل جواب بالمقطع المصدري بدقة. تُفتح الاستشهادات في قارئ محلي يتحقق من سلامة المستند قبل العرض — ولا تنتقل أبدًا إلى صفحة ويب مباشرة.</p><p>يمكنك أيضًا تثبيت أرشيفات ويكيبيديا عبر وضع نهاية العالم لقاعدة معرفية أوسع دون اتصال. وتتيح لك مرشحات المصدر واللغة التحكم في المجموعات التي تُبحث.</p></div>
       </details>
       <details class="faq-question" id="models-supported" data-faq-item>
         <summary><span>ما النماذج التي يدعمها WebBrain؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -669,11 +693,11 @@
       </details>
       <details class="faq-question" id="cdp" data-faq-item>
         <summary><span>ما هو شريط «WebBrain started debugging this browser»؟ ولماذا يستخدم WebBrain بروتوكول CDP؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>لكي يعمل WebBrain على الصفحة بشكل موثوق، يستخدم Chrome DevTools Protocol ‏(CDP) عبر واجهة الامتداد القياسية <code>chrome.debugger</code> — وهذا ما يُظهر شريط Chrome ‏«WebBrain started debugging this browser». يتيح CDP للوكيل النقر والكتابة عبر <strong>أحداث إدخال موثوقة</strong> تقبلها المواقع الحديثة فعليًا؛ أما الأحداث الاصطناعية الصادرة من content script فترفضها كثير من المواقع وWeb Components والحقول التي تتحكم بها أطر العمل. وبه أيضًا يلتقط WebBrain لقطات شاشة بدقة البكسل للرجوع البصري ويصل إلى <strong>إطارات iframe عبر الأصول وshadow DOM</strong> التي لا تراها content scripts.</p><p>أما <strong>وضع السؤال</strong> للقراءة فقط <strong>فلا يحتاج إلى CDP</strong>؛ إذ تمر قراءات الصفحة وشجرة الوصول عبر content scripts عادية. ما يتطلّبه هو موثوقية <strong>وضع التنفيذ</strong> والعمل عبر الأصول، وفي امتداد Manifest V3 لا توجد واجهة بلا مُنقِّح للإدخال الموثوق. يُرفق WebBrain المُنقِّح <strong>فقط عندما يتطلب الأمر إجراءً</strong>، ولكل علامة تبويب، والامتداد بأكمله مفتوح المصدر فيمكنك تدقيق ما تفعله الجلسة بالضبط. وبما أن CDP قوي، فإننا نعامل أثره كشيء يجب احتواؤه (الإرفاق عند الطلب، وإبقاء القراءات بعيدة عنه)، ومزيد من التضييق مُدرَج في خارطة طريق الأمان لدينا.</p></div>
+        <div class="faq-answer"><p>لكي يعمل WebBrain على الصفحة بشكل موثوق، يستخدم Chrome DevTools Protocol ‏(CDP) عبر واجهة الامتداد القياسية <code>chrome.debugger</code> — وهذا ما يُظهر شريط Chrome ‏«WebBrain started debugging this browser». يتيح CDP للوكيل النقر والكتابة عبر <strong>أحداث إدخال موثوقة</strong> تقبلها المواقع الحديثة فعليًا؛ أما الأحداث الاصطناعية الصادرة من content script فترفضها كثير من المواقع وWeb Components والحقول التي تتحكم بها أطر العمل. وبه أيضًا يلتقط WebBrain لقطات شاشة بدقة البكسل للرجوع البصري ويصل إلى <strong>إطارات iframe عبر الأصول وshadow DOM</strong> التي لا تراها content scripts.</p><p>أما <strong>وضع السؤال للقراءة فقط فلا يحتاج إلى CDP</strong>؛ إذ تمر قراءات الصفحة وشجرة الوصول عبر content scripts عادية. ما يتطلّبه هو موثوقية <strong>وضع التنفيذ</strong> والعمل عبر الأصول، وفي امتداد Manifest V3 لا توجد واجهة بلا مُنقِّح للإدخال الموثوق. يُرفق WebBrain المُنقِّح <strong>فقط عندما يتطلب الأمر إجراءً</strong>، ولكل علامة تبويب، والامتداد بأكمله مفتوح المصدر فيمكنك تدقيق ما تفعله الجلسة بالضبط. وبما أن CDP قوي، فإننا نعامل أثره كشيء يجب احتواؤه (الإرفاق عند الطلب، وإبقاء القراءات بعيدة عنه)، ومزيد من التضييق مُدرَج في خارطة طريق الأمان لدينا.</p></div>
       </details>
       <details class="faq-question" id="disable-approval-questions" data-faq-item>
         <summary><span>إنه يطرح عليّ أسئلة كثيرة جدًا. هل يمكنني تعطيل ذلك؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>مطالبات الموافقة هذه موجودة من أجل سلامتك. حتى على المواقع التي تثق بها، يمكن للجهات الخبيثة أن تقلّد تعليمات LLM أو تحقن محتوى يحاول جعل الوكيل ينفّذ نيابةً عنك أشياء لن توافق عليها. لذلك يطلب WebBrain موافقتك قبل الإجراءات ذات العواقب. إذا كنت لا تزال لا تريد المرور بهذه المطالبات، يمكنك تعطيلها: افتح الإضافة الجانبية، وانقر أيقونة العجلة في الرأس، وانتقل إلى تبويب <strong>الأذونات</strong> في <code>settings.html</code>، ثم أوقف خيار <strong>السؤال قبل الإجراءات ذات العواقب</strong>.</p></div>
+        <div class="faq-answer"><p>مطالبات الموافقة هذه موجودة من أجل سلامتك. حتى على المواقع التي تثق بها، يمكن للجهات الخبيثة أن تقلّد تعليمات LLM أو تحقن محتوى يحاول جعل الوكيل ينفّذ نيابةً عنك أشياء لن توافق عليها. لذلك يطلب WebBrain موافقتك قبل الإجراءات ذات العواقب. إذا كنت لا تزال لا تريد المرور بهذه المطالبات، فاكتب <code>/dangerously-skip-permissions</code> في اللوحة الجانبية أو عطّلها: افتح الإضافة الجانبية، وانقر أيقونة العجلة في الرأس، وانتقل إلى تبويب <strong>الأذونات</strong> في <code>settings.html</code>، ثم أوقف خيار <strong>السؤال قبل الإجراءات ذات العواقب</strong>.</p></div>
       </details>
       <details class="faq-question" id="api-mutations" data-faq-item>
         <summary><span>هل يستدعي WebBrain واجهات API مباشرةً، أم يتعامل دائمًا عبر الواجهة؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -685,15 +709,15 @@
       </details>
       <details class="faq-question" id="screenshot-redaction" data-faq-item>
         <summary><span>هل يضمن إعداد تعتيم لقطات الشاشة عدم وصول بياناتي الخاصة أبدًا إلى نموذج رؤية سحابي؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>لا — فهو يقلّل من التعرّض ولا يُعدّ ضمانًا. عند تفعيله (<strong>الإعدادات ← متعدّد الوسائط ← تعتيم لقطات الشاشة</strong>، معطّل افتراضيًا)، يقوم WebBrain بتغبيش حقول النماذج والنص الذي يبدو كعنوان بريد إلكتروني أو رقم هاتف في كل لقطة شاشة <em>قبل</em> إرسالها إلى نموذج رؤية. يعمل الكشف بالكامل على جهازك باستخدام استدلالات DOM؛ ولا يُنقل أي شيء إضافي.</p><p><strong>هذا تعتيم بأفضل جهد ومن نوع fail-open.</strong> إذا تعذّر على كاشف التعتيم العمل على صفحة ما — مثلًا مباشرة بعد التنقل، أو في عارضات PDF، أو على صفحات المتصفح المقيّدة — فستُرسل لقطة الشاشة كما هي <em>دون تعتيم</em> بدلًا من إلغاء مهمتك. المحتوى الذي لا تستطيع استدلالات DOM رؤيته (نص مرسوم على عنصر canvas، بيانات شخصية داخل الصور، عناصر واجهة غير معتادة) قد يفلت أيضًا. كما أن الإعداد يغطي لقطات الشاشة فقط: نص الصفحة المُرسل إلى النموذج لا يُعتَّم به.</p><p><strong>للحصول على خصوصية كاملة في الرؤية، استخدم نموذجًا محليًا.</strong> مع مزوّد دون اتصال مثل llama.cpp أو Ollama، لا تغادر لقطات الشاشة ونص الصفحة جهازك أبدًا، وبالتالي لا يوجد شيء لتعتيمه أصلًا — وهذا هو الإعداد الوحيد الذي تُضمن فيه الخصوصية. راجع "هل يمكنني استخدام WebBrain بدون اتصال بالإنترنت بالكامل؟" أعلاه.</p><p><strong>ليس لديك جهاز قادر على تشغيل نموذج محلي يدعم الرؤية؟</strong> حلّ وسط جيد هو استخدام نموذج محلي صغير للتخطيط واستدعاء الأدوات (خفيف بما يكفي لمعالج/بطاقة رسومات متواضعة) مع مزوّد سحابي لاستدعاءات الرؤية الفرعية، مع تفعيل تعتيم لقطات الشاشة. يبقى حديثك ونص الصفحة على جهازك، وكل لقطة شاشة تُرسَل إلى الرؤية السحابية تكون قد غُبِّشت فيها حقول النماذج والبريد/الهاتف المكتشَف مسبقًا — تعرّض أقل في السحابة دون الحاجة إلى عتاد لنموذج رؤية محلي كامل. اضبط هذا التقسيم ضمن <strong>الإعدادات ← الرؤية</strong> (راجع "كيف يُبقي WebBrain فواتير LLM السحابية تحت السيطرة؟" أعلاه).</p></div>
+        <div class="faq-answer"><p>لا — فهو يقلّل من التعرّض ولا يُعدّ ضمانًا. عند تفعيله (<strong>الإعدادات ← النماذج المساعدة ← الرؤية ← تعتيم لقطات الشاشة</strong>، معطّل افتراضيًا)، يقوم WebBrain بتغبيش حقول النماذج والنص الذي يبدو كعنوان بريد إلكتروني أو رقم هاتف في كل لقطة شاشة <em>قبل</em> إرسالها إلى نموذج رؤية. يعمل الكشف بالكامل على جهازك باستخدام استدلالات DOM؛ ولا يُنقل أي شيء إضافي.</p><p><strong>هذا تعتيم بأفضل جهد ومن نوع fail-open.</strong> إذا تعذّر على كاشف التعتيم العمل على صفحة ما — مثلًا مباشرة بعد التنقل، أو في عارضات PDF، أو على صفحات المتصفح المقيّدة — فستُرسل لقطة الشاشة كما هي <em>دون تعتيم</em> بدلًا من إلغاء مهمتك. المحتوى الذي لا تستطيع استدلالات DOM رؤيته (نص مرسوم على عنصر canvas، بيانات شخصية داخل الصور، عناصر واجهة غير معتادة) قد يفلت أيضًا. كما أن الإعداد يغطي لقطات الشاشة فقط: <em>نص</em> الصفحة المُرسل إلى النموذج لا يُعتَّم به.</p><p><strong>للحصول على خصوصية كاملة في الرؤية، استخدم نموذجًا محليًا.</strong> مع مزوّد دون اتصال مثل llama.cpp أو Ollama، لا تغادر لقطات الشاشة ونص الصفحة جهازك أبدًا، وبالتالي لا يوجد شيء لتعتيمه أصلًا — وهذا هو الإعداد الوحيد الذي تُضمن فيه الخصوصية. راجع "هل يمكنني استخدام WebBrain بدون اتصال بالإنترنت بالكامل؟" أعلاه.</p><p><strong>ليس لديك جهاز قادر على تشغيل نموذج محلي يدعم الرؤية؟</strong> حلّ وسط جيد هو استخدام نموذج محلي صغير للتخطيط واستدعاء الأدوات (خفيف بما يكفي لمعالج/بطاقة رسومات متواضعة) مع مزوّد سحابي لاستدعاءات الرؤية الفرعية، مع تفعيل تعتيم لقطات الشاشة. يبقى حديثك ونص الصفحة على جهازك، وكل لقطة شاشة تُرسَل إلى الرؤية السحابية تكون قد غُبِّشت فيها حقول النماذج والبريد/الهاتف المكتشَف مسبقًا — تعرّض أقل في السحابة دون الحاجة إلى عتاد لنموذج رؤية محلي كامل. اضبط هذا التقسيم ضمن <strong>الإعدادات ← النماذج المساعدة ← الرؤية</strong> (راجع "كيف يُبقي WebBrain فواتير LLM السحابية تحت السيطرة؟" أعلاه).</p></div>
       </details>
       <details class="faq-question" id="page-context" data-faq-item>
         <summary><span>هل يرسل WebBrain شجرة DOM كاملة إلى نموذج الذكاء الاصطناعي؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>لا. لا يرسل WebBrain افتراضيًا HTML الخام أو نسخة خامًا من DOM. يبدأ بعنوان URL وعنوان الصفحة وإرشادات الموقع المطابقة، ومع لقطة شاشة اختيارية لنافذة العرض عند تفعيل الرؤية.</p><p>عندما تتطلب المهمة محتوى الصفحة، يقرأه WebBrain عند الحاجة على شكل شجرة وصول دلالية مختصرة أو نص مستخرج. تُرشَّح القراءات حسب الظهور عند الحاجة، وتُفرض عليها حدود للأحرف، وتُقسَّم النتائج الكبيرة إلى صفحات. الوصول إلى مصدر الصفحة الخام متاح فقط في وضع Dev.</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>لماذا يُوزَّع WebBrain 33.0.0 والإصدارات الأحدث بموجب رخصة GPL؟</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>يُوزَّع WebBrain 33.0.0 والإصدارات الأحدث بموجب GPL-3.0-or-later لأن إضافة المتصفح تحزم وتدمج بيئة تشغيل WebAssembly الخاصة بـ Xapian/libzim المرخصة بموجب GPL للبحث النصي الكامل في أرشيفات ZIM الخاصة بويكيبيديا.</p><p>تتضمن حزم الإضافة إشعارات GPL المعمول بها، ويُنشر المصدر الكامل المقابل لبيئة التشغيل المدمجة مع كل إصدار. وتبقى الإصدارات السابقة لـ 33.0.0 بترخيص MIT، بينما تحتفظ المشاريع الفرعية المنشورة بشكل مستقل ومكونات الطرف الثالث بتراخيصها المعلنة. انظر <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">سجل قرار الترخيص</a> للتفاصيل.</p></div>
       </details>
     </section>
     </main>

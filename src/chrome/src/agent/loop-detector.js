@@ -22,6 +22,7 @@ export class LoopDetector {
     this.loopNudges = new Map();  // tabId -> consecutive-nudge counter
     this.healthyCallsSinceLoop = new Map(); // tabId -> count of clean calls since last nudge
     this.failedActionLoops = new Map(); // tabId -> Map(stable failure scope -> count)
+    this.filePickerDiscoveries = new Map(); // tabId -> bounded Set(first guarded selector discoveries)
     // Last few normalized URLs each tab arrived at during the active run.
     // Deliberately NOT cleared by _clearLoopState: it gates those intra-run
     // resets, so it must survive them until the outer run boundary.
@@ -34,7 +35,7 @@ export class LoopDetector {
     // interleaving reads cannot evade the generic loop detector.
     this.noProgressScrolls = new Map(); // tabId -> { key, count }
     // Separate buffer for coordinate-based click attempts. The general loop
-    // detector keys on JSON.stringify(args), so when the model interleaves
+    // detector keys on the exact argument bucket, so when the model interleaves
     // execute_js with different code strings between clicks, the same
     // (x,y) click never accumulates to the threshold inside its window.
     // This buffer tracks ONLY coord clicks and survives any amount of
@@ -50,6 +51,10 @@ export class LoopDetector {
     // cannot hide Next/Previous ping-pong by alternating arrows, AX clicks,
     // screenshot points, and adapter navigation.
     this.carouselIntentStates = new Map(); // tabId -> { history, cycleCount }
+    // Verified navigation can return to an unchanged page with a fresh
+    // document, fresh refs and a fresh one-use nonce. This semantic state is
+    // independent of document-scoped click/read/scroll history.
+    this.semanticPageRetries = new Map();
   }
 
   /**
@@ -149,6 +154,16 @@ export class LoopDetector {
     // same logical file via 8 different API endpoints. See loop-bucket.js.
     const errored = this._isToolResultErroredForLoop(name, args, result);
     const argsHash = bucketArgsKey(name, args);
+    if (name === 'chat_observe' && !errored && result?.success === true
+        && result.threadKey && result.chatWorkflow?.threadKey === result.threadKey) {
+      const deltaIds = (Array.isArray(result.chatWorkflow.newMessages) ? result.chatWorkflow.newMessages : [])
+        .slice(-20).map(message => String(message?.id || '').slice(0, 80)).filter(Boolean);
+      const deliveryId = result.chatDeliveryVerification?.threadKey === result.threadKey
+        ? String(result.chatDeliveryVerification.messageId || '').slice(0, 80) : '';
+      if (deltaIds.length || deliveryId) {
+        return `${name}|${argsHash}|thread:${String(result.threadKey).slice(0, 120)}|delta:${JSON.stringify(deltaIds)}|delivery:${deliveryId}`;
+      }
+    }
     if (name === 'find_text' && !errored) {
       const matchIdentity = this._findTextMatchLoopIdentity(result);
       if (matchIdentity) return `${name}|${argsHash}|match:${matchIdentity}`;
@@ -268,6 +283,7 @@ export class LoopDetector {
    */
   _clearPageLoopState(tabId) {
     this.failedActionLoops.delete(tabId);
+    this.filePickerDiscoveries.delete(tabId);
     this.axReadStates.delete(tabId);
     this.noProgressScrolls.delete(tabId);
     this.recentCoordClicks.delete(tabId);
@@ -331,6 +347,108 @@ export class LoopDetector {
     this._clearLoopState(tabId);
     this.verificationChallengeStates.delete(tabId);
     this.carouselIntentStates.delete(tabId);
+    this.semanticPageRetries.delete(tabId);
+  }
+
+  _semanticRetryUrl(url, baseUrl = '') {
+    try {
+      const parsed = new URL(url, baseUrl || undefined);
+      // This is only retry identity, never navigation/authorization identity.
+      // Keep search, pagination and hash views. Collapse only explicit nonce
+      // parameters with opaque hex values, such as Mastodon's acceptance key.
+      for (const [key, value] of [...parsed.searchParams]) {
+        if (/^(?:accept|nonce|csrf_token|authenticity_token)$/i.test(key)
+            && /^[a-f0-9]{24,128}$/i.test(value)) parsed.searchParams.delete(key);
+      }
+      return parsed.origin + parsed.pathname + parsed.search + parsed.hash;
+    } catch { return ''; }
+  }
+
+  _rememberSemanticRetryScope(tabId, pageUrl) {
+    if (!pageUrl) return;
+    const state = this.semanticPageRetries.get(tabId) || { attempts: new Map() };
+    state.scopeUrl = String(pageUrl);
+    this.semanticPageRetries.set(tabId, state);
+  }
+
+  _checkSemanticPageRetry(tabId, name, args, result) {
+    const state = this.semanticPageRetries.get(tabId) || { attempts: new Map() };
+    if (name === 'chat_observe' && result?.success === true
+        && result.threadKey && result.chatWorkflow?.threadKey === result.threadKey
+        && result.chatWorkflow.newMessages?.length) {
+      this.semanticPageRetries.delete(tabId);
+      return { kind: 'none' };
+    }
+    if (['set_field', 'type_ax', 'type_text', 'set_checked', 'select_option', 'chat_send'].includes(name)
+        && result?.success === true && result.verified !== false && !result.outcomeUnknown) {
+      state.observation = null;
+      state.pending = null;
+      state.attempts.clear();
+      this.semanticPageRetries.set(tabId, state);
+      return { kind: 'none' };
+    }
+    if (name === 'get_accessibility_tree') {
+      const content = typeof result?.pageContent === 'string' ? result.pageContent : '';
+      if (result?.error || result?.success === false || args?.ref_id
+          || Number(args?.page || 1) !== 1 || result?.hasMore === true
+          || result?.depthTruncated === true || result?.conversationRootRefId
+          || content.length < 80 || content.length > 32000
+          || !/^\s*heading\s+"[^"\n]+"/m.test(content)) return { kind: 'none' };
+      const pageUrl = result.refScopeUrl || result.pageUrl || result.url || state.scopeUrl || '';
+      const pageKey = this._semanticRetryUrl(pageUrl);
+      const body = content.split('\n')
+        .filter(line => !/dom_id="webbrain-agent-stop-button"/.test(line))
+        .join('\n').replace(/\s*\[ref_[\w-]+\]/g, '')
+        .replace(/\s+occluded=true\b/g, '')
+        .replace(/href="([^"]*)"/g, (_match, href) => `href="${this._semanticRetryUrl(href, pageUrl) || href}"`)
+        .replace(/\s+/g, ' ').trim();
+      const previous = state.observation;
+      const pending = state.pending;
+      const unchanged = previous && previous.body === body && previous.pageKey === pageKey;
+      state.observation = { pageKey, body };
+      state.pending = null;
+      if (!unchanged) state.attempts.clear();
+      if (unchanged && pending && pending.pageKey === pageKey) {
+        const count = (state.attempts.get(pending.key) || 0) + 1;
+        state.attempts.set(pending.key, count);
+        if (state.attempts.size > 8) state.attempts.delete(state.attempts.keys().next().value);
+        this.semanticPageRetries.set(tabId, state);
+        if (count >= 4) return {
+          kind: 'stop',
+          message: 'Stopped: the same verified navigation control returned to the unchanged page four times, despite fresh page references or one-use URL values. Do not click it again or replay its URL. Explain the blocker and continue only after the page or server state changes.',
+        };
+        if (count >= 2) return {
+          kind: 'nudge',
+          warning: '[UNCHANGED PAGE RETRY: The same verified navigation control returned to the same page twice. Fresh references and one-use URL values are not progress. Stop repeating this control. Inspect the current page once for a blocker; if it cannot be resolved, report it instead of clicking or replaying the URL again.]',
+        };
+      }
+      this.semanticPageRetries.set(tabId, state);
+      return { kind: 'none' };
+    }
+    if (!['click', 'click_ax'].includes(name) || result?.success !== true
+        || result.verified !== true || result.outcomeUnknown || result.inconclusive
+        || result.noDispatch === true || result.dispatched === false
+        || !Array.isArray(result.observedEffects) || result.observedEffects.length === 0
+        || result.observedEffects.some(effect => effect !== 'url')) return { kind: 'none' };
+    const label = String(result.name || result.matched || result.text || '').trim().slice(0, 200);
+    const href = result.resolvedHref || result.href || '';
+    const role = String(result.role || '').toLowerCase();
+    if (!label || !href || (String(result.tag || '').toLowerCase() !== 'a' && role !== 'link')) return { kind: 'none' };
+    const before = this._semanticRetryUrl(result.previousUrl || state.scopeUrl || '');
+    const after = this._semanticRetryUrl(result.currentUrl || '');
+    const target = this._semanticRetryUrl(href, result.previousUrl || state.scopeUrl || '');
+    if (!before || before !== after || target !== after) return { kind: 'none' };
+    // Standalone detector replays may lack the browser's AX scope envelope.
+    // A verified link result supplies its actual before/after URL, but it
+    // cannot establish an unchanged page without an earlier root observation.
+    state.scopeUrl = result.currentUrl;
+    if (state.observation && !state.observation.pageKey) state.observation.pageKey = before;
+    this.semanticPageRetries.set(tabId, state);
+    if (state.observation?.pageKey !== before) return { kind: 'none' };
+    state.pending = { pageKey: after, key: `link|${label}|${target}` };
+    state.scopeUrl = result.currentUrl;
+    this.semanticPageRetries.set(tabId, state);
+    return { kind: 'none' };
   }
 
   /**
@@ -591,6 +709,8 @@ export class LoopDetector {
     if (toolResult?.pageUrlChanged === true && !this._noteNavArrival(tabId, toolResult.currentUrl)) {
       this._clearLoopState(tabId);
     }
+    const semanticRetry = this._checkSemanticPageRetry(tabId, toolName, toolArgs, toolResult);
+    if (semanticRetry.kind !== 'none') return semanticRetry;
     if (
       toolName === 'find_text'
       && toolResult?.success === true
@@ -601,6 +721,25 @@ export class LoopDetector {
       // intentionally advance to the next match, so an unlocated match is not
       // safe evidence of a repeat loop.
       return this._noteHealthyLoopCall(tabId);
+    }
+    // A guarded chooser can discover the exact upload input on the last failed
+    // click. Give that first discovery one fresh decision, without clearing
+    // failures, action uncertainty, or authorizing any file assignment.
+    const selector = toolResult?.selector;
+    if (['click', 'click_ax', 'iframe_click'].includes(toolName)
+      && toolResult?.success === false && toolResult.filePickerBlocked === true
+      && toolResult.dispatched === true && toolResult.noDispatch !== true
+      && toolResult.outcomeUnknown !== true && toolResult.cancelled !== true
+      && toolResult.inconclusive !== true && toolResult.mutationMayHaveOccurred !== true
+      && toolResult.nonRetryable !== true && (this.loopNudges.get(tabId) || 0) < 8
+      && typeof selector === 'string' && selector.length > 0 && selector.length <= 2048
+      && selector.trim() === selector && !/[\u0000-\u001F\u007F]/.test(selector)) {
+      const discovered = this.filePickerDiscoveries.get(tabId) || new Set();
+      if (!discovered.has(selector) && discovered.size < 16) {
+        discovered.add(selector); this.filePickerDiscoveries.set(tabId, discovered);
+        this._recordCall(tabId, toolName, toolArgs, toolResult);
+        return { kind: 'nudge', warning: '[FILE INPUT DISCOVERED: The native chooser was blocked and its exact upload selector is in the current tool result. Inspect that result in a fresh decision and use upload_file if the current task requires it. Do not reopen the chooser, repeat the click, or run a queued upload planned before this discovery. This is not file attachment or remote-save evidence.]' };
+      }
     }
     const { buf, key } = this._recordCall(tabId, toolName, toolArgs, toolResult);
     const carouselLoop = this._checkSemanticCarouselLoop(tabId, toolName, toolArgs, toolResult);
@@ -621,24 +760,45 @@ export class LoopDetector {
       }
       const failures = this.failedActionLoops.get(tabId) || new Map();
       if (this._isToolResultErroredForLoop(toolName, toolArgs, toolResult)) {
+        const isOcclusionFailure = toolResult?.occluded === true
+          || /occluded|covered by another element|topmost/i.test(String(toolResult?.error || ''));
+        const maxAttempts = isOcclusionFailure ? 4 : 3;
         const attempts = (failures.get(failureScope) || 0) + 1;
         failures.set(failureScope, attempts);
         if (failures.size > 32) failures.delete(failures.keys().next().value);
         this.failedActionLoops.set(tabId, failures);
-        if (attempts >= 3) {
+        if (attempts >= maxAttempts) {
           this._clearLoopState(tabId);
           return {
             kind: 'stop',
-            message: `Stopped: ${toolName} failed or made no progress three times for the same target. Repeating it or switching to a precomputed fallback cannot make progress without fresh page evidence.`,
+            message: isOcclusionFailure
+              ? `Stopped: ${toolName} failed ${maxAttempts} times because the target is occluded by an overlapping layer or docked header. Close the overlay, scroll past the obstruction, or re-read the page before retrying.`
+              : `Stopped: ${toolName} failed or made no progress three times for the same target. Repeating it or switching to a precomputed fallback cannot make progress without fresh page evidence.`,
           };
         }
-        if (attempts === 2) {
+        if (attempts >= 2) {
           return {
             kind: 'nudge',
-            warning: `[FAILED ACTION LOOP: ${toolName} has failed or made no progress twice for the same target. Do not retry it or use a queued fallback. Re-read the page/tree and choose a new action from current evidence.]`,
+            warning: isOcclusionFailure
+              ? `[OVERLAY OCCLUSION: ${toolName} failed because the target element is occluded or covered by an overlapping element (such as a modal backdrop, fixed header, or sticky toolbar). Try closing the overlay (e.g. clicking a close/dismiss button or pressing Escape), scrolling the element into clear view, or re-reading the accessibility tree.]`
+              : `[FAILED ACTION LOOP: ${toolName} has failed or made no progress twice for the same target. Do not retry it or use a queued fallback. Re-read the page/tree and choose a new action from current evidence.]`,
           };
         }
       } else if (toolResult?.success === true && toolResult?.verified !== false) {
+        // A verified click can recover via coordinates, a selector, or an AX
+        // target. Its success must retire the shared preparation failures;
+        // reads, fresh captures, and dispatch-only success are not progress.
+        if (
+          ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && toolResult.verified === true
+          && toolResult.noDispatch !== true
+          && toolResult.dispatched !== false
+          && toolResult.outcomeUnknown !== true
+          && toolResult.inconclusive !== true
+        ) {
+          failures.delete('screenshot-coordinate-capture');
+          failures.delete('coordinate-provenance');
+        }
         for (const scope of equivalentFailureScopes) failures.delete(scope);
         if (failures.size) this.failedActionLoops.set(tabId, failures);
         else this.failedActionLoops.delete(tabId);

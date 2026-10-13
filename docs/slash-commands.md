@@ -18,6 +18,7 @@ for its available flags.
 | `/schedule --list` | Show scheduled tasks |
 | `/watch [--keep] [--secs <30-120>] [--long \| --short] <condition and action> [/beep]` | Poll the current page for a condition; stop after the first match unless `--keep` is set, and optionally play a background alert |
 | `/progress` | Show the current progress ledger |
+| `/btw [prompt]` | Open a quick side conversation |
 | `/scratchpad` | Show the current scratchpad |
 | `/scratchpad --append <text>` | Append text to the current scratchpad |
 | `/scratchpad --clear` | Clear the current scratchpad |
@@ -40,13 +41,17 @@ for its available flags.
 | `/verbose` | Toggle verbose/compact tool display |
 | `/reset` | Clear the conversation and all per-conversation flags |
 | `/print` | Open the current page's native print dialog |
-| `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Chrome only) |
+| `/screenshot [--full-page]` | Capture the visible tab, or the full scrollable page with `--full-page` (Firefox requires the optional trusted-automation companion) |
 | `/record [--full-screen] [--hide-recording-indicator] [--transcribe]` | Record the current tab, or a selected screen/window with `--full-screen` (Chrome only); add `--hide-recording-indicator` to hide the banner or `--transcribe` to save a transcript after stop |
-| `/export [--traces \| --config]` | Download version-stamped conversation Markdown, export the version-stamped tool chain with `--traces`, or export a Settings snapshot with `--config` |
+| `/export [--traces [--full] \| --config]` | Download version-stamped conversation Markdown, export the version-stamped tool chain with `--traces`, add `--full` for the complete stored session JSON including screenshots, or export a Settings snapshot with `--config` |
 | `/import <json>` | Import a Settings snapshot pasted inline |
 | `/import --file` | Choose and import a Settings snapshot JSON file |
 | `/profile` | Toggle profile auto-fill on/off without opening Settings |
 | `/vision` | Toggle vision mode (screenshot understanding) on the active provider |
+
+## Full-page screenshots on Firefox
+
+Install the [local companion](../firefox-companion/README.md) and enable Firefox trusted automation in Settings before using `/screenshot --full-page`. The capture stays local until you attach it to a message, and Save as exports a PNG. It captures the currently loaded document, including content outside the viewport; it does not scroll to load an infinite feed. Very large pages return an explicit size error. If the privacy scan cannot verify stable sensitive-field geometry, the preview remains saveable but is not attached to the composer. Ordinary `/screenshot` needs no companion.
 
 ## `/watch`
 
@@ -90,7 +95,7 @@ is failing. A badge appears while it is active, and it clears on `/reset`.
 
 To keep the same policy active across conversations and browser restarts, turn
 on **Always allow API mutations** under **Settings → General → Advanced**. The
-setting is off by default and remains active until you turn it off. `/reset`
+setting is on by default and remains active until you turn it off. `/reset`
 still clears the conversation-only `/allow-api` override, but does not change
 the persistent setting.
 
@@ -154,3 +159,5 @@ version:
   before download. Import normalizes it again, assigns a fresh local ID and
   timestamps, and never overwrites an existing workflow, so the same file can
   safely move between Chrome, Firefox, and WebBrain Cloud.
+
+`/export --traces --full` uses the same versioned JSON format as the Traces page, without Markdown preview truncation or the 500-turn Markdown limit. It exports recorded data only: earlier recording omissions remain marked, and the panel reports when they exist. Content and screenshots follow the recording privacy setting; the command does not enable lossless recording retroactively. Essential solver outcomes remain available even when the lossless content budget fills.

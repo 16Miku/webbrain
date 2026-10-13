@@ -1,0 +1,30 @@
+{
+  "id": "081",
+  "user": "send a thank-you email to everyone in my contacts",
+  "mode": "act",
+  "tab": {
+    "url": "https://mail.google.com/mail/u/0/#inbox",
+    "title": "Inbox (3) — Gmail"
+  },
+  "latencyMs": 4717,
+  "error": null,
+  "firstToolCall": {
+    "name": "get_accessibility_tree",
+    "args": {
+      "filter": "visible",
+      "maxDepth": 10,
+      "maxChars": 6000,
+      "page": 1
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"get_accessibility_tree\"><param name=\"filter\">visible</param><param name=\"maxDepth\">10</param><param name=\"maxChars\">6000</param><param name=\"page\">1</param></function>",
+  "usage": {
+    "prompt_tokens": 10479,
+    "completion_tokens": 42,
+    "total_tokens": 10521
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

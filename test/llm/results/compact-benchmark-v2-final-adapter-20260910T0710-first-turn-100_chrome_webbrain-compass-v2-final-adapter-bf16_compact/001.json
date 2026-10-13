@@ -1,0 +1,22 @@
+{
+  "id": "001",
+  "user": "go to firefox extensions management pagr",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 2232,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": "stop",
+  "content": " name=\"navigate\"> name=\"url\">https://www.mozilla.org/firefox/extensions/",
+  "usage": {
+    "prompt_tokens": 9712,
+    "completion_tokens": 27,
+    "total_tokens": 9739
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

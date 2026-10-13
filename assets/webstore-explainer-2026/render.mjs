@@ -11,6 +11,7 @@ const ROOT = path.resolve(DIR, '../..');
 const assets = {
   ask: dataUri('assets/screenshot-1-ask-mode.png'),
   modelProviders: dataUri('assets/webstore-explainer-2026/model-providers-short.png'),
+  safeSocial: dataUri('web/assets/webbrain-36-8-safesocial-instagram.png'),
 };
 
 const browserLogos = [
@@ -112,6 +113,9 @@ const baseCss = `
   .apocalypse { --bg1:#11100e; --bg2:#1c1a14; --ink:#f5f0e6; --muted:#a89e8a;
     --accent:#f7bd5f; --accent2:#f0a72f; --border:rgba(247,189,95,0.22);
     --panel:rgba(247,189,95,0.07); --shadow:0 28px 70px rgba(0,0,0,0.5); }
+  .release { --bg1:#f5f7ff; --bg2:#fff3f7; --ink:#171827; --muted:#586174;
+    --accent:#6757ff; --accent2:#ec6797; --border:rgba(37,42,66,0.13);
+    --panel:rgba(255,255,255,0.9); --shadow:0 28px 70px rgba(46,42,90,0.18); }
   .content { position: relative; z-index: 1; padding: 38px 48px; }
   h1 {
     margin: 18px 0 0; font-family: var(--display); font-size: 62px; line-height: 1.05;
@@ -404,9 +408,9 @@ function proofScene() {
     `<svg width="46" height="46" viewBox="0 0 24 24" fill="${color}" aria-hidden="true">${paths}</svg>`;
   const stats = [
     [icon('<path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>', 'var(--accent2)'),
-      '~1000', 'GitHub stars'],
+      '~1300', 'GitHub stars'],
     [icon('<path d="M9 11.5a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Zm7.2.3a3.1 3.1 0 1 0 0-6.2 3.1 3.1 0 0 0 0 6.2ZM9 13.2c-3.4 0-6.6 1.75-6.6 3.9V20h13.2v-2.9c0-2.15-3.2-3.9-6.6-3.9Zm7.2.2c-.62 0-1.2.05-1.74.14 1.2.94 1.94 2.11 1.94 3.56V20h5.2v-2.5c0-1.9-2.5-3.1-5.4-3.1Z"/>', 'var(--accent)'),
-      '~50', 'contributors'],
+      '80+', 'contributors'],
     [icon('<path d="M12 2.4c.6 0 1.1.5 1.1 1.1v.9l6.4 1.2a1 1 0 0 1-.18 1.98l-.5-.02 2.6 5.9c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.55-5.8-3.67-.68V18.6h3.3a1.1 1.1 0 1 1 0 2.2H7.6a1.1 1.1 0 1 1 0-2.2h3.3V6.81l-3.67.68 2.55 5.8c0 1.9-1.75 3.15-3.6 3.15s-3.6-1.25-3.6-3.15l2.6-5.9-.5.02a1 1 0 0 1-.18-1.98l6.4-1.2v-.9c0-.6.5-1.1 1.1-1.1Zm5.82 7.7-1.5 3.42h3l-1.5-3.42Zm-11.64 0-1.5 3.42h3l-1.5-3.42Z"/>', 'var(--accent)'),
       'GPL', 'open-source forever'],
   ];
@@ -456,7 +460,7 @@ function proofScene() {
             <div style="font-size:15px; font-weight:640; color:#9ba3b8; margin-top:4px;">Star it, fork it, ship a PR.</div>
           </div>
         </div>
-        <div style="display:flex; align-items:center; gap:18px;">
+        <div style="display:flex; align-items:center;">
           <div style="display:flex; align-items:center;">
             ${avatars.map(([handle, src], i) => `
               <span title="@${handle}" style="width:44px; height:44px; border-radius:999px; overflow:hidden;
@@ -465,14 +469,8 @@ function proofScene() {
               </span>`).join('')}
             <span style="height:44px; padding:0 14px; border-radius:999px; background:rgba(255,255,255,0.14);
               color:#e7eaf3; display:grid; place-items:center; font-size:15px; font-weight:800;
-              border:2px solid #171827; margin-left:-12px;">+1000</span>
+              border:2px solid #171827; margin-left:-12px;">+70</span>
           </div>
-          <span style="display:inline-flex; align-items:center; gap:9px; height:46px; padding:0 20px; border-radius:12px;
-            background:var(--accent2); color:#2b1c00; font-family:var(--mono); font-size:15px; font-weight:600;
-            letter-spacing:0.08em; text-transform:uppercase; white-space:nowrap;">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="#2b1c00" aria-hidden="true">
-              <path d="M12 2.2l2.95 5.98 6.6.96-4.78 4.66 1.13 6.57L12 17.27l-5.9 3.1 1.13-6.57L2.45 9.14l6.6-.96z"/>
-            </svg>Star</span>
         </div>
       </div>
       </div>`,
@@ -541,10 +539,120 @@ function apocalypseScene({ nuke = false, onboarding = false } = {}) {
   };
 }
 
+/* ---------- 10–13 FEATURE SLIDES (same structure as 03–05: big title, one-line sub, one focused card) ---------- */
+const featureCard = 'width:470px; padding:28px; background:#ffffff; border:1px solid var(--border); border-radius:26px; box-shadow:var(--shadow); transform:rotate(1deg);';
+const cardLabel = 'font-family:var(--mono); font-size:13px; font-weight:650; letter-spacing:0.07em; text-transform:uppercase; color:var(--muted);';
+
+function featureScene(file, title, sub, card) {
+  return {
+    scale: 1.22,
+    file,
+    theme: 'release',
+    body: `
+      <div style="display:grid; grid-template-columns: 440px 1fr; gap:40px; align-items:center; height:100%;">
+        <div>
+          <h1>${title}</h1>
+          <div class="sub">${sub}</div>
+        </div>
+        <div style="display:flex; justify-content:center;">${card}</div>
+      </div>`,
+  };
+}
+
+/* ---------- 10 FULL-PAGE SCREENSHOTS (/screenshot command) ---------- */
+function screenshotScene() {
+  const bars = [['#e9e6ff', 44], ['#f1f3f8', 24], ['#ffe9f1', 44], ['#f1f3f8', 24], ['#e4f6ec', 44]];
+  return featureScene('10-full-page-screenshots.png', 'Capture the full page.',
+    'Just type <span style="font-family:var(--mono); font-weight:650; color:var(--accent);">/screenshot</span>.', `
+    <div style="${featureCard}">
+      <div style="${cardLabel} ">Full page</div>
+      <div style="margin-top:12px; border:2px dashed var(--accent); border-radius:16px; padding:12px; background:rgba(103,87,255,0.04);">
+        <div style="display:grid; gap:8px;">
+          <div style="height:12px; width:50%; border-radius:99px; background:#cfd5e3;"></div>
+          ${bars.map(([c, h]) => `<div style="height:${h}px; border-radius:9px; background:${c};"></div>`).join('')}
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--border); border-radius:16px; background:#fbfbfe; margin-top:20px;">
+        <span style="flex:1; font-family:var(--mono); font-size:22px; font-weight:650; color:var(--ink);">/screenshot<span
+          style="display:inline-block; width:3px; height:24px; background:var(--accent); margin-left:4px; vertical-align:-4px; border-radius:2px;"></span></span>
+        <span style="width:40px; height:40px; border-radius:12px; background:var(--accent); color:#fff; display:grid; place-items:center; font-size:19px; font-weight:900;">&#8593;</span>
+      </div>
+    </div>`);
+}
+
+/* ---------- 11 DOWNLOADS (social media videos/photos + bulk files) ---------- */
+function bulkDownloadScene() {
+  const files = [
+    ['X', 'video.mp4', 'MP4', '#171827'],
+    ['YouTube', 'clip.mp4', 'MP4', '#e5484d'],
+    ['Instagram', 'photo.jpg', 'JPG', '#d6417f'],
+    ['example.com', 'report.pdf', 'PDF', '#3e6ff4'],
+  ];
+  return featureScene('11-bulk-file-downloads.png', 'Download them all.',
+    'Videos and photos from X, YouTube, Instagram, and more.', `
+    <div style="${featureCard}">
+      <div style="${cardLabel}">4 files · one task</div>
+      <div style="display:grid; gap:12px; margin-top:18px;">
+        ${files.map(([source, name, type, color]) => `
+          <div style="display:grid; grid-template-columns:1fr auto 28px; gap:12px; align-items:center; padding:12px 16px; border:1px solid var(--border); border-radius:14px; background:#fffefd;">
+            <span>
+              <span style="display:block; font-size:19px; font-weight:750; color:var(--ink);">${name}</span>
+              <span style="display:block; margin-top:2px; font-family:var(--mono); font-size:12px; font-weight:650; letter-spacing:0.05em; text-transform:uppercase; color:var(--muted);">${source}</span>
+            </span>
+            <span style="padding:5px 11px; border-radius:7px; background:${color}1c; color:${color}; font-family:var(--mono); font-size:12.5px; font-weight:800; letter-spacing:0.05em;">${type}</span>
+            <span style="width:28px; height:28px; border-radius:9px; display:grid; place-items:center; background:rgba(40,169,107,0.16); color:#1c8a56; font-size:15px; font-weight:900;">&#10003;</span>
+          </div>`).join('')}
+      </div>
+    </div>`);
+}
+
+/* ---------- 12 CAPTCHA ASSISTANCE ---------- */
+function captchaScene() {
+  const steps = [['done', 'Page blocked by a challenge'], ['done', 'Sent to your solving service'], ['live', 'Waiting for the solution…']];
+  return featureScene('12-captcha-assistance.png', 'Don’t stall on a CAPTCHA.', 'Connect a supported solving service.', `
+    <div style="${featureCard}">
+      <div style="${cardLabel}">CAPTCHA assistance</div>
+      <div style="border:1px solid #dfe3ee; border-radius:14px; padding:16px; background:#f8f9fc; margin-top:16px;">
+        <div style="display:flex; align-items:center; gap:14px; border:1px solid #d3d8e4; border-radius:8px; background:#fff; padding:16px;">
+          <span style="width:28px; height:28px; border-radius:6px; border:2px solid #b4bccd;"></span>
+          <span style="font-size:19px; font-weight:650; color:#3a4254;">I'm not a robot</span>
+        </div>
+      </div>
+      <div style="display:grid; gap:12px; margin-top:20px;">
+        ${steps.map(([state, label]) => `
+          <div style="display:grid; grid-template-columns:28px 1fr; gap:12px; align-items:center; font-size:17px; font-weight:720; color:var(--ink);">
+            <span style="width:28px; height:28px; border-radius:9px; display:grid; place-items:center; font-size:14px; font-weight:900;
+              ${state === 'live' ? 'background:var(--accent); color:#fff;' : 'background:rgba(40,169,107,0.16); color:#1c8a56;'}">${state === 'live' ? '&#9679;' : '&#10003;'}</span>
+            <span>${label}</span>
+          </div>`).join('')}
+      </div>
+      <div style="margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:14px; font-weight:600; line-height:1.4; color:var(--muted);">
+        Optional setup. Separate service account required; charges may apply.
+      </div>
+    </div>`);
+}
+
+/* ---------- 13 SAFESOCIAL ---------- */
+function safeSocialScene() {
+  return featureScene('13-safesocial.png', 'Give your mind a break from the feed.', 'A calmer Instagram, filtered on device.', `
+    <div style="${featureCard}">
+      <div style="${cardLabel}">SafeSocial</div>
+      <div style="height:230px; position:relative; overflow:hidden; border-radius:16px; margin-top:16px; background:#ececf2;">
+        <img src="${assets.safeSocial}" alt="" style="width:100%; height:100%; object-fit:cover; object-position:70% 51%; display:block; filter:blur(3px) saturate(0.72); transform:scale(1.04); opacity:0.83;">
+        <div style="position:absolute; inset:0; background:linear-gradient(90deg, rgba(255,255,255,0.7), rgba(255,255,255,0.2));"></div>
+        <div style="position:absolute; inset:0; display:grid; place-items:center;">
+          <div style="padding:14px 22px; border-radius:13px; background:#202a3a; color:#fff; font-size:18px; font-weight:750; box-shadow:0 10px 20px rgba(32,42,58,0.22);">Show image</div>
+        </div>
+      </div>
+      <div style="margin-top:18px; font-size:15px; font-weight:650; color:var(--muted);">Optional · runs on your device · off by default</div>
+    </div>`);
+}
+
 const scenes = [
   hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
   apocalypseScene(),
   apocalypseScene({ nuke: true }),
+  screenshotScene(), bulkDownloadScene(), captchaScene(), safeSocialScene(),
   hero(true), planScene(true),
   // The install page renders localized HTML over these copy-free variants.
   // Keep the Web Store artwork above unchanged: its English copy is intentional.

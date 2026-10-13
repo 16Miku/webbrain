@@ -1,9 +1,13 @@
+import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { D1_MODEL_ID } from '../providers/d1-config.js';
+import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings Page — provider configuration + display settings.
  */
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -36,10 +40,12 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   normalizeUserMemoryMaxPromptChars,
 } from '../agent/user-memory.js';
+import { initCaptchaSettings } from './captcha-settings.js';
 import {
-  isValidCapsolverApiKey,
-  normalizeCapsolverApiKey,
-} from '../agent/capsolver-config.js';
+  isValidTypesafeApiKey,
+  normalizeSystemOneThreshold,
+  normalizeTypesafeApiKey,
+} from '../agent/systemone-judge.js';
 import {
   OPENROUTER_ROUTING_VARIANTS,
   detectedCompatibilityPreset,
@@ -64,10 +70,13 @@ import { ADDITIONAL_PROVIDER_UI } from '../providers/provider-catalog.js';
 import { AUTO_VISION_PROVIDER_IDS, visionDetectionMatches } from '../providers/vision-capabilities.js';
 import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 import {
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_ENABLED_KEY,
+  normalizeWebgpuModelId,
 } from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
@@ -83,7 +92,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '34.1.0';
+const EXT_VERSION = '40.4.1';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -93,7 +102,9 @@ const advancedSettings = document.querySelector('.advanced-settings');
 const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
+const composerDeliveryModeSelect = document.getElementById('select-composer-delivery-mode');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
+const pdfViewerToggle = document.getElementById('toggle-pdf-viewer');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
 const helpImproveToggle = document.getElementById('toggle-help-improve');
 const screenshotToggle = document.getElementById('toggle-screenshot-fallback');
@@ -127,13 +138,10 @@ const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
 const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
+const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagnostics');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
-const cloudBridgeToggle = document.getElementById('toggle-cloud-bridge');
-const cloudBridgeUrlInput = document.getElementById('input-cloud-bridge-url');
-const cloudBridgeStatus = document.getElementById('cloud-bridge-status');
-const cloudBridgeStatusText = document.getElementById('cloud-bridge-status-text');
 const scheduledTasksToggle = document.getElementById('toggle-scheduled-tasks');
 const scheduledConfirmToggle = document.getElementById('toggle-scheduled-confirm');
 const visionBaseUrlInput = document.getElementById('vision-base-url');
@@ -167,6 +175,17 @@ const btnSaveTranscription = document.getElementById('btn-save-transcription');
 const btnTestTranscription = document.getElementById('btn-test-transcription');
 const btnClearTranscription = document.getElementById('btn-clear-transcription');
 const transcriptionTestResult = document.getElementById('test-transcription');
+// Generative Media — provider settings stored as imageGenModel.
+const imageGenProviderInput = document.getElementById('image-gen-provider');
+const imageGenBaseUrlInput = document.getElementById('image-gen-base-url');
+const imageGenWorkflowInput = document.getElementById('image-gen-workflow');
+const imageGenParametersInput = document.getElementById('image-gen-parameters');
+const imageGenApiKeyInput = document.getElementById('image-gen-api-key');
+const imageGenModelInput = document.getElementById('image-gen-model');
+const btnSaveImageGen = document.getElementById('btn-save-image-gen');
+const btnTestImageGen = document.getElementById('btn-test-image-gen');
+const btnClearImageGen = document.getElementById('btn-clear-image-gen');
+const imageGenTestResult = document.getElementById('test-image-gen');
 const btnTestVision = document.getElementById('btn-test-vision');
 const btnClearVision = document.getElementById('btn-clear-vision');
 const visionTestResult = document.getElementById('test-vision');
@@ -203,11 +222,36 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
-const captchaApiKeyInput = document.getElementById('captcha-api-key');
-const btnSaveCaptcha = document.getElementById('btn-save-captcha');
-const btnTestCaptcha = document.getElementById('btn-test-captcha');
-const btnClearCaptcha = document.getElementById('btn-clear-captcha');
-const captchaTestResult = document.getElementById('test-captcha');
+const memcodeRecallToggle = document.getElementById('toggle-memcode-recall');
+const memcodeConnectButton = document.getElementById('btn-memcode-connect');
+const memcodeDisconnectButton = document.getElementById('btn-memcode-disconnect');
+const memcodeRecallResult = document.getElementById('test-memcode-recall');
+const decisionProviderInput = document.getElementById('decision-provider');
+const decisionModelInput = document.getElementById('decision-model');
+const decisionEndpointInput = document.getElementById('decision-endpoint');
+const decisionVisionInput = document.getElementById('decision-vision');
+const decisionDoneToggle = document.getElementById('toggle-decision-done');
+const decisionThresholdInput = document.getElementById('decision-done-threshold');
+let decisionModels = [];
+const refreshD1Settings = initD1Settings(sendToBackground);
+let decisionVisionSupported = false;
+const decisionKeyDrafts = new Map();
+let previousDecisionProvider = 'openrouter';
+
+const systemOneApiKeyInput = document.getElementById('system-one-api-key');
+const systemOneEnabledToggle = document.getElementById('toggle-system-one');
+const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
+const systemOneCompletionToggle = document.getElementById('toggle-system-one-completion');
+const systemOneWatchThresholdRange = document.getElementById('range-system-one-watch-threshold');
+const systemOneWatchThresholdValue = document.getElementById('system-one-watch-threshold-value');
+const systemOneCompletionThresholdRange = document.getElementById('range-system-one-completion-threshold');
+const systemOneCompletionThresholdValue = document.getElementById('system-one-completion-threshold-value');
+const btnSaveSystemOne = document.getElementById('btn-save-system-one');
+const systemOneClassificationsToggle = document.getElementById('toggle-system-one-classifications');
+const systemOneBrowserToggle = document.getElementById('toggle-system-one-browser');
+const btnTestSystemOne = document.getElementById('btn-test-system-one');
+const btnClearSystemOne = document.getElementById('btn-clear-system-one');
+const systemOneTestResult = document.getElementById('test-system-one');
 const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
 const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
@@ -444,17 +488,13 @@ if (globalThis.chrome?.storage?.onChanged) {
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
+const WEBBRAIN_BILLING_STATUS_URL = 'https://api.webbrain.one/v1/billing/status';
 
 const DEFAULT_COST_ALLOWANCE_USD = 10;
 const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const PLAN_BEFORE_ACT_MODES = new Set(['try', 'strict', 'off']);
 const PLAN_REVIEW_MODES = new Set(['confidence', 'always', 'never']);
-const CLOUD_BRIDGE_ENABLED_KEY = 'webbrainCloudBridgeEnabled';
-const CLOUD_BRIDGE_URL_KEY = 'webbrainCloudBridgeUrl';
-const DEFAULT_CLOUD_BRIDGE_URL = 'ws://127.0.0.1:17374/extension';
-let cloudBridgeStatusPollTimer = null;
-let cloudBridgeStatusRequestPending = false;
 // Product default: auto-approve plans at 75% confidence to reduce review stops.
 // Planner prompt still tells the LLM to reserve 90%+ for straightforward plans;
 // that intentional gap keeps model scoring conservative without over-pausing.
@@ -491,203 +531,6 @@ function updatePlanReviewConfidenceUI() {
 function normalizeCostAmount(value, fallback = DEFAULT_COST_ALLOWANCE_USD) {
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
-
-function normalizeCloudBridgeSettingsUrl(value) {
-  const url = new URL(String(value || DEFAULT_CLOUD_BRIDGE_URL));
-  const host = url.hostname.toLowerCase();
-  if (url.protocol !== 'ws:' || !['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host)) {
-    throw new Error(t('st.display.cloud_bridge.invalid_url'));
-  }
-  return url.href;
-}
-
-function setCloudBridgeStatus(state, message) {
-  if (!cloudBridgeStatus || !cloudBridgeStatusText) return;
-  cloudBridgeStatus.dataset.state = state;
-  cloudBridgeStatusText.textContent = message;
-}
-
-function renderCloudBridgeStatus(status = {}) {
-  if (!cloudBridgeToggle?.checked || status.enabled === false) {
-    setCloudBridgeStatus('disabled', t('st.display.cloud_bridge.status_disabled'));
-    return;
-  }
-  if (status.connected) {
-    setCloudBridgeStatus('connected', t('st.display.cloud_bridge.status_connected'));
-    return;
-  }
-  if (status.lastError === 'WebSocket error') {
-    setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_unreachable', {
-      url: status.url || cloudBridgeUrlInput?.value || DEFAULT_CLOUD_BRIDGE_URL,
-    }));
-    return;
-  }
-  if (status.lastError) {
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: status.lastError }));
-    return;
-  }
-  if (Number(status.reconnectAttempt) > 0) {
-    setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_reconnecting', {
-      attempt: status.reconnectAttempt,
-    }));
-    return;
-  }
-  setCloudBridgeStatus('waiting', t('st.display.cloud_bridge.status_connecting'));
-}
-
-function validateCloudBridgeUrl({ report = false } = {}) {
-  if (!cloudBridgeUrlInput) return '';
-  try {
-    const normalized = normalizeCloudBridgeSettingsUrl(cloudBridgeUrlInput.value);
-    cloudBridgeUrlInput.setCustomValidity('');
-    cloudBridgeUrlInput.removeAttribute('aria-invalid');
-    return normalized;
-  } catch (error) {
-    const message = error?.message || t('st.display.cloud_bridge.invalid_url');
-    cloudBridgeUrlInput.setCustomValidity(message);
-    cloudBridgeUrlInput.setAttribute('aria-invalid', 'true');
-    setCloudBridgeStatus('error', message);
-    if (report) cloudBridgeUrlInput.reportValidity();
-    return '';
-  }
-}
-
-function setCloudBridgeControlsBusy(busy) {
-  if (cloudBridgeToggle) cloudBridgeToggle.disabled = busy;
-  if (cloudBridgeUrlInput) cloudBridgeUrlInput.disabled = busy;
-  const setting = document.getElementById('cloud-bridge-setting');
-  if (busy) setting?.setAttribute('aria-busy', 'true');
-  else setting?.removeAttribute('aria-busy');
-}
-
-async function refreshCloudBridgeStatus() {
-  if (!cloudBridgeToggle?.checked || cloudBridgeUrlInput?.getAttribute('aria-invalid') === 'true' || document.hidden || cloudBridgeStatusRequestPending) return;
-  cloudBridgeStatusRequestPending = true;
-  try {
-    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_status'));
-  } catch (error) {
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-  } finally {
-    cloudBridgeStatusRequestPending = false;
-  }
-}
-
-function startCloudBridgeStatusPolling() {
-  if (cloudBridgeStatusPollTimer) return;
-  cloudBridgeStatusPollTimer = setInterval(refreshCloudBridgeStatus, 2000);
-  document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) refreshCloudBridgeStatus();
-  });
-}
-
-async function saveCloudBridgeUrl() {
-  const normalized = validateCloudBridgeUrl({ report: true });
-  if (!normalized) return;
-  cloudBridgeUrlInput.value = normalized;
-  try {
-    await chrome.storage.local.set({ [CLOUD_BRIDGE_URL_KEY]: normalized });
-    if (!cloudBridgeToggle.checked) {
-      renderCloudBridgeStatus({ enabled: false });
-      return;
-    }
-    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
-  } catch (error) {
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-  }
-}
-
-async function toggleCloudBridge() {
-  if (!cloudBridgeToggle || !cloudBridgeUrlInput) return;
-  if (!cloudBridgeToggle.checked) {
-    setCloudBridgeControlsBusy(true);
-    try {
-      await chrome.storage.local.set({ [CLOUD_BRIDGE_ENABLED_KEY]: false });
-      await sendToBackground('cloud_bridge_stop').catch(() => null);
-      renderCloudBridgeStatus({ enabled: false });
-    } catch (error) {
-      cloudBridgeToggle.checked = true;
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    } finally {
-      setCloudBridgeControlsBusy(false);
-    }
-    return;
-  }
-
-  const normalized = validateCloudBridgeUrl({ report: true });
-  if (!normalized) {
-    cloudBridgeToggle.checked = false;
-    return;
-  }
-  cloudBridgeUrlInput.value = normalized;
-  setCloudBridgeControlsBusy(true);
-  try {
-    await chrome.storage.local.set({
-      [CLOUD_BRIDGE_ENABLED_KEY]: true,
-      [CLOUD_BRIDGE_URL_KEY]: normalized,
-    });
-    renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
-  } catch (error) {
-    cloudBridgeToggle.checked = false;
-    await chrome.storage.local.set({ [CLOUD_BRIDGE_ENABLED_KEY]: false }).catch(() => {});
-    setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-  } finally {
-    setCloudBridgeControlsBusy(false);
-  }
-}
-
-async function initCloudBridgeSettings(stored) {
-  if (!cloudBridgeToggle || !cloudBridgeUrlInput) return;
-  cloudBridgeToggle.checked = stored[CLOUD_BRIDGE_ENABLED_KEY] === true;
-  cloudBridgeUrlInput.value = stored[CLOUD_BRIDGE_URL_KEY] || DEFAULT_CLOUD_BRIDGE_URL;
-
-  const normalized = validateCloudBridgeUrl();
-  if (normalized) cloudBridgeUrlInput.value = normalized;
-  if (cloudBridgeToggle.checked && normalized) {
-    try {
-      renderCloudBridgeStatus(await sendToBackground('cloud_bridge_start', { url: normalized }));
-    } catch (error) {
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    }
-  } else if (normalized) {
-    renderCloudBridgeStatus({ enabled: false });
-  }
-
-  cloudBridgeToggle.addEventListener('change', () => {
-    toggleCloudBridge().catch((error) => {
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    });
-  });
-  cloudBridgeUrlInput.addEventListener('input', () => {
-    cloudBridgeUrlInput.setCustomValidity('');
-    cloudBridgeUrlInput.removeAttribute('aria-invalid');
-  });
-  cloudBridgeUrlInput.addEventListener('change', () => {
-    saveCloudBridgeUrl().catch((error) => {
-      setCloudBridgeStatus('error', t('st.display.cloud_bridge.status_error', { error: error.message }));
-    });
-  });
-  cloudBridgeUrlInput.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    cloudBridgeUrlInput.blur();
-  });
-  document.addEventListener('wb-locale-changed', () => {
-    if (cloudBridgeToggle.checked) refreshCloudBridgeStatus();
-    else renderCloudBridgeStatus({ enabled: false });
-  });
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes[CLOUD_BRIDGE_URL_KEY]?.newValue) {
-      cloudBridgeUrlInput.value = changes[CLOUD_BRIDGE_URL_KEY].newValue;
-    }
-    if (changes[CLOUD_BRIDGE_ENABLED_KEY]) {
-      cloudBridgeToggle.checked = changes[CLOUD_BRIDGE_ENABLED_KEY].newValue === true;
-      if (cloudBridgeToggle.checked) refreshCloudBridgeStatus();
-      else renderCloudBridgeStatus({ enabled: false });
-    }
-  });
-  startCloudBridgeStatusPolling();
 }
 
 function formatUsd(value) {
@@ -734,6 +577,7 @@ function boundedMaxAgentSteps(value) {
 let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
 const expandedProviders = new Set(); // ids the user explicitly expanded this session
+let editingSkillId = null;
 let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
@@ -784,12 +628,16 @@ async function init() {
   chrome.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await chrome.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', CLOUD_BRIDGE_ENABLED_KEY, CLOUD_BRIDGE_URL_KEY, 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await chrome.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', 'pdfViewerEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'webMcpEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
+  if (composerDeliveryModeSelect) {
+    composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  }
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
+  if (pdfViewerToggle) pdfViewerToggle.checked = stored.pdfViewerEnabled === undefined || stored.pdfViewerEnabled === true;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
   screenshotToggle.checked = stored.screenshotFallback ?? true; // on by default
@@ -836,9 +684,9 @@ async function init() {
   siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
-  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
-  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
-  if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled === true; // off by default
+  alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
+  apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === undefined || stored.apiMutationObserverEnabled === true;
+  if (webMcpToggle) webMcpToggle.checked = stored.webMcpEnabled !== false; // on by default
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) {
     planBeforeActModeSelect.value = normalizePlanBeforeActMode(stored);
@@ -857,6 +705,7 @@ async function init() {
   completionConfettiToggle.checked = stored.completionConfetti ?? true; // on by default
   completionFlashTabToggle.checked = stored.completionFlashTab ?? true; // on by default
   tracingToggle.checked = stored.tracingEnabled === true;
+  if (feedbackDiagnosticsToggle) feedbackDiagnosticsToggle.checked = stored.feedbackDiagnosticsEnabled !== false;
   losslessTracingToggle.checked = stored.losslessTrace === true;
   // Lossless recording only means something when tracing is on; mirror the
   // disabled state so the disclosure reads honestly.
@@ -873,13 +722,36 @@ async function init() {
   if (allowLocalNetworkToggle) {
     allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true; // off by default
   }
-  await initCloudBridgeSettings(stored);
+  // Bridge (MCP + Cloud Bridge + WebMCP) lives in Settings → Bridge.
+  // settings-cloud-bridge.js is the sole owner of webbrainCloudBridge* keys.
   if (scheduledTasksToggle) {
     scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false; // on by default
   }
   if (scheduledConfirmToggle) {
     scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false; // on by default
   }
+  const decisionConfig = resolveDecisionConfig(stored);
+  decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
+  decisionModelInput.value = decisionConfig.model;
+  decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
+  decisionVisionInput.value = stored.decisionVisionMode || 'auto';
+  decisionVisionSupported = stored.decisionVisionSupported === true;
+  decisionDoneToggle.checked = decisionConfig.doneEnabled;
+  decisionThresholdInput.value = String(decisionConfig.threshold * 100);
+  await refreshD1Settings();
+  decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
+  decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
+  decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
+  document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
+  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
+  if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
+  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
+  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
+  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
+  if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
+  if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+  updateSystemOneThresholdLabels();
 
   // Load vision model config
   await loadVisionConfig();
@@ -894,15 +766,19 @@ async function init() {
   updateMultimodalDetectedProvider('vision');
   updateMultimodalDetectedProvider('transcription');
 
+  // Load Generative Media config. Used by the generate_image agent tool.
+  const imageGenStored = await chrome.storage.local.get(['imageGenModel']);
+  renderImageGenConfig(imageGenStored.imageGenModel || {});
+
   // Load profile (auto-fill bio + throwaway password)
   const profileStored = await chrome.storage.local.get(['profileEnabled', 'profileText']);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!profileStored.profileEnabled;
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
+  await loadMemcodeStatus();
 
-  // A valid saved key is the CapSolver enable control.
-  const captchaStored = await chrome.storage.local.get('capsolverApiKey');
-  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.capsolverApiKey || '';
+  // Each provider has independent key, enable state, and fallback weight.
+  await initCaptchaSettings(chrome.storage.local, sendToBackground, t);
 
   await loadCustomSkills();
 
@@ -1157,7 +1033,7 @@ async function saveCustomSkills(nextSkills, opts = {}) {
   const update = { [CUSTOM_SKILLS_STORAGE_KEY]: customSkills };
   const removedSkill = opts.removedSkill;
   const installedSkill = opts.installedSkill;
-  const removedDefault = removedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(removedSkill.id);
+  const removedDefault = (removedSkill?.sourceType === 'built-in' || DEFAULT_SKILL_IDS.has(removedSkill?.id)) && DEFAULT_SKILL_IDS.has(removedSkill?.id);
   const installedDefault = installedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(installedSkill.id);
   if (removedDefault || installedDefault) {
     const stored = await chrome.storage.local.get(DEFAULT_SKILLS_REMOVED_STORAGE_KEY);
@@ -1219,6 +1095,7 @@ function renderSkills() {
                   data-skill-preview-id="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
           <div class="setting-desc skill-source">${escapeHtml(source)} · ${escapeHtml(t('st.skills.item.chars', { count: skill.content.length }))}${escapeHtml(toolSummary)}</div>
         </div>
+        <button class="btn-secondary" data-skill-edit-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.edit'))}</button>
         <button class="btn-secondary" data-skill-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.remove'))}</button>
       </div>`;
   }).join('');
@@ -1226,8 +1103,17 @@ function renderSkills() {
   skillsList.querySelectorAll('button[data-skill-preview-id]').forEach((btn) => {
     btn.addEventListener('click', () => previewEnabledSkill(btn.dataset.skillPreviewId));
   });
+  skillsList.querySelectorAll('button[data-skill-edit-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const skill = customSkills.find((s) => s.id === btn.dataset.skillEditId);
+      if (skill) startSkillEdit(skill);
+    });
+  });
   skillsList.querySelectorAll('button[data-skill-id]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (editingSkillId === btn.dataset.skillId) {
+        cancelSkillEdit();
+      }
       const removedSkill = customSkills.find((skill) => skill.id === btn.dataset.skillId);
       await saveCustomSkills(
         customSkills.filter((skill) => skill.id !== btn.dataset.skillId),
@@ -1270,6 +1156,24 @@ async function addPackagedSkill(skillId, button) {
   }
 }
 
+function startSkillEdit(skill) {
+  editingSkillId = skill.id;
+  if (skillNameInput) skillNameInput.value = skill.name || '';
+  if (skillTextArea) skillTextArea.value = skill.content || '';
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.providers.save');
+  flashSkillsResult('ok', skill.name || t('st.skills.edit'));
+  skillNameInput?.focus?.();
+  if (skillTextArea) skillTextArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelSkillEdit() {
+  if (editingSkillId == null) return;
+  editingSkillId = null;
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.skills.add_text');
+  if (skillNameInput) skillNameInput.value = '';
+  if (skillTextArea) skillTextArea.value = '';
+}
+
 async function addSkillFromText() {
   const content = (skillTextArea?.value || '').trim();
   if (!content) {
@@ -1277,6 +1181,27 @@ async function addSkillFromText() {
     return;
   }
   try {
+    if (editingSkillId) {
+      const original = customSkills.find((s) => s.id === editingSkillId);
+      if (!original) {
+        cancelSkillEdit();
+        throw new Error(t('st.skills.error.add_failed'));
+      }
+      const isBuiltIn = original.sourceType === 'built-in';
+      const updated = {
+        id: original.id,
+        name: (skillNameInput?.value || '').trim() || original.name || '',
+        sourceType: isBuiltIn ? 'text' : (original.sourceType || 'text'),
+        sourceUrl: isBuiltIn ? '' : (original.sourceUrl || ''),
+        content,
+        createdAt: original.createdAt || Date.now(),
+      };
+      const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
+      await saveCustomSkills(next);
+      cancelSkillEdit();
+      flashSkillsResult('ok', t('st.providers.saved'));
+      return;
+    }
     await addCustomSkill({
       id: makeSkillId(),
       name: skillNameInput?.value || '',
@@ -1346,6 +1271,7 @@ async function addSkillFromUrl() {
 btnAddSkillText?.addEventListener('click', addSkillFromText);
 btnAddSkillUrl?.addEventListener('click', addSkillFromUrl);
 btnClearSkillForm?.addEventListener('click', () => {
+  cancelSkillEdit();
   if (skillNameInput) skillNameInput.value = '';
   if (skillUrlInput) skillUrlInput.value = '';
   if (skillTextArea) skillTextArea.value = '';
@@ -1361,6 +1287,11 @@ if (globalThis.chrome?.storage?.onChanged) {
 }
 
 // --- Display Settings ---
+
+composerDeliveryModeSelect?.addEventListener('change', async () => {
+  const mode = composerDeliveryModeSelect.value === 'steer' ? 'steer' : 'queue';
+  await chrome.storage.local.set({ composerDeliveryMode: mode }).catch(() => {});
+});
 
 downloadDirectoryInput?.addEventListener('input', () => {
   downloadDirectoryInput.setCustomValidity('');
@@ -1385,6 +1316,10 @@ verboseToggle.addEventListener('change', async () => {
 
 selectionShortcutToggle?.addEventListener('change', async () => {
   await chrome.storage.local.set({ selectionShortcutEnabled: selectionShortcutToggle.checked }).catch(() => {});
+});
+
+pdfViewerToggle?.addEventListener('change', async () => {
+  await chrome.storage.local.set({ pdfViewerEnabled: pdfViewerToggle.checked }).catch(() => {});
 });
 
 autoGroupTabsToggle?.addEventListener('change', async () => {
@@ -1565,6 +1500,14 @@ losslessTracingToggle.addEventListener('change', async () => {
   await chrome.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
 });
 
+feedbackDiagnosticsToggle?.addEventListener('change', async () => {
+  await chrome.storage.local.set({ feedbackDiagnosticsEnabled: feedbackDiagnosticsToggle.checked });
+  if (!feedbackDiagnosticsToggle.checked) {
+    const response = await chrome.runtime.sendMessage({ target: 'background', action: 'feedback_clear_diagnostics' });
+    if (!response?.ok) console.error('[feedback] Could not clear local diagnostics:', response?.error);
+  }
+});
+
 costSessionLimitInput?.addEventListener('change', async () => {
   const value = normalizeCostAmount(costSessionLimitInput.value);
   costSessionLimitInput.value = value.toFixed(2);
@@ -1607,6 +1550,138 @@ if (scheduledConfirmToggle) {
     await chrome.storage.local.set({ scheduledRequireConsequentialConfirmation: scheduledConfirmToggle.checked }).catch(() => {});
   });
 }
+
+function updateSystemOneThresholdLabels() {
+  if (systemOneWatchThresholdValue && systemOneWatchThresholdRange) {
+    systemOneWatchThresholdValue.textContent = `${systemOneWatchThresholdRange.value}%`;
+  }
+  if (systemOneCompletionThresholdValue && systemOneCompletionThresholdRange) {
+    systemOneCompletionThresholdValue.textContent = `${systemOneCompletionThresholdRange.value}%`;
+  }
+}
+
+systemOneWatchThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+systemOneCompletionThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+
+function showSystemOneResult(className, text) {
+  if (!systemOneTestResult) return;
+  systemOneTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  systemOneTestResult.textContent = text;
+  if (className) setTimeout(() => systemOneTestResult.classList.remove('show'), 3000);
+}
+
+if (btnSaveSystemOne) {
+  btnSaveSystemOne.addEventListener('click', async () => {
+    const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+    const enabled = systemOneEnabledToggle?.checked === true;
+    if (enabled && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
+      showSystemOneResult('fail', t('st.system_one.need_key'));
+      return;
+    }
+    if (decisionProviderInput.value === 'webgpu_d1' && enabled) {
+      const consentResult = await sendToBackground('d1_control', { command: 'consent', consent: document.getElementById('d1-consent').checked, consentVersion: 1 });
+      if (!consentResult.success) { showSystemOneResult('fail', consentResult.error); return; }
+    }
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
+    let selection;
+    try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
+    await chrome.storage.local.set({
+      ...selection,
+      ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
+      systemOneEnabled: enabled && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
+      systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
+      systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
+      systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
+      systemOneFastBrowser: systemOneBrowserToggle?.checked === true,
+      systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
+      systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
+    });
+    if (!enabled || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    showSystemOneResult('ok', t('st.providers.saved'));
+  });
+}
+
+if (btnClearSystemOne) {
+  btnClearSystemOne.addEventListener('click', async () => {
+    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
+    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
+    decisionKeyDrafts.clear();
+    decisionProviderInput.value = previousDecisionProvider = 'openrouter';
+    decisionModelInput.value = DEFAULT_DECISION_MODEL;
+    decisionDoneToggle.checked = true;
+    decisionVisionSupported = false;
+    document.getElementById('decision-endpoint-field').hidden = true;
+    if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
+    if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
+    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
+    await chrome.storage.local.remove([
+      ...DECISION_SETTINGS_KEYS,
+      'typesafeApiKey',
+      'systemOneEnabled',
+      'systemOneWatchEnabled',
+      'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser',
+      'systemOneWatchThreshold',
+      'systemOneCompletionThreshold',
+    ]);
+    if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = '70';
+    if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = '70';
+    updateSystemOneThresholdLabels();
+    await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    await refreshD1Settings();
+    showSystemOneResult('ok', t('st.captcha.cleared'));
+  });
+}
+
+function decisionSettingsDraft() {
+  const card = decisionModels.find(m => m.id === decisionModelInput.value);
+  return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
+    decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
+    decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
+    systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : ['local', 'webgpu_d1'].includes(decisionProviderInput.value) ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
+}
+
+decisionProviderInput?.addEventListener('change', () => {
+  decisionKeyDrafts.set(previousDecisionProvider, systemOneApiKeyInput.value);
+  previousDecisionProvider = decisionProviderInput.value;
+  systemOneApiKeyInput.value = decisionKeyDrafts.get(previousDecisionProvider) || '';
+  decisionModelInput.value = previousDecisionProvider === 'webgpu_d1' ? D1_MODEL_ID : previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
+  decisionModels = []; decisionVisionSupported = false;
+  document.getElementById('decision-models').replaceChildren();
+  document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
+});
+decisionModelInput?.addEventListener('input', () => {
+  decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+});
+document.getElementById('btn-decision-models')?.addEventListener('click', async () => {
+  const button = document.getElementById('btn-decision-models'); button.disabled = true;
+  try {
+    const result = await sendToBackground('list_decision_models', { settings: decisionSettingsDraft() });
+    if (!result.success) throw new Error(result.error || 'Model discovery unavailable');
+    decisionModels = result.models;
+    const list = document.getElementById('decision-models'); list.replaceChildren();
+    for (const model of decisionModels) { const option = document.createElement('option'); option.value = model.id; option.label = model.name; list.append(option); }
+    decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+    showSystemOneResult('ok', t('st.decision.models_loaded', { count: decisionModels.length }));
+  } catch (error) { showSystemOneResult('fail', error.message); } finally { button.disabled = false; }
+});
+
+btnTestSystemOne?.addEventListener('click', async () => {
+  const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+  if (!apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  btnTestSystemOne.disabled = true;
+  showSystemOneResult('', t('st.providers.testing'));
+  try {
+    const result = await sendToBackground('test_system_one', { apiKey, settings: decisionSettingsDraft() });
+    if (result?.visionTested || result?.visionVerified) decisionVisionSupported = result.visionVerified === true;
+    showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
+      ? t('st.providers.connected', { model: result.model }) + (result.visionTested && !result.visionVerified ? ' ' + t('st.decision.vision_unverified') : '')
+      : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
+  } catch (error) {
+    showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
+  } finally { btnTestSystemOne.disabled = false; }
+});
 
 // --- Vision Model ---
 
@@ -1882,6 +1957,99 @@ if (btnClearTranscription) {
 
 transcriptionBaseUrlInput?.addEventListener('input', () => updateMultimodalDetectedProvider('transcription'));
 
+// --- Generative Media ---
+const imageGenDrafts = new Map();
+let imageGenCurrentProvider = 'fal';
+
+function showImageGenResult(className, text, color = '') {
+  if (!imageGenTestResult) return;
+  imageGenTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  imageGenTestResult.textContent = text;
+  imageGenTestResult.style.color = color || '';
+  return imageGenTestResult;
+}
+
+function flashImageGenResult(className, text) {
+  const resultEl = showImageGenResult(className, text);
+  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 2000);
+}
+
+function readImageGenForm() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  if (provider === 'comfyui') return { provider, baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl, workflow: imageGenWorkflowInput.value.trim() };
+  const config = { provider, apiKey: imageGenApiKeyInput.value.trim(), model: imageGenModelInput.value.trim() };
+  if (provider === 'comfyrouter') config.parameters = imageGenParametersInput.value.trim() || '{}';
+  return config;
+}
+
+function updateImageGenProvider() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  const meta = MEDIA_PROVIDERS[provider] || MEDIA_PROVIDERS.fal;
+  const local = provider === 'comfyui';
+  for (const [id, hidden] of [['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-parameters-field', provider !== 'comfyrouter']]) {
+    const field = document.getElementById(id); if (field) field.hidden = hidden;
+  }
+  if (imageGenApiKeyInput) imageGenApiKeyInput.placeholder = meta.keyPlaceholder || '';
+  if (imageGenModelInput) imageGenModelInput.placeholder = meta.model || '';
+  const hint = document.getElementById('image-gen-provider-hint');
+  if (hint) hint.textContent = t(`st.imagegen.hint.${provider}`) + ' ';
+  const docs = document.getElementById('image-gen-docs'); if (docs) docs.href = meta.docs;
+}
+
+function renderImageGenConfig(config) {
+  const provider = Object.hasOwn(MEDIA_PROVIDERS, mediaProvider(config)) ? mediaProvider(config) : 'fal';
+  imageGenCurrentProvider = provider;
+  if (imageGenProviderInput) imageGenProviderInput.value = provider;
+  if (imageGenApiKeyInput) imageGenApiKeyInput.value = config.apiKey || '';
+  if (imageGenModelInput) imageGenModelInput.value = config.model || '';
+  if (imageGenBaseUrlInput) imageGenBaseUrlInput.value = config.baseUrl || MEDIA_PROVIDERS.comfyui.baseUrl;
+  if (imageGenWorkflowInput) imageGenWorkflowInput.value = typeof config.workflow === 'object' ? JSON.stringify(config.workflow, null, 2) : config.workflow || '';
+  if (imageGenParametersInput) imageGenParametersInput.value = typeof config.parameters === 'object' ? JSON.stringify(config.parameters, null, 2) : config.parameters || '';
+  updateImageGenProvider();
+}
+
+imageGenProviderInput?.addEventListener('change', () => {
+  const selected = imageGenProviderInput.value;
+  // Preserve unsaved drafts while switching, and never reuse another provider's key.
+  imageGenProviderInput.value = imageGenCurrentProvider;
+  imageGenDrafts.set(imageGenCurrentProvider, readImageGenForm());
+  renderImageGenConfig(imageGenDrafts.get(selected) || { provider: selected });
+  if (imageGenTestResult) imageGenTestResult.classList.remove('show');
+});
+document.addEventListener('wb-locale-changed', updateImageGenProvider);
+
+async function saveImageGenForm() {
+  const config = readImageGenForm();
+  validateMediaConfig(config);
+  await chrome.storage.local.set({ imageGenModel: config });
+  return config;
+}
+
+btnSaveImageGen?.addEventListener('click', async () => {
+  try { await saveImageGenForm(); flashImageGenResult('ok', t('st.imagegen.saved')); }
+  catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+});
+
+btnTestImageGen?.addEventListener('click', async () => {
+  btnTestImageGen.disabled = true;
+  try {
+    const config = await saveImageGenForm();
+    showImageGenResult('', t('st.imagegen.testing'), 'var(--text2)');
+    const res = await sendToBackground('test_image_gen_provider');
+    if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
+    else showImageGenResult('fail', t('st.imagegen.failed', { error: res?.error || 'Unknown error' }));
+  } catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+  finally { btnTestImageGen.disabled = false; }
+});
+
+btnClearImageGen?.addEventListener('click', async () => {
+  const provider = imageGenProviderInput.value;
+  imageGenDrafts.clear();
+  renderImageGenConfig({ provider });
+  await chrome.storage.local.remove('imageGenModel');
+  flashImageGenResult('ok', t('st.imagegen.cleared'));
+});
+
 // --- Profile auto-fill ---
 let profileSyncChallenge = null;
 function showProfileSyncResult(ok, text) { if (!profileSyncResult) return; profileSyncResult.className = `test-result show ${ok ? 'ok' : 'fail'}`; profileSyncResult.textContent = text; }
@@ -1922,6 +2090,7 @@ async function reloadProfileSyncData() {
     WEBGPU_VISION_ENABLED_KEY,
     WEBGPU_VISION_CONSENT_VERSION_KEY,
     'transcriptionModel',
+    'imageGenModel',
   ]);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled;
   if (profileTextArea) profileTextArea.value = stored.profileText || '';
@@ -1939,6 +2108,7 @@ async function reloadProfileSyncData() {
   if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || '';
   if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || '';
   updateMultimodalDetectedProvider('transcription');
+  renderImageGenConfig(stored.imageGenModel || {});
   await loadUserMemorySettings();
   const res = await sendToBackground('get_providers');
   providersData = res.providers;
@@ -2036,6 +2206,47 @@ function flashUserMemoryResult(className, text) {
   userMemoryTestResult.textContent = text;
   setTimeout(() => userMemoryTestResult.classList.remove('show'), 2500);
 }
+
+async function loadMemcodeStatus() {
+  if (!memcodeRecallToggle) return;
+  const result = await sendToBackground('memcode_recall_status').catch(() => null);
+  memcodeRecallToggle.disabled = !result?.connected;
+  memcodeRecallToggle.checked = result?.recallEnabled === true;
+  if (memcodeConnectButton) memcodeConnectButton.disabled = result?.connected === true;
+  if (memcodeDisconnectButton) memcodeDisconnectButton.disabled = result?.connected !== true;
+  if (memcodeRecallResult) {
+    memcodeRecallResult.className = 'test-result show';
+    memcodeRecallResult.textContent = t(result?.connected
+      ? (result.recallEnabled ? 'st.memcode.active' : 'st.memcode.connected')
+      : 'st.memcode.disconnected', { account: result?.accountId || 'unknown' });
+  }
+}
+
+memcodeConnectButton?.addEventListener('click', async () => {
+  memcodeConnectButton.disabled = true;
+  try {
+    const result = await sendToBackground('memcode_recall_connect');
+    if (!result?.ok) throw new Error(result?.error || 'Connection failed');
+    await loadMemcodeStatus();
+  } catch (error) {
+    memcodeConnectButton.disabled = false;
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: error.message });
+  }
+});
+memcodeDisconnectButton?.addEventListener('click', async () => {
+  const result = await sendToBackground('memcode_recall_disconnect');
+  await loadMemcodeStatus();
+  if (result?.revocationFailed && memcodeRecallResult) {
+    memcodeRecallResult.textContent = t('st.memcode.revocation_warning');
+  }
+});
+memcodeRecallToggle?.addEventListener('change', async () => {
+  const result = await sendToBackground('memcode_recall_enable', { enabled: memcodeRecallToggle.checked });
+  if (!result?.ok) {
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: result?.error || 'Setting unavailable' });
+  }
+  await loadMemcodeStatus();
+});
 
 const USER_MEMORY_FAILURE_REASON_KEYS = {
   invalid_or_sensitive: 'st.memory.reason.invalid_or_sensitive',
@@ -2203,71 +2414,6 @@ if (btnImportUserMemory) {
   });
 }
 
-// --- CapSolver (captcha solving) ---
-// Saving a structurally valid API key enables CapSolver automatically.
-
-function showCaptchaResult(className, text, color = '') {
-  if (!captchaTestResult) return;
-  captchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
-  captchaTestResult.textContent = text;
-  captchaTestResult.style.color = color || '';
-  return captchaTestResult;
-}
-
-function flashCaptchaResult(className, text) {
-  const resultEl = showCaptchaResult(className, text);
-  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
-}
-
-if (btnSaveCaptcha) {
-  btnSaveCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    if (captchaApiKeyInput) captchaApiKeyInput.value = key;
-    // Saving the key is the user's explicit opt-in. Keep the legacy boolean
-    // as an internal consent bit so upgrades preserve an existing opt-out.
-    await chrome.storage.local.set({
-      capsolverApiKey: key,
-      captchaSolverEnabled: true,
-    });
-    flashCaptchaResult('ok', t('st.captcha.saved'));
-  });
-}
-
-if (btnTestCaptcha) {
-  btnTestCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    showCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
-    try {
-      const res = await sendToBackground('test_capsolver_balance', { apiKey: key });
-      if (res?.ok) {
-        flashCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
-      } else {
-        flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
-      }
-    } catch (e) {
-      flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
-    }
-  });
-}
-
-if (btnClearCaptcha) {
-  btnClearCaptcha.addEventListener('click', async () => {
-    if (captchaApiKeyInput) captchaApiKeyInput.value = '';
-    // Remove the legacy flag too so old exports cannot preserve a
-    // contradictory enabled-without-a-key state.
-    await chrome.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
-    flashCaptchaResult('ok', t('st.captcha.cleared'));
-  });
-}
-
 // --- Provider Rendering ---
 
 // Prompt-tier selector, shown only for local + OpenRouter providers (cloud is
@@ -2293,6 +2439,18 @@ const VISION_MODE_FIELD = {
     { value: 'off', labelKey: 'st.providers.compat.value.off' },
   ],
 };
+const TOOL_MODE_FIELD = {
+  key: 'toolsMode',
+  labelKey: 'st.provider.field.tools_mode',
+  type: 'select',
+  collapsed: true,
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+const OPENROUTER_VISION_MODE_FIELD = { ...VISION_MODE_FIELD, collapsed: true };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 const OPTIONAL_LOCAL_API_KEY_FIELD = {
   key: 'apiKey',
@@ -2300,6 +2458,12 @@ const OPTIONAL_LOCAL_API_KEY_FIELD = {
   type: 'password',
   placeholder: 'optional',
   collapsed: true,
+};
+const SHARE_RESEARCH_FIELD = {
+  key: 'shareQueriesForResearch',
+  labelKey: 'st.providers.share_research.label',
+  hintKey: 'st.providers.share_research.hint',
+  type: 'checkbox',
 };
 
 function providerDefinitionId(id, config = providersData[id]) {
@@ -2355,6 +2519,11 @@ const CONTEXT_WINDOW_FIELD = {
   placeholder: '16384',
   min: 4096,
   step: 1024,
+};
+
+const WEBGPU_CONTEXT_WINDOW_FIELD = {
+  ...CONTEXT_WINDOW_FIELD,
+  placeholder: '32768',
 };
 
 const MAX_OUTPUT_TOKENS_FIELD = {
@@ -2691,6 +2860,295 @@ function providerSubscriptionGuideHtml(definitionId) {
   </aside>`;
 }
 
+// The WebGPU chat error points users at Settings > Providers > WebGPU, so the
+// card needs its own download surface instead of sending everyone to
+// Apocalypse Mode. This drives the same background routes
+// (`start/stop/get_webgpu_download_status`) with a start/stop button and a
+// status line, using only already-translated `webgpu_download` strings.
+let webgpuDownloadPollTimer = null;
+let webgpuDownloadActionInFlight = false;
+
+function normalizeWebgpuDownloadSnapshot(snapshot = {}) {
+  const allowedStatuses = new Set(['checking', 'not-downloaded', 'downloading', 'paused', 'stopping', 'ready', 'error']);
+  const normalizeStatus = status => ['starting', 'queued'].includes(status)
+    ? 'downloading' : allowedStatuses.has(status) ? status : 'not-downloaded';
+  const status = normalizeStatus(snapshot.status);
+  const loaded = Math.max(0, Number(snapshot.loaded) || 0);
+  const total = Math.max(0, Number(snapshot.total) || 0);
+  const progress = status === 'ready'
+    ? 100
+    : Math.max(0, Math.min(100, Number(snapshot.progress) || (total > 0 ? loaded / total * 100 : 0)));
+  const rawTransfer = snapshot.activeTransfer && typeof snapshot.activeTransfer === 'object'
+    ? snapshot.activeTransfer
+    : null;
+  // Preserve the sibling transfer (e.g. Bonsai downloading while the ONNX
+  // card queries Compass): dropping it stops polling and hides Stop control.
+  let activeTransfer = null;
+  if (rawTransfer) {
+    const transferStatus = normalizeStatus(rawTransfer.status);
+    const transferLoaded = Math.max(0, Number(rawTransfer.loaded) || 0);
+    const transferTotal = Math.max(0, Number(rawTransfer.total) || 0);
+    const transferProgress = transferStatus === 'ready'
+      ? 100
+      : Math.max(0, Math.min(100, Number(rawTransfer.progress) || (transferTotal > 0 ? transferLoaded / transferTotal * 100 : 0)));
+    activeTransfer = {
+      status: transferStatus,
+      ready: rawTransfer.ready === true || transferStatus === 'ready',
+      progress: Math.round(transferProgress),
+      error: String(rawTransfer.error || ''),
+      modelId: String(rawTransfer.modelId || rawTransfer.model || ''),
+      dtype: rawTransfer.dtype,
+    };
+  }
+  return {
+    status,
+    ready: snapshot.ready === true || status === 'ready',
+    progress: Math.round(progress),
+    error: String(snapshot.error || ''),
+    modelId: String(snapshot.modelId || snapshot.model || ''),
+    dtype: snapshot.dtype,
+    activeTransfer,
+  };
+}
+
+function isActiveWebgpuTransfer(state) {
+  return !!state && state.ready !== true
+    && ['checking', 'downloading', 'paused', 'stopping'].includes(state.status);
+}
+
+function webgpuDownloadControlState(state) {
+  const sibling = state.activeTransfer;
+  const model = String(state.modelId || '').trim().toLowerCase();
+  const siblingModel = String(sibling?.modelId || '').trim().toLowerCase();
+  if (!siblingModel || siblingModel === model) return state;
+  const priority = item => !isActiveWebgpuTransfer(item) ? 0 : item.status === 'paused' ? 1 : 2;
+  return priority(sibling) > priority(state) ? sibling : state;
+}
+
+function webgpuDownloadCardLabel(state) {
+  if (state.ready || ['downloading', 'paused', 'stopping'].includes(state.status)) {
+    return t('st.providers.webgpu_download.stop');
+  }
+  return t('st.providers.webgpu_download.start');
+}
+
+function webgpuDownloadStatusLine(state) {
+  if (state.ready) return t('st.providers.webgpu_download.ready_detail');
+  switch (state.status) {
+    case 'checking':
+      return t('st.providers.webgpu_download.checking');
+    case 'downloading':
+      return t('st.providers.webgpu_download.downloading', { progress: state.progress });
+    case 'paused':
+      return `${t('st.providers.webgpu_download.paused', { progress: state.progress })} ${t('st.providers.webgpu_download.paused_detail')}`;
+    case 'stopping':
+      return t('st.providers.webgpu_download.stopping');
+    case 'error':
+      return `${t('st.providers.webgpu_download.error')}: ${state.error || t('st.providers.webgpu_download.error_detail')}`;
+    default:
+      return t('st.providers.webgpu_download.required');
+  }
+}
+
+function renderWebgpuDownloadControl(id, state) {
+  const btn = document.querySelector(`.btn-webgpu-download[data-provider="${id}"]`);
+  const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+  // When the user edits the Model field mid-download, the status for the
+  // newly displayed model is `not-downloaded` while `activeTransfer` still
+  // carries the running sibling transfer. Render the running transfer so its
+  // Stop control stays visible instead of flipping to Start with no way back.
+  // A distinct active transfer wins even when the displayed model is cached
+  // (ready): otherwise its remove action would delete the cached model while
+  // the sibling download runs hidden.
+  const display = webgpuDownloadControlState(state);
+  const transferActive = display !== state;
+  if (btn) {
+    btn.textContent = webgpuDownloadCardLabel(display);
+    btn.disabled = webgpuDownloadActionInFlight || ['checking', 'stopping'].includes(display.status);
+    // Stopping must target the running transfer, not the newly typed model.
+    if (transferActive && display.modelId) btn.dataset.activeTransferModel = display.modelId;
+    else delete btn.dataset.activeTransferModel;
+  }
+  if (line) {
+    line.textContent = transferActive && display.modelId
+      ? `${webgpuDownloadStatusLine(display)} (${display.modelId})`
+      : webgpuDownloadStatusLine(display);
+  }
+}
+
+function getDisplayedWebgpuModel(id = 'webgpu') {
+  const input = document.querySelector(`input[data-provider="${id}"][data-key="model"]`);
+  try {
+    return normalizeWebgpuModelId(input?.value || providersData[id]?.model);
+  } catch {
+    return String(input?.value || providersData[id]?.model || WEBGPU_COMPASS_TINY_V2_MODEL_ID).trim();
+  }
+}
+
+async function refreshWebgpuDownloadControls() {
+  const ids = [...new Set([...document.querySelectorAll('.btn-webgpu-download')].map(btn => btn.dataset.provider))];
+  if (!ids.length) {
+    if (webgpuDownloadPollTimer) {
+      clearInterval(webgpuDownloadPollTimer);
+      webgpuDownloadPollTimer = null;
+    }
+    return;
+  }
+  let active = false;
+  for (const id of ids) {
+    try {
+      const model = getDisplayedWebgpuModel(id);
+      const query = model ? { model } : {};
+      const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', query) || {});
+      renderWebgpuDownloadControl(id, state);
+      if (isActiveWebgpuTransfer(state) || isActiveWebgpuTransfer(state.activeTransfer)) active = true;
+    } catch (error) {
+      const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+      if (line) line.textContent = String(error?.message || error);
+    }
+  }
+  if (active && !webgpuDownloadPollTimer) {
+    webgpuDownloadPollTimer = setInterval(refreshWebgpuDownloadControls, 2000);
+  } else if (!active && webgpuDownloadPollTimer) {
+    clearInterval(webgpuDownloadPollTimer);
+    webgpuDownloadPollTimer = null;
+  }
+}
+
+async function handleWebgpuDownloadButton(btn) {
+  const id = btn.dataset.provider;
+  if (webgpuDownloadActionInFlight) return;
+  webgpuDownloadActionInFlight = true;
+  let didFallbackProvider = false;
+  try {
+    btn.disabled = true;
+    // Persist any form changes on the WebGPU card first so the background
+    // provider configuration stays in sync with the user's selected model.
+    if (dirtyProviderIds.has(id)) {
+      await saveProvider(id, { showFlash: false });
+    }
+    const model = getDisplayedWebgpuModel(id);
+    const msg = model ? { model } : {};
+    const state = normalizeWebgpuDownloadSnapshot(await sendToBackground('get_webgpu_download_status', msg) || {});
+    // If the user typed a new model while a sibling transfer runs, the status
+    // for the displayed model is `not-downloaded` (or ready, when switching
+    // to a cached model) with the running transfer in `activeTransfer`.
+    // Stopping must target the running transfer so its Stop control keeps
+    // working instead of attempting to start a blocked download or deleting
+    // the cached displayed model while the sibling runs hidden.
+    const control = webgpuDownloadControlState(state);
+    const siblingActive = control !== state;
+    const stopTarget = { model: control.modelId || model, ...(control.dtype ? { dtype: control.dtype } : {}) };
+    if (state.ready || ['downloading', 'paused'].includes(state.status) || siblingActive) {
+      const removedReadyModel = state.ready === true && !siblingActive;
+      await sendToBackground('stop_webgpu_download', stopTarget);
+      // Removing a ready model while WebGPU is the selected chat provider
+      // would leave every subsequent chat failing its readiness check until
+      // the user re-downloads or manually picks another provider. Fall back
+      // to a usable provider so the selection stays functional.
+      if (removedReadyModel && id === activeProviderId) {
+        try {
+          const fallback = providersData?.webbrain_cloud
+            ? 'webbrain_cloud'
+            : Object.keys(providersData || {}).find((candidate) => candidate !== id && providerIsActive(candidate, providersData[candidate])) || 'webbrain_cloud';
+          await sendToBackground('set_active_provider', { providerId: fallback });
+          activeProviderId = fallback;
+          requestedActiveProviderId = fallback;
+          didFallbackProvider = true;
+        } catch {
+          // Keep the current selection; chat will report the missing download.
+        }
+      }
+    } else {
+      await sendToBackground('start_webgpu_download', msg);
+    }
+  } catch (error) {
+    const line = document.querySelector(`[data-webgpu-download-status="${id}"]`);
+    if (line) line.textContent = String(error?.message || error);
+  } finally {
+    webgpuDownloadActionInFlight = false;
+    await refreshWebgpuDownloadControls();
+    if (didFallbackProvider) {
+      try {
+        renderProviders();
+      } catch {
+        // Card re-render is best-effort; the status line above already updated.
+      }
+    }
+  }
+}
+
+async function refreshWebbrainPaymentNotice() {
+  if (!refreshWebbrainPaymentNotice._focusBound && typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      refreshWebbrainPaymentNotice._cache = null;
+      void refreshWebbrainPaymentNotice();
+    });
+    refreshWebbrainPaymentNotice._focusBound = true;
+  }
+  const notice = providersContainer.querySelector('.webbrain-payment-notice');
+  const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
+  if (!notice || !deviceGuid) return;
+  const billingStatusUrl = typeof WEBBRAIN_BILLING_STATUS_URL === 'string'
+    ? WEBBRAIN_BILLING_STATUS_URL
+    : 'https://api.webbrain.one/v1/billing/status';
+  const renderNotice = (subscriptionStatus) => {
+    if (!notice.isConnected) return;
+    if (!['past_due', 'unpaid'].includes(subscriptionStatus)) {
+      notice.hidden = true;
+      notice.replaceChildren();
+      return;
+    }
+    const message = document.createElement('p');
+    message.textContent = t('st.account.payment_failed');
+    const link = document.createElement('a');
+    link.href = webbrainAccountUrl(deviceGuid);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = t('st.account.update_payment');
+    notice.replaceChildren(message, link);
+    notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
+    notice.hidden = false;
+  };
+  // Reuse recent results during search, but refresh on focus or after 30 seconds.
+  const cached = refreshWebbrainPaymentNotice._cache;
+  if (cached?.deviceGuid === deviceGuid && Date.now() - cached.fetchedAt < 30000) {
+    renderNotice(cached.subscriptionStatus);
+    return;
+  }
+  try {
+    let statusPromise = refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid
+      ? refreshWebbrainPaymentNotice._inflight.promise
+      : null;
+    if (!statusPromise) {
+      statusPromise = (async () => {
+        const response = await fetch(billingStatusUrl, {
+          headers: { 'X-WebBrain-Device-Id': deviceGuid },
+          cache: 'no-store',
+          credentials: 'omit',
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) return null;
+        const status = await response.json();
+        return status.subscription_status;
+      })();
+      refreshWebbrainPaymentNotice._inflight = { deviceGuid, promise: statusPromise };
+    }
+    const subscriptionStatus = await statusPromise;
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    if (subscriptionStatus == null) return;
+    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus, fetchedAt: Date.now() };
+    renderNotice(subscriptionStatus);
+  } catch {
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    /* An unavailable billing check must not interrupt settings. */
+  }
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -2722,6 +3180,16 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    ods: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'select the running ODS model' },
+        CONTEXT_WINDOW_FIELD,
+        VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
     lmstudio: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1234/v1' },
@@ -2729,6 +3197,16 @@ function renderProviders() {
         { key: 'model', labelKey: 'st.provider.field.model_optional', type: 'text', placeholderKey: 'st.provider.field.model_loaded_hint' },
         CONTEXT_WINDOW_FIELD,
         VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    osaurus: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:1337/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'llama-3.2-3b-instruct' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
       ],
     },
@@ -2802,6 +3280,23 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    webgpu: {
+      fields: [
+        {
+          key: 'model',
+          labelKey: 'st.provider.field.model',
+          type: 'text',
+          placeholder: 'owner/repository',
+          suggestions: [WEBGPU_COMPASS_TINY_V2_MODEL_ID],
+          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.filter(option => option.id === WEBGPU_COMPASS_TINY_V2_MODEL_ID).map(option => [
+            option.id,
+            `${option.label} — ${option.id}${option.supportsVision ? ` — ${t('st.provider.field.supports_vision')}` : ''}`,
+          ])),
+        },
+        WEBGPU_CONTEXT_WINDOW_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
     azure_openai: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://{resource}.openai.azure.com' },
@@ -2827,6 +3322,9 @@ function renderProviders() {
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-5.6-terra',
           suggestions: [
+            'gpt-6-luna-pro',
+            'gpt-6.1-sol',
+            'gpt-6-astra',
             'gpt-5.6-terra',
             'gpt-5.6-sol',
             'gpt-5.6-luna',
@@ -2846,9 +3344,11 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-or-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'openrouter/free',
-          suggestions: ['openrouter/free', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
+          suggestions: ['openrouter/free', 'anthropic/claude-opus-5.5', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
+        TOOL_MODE_FIELD,
+        OPENROUTER_VISION_MODE_FIELD,
       ],
     },
     huggingface: {
@@ -2884,7 +3384,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-ant-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'claude-opus-5',
-          suggestions: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
+          suggestions: ['claude-fable-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-haiku-5-5', 'claude-haiku-4-5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.anthropic.com' },
         ...CACHE_AWARE_COST_ESTIMATE_FIELDS,
       ],
@@ -2921,9 +3421,17 @@ function renderProviders() {
     deepseek: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-v4-flash',
-          suggestions: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-flash',
+          suggestions: ['deepseek-flash', 'deepseek-v4-flash'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com' },
+        // Chat Completions is the default wire format; DeepSeek's Responses API
+        // is an opt-in that mainly adds JSON-schema structured output.
+        { key: 'apiFormat', labelKey: 'st.provider.field.api_format', type: 'select', collapsed: true,
+          options: [
+            { value: 'auto', label: 'Chat Completions (default)' },
+            { value: 'chat', label: 'Chat Completions' },
+            { value: 'responses', label: 'Responses API' },
+          ] },
         ...COST_ESTIMATE_FIELDS,
       ],
     },
@@ -3062,11 +3570,14 @@ function renderProviders() {
     const keys = new Set(definition.fields.map(field => field.key));
     if (!keys.has('contextWindow')) definition.fields.push(CONTEXT_WINDOW_FIELD);
     if (!keys.has('maxOutputTokens')) definition.fields.push(MAX_OUTPUT_TOKENS_FIELD);
+    // Voluntary research sharing is opt-in per provider and never shown for
+    // WebBrain Compass itself.
+    if (!keys.has('shareQueriesForResearch')) definition.fields.push(SHARE_RESEARCH_FIELD);
   }
 
   providersContainer.appendChild(renderProviderFilterBar());
 
-  let entries = Object.entries(providersData).filter(([id]) => id !== 'webgpu');
+  let entries = Object.entries(providersData);
   const providerQuery = normalizeGeneralSearchText(providerSearchQuery);
   if (providerQuery) {
     entries = entries
@@ -3126,6 +3637,9 @@ function renderProviders() {
             <label style="margin:0;cursor:pointer;">${escapeHtml(label)}</label>
           </div>
         `;
+        if (field.hintKey) {
+          fieldHTML += `<div class="field-hint" style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(field.hintKey))}</div>`;
+        }
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
@@ -3146,7 +3660,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
@@ -3238,28 +3752,33 @@ function renderProviders() {
          </aside>`
       : '';
     const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
-    const duplicateDisabledKey = config.hasDuplicate
-      ? 'st.providers.duplicate_limit'
-      : (!config.canDuplicate
-        ? 'st.providers.duplicate_unavailable'
-        : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : ''));
+    const duplicateDisabledKey = !config.canDuplicate
+      ? 'st.providers.duplicate_unavailable'
+      : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : '');
 
     const subscriptionGuide = providerSubscriptionGuideHtml(definitionId);
     const body = `
       ${subscriptionGuide}
+      ${id !== 'webbrain_cloud' ? `<div class="field">
+        <label for="provider-title-${id}">${escapeHtml(t('st.providers.title'))}</label>
+        <input id="provider-title-${id}" type="text" data-provider="${id}" data-key="label"
+               value="${escapeHtml(config.label || id)}" maxlength="120" required>
+      </div>` : ''}
       ${fieldsHTML}
       ${providerNote}
+      ${id === 'webbrain_cloud' ? '<div class="webbrain-payment-notice" role="status" hidden></div>' : ''}
       ${ollamaWarning}
       ${compatibilitySettings}
       <div class="btn-row">
         <button class="btn-primary btn-save" data-provider="${id}">${escapeHtml(t('st.providers.save'))}</button>
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
+        ${definitionId === 'webgpu' ? `<button class="btn-secondary btn-webgpu-download" data-provider="${id}">${escapeHtml(t('st.providers.webgpu_download.start'))}</button>` : ''}
         ${billingButton}
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
-        ${config.isDuplicate
-          ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
-          : `<button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>`}
+        <button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>
+        ${config.isDuplicate ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>` : ''}
       </div>
+      ${definitionId === 'webgpu' ? `<div class="webgpu-download-status" data-webgpu-download-status="${id}" style="margin-top:8px;font-size:12px;color:var(--text2);">${escapeHtml(t('st.providers.webgpu_download.checking'))}</div>` : ''}
       <div class="test-result" id="test-${id}"></div>
     `;
 
@@ -3278,14 +3797,19 @@ function renderProviders() {
     providersContainer.appendChild(empty);
   }
 
+  refreshWebbrainPaymentNotice();
   restoreProviderApiKeyWarnings();
 
   document.querySelectorAll('.btn-save').forEach(btn => {
-    btn.addEventListener('click', () => saveProvider(btn.dataset.provider));
+    btn.addEventListener('click', () => saveProvider(btn.dataset.provider).catch(() => {}));
   });
   document.querySelectorAll('.btn-test').forEach(btn => {
     btn.addEventListener('click', () => testProvider(btn.dataset.provider));
   });
+  document.querySelectorAll('.btn-webgpu-download').forEach(btn => {
+    btn.addEventListener('click', () => handleWebgpuDownloadButton(btn));
+  });
+  refreshWebgpuDownloadControls();
   document.querySelectorAll('.btn-activate').forEach(btn => {
     btn.addEventListener('click', () => activateProvider(btn.dataset.provider));
   });
@@ -3295,6 +3819,17 @@ function renderProviders() {
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
     input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+  });
+  document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
+    input.addEventListener('click', (event) => {
+      // In click handlers, `input.checked` has already updated to the target
+      // state. Only prompt for confirmation when turning the toggle ON.
+      // preventDefault() cancels the click and rolls `checked` back to false.
+      if (!input.checked) return;
+      if (!window.confirm(t('st.providers.share_research.confirm'))) {
+        event.preventDefault();
+      }
+    });
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
     btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
@@ -3322,10 +3857,19 @@ function renderProviders() {
         input.style.display = 'none';
         input.value = sel.value;
       }
+      if (providerId === 'webgpu' && sel.value !== '__custom__') {
+        const preset = WEBGPU_MODEL_PRESETS.find(option => option.id === sel.value);
+        if (preset?.contextWindow) {
+          const contextInput = document.querySelector(`input[data-provider="${providerId}"][data-key="contextWindow"]`);
+          if (contextInput) contextInput.value = String(preset.contextWindow);
+          if (providersData[providerId]) providersData[providerId].contextWindow = preset.contextWindow;
+        }
+      }
       syncInferredOpenRouterRoutingVariant(providerId, input.value);
       markProviderDirty(providerId);
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
+      if (providerId === 'webgpu') refreshWebgpuDownloadControls();
     });
   });
   document.querySelectorAll('select[data-key="visionMode"]').forEach((select) => {
@@ -3348,6 +3892,7 @@ function renderProviders() {
       refreshProviderCompatibilitySummary(input.dataset.provider);
       refreshVisionStatus(input.dataset.provider);
       if (providerDefinitionId(input.dataset.provider) === 'ollama') refreshVisionStatus(input.dataset.provider);
+      if (input.dataset.provider === 'webgpu' && input.dataset.key === 'model') refreshWebgpuDownloadControls();
     });
   });
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
@@ -3423,7 +3968,6 @@ function renderProviderFilterBar() {
     { key: 'router', labelKey: 'st.providers.filter.router' },
   ];
   const filterCounts = Object.entries(providersData).reduce((counts, [id, config]) => {
-    if (id === 'webgpu') return counts;
     counts.all += 1;
     if (providerIsActive(id, config)) counts.active += 1;
     const category = config.category || 'cloud';
@@ -3461,6 +4005,8 @@ function renderProviderFilterBar() {
   input.value = providerSearchQuery;
   let providerSearchComposing = false;
   const applyProviderSearchInput = () => {
+    // Firefox may emit a final input event while the old search is removed.
+    if (!input.isConnected) return;
     const selectionStart = input.selectionStart ?? input.value.length;
     const selectionEnd = input.selectionEnd ?? input.value.length;
     syncInputsIntoProvidersData();
@@ -3559,7 +4105,7 @@ function markProviderDirty(id) {
 
 function refreshActiveProviderFilterCount() {
   const count = Object.entries(providersData)
-    .filter(([id, config]) => id !== 'webgpu' && providerIsActive(id, config))
+    .filter(([id, config]) => providerIsActive(id, config))
     .length;
   const countEl = document.querySelector('.provider-filter-pill[data-filter="active"] .provider-filter-count');
   if (countEl) countEl.textContent = String(count);
@@ -3725,8 +4271,17 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
     });
+    if (typeof config.label === 'string') config.label = config.label.trim();
     apiKeyWarning = providerApiKeyWarning(id, config);
-    await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    const updateRes = await sendToBackground('update_provider', { providerId: id, config, markConfigured });
+    // updateProvider may fall back to another active provider (e.g. the active
+    // WebGPU model was edited to an undownloaded target). Sync the page-local
+    // selection so the Selected badge does not lie about subsequent chats.
+    if (updateRes && typeof updateRes.activeProviderId === 'string'
+        && updateRes.activeProviderId !== activeProviderId) {
+      activeProviderId = updateRes.activeProviderId;
+      requestedActiveProviderId = updateRes.activeProviderId;
+    }
   } catch (e) {
     if (showFlash) setProviderTestResult(id, 'fail', t('st.providers.failed', { error: e.message }));
     throw e;
@@ -3744,6 +4299,29 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
     if (markConfigured) providersData[id].configured = id !== 'webbrain_cloud';
   }
   if (markConfigured) dirtyProviderIds.delete(id);
+  // If the background fell back to another active provider, re-render all
+  // cards so every Selected badge reflects the persisted selection.
+  if (requestedActiveProviderId === activeProviderId && document.querySelector('.provider-card')) {
+    const selectedCards = [...document.querySelectorAll('.provider-card.selected')].map((card) => card.dataset.providerId);
+    const shouldRerender = selectedCards.length !== 1 || selectedCards[0] !== activeProviderId;
+    if (shouldRerender) {
+      try {
+        syncInputsIntoProvidersData();
+      } catch {
+        // Draft preservation is best-effort; selection accuracy wins.
+      }
+      renderProviders();
+      refreshVisionStatus(id);
+      if (showFlash) {
+        if (apiKeyWarning) setProviderTestResult(id, 'warn', apiKeyWarning);
+        else {
+          const testEl = setProviderTestResult(id, 'ok', t('st.providers.saved'));
+          if (testEl) setTimeout(() => testEl.classList.remove('show'), 2000);
+        }
+      }
+      return;
+    }
+  }
   refreshProviderCardStatus(id);
   refreshVisionStatus(id);
 
@@ -3768,12 +4346,14 @@ function refreshProviderCardStatus(id) {
   card.classList.toggle('configured', isConfigured);
   card.classList.toggle('selected', isSelected);
   const duplicateButton = card.querySelector('.btn-duplicate');
-  if (duplicateButton && providersData[id]?.canDuplicate && !providersData[id]?.hasDuplicate) {
+  if (duplicateButton && providersData[id]?.canDuplicate) {
     const requiresSave = !isConfigured || dirtyProviderIds.has(id);
     duplicateButton.disabled = requiresSave;
     if (!requiresSave) duplicateButton.removeAttribute('title');
     else duplicateButton.title = t('st.providers.duplicate_inactive');
   }
+  const name = card.querySelector('.provider-name');
+  if (name) name.textContent = providersData[id]?.label || id;
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
@@ -3870,7 +4450,13 @@ async function duplicateProvider(id) {
     activeProviderId = refreshed.active;
     restoreProviderDrafts(providerDrafts);
     expandedProviders.add(created.providerId);
+    providerSearchQuery = '';
+    if (providerFilter !== 'all' && providerFilter !== providersData[created.providerId]?.category) {
+      providerFilter = 'all';
+      await chrome.storage.local.set({ providerFilter }).catch(() => {});
+    }
     renderProviders();
+    document.querySelector(`.provider-card[data-provider-id="${created.providerId}"]`)?.scrollIntoView({ block: 'nearest' });
   } catch (error) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
   }

@@ -40,7 +40,7 @@
   <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
   <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
-  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script async src="https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js"></script>
   <script>
     window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
     plausible.init()
@@ -78,6 +78,14 @@
     },
     {
       "@type": "Question",
+      "name": "ฉันชำระเงิน WebBrain Compass แล้ว แต่ส่วนขยายยังขอให้ชำระอีกครั้ง ฉันต้องจ่ายซ้ำหรือไม่?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "ไม่ต้อง — อย่าชำระเงินซ้ำ การสมัคร Compass ของคุณผูกกับตัวระบุเบราว์เซอร์/อุปกรณ์ที่ส่วนขยายสร้างขึ้น ดังนั้นหากตัวระบุนั้นเปลี่ยนไป (เบราว์เซอร์หรืออุปกรณ์ใหม่ ติดตั้งเบราว์เซอร์ใหม่ ลบโปรไฟล์เบราว์เซอร์ หรือรีเซ็ตที่เก็บข้อมูลส่วนขยาย) ส่วนขยายจะไม่รู้จักการสมัครเดิมของคุณและขอให้ชำระเงิน เชื่อมต่อการสมัครเดิมของคุณกับเบราว์เซอร์ปัจจุบันผ่านพอร์ทัลบริการตนเองที่ api.webbrain.one/portal แล้วทำตามคำแนะนำเพื่อกู้คืนการเข้าถึง สำหรับใบเสร็จและการเปลี่ยนแปลงการเรียกเก็บเงินอื่น ๆ ให้จัดการการเรียกเก็บเงินที่ api.webbrain.one/account ด้วยอีเมลของคุณ"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Cloud Sync แบบเข้ารหัสทำงานอย่างไร?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -94,6 +102,14 @@
     },
     {
       "@type": "Question",
+      "name": "ฉันแก้ไขเวิร์กโฟลว์ของ WebBrain ได้หรือไม่?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "ได้ ใช้ ตัวแก้ไขเวิร์กโฟลว์ WebBrain เพื่อตรวจสอบ แก้ไข ตรวจสอบความถูกต้อง และส่งออกไฟล์ JSON ของเวิร์กโฟลว์ในเบราว์เซอร์ของคุณ"
+      }
+    },
+    {
+      "@type": "Question",
       "name": "ใช้ WebBrain แบบออฟไลน์ทั้งหมดได้ไหม?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -102,10 +118,10 @@
     },
     {
       "@type": "Question",
-      "name": "What is the Emergency Box, and how does offline RAG work?",
+      "name": "กล่องฉุกเฉินคืออะไร และ RAG แบบออฟไลน์ทำงานอย่างไร?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required. Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page. You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched."
+        "text": "กล่องฉุกเฉินคือคอลเลกชันเอกสารอ้างอิงภาคสนามสาธารณสมบัติที่คัดสรรแล้วประมาณ 570 ฉบับ (การแพทย์ การเอาตัวรอด การศึกษา การสื่อสาร) ซึ่ง WebBrain สามารถดาวน์โหลดและจัดทำดัชนีในเครื่องได้ เมื่อติดตั้งแล้ว คุณสามารถถามคำถามเชิงข้อเท็จจริงแบบออฟไลน์และรับคำตอบจากเอกสารเหล่านั้นได้โดยไม่ต้องเชื่อมต่ออินเทอร์เน็ต เบื้องหลัง WebBrain ใช้ SQLite FTS5 สำหรับค้นหาคำสำคัญอย่างรวดเร็วทั้งในกล่องฉุกเฉินและคลัง Wikipedia ที่ติดตั้งไว้ รวมถึงชั้นการค้นหาเชิงความหมายเสริมที่ใช้โมเดล E5 หลายภาษาที่ดาวน์โหลดในเครื่อง (~140 MB) ผลลัพธ์จากทั้งสองวิธีจะถูกรวมและกระจายความหลากหลาย และทุกคำตอบจะอ้างอิงข้อความต้นฉบับที่ตรงจุด การอ้างอิงจะเปิดในตัวอ่านในเครื่องซึ่งตรวจสอบความสมบูรณ์ของเอกสารก่อนแสดง — ไม่มีการนำทางไปยังหน้าเว็บจริง คุณยังติดตั้งคลัง Wikipedia ผ่านโหมด Apocalypse เพื่อฐานความรู้ออฟไลน์ที่กว้างขึ้นได้ ตัวกรองแหล่งที่มาและภาษาช่วยให้คุณควบคุมว่าจะค้นในคอลเลกชันใด"
       }
     },
     {
@@ -193,7 +209,7 @@
       "name": "มันถามฉันเยอะเกินไป ปิดได้ไหม?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "ข้อความขออนุมัติเหล่านี้มีไว้เพื่อความปลอดภัยของคุณ แม้แต่ในเว็บไซต์ที่คุณไว้วางใจ ผู้ไม่หวังดีอาจเลียนแบบคำสั่งของ LLM หรือแทรกเนื้อหาที่พยายามทำให้เอเจนต์ทำสิ่งต่าง ๆ ในนามของคุณที่คุณจะไม่อนุมัติ นั่นคือเหตุผลที่ WebBrain ต้องขออนุมัติก่อนการกระทำที่มีผลตามมา หากคุณยังไม่ต้องการผ่านข้อความเหล่านี้ คุณสามารถปิดได้: เปิดปลั๊กอินด้านข้าง คลิกไอคอนรูปวงล้อในส่วนหัว ไปที่แท็บ Permissions ใน settings.html แล้วปิดตัวเลือก Ask before consequential actions."
+        "text": "ข้อความขออนุมัติเหล่านี้มีไว้เพื่อความปลอดภัยของคุณ แม้แต่ในเว็บไซต์ที่คุณไว้วางใจ ผู้ไม่หวังดีอาจเลียนแบบคำสั่งของ LLM หรือแทรกเนื้อหาที่พยายามทำให้เอเจนต์ทำสิ่งต่าง ๆ ในนามของคุณที่คุณจะไม่อนุมัติ นั่นคือเหตุผลที่ WebBrain ต้องขออนุมัติก่อนการกระทำที่มีผลตามมา หากคุณยังไม่ต้องการผ่านข้อความเหล่านี้ ให้พิมพ์ /dangerously-skip-permissions ในแผงด้านข้าง หรือปิดได้: เปิดปลั๊กอินด้านข้าง คลิกไอคอนรูปวงล้อในส่วนหัว ไปที่แท็บ Permissions ใน settings.html แล้วปิดตัวเลือก Ask before consequential actions."
       }
     },
     {
@@ -249,7 +265,7 @@
       "name": "การตั้งค่าเบลอภาพหน้าจอรับประกันหรือไม่ว่าข้อมูลส่วนตัวของฉันจะไม่มีวันไปถึงโมเดลวิชั่นบนคลาวด์?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "ไม่ — มันช่วยลดความเสี่ยง ไม่ใช่การรับประกัน เมื่อเปิดใช้งาน (การตั้งค่า → มัลติโมดัล → การเบลอภาพหน้าจอ ปิดอยู่โดยค่าเริ่มต้น) WebBrain จะเบลอช่องฟอร์มและข้อความที่ดูเหมือนอีเมลหรือหมายเลขโทรศัพท์บนภาพหน้าจอทุกภาพ ก่อน ที่จะส่งไปยังโมเดลวิชั่น การตรวจจับทำงานทั้งหมดบนอุปกรณ์ของคุณโดยใช้หลักการ DOM heuristics ไม่มีการส่งข้อมูลเพิ่มเติมใดๆ ฟีเจอร์นี้เป็นแบบ best-effort และ fail-open หากตัวตรวจจับไม่สามารถทำงานบนหน้าใดหน้าหนึ่งได้ — เช่น ทันทีหลังการนำทาง ในตัวแสดง PDF หรือบนหน้าเบราว์เซอร์ที่ถูกจำกัด — ภาพหน้าจอจะยังคงถูกส่งไปโดยไม่ถูกเบลอ แทนที่จะยกเลิกงานของคุณ เนื้อหาที่หลักการ DOM heuristics มองไม่เห็น (ข้อความที่วาดบน canvas ข้อมูลส่วนบุคคลในรูปภาพ วิดเจ็ตที่ไม่ปกติ) ก็อาจหลุดรอดได้เช่นกัน และการตั้งค่านี้ครอบคลุมเฉพาะภาพหน้าจอเท่านั้น ข้อความในหน้าเว็บที่ส่งไปยังโมเดลจะไม่ถูกเบลอโดยการตั้งค่านี้ หากต้องการความเป็นส่วนตัวด้านวิชั่นอย่างเต็มที่ ให้ใช้โมเดลภายในเครื่อง เมื่อใช้ผู้ให้บริการแบบออฟไลน์ เช่น llama.cpp หรือ Ollama ภาพหน้าจอและข้อความในหน้าเว็บจะไม่ออกจากเครื่องของคุณเลย จึงไม่มีอะไรต้องเบลอตั้งแต่แรก — นี่คือการตั้งค่าเดียวที่รับประกันความเป็นส่วนตัวได้จริง ดู \"ใช้ WebBrain แบบออฟไลน์ทั้งหมดได้ไหม?\" ด้านบน ไม่มีเครื่องที่แรงพอจะรันโมเดลภายในเครื่องแบบรองรับวิชั่น? ทางเลือกที่ดีคือใช้โมเดลภายในเครื่องขนาดเล็กสำหรับการวางแผนและเรียกใช้เครื่องมือ (เบาพอสำหรับ CPU/GPU ทั่วไป) ควบคู่กับผู้ให้บริการคลาวด์สำหรับการเรียกใช้วิชั่นย่อย พร้อมเปิดการเบลอภาพหน้าจอไว้ ด้วยวิธีนี้บทสนทนาและข้อความในหน้าเว็บของคุณยังคงอยู่ในเครื่อง และทุกภาพหน้าจอที่ส่งออกไปยังวิชั่นบนคลาวด์จะถูกเบลอช่องฟอร์มและอีเมล/เบอร์โทรที่ตรวจพบไว้ล่วงหน้าแล้ว — ลดความเสี่ยงบนคลาวด์โดยไม่ต้องใช้ฮาร์ดแวร์สำหรับโมเดลวิชั่นภายในเครื่องแบบเต็มรูปแบบ ตั้งค่าการแบ่งนี้ได้ที่ การตั้งค่า → วิชั่น (ดู \"WebBrain ควบคุมบิล LLM บนคลาวด์อย่างไร?\" ด้านบน)"
+        "text": "ไม่ — มันช่วยลดความเสี่ยง ไม่ใช่การรับประกัน เมื่อเปิดใช้งาน (การตั้งค่า → โมเดลเสริม → การมองเห็น → การเบลอภาพหน้าจอ ปิดอยู่โดยค่าเริ่มต้น) WebBrain จะเบลอช่องฟอร์มและข้อความที่ดูเหมือนอีเมลหรือหมายเลขโทรศัพท์บนภาพหน้าจอทุกภาพ ก่อน ที่จะส่งไปยังโมเดลวิชั่น การตรวจจับทำงานทั้งหมดบนอุปกรณ์ของคุณโดยใช้หลักการ DOM heuristics ไม่มีการส่งข้อมูลเพิ่มเติมใดๆ ฟีเจอร์นี้เป็นแบบ best-effort และ fail-open หากตัวตรวจจับไม่สามารถทำงานบนหน้าใดหน้าหนึ่งได้ — เช่น ทันทีหลังการนำทาง ในตัวแสดง PDF หรือบนหน้าเบราว์เซอร์ที่ถูกจำกัด — ภาพหน้าจอจะยังคงถูกส่งไปโดยไม่ถูกเบลอ แทนที่จะยกเลิกงานของคุณ เนื้อหาที่หลักการ DOM heuristics มองไม่เห็น (ข้อความที่วาดบน canvas ข้อมูลส่วนบุคคลในรูปภาพ วิดเจ็ตที่ไม่ปกติ) ก็อาจหลุดรอดได้เช่นกัน และการตั้งค่านี้ครอบคลุมเฉพาะภาพหน้าจอเท่านั้น ข้อความในหน้าเว็บที่ส่งไปยังโมเดลจะไม่ถูกเบลอโดยการตั้งค่านี้ หากต้องการความเป็นส่วนตัวด้านวิชั่นอย่างเต็มที่ ให้ใช้โมเดลภายในเครื่อง เมื่อใช้ผู้ให้บริการแบบออฟไลน์ เช่น llama.cpp หรือ Ollama ภาพหน้าจอและข้อความในหน้าเว็บจะไม่ออกจากเครื่องของคุณเลย จึงไม่มีอะไรต้องเบลอตั้งแต่แรก — นี่คือการตั้งค่าเดียวที่รับประกันความเป็นส่วนตัวได้จริง ดู \"ใช้ WebBrain แบบออฟไลน์ทั้งหมดได้ไหม?\" ด้านบน ไม่มีเครื่องที่แรงพอจะรันโมเดลภายในเครื่องแบบรองรับวิชั่น? ทางเลือกที่ดีคือใช้โมเดลภายในเครื่องขนาดเล็กสำหรับการวางแผนและเรียกใช้เครื่องมือ (เบาพอสำหรับ CPU/GPU ทั่วไป) ควบคู่กับผู้ให้บริการคลาวด์สำหรับการเรียกใช้วิชั่นย่อย พร้อมเปิดการเบลอภาพหน้าจอไว้ ด้วยวิธีนี้บทสนทนาและข้อความในหน้าเว็บของคุณยังคงอยู่ในเครื่อง และทุกภาพหน้าจอที่ส่งออกไปยังวิชั่นบนคลาวด์จะถูกเบลอช่องฟอร์มและอีเมล/เบอร์โทรที่ตรวจพบไว้ล่วงหน้าแล้ว — ลดความเสี่ยงบนคลาวด์โดยไม่ต้องใช้ฮาร์ดแวร์สำหรับโมเดลวิชั่นภายในเครื่องแบบเต็มรูปแบบ ตั้งค่าการแบ่งนี้ได้ที่ การตั้งค่า → โมเดลเสริม → การมองเห็น (ดู \"WebBrain ควบคุมบิล LLM บนคลาวด์อย่างไร?\" ด้านบน)"
       }
     },
     {
@@ -278,10 +294,10 @@
     },
     {
       "@type": "Question",
-      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
+      "name": "ทำไม WebBrain 33.0.0 ขึ้นไปจึงใช้สัญญาอนุญาต GPL?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
+        "text": "WebBrain 33.0.0 ขึ้นไปเผยแพร่ภายใต้ GPL-3.0-or-later เนื่องจากส่วนขยายเบราว์เซอร์รวมและผสานรวมรันไทม์ WebAssembly ของ Xapian/libzim ที่ได้รับอนุญาต GPL สำหรับการค้นหาข้อความเต็มในคลัง ZIM ของ Wikipedia แพ็กเกจส่วนขยายมีประกาศ GPL ที่เกี่ยวข้อง และซอร์สโค้ดที่เกี่ยวข้องครบถ้วนของรันไทม์ที่รวมอยู่จะเผยแพร่พร้อมกับทุกรุ่น รุ่นก่อน 33.0.0 ยังคงใช้สัญญาอนุญาต MIT ส่วนโปรเจกต์ย่อยที่เผยแพร่อิสระและคอมโพเนนต์บุคคลที่สามยังคงใช้สัญญาอนุญาตตามที่ระบุ ดูบันทึกการตัดสินใจเรื่องสัญญาอนุญาตสำหรับรายละเอียด"
       }
     },
     {
@@ -289,7 +305,7 @@
       "name": "WebBrain ควบคุมบิล LLM บนคลาวด์อย่างไร?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "มีสามชั้นที่เป็นอิสระต่อกัน: ภาพหน้าจอประหยัดโทเค็น ก่อนรูปจะออกจากเครื่องของคุณ WebBrain ปรับขนาด (จำกัดด้านที่สั้นกว่า โดยรักษาสัดส่วน) และบีบอัด JPEG ซ้ำ ๆ จนกระทั่งพอดีกับงบโทเค็นรูปต่อเทิร์น ภาพหน้าจอ 2000×1200 ที่จะใช้โทเค็นอินพุตประมาณ 1,500 บน GPT-4o จะถูกบีบลงเหลือ ~300–500 โทเค็น โดยไม่มีความสูญเสียในทางปฏิบัติสำหรับงานอ่านหน้า ใช้งานอยู่ใน _fitImageDimensions พร้อมยูนิตเทสต์สำหรับคณิตศาสตร์ของงบ การตัด context อัจฉริยะ ประวัติการสนทนา เอาต์พุตของเครื่องมือ และดัมป์ DOM แบบฝังในแต่ละเทิร์นล้วนมีขีดจำกัด และจะถูกตัดจากเก่าที่สุดก่อนเมื่อหน้าต่าง context ของโมเดลที่ใช้งานอยู่ใกล้เต็ม คุณจะไม่เห็นการรันบวมขึ้นเงียบ ๆ จาก 10k โทเค็นเป็น 100k เพราะ read_page คืนบทความยาวขนาดนวนิยาย โมเดลด้านการมองเห็นโดยเฉพาะ จับคู่โมเดลข้อความราคาถูก (เช่น GPT-4o-mini) สำหรับการวางแผนและเรียกใช้เครื่องมือ กับโมเดลที่รองรับการมองเห็นแยก (เช่น GPT-4o) เฉพาะภาพหน้าจอ คุณจะได้ไม่ต้องจ่ายราคาของโมเดลมัลติโมดัลในทุกเทิร์น ตั้งค่าได้ที่ การตั้งค่า → การมองเห็น ผลลัพธ์สุดท้าย: เซสชันยาว ๆ กับผู้ให้บริการคลาวด์ยังคาดเดาได้ หากต้องการการควบคุมเต็มที่ ใช้ llama.cpp ภายในเครื่อง — ต้นทุนต่อโทเค็นเป็นศูนย์"
+        "text": "มีสามชั้นที่เป็นอิสระต่อกัน: ภาพหน้าจอประหยัดโทเค็น ก่อนรูปจะออกจากเครื่องของคุณ WebBrain ปรับขนาด (จำกัดด้านที่สั้นกว่า โดยรักษาสัดส่วน) และบีบอัด JPEG ซ้ำ ๆ จนกระทั่งพอดีกับงบโทเค็นรูปต่อเทิร์น ภาพหน้าจอ 2000×1200 ที่จะใช้โทเค็นอินพุตประมาณ 1,500 บน GPT-4o จะถูกบีบลงเหลือ ~300–500 โทเค็น โดยไม่มีความสูญเสียในทางปฏิบัติสำหรับงานอ่านหน้า ใช้งานอยู่ใน _fitImageDimensions พร้อมยูนิตเทสต์สำหรับคณิตศาสตร์ของงบ การตัด context อัจฉริยะ ประวัติการสนทนา เอาต์พุตของเครื่องมือ และดัมป์ DOM แบบฝังในแต่ละเทิร์นล้วนมีขีดจำกัด และจะถูกตัดจากเก่าที่สุดก่อนเมื่อหน้าต่าง context ของโมเดลที่ใช้งานอยู่ใกล้เต็ม คุณจะไม่เห็นการรันบวมขึ้นเงียบ ๆ จาก 10k โทเค็นเป็น 100k เพราะ read_page คืนบทความยาวขนาดนวนิยาย โมเดลด้านการมองเห็นโดยเฉพาะ จับคู่โมเดลข้อความราคาถูก (เช่น GPT-4o-mini) สำหรับการวางแผนและเรียกใช้เครื่องมือ กับโมเดลที่รองรับการมองเห็นแยก (เช่น GPT-4o) เฉพาะภาพหน้าจอ คุณจะได้ไม่ต้องจ่ายราคาของโมเดลมัลติโมดัลในทุกเทิร์น ตั้งค่าได้ที่ การตั้งค่า → โมเดลเสริม → การมองเห็น ผลลัพธ์สุดท้าย: เซสชันยาว ๆ กับผู้ให้บริการคลาวด์ยังคาดเดาได้ หากต้องการการควบคุมเต็มที่ ใช้ llama.cpp ภายในเครื่อง — ต้นทุนต่อโทเค็นเป็นศูนย์"
       }
     },
     {
@@ -545,7 +561,7 @@
     <section class="faq-topic" id="topic-about" data-faq-topic>
       <header class="faq-topic-header">
         <h2>เกี่ยวกับ WebBrain</h2>
-        <span aria-label="6">6</span>
+        <span aria-label="7">7</span>
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>WebBrain เป็นทางเลือกฟรีของปลั๊กอินเบราว์เซอร์ของ Claude หรือเปล่า?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -554,6 +570,10 @@
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>WebBrain เปรียบเทียบกับ OpenClaw, Browser-Use และเฟรมเวิร์กเอเจนต์ AI อื่น ๆ ได้อย่างไร?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>เป็นเครื่องมือคนละหมวด WebBrain คือส่วนขยายเบราว์เซอร์ — คุณติดตั้งใน Chrome หรือ Firefox และสนทนากับมันในแถบด้านข้าง ไม่ต้องเขียนโค้ด ส่วนเฟรมเวิร์กอย่าง OpenClaw และ Browser-Use คือ SDK สำหรับนักพัฒนาเพื่อสร้างไปป์ไลน์เบราว์เซอร์อัตโนมัติด้วย Python โดยทั่วไปจะใช้เบราว์เซอร์แบบ headless และ CDP คิดอย่างนี้: WebBrain ใช้สำหรับท่องเว็บประจำวันคู่กับผู้ช่วย AI; เฟรมเวิร์กเอเจนต์ใช้สำหรับสร้างบอท scraping และระบบทดสอบอัตโนมัติ ใช้คู่กันได้ — เสริมกัน</p></div>
+      </details>
+      <details class="faq-question" id="workflow-editor" data-faq-item>
+        <summary><span>ฉันแก้ไขเวิร์กโฟลว์ของ WebBrain ได้หรือไม่?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>ได้ ใช้ <a href="https://www.webbrain.one/workflow-editor">ตัวแก้ไขเวิร์กโฟลว์ WebBrain</a> เพื่อตรวจสอบ แก้ไข ตรวจสอบความถูกต้อง และส่งออกไฟล์ JSON ของเวิร์กโฟลว์ในเบราว์เซอร์ของคุณ</p></div>
       </details>
       <details class="faq-question" id="firefox" data-faq-item>
         <summary><span>WebBrain ใช้งานบน Firefox ได้ไหม?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -575,7 +595,7 @@
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
       <header class="faq-topic-header">
         <h2>คลาวด์และการเรียกเก็บเงิน</h2>
-        <span aria-label="4">4</span>
+        <span aria-label="5">5</span>
       </header>
       <details class="faq-question" id="cloud-subscription" data-faq-item>
         <summary><span>ค่าสมัครสมาชิก WebBrain Compass เท่าไร?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -585,13 +605,17 @@
         <summary><span>ฉันจะจัดการหรือยกเลิกการสมัครสมาชิกได้อย่างไร?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>จัดการการเรียกเก็บเงินที่ <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> และเข้าสู่ระบบด้วยอีเมลของคุณ</p></div>
       </details>
+      <details class="faq-question" id="subscription-unrecognized" data-faq-item>
+        <summary><span>ฉันชำระเงิน WebBrain Compass แล้ว แต่ส่วนขยายยังขอให้ชำระอีกครั้ง ฉันต้องจ่ายซ้ำหรือไม่?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>ไม่ต้อง — อย่าชำระเงินซ้ำ การสมัคร Compass ของคุณผูกกับตัวระบุเบราว์เซอร์/อุปกรณ์ที่ส่วนขยายสร้างขึ้น ดังนั้นหากตัวระบุนั้นเปลี่ยนไป (เบราว์เซอร์หรืออุปกรณ์ใหม่ ติดตั้งเบราว์เซอร์ใหม่ ลบโปรไฟล์เบราว์เซอร์ หรือรีเซ็ตที่เก็บข้อมูลส่วนขยาย) ส่วนขยายจะไม่รู้จักการสมัครเดิมของคุณและขอให้ชำระเงิน</p><p>เชื่อมต่อการสมัครเดิมของคุณกับเบราว์เซอร์ปัจจุบันผ่านพอร์ทัลบริการตนเองที่ <a href="https://api.webbrain.one/portal" target="_blank" rel="noopener">api.webbrain.one/portal</a> แล้วทำตามคำแนะนำเพื่อกู้คืนการเข้าถึง</p><p>สำหรับใบเสร็จและการเปลี่ยนแปลงการเรียกเก็บเงินอื่น ๆ ให้จัดการการเรียกเก็บเงินที่ <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> ด้วยอีเมลของคุณ</p></div>
+      </details>
       <details class="faq-question" id="cloud-sync" data-faq-item>
         <summary><span>Cloud Sync แบบเข้ารหัสทำงานอย่างไร?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Cloud Sync เป็นฟีเจอร์เสริมสำหรับสมาชิก WebBrain Compass ที่ยังใช้งานอยู่ ซิงก์ความจำ WebBrain ข้อความเติมอัตโนมัติของโปรไฟล์ และการตั้งค่าผู้ให้บริการที่รองรับ รวมถึงคีย์ API โดย<strong>ไม่</strong>ซิงก์ประวัติแชท ประวัติเบราว์เซอร์ ภาพหน้าจอหน้าเว็บ หรือโทเค็น OAuth เข้าถึง/รีเฟรชแบบเก่า</p><p>เบราว์เซอร์จะเข้ารหัสคลังซิงก์ก่อนอัปโหลดด้วยรหัสผ่านที่คุณเลือก WebBrain Compass เก็บเฉพาะคลังที่เข้ารหัสแล้วเท่านั้น อ่านความจำ ข้อความโปรไฟล์ การตั้งค่าผู้ให้บริการ หรือคีย์ API ของคุณไม่ได้ และกู้รหัสผ่านซิงก์แทนคุณไม่ได้</p><p>ช่องอีเมลใช้สำหรับยืนยันตัวตน billing/subscription แบบ magic-link ของ WebBrain Compass ไม่ใช่รหัสผ่านบัญชี หาก UI บอกให้เปลี่ยนรหัสผ่านใน Cloud Sync หมายถึง <strong>รหัสผ่านเข้ารหัสการซิงก์</strong> ไม่ใช่รหัสผ่านบัญชี WebBrain</p><p>หากลืมรหัสผ่านซิงก์ จะถอดรหัสคลังคลาวด์เก่าไม่ได้ คุณรีเซ็ตคลังคลาวด์แล้วอัปโหลดสำเนาเข้ารหัสใหม่จากอุปกรณ์ที่ยังมีข้อมูลในเครื่องได้</p></div>
       </details>
       <details class="faq-question" id="token-conscious" data-faq-item>
         <summary><span>WebBrain ควบคุมบิล LLM บนคลาวด์อย่างไร?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>มีสามชั้นที่เป็นอิสระต่อกัน:</p><p><strong>ภาพหน้าจอประหยัดโทเค็น</strong> ก่อนรูปจะออกจากเครื่องของคุณ WebBrain ปรับขนาด (จำกัดด้านที่สั้นกว่า โดยรักษาสัดส่วน) และบีบอัด JPEG ซ้ำ ๆ จนกระทั่งพอดีกับงบโทเค็นรูปต่อเทิร์น ภาพหน้าจอ 2000×1200 ที่จะใช้โทเค็นอินพุตประมาณ 1,500 บน GPT-4o จะถูกบีบลงเหลือ ~300–500 โทเค็น โดยไม่มีความสูญเสียในทางปฏิบัติสำหรับงานอ่านหน้า ใช้งานอยู่ใน <code>_fitImageDimensions</code> พร้อมยูนิตเทสต์สำหรับคณิตศาสตร์ของงบ</p><p><strong>การตัด context อัจฉริยะ</strong> ประวัติการสนทนา เอาต์พุตของเครื่องมือ และดัมป์ DOM แบบฝังในแต่ละเทิร์นล้วนมีขีดจำกัด และจะถูกตัดจากเก่าที่สุดก่อนเมื่อหน้าต่าง context ของโมเดลที่ใช้งานอยู่ใกล้เต็ม คุณจะไม่เห็นการรันบวมขึ้นเงียบ ๆ จาก 10k โทเค็นเป็น 100k เพราะ <code>read_page</code> คืนบทความยาวขนาดนวนิยาย</p><p><strong>โมเดลด้านการมองเห็นโดยเฉพาะ</strong> จับคู่โมเดลข้อความราคาถูก (เช่น GPT-4o-mini) สำหรับการวางแผนและเรียกใช้เครื่องมือ กับโมเดลที่รองรับการมองเห็นแยก (เช่น GPT-4o) เฉพาะภาพหน้าจอ คุณจะได้ไม่ต้องจ่ายราคาของโมเดลมัลติโมดัลในทุกเทิร์น ตั้งค่าได้ที่ <strong>การตั้งค่า → การมองเห็น</strong></p><p>ผลลัพธ์สุดท้าย: เซสชันยาว ๆ กับผู้ให้บริการคลาวด์ยังคาดเดาได้ หากต้องการการควบคุมเต็มที่ ใช้ llama.cpp ภายในเครื่อง — ต้นทุนต่อโทเค็นเป็นศูนย์</p></div>
+        <div class="faq-answer"><p>มีสามชั้นที่เป็นอิสระต่อกัน:</p><p><strong>ภาพหน้าจอประหยัดโทเค็น</strong> ก่อนรูปจะออกจากเครื่องของคุณ WebBrain ปรับขนาด (จำกัดด้านที่สั้นกว่า โดยรักษาสัดส่วน) และบีบอัด JPEG ซ้ำ ๆ จนกระทั่งพอดีกับงบโทเค็นรูปต่อเทิร์น ภาพหน้าจอ 2000×1200 ที่จะใช้โทเค็นอินพุตประมาณ 1,500 บน GPT-4o จะถูกบีบลงเหลือ ~300–500 โทเค็น โดยไม่มีความสูญเสียในทางปฏิบัติสำหรับงานอ่านหน้า ใช้งานอยู่ใน <code>_fitImageDimensions</code> พร้อมยูนิตเทสต์สำหรับคณิตศาสตร์ของงบ</p><p><strong>การตัด context อัจฉริยะ</strong> ประวัติการสนทนา เอาต์พุตของเครื่องมือ และดัมป์ DOM แบบฝังในแต่ละเทิร์นล้วนมีขีดจำกัด และจะถูกตัดจากเก่าที่สุดก่อนเมื่อหน้าต่าง context ของโมเดลที่ใช้งานอยู่ใกล้เต็ม คุณจะไม่เห็นการรันบวมขึ้นเงียบ ๆ จาก 10k โทเค็นเป็น 100k เพราะ <code>read_page</code> คืนบทความยาวขนาดนวนิยาย</p><p><strong>โมเดลด้านการมองเห็นโดยเฉพาะ</strong> จับคู่โมเดลข้อความราคาถูก (เช่น GPT-4o-mini) สำหรับการวางแผนและเรียกใช้เครื่องมือ กับโมเดลที่รองรับการมองเห็นแยก (เช่น GPT-4o) เฉพาะภาพหน้าจอ คุณจะได้ไม่ต้องจ่ายราคาของโมเดลมัลติโมดัลในทุกเทิร์น ตั้งค่าได้ที่ <strong>การตั้งค่า → โมเดลเสริม → การมองเห็น</strong></p><p>ผลลัพธ์สุดท้าย: เซสชันยาว ๆ กับผู้ให้บริการคลาวด์ยังคาดเดาได้ หากต้องการการควบคุมเต็มที่ ใช้ llama.cpp ภายในเครื่อง — ต้นทุนต่อโทเค็นเป็นศูนย์</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-models" data-faq-topic>
@@ -604,8 +628,8 @@
         <div class="faq-answer"><p>ได้ ผู้ให้บริการเริ่มต้นของ WebBrain คือ llama.cpp ซึ่งรันโมเดล AI ในเครื่องคุณ ไม่ต้องใช้คีย์ API, AI ไม่ต้องใช้อินเทอร์เน็ต และข้อมูลก็ไม่ออกจากเครื่องคุณเลย เพียงดาวน์โหลดโมเดล GGUF เริ่ม llama-server แล้วคุณจะมี AI browser agent ที่เป็นส่วนตัวเต็มรูปแบบ คุณยังสามารถใช้ Ollama ผ่าน endpoint ที่เข้ากันได้กับ OpenAI ได้ด้วย</p></div>
       </details>
       <details class="faq-question" id="emergency-box" data-faq-item>
-        <summary><span>What is the Emergency Box, and how does offline RAG work?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required.</p><p>Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page.</p><p>You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched.</p></div>
+        <summary><span>กล่องฉุกเฉินคืออะไร และ RAG แบบออฟไลน์ทำงานอย่างไร?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>กล่องฉุกเฉินคือคอลเลกชันเอกสารอ้างอิงภาคสนามสาธารณสมบัติที่คัดสรรแล้วประมาณ 570 ฉบับ (การแพทย์ การเอาตัวรอด การศึกษา การสื่อสาร) ซึ่ง WebBrain สามารถดาวน์โหลดและจัดทำดัชนีในเครื่องได้ เมื่อติดตั้งแล้ว คุณสามารถถามคำถามเชิงข้อเท็จจริงแบบออฟไลน์และรับคำตอบจากเอกสารเหล่านั้นได้โดยไม่ต้องเชื่อมต่ออินเทอร์เน็ต</p><p>เบื้องหลัง WebBrain ใช้ SQLite FTS5 สำหรับค้นหาคำสำคัญอย่างรวดเร็วทั้งในกล่องฉุกเฉินและคลัง Wikipedia ที่ติดตั้งไว้ รวมถึงชั้นการค้นหาเชิงความหมายเสริมที่ใช้โมเดล E5 หลายภาษาที่ดาวน์โหลดในเครื่อง (~140 MB) ผลลัพธ์จากทั้งสองวิธีจะถูกรวมและกระจายความหลากหลาย และทุกคำตอบจะอ้างอิงข้อความต้นฉบับที่ตรงจุด การอ้างอิงจะเปิดในตัวอ่านในเครื่องซึ่งตรวจสอบความสมบูรณ์ของเอกสารก่อนแสดง — ไม่มีการนำทางไปยังหน้าเว็บจริง</p><p>คุณยังติดตั้งคลัง Wikipedia ผ่านโหมด Apocalypse เพื่อฐานความรู้ออฟไลน์ที่กว้างขึ้นได้ ตัวกรองแหล่งที่มาและภาษาช่วยให้คุณควบคุมว่าจะค้นในคอลเลกชันใด</p></div>
       </details>
       <details class="faq-question" id="models-supported" data-faq-item>
         <summary><span>WebBrain รองรับโมเดล AI ใดบ้าง?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -669,11 +693,11 @@
       </details>
       <details class="faq-question" id="cdp" data-faq-item>
         <summary><span>แบนเนอร์ «WebBrain started debugging this browser» คืออะไร? ทำไม WebBrain จึงใช้ CDP?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>เพื่อให้ดำเนินการบนหน้าเว็บได้อย่างเชื่อถือได้ WebBrain ใช้ Chrome DevTools Protocol (CDP) ผ่าน API ส่วนขยายมาตรฐาน <code>chrome.debugger</code> ซึ่งเป็นสาเหตุที่ทำให้ขึ้นแบนเนอร์ «WebBrain started debugging this browser» ของ Chrome โดย CDP ช่วยให้เอเจนต์คลิกและพิมพ์ด้วย<strong>เหตุการณ์อินพุตที่เชื่อถือได้</strong>ซึ่งเว็บไซต์สมัยใหม่ยอมรับจริง ส่วนเหตุการณ์สังเคราะห์ที่ส่งจาก content script มักถูกปฏิเสธโดยหลายเว็บไซต์ Web Components และช่องที่ควบคุมโดยเฟรมเวิร์ก นอกจากนี้ WebBrain ยังใช้มันจับภาพหน้าจอความละเอียดระดับพิกเซลสำหรับการสำรองด้วยวิชัน และเข้าถึง <strong>iframe ข้ามต้นทางและ shadow DOM</strong> ที่ content script มองไม่เห็น</p><p><strong>โหมดถาม</strong>แบบอ่านอย่างเดียว<strong>ไม่จำเป็นต้องใช้ CDP</strong> การอ่านหน้าและ accessibility tree ทำผ่าน content script ปกติ สิ่งที่ต้องใช้ CDP คือความน่าเชื่อถือของ<strong>โหมดทำ</strong>และงานข้ามต้นทาง และในส่วนขยาย Manifest V3 ไม่มี API ใดที่ให้อินพุตที่เชื่อถือได้โดยไม่ใช้ดีบักเกอร์ WebBrain จะแนบดีบักเกอร์<strong>เฉพาะเมื่อการกระทำต้องใช้</strong>เท่านั้น แบบแยกตามแท็บ และส่วนขยายทั้งหมดเป็นโอเพนซอร์ส คุณจึงตรวจสอบได้ว่าเซสชันทำอะไรบ้าง CDP มีพลังมาก เราจึงถือว่าขอบเขตของมันเป็นสิ่งที่ต้องจำกัด (แนบเมื่อจำเป็น ไม่ใช้กับการอ่าน) และการรัดกุมยิ่งขึ้นอยู่ในแผนงานด้านความปลอดภัยของเรา</p></div>
+        <div class="faq-answer"><p>เพื่อให้ดำเนินการบนหน้าเว็บได้อย่างเชื่อถือได้ WebBrain ใช้ Chrome DevTools Protocol (CDP) ผ่าน API ส่วนขยายมาตรฐาน <code>chrome.debugger</code> ซึ่งเป็นสาเหตุที่ทำให้ขึ้นแบนเนอร์ «WebBrain started debugging this browser» ของ Chrome โดย CDP ช่วยให้เอเจนต์คลิกและพิมพ์ด้วย<strong>เหตุการณ์อินพุตที่เชื่อถือได้</strong>ซึ่งเว็บไซต์สมัยใหม่ยอมรับจริง ส่วนเหตุการณ์สังเคราะห์ที่ส่งจาก content script มักถูกปฏิเสธโดยหลายเว็บไซต์ Web Components และช่องที่ควบคุมโดยเฟรมเวิร์ก นอกจากนี้ WebBrain ยังใช้มันจับภาพหน้าจอความละเอียดระดับพิกเซลสำหรับการสำรองด้วยวิชัน และเข้าถึง <strong>iframe ข้ามต้นทางและ shadow DOM</strong> ที่ content script มองไม่เห็น</p><p><strong>โหมดถามแบบอ่านอย่างเดียวไม่จำเป็นต้องใช้ CDP</strong> การอ่านหน้าและ accessibility tree ทำผ่าน content script ปกติ สิ่งที่ต้องใช้ CDP คือความน่าเชื่อถือของ<strong>โหมดทำ</strong>และงานข้ามต้นทาง และในส่วนขยาย Manifest V3 ไม่มี API ใดที่ให้อินพุตที่เชื่อถือได้โดยไม่ใช้ดีบักเกอร์ WebBrain จะแนบดีบักเกอร์<strong>เฉพาะเมื่อการกระทำต้องใช้</strong>เท่านั้น แบบแยกตามแท็บ และส่วนขยายทั้งหมดเป็นโอเพนซอร์ส คุณจึงตรวจสอบได้ว่าเซสชันทำอะไรบ้าง CDP มีพลังมาก เราจึงถือว่าขอบเขตของมันเป็นสิ่งที่ต้องจำกัด (แนบเมื่อจำเป็น ไม่ใช้กับการอ่าน) และการรัดกุมยิ่งขึ้นอยู่ในแผนงานด้านความปลอดภัยของเรา</p></div>
       </details>
       <details class="faq-question" id="disable-approval-questions" data-faq-item>
         <summary><span>มันถามฉันเยอะเกินไป ปิดได้ไหม?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>ข้อความขออนุมัติเหล่านี้มีไว้เพื่อความปลอดภัยของคุณ แม้แต่ในเว็บไซต์ที่คุณไว้วางใจ ผู้ไม่หวังดีอาจเลียนแบบคำสั่งของ LLM หรือแทรกเนื้อหาที่พยายามทำให้เอเจนต์ทำสิ่งต่าง ๆ ในนามของคุณที่คุณจะไม่อนุมัติ นั่นคือเหตุผลที่ WebBrain ต้องขออนุมัติก่อนการกระทำที่มีผลตามมา หากคุณยังไม่ต้องการผ่านข้อความเหล่านี้ คุณสามารถปิดได้: เปิดปลั๊กอินด้านข้าง คลิกไอคอนรูปวงล้อในส่วนหัว ไปที่แท็บ <strong>Permissions</strong> ใน <code>settings.html</code> แล้วปิดตัวเลือก <strong>Ask before consequential actions</strong>.</p></div>
+        <div class="faq-answer"><p>ข้อความขออนุมัติเหล่านี้มีไว้เพื่อความปลอดภัยของคุณ แม้แต่ในเว็บไซต์ที่คุณไว้วางใจ ผู้ไม่หวังดีอาจเลียนแบบคำสั่งของ LLM หรือแทรกเนื้อหาที่พยายามทำให้เอเจนต์ทำสิ่งต่าง ๆ ในนามของคุณที่คุณจะไม่อนุมัติ นั่นคือเหตุผลที่ WebBrain ต้องขออนุมัติก่อนการกระทำที่มีผลตามมา หากคุณยังไม่ต้องการผ่านข้อความเหล่านี้ ให้พิมพ์ <code>/dangerously-skip-permissions</code> ในแผงด้านข้าง หรือปิดได้: เปิดปลั๊กอินด้านข้าง คลิกไอคอนรูปวงล้อในส่วนหัว ไปที่แท็บ <strong>Permissions</strong> ใน <code>settings.html</code> แล้วปิดตัวเลือก <strong>Ask before consequential actions</strong>.</p></div>
       </details>
       <details class="faq-question" id="api-mutations" data-faq-item>
         <summary><span>WebBrain เรียก API โดยตรง หรือคลิกผ่าน UI เสมอ?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -685,15 +709,15 @@
       </details>
       <details class="faq-question" id="screenshot-redaction" data-faq-item>
         <summary><span>การตั้งค่าเบลอภาพหน้าจอรับประกันหรือไม่ว่าข้อมูลส่วนตัวของฉันจะไม่มีวันไปถึงโมเดลวิชั่นบนคลาวด์?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>ไม่ — มันช่วยลดความเสี่ยง ไม่ใช่การรับประกัน เมื่อเปิดใช้งาน (<strong>การตั้งค่า → มัลติโมดัล → การเบลอภาพหน้าจอ</strong> ปิดอยู่โดยค่าเริ่มต้น) WebBrain จะเบลอช่องฟอร์มและข้อความที่ดูเหมือนอีเมลหรือหมายเลขโทรศัพท์บนภาพหน้าจอทุกภาพ <em>ก่อน</em> ที่จะส่งไปยังโมเดลวิชั่น การตรวจจับทำงานทั้งหมดบนอุปกรณ์ของคุณโดยใช้หลักการ DOM heuristics ไม่มีการส่งข้อมูลเพิ่มเติมใดๆ</p><p><strong>ฟีเจอร์นี้เป็นแบบ best-effort และ fail-open</strong> หากตัวตรวจจับไม่สามารถทำงานบนหน้าใดหน้าหนึ่งได้ — เช่น ทันทีหลังการนำทาง ในตัวแสดง PDF หรือบนหน้าเบราว์เซอร์ที่ถูกจำกัด — ภาพหน้าจอจะยังคงถูกส่งไปโดย<em>ไม่ถูกเบลอ</em> แทนที่จะยกเลิกงานของคุณ เนื้อหาที่หลักการ DOM heuristics มองไม่เห็น (ข้อความที่วาดบน canvas ข้อมูลส่วนบุคคลในรูปภาพ วิดเจ็ตที่ไม่ปกติ) ก็อาจหลุดรอดได้เช่นกัน และการตั้งค่านี้ครอบคลุมเฉพาะภาพหน้าจอเท่านั้น ข้อความในหน้าเว็บที่ส่งไปยังโมเดลจะไม่ถูกเบลอโดยการตั้งค่านี้</p><p><strong>หากต้องการความเป็นส่วนตัวด้านวิชั่นอย่างเต็มที่ ให้ใช้โมเดลภายในเครื่อง</strong> เมื่อใช้ผู้ให้บริการแบบออฟไลน์ เช่น llama.cpp หรือ Ollama ภาพหน้าจอและข้อความในหน้าเว็บจะไม่ออกจากเครื่องของคุณเลย จึงไม่มีอะไรต้องเบลอตั้งแต่แรก — นี่คือการตั้งค่าเดียวที่รับประกันความเป็นส่วนตัวได้จริง ดู "ใช้ WebBrain แบบออฟไลน์ทั้งหมดได้ไหม?" ด้านบน</p><p><strong>ไม่มีเครื่องที่แรงพอจะรันโมเดลภายในเครื่องแบบรองรับวิชั่น?</strong> ทางเลือกที่ดีคือใช้โมเดลภายในเครื่องขนาดเล็กสำหรับการวางแผนและเรียกใช้เครื่องมือ (เบาพอสำหรับ CPU/GPU ทั่วไป) ควบคู่กับผู้ให้บริการคลาวด์สำหรับการเรียกใช้วิชั่นย่อย พร้อมเปิดการเบลอภาพหน้าจอไว้ ด้วยวิธีนี้บทสนทนาและข้อความในหน้าเว็บของคุณยังคงอยู่ในเครื่อง และทุกภาพหน้าจอที่ส่งออกไปยังวิชั่นบนคลาวด์จะถูกเบลอช่องฟอร์มและอีเมล/เบอร์โทรที่ตรวจพบไว้ล่วงหน้าแล้ว — ลดความเสี่ยงบนคลาวด์โดยไม่ต้องใช้ฮาร์ดแวร์สำหรับโมเดลวิชั่นภายในเครื่องแบบเต็มรูปแบบ ตั้งค่าการแบ่งนี้ได้ที่ <strong>การตั้งค่า → วิชั่น</strong> (ดู "WebBrain ควบคุมบิล LLM บนคลาวด์อย่างไร?" ด้านบน)</p></div>
+        <div class="faq-answer"><p>ไม่ — มันช่วยลดความเสี่ยง ไม่ใช่การรับประกัน เมื่อเปิดใช้งาน (<strong>การตั้งค่า → โมเดลเสริม → การมองเห็น → การเบลอภาพหน้าจอ</strong> ปิดอยู่โดยค่าเริ่มต้น) WebBrain จะเบลอช่องฟอร์มและข้อความที่ดูเหมือนอีเมลหรือหมายเลขโทรศัพท์บนภาพหน้าจอทุกภาพ <em>ก่อน</em> ที่จะส่งไปยังโมเดลวิชั่น การตรวจจับทำงานทั้งหมดบนอุปกรณ์ของคุณโดยใช้หลักการ DOM heuristics ไม่มีการส่งข้อมูลเพิ่มเติมใดๆ</p><p><strong>ฟีเจอร์นี้เป็นแบบ best-effort และ fail-open</strong> หากตัวตรวจจับไม่สามารถทำงานบนหน้าใดหน้าหนึ่งได้ — เช่น ทันทีหลังการนำทาง ในตัวแสดง PDF หรือบนหน้าเบราว์เซอร์ที่ถูกจำกัด — ภาพหน้าจอจะยังคงถูกส่งไปโดย<em>ไม่ถูกเบลอ</em> แทนที่จะยกเลิกงานของคุณ เนื้อหาที่หลักการ DOM heuristics มองไม่เห็น (ข้อความที่วาดบน canvas ข้อมูลส่วนบุคคลในรูปภาพ วิดเจ็ตที่ไม่ปกติ) ก็อาจหลุดรอดได้เช่นกัน และการตั้งค่านี้ครอบคลุมเฉพาะภาพหน้าจอเท่านั้น <em>ข้อความ</em>ในหน้าเว็บที่ส่งไปยังโมเดลจะไม่ถูกเบลอโดยการตั้งค่านี้</p><p><strong>หากต้องการความเป็นส่วนตัวด้านวิชั่นอย่างเต็มที่ ให้ใช้โมเดลภายในเครื่อง</strong> เมื่อใช้ผู้ให้บริการแบบออฟไลน์ เช่น llama.cpp หรือ Ollama ภาพหน้าจอและข้อความในหน้าเว็บจะไม่ออกจากเครื่องของคุณเลย จึงไม่มีอะไรต้องเบลอตั้งแต่แรก — นี่คือการตั้งค่าเดียวที่รับประกันความเป็นส่วนตัวได้จริง ดู "ใช้ WebBrain แบบออฟไลน์ทั้งหมดได้ไหม?" ด้านบน</p><p><strong>ไม่มีเครื่องที่แรงพอจะรันโมเดลภายในเครื่องแบบรองรับวิชั่น?</strong> ทางเลือกที่ดีคือใช้โมเดลภายในเครื่องขนาดเล็กสำหรับการวางแผนและเรียกใช้เครื่องมือ (เบาพอสำหรับ CPU/GPU ทั่วไป) ควบคู่กับผู้ให้บริการคลาวด์สำหรับการเรียกใช้วิชั่นย่อย พร้อมเปิดการเบลอภาพหน้าจอไว้ ด้วยวิธีนี้บทสนทนาและข้อความในหน้าเว็บของคุณยังคงอยู่ในเครื่อง และทุกภาพหน้าจอที่ส่งออกไปยังวิชั่นบนคลาวด์จะถูกเบลอช่องฟอร์มและอีเมล/เบอร์โทรที่ตรวจพบไว้ล่วงหน้าแล้ว — ลดความเสี่ยงบนคลาวด์โดยไม่ต้องใช้ฮาร์ดแวร์สำหรับโมเดลวิชั่นภายในเครื่องแบบเต็มรูปแบบ ตั้งค่าการแบ่งนี้ได้ที่ <strong>การตั้งค่า → โมเดลเสริม → การมองเห็น</strong> (ดู "WebBrain ควบคุมบิล LLM บนคลาวด์อย่างไร?" ด้านบน)</p></div>
       </details>
       <details class="faq-question" id="page-context" data-faq-item>
         <summary><span>WebBrain ส่ง DOM ทั้งหมดไปยังโมเดล AI หรือไม่?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>ไม่ โดยค่าเริ่มต้น WebBrain จะไม่ส่ง HTML ดิบหรือข้อมูล DOM ดิบทั้งหมด ระบบเริ่มจาก URL และชื่อหน้า คำแนะนำที่ตรงกับเว็บไซต์ และภาพหน้าจอของพื้นที่ที่มองเห็นแบบเลือกใช้เมื่อเปิดใช้งานการมองเห็น</p><p>เมื่องานต้องใช้เนื้อหาของหน้า WebBrain จะอ่านตามความจำเป็นในรูปแบบโครงสร้างการช่วยการเข้าถึงเชิงความหมายที่ย่อแล้วหรือข้อความที่แยกออกมา การอ่านจะกรองตามการมองเห็นเมื่อเหมาะสม จำกัดจำนวนอักขระ และแบ่งผลลัพธ์เป็นหน้า การเข้าถึงซอร์สของหน้าแบบดิบมีเฉพาะในโหมด Dev เท่านั้น</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>ทำไม WebBrain 33.0.0 ขึ้นไปจึงใช้สัญญาอนุญาต GPL?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain 33.0.0 ขึ้นไปเผยแพร่ภายใต้ GPL-3.0-or-later เนื่องจากส่วนขยายเบราว์เซอร์รวมและผสานรวมรันไทม์ WebAssembly ของ Xapian/libzim ที่ได้รับอนุญาต GPL สำหรับการค้นหาข้อความเต็มในคลัง ZIM ของ Wikipedia</p><p>แพ็กเกจส่วนขยายมีประกาศ GPL ที่เกี่ยวข้อง และซอร์สโค้ดที่เกี่ยวข้องครบถ้วนของรันไทม์ที่รวมอยู่จะเผยแพร่พร้อมกับทุกรุ่น รุ่นก่อน 33.0.0 ยังคงใช้สัญญาอนุญาต MIT ส่วนโปรเจกต์ย่อยที่เผยแพร่อิสระและคอมโพเนนต์บุคคลที่สามยังคงใช้สัญญาอนุญาตตามที่ระบุ ดู<a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">บันทึกการตัดสินใจเรื่องสัญญาอนุญาต</a>สำหรับรายละเอียด</p></div>
       </details>
     </section>
     </main>

@@ -1,0 +1,13 @@
+{
+  "schema": "webbrain-accessibility-tree-benchmark-model-check/1",
+  "providerModel": "Codex / gpt-5.6-luna",
+  "method": "Blinded controlled spot-check. The model selected from the task and serialized representation before target fields were compared.",
+  "requests": 36,
+  "validJsonResponses": 36,
+  "formats": {
+    "line": { "cases": 12, "passes": 12, "passRate": 1 },
+    "compact-ndjson": { "cases": 12, "passes": 12, "passRate": 1 },
+    "full-json": { "cases": 12, "passes": 12, "passRate": 1 }
+  },
+  "conclusion": "No selection-quality difference appeared in this small Luna spot-check. It is not statistically significant and does not establish local-model or frontier-model population performance."
+}

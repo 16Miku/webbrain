@@ -1,3 +1,8 @@
+import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
+import { createRequestDeadline, readResponseText, responseAbortError } from './response-body.js';
+import { prepareAuthenticatedDownload, createAuthenticatedDownloadJobs, createDiskDownloadStore } from './download-staging.js';
+import { isMastodonPublicMediaUrl } from '../agent/public-media-url.js';
+import { isKnownMastodonHost } from '../agent/adapters.js';
 /**
  * Network & download tools for the WebBrain agent.
  *
@@ -63,6 +68,8 @@ function htmlToText(html) {
 // agent's generic result truncation. This keeps continuation metadata aligned
 // with the text the model actually received and gives large source files a
 // deterministic search/pagination path.
+const FETCH_BODY_MAX_BYTES = 8 * 1024 * 1024;
+const FETCH_REQUEST_TIMEOUT_MS = 30000;
 const FETCH_TEXT_DEFAULT_LIMIT = 7000;
 const FETCH_TEXT_MIN_LIMIT = 1000;
 const FETCH_TEXT_MAX_LIMIT = 7000;
@@ -402,20 +409,68 @@ function providerError(status, data, rawText) {
   return typeof detail === 'string' ? detail.slice(0, 1000) : JSON.stringify(detail).slice(0, 1000);
 }
 
-function inputUrlAllowed(rawUrl, rules = []) {
-  if (!rules.length) return true;
+// Unknown instances must identify their software independently of the status
+// path. Probe only public metadata on that origin, never the supplied post URL.
+async function verifyMastodonInstance(origin) {
+  const deadline = createRequestDeadline({ timeoutMs: 10000 });
+  const readJson = async (url) => {
+    const response = await fetch(url, {
+      method: 'GET', headers: { Accept: 'application/json' },
+      credentials: 'omit', redirect: 'manual', signal: deadline.signal,
+    });
+    if (!response.ok || response.type === 'opaqueredirect'
+      || (response.url && response.url !== url)) return null;
+    const body = await readResponseText(response, {
+      signal: deadline.signal, maxBytes: 65536, idleTimeoutMs: 10000,
+    });
+    return body.exceeded ? null : JSON.parse(body.text);
+  };
+  try {
+    const discovery = await readJson(`${origin}/.well-known/nodeinfo`);
+    const links = Array.isArray(discovery?.links) ? discovery.links : [];
+    const link = ['2.1', '2.0'].map(version => links.find(item =>
+      item?.rel === `http://nodeinfo.diaspora.software/ns/schema/${version}`)).find(Boolean);
+    if (!link || typeof link.href !== 'string') return false;
+    const metadataUrl = new URL(link.href);
+    if (metadataUrl.origin !== origin || metadataUrl.username || metadataUrl.password) return false;
+    const metadata = await readJson(metadataUrl.href);
+    return metadata?.software?.name === 'mastodon';
+  } catch (_) {
+    return false;
+  } finally {
+    deadline.dispose();
+  }
+}
+
+async function allowedSkillInputUrl(rawUrl, rules = []) {
+  if (!rules.length) return rawUrl;
   let u;
-  try { u = new URL(rawUrl); } catch (_) { return false; }
+  try { u = new URL(rawUrl); } catch (_) { return null; }
   const host = u.hostname.toLowerCase();
   const path = u.pathname || '/';
-  return rules.some((rule) => {
+  for (const rule of rules) {
+    if (rule.siteAdapter === 'mastodon') {
+      // URL already normalizes Unicode domains to IDNA. Check DNS labels rather
+      // than requiring an alphabetic TLD, which would reject punycoded TLDs.
+      const labels = host.split('.');
+      const publicDomain = host.length <= 253 && labels.length > 1
+        && labels.every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))
+        && !/^\d+$/.test(labels.at(-1))
+        && !/\.(?:local|internal|localhost|lan|home|corp)$/i.test(host);
+      if (u.protocol !== 'https:' || u.username || u.password || u.port
+        || !publicDomain || !validateFetchUrl(rawUrl).ok || !isMastodonPublicMediaUrl(rawUrl)) continue;
+      if (isKnownMastodonHost(host) || await verifyMastodonInstance(u.origin)) {
+        // A public status needs only its path; never forward query tokens.
+        return `${u.origin}${path}`;
+      }
+      continue;
+    }
     const ruleHost = String(rule.host || '').toLowerCase();
-    if (!ruleHost) return false;
-    const hostMatches = host === ruleHost || host.endsWith(`.${ruleHost}`);
-    if (!hostMatches) return false;
+    if (!ruleHost || !(host === ruleHost || host.endsWith(`.${ruleHost}`))) continue;
     const paths = Array.isArray(rule.paths) && rule.paths.length ? rule.paths : ['/'];
-    return paths.some((prefix) => path.startsWith(String(prefix || '/')));
-  });
+    if (paths.some(prefix => path.startsWith(String(prefix || '/')))) return rawUrl;
+  }
+  return null;
 }
 
 function applySkillResponseLimits(value, limits = {}) {
@@ -1022,7 +1077,7 @@ async function downloadSkillFile(url, filename, waitMs = 60000) {
     || filenameFromContentDisposition(file.contentDisposition);
   const opts = { url: staged ? staged.localUrl : file.dataUrl, conflictAction: 'uniquify' };
   const safeName = safeDownloadFilename(filename) || responseFilename || defaultSkillDownloadFilename(contentType);
-  if (safeName) opts.filename = safeName;
+  if (safeName) opts.filename = await filenameInConfiguredDownloadDirectory(chrome, safeName);
   let downloadId;
   try {
     downloadId = await new Promise((resolve, reject) => {
@@ -1208,8 +1263,12 @@ export async function executeHttpSkillTool(tool, args = {}, ctx = {}) {
   if (tool.activeTabUrlArg && !payload[tool.activeTabUrlArg]) {
     payload[tool.activeTabUrlArg] = await currentTabUrl(ctx.tabId);
   }
-  if (tool.inputUrlArg && payload[tool.inputUrlArg] && !inputUrlAllowed(payload[tool.inputUrlArg], tool.allowedInputUrls || [])) {
-    return { success: false, error: `Skill tool input URL is outside its declared allowlist: ${tool.inputUrlArg}`, provider: endpoint.hostname };
+  if (tool.inputUrlArg && payload[tool.inputUrlArg]) {
+    const allowedUrl = await allowedSkillInputUrl(payload[tool.inputUrlArg], tool.allowedInputUrls || []);
+    if (!allowedUrl) {
+      return { success: false, error: `Skill tool input URL is outside its declared allowlist: ${tool.inputUrlArg}`, provider: endpoint.hostname };
+    }
+    payload[tool.inputUrlArg] = allowedUrl;
   }
 
   if (tool.kind === 'httpDownloadJob') {
@@ -1386,6 +1445,83 @@ function formatTextFetchResult({ status, contentType, finalUrl, text, replayCont
   }, 'text');
 }
 
+// Both functions are serialized into the extension's isolated page world.
+// Keep them closure-free so Chrome and Firefox execute the same request policy.
+function cancelPageReplay(requestId) {
+  const registry = globalThis.__webbrainNetworkReplays ||= new Map();
+  const active = registry.get(requestId);
+  if (active?.abort) active.abort();
+  else {
+    const cancelled = { cancelled: true };
+    registry.set(requestId, cancelled);
+    setTimeout(() => {
+      if (registry.get(requestId) === cancelled) registry.delete(requestId);
+    }, 30000);
+  }
+}
+
+async function performPageReplay(rawUrl, replayInit, { requestId, maxBytes, timeoutMs }) {
+  const registry = globalThis.__webbrainNetworkReplays ||= new Map();
+  const controller = new AbortController();
+  if (registry.get(requestId)?.cancelled) controller.abort();
+  registry.set(requestId, controller);
+  const timer = setTimeout(() => controller.abort(new Error('Page-context replay request timed out.')), timeoutMs);
+  let reader;
+  let response;
+  try {
+    if (controller.signal.aborted) throw new Error('Page-context replay was cancelled.');
+    const targetUrl = new URL(rawUrl, location.href);
+    if (targetUrl.origin !== location.origin) {
+      return { ok: false, error: 'Page-context replay target does not match page origin.', finalUrl: targetUrl.href };
+    }
+    const headers = {};
+    for (const [name, value] of Object.entries(replayInit.headers || {})) {
+      if (value != null) headers[name] = String(value);
+    }
+    response = await fetch(targetUrl.href, {
+      method: replayInit.method || 'GET',
+      headers,
+      body: replayInit.body == null ? undefined : replayInit.body,
+      credentials: 'include',
+      redirect: 'manual',
+      signal: controller.signal,
+    });
+    if (response.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(response.status)) {
+      return { ok: false, error: 'Page-context replay redirect was not followed; use an explicit destination URL.', status: response.status, finalUrl: targetUrl.href };
+    }
+    const finalUrl = response.url || targetUrl.href;
+    if (new URL(finalUrl).origin !== location.origin) {
+      return { ok: false, error: 'Page-context replay redirected outside the page origin; response body was discarded.', status: response.status, finalUrl };
+    }
+    let text = '';
+    let bytesRead = 0;
+    const decoder = new TextDecoder();
+    if (response.body) {
+      reader = response.body.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytesRead += value.byteLength;
+        if (bytesRead > maxBytes) throw new Error('Page-context replay response exceeds ' + maxBytes + ' bytes.');
+        text += decoder.decode(value, { stream: true });
+      }
+      text += decoder.decode();
+    } else {
+      text = await response.text();
+      if (new TextEncoder().encode(text).length > maxBytes) throw new Error('Page-context replay response is too large.');
+    }
+    return { ok: true, status: response.status, url: finalUrl, contentType: response.headers.get('content-type') || '', text };
+  } catch (error) {
+    return { ok: false, error: controller.signal.reason?.message || error?.message || String(error), cancelled: controller.signal.aborted };
+  } finally {
+    clearTimeout(timer);
+    registry.delete(requestId);
+    controller.abort();
+    try { Promise.resolve(reader ? reader.cancel() : response?.body?.cancel()).catch(() => {}); } catch {}
+    try { reader?.releaseLock(); } catch {}
+  }
+}
+
 async function fetchReplayInPageContext(url, opts = {}, ctx = {}, allowLocal = false) {
   const replayRequestId = opts.replayRequestId || opts.apiReplayRequestId;
   const api = globalThis.chrome;
@@ -1409,6 +1545,15 @@ async function fetchReplayInPageContext(url, opts = {}, ctx = {}, allowLocal = f
     };
   }
 
+  const requestId = crypto.randomUUID();
+  const replayBounds = { requestId, maxBytes: FETCH_BODY_MAX_BYTES, timeoutMs: FETCH_REQUEST_TIMEOUT_MS };
+  const onAbort = () => {
+    api.scripting.executeScript({
+      target: { tabId: ctx.tabId }, world: 'ISOLATED',
+      func: cancelPageReplay, args: [requestId],
+    }).catch(() => {});
+  };
+
   const init = {
     method: opts.method || 'GET',
     headers: opts.headers || {},
@@ -1417,6 +1562,8 @@ async function fetchReplayInPageContext(url, opts = {}, ctx = {}, allowLocal = f
 
   let payload;
   try {
+    if (ctx.signal?.aborted) throw responseAbortError(ctx.signal);
+    ctx.signal?.addEventListener('abort', onAbort, { once: true });
     const results = await api.scripting.executeScript({
       target: { tabId: ctx.tabId },
       // ISOLATED world: the injected func does the safety-critical origin check
@@ -1426,58 +1573,20 @@ async function fetchReplayInPageContext(url, opts = {}, ctx = {}, allowLocal = f
       // check). credentials:'include' still attaches the page's cookies, so the
       // legitimate replay use case is preserved.
       world: 'ISOLATED',
-      args: [url, init],
-      func: async (rawUrl, replayInit) => {
-        try {
-          const targetUrl = new URL(rawUrl, location.href);
-          if (targetUrl.origin !== location.origin) {
-            return {
-              ok: false,
-              error: `Page-context replay target ${targetUrl.origin} does not match page origin ${location.origin}.`,
-              finalUrl: targetUrl.href,
-            };
-          }
-          const headers = {};
-          for (const [name, value] of Object.entries(replayInit.headers || {})) {
-            if (value != null) headers[name] = String(value);
-          }
-          const response = await fetch(targetUrl.href, {
-            method: replayInit.method || 'GET',
-            headers,
-            body: replayInit.body == null ? undefined : replayInit.body,
-            credentials: 'include',
-            redirect: 'follow',
-          });
-          const finalUrl = response.url || targetUrl.href;
-          try {
-            if (new URL(finalUrl).origin !== location.origin) {
-              return {
-                ok: false,
-                error: 'Page-context replay redirected outside the page origin; response body was discarded.',
-                status: response.status,
-                finalUrl,
-              };
-            }
-          } catch (_) {}
-          return {
-            ok: true,
-            status: response.status,
-            url: finalUrl,
-            contentType: response.headers.get('content-type') || '',
-            text: await response.text(),
-          };
-        } catch (e) {
-          return { ok: false, error: e?.message || String(e) };
-        }
-      },
+      args: [url, init, replayBounds],
+      func: performPageReplay,
     });
     payload = results?.[0]?.result;
+    if (ctx.signal?.aborted) throw responseAbortError(ctx.signal);
   } catch (e) {
     return {
       success: false,
-      error: `Page-context API replay failed before fetch: ${e.message}`,
+      error: `Page-context API replay failed: ${e.message}`,
       replayContext: 'page',
+      ...(ctx.signal?.aborted ? { cancelled: true } : {}),
     };
+  } finally {
+    ctx.signal?.removeEventListener('abort', onAbort);
   }
 
   if (!payload) {
@@ -1623,34 +1732,30 @@ export function validatePageSourceResponseHeaders(headers, maxBytes = PAGE_SOURC
   return { ok: true, contentType, sizeBytes };
 }
 
-export async function readPageSourceResponseText(res, maxBytes = PAGE_SOURCE_BODY_MAX_BYTES) {
-  const limit = Math.max(0, Math.floor(Number(maxBytes) || 0));
-  if (!res?.body || typeof res.body.getReader !== 'function') {
-    const text = await res.text();
-    const bytesRead = new TextEncoder().encode(text).length;
-    return { text, bytesRead, exceeded: !!(limit && bytesRead > limit) };
-  }
+export async function readPageSourceResponseText(res, maxBytes = PAGE_SOURCE_BODY_MAX_BYTES, options = {}) {
+  return readResponseText(res, { ...options, maxBytes });
+}
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let text = '';
-  let bytesRead = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
-    if (limit && bytesRead + chunk.byteLength > limit) {
-      const allowed = Math.max(0, limit - bytesRead);
-      if (allowed > 0) {
-        text += decoder.decode(chunk.slice(0, allowed), { stream: true });
-      }
-      try { await reader.cancel(); } catch {}
-      return { text: text + decoder.decode(), bytesRead: limit, exceeded: true };
-    }
-    bytesRead += chunk.byteLength;
-    text += decoder.decode(chunk, { stream: true });
+async function readFetchResponseText(res, signal) {
+  const read = await readResponseText(res, { signal, maxBytes: FETCH_BODY_MAX_BYTES });
+  if (read.exceeded) {
+    throw new Error(`fetch_url response exceeds ${FETCH_BODY_MAX_BYTES} bytes. Download the resource or request a smaller server-side result.`);
   }
-  return { text: text + decoder.decode(), bytesRead, exceeded: false };
+  return read.text;
+}
+
+function networkRequestDeadline(ctx = {}) {
+  // Only extension-owned context controls deadlines, never model-supplied options.
+  const timeoutMs = Number.isFinite(ctx.timeoutMs) && ctx.timeoutMs > 0
+    ? Math.min(ctx.timeoutMs, 120000)
+    : FETCH_REQUEST_TIMEOUT_MS;
+  return createRequestDeadline({ signal: ctx.signal, timeoutMs });
+}
+
+function rejectNetworkRedirect(res) {
+  if (res?.type === 'opaqueredirect' || isHttpRedirectStatus(res?.status)) {
+    throw new Error('Redirect was not followed because its target cannot be validated before sending the request. Use an explicit destination URL.');
+  }
 }
 
 function parseContentLength(value) {
@@ -1767,12 +1872,17 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
     } catch {}
   }
 
+  const deadline = networkRequestDeadline(ctx);
+  let res;
   try {
-    const res = await fetch(targetUrl, {
+    if (deadline.signal.aborted) throw responseAbortError(deadline.signal);
+    res = await fetch(targetUrl, {
       method: 'GET',
       credentials: attachCookies ? 'include' : 'omit',
-      redirect: 'follow',
+      redirect: 'manual',
+      signal: deadline.signal,
     });
+    rejectNetworkRedirect(res);
 
     if (res.url && res.url !== targetUrl) {
       const v2 = validateFetchUrl(res.url, { allowLocalNetwork: allowLocal });
@@ -1809,7 +1919,7 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
       };
     }
 
-    const read = await readPageSourceResponseText(res);
+    const read = await readPageSourceResponseText(res, PAGE_SOURCE_BODY_MAX_BYTES, { signal: deadline.signal });
     if (read.exceeded) {
       return {
         success: false,
@@ -1843,6 +1953,9 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
     }, source.length);
   } catch (e) {
     return { success: false, error: `read_page_source failed: ${e.message}` };
+  } finally {
+    deadline.dispose();
+    try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
 }
 
@@ -1859,10 +1972,9 @@ export async function readPageSource(url, opts = {}, ctx = {}) {
  * mail.google.com do not. This prevents prompt-injected pages from steering
  * the agent into authenticated cross-origin reads.
  *
- * Redirect policy: redirects ARE followed (so http→https and similar work),
- * but the final URL is re-validated against validateFetchUrl. If a redirect
- * lands on a blocked host, or — when cookies were attached — crosses the
- * eTLD+1 boundary, the body is discarded and an error is returned.
+ * Redirects stop before dispatch to an unvalidated destination. The browser
+ * hides Location on manual redirects, so the caller must supply an explicit
+ * destination URL for the same validation and cookie policy as any request.
  */
 export async function fetchUrl(url, opts = {}, ctx = {}) {
   if (!url) return { success: false, error: 'url is required' };
@@ -1895,14 +2007,19 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
     } catch (_) { /* tab gone */ }
   }
 
+  const deadline = networkRequestDeadline(ctx);
+  let res;
   try {
-    const res = await fetch(url, {
+    if (deadline.signal.aborted) throw responseAbortError(deadline.signal);
+    res = await fetch(url, {
       method: opts.method || 'GET',
       headers: opts.headers || {},
       body: opts.body || undefined,
       credentials: attachCookies ? 'include' : 'omit',
-      redirect: 'follow',
+      redirect: 'manual',
+      signal: deadline.signal,
     });
+    rejectNetworkRedirect(res);
 
     // Re-validate the final URL after redirects. If a redirect landed on a
     // blocked host, discard the body. If cookies were attached and the
@@ -1935,7 +2052,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
 
     // JSON
     if (contentType.includes('json')) {
-      const text = await res.text();
+      const text = await readFetchResponseText(res, deadline.signal);
       let pretty = text;
       try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
       return constrainFetchTextResult({
@@ -1949,7 +2066,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
 
     // HTML — strip to readable text
     if (contentType.includes('html') || contentType.includes('xhtml')) {
-      const html = await res.text();
+      const html = await readFetchResponseText(res, deadline.signal);
       const { title, text } = htmlToText(html);
       return constrainFetchTextResult({
         success,
@@ -1967,7 +2084,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
         contentType.includes('csv') ||
         contentType.includes('markdown') ||
         contentType === '') {
-      const text = await res.text();
+      const text = await readFetchResponseText(res, deadline.signal);
       return constrainFetchTextResult({
         success,
         ...(error ? { error } : {}),
@@ -1989,6 +2106,9 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
     };
   } catch (e) {
     return { success: false, error: `Fetch failed: ${e.message}` };
+  } finally {
+    deadline.dispose();
+    try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
 }
 
@@ -2136,120 +2256,161 @@ export async function listDownloads(opts = {}) {
 
 const READ_FILE_TEXT_LIMIT = 16000;
 const READ_FILE_BASE64_LIMIT = 32000;
+const READ_FILE_TEXT_PREFIX_BYTES = READ_FILE_TEXT_LIMIT * 4 + 4;
+const READ_FILE_BINARY_PREFIX_BYTES = READ_FILE_BASE64_LIMIT * 0.75 + 1;
+
+function downloadedFileIsText(item, contentType) {
+  return contentType.startsWith('text/') || /json|xml|javascript|csv|markdown/.test(contentType)
+    || /\.(txt|md|csv|json|xml|html|js|ts|py|css|log|yaml|yml|toml|ini|conf|sh)$/i.test(item.filename || '');
+}
+
+function downloadedFileReadStillActive(ctx) {
+  if (ctx.signal?.aborted) throw ctx.signal.reason || new Error('Download read stopped.');
+  if (typeof ctx.checkStillActive === 'function') ctx.checkStillActive();
+}
+
+function downloadedFileIdentity(item) {
+  return JSON.stringify([item.id, item.state, item.filename, item.url, item.mime, item.fileSize, item.exists]);
+}
+
+function downloadedFileContent(item, payload, contentSource, savedFileVerified) {
+  const size = payload?.size;
+  if (payload?.exists !== true || payload.readable !== true || !Number.isSafeInteger(size) || size < 0
+      || typeof payload.base64 !== 'string' || payload.base64.length > Math.ceil(READ_FILE_TEXT_PREFIX_BYTES / 3) * 4
+      || !/^[A-Za-z0-9+/]*={0,2}$/.test(payload.base64)) {
+    return { success: false, code: 'saved_download_unreadable', error: 'The completed download could not be read from its saved source.' };
+  }
+  const binary = atob(payload.base64), bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+  if (bytes.length !== payload.dataBytesRead || bytes.length > size
+      || payload.dataTruncated !== (bytes.length < size)) {
+    return { success: false, code: 'saved_download_read_incomplete', error: 'The downloaded-file byte window could not be verified.' };
+  }
+  const ct = String(item.mime || payload.mimeType || '').toLowerCase();
+  const common = { success: true, filename: item.filename, contentType: ct, sizeBytes: size,
+    contentSource, savedFileVerified, sourceRefetched: false, bytesRead: bytes.length };
+  if (downloadedFileIsText(item, ct)) {
+    // Do not invent the full character count of a bounded byte prefix. A
+    // streaming decode also omits a partial UTF-8 character at its boundary.
+    const text = new TextDecoder().decode(bytes, { stream: payload.dataTruncated });
+    return { ...common, contentType: ct || 'text/plain', text: text.slice(0, READ_FILE_TEXT_LIMIT),
+      truncated: payload.dataTruncated || text.length > READ_FILE_TEXT_LIMIT,
+      originalLength: payload.dataTruncated ? null : text.length, originalLengthKnown: !payload.dataTruncated };
+  }
+  if (size > READ_FILE_BASE64_LIMIT * 0.75) {
+    return { ...common, note: savedFileVerified
+      ? `Binary file too large to inline (${size} bytes). It is on disk at: ${item.filename}`
+      : `Captured binary payload too large to inline (${size} bytes). Firefox cannot verify the current on-disk file.` };
+  }
+  if (payload.dataTruncated) return { success: false, code: 'saved_download_read_incomplete', error: 'The small binary payload was not read completely.' };
+  return { ...common, base64: payload.base64 };
+}
 
 export async function readDownloadedFile(downloadId, ctx = {}) {
-  if (downloadId == null) return { success: false, error: 'downloadId is required' };
+  if (!Number.isSafeInteger(downloadId) || downloadId < 0) return { success: false, error: 'A valid downloadId is required.' };
   try {
+    downloadedFileReadStillActive(ctx);
     const items = await chrome.downloads.search({ id: downloadId });
-    if (items.length === 0) return { success: false, error: `Download #${downloadId} not found` };
-    const item = items[0];
-    if (item.state !== 'complete') {
-      return { success: false, error: `Download is in state: ${item.state}, not complete` };
+    downloadedFileReadStillActive(ctx);
+    const item = items.find(value => value.id === downloadId);
+    if (!item) return { success: false, error: `Download #${downloadId} not found` };
+    if (item.state !== 'complete' || item.exists === false || typeof item.filename !== 'string' || !item.filename) {
+      return { success: false, code: 'saved_download_unavailable', error: 'The completed download is missing, deleted or not yet complete.' };
     }
-
-    // Re-fetch the source URL. Validate first; apply same cookie policy as
-    // fetchUrl (eTLD+1 of active tab), and re-validate after redirects.
-    // data: URLs are exempt from the http(s)-only validator:
-    // downloadResourceFromPage saves blob: resources as data: URLs
-    // (chrome.downloads can't follow blob: from the background), and a
-    // data: URL's content is already inline — there is no network request
-    // to guard.
-    const allowLocal = getAllowLocalNetwork();
-    const isDataUrl = typeof item.url === 'string' && item.url.startsWith('data:');
-    if (!isDataUrl) {
-      const v = validateFetchUrl(item.url, { allowLocalNetwork: allowLocal });
-      if (!v.ok) return { success: false, error: v.error };
+    if (!Number.isSafeInteger(ctx.tabId) || !ctx.cdpClient?.probeLocalFile || !ctx.cdpClient?.attach
+        || !chrome.webNavigation?.getAllFrames) {
+      return { success: false, code: 'saved_download_read_unavailable', error: 'Reading saved download bytes requires the current tab and its isolated local-file reader. The source URL was not fetched.' };
     }
-
-    let attachCookies = false;
-    let tabRegDomain = null;
-    if (ctx && ctx.tabId != null) {
-      try {
-        const tab = await chrome.tabs.get(ctx.tabId);
-        if (tab && tab.url) {
-          try {
-            tabRegDomain = registrableDomain(new URL(tab.url).hostname);
-            if (tabRegDomain && tabRegDomain === registrableDomain(new URL(item.url).hostname)) {
-              attachCookies = true;
-            }
-          } catch (_) {}
-        }
-      } catch (_) {}
+    const frames = await chrome.webNavigation.getAllFrames({ tabId: ctx.tabId });
+    downloadedFileReadStillActive(ctx);
+    const frame = frames?.find(value => value.frameId === 0);
+    if (!frame?.documentId || !frame.url) return { success: false, code: 'saved_download_document_unavailable', error: 'The current document could not be pinned for the local-file read.' };
+    const originalItem = downloadedFileIdentity(item);
+    const ct = String(item.mime || '').toLowerCase();
+    const prefixBytes = downloadedFileIsText(item, ct) ? READ_FILE_TEXT_PREFIX_BYTES : READ_FILE_BINARY_PREFIX_BYTES;
+    await ctx.cdpClient.attach(ctx.tabId);
+    downloadedFileReadStillActive(ctx);
+    const payload = await ctx.cdpClient.probeLocalFile(ctx.tabId, item.filename,
+      { includeData: true, maxBytes: prefixBytes, readPrefixBytes: prefixBytes });
+    downloadedFileReadStillActive(ctx);
+    const current = await chrome.downloads.search({ id: downloadId });
+    downloadedFileReadStillActive(ctx);
+    if (current.length !== 1 || downloadedFileIdentity(current[0]) !== originalItem) {
+      return { success: false, code: 'saved_download_changed', error: 'The download changed or disappeared while its saved bytes were being read.' };
     }
-
-    const res = await fetch(item.url, {
-      credentials: attachCookies ? 'include' : 'omit',
-      redirect: 'follow',
-    });
-    if (!isDataUrl && res.url && res.url !== item.url) {
-      const v2 = validateFetchUrl(res.url, { allowLocalNetwork: allowLocal });
-      if (!v2.ok) return { success: false, error: `Redirect to blocked URL: ${v2.error}`, finalUrl: res.url };
-      if (attachCookies && tabRegDomain) {
-        try {
-          const finalRegDomain = registrableDomain(new URL(res.url).hostname);
-          if (finalRegDomain !== tabRegDomain) {
-            return { success: false, error: `Redirect crossed registrable-domain boundary; body discarded for safety.`, finalUrl: res.url };
-          }
-        } catch (_) {}
-      }
+    const afterFrames = await chrome.webNavigation.getAllFrames({ tabId: ctx.tabId });
+    downloadedFileReadStillActive(ctx);
+    const after = afterFrames?.find(value => value.frameId === 0);
+    if (!after || after.documentId !== frame.documentId || after.url !== frame.url) {
+      return { success: false, code: 'saved_download_document_changed', error: 'The current document changed during the local-file read; the bytes were discarded.' };
     }
-    if (!res.ok) {
-      return { success: false, error: `Re-fetch failed with HTTP ${res.status}` };
+    if (Number.isSafeInteger(item.fileSize) && item.fileSize >= 0 && payload?.size !== item.fileSize) {
+      return { success: false, code: 'saved_download_changed', error: 'The saved file size no longer matches the completed download.' };
     }
-    const ct = (item.mime || res.headers.get('content-type') || '').toLowerCase();
-
-    // Text-y types — return as text
-    if (ct.startsWith('text/') ||
-        ct.includes('json') ||
-        ct.includes('xml') ||
-        ct.includes('javascript') ||
-        ct.includes('csv') ||
-        ct.includes('markdown') ||
-        /\.(txt|md|csv|json|xml|html|js|ts|py|css|log|yaml|yml|toml|ini|conf|sh)$/i.test(item.filename)) {
-      const text = await res.text();
-      return {
-        success: true,
-        filename: item.filename,
-        contentType: ct || 'text/plain',
-        text: text.slice(0, READ_FILE_TEXT_LIMIT),
-        truncated: text.length > READ_FILE_TEXT_LIMIT,
-        originalLength: text.length,
-      };
-    }
-
-    // Binary
-    const buf = await res.arrayBuffer();
-    const sizeBytes = buf.byteLength;
-    if (sizeBytes > READ_FILE_BASE64_LIMIT * 0.75) {
-      return {
-        success: true,
-        filename: item.filename,
-        contentType: ct,
-        sizeBytes,
-        note: `Binary file too large to inline (${sizeBytes} bytes). It is on disk at: ${item.filename}`,
-      };
-    }
-    const bytes = new Uint8Array(buf);
-    let bin = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-    }
-    return {
-      success: true,
-      filename: item.filename,
-      contentType: ct,
-      sizeBytes,
-      base64: btoa(bin),
-    };
-  } catch (e) {
-    return { success: false, error: e.message };
+    return downloadedFileContent(item, payload, 'saved_local_file', true);
+  } catch (error) {
+    return { success: false, code: ctx.signal?.aborted ? 'saved_download_read_cancelled' : 'saved_download_read_failed',
+      error: ctx.signal?.aborted ? 'Download read stopped; no file bytes returned.' : String(error?.message || 'Saved download read failed.') };
   }
 }
 
 // ─── download_resource_from_page ────────────────────────────────────────
 
-export async function downloadResourceFromPage(tabId, args = {}) {
+async function prepareGenericDownload(url, ctx = {}) {
+  try {
+    await ensureOffscreen();
+    const contexts = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'], documentUrls: [chrome.runtime.getURL('src/offscreen/offscreen.html')] });
+    if (contexts.length !== 1 || !contexts[0].documentId) throw new Error('The download offscreen document cannot be uniquely identified.');
+    const documentId = contexts[0].documentId;
+    const context = { documentId, origin: chrome.runtime.getURL('').replace(/\/$/, ''),
+      isCurrent: () => !ctx.signal?.aborted };
+    const send = async message => sendOffscreenSkillDownloadMessage(message);
+    const transport = {
+      start: (jobId, url) => send({ type: 'authenticated-download-start', jobId, url }),
+      status: jobId => send({ type: 'authenticated-download-status', jobId }),
+      cancel: jobId => send({ type: 'authenticated-download-cancel', jobId }),
+      forget: jobId => send({ type: 'authenticated-download-forget', jobId }),
+    };
+    return await prepareAuthenticatedDownload(url, { api: chrome, transport, context,
+      validateUrl: value => validateFetchUrl(value, { allowLocalNetwork: getAllowLocalNetwork() }), signal: ctx.signal });
+  } catch (error) { return { success: false, error: `Authenticated download staging is unavailable: ${error.message}` }; }
+}
+
+async function releaseGenericDownloadStage(releaseToken) {
+  if (!releaseToken) return;
+  try { await sendOffscreenSkillDownloadMessage({ type: 'authenticated-download-release', releaseToken }); }
+  catch (_) { /* A fresh offscreen lifetime removes abandoned generic stages. */ }
+}
+
+function genericDownloadFilename(stage) {
+  const attachment = filenameFromContentDisposition(stage.contentDisposition);
+  if (attachment) return attachment;
+  try {
+    const basename = safeDownloadFilename(decodeURIComponent(new URL(stage.finalUrl).pathname.split('/').pop() || ''));
+    if (basename) return basename;
+  } catch (_) {}
+  return defaultSkillDownloadFilename(stage.contentType)?.replace(/^public-media/, 'download') || 'download.bin';
+}
+
+function retainGenericDownloadStage(downloadId, releaseToken, signal) {
+  if (!releaseToken) return;
+  const listener = delta => {
+    if (delta.id === downloadId && ['complete', 'interrupted'].includes(delta.state?.current)) void finish();
+  };
+  let finished = false;
+  const finish = async () => {
+    if (finished) return; finished = true;
+    chrome.downloads.onChanged.removeListener(listener);
+    signal?.removeEventListener('abort', cancel);
+    await releaseGenericDownloadStage(releaseToken);
+  };
+  const cancel = async () => { if (await callChromeDownloadAction('cancel', downloadId)) await finish(); };
+  signal?.addEventListener('abort', cancel, { once: true });
+  chrome.downloads.onChanged.addListener(listener);
+  if (signal?.aborted) void cancel();
+  findDownloadItem(downloadId).then(item => { if (['complete', 'interrupted'].includes(item?.state)) void finish(); }).catch(() => {});
+}
+
+export async function downloadResourceFromPage(tabId, args = {}, ctx = {}) {
   const { selector, filename } = args;
   if (!selector) return { success: false, error: 'selector is required' };
   try {
@@ -2299,10 +2460,22 @@ export async function downloadResourceFromPage(tabId, args = {}) {
       };
     }
 
+    if (!r.isBlob) {
+      const urlCheck = validateFetchUrl(r.url, { allowLocalNetwork: getAllowLocalNetwork() });
+      if (!urlCheck.ok) return { success: false, blocked: true, error: urlCheck.error };
+    }
+
+    if (!r.isBlob) {
+      const batch = await downloadFiles({ urls: [r.url], filename }, ctx);
+      const result = batch.downloads?.[0] || batch;
+      return { ...result, sourceUrl: r.url, blob: false, mime: null };
+    }
+
+    const downloadFilename = await filenameInConfiguredDownloadDirectory(chrome, filename);
     const downloadId = await new Promise((resolve, reject) => {
       chrome.downloads.download({
         url: r.url,
-        filename: filename || undefined,
+        filename: downloadFilename,
         conflictAction: 'uniquify',
       }, (id) => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
@@ -2370,7 +2543,7 @@ async function resolveDownloadInfo(downloadId, timeoutMs = 15000, opts = {}) {
   return last; // timed out — return best-known (may still be in_progress)
 }
 
-export async function downloadFiles(args = {}) {
+export async function downloadFiles(args = {}, ctx = {}) {
   const urls = args.urls;
   if (!Array.isArray(urls) || urls.length === 0) {
     return { success: false, error: 'urls array is required' };
@@ -2389,17 +2562,32 @@ export async function downloadFiles(args = {}) {
       const i = idx++;
       if (i >= urls.length) return;
       const url = urls[i];
+      let stage = null;
       try {
-        const opts = { url, conflictAction: 'uniquify' };
-        if (i === 0 && singleFilename) opts.filename = singleFilename;
+        const urlCheck = validateFetchUrl(url, { allowLocalNetwork: getAllowLocalNetwork() });
+        if (!urlCheck.ok) {
+          results[i] = { url, success: false, blocked: true, error: urlCheck.error };
+          continue;
+        }
+        stage = await prepareGenericDownload(url, ctx);
+        if (!stage.success) { results[i] = { url, ...stage, success: false }; continue; }
+        const opts = { url: stage.localUrl, conflictAction: 'uniquify' };
+        opts.filename = await filenameInConfiguredDownloadDirectory(chrome,
+          i === 0 && singleFilename ? singleFilename : genericDownloadFilename(stage));
+        if (ctx.signal?.aborted) {
+          await releaseGenericDownloadStage(stage.releaseToken);
+          results[i] = { url, success: false, cancelled: true, error: 'Download stopped before saving.' }; continue;
+        }
         const downloadId = await new Promise((resolve, reject) => {
           chrome.downloads.download(opts, (id) => {
             if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
             else resolve(id);
           });
         });
-        results[i] = { url, downloadId, success: true };
+        retainGenericDownloadStage(downloadId, stage.releaseToken, ctx.signal);
+        results[i] = { url, downloadId, success: true, finalUrl: stage.finalUrl };
       } catch (e) {
+        if (stage?.releaseToken) await releaseGenericDownloadStage(stage.releaseToken);
         results[i] = { url, success: false, error: e.message };
       }
     }
@@ -2422,6 +2610,7 @@ export async function downloadFiles(args = {}) {
         if (info.error) r.error = info.error;
         if (info.bytesReceived != null) r.bytesReceived = info.bytesReceived;
         if (info.totalBytes != null) r.totalBytes = info.totalBytes;
+        if (ctx.signal?.aborted) { r.success = false; r.cancelled = true; r.savedBeforeStop = info.state === 'complete'; }
         if (info.state === 'interrupted') {
           r.success = false;
           r.error = info.error ? `Download interrupted: ${info.error}` : 'Download interrupted before completion.';

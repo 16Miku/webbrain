@@ -1,5 +1,7 @@
 {
   "rewrites": [
+    { "source": "/workflow-editor", "destination": "/workflow-editor/index.html" },
+    { "source": "/workflow-editor/", "destination": "/workflow-editor/index.html" },
     { "source": "/privacy", "destination": "/privacy.html" },
     { "source": "/subscribe", "destination": "/subscribe/index.html" },
     { "source": "/subscribe/", "destination": "/subscribe/index.html" },

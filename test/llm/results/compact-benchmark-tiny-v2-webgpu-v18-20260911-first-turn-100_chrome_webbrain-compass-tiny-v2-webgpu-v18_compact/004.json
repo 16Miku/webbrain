@@ -1,0 +1,28 @@
+{
+  "id": "004",
+  "user": "open my github",
+  "mode": "act",
+  "tab": {
+    "url": "about:home",
+    "title": "New Tab"
+  },
+  "latencyMs": 3203,
+  "error": null,
+  "firstToolCall": {
+    "name": "navigate",
+    "args": {
+      "url": "https://github.com",
+      "force": false
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "finishReason": "tool_calls",
+  "content": "<function name=\"navigate\"><param name=\"url\">https://github.com</param><param name=\"force\">False</param></function>",
+  "usage": {
+    "prompt_tokens": 9707,
+    "completion_tokens": 25,
+    "total_tokens": 9732
+  },
+  "attempts": 1,
+  "retryErrors": []
+}

@@ -1,0 +1,36 @@
+{
+  "id": "042",
+  "category": "counter-polarity",
+  "description": "Mastodon counter shows \"251\" (positive) — 251 chars remaining. Safe to submit.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 5673,
+  "error": null,
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "expected": {
+    "idealNextToolCall": {
+      "name": "click",
+      "args": {
+        "text": "Gönder"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "set_field({ref_id:\"ref_8\", clear:true, text:\"...\"})",
+        "reason": "Shortening again — but 251 means 251 remaining, not 251 over. gpt-4o xpx9t9 misread this exact case."
+      }
+    ],
+    "successRubric": "Positive number on the counter = chars REMAINING (Mastodon). 251 means safe. Submit via click on \"Gönder\"."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "no_tool",
+  "scoreNote": null,
+  "finishReason": "stop",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t post the shortened version because the field currently contains `<short text>` and the page is still loading the publish form. Please paste the shortened text or select the field and enter it, then I’ll submit it.</param></function>",
+  "usage": {
+    "prompt_tokens": 9852,
+    "completion_tokens": 65,
+    "total_tokens": 9917
+  }
+}

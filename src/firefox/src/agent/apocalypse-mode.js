@@ -248,12 +248,24 @@ function nulString(bytes, start) {
   return { value: new TextDecoder().decode(bytes.subarray(start, end)), next: end + 1 };
 }
 
+function decodeHtmlNumericEntity(code) {
+  const hexadecimal = code[0].toLowerCase() === 'x';
+  const digits = (hexadecimal ? code.slice(1) : code).replace(/^0+/, '');
+  // Numeric references must produce Unicode scalar values. Invalid references
+  // are article text, not evidence that the containing archive is unreadable.
+  if (digits.length > (hexadecimal ? 6 : 7)) return '\uFFFD';
+  const value = Number.parseInt(digits || '0', hexadecimal ? 16 : 10);
+  return value > 0 && value <= 0x10ffff && !(value >= 0xd800 && value <= 0xdfff)
+    ? String.fromCodePoint(value)
+    : '\uFFFD';
+}
+
 function decodeHtmlText(html) {
   return String(html || '')
     .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<!--[^]*?-->/g, ' ')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code[0].toLowerCase() === 'x' ? code.slice(1) : code, code[0].toLowerCase() === 'x' ? 16 : 10)))
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code) => decodeHtmlNumericEntity(code))
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
@@ -272,7 +284,7 @@ function decodeHtmlArticleText(html) {
     .replace(/<\/(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|table|tr|ul)>/gi, '\n\n')
     .replace(/<li\b[^>]*>/gi, '• ')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code[0].toLowerCase() === 'x' ? code.slice(1) : code, code[0].toLowerCase() === 'x' ? 16 : 10)))
+    .replace(/&#(x[0-9a-f]+|\d+);/gi, (_, code) => decodeHtmlNumericEntity(code))
     .replace(/&nbsp;/gi, ' ')
     .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')

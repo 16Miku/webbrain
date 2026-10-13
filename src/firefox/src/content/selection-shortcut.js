@@ -5,7 +5,9 @@
  * the background owns prompt construction and untrusted-content wrapping.
  */
 (function () {
-  if (window.top !== window || window.__webbrainSelectionShortcutInjected) return;
+  const shortcutConfig = globalThis.__webbrainSelectionShortcutConfig;
+  if ((window.top !== window && shortcutConfig?.allowNestedFrame !== true)
+      || window.__webbrainSelectionShortcutInjected) return;
   window.__webbrainSelectionShortcutInjected = true;
 
   const api = globalThis.browser || globalThis.chrome;
@@ -13,7 +15,15 @@
 
   const STORAGE_KEY = 'selectionShortcutEnabled';
   const LOCALE_STORAGE_KEY = 'wbLocale';
-  const SUBMIT_MESSAGE = 'WB_SELECTION_SHORTCUT_SUBMIT';
+  const SUBMIT_MESSAGE = typeof shortcutConfig?.submitMessage === 'string'
+    && shortcutConfig.submitMessage.trim()
+    ? shortcutConfig.submitMessage.trim()
+    : 'WB_SELECTION_SHORTCUT_SUBMIT';
+  const SUBMIT_FIELDS = shortcutConfig?.submitFields
+    && typeof shortcutConfig.submitFields === 'object'
+    && !Array.isArray(shortcutConfig.submitFields)
+    ? { ...shortcutConfig.submitFields }
+    : {};
   const LOCALIZATION_MESSAGE = 'WB_SELECTION_SHORTCUT_LOCALIZATION';
   const GAP = 8;
   const BUTTON_SIZE = 44;
@@ -175,6 +185,7 @@ host.lang = localization.locale;
     if (host?.isConnected) return;
     host = document.createElement('div');
     host.id = 'webbrain-selection-shortcut-host';
+    (window.__wbPageMonitorDecorations ??= new WeakSet()).add(host);
     host.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;display:block;pointer-events:none;z-index:2147483647';
     shadow = host.attachShadow({ mode: 'closed' });
     shadow.innerHTML = `
@@ -425,8 +436,18 @@ host.lang = localization.locale;
     }
   }
 
+  const surfacePressedKeys = new Set();
+
   function containSurfaceKeyboardEvent(event) {
-    if (!host || !event.composedPath?.().includes(host)) return;
+    const key = event.code || event.key;
+    const onSurface = !!host && event.composedPath?.().includes(host);
+    // Submitting/dismissing the dialog can move focus before the chord's
+    // keyup. Its release still belongs to the dialog, not the underlying page.
+    if (!onSurface && event.type === 'keydown') surfacePressedKeys.delete(key);
+    const ownedRelease = event.type === 'keyup' && surfacePressedKeys.has(key);
+    if (!onSurface && !ownedRelease) return;
+    if (event.type === 'keydown' && event.isTrusted) surfacePressedKeys.add(key);
+    if (event.type === 'keyup') surfacePressedKeys.delete(key);
     event.stopImmediatePropagation();
     if (event.type !== 'keydown') return;
     if (event.key === 'Escape') {
@@ -515,6 +536,7 @@ host.lang = localization.locale;
     if (action === 'custom' && !String(customQuestion || '').trim()) return;
     if (action === 'translate' && !isSupportedTranslationLanguage(language)) return;
     const request = {
+      ...SUBMIT_FIELDS,
       type: SUBMIT_MESSAGE,
       action,
       selectionText: snapshot.text,
@@ -569,6 +591,7 @@ host.lang = localization.locale;
   window.addEventListener('keydown', containSurfaceKeyboardEvent, true);
   window.addEventListener('keypress', containSurfaceKeyboardEvent, true);
   window.addEventListener('keyup', containSurfaceKeyboardEvent, true);
+  window.addEventListener('blur', () => surfacePressedKeys.clear());
 
   api.runtime.onMessage.addListener((message) => {
     if (message?.type === 'WB_HIDE_FOR_TOOL_USE') {

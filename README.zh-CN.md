@@ -84,9 +84,12 @@ python -m sglang.launch_server --model-path your-model --port 30000
 
 LM Studio（`:1234/v1`）、Jan（`:1337/v1`）、LocalAI（`:8080/v1`）和 GPT4All
 （`:4891/v1`）用法相同。通用的**本地 OpenAI 兼容代理**卡片也支持 CLIProxyAPI
-等带认证的回环网关；请参阅[安全代理配置](docs/zh-CN/providers-and-models.md#订阅代理示例cliproxyapi)。请加载
-**至少具有 16k 令牌上下文窗口**的模型 —— 8k 仅在 Compact 层级下可用，4k 无法容纳
-系统提示加工具 schema。WebBrain 会为 llama.cpp、Ollama 和 LM Studio 自动检测真实窗口，
+等带认证的回环网关；请参阅[安全代理配置](docs/zh-CN/providers-and-models.md#订阅代理示例cliproxyapi)。
+请根据所选层级的系统提示、工具 schema、页面与对话历史以及所需输出，设置实际加载的上下文窗口。
+**16k 是配置回退值，并非保证足够的最低容量；Compact 也不保证能放入 8k。**
+Mid 和 Full 在历史积累之前就可能超过 16k；压缩历史无法缩小固定提示或工具 schema。
+字符估算不等于模型的精确 tokenizer 计数；请参阅[上下文指南](docs/providers-and-models.md#local-providers)。
+WebBrain 会为 llama.cpp、Ollama 和 LM Studio 自动检测真实窗口，
 并在对话接近上限时自动压缩。此外还有预览版的
 `ollama launch webbrain --model <model>` 交接。详见
 [提供商与模型](docs/zh-CN/providers-and-models.md#本地提供商)。
@@ -231,15 +234,6 @@ lms clone webbrain/web-tools
 
 源代码：[`lmstudio-plugin/`](lmstudio-plugin/)。
 
-## Star History
-
-<a href="https://www.star-history.com/?repos=webbrain-one%2Fwebbrain&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=webbrain-one/webbrain&type=date&legend=top-left" />
- </picture>
-</a>
 
 ## 贡献者
 
@@ -263,7 +257,5 @@ lms clone webbrain/web-tools
 
 WebBrain 33.0.0 及更高版本采用 [GPL-3.0-or-later](LICENSE) 许可证，因为发布的
 浏览器扩展捆绑并集成了采用 GPL 许可证的 Xapian/libzim WebAssembly 运行时。
-33.0.0 之前发布的版本仍采用其发布时适用的 MIT 许可证；历史许可证文本保存在
-[LICENSES/MIT.txt](LICENSES/MIT.txt)。
 
-由 [Emre Sokullu](https://emresokullu.com) 构建。
+由 [Emre Sokullu](https://emresokullu.com) 和[开源贡献者](https://github.com/webbrain-one/webbrain/graphs/contributors)用 ❤️ 构建。

@@ -66,13 +66,22 @@ const SOURCE_DEFINITIONS = Object.freeze({
 });
 const SOURCE_IDS = Object.freeze(Object.keys(SOURCE_DEFINITIONS));
 
+function decodeHtmlNumericEntity(digits, radix) {
+  const significant = digits.replace(/^0+/, '') || '0';
+  if (significant.length > (radix === 16 ? 6 : 7)) return '\uFFFD';
+  const scalar = Number.parseInt(significant, radix);
+  if (!Number.isInteger(scalar) || scalar === 0 || scalar > 0x10FFFF
+      || (scalar >= 0xD800 && scalar <= 0xDFFF)) return '\uFFFD';
+  return String.fromCodePoint(scalar);
+}
+
 function decodeHtmlAttribute(value) {
   return String(value || '')
     .replace(/&amp;/gi, '&')
     .replace(/&quot;/gi, '"')
     .replace(/&apos;|&#39;/gi, "'")
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
-    .replace(/&#([0-9]+);/g, (_, decimal) => String.fromCodePoint(Number.parseInt(decimal, 10)));
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => decodeHtmlNumericEntity(hex, 16))
+    .replace(/&#([0-9]+);/g, (_, decimal) => decodeHtmlNumericEntity(decimal, 10));
 }
 
 function decodeSerializedUrl(value) {

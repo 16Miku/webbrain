@@ -7,6 +7,7 @@ and asserts the script extracts a URL that looks like real video media
 from __future__ import annotations
 import time
 from common import TestResult, inject_smd, collect_smd
+from url_hosts import url_has_host
 from sites import _safe_goto, _screenshot, _click_first
 
 TESTS = []
@@ -209,7 +210,7 @@ def test_youtube_video(page, js_path, sdir):
         r.error = data["error"]; r.screenshot_path = _screenshot(page, sdir, "youtube_video"); return r
     urls = data.get("urls", [])
     # Accept poster (.jpg/.webp on ytimg.com) as a "video-related" success
-    yt_media = [u for u in urls if "ytimg.com" in u or "googlevideo.com" in u or _is_video_url(u)]
+    yt_media = [u for u in urls if url_has_host(u, "ytimg.com", "googlevideo.com") or _is_video_url(u)]
     r.profile_detected = data.get("profile"); r.url_count = len(urls)
     r.sample_urls = [u[:90] for u in (yt_media or urls)[:3]]
     r.assertions = [

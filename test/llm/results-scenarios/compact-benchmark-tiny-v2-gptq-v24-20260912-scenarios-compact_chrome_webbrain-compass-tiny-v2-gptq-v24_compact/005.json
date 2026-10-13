@@ -1,0 +1,42 @@
+{
+  "id": "005",
+  "category": "loop-bad-url",
+  "description": "Guessed documentation URL based on tool name failed. Should search docs index, not guess again.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 10530,
+  "error": null,
+  "firstToolCall": {
+    "name": "clarify",
+    "args": {
+      "question": "The API reference URL returned a 404. Please verify the correct base URL or API endpoint and provide it if you want me to retry.",
+      "reason": "The requested API reference page is unavailable (404), so the next step requires the correct URL."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "navigate",
+      "args": {
+        "url": "https://docs.example-tool.io/"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "navigate({url:\"https://docs.example-tool.io/api/v1\"})",
+        "reason": "Guess-and-check on docs path is a loop pattern."
+      }
+    ],
+    "successRubric": "Go to the docs root and let the site's nav lead to the API reference. Acceptable: web search for \"example-tool api reference\"."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The API reference URL returned a 404, so the page is unavailable. Please verify the correct base URL or API endpoint and provide it if you want me to retry.\n<function name=\"clarify\"><param name=\"question\">The API reference URL returned a 404. Please verify the correct base URL or API endpoint and provide it if you want me to retry.</param><param name=\"reason\">The requested API reference page is unavailable (404), so the next step requires the correct URL.</param></function>",
+  "usage": {
+    "prompt_tokens": 9833,
+    "completion_tokens": 103,
+    "total_tokens": 9936
+  }
+}

@@ -22,15 +22,17 @@ cd mcp-server && npm install && npm run build
 
 ## Connect the browser
 
-> **Chromium only.** Chrome, Edge, Brave, Opera, Vivaldi. The bridge runs from the extension's **offscreen document**, and the Firefox build has none — `cloud-bridge.js` and `cloud-runs.js` live only under `src/chrome/`. See [`src/firefox/ARCHITECTURE.md`](../src/firefox/ARCHITECTURE.md).
+> **Chromium first.** Chrome, Edge, Brave, Opera, Vivaldi run the bridge from the extension's **offscreen document** (`src/chrome/src/offscreen/cloud-bridge.js`). Firefox has no offscreen document, so `src/firefox/src/cloud-bridge.js` runs it in the background page, configured under the same **Settings → Bridge** tab; it has not yet been verified against this MCP server on a real Firefox install.
+>
+> This server does not use the optional browser-approval handshake (token, `connection_pending` / `connection_approved`). Without a token the extension behaves exactly as before. See [Cloud Bridge browser approval](../docs/cloud-bridge-browser-approval.md) for backends that want it.
 
 The MCP server hosts the listener; the extension dials out to it. A Manifest V3 extension cannot listen on a socket, so the direction is fixed.
 
 1. Install the [WebBrain extension](https://webbrain.one) and open your browser.
-2. In **WebBrain → Settings → General → Advanced → MCP**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
+2. In **WebBrain → Settings → Bridge**, set the URL to `ws://127.0.0.1:17374/extension` and enable it.
 3. Ask your MCP client to call `webbrain_connection` to confirm.
 
-> **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch it under **Settings → General → Advanced → MCP**.
+> **One bridge at a time.** The extension holds exactly one outbound bridge socket. Pointing it here means it is *not* pointed at WebBrain Cloud (`17373`) or the LM Studio plugin (`17375`). Switch it under **Settings → Bridge**.
 
 ## Register with a client
 
@@ -80,7 +82,7 @@ npm start
 ```
 
 After it is running, enable `ws://127.0.0.1:17374/extension` under **WebBrain →
-Settings → General → Advanced → MCP**. Ask the MCP client to call
+Settings → Bridge**. Ask the MCP client to call
 `webbrain_connection` to verify the complete connection.
 
 ## Troubleshooting
@@ -109,6 +111,18 @@ in Chromium browsers only, not Firefox.
 | `webbrain_respond` | Answer a run sitting at `needs_user_input`. |
 | `webbrain_abort` | Stop a run. Actions already taken are not undone. |
 | `webbrain_connection` | Report whether the extension is attached, and how to fix it if not. |
+
+When a run pauses for an ordinary clarification, relay the question and pass the
+user's answer verbatim to `webbrain_respond`. Permission prompts are structured:
+after the user explicitly decides, send the exact stable value `once`, `always`,
+or `deny`. A normal approval maps to `once`; use `always` only when the user
+explicitly requests a persistent grant. Localized labels such as "allow" must
+not be forwarded as the permission value because the extension deliberately
+fails closed on unknown decisions.
+
+Form-submission confirmations and saved-workflow repair prompts are structured
+the same way, and fail closed the same way. Each lists the values it accepts on
+a `decisions:` line in the status text — send one of those exactly.
 
 ### Example
 
@@ -183,6 +197,16 @@ npm run build && node --test test/bridge.test.mjs
 ```
 
 The suite stands up the real listener and connects a fake extension speaking the exact frames `src/chrome/src/offscreen/cloud-bridge.js` emits — handshake, id correlation under concurrency, error propagation, disconnect mid-command, and the poll/timeout/clarify paths. If the extension's wire format changes, these fail. That is intentional.
+
+For manual poking, [`scripts/fake-extension.mjs`](scripts/fake-extension.mjs) is
+the same fake as a standalone process — run the server, then:
+
+```bash
+node scripts/fake-extension.mjs
+```
+
+It logs every frame in both directions, so you can watch what your MCP client
+actually sends without Chrome in the loop.
 
 ## License
 

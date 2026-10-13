@@ -4,6 +4,19 @@ export const RUN_UI_STREAM_TEXT_LIMIT = 100000;
 export const RUN_UI_PERSIST_BUDGET = 512 * 1024;
 export const RUN_UI_PERSIST_RETRY_BUDGET = 128 * 1024;
 
+export function runUiUpdatesForCurrentTask(updates = []) {
+  if (!Array.isArray(updates)) return [];
+  let boundary = -1;
+  for (let index = updates.length - 1; index >= 0; index--) {
+    if (updates[index]?.type === 'steering_applied') { boundary = index; break; }
+  }
+  if (boundary < 0) return updates;
+  // Applied user steering replaces task outcomes, not run-wide resource or
+  // persistence boundaries. Classifiers share this view; history stays intact.
+  return updates.filter((update, index) => index > boundary || update?.type === 'quota'
+    || (update?.type === 'run_status' && update?.data?.status === 'persistence_degraded'));
+}
+
 /**
  * Highest sequence number that was genuinely evicted from the bounded replay
  * journal. Older snapshots used `truncatedBeforeSeq` for both eviction and
@@ -45,7 +58,7 @@ export function runUiSnapshotForRequest(snapshot, requestedRequestId = '') {
 
 const RUN_UI_TOOL_RESULT_PREVIEW_CHARS = 500;
 
-function compactRunUiToolResult(result) {
+function compactRunUiToolResult(result, name) {
   const source = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
   const compacted = {};
   if (typeof source.success === 'boolean') compacted.success = source.success;
@@ -68,6 +81,14 @@ function compactRunUiToolResult(result) {
   if (source.truncated === true) compacted.truncated = true;
   if (source.hasMore === true) compacted.hasMore = true;
   if (source.notice) compacted.notice = String(source.notice).slice(0, 300);
+  if (name === 'generate_image' && source.success === true) {
+    // Inline bytes live in IndexedDB; retain the asset handle for live delivery
+    // and replay. Hosted/local URLs are small enough to keep in the journal.
+    for (const key of ['url', 'mediaId', 'mimeType', 'provider', 'model']) {
+      if (typeof source[key] === 'string') compacted[key] = source[key];
+    }
+    if (source.inlineMedia === true) compacted.inlineMedia = true;
+  }
   if (Object.keys(compacted).length === 0) {
     try {
       compacted.preview = String(JSON.stringify(source) || '{}').slice(0, 300);
@@ -83,7 +104,7 @@ export function compactRunUiData(type, data) {
   if (type === 'tool_result') {
     return {
       name: data.name,
-      result: compactRunUiToolResult(data.result),
+      result: compactRunUiToolResult(data.result, data.name),
     };
   }
   if (type === 'text' || type === 'text_delta') {
@@ -92,13 +113,32 @@ export function compactRunUiData(type, data) {
   return data;
 }
 
+function isCompleteTableJsonFinal(content) {
+  if (content.length > 30000) return false;
+  let parsed;
+  try { parsed = JSON.parse(content); } catch { return false; }
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object'
+      || Object.keys(parsed).length !== 2
+      || !Object.hasOwn(parsed, 'rowCount') || !Object.hasOwn(parsed, 'rows')
+      || !Number.isSafeInteger(parsed.rowCount) || parsed.rowCount < 0
+      || !Array.isArray(parsed.rows) || parsed.rowCount !== parsed.rows.length) return false;
+  return parsed.rows.every(row => row && typeof row === 'object' && !Array.isArray(row)
+    && Object.values(row).every(cell => cell === null
+      || typeof cell === 'string' || typeof cell === 'boolean'
+      || typeof cell === 'number' && Number.isFinite(cell)));
+}
+
 export function compactRunUiSnapshotForPersist(snapshot, options = {}) {
   const tight = options.tight === true;
   const budget = tight ? RUN_UI_PERSIST_RETRY_BUDGET : RUN_UI_PERSIST_BUDGET;
   const clone = typeof structuredClone === 'function'
     ? structuredClone(snapshot || {})
     : JSON.parse(JSON.stringify(snapshot || {}));
-  clone.finalContent = String(clone.finalContent || '').slice(0, tight ? 8000 : 30000);
+  const finalContent = String(clone.finalContent || '');
+  // Preserve a complete bounded table answer as formatting only. Success and
+  // execution authority still come from the existing terminal evidence.
+  const finalContentLimit = tight && !isCompleteTableJsonFinal(finalContent) ? 8000 : 30000;
+  clone.finalContent = finalContent.slice(0, finalContentLimit);
   clone.streamedText = String(clone.streamedText || '').slice(0, tight ? 30000 : RUN_UI_STREAM_TEXT_LIMIT);
   const eventCap = tight ? 64 : RUN_UI_EVENT_LIMIT;
   clone.events = (Array.isArray(clone.events) ? clone.events : []).slice(-eventCap).map(event => {
@@ -206,6 +246,8 @@ export class RunUiJournal {
       requestId: createRunRequestId(tabId, requestId),
       mode: String(metadata?.mode || ''),
       kind: metadata?.kind === 'continue' ? 'continue' : 'chat',
+      scheduledJobId: String(metadata?.scheduledJobId || ''),
+      scheduledExecutionId: String(metadata?.scheduledExecutionId || ''),
       foreground: metadata?.foreground === true,
       attachmentCount,
       attachmentDeliveryState: attachmentCount ? 'sending' : '',
@@ -221,13 +263,19 @@ export class RunUiJournal {
       lastPlanResolution: null,
       finalContent: '',
       successfulDone: false,
+      runSucceeded: false,
       hadError: false,
       lastError: '',
+      quota: null,
       pendingToolCall: null,
       streamedText: '',
       streamedTextStartSeq: 0,
       streamedTextSeq: 0,
       streamedTextTruncated: false,
+      // Display-only state survives acknowledged events; incomplete prose
+      // never contributes to completion evidence or success classification.
+      responseRetry: null,
+      responseIncomplete: false,
       startedAt: Date.now(),
       endedAt: null,
     };
@@ -252,8 +300,12 @@ export class RunUiJournal {
     snapshot.status = 'running';
     snapshot.pendingPlanId = null;
     snapshot.finalContent = '';
+    snapshot.quota = null;
     snapshot.successfulDone = false;
+    snapshot.runSucceeded = false;
     snapshot.endedAt = null;
+    snapshot.responseRetry = null;
+    snapshot.responseIncomplete = false;
     return this._changed(tabId, snapshot);
   }
 
@@ -268,7 +320,13 @@ export class RunUiJournal {
       ts: Date.now(),
     };
     snapshot.events.push(event);
+    if (data?.quota) snapshot.quota = structuredClone(data.quota);
     if (type === 'text_delta') {
+      if (snapshot.responseRetry || snapshot.responseIncomplete) {
+        snapshot.streamedText = '';
+        snapshot.streamedTextStartSeq = 0;
+        snapshot.streamedTextTruncated = false;
+      }
       const chunk = String(event.data?.content || '');
       if (!snapshot.streamedText && !snapshot.streamedTextTruncated) {
         snapshot.streamedTextStartSeq = event.seq;
@@ -290,6 +348,23 @@ export class RunUiJournal {
       snapshot.streamedTextSeq = 0;
       snapshot.streamedTextTruncated = false;
     }
+    if (type === 'response_retry') {
+      snapshot.responseRetry = {
+        reason: 'stream_interrupted',
+        retainPartial: data?.retainPartial === true,
+        seq: event.seq,
+      };
+      snapshot.responseIncomplete = snapshot.responseRetry.retainPartial && !!snapshot.streamedText;
+      if (!snapshot.responseRetry.retainPartial) {
+        snapshot.streamedText = '';
+        snapshot.streamedTextStartSeq = 0;
+        snapshot.streamedTextSeq = 0;
+        snapshot.streamedTextTruncated = false;
+      }
+    } else if (['text', 'text_delta', 'tool_call', 'error', 'failure_recovery', 'run_complete', 'steering_applied'].includes(type)) {
+      snapshot.responseRetry = null;
+    }
+    if (['text', 'text_delta', 'tool_call', 'steering_applied'].includes(type)) snapshot.responseIncomplete = false;
     while (snapshot.events.length > this.eventLimit) {
       const removed = snapshot.events.shift();
       const removedSeq = Number(removed?.seq || 0);
@@ -315,14 +390,18 @@ export class RunUiJournal {
         seq: event.seq,
       };
     }
+    if (type === 'steering_applied') {
+      snapshot.successfulDone = false;
+      snapshot.runSucceeded = false;
+      snapshot.hadError = false;
+      snapshot.lastError = '';
+    }
     if (type === 'tool_result'
         && data?.name === 'done'
         && data?.result?.done === true
-        && data?.result?.outcome === 'success'
-        && data?.result?.success !== false
-        && !data?.result?.error
         && !data?.result?.blockedDone) {
-      snapshot.successfulDone = true;
+      snapshot.successfulDone = data.result.outcome === 'success'
+        && data.result.success !== false && !data.result.error;
     }
     if (type === 'error' || type === 'attachment_rejected' || type === 'max_steps_reached') {
       snapshot.hadError = true;
@@ -347,21 +426,29 @@ export class RunUiJournal {
     return this._changed(tabId, snapshot);
   }
 
-  finish(tabId, requestId, status, finalContent = '', runId = null) {
+  finish(tabId, requestId, status, finalContent = '', runId = null, options = {}) {
     const snapshot = this.snapshots.get(tabId);
     if (!snapshot || snapshot.requestId !== requestId) return null;
     snapshot.runId = runId || snapshot.runId || null;
     snapshot.status = status;
+    // Classify before onChange clones the terminal snapshot for persistence.
+    snapshot.runSucceeded = status === 'completed' && options.allowSuccess !== false
+      && (snapshot.successfulDone === true || options.askSucceeded === true);
     snapshot.pendingPlanId = null;
     snapshot.pendingToolCall = null;
     snapshot.finalContent = String(finalContent || '').slice(0, 30000);
+    snapshot.responseRetry = null;
+    if (status === 'completed' && snapshot.finalContent) snapshot.responseIncomplete = false;
     snapshot.endedAt = Date.now();
     const event = {
       seq: ++snapshot.seq,
       type: 'run_complete',
       data: {
         status: snapshot.status,
+        successfulDone: snapshot.successfulDone === true,
+        runSucceeded: snapshot.runSucceeded === true,
         finalContent: snapshot.finalContent,
+        quota: snapshot.quota || null,
         endedAt: snapshot.endedAt,
         attachmentDeliveryState: snapshot.attachmentDeliveryState || '',
       },
@@ -397,6 +484,9 @@ export class RunUiJournal {
     // only. Acknowledged events are intentionally released, not lost.
     snapshot.truncatedBeforeSeq = snapshot.discardedBeforeSeq;
     if (snapshot.successfulDone !== true) snapshot.successfulDone = false;
+    const restoredSuccess = typeof snapshot.runSucceeded === 'boolean'
+      ? snapshot.runSucceeded : snapshot.successfulDone === true;
+    snapshot.runSucceeded = snapshot.status === 'completed' && restoredSuccess;
     if (snapshot.hadError !== true) snapshot.hadError = false;
     if (typeof snapshot.lastError !== 'string') snapshot.lastError = '';
     if (!snapshot.pendingToolCall || typeof snapshot.pendingToolCall !== 'object') {
@@ -423,6 +513,15 @@ export class RunUiJournal {
     const restoredStreamSeq = Number(snapshot.streamedTextSeq || 0);
     snapshot.streamedTextStartSeq = Number.isFinite(restoredStreamStartSeq) ? Math.max(0, restoredStreamStartSeq) : 0;
     snapshot.streamedTextSeq = Number.isFinite(restoredStreamSeq) ? Math.max(0, restoredStreamSeq) : 0;
+    const restoredRetrySeq = Number(snapshot.responseRetry?.seq);
+    snapshot.responseRetry = snapshot.status === 'running'
+      && snapshot.responseRetry?.reason === 'stream_interrupted'
+      && Number.isSafeInteger(restoredRetrySeq) && restoredRetrySeq > 0
+      && restoredRetrySeq <= Number(snapshot.seq || 0)
+      ? { reason: 'stream_interrupted', retainPartial: snapshot.responseRetry.retainPartial === true, seq: restoredRetrySeq }
+      : null;
+    snapshot.responseIncomplete = snapshot.responseIncomplete === true && !!snapshot.streamedText
+      && !(snapshot.status === 'completed' && snapshot.finalContent);
     if (!snapshot.lastPlanResolution || typeof snapshot.lastPlanResolution !== 'object') {
       snapshot.lastPlanResolution = null;
     }

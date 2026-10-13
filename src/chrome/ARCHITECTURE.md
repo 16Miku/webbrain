@@ -1,6 +1,6 @@
 # WebBrain Chrome/Edge Extension — Architecture
 
-> Version 34.1.0 · Manifest V3 · Service Worker background
+> Version 40.4.1 · Manifest V3 · Service Worker background
 
 ## High-Level Overview
 
@@ -39,6 +39,7 @@ src/chrome/
 ├── src/
 │   ├── background.js           # Service worker — message router
 │   ├── run-ui-journal.js       # Detached-run replay + streamed-text snapshots
+│   ├── cloud-runs.js           # cloud_* run controller + persistent bridge identity
 │   ├── agent/
 │   │   ├── agent.js            # Core agent loop + tool dispatch
 │   │   ├── loop-detector.js     # Browser-free loop detection, directly unit-tested
@@ -60,6 +61,7 @@ src/chrome/
 │   ├── offscreen/
 │   │   ├── offscreen.html      # Offscreen document host
 │   │   ├── offscreen.js        # HTTP fetch proxy (localhost/PNA fallback)
+│   │   ├── cloud-bridge.js     # Outbound WebSocket bridge + browser-approval state
 │   │   ├── vision-inference-host.js # Local WebGPU worker bridge
 │   │   └── inference-worker.js # Transformers.js WebGPU inference worker
 │   ├── providers/
@@ -103,7 +105,7 @@ src/chrome/
 | Permission | Why |
 |---|---|
 | `debugger` | CDP access — trusted mouse/keyboard, pixel-perfect screenshots, shadow-DOM piercing. The single most important differentiator in the Chrome/Edge build vs Firefox. |
-| `webRequest` | Opt-in, in-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. Off by default. |
+| `webRequest` | In-memory same-tab XHR/fetch observer for repeated-click API shortcut hints and opaque same-origin replay. On by default; can be disabled in Settings. |
 | `alarms` | Scheduled tasks and scheduled resumes across browser sessions. |
 | `unlimitedStorage` | Optional trace recorder persists agent runs (LLM I/O + screenshots) into IndexedDB. A multi-step run can be 1–10 MB; the default ~10 MB origin cap fills after a few runs. |
 | `offscreen` | Hosts the localhost/PNA fetch proxy, tab recorder, and optional on-device WebGPU model worker. Chrome MV3 service workers cannot provide those document APIs directly. |
@@ -132,8 +134,8 @@ same cost allowance and abort checks as the main loop.
 
 Planner prompts keep optional policy text mechanically gated. The base planner
 prompt includes general repeated-task pacing, but API replay guidance is appended
-only when the tab conversation already has `/allow-api`; unavailable paths should
-not bloat every planner request.
+only when API mutations are authorized by the persistent setting or the tab's
+`/allow-api` override; unavailable paths should not bloat every planner request.
 
 ---
 
@@ -256,6 +258,19 @@ tabAudioSource.connect(audioContext.destination); // back to the user's speaker
 
 Mic, by contrast, is only piped into the recording (NOT to the speaker —
 that would feed back).
+
+### Cloud Bridge and browser approval
+
+`offscreen/cloud-bridge.js` dials out to a controller on localhost and accepts
+only the `cloud_*` run actions. `cloud-runs.js` reads the persistent identity
+(`webbrainCloudBridgeToken`, `…BrowserId`, `…InstallationId`) from
+`chrome.storage.local` and passes it with `cloud-bridge-start`, because the
+offscreen page has no storage access. With a token configured, each new socket
+sends an authenticated `hello` and stays *pending* until the backend answers
+`connection_approved`; commands before that get `connection_not_approved`.
+Approval is per socket and never carries over a reconnect. Without a token the
+legacy behaviour is unchanged. Protocol and limits:
+[docs/cloud-bridge-browser-approval.md](../../docs/cloud-bridge-browser-approval.md).
 
 ### Why a shared offscreen document
 
@@ -443,11 +458,13 @@ Before any submit-like text `click`, the agent checks a per-tab+URL 45-second wi
 
 When the API mutation observer setting is enabled, `background.js` records the
 last 40 same-tab XHR/fetch requests using `chrome.webRequest.onBeforeRequest`.
-The setting is off by default. When loop detection sees the same `click` /
-`click_ax` repeat, `_detectApiShortcut()` checks whether each click produced the
-same exact URL + method within 3 seconds. If so, the warning suggests
+The setting is on by default and can be disabled in Settings. When loop detection
+sees the same `click` / `click_ax` repeat, `_detectApiShortcut()` checks whether
+each click produced the same exact URL + method within 3 seconds. If so, the warning suggests
 `fetch_url({url, method})` instead of another click. This is advisory only:
-POST/PUT/PATCH/DELETE still depend on the conversation's `/allow-api` state, and
+POST/PUT/PATCH/DELETE still depend on the persistent **Always allow API mutations**
+setting (on by default) or the conversation's `/allow-api` override. If the
+persistent setting cannot be read from storage, it grants no authorization.
 GET/non-network capabilities still follow the normal permission gate.
 
 ### Ambiguous-click CDP enrichment (v3.6.4+)
@@ -483,7 +500,7 @@ tier:
 > whitespace-normalising rich-text bodies. Only the toolbar recovery contract
 > requires a positive `true`.
 
-`click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `new_tab`, `promote_iframe`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
+`click_ax`, `type_ax`, `set_field`, `click` (by text/selector/index/coords), `type_text`, `press_keys`, `scroll`, `navigate`, `go_back`, `go_forward`, `promote_iframe`, `wait_for_element`, `iframe_read`, `iframe_click`, `iframe_type`, `upload_file`
 
 Iframe reads enumerate semantic labels, values, and stable per-selector `matchIndex` values. Iframe click/type calls first resolve exactly one frame and element and fail before dispatch on ambiguity. `promote_iframe` is the current-tab escape hatch for unreliable embeds: it resolves a child-frame URL from `webNavigation`, applies the normal navigation and unsaved-state guards, and preserves Back history. An `iframe_type` action opens a completion obligation that only `verify_form({urlFilter})` against the same iframe scope can clear.
 
@@ -580,6 +597,16 @@ bridge, and the optional local WebGPU model worker.
 ## Scheduled Tasks (`scheduler.js`)
 
 `ScheduledJobManager` (Chrome/Edge build: `src/chrome/src/agent/scheduler.js`) is instantiated in `background.js` and uses `chrome.alarms` to fire deferred work.
+
+The optional `systemone-judge.js` module is a separate, browser-neutral HTTP
+sidecar. It is disabled by default and is wired into scheduled watch and task
+completion only after the user enables the global switch, the relevant feature
+switch, and supplies a TypeSafe API key. The sidecar receives bounded task and
+observation state, uses the documented `jev-latest` System One contract, and
+can only downgrade a scheduler success to `partial`. It never runs browser
+tools or supplies instructions to the agent. Its retry, timeout, answer-shape,
+privacy, and fail-open behavior lives in the shared module so the Chrome and
+Firefox copies remain byte-identical.
 
 **Chromium/Edge-specific behavior vs Firefox:**
 
@@ -834,7 +861,7 @@ Adapters may also opt into narrow runtime enforcement. On Douyin `/chat`, an `ac
 - `debugger` → trusted events on any tab.
 - Cross-origin iframes reachable via content-script injection (extension privilege).
 - Plan before Act can require user approval before any action-mode tool executes.
-- `/allow-api` flag required for API mutations (POST/PUT/PATCH/DELETE via `fetch_url`).
+- The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives permission prompts for API mutations (POST/PUT/PATCH/DELETE via `fetch_url` / `research_url`).
 - Finance adapters layer extra confirmation guidance.
 - Tool results capped at 8 KB to limit prompt-injection surface.
 - Offscreen proxy only forwards requests the user's own code initiated (provider SDK traffic).

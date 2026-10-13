@@ -18,7 +18,7 @@ to eyeball the actual pixelation before merging changes to
 2. Load the unpacked extension (Chrome: `chrome://extensions` → Developer
    mode → Load unpacked → `src/chrome`. Firefox: `about:debugging` → This
    Firefox → Load Temporary Add-on → `src/firefox/manifest.json`).
-3. Settings → **Multimodal** → turn **Screenshot redaction** on.
+3. Settings → **Assistive Models → Vision** → turn **Screenshot redaction** on.
 
 ## Test 1 — Redaction on, take a screenshot
 

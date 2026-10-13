@@ -142,3 +142,35 @@ function repairJsonQuotedPageTitleLines(value) {
 export function repairAssistantDisplayText(value) {
   return repairJsonQuotedPageTitleLines(repairDoubleEscapedAssistantText(value));
 }
+
+/**
+ * Strip one extra JSON-escaping layer from clarify question/options/reason.
+ *
+ * Models sometimes copy a JSON-escaped post body into a clarify tool call
+ * (e.g. Publish: "Just finished \"The Last Economy\" ..."), leaving literal
+ * `\"` sequences after the tool-call JSON itself has already been parsed.
+ * The clarify card renders via textContent, so those backslashes show up
+ * verbatim in the UI ("\" ??" bug). Runs of backslashes immediately before a
+ * single or double quote are therefore treated as display noise and removed.
+ *
+ * Known edge (accepted): a trailing path separator before a closing quote
+ * (e.g. Save to "C:\Temp\") loses its slash and renders as "C:\Temp". That
+ * prose is rare in single-sentence clarify prompts and stays readable;
+ * showing literal `\"` in every publish confirmation is worse.
+ *
+ * A surviving `\\` (double backslash) is the same over-escaping artifact for
+ * a literal backslash, so it is collapsed once — except a UNC leading `\\`
+ * (start of string or after whitespace/quote/paren/bracket + word char),
+ * which is preserved. Lone single backslashes (e.g. tab\tx) are left alone.
+ */
+export function repairClarifyText(value) {
+  if (typeof value !== 'string' || !value) return value == null ? '' : String(value);
+  if (!value.includes('\\')) return value;
+  const stripped = value.replace(/\\+(?=["'])/g, '');
+  return stripped.replace(/\\\\/g, (match, offset, str) => {
+    const before = offset === 0 ? '' : str[offset - 1];
+    const after = str[offset + 2] || '';
+    if ((offset === 0 || /[\s"'(\[{]/.test(before)) && /[A-Za-z0-9]/.test(after)) return match;
+    return '\\';
+  });
+}

@@ -7,8 +7,15 @@ export const SELECTION_SHORTCUT_ACTIONS = Object.freeze({
   summarize: 'Summarize this selected text clearly and concisely.',
   explain: 'Explain this selected text in plain language.',
   quiz: 'Quiz me on this selected text. Ask one question at a time and wait for my answer.',
-  proofread: 'Proofread this selected text. Identify errors and provide a corrected version while preserving its meaning and tone.',
+  proofread: 'Proofread this selected text. First verify that the selection is complete enough to edit. Never infer or reconstruct text beyond its boundaries. If an edge is visibly cut mid-word or the passage is otherwise clearly incomplete, say so and ask the user to select the complete passage instead of supplying a corrected version. For a complete selection, tie every claimed error to exact selected wording, distinguish actual errors from optional style suggestions, and provide one complete corrected version that fixes every listed error without unrelated additions.',
   humanize: 'Rewrite this selected text so it reads as human writing rather than AI output. Keep every claim, the language, and the author\'s intent; return only the rewritten text.',
+});
+
+// Some fixed actions carry model-only guardrails that should not crowd the
+// user-visible chat bubble or history title. Match the complete trusted action
+// text so custom prompts that happen to start similarly remain untouched.
+const SELECTION_SHORTCUT_DISPLAY_INSTRUCTIONS = Object.freeze({
+  proofread: 'Proofread this selected text.',
 });
 
 // Selected-text runs carry no tools, so `load_skill` cannot rescue a writing
@@ -168,6 +175,12 @@ export function formatSelectionPromptForDisplay(promptText) {
     instruction = instruction.slice(CUSTOM_QUESTION_PREFIX.length).trim();
   } else {
     instruction = stripResponseLanguageInstruction(instruction);
+    for (const [actionId, displayInstruction] of Object.entries(SELECTION_SHORTCUT_DISPLAY_INSTRUCTIONS)) {
+      if (instruction === SELECTION_SHORTCUT_ACTIONS[actionId]) {
+        instruction = displayInstruction;
+        break;
+      }
+    }
     if (instruction === GENERIC_CONTEXT_MENU_INSTRUCTION) instruction = '';
   }
 

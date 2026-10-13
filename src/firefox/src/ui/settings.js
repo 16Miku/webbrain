@@ -1,9 +1,14 @@
+import { DECISION_SETTINGS_KEYS, DEFAULT_DECISION_MODEL, resolveDecisionConfig } from '../agent/decision-config.js';
+import { D1_MODEL_ID } from '../providers/d1-config.js';
+import { initD1Settings } from './d1-settings.js';
 /**
  * WebBrain Settings Page — provider configuration + display settings.
  */
 
 import { t, getLocale, setLocale, LANGUAGES } from './i18n.js';
 import { escapeHtml } from './utils.js';
+import { MEDIA_PROVIDERS, mediaProvider, validateMediaConfig } from '../agent/media-config.js';
+import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
 import { THEME_MODES, applyMode, loadMode, watch } from './theme.js';
 import {
   UI_SCALE_LEVELS,
@@ -36,10 +41,12 @@ import {
   USER_MEMORY_MAX_PROMPT_CHARS_KEY,
   normalizeUserMemoryMaxPromptChars,
 } from '../agent/user-memory.js';
+import { initCaptchaSettings } from './captcha-settings.js';
 import {
-  isValidCapsolverApiKey,
-  normalizeCapsolverApiKey,
-} from '../agent/capsolver-config.js';
+  isValidTypesafeApiKey,
+  normalizeSystemOneThreshold,
+  normalizeTypesafeApiKey,
+} from '../agent/systemone-judge.js';
 import {
   OPENROUTER_ROUTING_VARIANTS,
   detectedCompatibilityPreset,
@@ -77,7 +84,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '34.1.0';
+const EXT_VERSION = '40.4.1';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -87,6 +94,7 @@ const advancedSettings = document.querySelector('.advanced-settings');
 const apocalypseModeLink = document.getElementById('apocalypse-mode-link');
 const apocalypseModeStatus = document.getElementById('apocalypse-mode-status');
 const verboseToggle = document.getElementById('toggle-verbose');
+const composerDeliveryModeSelect = document.getElementById('select-composer-delivery-mode');
 const selectionShortcutToggle = document.getElementById('toggle-selection-shortcut');
 const autoGroupTabsToggle = document.getElementById('toggle-auto-group-tabs');
 const helpImproveToggle = document.getElementById('toggle-help-improve');
@@ -120,6 +128,7 @@ const notifySoundToggle = document.getElementById('toggle-notify-sound');
 const completionConfettiToggle = document.getElementById('toggle-completion-confetti');
 const completionFlashTabToggle = document.getElementById('toggle-completion-flash-tab');
 const tracingToggle = document.getElementById('toggle-tracing');
+const feedbackDiagnosticsToggle = document.getElementById('toggle-feedback-diagnostics');
 const losslessTracingToggle = document.getElementById('toggle-lossless-tracing');
 const strictSecretToggle = document.getElementById('toggle-strict-secret');
 const allowLocalNetworkToggle = document.getElementById('toggle-allow-local-network');
@@ -157,6 +166,17 @@ const btnSaveTranscription = document.getElementById('btn-save-transcription');
 const btnTestTranscription = document.getElementById('btn-test-transcription');
 const btnClearTranscription = document.getElementById('btn-clear-transcription');
 const transcriptionTestResult = document.getElementById('test-transcription');
+// Generative Media — provider settings stored as imageGenModel.
+const imageGenProviderInput = document.getElementById('image-gen-provider');
+const imageGenBaseUrlInput = document.getElementById('image-gen-base-url');
+const imageGenWorkflowInput = document.getElementById('image-gen-workflow');
+const imageGenParametersInput = document.getElementById('image-gen-parameters');
+const imageGenApiKeyInput = document.getElementById('image-gen-api-key');
+const imageGenModelInput = document.getElementById('image-gen-model');
+const btnSaveImageGen = document.getElementById('btn-save-image-gen');
+const btnTestImageGen = document.getElementById('btn-test-image-gen');
+const btnClearImageGen = document.getElementById('btn-clear-image-gen');
+const imageGenTestResult = document.getElementById('test-image-gen');
 const profileEnabledToggle = document.getElementById('toggle-profile-enabled');
 const profileTextArea = document.getElementById('profile-text');
 const btnSaveProfile = document.getElementById('btn-save-profile');
@@ -190,11 +210,36 @@ const btnClearUserMemory = document.getElementById('btn-clear-user-memory');
 const userMemoryImportText = document.getElementById('user-memory-import-text');
 const btnImportUserMemory = document.getElementById('btn-import-user-memory');
 const userMemoryTestResult = document.getElementById('test-user-memory');
-const captchaApiKeyInput = document.getElementById('captcha-api-key');
-const btnSaveCaptcha = document.getElementById('btn-save-captcha');
-const btnTestCaptcha = document.getElementById('btn-test-captcha');
-const btnClearCaptcha = document.getElementById('btn-clear-captcha');
-const captchaTestResult = document.getElementById('test-captcha');
+const memcodeRecallToggle = document.getElementById('toggle-memcode-recall');
+const memcodeConnectButton = document.getElementById('btn-memcode-connect');
+const memcodeDisconnectButton = document.getElementById('btn-memcode-disconnect');
+const memcodeRecallResult = document.getElementById('test-memcode-recall');
+const decisionProviderInput = document.getElementById('decision-provider');
+const decisionModelInput = document.getElementById('decision-model');
+const decisionEndpointInput = document.getElementById('decision-endpoint');
+const decisionVisionInput = document.getElementById('decision-vision');
+const decisionDoneToggle = document.getElementById('toggle-decision-done');
+const decisionThresholdInput = document.getElementById('decision-done-threshold');
+let decisionModels = [];
+const refreshD1Settings = initD1Settings(sendToBackground);
+let decisionVisionSupported = false;
+const decisionKeyDrafts = new Map();
+let previousDecisionProvider = 'openrouter';
+
+const systemOneApiKeyInput = document.getElementById('system-one-api-key');
+const systemOneEnabledToggle = document.getElementById('toggle-system-one');
+const systemOneWatchToggle = document.getElementById('toggle-system-one-watch');
+const systemOneCompletionToggle = document.getElementById('toggle-system-one-completion');
+const systemOneWatchThresholdRange = document.getElementById('range-system-one-watch-threshold');
+const systemOneWatchThresholdValue = document.getElementById('system-one-watch-threshold-value');
+const systemOneCompletionThresholdRange = document.getElementById('range-system-one-completion-threshold');
+const systemOneCompletionThresholdValue = document.getElementById('system-one-completion-threshold-value');
+const btnSaveSystemOne = document.getElementById('btn-save-system-one');
+const systemOneClassificationsToggle = document.getElementById('toggle-system-one-classifications');
+const systemOneBrowserToggle = document.getElementById('toggle-system-one-browser');
+const btnTestSystemOne = document.getElementById('btn-test-system-one');
+const btnClearSystemOne = document.getElementById('btn-clear-system-one');
+const systemOneTestResult = document.getElementById('test-system-one');
 const languageSelect = document.getElementById('select-language');
 const themeSelect = document.getElementById('select-theme');
 const settingsUiScaleDecrease = document.getElementById('settings-ui-scale-decrease');
@@ -423,6 +468,7 @@ if (globalThis.browser?.storage?.onChanged) {
 
 const WEBBRAIN_SUBSCRIBE_URL = 'https://webbrain.one/subscribe';
 const WEBBRAIN_ACCOUNT_URL = 'https://api.webbrain.one/account';
+const WEBBRAIN_BILLING_STATUS_URL = 'https://api.webbrain.one/v1/billing/status';
 
 const DEFAULT_COST_ALLOWANCE_USD = 10;
 const MAX_AGENT_STEPS_DEFAULT = 130;
@@ -509,6 +555,7 @@ function boundedMaxAgentSteps(value) {
 let providerFilter = 'all';     // 'all' | 'active' | 'local' | 'cloud' | 'router'
 let providerSearchQuery = '';
 const expandedProviders = new Set();
+let editingSkillId = null;
 let customSkills = [];
 let skillPreviewRequestId = 0;
 const DEFAULT_SKILL_IDS = new Set(DEFAULT_SKILL_SOURCES.map((source) => source.id));
@@ -559,11 +606,14 @@ async function init() {
   browser.storage.local.remove(['authToken', 'authEmail', 'authDefaultModel']).catch(() => {});
 
   // Load display settings
-  const stored = await browser.storage.local.get(['verboseMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
+  const stored = await browser.storage.local.get([...DECISION_SETTINGS_KEYS, 'verboseMode', 'composerDeliveryMode', 'selectionShortcutEnabled', AUTO_GROUP_TABS_KEY, 'helpImproveWebBrain', 'screenshotFallback', 'maxAgentSteps', 'autoScreenshot', 'useSiteAdapters', 'researchEscalationEnabled', 'researchEscalationEngine', 'voiceInputEnabled', 'alwaysAllowApiMutations', 'apiMutationObserverEnabled', 'openaiAskStreamingEnabled', 'planBeforeActMode', 'planBeforeAct', 'planReviewMode', 'planReviewConfidenceThreshold', DOWNLOAD_DIRECTORY_STORAGE_KEY, 'notifySound', 'completionConfetti', 'completionFlashTab', 'tracingEnabled', 'feedbackDiagnosticsEnabled', 'losslessTrace', 'strictSecretMode', 'agentAllowLocalNetwork', 'scheduledTasksEnabled', 'scheduledRequireConsequentialConfirmation', 'systemOneEnabled', 'systemOneWatchEnabled', 'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser', 'systemOneWatchThreshold', 'systemOneCompletionThreshold', 'typesafeApiKey', 'providerFilter', 'requestTimeoutMs', 'clarifyTimeoutSec', 'clarifyTimeoutSemanticsV2', 'costAllowanceSessionUsd', 'costAllowanceTotalUsd', 'meteredProviderCostSpentUsd', 'screenshotRedaction', 'imageDetail', 'maxScreenshotsPerTurn', 'maxImageDimension']);
   if (typeof stored.providerFilter === 'string' && ['all','active','local','cloud','router'].includes(stored.providerFilter)) {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
+  if (composerDeliveryModeSelect) {
+    composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
+  }
   if (selectionShortcutToggle) selectionShortcutToggle.checked = stored.selectionShortcutEnabled !== false;
   if (autoGroupTabsToggle) autoGroupTabsToggle.checked = stored[AUTO_GROUP_TABS_KEY] !== false;
   if (helpImproveToggle) helpImproveToggle.checked = stored.helpImproveWebBrain !== false; // on by default
@@ -610,8 +660,8 @@ async function init() {
   if (siteAdaptersToggle) siteAdaptersToggle.checked = stored.useSiteAdapters ?? true;
   if (researchEscalationToggle) researchEscalationToggle.checked = stored.researchEscalationEnabled === true;
   if (voiceInputToggle) voiceInputToggle.checked = stored.voiceInputEnabled ?? true;
-  if (alwaysAllowApiMutationsToggle) alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === true;
-  if (apiMutationObserverToggle) apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === true;
+  if (alwaysAllowApiMutationsToggle) alwaysAllowApiMutationsToggle.checked = stored.alwaysAllowApiMutations === undefined || stored.alwaysAllowApiMutations === true;
+  if (apiMutationObserverToggle) apiMutationObserverToggle.checked = stored.apiMutationObserverEnabled === undefined || stored.apiMutationObserverEnabled === true;
   if (openAIAskStreamingToggle) openAIAskStreamingToggle.checked = stored.openaiAskStreamingEnabled !== false;
   if (planBeforeActModeSelect) planBeforeActModeSelect.value = normalizePlanBeforeActMode(stored);
   if (planReviewModeSelect) planReviewModeSelect.value = normalizePlanReviewMode(stored);
@@ -626,6 +676,7 @@ async function init() {
   if (completionConfettiToggle) completionConfettiToggle.checked = stored.completionConfetti ?? true;
   if (completionFlashTabToggle) completionFlashTabToggle.checked = stored.completionFlashTab ?? true;
   if (tracingToggle) tracingToggle.checked = stored.tracingEnabled === true;
+  if (feedbackDiagnosticsToggle) feedbackDiagnosticsToggle.checked = stored.feedbackDiagnosticsEnabled !== false;
   if (losslessTracingToggle) {
     losslessTracingToggle.checked = stored.losslessTrace === true;
     // Lossless recording only means something when tracing is on; mirror the
@@ -642,6 +693,28 @@ async function init() {
   if (allowLocalNetworkToggle) allowLocalNetworkToggle.checked = stored.agentAllowLocalNetwork === true;
   if (scheduledTasksToggle) scheduledTasksToggle.checked = stored.scheduledTasksEnabled !== false;
   if (scheduledConfirmToggle) scheduledConfirmToggle.checked = stored.scheduledRequireConsequentialConfirmation !== false;
+  const decisionConfig = resolveDecisionConfig(stored);
+  decisionProviderInput.value = previousDecisionProvider = decisionConfig.provider;
+  decisionModelInput.value = decisionConfig.model;
+  decisionEndpointInput.value = stored.decisionBaseUrl || 'http://127.0.0.1:8009';
+  decisionVisionInput.value = stored.decisionVisionMode || 'auto';
+  decisionVisionSupported = stored.decisionVisionSupported === true;
+  decisionDoneToggle.checked = decisionConfig.doneEnabled;
+  decisionThresholdInput.value = String(decisionConfig.threshold * 100);
+  await refreshD1Settings();
+  decisionKeyDrafts.set('typesafe', stored.typesafeApiKey || '');
+  decisionKeyDrafts.set('openrouter', stored.decisionApiKey || '');
+  decisionKeyDrafts.set('local', stored.decisionLocalApiKey || '');
+  document.getElementById('decision-endpoint-field').hidden = decisionConfig.provider !== 'local';
+  if (systemOneEnabledToggle) systemOneEnabledToggle.checked = stored.systemOneEnabled === true;
+  if (systemOneWatchToggle) systemOneWatchToggle.checked = stored.systemOneWatchEnabled === true;
+  if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = stored.systemOneFastClassifications === true;
+  if (systemOneBrowserToggle) systemOneBrowserToggle.checked = stored.systemOneFastBrowser === true;
+  if (systemOneCompletionToggle) systemOneCompletionToggle.checked = stored.systemOneCompletionEnabled === true;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.value = decisionConfig.apiKey;
+  if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneWatchThreshold) * 100);
+  if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = String(normalizeSystemOneThreshold(stored.systemOneCompletionThreshold) * 100);
+  updateSystemOneThresholdLabels();
 
   // Load vision model config
   const visionStored = await browser.storage.local.get(['visionModel']);
@@ -660,15 +733,19 @@ async function init() {
   updateMultimodalDetectedProvider('vision');
   updateMultimodalDetectedProvider('transcription');
 
+  // Load Generative Media config. Used by the generate_image agent tool.
+  const imageGenStored = await browser.storage.local.get(['imageGenModel']);
+  renderImageGenConfig(imageGenStored.imageGenModel || {});
+
   // Load profile (auto-fill bio + throwaway password)
   const profileStored = await browser.storage.local.get(['profileEnabled', 'profileText']);
   if (profileEnabledToggle) profileEnabledToggle.checked = !!profileStored.profileEnabled;
   if (profileTextArea) profileTextArea.value = profileStored.profileText || '';
   await loadUserMemorySettings();
+  await loadMemcodeStatus();
 
-  // A valid saved key is the CapSolver enable control.
-  const captchaStored = await browser.storage.local.get('capsolverApiKey');
-  if (captchaApiKeyInput) captchaApiKeyInput.value = captchaStored.capsolverApiKey || '';
+  // Each provider has independent key, enable state, and fallback weight.
+  await initCaptchaSettings(browser.storage.local, sendToBackground, t);
 
   await loadCustomSkills();
 
@@ -923,7 +1000,7 @@ async function saveCustomSkills(nextSkills, opts = {}) {
   const update = { [CUSTOM_SKILLS_STORAGE_KEY]: customSkills };
   const removedSkill = opts.removedSkill;
   const installedSkill = opts.installedSkill;
-  const removedDefault = removedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(removedSkill.id);
+  const removedDefault = (removedSkill?.sourceType === 'built-in' || DEFAULT_SKILL_IDS.has(removedSkill?.id)) && DEFAULT_SKILL_IDS.has(removedSkill.id);
   const installedDefault = installedSkill?.sourceType === 'built-in' && DEFAULT_SKILL_IDS.has(installedSkill.id);
   if (removedDefault || installedDefault) {
     const stored = await browser.storage.local.get(DEFAULT_SKILLS_REMOVED_STORAGE_KEY);
@@ -985,6 +1062,7 @@ function renderSkills() {
                   data-skill-preview-id="${escapeHtml(skill.id)}">${escapeHtml(skill.name)}</button>
           <div class="setting-desc skill-source">${escapeHtml(source)} · ${escapeHtml(t('st.skills.item.chars', { count: skill.content.length }))}${escapeHtml(toolSummary)}</div>
         </div>
+        <button class="btn-secondary" data-skill-edit-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.edit'))}</button>
         <button class="btn-secondary" data-skill-id="${escapeHtml(skill.id)}">${escapeHtml(t('st.skills.remove'))}</button>
       </div>`;
   }).join('');
@@ -992,8 +1070,17 @@ function renderSkills() {
   skillsList.querySelectorAll('button[data-skill-preview-id]').forEach((btn) => {
     btn.addEventListener('click', () => previewEnabledSkill(btn.dataset.skillPreviewId));
   });
+  skillsList.querySelectorAll('button[data-skill-edit-id]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const skill = customSkills.find((s) => s.id === btn.dataset.skillEditId);
+      if (skill) startSkillEdit(skill);
+    });
+  });
   skillsList.querySelectorAll('button[data-skill-id]').forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (editingSkillId === btn.dataset.skillId) {
+        cancelSkillEdit();
+      }
       const removedSkill = customSkills.find((skill) => skill.id === btn.dataset.skillId);
       await saveCustomSkills(
         customSkills.filter((skill) => skill.id !== btn.dataset.skillId),
@@ -1036,6 +1123,24 @@ async function addPackagedSkill(skillId, button) {
   }
 }
 
+function startSkillEdit(skill) {
+  editingSkillId = skill.id;
+  if (skillNameInput) skillNameInput.value = skill.name || '';
+  if (skillTextArea) skillTextArea.value = skill.content || '';
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.providers.save');
+  flashSkillsResult('ok', skill.name || t('st.skills.edit'));
+  skillNameInput?.focus?.();
+  if (skillTextArea) skillTextArea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelSkillEdit() {
+  if (editingSkillId == null) return;
+  editingSkillId = null;
+  if (btnAddSkillText) btnAddSkillText.textContent = t('st.skills.add_text');
+  if (skillNameInput) skillNameInput.value = '';
+  if (skillTextArea) skillTextArea.value = '';
+}
+
 async function addSkillFromText() {
   const content = (skillTextArea?.value || '').trim();
   if (!content) {
@@ -1043,6 +1148,27 @@ async function addSkillFromText() {
     return;
   }
   try {
+    if (editingSkillId) {
+      const original = customSkills.find((s) => s.id === editingSkillId);
+      if (!original) {
+        cancelSkillEdit();
+        throw new Error(t('st.skills.error.add_failed'));
+      }
+      const isBuiltIn = original.sourceType === 'built-in';
+      const updated = {
+        id: original.id,
+        name: (skillNameInput?.value || '').trim() || original.name || '',
+        sourceType: isBuiltIn ? 'text' : (original.sourceType || 'text'),
+        sourceUrl: isBuiltIn ? '' : (original.sourceUrl || ''),
+        content,
+        createdAt: original.createdAt || Date.now(),
+      };
+      const next = customSkills.map((s) => (s.id === editingSkillId ? updated : s));
+      await saveCustomSkills(next);
+      cancelSkillEdit();
+      flashSkillsResult('ok', t('st.providers.saved'));
+      return;
+    }
     await addCustomSkill({
       id: makeSkillId(),
       name: skillNameInput?.value || '',
@@ -1112,6 +1238,7 @@ async function addSkillFromUrl() {
 btnAddSkillText?.addEventListener('click', addSkillFromText);
 btnAddSkillUrl?.addEventListener('click', addSkillFromUrl);
 btnClearSkillForm?.addEventListener('click', () => {
+  cancelSkillEdit();
   if (skillNameInput) skillNameInput.value = '';
   if (skillUrlInput) skillUrlInput.value = '';
   if (skillTextArea) skillTextArea.value = '';
@@ -1127,6 +1254,11 @@ if (globalThis.browser?.storage?.onChanged) {
 }
 
 // --- Display Settings ---
+
+composerDeliveryModeSelect?.addEventListener('change', async () => {
+  const mode = composerDeliveryModeSelect.value === 'steer' ? 'steer' : 'queue';
+  await browser.storage.local.set({ composerDeliveryMode: mode }).catch(() => {});
+});
 
 downloadDirectoryInput?.addEventListener('input', () => {
   downloadDirectoryInput.setCustomValidity('');
@@ -1320,6 +1452,14 @@ losslessTracingToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ losslessTrace: losslessTracingToggle.checked }).catch(() => {});
 });
 
+feedbackDiagnosticsToggle?.addEventListener('change', async () => {
+  await browser.storage.local.set({ feedbackDiagnosticsEnabled: feedbackDiagnosticsToggle.checked });
+  if (!feedbackDiagnosticsToggle.checked) {
+    const response = await browser.runtime.sendMessage({ target: 'background', action: 'feedback_clear_diagnostics' });
+    if (!response?.ok) console.error('[feedback] Could not clear local diagnostics:', response?.error);
+  }
+});
+
 costSessionLimitInput?.addEventListener('change', async () => {
   const value = normalizeCostAmount(costSessionLimitInput.value);
   costSessionLimitInput.value = value.toFixed(2);
@@ -1353,6 +1493,138 @@ scheduledTasksToggle?.addEventListener('change', async () => {
 
 scheduledConfirmToggle?.addEventListener('change', async () => {
   await browser.storage.local.set({ scheduledRequireConsequentialConfirmation: scheduledConfirmToggle.checked }).catch(() => {});
+});
+
+function updateSystemOneThresholdLabels() {
+  if (systemOneWatchThresholdValue && systemOneWatchThresholdRange) {
+    systemOneWatchThresholdValue.textContent = `${systemOneWatchThresholdRange.value}%`;
+  }
+  if (systemOneCompletionThresholdValue && systemOneCompletionThresholdRange) {
+    systemOneCompletionThresholdValue.textContent = `${systemOneCompletionThresholdRange.value}%`;
+  }
+}
+
+systemOneWatchThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+systemOneCompletionThresholdRange?.addEventListener('input', updateSystemOneThresholdLabels);
+
+function showSystemOneResult(className, text) {
+  if (!systemOneTestResult) return;
+  systemOneTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  systemOneTestResult.textContent = text;
+  if (className) setTimeout(() => systemOneTestResult.classList.remove('show'), 3000);
+}
+
+if (btnSaveSystemOne) {
+  btnSaveSystemOne.addEventListener('click', async () => {
+    const key = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+    const enabled = systemOneEnabledToggle?.checked === true;
+    if (enabled && !['local', 'webgpu_d1'].includes(decisionProviderInput.value) && !isValidTypesafeApiKey(key)) {
+      showSystemOneResult('fail', t('st.system_one.need_key'));
+      return;
+    }
+    if (decisionProviderInput.value === 'webgpu_d1' && enabled) {
+      const consentResult = await sendToBackground('d1_control', { command: 'consent', consent: document.getElementById('d1-consent').checked, consentVersion: 1 });
+      if (!consentResult.success) { showSystemOneResult('fail', consentResult.error); return; }
+    }
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = key;
+    let selection;
+    try { selection = decisionSettingsDraft(); resolveDecisionConfig(selection); if (!(selection.systemOneDoneThreshold >= .5 && selection.systemOneDoneThreshold <= .99)) throw new Error('Completion threshold must be 50–99%.'); } catch (error) { showSystemOneResult('fail', error.message); return; }
+    await browser.storage.local.set({
+      ...selection,
+      ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: key } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: key }),
+      systemOneEnabled: enabled && (['local', 'webgpu_d1'].includes(decisionProviderInput.value) || isValidTypesafeApiKey(key)),
+      systemOneWatchEnabled: systemOneWatchToggle?.checked === true,
+      systemOneCompletionEnabled: systemOneCompletionToggle?.checked === true,
+      systemOneFastClassifications: systemOneClassificationsToggle?.checked === true,
+      systemOneFastBrowser: systemOneBrowserToggle?.checked === true,
+      systemOneWatchThreshold: normalizeSystemOneThreshold(Number(systemOneWatchThresholdRange?.value) / 100),
+      systemOneCompletionThreshold: normalizeSystemOneThreshold(Number(systemOneCompletionThresholdRange?.value) / 100),
+    });
+    if (!enabled || decisionProviderInput.value !== 'webgpu_d1') await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    showSystemOneResult('ok', t('st.providers.saved'));
+  });
+}
+
+if (btnClearSystemOne) {
+  btnClearSystemOne.addEventListener('click', async () => {
+    if (systemOneClassificationsToggle) systemOneClassificationsToggle.checked = false;
+    if (systemOneBrowserToggle) systemOneBrowserToggle.checked = false;
+    if (systemOneApiKeyInput) systemOneApiKeyInput.value = '';
+    decisionKeyDrafts.clear();
+    decisionProviderInput.value = previousDecisionProvider = 'openrouter';
+    decisionModelInput.value = DEFAULT_DECISION_MODEL;
+    decisionDoneToggle.checked = true;
+    decisionVisionSupported = false;
+    document.getElementById('decision-endpoint-field').hidden = true;
+    if (systemOneEnabledToggle) systemOneEnabledToggle.checked = false;
+    if (systemOneWatchToggle) systemOneWatchToggle.checked = false;
+    if (systemOneCompletionToggle) systemOneCompletionToggle.checked = false;
+    await browser.storage.local.remove([
+      ...DECISION_SETTINGS_KEYS,
+      'typesafeApiKey',
+      'systemOneEnabled',
+      'systemOneWatchEnabled',
+      'systemOneCompletionEnabled', 'systemOneFastClassifications', 'systemOneFastBrowser',
+      'systemOneWatchThreshold',
+      'systemOneCompletionThreshold',
+    ]);
+    if (systemOneWatchThresholdRange) systemOneWatchThresholdRange.value = '70';
+    if (systemOneCompletionThresholdRange) systemOneCompletionThresholdRange.value = '70';
+    updateSystemOneThresholdLabels();
+    await sendToBackground('d1_control', { command: 'reset' }).catch(() => {});
+    await refreshD1Settings();
+    showSystemOneResult('ok', t('st.captcha.cleared'));
+  });
+}
+
+function decisionSettingsDraft() {
+  const card = decisionModels.find(m => m.id === decisionModelInput.value);
+  return { decisionProvider: decisionProviderInput.value, decisionModel: decisionModelInput.value.trim(),
+    decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
+    decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
+    systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : ['local', 'webgpu_d1'].includes(decisionProviderInput.value) ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
+}
+
+decisionProviderInput?.addEventListener('change', () => {
+  decisionKeyDrafts.set(previousDecisionProvider, systemOneApiKeyInput.value);
+  previousDecisionProvider = decisionProviderInput.value;
+  systemOneApiKeyInput.value = decisionKeyDrafts.get(previousDecisionProvider) || '';
+  decisionModelInput.value = previousDecisionProvider === 'webgpu_d1' ? D1_MODEL_ID : previousDecisionProvider === 'typesafe' ? 'jev-1.13.0' : previousDecisionProvider === 'local' ? 'kev-latest' : DEFAULT_DECISION_MODEL;
+  decisionModels = []; decisionVisionSupported = false;
+  document.getElementById('decision-models').replaceChildren();
+  document.getElementById('decision-endpoint-field').hidden = previousDecisionProvider !== 'local';
+});
+decisionModelInput?.addEventListener('input', () => {
+  decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+});
+document.getElementById('btn-decision-models')?.addEventListener('click', async () => {
+  const button = document.getElementById('btn-decision-models'); button.disabled = true;
+  try {
+    const result = await sendToBackground('list_decision_models', { settings: decisionSettingsDraft() });
+    if (!result.success) throw new Error(result.error || 'Model discovery unavailable');
+    decisionModels = result.models;
+    const list = document.getElementById('decision-models'); list.replaceChildren();
+    for (const model of decisionModels) { const option = document.createElement('option'); option.value = model.id; option.label = model.name; list.append(option); }
+    decisionVisionSupported = decisionModels.find(m => m.id === decisionModelInput.value)?.supportsVision === true;
+    showSystemOneResult('ok', t('st.decision.models_loaded', { count: decisionModels.length }));
+  } catch (error) { showSystemOneResult('fail', error.message); } finally { button.disabled = false; }
+});
+
+btnTestSystemOne?.addEventListener('click', async () => {
+  const apiKey = normalizeTypesafeApiKey(systemOneApiKeyInput?.value);
+  if (!apiKey && !['local', 'webgpu_d1'].includes(decisionProviderInput.value)) { showSystemOneResult('fail', t('st.system_one.need_key')); return; }
+  btnTestSystemOne.disabled = true;
+  showSystemOneResult('', t('st.providers.testing'));
+  try {
+    const result = await sendToBackground('test_system_one', { apiKey, settings: decisionSettingsDraft() });
+    if (result?.visionTested || result?.visionVerified) decisionVisionSupported = result.visionVerified === true;
+    showSystemOneResult(result?.success ? 'ok' : 'fail', result?.success
+      ? t('st.providers.connected', { model: result.model }) + (result.visionTested && !result.visionVerified ? ' ' + t('st.decision.vision_unverified') : '')
+      : t('st.providers.failed', { error: result?.error || 'Jev unavailable' }));
+  } catch (error) {
+    showSystemOneResult('fail', t('st.providers.failed', { error: error.message }));
+  } finally { btnTestSystemOne.disabled = false; }
 });
 
 // --- Vision Model ---
@@ -1533,6 +1805,99 @@ if (btnClearTranscription) {
 
 transcriptionBaseUrlInput?.addEventListener('input', () => updateMultimodalDetectedProvider('transcription'));
 
+// --- Generative Media ---
+const imageGenDrafts = new Map();
+let imageGenCurrentProvider = 'fal';
+
+function showImageGenResult(className, text, color = '') {
+  if (!imageGenTestResult) return;
+  imageGenTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
+  imageGenTestResult.textContent = text;
+  imageGenTestResult.style.color = color || '';
+  return imageGenTestResult;
+}
+
+function flashImageGenResult(className, text) {
+  const resultEl = showImageGenResult(className, text);
+  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 2000);
+}
+
+function readImageGenForm() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  if (provider === 'comfyui') return { provider, baseUrl: imageGenBaseUrlInput.value.trim() || MEDIA_PROVIDERS.comfyui.baseUrl, workflow: imageGenWorkflowInput.value.trim() };
+  const config = { provider, apiKey: imageGenApiKeyInput.value.trim(), model: imageGenModelInput.value.trim() };
+  if (provider === 'comfyrouter') config.parameters = imageGenParametersInput.value.trim() || '{}';
+  return config;
+}
+
+function updateImageGenProvider() {
+  const provider = imageGenProviderInput?.value || 'fal';
+  const meta = MEDIA_PROVIDERS[provider] || MEDIA_PROVIDERS.fal;
+  const local = provider === 'comfyui';
+  for (const [id, hidden] of [['image-gen-key-field', local], ['image-gen-model-field', local], ['image-gen-url-field', !local], ['image-gen-workflow-field', !local], ['image-gen-parameters-field', provider !== 'comfyrouter']]) {
+    const field = document.getElementById(id); if (field) field.hidden = hidden;
+  }
+  if (imageGenApiKeyInput) imageGenApiKeyInput.placeholder = meta.keyPlaceholder || '';
+  if (imageGenModelInput) imageGenModelInput.placeholder = meta.model || '';
+  const hint = document.getElementById('image-gen-provider-hint');
+  if (hint) hint.textContent = t(`st.imagegen.hint.${provider}`) + ' ';
+  const docs = document.getElementById('image-gen-docs'); if (docs) docs.href = meta.docs;
+}
+
+function renderImageGenConfig(config) {
+  const provider = Object.hasOwn(MEDIA_PROVIDERS, mediaProvider(config)) ? mediaProvider(config) : 'fal';
+  imageGenCurrentProvider = provider;
+  if (imageGenProviderInput) imageGenProviderInput.value = provider;
+  if (imageGenApiKeyInput) imageGenApiKeyInput.value = config.apiKey || '';
+  if (imageGenModelInput) imageGenModelInput.value = config.model || '';
+  if (imageGenBaseUrlInput) imageGenBaseUrlInput.value = config.baseUrl || MEDIA_PROVIDERS.comfyui.baseUrl;
+  if (imageGenWorkflowInput) imageGenWorkflowInput.value = typeof config.workflow === 'object' ? JSON.stringify(config.workflow, null, 2) : config.workflow || '';
+  if (imageGenParametersInput) imageGenParametersInput.value = typeof config.parameters === 'object' ? JSON.stringify(config.parameters, null, 2) : config.parameters || '';
+  updateImageGenProvider();
+}
+
+imageGenProviderInput?.addEventListener('change', () => {
+  const selected = imageGenProviderInput.value;
+  // Preserve unsaved drafts while switching, and never reuse another provider's key.
+  imageGenProviderInput.value = imageGenCurrentProvider;
+  imageGenDrafts.set(imageGenCurrentProvider, readImageGenForm());
+  renderImageGenConfig(imageGenDrafts.get(selected) || { provider: selected });
+  if (imageGenTestResult) imageGenTestResult.classList.remove('show');
+});
+document.addEventListener('wb-locale-changed', updateImageGenProvider);
+
+async function saveImageGenForm() {
+  const config = readImageGenForm();
+  validateMediaConfig(config);
+  await browser.storage.local.set({ imageGenModel: config });
+  return config;
+}
+
+btnSaveImageGen?.addEventListener('click', async () => {
+  try { await saveImageGenForm(); flashImageGenResult('ok', t('st.imagegen.saved')); }
+  catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+});
+
+btnTestImageGen?.addEventListener('click', async () => {
+  btnTestImageGen.disabled = true;
+  try {
+    const config = await saveImageGenForm();
+    showImageGenResult('', t('st.imagegen.testing'), 'var(--text2)');
+    const res = await sendToBackground('test_image_gen_provider');
+    if (res?.ok) showImageGenResult('ok', t('st.imagegen.connected', { model: res.model || config.model }));
+    else showImageGenResult('fail', t('st.imagegen.failed', { error: res?.error || 'Unknown error' }));
+  } catch (error) { showImageGenResult('fail', t('st.imagegen.failed', { error: error.message })); }
+  finally { btnTestImageGen.disabled = false; }
+});
+
+btnClearImageGen?.addEventListener('click', async () => {
+  const provider = imageGenProviderInput.value;
+  imageGenDrafts.clear();
+  renderImageGenConfig({ provider });
+  await browser.storage.local.remove('imageGenModel');
+  flashImageGenResult('ok', t('st.imagegen.cleared'));
+});
+
 // --- Profile auto-fill ---
 let profileSyncChallenge = null;
 function showProfileSyncResult(ok, text) { if (!profileSyncResult) return; profileSyncResult.className = `test-result show ${ok ? 'ok' : 'fail'}`; profileSyncResult.textContent = text; }
@@ -1565,7 +1930,7 @@ function renderProfileSyncState(state) {
   if (profileSyncStatus) profileSyncStatus.textContent = describeProfileSyncState(state || {});
 }
 async function refreshProfileSyncState() { const state = await sendToBackground('profile_sync_state').catch(e => ({ status: 'error', error: e.message })); renderProfileSyncState(state); return state; }
-async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
+async function reloadProfileSyncData() { const stored = await browser.storage.local.get(['profileEnabled', 'profileText', 'visionModel', 'transcriptionModel', 'imageGenModel']); if (profileEnabledToggle) profileEnabledToggle.checked = !!stored.profileEnabled; if (profileTextArea) profileTextArea.value = stored.profileText || ''; const vision = stored.visionModel || {}; visionBaseUrlInput.value = vision.baseUrl || ''; visionApiKeyInput.value = vision.apiKey || ''; visionModelInput.value = vision.model || ''; const transcription = stored.transcriptionModel || {}; if (transcriptionBaseUrlInput) transcriptionBaseUrlInput.value = transcription.baseUrl || ''; if (transcriptionApiKeyInput) transcriptionApiKeyInput.value = transcription.apiKey || ''; if (transcriptionModelInput) transcriptionModelInput.value = transcription.model || ''; const imageGen = stored.imageGenModel || {}; if (imageGenApiKeyInput) imageGenApiKeyInput.value = imageGen.apiKey || ''; if (imageGenModelInput) imageGenModelInput.value = imageGen.model || ''; updateMultimodalDetectedProvider('vision'); updateMultimodalDetectedProvider('transcription'); await loadUserMemorySettings(); const res = await sendToBackground('get_providers'); providersData = res.providers; activeProviderId = res.active; renderProviders(); }
 async function requestProfileSyncDataConsent() { const permissions = await browser.permissions.getAll(); if (!Object.hasOwn(permissions, 'data_collection')) return window.confirm(t('st.sync.consent.legacy')); return browser.permissions.request({ data_collection: ['personallyIdentifyingInfo', 'authenticationInfo', 'personalCommunications', 'websiteContent', 'technicalAndInteraction'] }); }
 function profileSyncButtonRestore(button, pendingLabel) {
   if (!button) return () => {};
@@ -1642,6 +2007,47 @@ function flashUserMemoryResult(className, text) {
   userMemoryTestResult.textContent = text;
   setTimeout(() => userMemoryTestResult.classList.remove('show'), 2500);
 }
+
+async function loadMemcodeStatus() {
+  if (!memcodeRecallToggle) return;
+  const result = await sendToBackground('memcode_recall_status').catch(() => null);
+  memcodeRecallToggle.disabled = !result?.connected;
+  memcodeRecallToggle.checked = result?.recallEnabled === true;
+  if (memcodeConnectButton) memcodeConnectButton.disabled = result?.connected === true;
+  if (memcodeDisconnectButton) memcodeDisconnectButton.disabled = result?.connected !== true;
+  if (memcodeRecallResult) {
+    memcodeRecallResult.className = 'test-result show';
+    memcodeRecallResult.textContent = t(result?.connected
+      ? (result.recallEnabled ? 'st.memcode.active' : 'st.memcode.connected')
+      : 'st.memcode.disconnected', { account: result?.accountId || 'unknown' });
+  }
+}
+
+memcodeConnectButton?.addEventListener('click', async () => {
+  memcodeConnectButton.disabled = true;
+  try {
+    const result = await sendToBackground('memcode_recall_connect');
+    if (!result?.ok) throw new Error(result?.error || 'Connection failed');
+    await loadMemcodeStatus();
+  } catch (error) {
+    memcodeConnectButton.disabled = false;
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: error.message });
+  }
+});
+memcodeDisconnectButton?.addEventListener('click', async () => {
+  const result = await sendToBackground('memcode_recall_disconnect');
+  await loadMemcodeStatus();
+  if (result?.revocationFailed && memcodeRecallResult) {
+    memcodeRecallResult.textContent = t('st.memcode.revocation_warning');
+  }
+});
+memcodeRecallToggle?.addEventListener('change', async () => {
+  const result = await sendToBackground('memcode_recall_enable', { enabled: memcodeRecallToggle.checked });
+  if (!result?.ok) {
+    if (memcodeRecallResult) memcodeRecallResult.textContent = t('st.memcode.error', { error: result?.error || 'Setting unavailable' });
+  }
+  await loadMemcodeStatus();
+});
 
 const USER_MEMORY_FAILURE_REASON_KEYS = {
   invalid_or_sensitive: 'st.memory.reason.invalid_or_sensitive',
@@ -1809,71 +2215,6 @@ if (btnImportUserMemory) {
   });
 }
 
-// --- CapSolver (captcha solving) ---
-// Saving a structurally valid API key enables CapSolver automatically.
-
-function showCaptchaResult(className, text, color = '') {
-  if (!captchaTestResult) return;
-  captchaTestResult.className = `test-result show${className ? ` ${className}` : ''}`;
-  captchaTestResult.textContent = text;
-  captchaTestResult.style.color = color || '';
-  return captchaTestResult;
-}
-
-function flashCaptchaResult(className, text) {
-  const resultEl = showCaptchaResult(className, text);
-  if (resultEl) setTimeout(() => resultEl.classList.remove('show'), 3000);
-}
-
-if (btnSaveCaptcha) {
-  btnSaveCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    if (captchaApiKeyInput) captchaApiKeyInput.value = key;
-    // Saving the key is the user's explicit opt-in. Keep the legacy boolean
-    // as an internal consent bit so upgrades preserve an existing opt-out.
-    await browser.storage.local.set({
-      capsolverApiKey: key,
-      captchaSolverEnabled: true,
-    });
-    flashCaptchaResult('ok', t('st.captcha.saved'));
-  });
-}
-
-if (btnTestCaptcha) {
-  btnTestCaptcha.addEventListener('click', async () => {
-    const key = normalizeCapsolverApiKey(captchaApiKeyInput?.value);
-    if (!isValidCapsolverApiKey(key)) {
-      flashCaptchaResult('fail', t('st.captcha.need_key'));
-      return;
-    }
-    showCaptchaResult('', t('st.captcha.checking'), 'var(--text2)');
-    try {
-      const res = await sendToBackground('test_capsolver_balance', { apiKey: key });
-      if (res?.ok) {
-        flashCaptchaResult('ok', t('st.captcha.balance_ok', { balance: `$${Number(res.balance).toFixed(4)}` }));
-      } else {
-        flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: res?.error || 'Unknown error' }));
-      }
-    } catch (e) {
-      flashCaptchaResult('fail', t('st.captcha.balance_fail', { error: e.message }));
-    }
-  });
-}
-
-if (btnClearCaptcha) {
-  btnClearCaptcha.addEventListener('click', async () => {
-    if (captchaApiKeyInput) captchaApiKeyInput.value = '';
-    // Remove the legacy flag too so old exports cannot preserve a
-    // contradictory enabled-without-a-key state.
-    await browser.storage.local.remove(['capsolverApiKey', 'captchaSolverEnabled']);
-    flashCaptchaResult('ok', t('st.captcha.cleared'));
-  });
-}
-
 // --- Provider Rendering ---
 
 // Prompt-tier selector, shown only for local + OpenRouter providers (cloud is
@@ -1899,6 +2240,18 @@ const VISION_MODE_FIELD = {
     { value: 'off', labelKey: 'st.providers.compat.value.off' },
   ],
 };
+const TOOL_MODE_FIELD = {
+  key: 'toolsMode',
+  labelKey: 'st.provider.field.tools_mode',
+  type: 'select',
+  collapsed: true,
+  options: [
+    { value: 'auto', labelKey: 'st.provider.field.vision_auto' },
+    { value: 'on', labelKey: 'st.provider.field.vision_force_on' },
+    { value: 'off', labelKey: 'st.providers.compat.value.off' },
+  ],
+};
+const OPENROUTER_VISION_MODE_FIELD = { ...VISION_MODE_FIELD, collapsed: true };
 const OLLAMA_VISION_MODE_FIELD = VISION_MODE_FIELD;
 const OPTIONAL_LOCAL_API_KEY_FIELD = {
   key: 'apiKey',
@@ -1907,6 +2260,39 @@ const OPTIONAL_LOCAL_API_KEY_FIELD = {
   placeholder: 'optional',
   collapsed: true,
 };
+const SHARE_RESEARCH_FIELD = {
+  key: 'shareQueriesForResearch',
+  labelKey: 'st.providers.share_research.label',
+  hintKey: 'st.providers.share_research.hint',
+  type: 'checkbox',
+};
+
+async function confirmResearchSharing(event) {
+  const input = event.currentTarget;
+  if (!input.checked) return;
+  if (!window.confirm(t('st.providers.share_research.confirm'))) {
+    event.preventDefault();
+    return;
+  }
+  // Keep the setting off while Firefox asks for native collection consent.
+  // Call request directly in the click handler, before the first await, to
+  // preserve the user gesture required by the permissions API.
+  input.checked = false;
+  input.disabled = true;
+  try {
+    const granted = await browser.permissions.request({
+      data_collection: RESEARCH_DATA_COLLECTION,
+    });
+    if (granted && input.isConnected) {
+      input.checked = true;
+      markProviderDirty(input.dataset.provider);
+    }
+  } catch {
+    // Denied or unavailable native consent leaves research sharing off.
+  } finally {
+    input.disabled = false;
+  }
+}
 
 function providerDefinitionId(id, config = providersData[id]) {
   return String(config?.sourceProviderId || config?.duplicateOf || id || '');
@@ -2297,6 +2683,77 @@ function providerSubscriptionGuideHtml(definitionId) {
   </aside>`;
 }
 
+async function refreshWebbrainPaymentNotice() {
+  if (!refreshWebbrainPaymentNotice._focusBound && typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      refreshWebbrainPaymentNotice._cache = null;
+      void refreshWebbrainPaymentNotice();
+    });
+    refreshWebbrainPaymentNotice._focusBound = true;
+  }
+  const notice = providersContainer.querySelector('.webbrain-payment-notice');
+  const deviceGuid = providersData.webbrain_cloud?.deviceGuid;
+  if (!notice || !deviceGuid) return;
+  const billingStatusUrl = typeof WEBBRAIN_BILLING_STATUS_URL === 'string'
+    ? WEBBRAIN_BILLING_STATUS_URL
+    : 'https://api.webbrain.one/v1/billing/status';
+  const renderNotice = (subscriptionStatus) => {
+    if (!notice.isConnected) return;
+    if (!['past_due', 'unpaid'].includes(subscriptionStatus)) {
+      notice.hidden = true;
+      notice.replaceChildren();
+      return;
+    }
+    const message = document.createElement('p');
+    message.textContent = t('st.account.payment_failed');
+    const link = document.createElement('a');
+    link.href = webbrainAccountUrl(deviceGuid);
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = t('st.account.update_payment');
+    notice.replaceChildren(message, link);
+    notice.style.cssText = 'margin-top:10px;padding:12px;border-radius:6px;border:1px solid var(--warning,#b7791f);';
+    notice.hidden = false;
+  };
+  // Reuse recent results during search, but refresh on focus or after 30 seconds.
+  const cached = refreshWebbrainPaymentNotice._cache;
+  if (cached?.deviceGuid === deviceGuid && Date.now() - cached.fetchedAt < 30000) {
+    renderNotice(cached.subscriptionStatus);
+    return;
+  }
+  try {
+    let statusPromise = refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid
+      ? refreshWebbrainPaymentNotice._inflight.promise
+      : null;
+    if (!statusPromise) {
+      statusPromise = (async () => {
+        const response = await fetch(billingStatusUrl, {
+          headers: { 'X-WebBrain-Device-Id': deviceGuid },
+          cache: 'no-store',
+          credentials: 'omit',
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!response.ok) return null;
+        const status = await response.json();
+        return status.subscription_status;
+      })();
+      refreshWebbrainPaymentNotice._inflight = { deviceGuid, promise: statusPromise };
+    }
+    const subscriptionStatus = await statusPromise;
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    if (subscriptionStatus == null) return;
+    refreshWebbrainPaymentNotice._cache = { deviceGuid, subscriptionStatus, fetchedAt: Date.now() };
+    renderNotice(subscriptionStatus);
+  } catch {
+    if (refreshWebbrainPaymentNotice._inflight?.deviceGuid === deviceGuid) {
+      refreshWebbrainPaymentNotice._inflight = null;
+    }
+    /* An unavailable billing check must not interrupt settings. */
+  }
+}
+
 function renderProviders() {
   providersContainer.innerHTML = '';
 
@@ -2328,6 +2785,16 @@ function renderProviders() {
         PROMPT_TIER_FIELD,
       ],
     },
+    ods: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:11434/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'select the running ODS model' },
+        CONTEXT_WINDOW_FIELD,
+        VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
     lmstudio: {
       fields: [
         { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://localhost:1234/v1' },
@@ -2335,6 +2802,16 @@ function renderProviders() {
         { key: 'model', labelKey: 'st.provider.field.model_optional', type: 'text', placeholderKey: 'st.provider.field.model_loaded_hint' },
         CONTEXT_WINDOW_FIELD,
         VISION_MODE_FIELD,
+        PROMPT_TIER_FIELD,
+      ],
+    },
+    osaurus: {
+      fields: [
+        { key: 'baseUrl', labelKey: 'st.provider.field.server_url', type: 'text', placeholder: 'http://127.0.0.1:1337/v1' },
+        OPTIONAL_LOCAL_API_KEY_FIELD,
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'llama-3.2-3b-instruct' },
+        CONTEXT_WINDOW_FIELD,
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox' },
         PROMPT_TIER_FIELD,
       ],
     },
@@ -2433,6 +2910,9 @@ function renderProviders() {
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'gpt-5.6-terra',
           suggestions: [
+            'gpt-6-luna-pro',
+            'gpt-6.1-sol',
+            'gpt-6-astra',
             'gpt-5.6-terra',
             'gpt-5.6-sol',
             'gpt-5.6-luna',
@@ -2452,9 +2932,11 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-or-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'openrouter/free',
-          suggestions: ['openrouter/free', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
+          suggestions: ['openrouter/free', 'anthropic/claude-opus-5.5', 'qwen/qwen3.8-27b', 'moonshotai/kimi-k3', 'z-ai/glm-5.3', 'minimax/minimax-m3'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://openrouter.ai/api/v1' },
         PROMPT_TIER_FIELD,
+        TOOL_MODE_FIELD,
+        OPENROUTER_VISION_MODE_FIELD,
       ],
     },
     huggingface: {
@@ -2490,7 +2972,7 @@ function renderProviders() {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-ant-...' },
         { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'claude-opus-5',
-          suggestions: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] },
+          suggestions: ['claude-fable-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-haiku-5-5', 'claude-haiku-4-5'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.anthropic.com' },
         ...CACHE_AWARE_COST_ESTIMATE_FIELDS,
       ],
@@ -2527,9 +3009,17 @@ function renderProviders() {
     deepseek: {
       fields: [
         { key: 'apiKey', labelKey: 'st.provider.field.api_key', type: 'password', placeholder: 'sk-...' },
-        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-v4-flash',
-          suggestions: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'] },
+        { key: 'model', labelKey: 'st.provider.field.model', type: 'text', placeholder: 'deepseek-flash',
+          suggestions: ['deepseek-flash', 'deepseek-v4-flash'] },
         { key: 'baseUrl', labelKey: 'st.provider.field.api_base_url', type: 'text', placeholder: 'https://api.deepseek.com' },
+        // Chat Completions is the default wire format; DeepSeek's Responses API
+        // is an opt-in that mainly adds JSON-schema structured output.
+        { key: 'apiFormat', labelKey: 'st.provider.field.api_format', type: 'select', collapsed: true,
+          options: [
+            { value: 'auto', label: 'Chat Completions (default)' },
+            { value: 'chat', label: 'Chat Completions' },
+            { value: 'responses', label: 'Responses API' },
+          ] },
         ...COST_ESTIMATE_FIELDS,
       ],
     },
@@ -2665,6 +3155,9 @@ function renderProviders() {
     const keys = new Set(definition.fields.map(field => field.key));
     if (!keys.has('contextWindow')) definition.fields.push(CONTEXT_WINDOW_FIELD);
     if (!keys.has('maxOutputTokens')) definition.fields.push(MAX_OUTPUT_TOKENS_FIELD);
+    // Voluntary research sharing is opt-in per provider and never shown for
+    // WebBrain Compass itself.
+    if (!keys.has('shareQueriesForResearch')) definition.fields.push(SHARE_RESEARCH_FIELD);
   }
 
   providersContainer.appendChild(renderProviderFilterBar());
@@ -2727,6 +3220,9 @@ function renderProviders() {
             <label style="margin:0;cursor:pointer;">${escapeHtml(label)}</label>
           </div>
         `;
+        if (field.hintKey) {
+          fieldHTML += `<div class="field-hint" style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(field.hintKey))}</div>`;
+        }
         } else if (field.suggestions && field.key === 'model') {
         const rawVal = config[field.key] || '';
         const isCustom = rawVal && !field.suggestions.includes(rawVal);
@@ -2747,7 +3243,7 @@ function renderProviders() {
           </div>
         `;
       } else {
-        const localModelProviders = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+        const localModelProviders = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
         const canLoadModels = localModelProviders.includes(definitionId) && field.key === 'model';
         const listAttr = canLoadModels ? `list="models-${id}"` : '';
         const datalistHTML = canLoadModels ? `<datalist id="models-${id}"></datalist>` : '';
@@ -2839,17 +3335,21 @@ function renderProviders() {
          </aside>`
       : '';
     const compatibilitySettings = renderProviderCompatibilitySettings(id, config);
-    const duplicateDisabledKey = config.hasDuplicate
-      ? 'st.providers.duplicate_limit'
-      : (!config.canDuplicate
-        ? 'st.providers.duplicate_unavailable'
-        : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : ''));
+    const duplicateDisabledKey = !config.canDuplicate
+      ? 'st.providers.duplicate_unavailable'
+      : ((!isConfigured || dirtyProviderIds.has(id)) ? 'st.providers.duplicate_inactive' : '');
 
     const subscriptionGuide = providerSubscriptionGuideHtml(definitionId);
     const body = `
       ${subscriptionGuide}
+      ${id !== 'webbrain_cloud' ? `<div class="field">
+        <label for="provider-title-${id}">${escapeHtml(t('st.providers.title'))}</label>
+        <input id="provider-title-${id}" type="text" data-provider="${id}" data-key="label"
+               value="${escapeHtml(config.label || id)}" maxlength="120" required>
+      </div>` : ''}
       ${fieldsHTML}
       ${providerNote}
+      ${id === 'webbrain_cloud' ? '<div class="webbrain-payment-notice" role="status" hidden></div>' : ''}
       ${ollamaWarning}
       ${compatibilitySettings}
       <div class="btn-row">
@@ -2857,9 +3357,8 @@ function renderProviders() {
         <button class="btn-secondary btn-test" data-provider="${id}">${escapeHtml(t('st.providers.test'))}</button>
         ${billingButton}
         ${!isSelected ? `<button class="btn-secondary btn-activate" data-provider="${id}">${escapeHtml(t('st.providers.select_for_chat'))}</button>` : ''}
-        ${config.isDuplicate
-          ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>`
-          : `<button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>`}
+        <button class="btn-secondary btn-duplicate" data-provider="${id}"${duplicateDisabledKey ? ` disabled title="${escapeHtml(t(duplicateDisabledKey))}"` : ''}>${escapeHtml(t('st.providers.duplicate'))}</button>
+        ${config.isDuplicate ? `<button class="btn-secondary btn-remove-duplicate" data-provider="${id}">${escapeHtml(t('st.providers.remove_duplicate'))}</button>` : ''}
       </div>
       <div class="test-result" id="test-${id}"></div>
     `;
@@ -2876,10 +3375,11 @@ function renderProviders() {
     providersContainer.appendChild(empty);
   }
 
+  refreshWebbrainPaymentNotice();
   restoreProviderApiKeyWarnings();
 
   document.querySelectorAll('.btn-save').forEach(btn => {
-    btn.addEventListener('click', () => saveProvider(btn.dataset.provider));
+    btn.addEventListener('click', () => saveProvider(btn.dataset.provider).catch(() => {}));
   });
   document.querySelectorAll('.btn-test').forEach(btn => {
     btn.addEventListener('click', () => testProvider(btn.dataset.provider));
@@ -2893,6 +3393,9 @@ function renderProviders() {
   document.querySelectorAll('input[data-provider], select[data-provider], textarea[data-provider]').forEach(input => {
     const eventName = input.tagName === 'SELECT' ? 'change' : 'input';
     input.addEventListener(eventName, () => markProviderDirty(input.dataset.provider));
+  });
+  document.querySelectorAll('input[data-key="shareQueriesForResearch"]').forEach(input => {
+    input.addEventListener('click', confirmResearchSharing);
   });
   document.querySelectorAll('.btn-remove-duplicate').forEach(btn => {
     btn.addEventListener('click', () => removeDuplicateProvider(btn.dataset.provider));
@@ -3056,6 +3559,8 @@ function renderProviderFilterBar() {
   input.value = providerSearchQuery;
   let providerSearchComposing = false;
   const applyProviderSearchInput = () => {
+    // Firefox may emit a final input event while the old search is removed.
+    if (!input.isConnected) return;
     const selectionStart = input.selectionStart ?? input.value.length;
     const selectionEnd = input.selectionEnd ?? input.value.length;
     syncInputsIntoProvidersData();
@@ -3313,6 +3818,7 @@ async function saveProvider(id, { showFlash = true, markConfigured = true } = {}
         : providerInputValue(input);
       setProviderConfigValue(config, input.dataset.key, value);
     });
+    if (typeof config.label === 'string') config.label = config.label.trim();
     apiKeyWarning = providerApiKeyWarning(id, config);
     await sendToBackground('update_provider', { providerId: id, config, markConfigured });
   } catch (e) {
@@ -3356,12 +3862,14 @@ function refreshProviderCardStatus(id) {
   card.classList.toggle('configured', isConfigured);
   card.classList.toggle('selected', isSelected);
   const duplicateButton = card.querySelector('.btn-duplicate');
-  if (duplicateButton && providersData[id]?.canDuplicate && !providersData[id]?.hasDuplicate) {
+  if (duplicateButton && providersData[id]?.canDuplicate) {
     const requiresSave = !isConfigured || dirtyProviderIds.has(id);
     duplicateButton.disabled = requiresSave;
     if (!requiresSave) duplicateButton.removeAttribute('title');
     else duplicateButton.title = t('st.providers.duplicate_inactive');
   }
+  const name = card.querySelector('.provider-name');
+  if (name) name.textContent = providersData[id]?.label || id;
   const badges = card.querySelector('.provider-status-badges');
   if (!badges) return;
   badges.innerHTML = `
@@ -3452,7 +3960,13 @@ async function duplicateProvider(id) {
     activeProviderId = refreshed.active;
     restoreProviderDrafts(providerDrafts);
     expandedProviders.add(created.providerId);
+    providerSearchQuery = '';
+    if (providerFilter !== 'all' && providerFilter !== providersData[created.providerId]?.category) {
+      providerFilter = 'all';
+      await browser.storage.local.set({ providerFilter }).catch(() => {});
+    }
     renderProviders();
+    document.querySelector(`.provider-card[data-provider-id="${created.providerId}"]`)?.scrollIntoView({ block: 'nearest' });
   } catch (error) {
     setProviderTestResult(id, 'fail', t('st.providers.failed', { error: error.message }));
   }
@@ -3513,3 +4027,31 @@ async function sendToBackground(action, data = {}) {
 }
 
 init();
+
+// Firefox-only companion controls; kept off by default for extension-only users.
+const bidiEnabled = document.getElementById('firefox-bidi-enabled');
+const bidiPort = document.getElementById('firefox-bidi-port');
+const bidiStatus = document.getElementById('firefox-bidi-status');
+if (bidiEnabled && bidiPort) {
+  browser.storage.local.get(['firefoxBidiEnabled', 'firefoxBidiPort']).then(values => {
+    bidiEnabled.checked = values.firefoxBidiEnabled === true;
+    bidiPort.value = values.firefoxBidiPort || 9222;
+  });
+  const saveBidi = async () => {
+    const port = Number(bidiPort.value);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) { bidiStatus.textContent = t('st.bidi.invalid_port'); return false; }
+    await browser.storage.local.set({ firefoxBidiEnabled: bidiEnabled.checked, firefoxBidiPort: port });
+    bidiStatus.textContent = bidiEnabled.checked ? t('st.bidi.enabled') : t('st.bidi.disabled');
+    return true;
+  };
+  bidiEnabled.addEventListener('change', saveBidi);
+  bidiPort.addEventListener('change', saveBidi);
+  document.getElementById('firefox-bidi-connect').addEventListener('click', async () => {
+    if (!await saveBidi()) return;
+    bidiStatus.textContent = t('st.bidi.connecting');
+    try {
+      const result = await browser.runtime.sendMessage({ type: 'WB_BIDI_CONNECT' });
+      bidiStatus.textContent = result?.success ? t('st.bidi.connected') : result?.error || t('st.bidi.failed');
+    } catch (error) { bidiStatus.textContent = error.message; }
+  });
+}

@@ -1,0 +1,18 @@
+{
+  "id": "025",
+  "user": "search youtube for \"never gonna give you up\"",
+  "mode": "act",
+  "tab": {
+    "url": "https://www.youtube.com/",
+    "title": "YouTube"
+  },
+  "latencyMs": 74,
+  "error": "HTTP 500: {\"error\": {\"message\": \"Error in execution: Non-zero status code returned while running Attention node. Name:'node_scaled_dot_product_attention' Status Message: N:\\\\_work\\\\1\\\\s\\\\onnxruntime\\\\core\\\\framework\\\\bfc_arena.cc:359 onnxruntime::BFCArena::AllocateRawInternal Available memory of 3221225472 is smaller than requested bytes of 12802560512\\n\", \"type\": \"RuntimeError\"}}",
+  "firstToolCall": null,
+  "toolCallSource": null,
+  "finishReason": null,
+  "content": null,
+  "usage": null,
+  "attempts": 1,
+  "retryErrors": []
+}

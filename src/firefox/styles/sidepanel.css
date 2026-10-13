@@ -1007,8 +1007,8 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   flex-shrink: 0;
 }
 
-/* Compact language picker: the closed trigger uses only the representative
-   flag; language codes and native/English names stay in the open menu. */
+/* Compact language picker: the closed trigger is a plain header icon, matching
+   the other header buttons; flags, codes and names live in the open menu. */
 .language-picker {
   position: relative;
   display: flex;
@@ -1016,38 +1016,24 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   flex: 0 0 auto;
 }
 
-.language-picker-btn {
-  min-width: 48px;
-  padding: 3px 4px 3px 6px;
-  gap: 4px;
-  color: var(--text-secondary);
-  direction: ltr;
-}
-
-.language-picker-btn:hover,
-.language-picker-btn[aria-expanded="true"] {
+/* Two selectors deep: the generic `#header .header-right button:not(...)` rule
+   below outranks a bare class selector, and this trigger lives in .header-right. */
+#header .header-right button.language-picker-btn[aria-expanded="true"] {
   color: var(--text-primary);
+  background: var(--accent-dim);
 }
 
-.language-picker-flag,
+.language-picker-btn:focus-visible {
+  outline: 2px solid var(--accent, #6c63ff);
+  outline-offset: 1px;
+}
+
 .language-picker-option-flag {
   display: block;
   flex: 0 0 auto;
   object-fit: cover;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   background: var(--bg-input);
-}
-
-.language-picker-flag {
-  width: 20px;
-  height: 15px;
-  border-radius: 3px;
-}
-
-.language-picker-caret {
-  width: 12px;
-  height: 16px;
-  margin-left: 0;
 }
 
 .language-picker-menu {
@@ -1128,9 +1114,9 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   background: var(--border);
 }
 
-/* Icon buttons in the header-right cluster only. Custom picker controls keep
-   their select chrome even though the language picker also lives here. */
-#header .header-right button:not(.language-picker-btn):not(.language-picker-option) {
+/* Icon buttons in the header-right cluster only. The language trigger is one
+   of them; its menu options keep their own option styling. */
+#header .header-right button:not(.language-picker-option) {
   background: none;
   border: none;
   color: var(--text-secondary);
@@ -1142,21 +1128,20 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
   transition: color 0.2s, background 0.2s;
 }
 
-#header .header-right button:not(.language-picker-btn):not(.language-picker-option):hover {
+#header .header-right button:not(.language-picker-option):hover {
   color: var(--text-primary);
   background: var(--accent-dim);
 }
 
-#header .header-right button:not(.language-picker-btn):not(.language-picker-option).active {
+#header .header-right button:not(.language-picker-option).active {
   color: var(--accent);
   background: var(--accent-dim);
 }
 
-/* Narrow panels: reduce only the outer chrome. The three remaining header
-   icons keep their normal gap and padding instead of collapsing together. */
+/* Narrow panels: reduce only the outer chrome. The header icons keep their
+   normal gap and padding instead of collapsing together. */
 @media (max-width: 380px) {
   #header { padding-inline: 8px; }
-  .language-picker-btn { padding-inline: 2px; }
 }
 
 .composer-toast {
@@ -1406,6 +1391,12 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
 
 .message.assistant.assistant-awaiting-content {
   display: none;
+}
+
+.response-incomplete-note {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .message-content {
@@ -2869,7 +2860,23 @@ html[data-ui-scale-ready="false"] body { visibility: hidden; }
    ASK / ACT MODE TOGGLE
    ========================================================================== */
 
-html[data-standalone="true"] #mode-toggle {
+html[data-standalone="true"] .composer-control-row {
+  display: none;
+}
+
+html[data-standalone="true"] #header #btn-expand {
+  display: none;
+}
+
+html[data-standalone="true"] #header #btn-clear {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+}
+
+html[data-standalone="true"] #header #btn-clear .conversation-action-label {
   display: none;
 }
 
@@ -3050,6 +3057,11 @@ html[data-ui-scale="175"] .conversation-action-label {
   border-color: var(--warning);
 }
 
+#input-area.drag-over #input-wrapper {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
 .slash-command-menu {
   display: flex;
   flex-direction: column;
@@ -3090,6 +3102,10 @@ html[data-ui-scale="175"] .conversation-action-label {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
+}
+
+.queued-message.has-steer {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
 }
 
 .queued-message-label {
@@ -3283,6 +3299,15 @@ html[data-ui-scale="175"] .conversation-action-label {
 
 #user-input::placeholder {
   color: var(--text-muted);
+}
+
+.queued-message-steer.hidden {
+  display: none;
+}
+
+.queued-message-action:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 #btn-send {
@@ -3692,43 +3717,45 @@ html[data-ui-scale="175"] .conversation-action-label {
 }
 
 .message.error.retryable .message-content {
-  position: relative;
-  padding-right: 42px;
-  min-height: 42px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
 }
 
-.error-retry-btn {
-  position: absolute;
-  right: 8px;
-  bottom: 7px;
-  width: 24px;
-  height: 24px;
+.error-retry-btn,
+.ask-act-handoff-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(244, 67, 54, 0.35);
+  padding: 8px 22px;
   border-radius: 6px;
-  background: rgba(244, 67, 54, 0.08);
-  color: var(--error-soft);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
 }
 
-.error-retry-btn svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.ask-act-handoff-btn {
+  margin-top: 10px;
+  max-width: 100%;
+  white-space: normal;
 }
 
 .error-retry-btn:hover,
-.error-retry-btn:focus-visible {
-  background: rgba(244, 67, 54, 0.18);
-  border-color: rgba(244, 67, 54, 0.55);
+.ask-act-handoff-btn:hover {
+  background: var(--accent-dim);
   color: var(--text-primary);
+}
+
+.error-retry-btn:focus-visible,
+.ask-act-handoff-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* WebBrain Compass quota / subscribe prompt — bare URL upgraded to a button */
@@ -3875,6 +3902,40 @@ html[data-ui-scale="175"] .conversation-action-label {
 .cost-allowance-status:empty {
   display: none;
 }
+
+.failure-recovery-card {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 6px);
+  background: var(--bg-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.failure-recovery-message { color: var(--text-primary); }
+.failure-recovery-note, .failure-recovery-status {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.failure-recovery-status:empty { display: none; }
+.failure-recovery-actions { display: flex; gap: 8px; margin-top: 12px; }
+.failure-recovery-action {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  cursor: pointer;
+  font: inherit;
+}
+.failure-recovery-action.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.failure-recovery-action:disabled { cursor: default; opacity: .55; }
+.failure-recovery-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.failure-recovery-details { margin-top: 8px; color: var(--text-secondary); font-size: 11px; }
+.failure-recovery-details summary { cursor: pointer; }
+.failure-recovery-details pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Clarify card — agent paused to ask user a question */
 .clarify-card {
@@ -4539,4 +4600,29 @@ html[data-ui-scale="175"] .conversation-action-label {
   .completion-confetti {
     display: none;
   }
+}
+
+/* Compass quota recovery: controls wrap within narrow side panels. */
+.compass-quota { width: 100%; min-width: 0; }
+.quota-choices, .quota-composers, .quota-providers { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+.compass-quota button { appearance: none; font: inherit; border: 1px solid var(--accent); background: transparent; color: var(--accent); max-width: 100%; white-space: normal; overflow-wrap: anywhere; padding: 8px 12px; border-radius: 6px; cursor: pointer; }
+.quota-choices > button { flex: 1 1 100%; text-align: start; border: 1px solid var(--accent); background: var(--accent-dim); color: var(--text-primary); }
+.quota-choices > .subscribe-btn { background: var(--accent); color: white; }
+.quota-claim, .quota-providers label { width: 100%; min-width: 0; }
+.quota-claim:empty, .quota-providers:empty { display: none; }
+.quota-claim label { display: block; margin-block: 10px 6px; }
+.quota-claim input, .quota-claim textarea, .quota-claim select, .quota-providers select { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin-block: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-secondary); color: var(--text-primary); }
+.quota-claim textarea { resize: vertical; }
+.compass-quota :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.quota-balance, .quota-reset { font-size: 12px; overflow-wrap: anywhere; }
+.quota-status { line-height: 1.45; overflow-wrap: anywhere; }
+.compass-quota [hidden] { display: none; }
+
+.page-feedback-note {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 2px solid currentColor;
+  opacity: .8;
+  font-size: 12px;
+  overflow-wrap: anywhere;
 }

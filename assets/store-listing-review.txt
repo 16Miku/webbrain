@@ -1,0 +1,76 @@
+WebBrain store listing review - 2026-10-01
+
+Recommendation
+
+Lead with an open-source agent that reads and acts in the user's existing browser. Put concrete outcomes first: understand pages and PDFs, do browser tasks, collect data, schedule work, and repeat workflows. Keep model choice visible as a meaningful setup decision. Group downloads, screenshots, article reading and CAPTCHA assistance beneath the core features. Keep Apocalypse Mode as a distinctive secondary benefit.
+
+Proposed title: WebBrain — AI Browser Agent
+Open source remains in the summary and opening sentence. This is a positioning recommendation, not a measured search-ranking or conversion improvement.
+
+Live pages inspected directly in the browser
+
+Chrome: https://chromewebstore.google.com/detail/webbrain/ljhijonmfahplgbbacgcfnaihbjljhhb
+Displayed version: 36.1.0; updated September 15, 2026.
+Firefox: https://addons.mozilla.org/en-US/firefox/addon/webbrain/
+Displayed version: 36.8.0; updated September 20, 2026.
+Source for the initial copy audit: a34843d22; both manifests reported 38.0.1. The Firefox implementation follow-up started from 38.0.13.
+
+The public descriptions are nearly identical. They omit scheduling, workflows, explicit PDF analysis, bulk downloads, screenshots, article/transcript reading, CAPTCHA integration and Dev mode. The Firefox opening incorrectly says Chrome. Both descriptions say MIT; Firefox's separate license metadata also says MIT. LICENSE specifies GPL-3.0-or-later for 33.0.0 onward.
+
+Offline features occupy a large share of the existing copy. The claims of zero data leakage and unconditional offline continuity are too broad. The blanket WebGPU requirement is also wrong for local server connections. Replace these with specific data-flow and setup statements.
+
+The previous assets/store-listing-*.txt files were labeled v0.9.0 and differed from the live pages. These files now contain proposed copy. No manifest, package, store dashboard, privacy field, license metadata or live listing was changed.
+
+The Chrome rejection
+
+The user supplied the Keyword Spam rejection, reference Yellow Argon. Google specifically flagged the sentence naming LM Studio, Ollama, llama.cpp, OpenAI, Anthropic Claude, Gemini and OpenRouter. This points to the brand-heavy clause; it does not establish a numerical limit on provider names or a complaint about the word provider alone.
+
+The proposed copy removes llama.cpp from the examples: seven external AI connection names become six. It retains two local and four cloud examples, each once in the description, in sentences explaining where inference runs and how the user connects. This changes the listing, not product compatibility. The full catalog belongs in Settings and documentation.
+
+Dropping one name and rewriting the clause cannot guarantee approval. If the reviewer still considers six examples excessive, replace the entire model-choice paragraph with this more conservative option:
+
+Start with WebBrain's built-in model without an API key. For local inference, connect to a model running on your computer through LM Studio or Ollama. You can also connect your own API key for a supported cloud model. Find the available connections in Settings.
+
+This is a replacement option, not an additional paragraph. No appeal or resubmission was made.
+
+Source evidence and claim boundaries
+
+• Core modes/actions: README.md, docs/agent-tools.md, src/{chrome,firefox}/src/agent/tools.js. Ask reads; Act interacts; Dev adds inspection/debugging. Avoid guaranteed completion on every site.
+• PDFs: read_pdf in both agent/tools.js files, agent/pdf-tools.js, ui/pdf-handler.js. Viewer/OCR work appears under 35.0.0 and 36.0.1 in CHANGELOG.md. The copy promises PDF questions/analysis, not perfect extraction from every scanned document.
+• Bulk downloads: download_files in both agent/tools.js files accepts multiple URLs, with 50 total and three concurrent transfers. Avoid unlimited downloader claims.
+• New York Times reading and YouTube transcripts: src/{chrome,firefox}/skills/freeskillz-xyz.md, agent/skills.js, docs/skills.md, docs/privacy-and-data-flow.md. The service-backed skill is enabled by default and removable. NYTimes support entered history in July 2026 (834e4c524, 0b68a52bf). Do not imply publisher affiliation, universal article access or a universal paywall bypass. Source/service availability is explicit in the draft.
+• Scheduling/watches: schedule_task in both agent/tools.js files, agent/scheduler.js, docs/slash-commands.md. One-shot and fixed-interval recurrence exist; calendar/cron recurrence does not. Browser alarms require the browser to run. Do not promise execution with the browser/computer shut down.
+• Workflows/teaching: agent/workflows.js, agent/teacher-mode.js, content/teacher-capture.js, docs/export-and-workflow-formats.md. Teacher mode is documented in 27.1.0. Avoid claiming every demonstrated action can be captured/replayed.
+• Chrome full-page screenshots: agent/agent.js captureFullPageScreenshotForUser and background.js capture_full_page_screenshot. The Firefox follow-up now routes --full-page through the local companion, with preview/save and capture-time privacy geometry.
+• Firefox BiDi: firefox-companion/session.mjs now provides a document-bound full-page capture command; src/firefox/src/bidi/client.js transfers large PNGs in chunks. The updated Firefox draft states the optional companion requirement. This feature is implemented locally and must accompany a containing extension release before it is advertised on the live store.
+• CAPTCHA: agent/captcha-solver.js, ui/captcha-settings.js, docs/captcha-provider-coverage.md. Opt-in integration dates to 7.3.0. The expanded seven-service catalog is newer than the displayed store releases. Advertise generic optional assistance, not that new catalog, particular challenge families or guaranteed acceptance. Disclose separate setup/account/charges.
+• Offline mode: docs/apocalypse-mode.md and the live listings. Keep prior-download and WebGPU qualifications attached to on-device inference, not all local model servers.
+• Model setup: README.md and docs/providers-and-models.md. The built-in default requires no API key. Compatibility depends on the selected model and setup; avoid any-LLM guarantees and rapidly aging model-version lists.
+• Privacy: docs/privacy-and-data-flow.md. Relevant context goes to the selected AI service; local inference and online skill calls are distinct. Help Improve WebBrain is on by default for the built-in model and can be disabled. Avoid all-data-stays-local and API-keys-never-leave claims.
+
+The initial work was a source and listing review. The Firefox follow-up also includes a real-browser test of full-page pixels, large image transfer, below-fold privacy geometry and PNG saving. Paid solvers and reading services were not tested end to end. Store versions lag the checkout. The draft avoids newly expanded solver counts. Verify package-specific behavior when preparing a submission; source presence alone is not proof of a published feature.
+
+Search and conversion
+
+Use AI browser agent, PDFs, data extraction, scheduled tasks, workflows, bulk downloads and the platform-appropriate screenshot phrase within real feature explanations. Do not append keyword, competitor, model-version or website lists. Mention the named reading sources once as use cases.
+
+Suggested screenshot story: the browser agent completing a clear request; PDF questions; a multi-step task; a scheduled watch or reusable workflow; then downloads/screenshots. Use actual UI. Offline mode can follow the core story. No new images were created in this review.
+
+Firefox's current categories are Search Tools and Tabs, and its tags emphasize sites and downloads. Reassess the actual category/tag choices in the dashboard against the core productivity/research use case. Do not add unrelated tags for reach.
+
+Publication notes
+
+Copy only the text between DESCRIPTION and END DESCRIPTION into the long-description field. Title and summary are separate metadata. Chrome derives them from the manifest, so changing those requires a future package. AMO's license field needs a separate correction. The Chrome privacy declaration also merits reconciliation with the built-in service's documented data use before the next submission.
+
+Reference guidance
+
+Chrome listing requirements, including brand lists without substantial added value:
+https://developer.chrome.com/docs/webstore/program-policies/listing-requirements
+Chrome listing guidance and 132-character summary:
+https://developer.chrome.com/docs/webstore/best-listing
+Firefox listing guidance and 250-character summary:
+https://extensionworkshop.com/documentation/develop/create-an-appealing-listing/
+BiDi full-document capture:
+https://developer.mozilla.org/en-US/docs/Web/WebDriver/Reference/BiDi/Modules/browsingContext/captureScreenshot
+
+These sources favor concise, accurate descriptions and natural keywords. They do not establish that any particular brand count guarantees approval or higher ranking.

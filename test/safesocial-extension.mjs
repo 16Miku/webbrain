@@ -1,0 +1,47 @@
+import { chromium } from 'playwright';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import assert from 'node:assert/strict';
+const root=resolve('.');
+const modelDir=process.env.SAFESOCIAL_MODEL_DIR;
+if (!modelDir) throw new Error('Set SAFESOCIAL_MODEL_DIR to the pinned test bundle directory.');
+let downloads=0;
+const profile=await mkdtemp(join(tmpdir(),'wb-safesocial-profile-'));
+const context=await chromium.launchPersistentContext(profile,{headless:true,channel:'chromium',args:[`--disable-extensions-except=${root}/src/chrome`,`--load-extension=${root}/src/chrome`]});
+try {
+  const worker=context.serviceWorkers()[0]||await context.waitForEvent('serviceworker');
+  const id=new URL(worker.url()).host;
+  console.log('isolated extension started',id);
+  await context.route('https://huggingface.co/**', async route=>{
+    downloads++;
+    const name=new URL(route.request().url()).pathname.split('/').at(-1);
+    await route.fulfill({path:resolve(modelDir,(name==='model.onnx'?'webbrain-safesocial-model.onnx':'webbrain-safesocial-model.json')),headers:{'Access-Control-Allow-Origin':'*'}});
+  });
+  const page=await context.newPage();
+  await page.goto(`chrome-extension://${id}/src/ui/settings.html#multimodal`);
+  await page.waitForFunction(()=>document.querySelector('#safesocial-status')?.textContent.length>0);
+  assert.equal(await page.evaluate(()=>chrome.storage.local.get('safeSocialSettings').then(x=>x.safeSocialSettings?.enabled===true)),false);
+  const noWork=await page.evaluate(()=>chrome.runtime.sendMessage({target:'safesocial',command:'prepare'}));
+  assert.equal(noWork.disabled,true);
+  await page.locator('#safesocial-enabled').locator('..').click();
+  await page.waitForFunction(()=>document.querySelector('#safesocial-status').textContent.includes('Ready')||document.querySelector('#safesocial-status').textContent.includes('unavailable'),{},{timeout:180000});
+  const status=await page.locator('#safesocial-status').textContent();console.log('status:',status);
+  assert.ok(status.includes('Ready'),status);
+  const state=await page.evaluate(()=>chrome.runtime.sendMessage({target:'safesocial',command:'status'}));
+  assert.equal(state.status,'ready');
+  const bypass=await page.evaluate(()=>chrome.runtime.sendMessage({target:'safesocial-host',command:'classify',url:'https://scontent.cdninstagram.com/test.png'}).catch(()=>null));
+  assert.ok(bypass == null,'settings cannot bypass background classifier gate');
+  await page.locator('#safesocial-enabled').locator('..').click();
+  await page.waitForFunction(()=>!document.querySelector('#safesocial-enabled').checked);
+  const downloaded=downloads;
+  await page.locator('#safesocial-enabled').locator('..').click();
+  await page.waitForFunction(()=>document.querySelector('#safesocial-status').textContent.includes('Ready'));
+  assert.equal(downloads,downloaded,'re-enabling uses cached model data');
+  await page.locator('#safesocial-enabled').locator('..').click();
+  await page.waitForFunction(()=>!document.querySelector('#safesocial-enabled').checked);
+  await page.locator('#safesocial-remove').click();
+  await page.waitForFunction(()=>document.querySelector('#safesocial-status').textContent.includes('removed'));
+  assert.equal(await page.evaluate(()=>caches.has('webbrain-safesocial-v1')),false);
+  console.log('real Chrome MV3: lazy opt-in, offscreen host, pinned download, ready, host gate, disable/remove passed');
+} finally {await context.close();await rm(profile,{recursive:true,force:true});}

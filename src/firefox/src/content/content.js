@@ -4,8 +4,11 @@
  */
 
 (() => {
-  // Prevent double-injection
-  if (window.__webbrain_injected) return;
+  // Take over from an orphaned installation. A reload or update leaves the
+  // old content script in the page with a dead runtime context; the newest
+  // copy must be the only listener that answers subsequent tool calls.
+  window.__webbrain_generation = (Number(window.__webbrain_generation) || 0) + 1;
+  const WEBBRAIN_GENERATION = window.__webbrain_generation;
   window.__webbrain_injected = true;
 
   const PAGE_GATE_SELECTORS = [
@@ -161,6 +164,55 @@
       blocks.push(value);
     }
     return blocks.join('\n\n').trim();
+  }
+
+  function getVisibleLayers() {
+    const selectors = [
+      'header', 'nav', '[role="banner"]', '[role="navigation"]',
+      '[role="toolbar"]', '[class*="toolbar" i]',
+      '[role="dialog"]', '[role="alertdialog"]', '[aria-modal="true"]',
+      'dialog[open]', '.modal.show', '[class*="DialogContent"]', '[class*="ModalContent"]',
+      '[data-overlay]', '[class*="overlay" i]', '[class*="popover" i]', '[class*="drawer" i]',
+    ].join(',');
+    const layers = [];
+    let candidates = [];
+    try { candidates = Array.from(document.querySelectorAll(selectors)); } catch { return []; }
+    const dialogSelector = '[role="dialog"],[role="alertdialog"],[aria-modal="true"],dialog[open],.modal.show,[class*="DialogContent"],[class*="ModalContent"]';
+    // Preserve the active dialog even when the page has many fixed nav items.
+    candidates.sort((a, b) => Number(b.matches(dialogSelector)) - Number(a.matches(dialogSelector)));
+    for (const el of candidates) {
+      if (layers.length >= 4) break;
+      try {
+        if (!gateElementIsRendered(el)) continue;
+        const style = getComputedStyle(el);
+        if (!['fixed', 'sticky', 'absolute'].includes(style.position) && !(el.tagName === 'DIALOG' && el.open)) continue;
+        const r = el.getBoundingClientRect();
+        const left = Math.max(0, r.left), right = Math.min(window.innerWidth, r.right);
+        const top = Math.max(0, r.top), bottom = Math.min(window.innerHeight, r.bottom);
+        if (right - left < 10 || bottom - top < 10) continue;
+        if (layers.some(layer => layer.element.contains(el) || el.contains(layer.element))) continue;
+        const text = String(el.innerText || el.getAttribute('aria-label') || '')
+          .replace(/\s+/g, ' ').trim().slice(0, 240);
+        if (!text) continue;
+        const points = [
+          [(left + right) / 2, (top + bottom) / 2],
+          [left + (right - left) * 0.2, top + (bottom - top) * 0.2],
+          [right - (right - left) * 0.2, bottom - (bottom - top) * 0.2],
+        ];
+        if (!points.some(([x, y]) => {
+          const hit = document.elementFromPoint(x, y);
+          return hit === el || el.contains(hit);
+        })) continue;
+        layers.push({
+          element: el,
+          role: (el.getAttribute('role') || el.tagName.toLowerCase()).slice(0, 80),
+          text,
+          position: style.position,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        });
+      } catch { /* ignore malformed or changing page surfaces */ }
+    }
+    return layers.map(({ element, ...layer }) => layer);
   }
 
   /**
@@ -346,6 +398,7 @@
       textSource: t.textSource,
       isArticlePage: t.isArticlePage,
       includeChrome: !!(params && params.includeChrome),
+      visibleLayers: blockedAuxiliaryContent ? [] : getVisibleLayers(),
       media: blockedAuxiliaryContent
         ? { videoCount: 0, imageCount: 0, videos: [], images: [] }
         : getPageMediaSummary(),
@@ -398,6 +451,7 @@
       textSource: t.textSource,
       isArticlePage: t.isArticlePage,
       includeChrome: !!(params && params.includeChrome),
+      visibleLayers: blockedAuxiliaryContent ? [] : getVisibleLayers(),
       media: blockedAuxiliaryContent
         ? { videoCount: 0, imageCount: 0, videos: [], images: [] }
         : getPageMediaSummary(),
@@ -470,7 +524,8 @@
       const descriptor = window.__wbSiteInteractions?.describe?.(el);
       if (descriptor?.name) return descriptor.name;
     } catch {}
-    return (el?.innerText || el?.value || el?.placeholder || el?.title || el?.ariaLabel || '').trim();
+    const aria = el?.getAttribute?.('aria-label') || el?.ariaLabel || '';
+    return (el?.innerText || el?.value || el?.placeholder || el?.title || aria || '').trim();
   }
 
   function _isSiteInteractive(el) {
@@ -479,6 +534,26 @@
     } catch {
       return false;
     }
+  }
+
+  function _isSiteSelectorCandidate(el) {
+    try {
+      return _siteInteractiveSelectors().some(selector => el.matches(selector));
+    } catch {
+      return false;
+    }
+  }
+
+  function _isStandardInteractive(el) {
+    try {
+      return INTERACTIVE_SELECTORS.some(selector => el.matches(selector));
+    } catch {
+      return false;
+    }
+  }
+
+  function _isUsableSiteInteractive(el) {
+    return _isStandardInteractive(el) || !_isSiteSelectorCandidate(el) || _isSiteInteractive(el);
   }
 
   function _composedParent(node) {
@@ -496,18 +571,153 @@
       : null;
   }
 
-  function _isFullyVisibleForInteraction(el) {
+  function _getViewportDockedInsets(view = window, target = null) {
+    let top = 0;
+    let bottom = 0;
+    try {
+      const doc = view.document;
+      if (!doc) return { top: 0, bottom: 0 };
+      const htmlStyle = view.getComputedStyle(doc.documentElement);
+      const bodyStyle = doc.body ? view.getComputedStyle(doc.body) : null;
+      const parsePadding = val => {
+        const n = parseFloat(val);
+        return Number.isFinite(n) && n > 0 ? n : 0;
+      };
+      let targetInTopDock = false;
+      let targetInBottomDock = false;
+      for (let node = target; node && node !== doc; node = _composedParent(node)) {
+        if (node.nodeType !== Node.ELEMENT_NODE) continue;
+        const style = view.getComputedStyle(node);
+        if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+        const rect = node.getBoundingClientRect();
+        if (rect.top >= -10 && rect.top < view.innerHeight * 0.4 && rect.bottom > 0 && rect.bottom <= view.innerHeight * 0.4) targetInTopDock = true;
+        if (rect.bottom <= view.innerHeight + 10 && rect.bottom > view.innerHeight * 0.6 && rect.top >= view.innerHeight * 0.6) targetInBottomDock = true;
+      }
+      if (!targetInTopDock) top = Math.max(top, parsePadding(htmlStyle.scrollPaddingTop));
+      if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(htmlStyle.scrollPaddingBottom));
+      if (bodyStyle) {
+        if (!targetInTopDock) top = Math.max(top, parsePadding(bodyStyle.scrollPaddingTop));
+        if (!targetInBottomDock) bottom = Math.max(bottom, parsePadding(bodyStyle.scrollPaddingBottom));
+      }
+      const candidates = doc.querySelectorAll('header, nav, [role="banner"], [role="navigation"], [role="toolbar"], [class*="header" i], [class*="navbar" i], [class*="toolbar" i]');
+      const vw = view.innerWidth || 800;
+      const vh = view.innerHeight || 600;
+      const topRects = [];
+      const bottomRects = [];
+      for (const c of candidates) {
+        if (target && _isComposedAncestor(c, target)) continue;
+        if (!c.isConnected || c.offsetWidth <= 0 || c.offsetHeight <= 0) continue;
+        const cs = view.getComputedStyle(c);
+        if (cs.position !== 'fixed' && cs.position !== 'sticky') continue;
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const r = c.getBoundingClientRect();
+        if (r.width < vw * 0.4) continue;
+        if (r.top < vh * 0.4 && r.bottom > 0 && r.bottom < vh * 0.4) topRects.push(r);
+        if (r.bottom > vh * 0.6 && r.top < vh && r.top > vh * 0.6) bottomRects.push(r);
+      }
+      // Recheck until all contiguous bars are included, regardless of DOM order.
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const r of topRects) {
+          if (r.top <= top + 10 && r.bottom > top) {
+            top = r.bottom;
+            changed = true;
+          }
+        }
+        for (const r of bottomRects) {
+          if (r.bottom >= vh - bottom - 10 && r.top < vh - bottom) {
+            bottom = vh - r.top;
+            changed = true;
+          }
+        }
+      }
+    } catch {}
+    return {
+      top: Math.min(top, (view.innerHeight || 600) * 0.4),
+      bottom: Math.min(bottom, (view.innerHeight || 600) * 0.4),
+    };
+  }
+
+  function _floatingTopBarRect(blocker, view = window) {
+    const vh = view.innerHeight || 600;
+    const vw = view.innerWidth || 800;
+    for (let node = blocker; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches?.('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return null;
+      const style = view.getComputedStyle(node);
+      if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.top > 10 && rect.top < vh * 0.35 && rect.bottom < vh * 0.45
+        && rect.height <= vh * 0.25 && rect.width >= vw * 0.4) return rect;
+    }
+    return null;
+  }
+
+  function _isCoveredByFixedNonModalSurface(el, view = window) {
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    if (cx < 0 || cy < 0 || cx >= view.innerWidth || cy >= view.innerHeight) return false;
+    const hit = _shadowAwareElementFromPoint(cx, cy);
+    if (!hit || _isComposedAncestor(el, hit) || _isComposedAncestor(hit, el)) return false;
+    for (let node = hit; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      if (node.matches?.('[role="dialog"], [role="alertdialog"], [aria-modal="true"], dialog[open]')) return false;
+      const style = view.getComputedStyle(node);
+      if (style.position !== 'fixed' && style.position !== 'sticky') continue;
+      const blocker = node.getBoundingClientRect();
+      if (blocker.width >= view.innerWidth * 0.8 && blocker.height >= view.innerHeight * 0.8) return false;
+      return true;
+    }
+    return false;
+  }
+
+  function _withTypingPreparation(kind, el, callback) {
+    const monitor = window.__wbPageMonitor;
+    if (monitor?.withLocalPreparation) return monitor.withLocalPreparation(kind, el, callback);
+    monitor?.beforeLocalDispatch({ preparation: kind === 'focus', kind, target: el });
+    return callback();
+  }
+
+  function _scrollElementIntoClearView(el) {
+    if (!el?.isConnected) return;
+    try {
+      const view = el.ownerDocument?.defaultView || window;
+      if (_isAlreadyVisibleInFixedSurface(el, view)) return;
+      const insets = _getViewportDockedInsets(view, el);
+      // A viewport-only rect check misses elements clipped by a scrollable
+      // ancestor even when their bounding box is inside the viewport.
+      const fullyVisible = _isFullyVisibleForInteraction(el, insets);
+      const coveredByFixed = fullyVisible && _isCoveredByFixedNonModalSurface(el, view);
+      if (!fullyVisible || coveredByFixed) {
+        _withTypingPreparation('scroll', el, () => el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }));
+        const rAfter = el.getBoundingClientRect();
+        if (rAfter.top < insets.top) {
+          _withTypingPreparation('scroll', el, () => view.scrollBy({ top: rAfter.top - insets.top - 16, behavior: 'instant' }));
+        } else if (rAfter.bottom > view.innerHeight - insets.bottom) {
+          _withTypingPreparation('scroll', el, () => view.scrollBy({ top: rAfter.bottom - (view.innerHeight - insets.bottom) + 16, behavior: 'instant' }));
+        }
+      }
+    } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
+      try { _withTypingPreparation('scroll', el, () => el.scrollIntoView({ block: 'center', inline: 'center' })); } catch (fallbackError) { if (fallbackError?.code === 'page_feedback_pending') throw fallbackError; }
+    }
+  }
+
+  function _isFullyVisibleForInteraction(el, dockedInsets = null) {
     try {
       if (!el?.isConnected) return false;
       const view = el.ownerDocument?.defaultView || window;
       const rect = el.getBoundingClientRect();
+      const insets = dockedInsets || _getViewportDockedInsets(view, el);
       if (
         rect.width < 1
         || rect.height < 1
         || rect.left < 0
-        || rect.top < 0
+        || rect.top < insets.top
         || rect.right > view.innerWidth
-        || rect.bottom > view.innerHeight
+        || rect.bottom > (view.innerHeight - insets.bottom)
       ) return false;
       for (let node = _composedParent(el); node && node !== el.ownerDocument; node = _composedParent(node)) {
         if (node.nodeType !== Node.ELEMENT_NODE) continue;
@@ -523,6 +733,33 @@
     } catch {
       return false;
     }
+  }
+
+  function _isAlreadyVisibleInFixedSurface(el, view = window) {
+    if (!_isFullyVisibleForInteraction(el, { top: 0, bottom: 0 })) return false;
+    for (let node = el; node; node = _composedParent(node)) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const style = view.getComputedStyle(node);
+      if (style.position === 'fixed') return true;
+      if (style.position !== 'sticky') continue;
+      let portTop = 0;
+      let portBottom = view.innerHeight;
+      for (let parent = _composedParent(node); parent; parent = _composedParent(parent)) {
+        if (parent.nodeType !== Node.ELEMENT_NODE) continue;
+        const parentStyle = view.getComputedStyle(parent);
+        if (!/^(?:auto|scroll|hidden)$/.test(parentStyle.overflowY)) continue;
+        const parentRect = parent.getBoundingClientRect();
+        portTop = parentRect.top + parent.clientTop;
+        portBottom = portTop + parent.clientHeight;
+        break;
+      }
+      const rect = node.getBoundingClientRect();
+      const top = parseFloat(style.top);
+      const bottom = parseFloat(style.bottom);
+      if ((Number.isFinite(top) && Math.abs(rect.top - portTop - top) <= 2)
+        || (Number.isFinite(bottom) && Math.abs(rect.bottom - portBottom + bottom) <= 2)) return true;
+    }
+    return false;
   }
 
   function _isComposedAncestor(ancestor, node) {
@@ -547,6 +784,31 @@
       cur = _composedParent(cur);
     }
     return null;
+  }
+
+  function _someComposedDescendant(root, selector, predicate, limit = 2000) {
+    const pending = [root];
+    const seen = new Set();
+    let visited = 0;
+    while (pending.length && visited < limit) {
+      const scope = pending.shift();
+      const descendants = scope?.querySelectorAll?.('*') || [];
+      const elements = scope?.nodeType === Node.ELEMENT_NODE
+        ? [scope, ...descendants]
+        : descendants;
+      for (const element of elements) {
+        if (seen.has(element)) continue;
+        seen.add(element);
+        visited += 1;
+        if (element.matches?.(selector) && predicate(element)) return true;
+        if (element.shadowRoot) pending.push(element.shadowRoot);
+        if (element.tagName === 'SLOT') {
+          pending.push(...(element.assignedElements?.({ flatten: true }) || []));
+        }
+        if (visited >= limit) break;
+      }
+    }
+    return false;
   }
 
   function isVisiblyInteractive(el) {
@@ -622,6 +884,9 @@
   function _hasVisibleBox(el, minWidth = 1, minHeight = 1) {
     if (!el || typeof el.getBoundingClientRect !== 'function') return false;
     try {
+      for (let ancestor = el; ancestor; ancestor = _composedParent(ancestor)) {
+        if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+      }
       const r = el.getBoundingClientRect();
       if (r.width < minWidth || r.height < minHeight) return false;
       const s = getComputedStyle(el);
@@ -718,6 +983,7 @@
     const out = [];
     for (const el of all) {
       if (!isVisiblyInteractive(el)) continue;
+      if (!_isUsableSiteInteractive(el)) continue;
       if (modal && !_isComposedAncestor(modal, el)) continue;
       out.push(el);
     }
@@ -843,6 +1109,7 @@
         try {
           root.querySelectorAll(sel).forEach(el => {
             if (seen.has(el)) return;
+            if (!_isUsableSiteInteractive(el)) return;
             const rect = el.getBoundingClientRect();
             if (!isUsable(el, rect)) return;
             seen.add(el);
@@ -994,11 +1261,91 @@
   }
 
   window.__wb_resolve_click_target_for_submit_probe = function resolveClickTargetForSubmitProbe(params = {}) {
-    if (params?.index == null) return null;
-    const index = Number(params.index);
-    if (!Number.isInteger(index) || index < 0) return null;
-    return queryInteractiveForToolIndex()[index] || null;
+    return resolveObservedClickTarget(params);
   };
+
+  // Pure counterpart of clickElement's dispatch resolution. Observation must
+  // never scroll, focus, select an option or dispatch while identifying a target.
+  function resolveObservedClickTarget(params = {}) {
+    if (params.selector && /:contains\(|:has-text\(/.test(params.selector)) return null;
+    if (params.text) {
+      if (typeof params.text !== 'string') return null;
+      const needle = params.text.toLowerCase();
+      const scope = _findTopmostModal() || document;
+      const modes = params.textMatch ? [params.textMatch] : ['exact', 'prefix', 'contains'];
+      if (modes.some(mode => !['exact', 'prefix', 'contains'].includes(mode))) return null;
+      const candidates = _clickTextCandidates(scope);
+      let matches = [];
+      let usedMode = modes[0];
+      for (const mode of modes) {
+        usedMode = mode;
+        matches = candidates.filter(({ txt }) => mode === 'exact' ? txt === needle
+          : mode === 'prefix' ? txt.startsWith(needle)
+            : needle.length >= 3 ? txt.includes(needle)
+              : txt === needle || txt.startsWith(needle + ' ') || txt.endsWith(' ' + needle) || txt.includes(' ' + needle + ' '));
+        if (matches.length) break;
+      }
+      const labelTarget = label => {
+        let target = label.htmlFor ? document.getElementById(label.htmlFor) : null;
+        target ||= label.querySelector('input,textarea,select');
+        if (!target && label.nextElementSibling) {
+          const sibling = label.nextElementSibling;
+          target = /^(INPUT|TEXTAREA|SELECT)$/.test(sibling.tagName) ? sibling : sibling.querySelector('input,textarea,select');
+        }
+        return target;
+      };
+      if (!matches.length) {
+        const labelMap = new Map();
+        for (const label of scope.querySelectorAll('label')) {
+          const text = (label.innerText || '').trim().toLowerCase();
+          if (!text) continue;
+          const target = (label.htmlFor ? document.getElementById(label.htmlFor) : null) || label.querySelector('input,textarea,select');
+          if (target) labelMap.set(text, target);
+        }
+        for (const [text, target] of labelMap) if (needle === text || text.startsWith(needle) || text.includes(needle)) return target;
+        return null;
+      }
+      if (matches.length > 1) {
+        const owners = new Map();
+        for (const match of matches) {
+          const owner = _resolveInteractiveAncestor(match.e) || match.e;
+          if (!owners.has(owner) || (match.primary === true && owners.get(owner).primary !== true)) owners.set(owner, match);
+        }
+        matches = [...owners.values()];
+      }
+      if (matches.length > 1) {
+        const preferred = _preferredPrimaryTextClickMatch(matches);
+        if (preferred) matches = [preferred];
+      }
+      if (matches.length > 1) {
+        const interactive = matches.filter(({ e }) => _isInteractive(e));
+        if (interactive.length === 1) matches = interactive;
+        else {
+          const eligible = (interactive.length > 1 ? interactive : matches).filter(({ e }) => _isEligibleTextClickTarget(e));
+          if (eligible.length === 1) matches = eligible;
+        }
+      }
+      if (matches.length !== 1) return null;
+      const selected = matches[0].e;
+      const resolved = selected.tagName === 'LABEL' ? labelTarget(selected) || selected : selected;
+      // Dispatch may choose a select option instead of a non-exact text
+      // target. Until that local selection is separately bound, do not
+      // authorize the earlier button as though it were the clicked control.
+      if (resolved instanceof HTMLSelectElement || usedMode !== 'exact') {
+        const selects = resolved instanceof HTMLSelectElement ? [resolved] : scope.querySelectorAll('select');
+        for (const select of selects) for (const option of select.options) {
+          if ([option.textContent, option.label, option.value].some(value => String(value || '').trim().toLowerCase() === needle.trim())) return null;
+        }
+      }
+      return _resolveInteractiveAncestor(resolved) || resolved;
+    }
+    if (params.selector) return safeIndexedQuerySelector(params.selector, params.matchIndex).element;
+    if (params.index != null) {
+      const index = typeof params.index === 'number' || (typeof params.index === 'string' && /^\d+$/.test(params.index)) ? Number(params.index) : NaN;
+      return Number.isSafeInteger(index) && index >= 0 ? queryInteractiveForToolIndex()[index] || null : null;
+    }
+    return Number.isFinite(params.x) && Number.isFinite(params.y) ? _shadowAwareElementFromPoint(params.x, params.y) : null;
+  }
 
   function getInteractiveElementsFull() {
     return queryInteractiveFull().map((c, i) => {
@@ -1255,6 +1602,163 @@
     return { element: matches[requested] || null, matchCount: matches.length, matchIndex: requested };
   }
 
+  // Shared by click dispatch and its recipient-safety preflight. Keep the
+  // Firefox option visibility and input-label rules identical in both paths.
+  // Text candidate discovery walks every open shadow root, so each discovered
+  // root must invalidate the cache when its own subtree changes.
+  const _domRevision = { value: 0, observer: null, observedRoots: new WeakSet() };
+  function _observeDomRevisionRoot(root) {
+    if (!root || _domRevision.observedRoots.has(root) || typeof MutationObserver === 'undefined') return;
+    try {
+      if (!_domRevision.observer) {
+        _domRevision.observer = new MutationObserver(() => { _domRevision.value += 1; });
+      }
+      _domRevision.observer.observe(root, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: [
+          'aria-label', 'aria-labelledby', 'title', 'placeholder', 'value', 'disabled',
+          'aria-expanded', 'aria-selected', 'aria-checked', 'aria-hidden', 'hidden',
+          'class', 'style', 'role', 'tabindex',
+        ],
+      });
+      _domRevision.observedRoots.add(root);
+    } catch { /* leave other observable roots cacheable */ }
+  }
+
+  // Text preference and recipient preflight must use the control that can
+  // actually receive the click, including when the label is a passive child.
+  function _isEligibleTextClickTarget(el) {
+    try {
+      const control = _resolveInteractiveAncestor(el) || el;
+      const r = control.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return false;
+      if (control.disabled === true || control.matches?.(':disabled')
+          || control.getAttribute?.('aria-disabled') === 'true') return false;
+      const hit = _shadowAwareElementFromPoint(
+        Math.round(r.left + r.width / 2),
+        Math.round(r.top + r.height / 2),
+      );
+      return !!hit && (hit === control || control.contains?.(hit) || hit.contains?.(control));
+    } catch {
+      return false;
+    }
+  }
+
+  function _primaryClickText(el) {
+    const tag = String(el.tagName || '').toLowerCase();
+    if (tag === 'textarea') return '';
+    if (tag === 'input') {
+      const type = String(el.getAttribute?.('type') || 'text').toLowerCase();
+      return /^(button|submit|reset)$/.test(type) ? String(el.value || '').trim().toLowerCase() : '';
+    }
+    return String(el.innerText || '').trim().toLowerCase();
+  }
+
+  // A painted passive label is not a competing control. Collapse primary
+  // labels to their actionable owner before dispatch and preflight choose it.
+  function _preferredPrimaryTextClickMatch(matches) {
+    const controls = new Map();
+    for (const match of matches) {
+      if (match.primary !== true) continue;
+      const actionable = _resolveInteractiveAncestor(match.e) || match.e;
+      if (!_isInteractive(actionable) || !_isEligibleTextClickTarget(actionable)) continue;
+      if (!controls.has(actionable)) controls.set(actionable, match);
+    }
+    if (controls.size !== 1) return null;
+    const [actionable, match] = controls.entries().next().value;
+    // A visible caption wins only over passive text. A distinct interactive
+    // element with the same accessible name remains an explicit ambiguity.
+    for (const candidate of matches) {
+      const owner = _resolveInteractiveAncestor(candidate.e) || candidate.e;
+      if (owner !== actionable && _isInteractive(owner)) return null;
+    }
+    return match;
+  }
+
+  const _textCandidateCache = new WeakMap();
+  function _clickTextCandidates(scope) {
+    _observeDomRevisionRoot(document);
+    const revision = _domRevision.value;
+    const cacheScope = scope && typeof scope === 'object' ? scope : document;
+    const cached = _textCandidateCache.get(cacheScope);
+    if (cached && cached.revision === revision) return cached.list.slice();
+    const sels = [
+      'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
+      '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
+      '[role="combobox"]', '[role="searchbox"]', '[role="textbox"]',
+      'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
+      'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
+      '[aria-label]', '[tabindex]', '[data-tooltip]',
+      ..._siteInteractiveSelectors(),
+    ].join(', ');
+    // Candidate filter: listbox/menu option roles are often kept mounted but
+    // hidden while a custom select is collapsed or virtualized (Radix/MUI/
+    // React-Select). Drop hidden ones so click({text}) can't match — and
+    // falsely "succeed" on — an invisible option; the open-listbox fallback
+    // still surfaces them when the control is actually open. Shared by the
+    // primary pass AND the auto-scroll retry below so they can't diverge.
+    const _keepCandidate = (el) => {
+      const role = (el.getAttribute && el.getAttribute('role')) || '';
+      if (role !== 'option' && role !== 'menuitemradio' && role !== 'menuitemcheckbox' && role !== 'treeitem') return true;
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.width < 1 || r.height < 1) return false;
+        const s = window.getComputedStyle(el);
+        if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
+        if (el.closest('[aria-hidden="true"],[hidden]')) return false;
+        return true;
+      } catch (e) { return false; }
+    };
+    // A text field's `value` is content the user typed, NOT a click label.
+    // Matching on it makes click({text}) resolve to the field you just filled
+    // (e.g. a combobox/filter box whose value now equals the needle) instead
+    // of the menu option bearing the same text — the "click succeeds but
+    // nothing happens, model loops forever" bug. Only treat `value` as a label
+    // for button-like inputs; non-input elements with .value (<select>) keep it.
+    const _valIsLabel = (el) => {
+      if (el.tagName === 'TEXTAREA') return false;
+      if (el.tagName !== 'INPUT') return true;
+      const t = (el.getAttribute('type') || 'text').toLowerCase();
+      return t === 'button' || t === 'submit' || t === 'reset';
+    };
+    const _normTxt = (el) => {
+      const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
+      return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder
+        || el.getAttribute?.('aria-label') || el.ariaLabel || el.title || '').trim().toLowerCase();
+    };
+    // LinkedIn can render the feed itself inside an open shadow root. Keep
+    // preflight and dispatch on the same candidate set, including duplicate
+    // labels across roots, without searching outside the selected modal.
+    const candidates = [];
+    const visit = (root) => {
+      _observeDomRevisionRoot(root);
+      candidates.push(...root.querySelectorAll(sels));
+      if (root.shadowRoot) visit(root.shadowRoot);
+      for (const host of root.querySelectorAll('*')) {
+        if (host.shadowRoot) visit(host.shadowRoot);
+      }
+    };
+    visit(cacheScope);
+    const all = candidates.filter(e => _hasVisibleBox(e) && _keepCandidate(e));
+    const list = [];
+    for (const e of all) {
+      const text = _normTxt(e);
+      const primaryText = _primaryClickText(e);
+      if (text) list.push({ e, txt: text, primary: !!primaryText && text === primaryText });
+      if (primaryText && primaryText !== text) list.push({ e, txt: primaryText, primary: true });
+      // Secondary needles (primary: false): in ambiguity resolution a
+      // visible-text match on a different control must not lose to them.
+      for (const attr of ['aria-label', 'title', 'placeholder', 'data-tooltip']) {
+        const value = String(e.getAttribute?.(attr) || '').trim().toLowerCase();
+        if (value && value !== text) list.push({ e, txt: value, primary: false });
+      }
+    }
+    _textCandidateCache.set(cacheScope, { revision, list });
+    return list.slice();
+  }
+
   let _lastClickIdent = null;
   let _lastEditableTarget = null;
 
@@ -1478,6 +1982,7 @@
     try {
       runClick();
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       cleanupGuard();
       _filePickerGuardStates.delete(guardId);
       throw error;
@@ -1505,11 +2010,18 @@
     if (!state.settled) return { success: true, settled: false, filePickerBlocked: false };
     if (state.cleanupTimer) clearTimeout(state.cleanupTimer);
     document.removeEventListener('click', state.guard, true);
-    // If nothing was observed, stop content-side observation but leave the
-    // page-world programmatic click/showPicker guard active until its own
-    // short TTL. This suppresses longer debounces without blocking the tool
-    // response or intercepting a user's direct native input click.
-    state.cleanupPageShowPickerGuard?.(!!state.blocked);
+    // Stop content-side observation, but leave the page-world programmatic
+    // click/showPicker guard active until its own short TTL. This suppresses
+    // longer debounces without blocking the tool response or intercepting a
+    // user's direct native input click.
+    //
+    // This has to hold most of all when something WAS blocked. An app that
+    // routes an upload affordance through a file input often retries on a
+    // timer, and disarming here on the strength of the first interception left
+    // that retry unguarded — it opened a real OS chooser that nothing can
+    // close, and it stayed on screen through the rest of the run while
+    // upload_file attached the file directly.
+    state.cleanupPageShowPickerGuard?.(false);
     _filePickerGuardStates.delete(guardId);
     if (state.blocked) {
       return { ...filePickerBlockedResponse(state.blocked), settled: true };
@@ -1570,14 +2082,6 @@
     if (params.text) {
       const needle = params.text.toLowerCase();
       const explicit = params.textMatch || '';
-      // Include inputs/select/textarea so we can match by placeholder, value, or aria-label
-      const sels = [
-        'a', 'button', '[role="button"]', '[role="link"]', '[role="tab"]', '[role="menuitem"]',
-        '[role="option"]', '[role="menuitemradio"]', '[role="menuitemcheckbox"]', '[role="treeitem"]',
-        'input:not([type="hidden"])', 'textarea', 'select', 'input[type="button"]',
-        'input[type="submit"]', 'summary', 'label', '[onclick]', '[data-action]',
-        ..._siteInteractiveSelectors(),
-      ].join(', ');
       // Modal scoping: if a topmost modal/dialog is open, restrict the search
       // to elements inside it. Prevents the classic failure where the model
       // types "Publish release" and the resolver clicks the dimmed Publish
@@ -1586,42 +2090,7 @@
       // reachable via coordinate clicks.
       const _modalRoot = _findTopmostModal();
       const _scope = _modalRoot || document;
-      // Candidate filter: listbox/menu option roles are often kept mounted but
-      // hidden while a custom select is collapsed or virtualized (Radix/MUI/
-      // React-Select). Drop hidden ones so click({text}) can't match — and
-      // falsely "succeed" on — an invisible option; the open-listbox fallback
-      // still surfaces them when the control is actually open. Shared by the
-      // primary pass AND the auto-scroll retry below so they can't diverge.
-      const _keepCandidate = (el) => {
-        const role = (el.getAttribute && el.getAttribute('role')) || '';
-        if (role !== 'option' && role !== 'menuitemradio' && role !== 'menuitemcheckbox' && role !== 'treeitem') return true;
-        try {
-          const r = el.getBoundingClientRect();
-          if (r.width < 1 || r.height < 1) return false;
-          const s = window.getComputedStyle(el);
-          if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) return false;
-          if (el.closest('[aria-hidden="true"],[hidden]')) return false;
-          return true;
-        } catch (e) { return false; }
-      };
-      // A text field's `value` is content the user typed, NOT a click label.
-      // Matching on it makes click({text}) resolve to the field you just filled
-      // (e.g. a combobox/filter box whose value now equals the needle) instead
-      // of the menu option bearing the same text — the "click succeeds but
-      // nothing happens, model loops forever" bug. Only treat `value` as a label
-      // for button-like inputs; non-input elements with .value (<select>) keep it.
-      const _valIsLabel = (el) => {
-        if (el.tagName === 'TEXTAREA') return false;
-        if (el.tagName !== 'INPUT') return true;
-        const t = (el.getAttribute('type') || 'text').toLowerCase();
-        return t === 'button' || t === 'submit' || t === 'reset';
-      };
-      const _normTxt = (el) => {
-        const siteText = _isSiteInteractive(el) ? _siteInteractionText(el) : '';
-        return (siteText || el.innerText || (_valIsLabel(el) ? el.value : '') || el.placeholder || el.ariaLabel || '').trim().toLowerCase();
-      };
-      const all = Array.from(_scope.querySelectorAll(sels)).filter(_keepCandidate);
-      const normalized = all.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+      const normalized = _clickTextCandidates(_scope);
 
       // Build label→input map so we can match label text and resolve to associated input
       const labelMap = new Map();
@@ -1637,7 +2106,14 @@
       function tryMode(mode) {
         if (mode === 'exact') return normalized.filter(x => x.txt === needle);
         if (mode === 'prefix') return normalized.filter(x => x.txt.startsWith(needle));
-        if (mode === 'contains') return normalized.filter(x => x.txt.includes(needle));
+        if (mode === 'contains') {
+          if (needle.length >= 3) return normalized.filter(x => x.txt.includes(needle));
+          const padded = ` ${needle} `;
+          return normalized.filter(x => x.txt === needle
+            || x.txt.startsWith(`${needle} `)
+            || x.txt.endsWith(` ${needle}`)
+            || x.txt.includes(padded));
+        }
         return [];
       }
 
@@ -1663,6 +2139,7 @@
             if (actionDeadlineExpired()) return deadlineFailure();
             inp.scrollIntoView({ block: 'center', inline: 'center' });
             if (actionDeadlineExpired()) return deadlineFailure();
+            window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: inp });
             inp.focus();
             el = inp;
             textResolvedExact = (needle === ltxt);
@@ -1681,8 +2158,7 @@
           // Re-query after scroll. Re-resolve the modal root in case the
           // dialog opened/closed during scroll.
           const _retryScope = _findTopmostModal() || document;
-          const allRetry = Array.from(_retryScope.querySelectorAll(sels)).filter(_keepCandidate);
-          const normRetry = allRetry.map(e => ({ e, txt: _normTxt(e) })).filter(x => !!x.txt);
+          const normRetry = _clickTextCandidates(_retryScope);
           for (const m of modes) {
             if (m === 'exact') matches = normRetry.filter(x => x.txt === needle);
             else if (m === 'prefix') matches = normRetry.filter(x => x.txt.startsWith(needle));
@@ -1707,6 +2183,7 @@
                 if (actionDeadlineExpired()) return deadlineFailure();
                 inp.scrollIntoView({ block: 'center', inline: 'center' });
                 if (actionDeadlineExpired()) return deadlineFailure();
+                window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: inp });
                 inp.focus();
                 el = inp;
                 textResolvedExact = (needle === ltxt);
@@ -1771,12 +2248,51 @@
           }
         }
       }
+      // Labels nested inside their actionable control are not independent
+      // targets. Collapse them before reporting an ambiguity so a single
+      // visible Send/Post control remains directly clickable.
+      if (!el && matches.length > 1) {
+        const collapsedByAncestor = new Map();
+        for (const match of matches) {
+          const actionable = _resolveInteractiveAncestor(match.e) || match.e;
+          if (!collapsedByAncestor.has(actionable)
+              || (match.primary === true && collapsedByAncestor.get(actionable).primary !== true)) {
+            collapsedByAncestor.set(actionable, match);
+          }
+        }
+        if (collapsedByAncestor.size < matches.length) matches = [...collapsedByAncestor.values()];
+        if (matches.length === 1) {
+          el = _resolveInteractiveAncestor(matches[0].e) || matches[0].e;
+          textResolvedExact = (usedMode === 'exact');
+        }
+      }
+      if (!el && matches.length > 1) {
+        // Prefer a unique visible caption only when its actionable owner can
+        // receive the click. Passive text and attribute-only names retain the
+        // existing interactive-target and ambiguity rules.
+        const entry = _preferredPrimaryTextClickMatch(matches);
+        if (entry) {
+          el = _resolveInteractiveAncestor(entry.e) || entry.e;
+          textResolvedExact = (usedMode === 'exact');
+          matches = [entry];
+        }
+      }
       if (!el && matches.length > 1) {
         // Prefer interactive elements over passive children (label, span, etc.)
         const interactiveMatches = matches.filter(m => _isInteractive(m.e));
         if (interactiveMatches.length === 1) {
           matches = interactiveMatches;
         } else {
+          const hitTargetPool = (interactiveMatches.length > 1 ? interactiveMatches : matches)
+            .filter(m => _isEligibleTextClickTarget(m.e));
+          if (hitTargetPool.length === 1) {
+            el = _resolveInteractiveAncestor(hitTargetPool[0].e) || hitTargetPool[0].e;
+            textResolvedExact = (usedMode === 'exact');
+            matches = hitTargetPool;
+          } else if (hitTargetPool.length > 1 && hitTargetPool.length < matches.length) {
+            matches = hitTargetPool;
+          }
+          if (matches.length > 1) {
           // Build rich candidates: position (rect), tag, role, surrounding
           // context (closest landmark/dialog/button text), and precomputed
           // click centers. When the same text appears twice, the model needs
@@ -1826,6 +2342,7 @@
             error: `Ambiguous text match for "${params.text}" (mode=${usedMode}, matches=${matches.length})${_scopeNote}. ${candidates.length} candidates returned with cx/cy (precomputed click center, in CSS pixels) and ancestor context. Pick one and call click({x: candidate.cx, y: candidate.cy, coordinate_space: "css"}) — no arithmetic needed. Use the ancestor field to disambiguate (e.g. an alertdialog's Cancel vs a form's Cancel sit in different containers). Do NOT retry click({text: "${params.text}"}) — it will fail the same way.`,
             candidates,
           };
+          }
         }
       }
       if (!el) {
@@ -1843,6 +2360,7 @@
           }
           if (target) {
             if (actionDeadlineExpired()) return deadlineFailure();
+            window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target });
             target.focus();
             resolved = target;
           }
@@ -1856,7 +2374,7 @@
       el = interactive[params.index];
       if (!el) return { ..._staleIndexError(params.index, interactive), dispatched: false };
     } else if (params.x != null && params.y != null) {
-      el = document.elementFromPoint(params.x, params.y);
+      el = _shadowAwareElementFromPoint(params.x, params.y);
     }
 
     // A selector miss is a discovery failure, not a changed bound target. Do
@@ -1917,9 +2435,11 @@
           return { success: true, method: 'select-already-set', selectedText: match.text.trim(), selectedValue: match.value };
         }
         if (actionDeadlineExpired()) return deadlineFailure();
+        window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: sel });
         sel.focus();
         if (actionDeadlineExpired()) return deadlineFailure();
         const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
+        window.__wbPageMonitor?.beforeLocalDispatch();
         dispatched = true;
         if (nativeSetter) nativeSetter.call(sel, match.value);
         else sel.value = match.value;
@@ -1940,6 +2460,7 @@
     // Do NOT scrollIntoView (hidden selects inside modals scroll to wrong position).
     if (el instanceof HTMLSelectElement) {
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: el });
       el.focus();
       if (actionDeadlineExpired()) return deadlineFailure();
       const options = Array.from(el.options).map(o => o.text.trim());
@@ -1963,6 +2484,7 @@
       }
       if (nearbySel) {
         if (actionDeadlineExpired()) return deadlineFailure();
+        window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'focus', target: nearbySel });
         nearbySel.focus();
         if (actionDeadlineExpired()) return deadlineFailure();
         const options = Array.from(nearbySel.options).map(o => o.text.trim());
@@ -1979,7 +2501,7 @@
     // Do NOT scrollIntoView on SELECT elements (hidden selects in modals cause scroll jumps)
     if (el.tagName !== 'SELECT') {
       if (actionDeadlineExpired()) return deadlineFailure();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      _scrollElementIntoClearView(el);
     }
 
     // Occlusion hit-test: for text/selector/index clicks, verify that the
@@ -1990,11 +2512,62 @@
     // SELECT (already handled).
     if (el.tagName !== 'SELECT' && params.x == null && params.y == null) {
       try {
-        const r = el.getBoundingClientRect();
+        let r = el.getBoundingClientRect();
         if (r.width >= 1 && r.height >= 1 && r.top >= 0 && r.left >= 0 && r.bottom <= window.innerHeight && r.right <= window.innerWidth) {
-          const cx = Math.round(r.left + r.width / 2);
-          const cy = Math.round(r.top + r.height / 2);
-          const topmost = _shadowAwareElementFromPoint(cx, cy);
+          let cx = Math.round(r.left + r.width / 2);
+          let cy = Math.round(r.top + r.height / 2);
+          let topmost = _shadowAwareElementFromPoint(cx, cy);
+
+          // If covered at center, test if scrolling can clear a fixed/sticky header
+          if (topmost && !_hitTestMatchesTarget(el, topmost)) {
+            const floatingBar = _floatingTopBarRect(topmost);
+            const bRect = floatingBar || topmost.getBoundingClientRect();
+            if (!_isAlreadyVisibleInFixedSurface(el)
+              && (floatingBar || bRect.top <= _getViewportDockedInsets(window, el).top + 10)
+              && bRect.bottom > r.top && bRect.bottom < window.innerHeight * 0.45) {
+              window.scrollBy({ top: r.top - bRect.bottom - 20, behavior: 'instant' });
+              r = el.getBoundingClientRect();
+              cx = Math.round(r.left + r.width / 2);
+              cy = Math.round(r.top + r.height / 2);
+              topmost = _shadowAwareElementFromPoint(cx, cy);
+            }
+          }
+
+          // If still covered at center, test sample perimeter points
+          if (topmost && !_hitTestMatchesTarget(el, topmost)) {
+            const sampleOffsets = [
+              [cx, Math.round(r.top + Math.max(2, Math.min(8, r.height * 0.2)))],
+              [cx, Math.round(r.bottom - Math.max(2, Math.min(8, r.height * 0.2)))],
+              [Math.round(r.left + Math.max(2, Math.min(8, r.width * 0.2))), cy],
+              [Math.round(r.right - Math.max(2, Math.min(8, r.width * 0.2))), cy],
+            ];
+            for (const [sx, sy] of sampleOffsets) {
+              if (sx < 0 || sy < 0 || sx > window.innerWidth || sy > window.innerHeight) continue;
+              const sampleHit = _shadowAwareElementFromPoint(sx, sy);
+              if (sampleHit && _hitTestMatchesTarget(el, sampleHit)) {
+                topmost = sampleHit;
+                cx = sx;
+                cy = sy;
+                break;
+              }
+            }
+          }
+
+          // If still covered, check if the blocker chain has pointer-events: none
+          if (topmost && !_hitTestMatchesTarget(el, topmost)) {
+            try {
+              const elements = document.elementsFromPoint ? document.elementsFromPoint(cx, cy) : [];
+              const targetIdx = elements.indexOf(el);
+              if (targetIdx > 0) {
+                const allAboveNone = elements.slice(0, targetIdx).every(item => {
+                  const pe = window.getComputedStyle(item).pointerEvents;
+                  return pe === 'none' || _hitTestMatchesTarget(el, item);
+                });
+                if (allAboveNone) topmost = el;
+              }
+            } catch {}
+          }
+
           if (topmost && !_hitTestMatchesTarget(el, topmost)) {
             let blockerInfo = topmost.tagName.toLowerCase();
             const role = topmost.getAttribute && topmost.getAttribute('role');
@@ -2022,6 +2595,11 @@
       } catch {}
     }
 
+    // Firefox prepares focus before this click. Attribute only that exact
+    // intended target, while retaining the existing preparation fences.
+    if (_isTypeableElement(el) || _isFocusableElement(el)) {
+      window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
+    }
     if (_isTypeableElement(el)) {
       _focusElement(el);
       _rememberEditableTarget(el);
@@ -2039,8 +2617,16 @@
     if (actionDeadlineExpired()) return deadlineFailure();
     const clickedRect = rememberInteractionPoint(el, 'click');
     if (actionDeadlineExpired()) return deadlineFailure();
-    dispatched = true;
-    const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+    if (params._bidiPrepare) {
+      const coordinateClick = !params.text && !params.selector && params.index == null && Number.isFinite(params.x) && Number.isFinite(params.y);
+      return { ...prepareBidiTarget(el, params._bidiPrepare),
+        ...(coordinateClick ? { point: { x: Math.round(params.x), y: Math.round(params.y) } } : {}),
+        _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId };
+    }
+    const filePickerGuard = withLocalPageDispatch(() => {
+      dispatched = true;
+      return clickWithoutNativeFilePicker(() => el.click());
+    });
     if (filePickerGuard.blocked) {
       return {
         ...filePickerBlockedResponse(filePickerGuard.blocked, params.text || el.innerText?.trim() || ''),
@@ -2110,6 +2696,331 @@
 
   function typeText(params, actionDeadlineExpired = () => false) {
     return _typeTextInner(params, actionDeadlineExpired);
+  }
+
+  function withLocalPageDispatch(callback) {
+    const monitor = window.__wbPageMonitor;
+    if (typeof monitor?.withLocalDispatch === 'function') return monitor.withLocalDispatch(callback);
+    monitor?.beforeLocalDispatch();
+    return callback();
+  }
+
+  async function pasteDraftJsText(el, text, clear, readDocument, options = {}) {
+    const doc = el?.ownerDocument, view = doc?.defaultView, root = el?.getRootNode(), url = doc?.URL;
+    let dispatched = false;
+    const failure = (error, extra = {}) => ({
+      success: false, verified: false, dispatched,
+      ...(dispatched
+        ? { mutationMayHaveOccurred: true, outcomeUnknown: true, retryable: false, recoveryRequired: 'verify_or_restore_field' }
+        : { noDispatch: true, outcomeUnknown: false, retryable: false }),
+      error, ...extra,
+    });
+    const expired = () => options.deadlineExpired?.() === true;
+    const deadlineFailure = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
+    const current = () => !!el?.isConnected && el.ownerDocument === doc && doc.defaultView === view
+      && view.document === doc && el.getRootNode() === root && doc.URL === url;
+    const active = () => {
+      let target = root?.activeElement || doc?.activeElement;
+      while (target?.shadowRoot?.activeElement) target = target.shadowRoot.activeElement;
+      return target;
+    };
+    const selection = () => root?.getSelection?.() || view?.getSelection();
+    const range = () => { const selected = selection(); return selected?.rangeCount === 1 ? selected.getRangeAt(0) : null; };
+    const within = selected => !!selected && el.contains(selected.startContainer) && el.contains(selected.endContainer);
+    const wait = () => new Promise(resolve => view.setTimeout(resolve, 30));
+    const fence = phase => {
+      if (options.beforeDispatch?.(phase) === false) {
+        throw Object.assign(new Error('Browser changed during action preparation. Re-observe before acting.'), { code: 'page_feedback_pending' });
+      }
+    };
+    try {
+      if (expired()) return deadlineFailure();
+      if (!current() || !el.isContentEditable || typeof readDocument !== 'function') return failure('The editable target is no longer available.');
+      text = String(text).replace(/\r\n?/g, '\n');
+      const previous = readDocument(el), htmlBefore = el.innerHTML;
+      if (typeof previous !== 'string') return failure('The DraftJS document could not be read completely.', { recoveryRequired: 'fresh_tree' });
+      if (!text.includes('\n')) return failure('This page-handled path requires multiline DraftJS text.');
+      fence('focus');
+      if (expired()) return deadlineFailure();
+      el.focus({ preventScroll: true });
+      await wait();
+      if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+        dispatched = true;
+        return failure('The editor changed while preparing plain-text paste. No paste was sent.');
+      }
+      if (expired()) return deadlineFailure();
+      if (active() !== el) return failure('The editor focus changed before plain-text paste.');
+      // DraftJS maps marked text leaves to its public DOM selection. Selecting
+      // the root or replacing its nodes can leave the model selection stale.
+      const leaves = Array.from(el.querySelectorAll('[data-text="true"]'));
+      const first = leaves[0], last = leaves[leaves.length - 1], selected = doc.createRange();
+      if (!first || !last) return failure('The DraftJS text selection could not be established.');
+      if (first.tagName === 'BR') selected.setStartBefore(first);
+      else if (first.firstChild?.nodeType === 3) selected.setStart(first.firstChild, 0);
+      else return failure('The DraftJS text selection could not be established.');
+      if (last.tagName === 'BR') selected.setEndBefore(last);
+      else if (last.lastChild?.nodeType === 3) selected.setEnd(last.lastChild, last.lastChild.nodeValue.length);
+      else return failure('The DraftJS text selection could not be established.');
+      if (!clear) selected.collapse(false);
+      const selectedText = selection();
+      if (!selectedText) return failure('The text selection is unavailable.');
+      selectedText.removeAllRanges(); selectedText.addRange(selected);
+      const prepared = range()?.cloneRange();
+      await wait();
+      if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+        dispatched = true;
+        return failure('The editor changed while preparing plain-text paste. No paste was sent.');
+      }
+      if (expired()) return deadlineFailure();
+      const liveRange = range();
+      if (active() !== el || !within(liveRange) || !prepared
+          || liveRange.startContainer !== prepared.startContainer || liveRange.startOffset !== prepared.startOffset
+          || liveRange.endContainer !== prepared.endContainer || liveRange.endOffset !== prepared.endOffset) {
+        return failure('The editor focus or selection changed before plain-text paste.');
+      }
+      const transfer = new view.DataTransfer();
+      transfer.setData('text/plain', text);
+      const event = new view.ClipboardEvent('paste', { bubbles: true, composed: true, cancelable: true, clipboardData: transfer });
+      // Firefox drops ClipboardEventInit.clipboardData. This event-local payload
+      // is plain text only and never reads or writes the system clipboard.
+      if (event.clipboardData?.getData('text/plain') !== text) Object.defineProperty(event, 'clipboardData', { value: transfer });
+      if (event.clipboardData?.getData('text/plain') !== text) return failure('The plain-text paste payload could not be established.');
+      fence('input');
+      if (expired()) return deadlineFailure();
+      const fencedRange = range();
+      if (!current() || readDocument(el) !== previous || el.innerHTML !== htmlBefore) {
+        dispatched = true;
+        return failure('The editor changed during the paste dispatch fence. No paste was sent.');
+      }
+      if (active() !== el || !within(fencedRange)
+          || fencedRange.startContainer !== prepared.startContainer || fencedRange.startOffset !== prepared.startOffset
+          || fencedRange.endContainer !== prepared.endContainer || fencedRange.endOffset !== prepared.endOffset) {
+        return failure('The editor focus or selection changed at the paste dispatch fence.');
+      }
+      const invoke = () => { dispatched = true; return el.dispatchEvent(event); };
+      const accepted = options.dispatch ? options.dispatch(invoke) : invoke();
+      await wait(); await wait();
+      if (expired()) return deadlineFailure();
+      if (!current() || active() !== el || !within(range())) return failure('The editor scope changed during plain-text paste.');
+      const value = readDocument(el), expected = (clear ? '' : previous) + text;
+      if (accepted || typeof value !== 'string' || value !== expected) {
+        return failure('The complete settled DraftJS value could not be verified after plain-text paste. No additional text was sent.');
+      }
+      return { success: true, verified: true, dispatched: true, outcomeUnknown: false,
+        pageHandledPaste: true, method: 'contenteditable-page-handled-paste', value: value.slice(0, 100) };
+    } catch (error) {
+      return failure(error?.message || String(error), error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {});
+    }
+  }
+
+  async function _insertContentEditableText(el, text, clear, actionDeadlineExpired = () => false, ownInputScope = null) {
+    if (isDraftJsEditor(el) && /[\r\n]/.test(text)) {
+      const result = await pasteDraftJsText(el, text, clear, readDraftJsText, {
+        deadlineExpired: actionDeadlineExpired,
+        beforeDispatch: phase => window.__wbPageMonitor?.beforeLocalDispatch({ preparation: phase === 'focus', kind: 'input', target: el }),
+        dispatch: callback => withLocalPageDispatch(callback),
+      });
+      return { ...result, fieldMeta: _fieldMeta(el) };
+    }
+    const doc = el.ownerDocument;
+    let dispatched = false;
+    const failure = (error, extra = {}) => ({
+      success: false,
+      verified: false,
+      dispatched,
+      ...(dispatched
+        ? { mutationMayHaveOccurred: true, outcomeUnknown: true, retryable: false }
+        : { noDispatch: true, outcomeUnknown: false, retryable: true }),
+      error,
+      ...extra,
+    });
+    const expired = () => failure('The page action deadline expired during rich-text entry.', { deadlineExpired: true });
+    if (actionDeadlineExpired()) return expired();
+    if (isModelManagedEditor(el)) {
+      // Framework editors own their DOM. Native BiDi input bypasses this
+      // fallback; without it, leave the draft intact instead of corrupting it.
+      return failure('This rich-text editor requires Firefox trusted automation. Enable it in Settings → General → Advanced and retry.',
+        { trustedTypeRequired: true, recoveryRequired: 'trusted_input', retryable: false });
+    }
+    if (typeof doc.execCommand !== 'function') {
+      return failure('This editor has no supported native text insertion path. No content was changed.');
+    }
+    const selection = el.getRootNode?.().getSelection?.() || doc.defaultView?.getSelection();
+    if (!selection || !el.isConnected) return failure('The editable target is no longer available.');
+    // Model-backed paragraph editors have semantic document line breaks.
+    // Ordinary editors must verify the same rendered value their input
+    // handlers read; accepting browser-created blank lines corrupts saves.
+    const draftJsEditor = isDraftJsEditor(el);
+    if (draftJsEditor && readDraftJsText(el) === null) {
+      return failure('The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+        { recoveryRequired: 'fresh_tree', retryable: false });
+    }
+    const semanticEditor = readProseMirrorText(el) !== null;
+    const readValue = () => _editableTextValue(el);
+    const previous = readValue();
+    const nativeClearContext = clear && text === '' ? _nativeChatCaretContext(el) : null;
+    const selectContents = (collapse) => {
+      const range = doc.createRange();
+      let container = el;
+      if (collapse) {
+        // End the append inside the last editable block. Collapsing at the
+        // root end inserts a new sibling after the paragraph on Firefox.
+        while (container.lastChild?.nodeType === 1
+            && container.lastChild.isContentEditable
+            && container.lastChild.nodeName !== 'BR') container = container.lastChild;
+      }
+      range.selectNodeContents(container);
+      if (collapse) range.collapse(false);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    };
+    const edit = async (command, inputType, data = null, commandData = data) => {
+      const htmlBefore = el.innerHTML;
+      const rootBefore = el.getRootNode?.() || doc;
+      const pageUrlBefore = doc.location?.href || doc.URL || '';
+      const nativeContextBefore = _nativeChatCaretContext(el);
+      const rangeBefore = selection.rangeCount ? selection.getRangeAt(0).cloneRange() : null;
+      if (!rangeBefore || !el.contains(rangeBefore.startContainer) || !el.contains(rangeBefore.endContainer)) {
+        return failure('The text selection moved outside the intended editor before insertion.');
+      }
+      // execCommand is the native editing fallback: it preserves markup and
+      // the editor's undo stack. Its beforeinput behavior differs by browser,
+      // so offer the page a cancellable gate BEFORE invoking the command.
+      window.__wbPageMonitor?.beforeLocalDispatch();
+      const verifyNativeObservation = nativeContextBefore && typeof window.__wbPageMonitor?.captureLocalInputObservation === 'function'
+        ? window.__wbPageMonitor.captureLocalInputObservation(el) : null;
+      const beforeInputGate = () => el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, composed: true, cancelable: true, inputType, data,
+      }));
+      const accepted = window.__wbPageMonitor?.withLocalDispatch
+        ? window.__wbPageMonitor.withLocalDispatch(beforeInputGate) : beforeInputGate();
+      if (!accepted) {
+        // React/model editors can cancel native insertion while handling the
+        // requested edit themselves. Allow their bounded render to settle
+        // before claiming that no mutation happened. Never send another edit.
+        await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
+        const changed = el.innerHTML !== htmlBefore || !el.isConnected;
+        if (changed) dispatched = true;
+        if (actionDeadlineExpired()) return expired();
+        if (!changed) return failure('The editor cancelled text entry before mutation.', { cancelled: true });
+        const nativeContextAfter = _nativeChatCaretContext(el);
+        const sameScope = el.isConnected && el.ownerDocument === doc
+          && doc.defaultView?.document === doc && (el.getRootNode?.() || doc) === rootBefore
+          && (doc.location?.href || doc.URL || '') === pageUrlBefore
+          && ((!nativeContextBefore && !nativeContextAfter)
+            || _sameNativeChatCaretContext(nativeContextBefore, nativeContextAfter));
+        const unknown = () => failure('The editor handled a cancelled beforeinput and changed. Its complete value could not be verified in the same scope. No additional text was dispatched.',
+          { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false });
+        if (!sameScope || (draftJsEditor && readDraftJsText(el) === null)) return unknown();
+        try {
+          if (verifyNativeObservation) {
+            if (!verifyNativeObservation()) throw Object.assign(new Error(`The native text observation lost its original operation or received browser intervention (${verifyNativeObservation.reason || 'observation_invalid'})${verifyNativeObservation.diagnostic ? ' [' + verifyNativeObservation.diagnostic + ']' : ''}.`), { code: 'page_feedback_pending' });
+          } else window.__wbPageMonitor?.beforeLocalDispatch();
+        }
+        catch (error) { return failure(error?.message || 'The editor scope changed during page-handled text entry.',
+          { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false,
+            ...(error?.code === 'page_feedback_pending' ? { pageFeedbackPending: true } : {}) }); }
+        const value = readValue();
+        const expected = clear ? text : previous + text;
+        const normalize = value => String(value).replace(/\r\n?/g, '\n');
+        if (normalize(value) !== normalize(expected)) return unknown();
+        return { success: true, verified: true, dispatched: true, outcomeUnknown: false,
+          pageHandledBeforeInput: true, nativeBeforeInputCancelled: true,
+          method: 'contenteditable-page-handled-beforeinput', value: value.slice(0, 100), fieldMeta: _fieldMeta(el) };
+      }
+      if (el.innerHTML !== htmlBefore || !el.isConnected) {
+        window.__wbPageMonitor?.beforeLocalDispatch();
+        dispatched = true;
+        return failure('The editor changed while handling beforeinput. No additional text was dispatched.');
+      }
+      if (actionDeadlineExpired()) return expired();
+      const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+      let active = doc.activeElement;
+      while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+      if (!range || !rangeBefore || (active !== el && !el.contains(active))
+          || range.startContainer !== rangeBefore.startContainer || range.startOffset !== rangeBefore.startOffset
+          || range.endContainer !== rangeBefore.endContainer || range.endOffset !== rangeBefore.endOffset) {
+        return failure('The editor focus or selection changed before text insertion.');
+      }
+      window.__wbPageMonitor?.beforeLocalDispatch();
+      dispatched = true;
+      try {
+        const execute = () => {
+          const previous = _messageRecipientOwnedInputScope;
+          _messageRecipientOwnedInputScope = ownInputScope?.el === el ? ownInputScope : null;
+          const classBefore = ownInputScope?.el === el
+            ? _nativeChatDraftClassTokens(el.getAttribute('class') || '') : null;
+          const inputCount = ownInputScope?.count;
+          try { return doc.execCommand(command, false, commandData); }
+          finally {
+            _messageRecipientOwnedInputScope = previous;
+            if (classBefore && ownInputScope.count > inputCount) {
+              const classAfter = _nativeChatDraftClassTokens(el.getAttribute('class') || '');
+              if (classAfter) {
+                ownInputScope.classRemovalTokens ||= new Set();
+                for (const token of classAfter) if (!classBefore.has(token)) ownInputScope.classRemovalTokens.add(token);
+              }
+            }
+          }
+        };
+        const inserted = window.__wbPageMonitor?.withLocalDispatch ? window.__wbPageMonitor.withLocalDispatch(execute) : execute();
+        if (!inserted) {
+          return failure('The editor rejected native text entry. No DOM replacement was attempted.');
+        }
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') throw error;
+        return failure(`Native text entry failed: ${error?.message || String(error)}`);
+      }
+      return null;
+    };
+
+    const hasNonTextContent = () => !!el.querySelector('img, svg, canvas, video, audio, iframe, object, embed, [contenteditable="false"]');
+    const mustClear = clear && (previous !== '' || hasNonTextContent());
+    if (mustClear && (!text || semanticEditor)) {
+      selectContents(false);
+      const deletionFailure = await edit('delete', 'deleteContentBackward');
+      if (deletionFailure) return deletionFailure;
+      await new Promise(resolve => setTimeout(resolve, 30));
+      if (actionDeadlineExpired()) return expired();
+      if (!el.isConnected || String(el.textContent || '') !== '' || hasNonTextContent()) {
+        return failure('The editor could not be proven empty. No replacement text was inserted.');
+      }
+      if (nativeClearContext) _rememberNativeChatEmptyCaret(el, nativeClearContext);
+    }
+    if (text) {
+      // Keep the legacy append contract, but retain every existing rich-text
+      // node instead of assigning textContent for the entire editor.
+      // Replace an ordinary editor in one native operation. Deleting first
+      // creates caret/whitespace nodes that can survive the second insertion.
+      if (!semanticEditor || !mustClear) selectContents(!clear && !_nativeChatCaretValueIsEmpty(el));
+      // Chromium's multiline insertText creates empty DIV blocks that add
+      // extra innerText line feeds. Native HTML insertion of escaped literal
+      // text preserves whitespace and undo/input handling without replacing
+      // the editor DOM. The wrapper only formats the newly inserted text.
+      const literal = String(text).replace(/\r\n?/g, '\n')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const insertionFailure = semanticEditor
+        ? await edit('insertText', 'insertText', text)
+        : await edit('insertHTML', 'insertText', text, `<span style="white-space: pre-wrap">${literal}</span>`);
+      if (insertionFailure) return insertionFailure;
+    }
+    await new Promise(resolve => setTimeout(resolve, 30));
+    if (actionDeadlineExpired()) return expired();
+    if (draftJsEditor && readDraftJsText(el) === null) {
+      return failure('The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+        { recoveryRequired: 'verify_or_restore_field', retryable: false });
+    }
+    const value = readValue();
+    const expected = clear ? text : previous + text;
+    const normalize = value => String(value).replace(/\r\n?/g, '\n');
+    if (!el.isConnected || normalize(value) !== normalize(expected)) {
+      return failure('The complete settled rich-text value could not be verified exactly.');
+    }
+    return {
+      success: true, verified: true, dispatched,
+      ...(!dispatched ? { noDispatch: true, noop: true } : {}),
+      method: 'contenteditable-native', value: value.slice(0, 100), fieldMeta: _fieldMeta(el),
+    };
   }
 
   async function _typeTextInner(params, actionDeadlineExpired = () => false) {
@@ -2190,32 +3101,26 @@
       return noDispatchFailure(`Cannot type into <${tag}> — it is not an editable field. If you wanted to activate it, use click instead. If the real target is a nearby input, click the input first, then call type_text({text: "..."}) with no selector.`);
     }
 
+    // Empty appends mutate nothing: skip focus/dispatch entirely and report
+    // a proven no-op so no uncertainty debt is recorded downstream.
+    // (clear:true still empties below and takes the verified path. Native
+    // selects are excluded: choosing an empty-valued option IS a mutation.)
+    if (!typedText && !params.clear && !(el instanceof HTMLSelectElement)) {
+      return { success: true, dispatched: false, noDispatch: true, noop: true, method: 'noop-empty-append' };
+    }
+
     if (actionDeadlineExpired()) return deadlineFailure();
-    el.focus();
+    _withTypingPreparation('focus', el, () => el.focus());
     if (actionDeadlineExpired()) return deadlineFailure();
     showAgentWorkingTarget(el, 'type_text');
     const beforeValue = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
     const routeHrefBeforeType = location.href;
 
-    // contenteditable path (Notion, Google Docs comments, Lexical,
-    // ProseMirror, Slate, Draft — all need the beforeinput → input →
-    // change sequence with a real inputType, or their internal state
-    // won't update).
+    if (params._bidiPrepare && !(el instanceof HTMLSelectElement)) return prepareBidiTarget(el, params._bidiPrepare);
+
+    // Rich editors must retain their native node structure and editing events.
     if (el.isContentEditable) {
-      if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      if (params.clear) el.textContent = '';
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.textContent += params.text;
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: params.text }));
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: params.text }));
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
-      if (actionDeadlineExpired()) return deadlineFailure();
-      return { success: true, ...(verified === true ? { verified: true } : {}), method: 'contenteditable', value: el.textContent.slice(0, 100) };
+      return _insertContentEditableText(el, typedText, params.clear === true, actionDeadlineExpired);
     }
 
     // <select>: match by value or option text.
@@ -2231,22 +3136,19 @@
       }
       const nativeSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
       if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      if (nativeSetter) nativeSetter.call(el, match.value);
-      else el.value = match.value;
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      if (actionDeadlineExpired()) return deadlineFailure();
-      el.dispatchEvent(new Event('change', { bubbles: true }));
+      const dispatchResult = withLocalPageDispatch(() => {
+        dispatched = true;
+        if (nativeSetter) nativeSetter.call(el, match.value);
+        else el.value = match.value;
+        if (actionDeadlineExpired()) return deadlineFailure();
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        if (actionDeadlineExpired()) return deadlineFailure();
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      if (dispatchResult) return dispatchResult;
       await new Promise(resolve => setTimeout(resolve, 30));
       if (actionDeadlineExpired()) return deadlineFailure();
       return { success: true, ...(el.isConnected && el.value === match.value ? { verified: true } : {}), method: 'select', value: el.value };
-    }
-
-    if (params.clear) {
-      if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      el.value = '';
     }
 
     // Use input events for React/Vue compatibility
@@ -2256,17 +3158,19 @@
     const nativeInputValueSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
 
     if (actionDeadlineExpired()) return deadlineFailure();
-    dispatched = true;
-    if (nativeInputValueSetter) {
-      nativeInputValueSetter.call(el, (params.clear ? '' : (el.value || '')) + params.text);
-    } else {
-      el.value = (params.clear ? '' : (el.value || '')) + params.text;
-    }
-
-    if (actionDeadlineExpired()) return deadlineFailure();
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    if (actionDeadlineExpired()) return deadlineFailure();
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    const dispatchResult = withLocalPageDispatch(() => {
+      dispatched = true;
+      if (nativeInputValueSetter) {
+        nativeInputValueSetter.call(el, (params.clear ? '' : (el.value || '')) + params.text);
+      } else {
+        el.value = (params.clear ? '' : (el.value || '')) + params.text;
+      }
+      if (actionDeadlineExpired()) return deadlineFailure();
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      if (actionDeadlineExpired()) return deadlineFailure();
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    if (dispatchResult) return dispatchResult;
     const verified = await verifyValue(el, typedText, params.clear === true, beforeValue);
     if (actionDeadlineExpired()) return deadlineFailure();
 
@@ -2281,7 +3185,7 @@
     }
     _lastTypeFieldIdent = routeStayedCurrent ? fieldIdent : null;
 
-    return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), ...(typeWarning ? { warning: typeWarning } : {}) };
+    return { success: true, ...(verified === true ? { verified: true } : {}), value: (el.value || '').slice(0, 100), fieldMeta: _fieldMeta(el), ...(typeWarning ? { warning: typeWarning } : {}) };
   }
 
   /**
@@ -2415,6 +3319,7 @@
           : 'window.find reported a match, but WebBrain could not verify a visible current selection in the top document (for example, the active match may be inside a frame while an older top-document selection remains). Do not claim it is visibly highlighted. The browser Find UI was not opened.',
       };
     } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
       return { success: false, found: false, dispatched: false, noDispatch: true, error: `find_text failed: ${error.message || error}` };
     }
   }
@@ -2482,6 +3387,8 @@
       ? focusedTarget
       : document;
 
+    if (params._bidiPrepare) return prepareBidiTarget(focusedTarget || document.body, params._bidiPrepare);
+
     const moveTabFocus = () => {
       const focusables = Array.from(document.querySelectorAll(
         'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -2522,13 +3429,19 @@
       // the same event object on document again would fire those listeners
       // twice per key (double-advancing ARIA listboxes, menus, etc.).
       if (actionDeadlineExpired()) return deadlineFailure();
-      dispatched = true;
-      target.dispatchEvent(down);
-      // A keydown listener may run across the deadline. Always release the
-      // synthetic key before returning the partial-dispatch timeout so pages
-      // that track held keys are not left in a stuck state.
-      const expiredAfterKeydown = actionDeadlineExpired();
-      target.dispatchEvent(up);
+      const expiredAfterKeydown = withLocalPageDispatch(() => {
+        // Private page validation can consume the last part of the budget.
+        // Recheck inside the dispatch callback before emitting keydown.
+        if (actionDeadlineExpired()) return true;
+        dispatched = true;
+        target.dispatchEvent(down);
+        // A keydown listener may run across the deadline. Always release the
+        // synthetic key before returning the partial-dispatch timeout so pages
+        // that track held keys are not left in a stuck state.
+        const expired = actionDeadlineExpired();
+        target.dispatchEvent(up);
+        return expired;
+      });
       if (expiredAfterKeydown) return deadlineFailure();
       if (key === 'Tab' && !moveTabFocus()) return deadlineFailure();
     }
@@ -2619,6 +3532,7 @@
 
     if (target) {
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       if (direction === 'down') target.scrollBy(0, amount);
       else if (direction === 'up') target.scrollBy(0, -amount);
@@ -2629,6 +3543,7 @@
 
     // Always also scroll the window in case both are needed.
     if (actionDeadlineExpired()) return deadlineFailure();
+    window.__wbPageMonitor?.beforeLocalDispatch();
     dispatched = true;
     if (direction === 'down') window.scrollBy(0, amount);
     else if (direction === 'up') window.scrollBy(0, -amount);
@@ -2817,6 +3732,7 @@
     if (target) {
       containerBefore = target.scrollTop;
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       scrollElementInstant(target, direction, amount);
       containerAfter = target.scrollTop;
@@ -2827,6 +3743,7 @@
     const shouldScrollWindow = params.alsoWindow === true || !movedContainer;
     if (shouldScrollWindow && windowCanMove) {
       if (actionDeadlineExpired()) return deadlineFailure();
+      window.__wbPageMonitor?.beforeLocalDispatch();
       dispatched = true;
       if (direction === 'down') window.scrollBy(0, amount);
       else if (direction === 'up') window.scrollBy(0, -amount);
@@ -2879,6 +3796,8 @@
     try {
       return smartScrollPage(params, actionDeadlineExpired);
     } catch (e) {
+     if (e?.code === 'page_feedback_pending') throw e;
+      if (e?.code === 'page_feedback_pending') throw e;
       const fallback = legacyScrollPage(params || {}, actionDeadlineExpired);
       return {
         ...fallback,
@@ -2894,6 +3813,68 @@
     const type = params.type || 'tables';
 
     if (type === 'tables') {
+      if (Array.isArray(params.columns)) {
+        const tables = Array.from(document.querySelectorAll('table'));
+        const hasCaption = params.caption !== undefined;
+        const hasIndex = params.table_index !== undefined;
+        if ((hasCaption && (typeof params.caption !== 'string' || !params.caption))
+            || (hasIndex && (!Number.isSafeInteger(params.table_index) || params.table_index < 0))
+            || (hasCaption && hasIndex)) {
+          return { success: false, error: 'Use one exact caption or one nonnegative table_index. No complete export was captured.' };
+        }
+        const matches = typeof params.caption === 'string'
+          ? tables.filter(table => (table.caption?.innerText || '').trim() === params.caption)
+          : Number.isSafeInteger(params.table_index) && params.table_index >= 0
+            ? tables.slice(params.table_index, params.table_index + 1)
+            : tables.length === 1 ? tables : [];
+        if (matches.length !== 1) return { success: false, error: 'Select exactly one table by its exact caption or table_index. No complete export was captured.' };
+        const table = matches[0];
+        const first = params.first_data_row === undefined ? 1 : params.first_data_row;
+        if (!Number.isSafeInteger(first) || first < 0) return { success: false, error: 'first_data_row must be a nonnegative integer.' };
+        const nativeRows = Array.from(table.querySelectorAll('tr')).filter(row => row.closest('table') === table);
+        const cellsOf = row => Array.from(row.querySelectorAll('th,td')).filter(cell => cell.closest('tr') === row)
+          .map(cell => typeof cell.innerText === 'string' ? cell.innerText : cell.textContent || '');
+        // Source headers remain evidence even when the caller includes row zero
+        // or renames a sensitive column in its requested output schema.
+        const headerRows = [];
+        let headerChars = 0;
+        for (const [index, row] of nativeRows.entries()) {
+          if (index !== 0 && row.closest('thead')?.closest('table') !== table
+              && !Array.from(row.querySelectorAll('th')).some(cell => cell.closest('tr') === row)) continue;
+          const cells = cellsOf(row);
+          headerChars += cells.reduce((sum, cell) => sum + cell.length, 0);
+          if (headerRows.length >= 10000 || headerChars > 2000000) {
+            return { success: false, error: 'The source headers exceed the complete snapshot limit. No sampled export is returned.' };
+          }
+          headerRows.push(cells);
+        }
+        const filter = params.row_filter;
+        if (filter !== undefined && (!filter || typeof filter !== 'object' || Array.isArray(filter)
+            || !Number.isSafeInteger(filter.column) || filter.column < 0
+            || !Array.isArray(filter.equals) || filter.equals.length > 10000
+            || filter.equals.some(value => typeof value !== 'string'))) {
+          return { success: false, error: 'row_filter needs a column index and exact string values.' };
+        }
+        const selected = filter ? new Set(filter.equals) : null;
+        const found = new Set();
+        const rows = [];
+        let chars = 0;
+        for (const row of nativeRows.slice(first)) {
+          const cells = cellsOf(row);
+          if (selected && !selected.has(cells[filter.column])) continue;
+          if (selected) found.add(cells[filter.column]);
+          chars += cells.reduce((sum, cell) => sum + cell.length, 0);
+          if (rows.length >= 10000 || chars > 2000000) return { success: false, error: 'The complete table exceeds the snapshot limit. Select explicit rows or fewer data; no sampled export is returned.' };
+          rows.push(cells);
+        }
+        if (selected && [...selected].some(value => !found.has(value))) {
+          return { success: false, error: 'One or more exact row_filter values were not found in the selected table. No complete export was captured.' };
+        }
+        if (!window.__wbAxDocumentToken) window.__wbAxDocumentToken = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+        return { schema: 'webbrain.table-snapshot.v1', success: true,
+          documentToken: window.__wbAxDocumentToken, pageUrl: location.href,
+          tableIndex: tables.indexOf(table), caption: (table.caption?.innerText || '').trim(), headerRows, rows };
+      }
       return Array.from(document.querySelectorAll('table')).slice(0, 10).map((table, i) => {
         const rows = Array.from(table.querySelectorAll('tr')).map(tr =>
           Array.from(tr.querySelectorAll('th, td')).map(cell => cell.innerText.trim())
@@ -2934,6 +3915,7 @@
       try {
         existing = document.querySelector(params.selector);
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         resolve({
           success: false,
           found: false,
@@ -3103,6 +4085,7 @@
           warnings.push(`No element matched selector "${selector}".`);
         }
       } catch (e) {
+        if (e?.code === 'page_feedback_pending') throw e;
         warnings.push(`Invalid selector: ${e.message}`);
       }
     }
@@ -3165,6 +4148,7 @@
             media: sheet.media ? Array.from(sheet.media).join(', ') : '',
           });
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           if (warnings.length < 10) {
             warnings.push(`Could not read stylesheet ${sheet.href || 'inline'}: ${e.name || e.message}`);
           }
@@ -3209,15 +4193,315 @@
 
   const SET_FIELD_VERIFY_DELAY_MS = 80;
 
-  function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false) {
+  function _setFieldValueMatches(actual, previous, text, clear, normalizeNewlines = false, semanticNewlines = false) {
     const expected = clear ? text : previous + text;
     if (!normalizeNewlines) return actual === expected;
     const normalize = value => String(value).replace(/\r\n?/g, '\n');
     return normalize(actual) === normalize(expected);
   }
 
+  function readProseMirrorText(el) {
+    if (!el?.isContentEditable || !el.classList?.contains('ProseMirror')) return null;
+    // Paragraphs are document line breaks, not innerText's visual spacing.
+    // ProseMirror's final BR is a caret placeholder, not another hard break.
+    const read = node => {
+      if (node.nodeType === 3) return node.nodeValue || '';
+      if (node.nodeType !== 1) return '';
+      if (node.tagName === 'BR') return node.classList?.contains('ProseMirror-trailingBreak') ? '' : '\n';
+      return Array.from(node.childNodes).map(read).join('');
+    };
+    const children = Array.from(el.childNodes);
+    if (!children.every(node => node.nodeType === 1 && node.tagName === 'P')) return null;
+    return children.map(read).join('\n');
+  }
+
+  function readEmptyCaretText(el) {
+    // A sole BR can be either a browser caret or an authored literal LF.
+    // Generic DOM shape cannot establish which; keep its rendered value.
+    // DraftJS/ProseMirror markers and exact native-clear receipts prove their
+    // own empty state independently. Only a genuinely empty DOM is generic.
+    return el?.isContentEditable && el.childNodes?.length === 0
+      && el.innerText === '' && el.textContent === '' ? '' : null;
+  }
+
+  const _nativeChatEmptyCaretReceipts = new WeakMap();
+
+  function _nativeChatCaretContext(el) {
+    try {
+      const context = window.__wb_get_native_chat_context?.(el);
+      return context && ['telegram', 'whatsapp-self', 'whatsapp'].includes(context.service) ? context : null;
+    } catch { return null; }
+  }
+
+  function _sameNativeChatCaretContext(before, after) {
+    return !!before && !!after && before.id === after.id && before.service === after.service && before.name === after.name
+      && before.root === after.root && before.transcript === after.transcript
+      && before.header === after.header && before.carrier === after.carrier && before.owner === after.owner
+      && before.title === after.title && before.selfMarker === after.selfMarker && before.peerIdentity === after.peerIdentity
+      && before.aliasWitnessSignature === after.aliasWitnessSignature;
+  }
+
+  function _singleEditableCaretBreak(el) {
+    if (!el?.isContentEditable || String(el.textContent || '') !== '') return null;
+    let node = el;
+    for (let depth = 0; depth < 8; depth++) {
+      const children = Array.from(node.childNodes).filter(child => child.nodeType !== 8
+        && !(child.nodeType === 3 && !child.nodeValue));
+      if (children.length !== 1 || children[0].nodeType !== 1) return null;
+      node = children[0];
+      if (node.tagName === 'BR') return node;
+      if (!/^(?:SPAN|DIV|P|B|STRONG|I|EM|U|S)$/.test(node.tagName)
+          || node.getAttribute('contenteditable') === 'false') return null;
+    }
+    return null;
+  }
+
+  function isDraftJsEditor(el) {
+    return !!el?.isContentEditable && (el.classList?.contains('public-DraftEditor-content')
+      || Array.from(el.children || []).some(child => child.getAttribute('data-contents') === 'true'));
+  }
+
+  function isModelManagedEditor(el) {
+    return !!el?.isContentEditable && (isDraftJsEditor(el)
+      || ['ProseMirror', 'ql-editor', 'cke_editable', 'mce-content-body', 'cm-content']
+        .some(name => el.classList?.contains(name))
+      || el.getAttribute('data-slate-editor') === 'true'
+      || el.getAttribute('data-lexical-editor') === 'true');
+  }
+
+  function readDraftJsText(el) {
+    if (!el?.isContentEditable || !el.childNodes) return null;
+    const roots = Array.from(el.childNodes);
+    if (roots.length !== 1 || roots[0].nodeType !== 1 || roots[0].tagName !== 'DIV'
+        || roots[0].getAttribute('data-contents') !== 'true') return null;
+    let visited = 0;
+    const supported = node => {
+      if (++visited > 4096 || node.shadowRoot || node.hidden || String(node.getAttribute('aria-hidden') || '').trim().toLowerCase() === 'true'
+          || String(node.getAttribute('contenteditable') || '').trim().toLowerCase() === 'false') return false;
+      const style = node.ownerDocument?.defaultView?.getComputedStyle?.(node);
+      return !!style && (style.display !== 'none' && !['hidden', 'collapse'].includes(style.visibility)
+        && style.opacity !== '0' && style.contentVisibility !== 'hidden');
+    };
+    if (!supported(el) || !supported(roots[0])) return null;
+    const blocks = Array.from(roots[0].childNodes);
+    if (!blocks.length) return null;
+    const texts = [];
+    for (const block of blocks) {
+      if (block.nodeType !== 1 || block.tagName !== 'DIV' || block.getAttribute('data-block') !== 'true'
+          || !block.getAttribute('data-offset-key') || !supported(block)) return null;
+      const children = Array.from(block.childNodes);
+      const body = children[0];
+      if (children.length !== 1 || body?.nodeType !== 1 || body.tagName !== 'DIV'
+          || !body.classList.contains('public-DraftStyleDefault-block')
+          || !body.getAttribute('data-offset-key') || !supported(body)) return null;
+      const leaves = [];
+      const read = (node, depth = 0) => {
+        if (depth > 32 || node.nodeType !== 1 || !supported(node)) return false;
+        if (node.tagName === 'BR') {
+          if (node.getAttribute('data-text') !== 'true' || node.childNodes.length) return false;
+          leaves.push(null); return true;
+        }
+        if (node.tagName !== 'SPAN') return false;
+        const descendants = Array.from(node.childNodes);
+        if (node.getAttribute('data-text') === 'true') {
+          if (!descendants.every(child => child.nodeType === 3)) return false;
+          leaves.push(descendants.map(child => child.nodeValue || '').join('')); return true;
+        }
+        return descendants.length > 0 && descendants.every(child => read(child, depth + 1));
+      };
+      if (!body.childNodes.length || !Array.from(body.childNodes).every(node => read(node))) return null;
+      // DraftJS's sole data-text BR in an empty block is a caret placeholder.
+      // Real document breaks are separators between blocks (or text in leaves).
+      // Mixed BR/text and embeds are unsupported; keep their rendered fallback.
+      const placeholders = leaves.filter(value => value === null).length;
+      if (placeholders && (placeholders !== 1 || leaves.some(value => value !== null && value !== ''))) return null;
+      texts.push(leaves.filter(value => value !== null).join(''));
+    }
+    return texts.join('\n');
+  }
+
+  const _nativeChatClearPreparations = new Map();
+
+  function _releaseNativeChatClear(token) {
+    const record = _nativeChatClearPreparations.get(token);
+    if (!record) return;
+    _nativeChatClearPreparations.delete(token);
+    clearTimeout(record.timer);
+    record.observer.disconnect();
+    for (const [name, listener] of record.listeners) record.view.removeEventListener(name, listener, true);
+  }
+
+  function _prepareNativeChatClear(ref) {
+    const el = window.__wb_ax_lookup?.(ref), context = _nativeChatCaretContext(el);
+    if (!el?.isContentEditable || !el.isConnected || !context || !el.textContent) return { success: false };
+    const doc = el.ownerDocument, root = el.getRootNode(), view = doc.defaultView;
+    const url = doc.URL, documentToken = _axDocumentToken();
+    const ancestors = []; for (let node = el.parentElement; node; node = node.parentElement) ancestors.push(node);
+    const identityNodes = [context.header, context.carrier, context.title, context.selfMarker, context.owner]
+      .filter(node => node?.nodeType === 1);
+    const selection = () => root.getSelection?.() || view.getSelection();
+    const rangeNow = () => { const value = selection(); return value?.rangeCount === 1 ? value.getRangeAt(0) : null; };
+    const sameRange = (a, b) => !!a && !!b && a.startContainer === b.startContainer && a.startOffset === b.startOffset
+      && a.endContainer === b.endContainer && a.endOffset === b.endOffset;
+    const originalBreaks = new Set(el.querySelectorAll('br'));
+    const originalNodes = new Set([el]), originalText = new Map(), deletedTextNodes = new Set();
+    const originalWalker = doc.createTreeWalker(el, view.NodeFilter.SHOW_ALL);
+    for (let node = originalWalker.nextNode(); node; node = originalWalker.nextNode()) {
+      originalNodes.add(node); if (node.nodeType === 3) originalText.set(node, node.nodeValue);
+    }
+    const fullySelected = () => {
+      const value = rangeNow();
+      if (!value || value.collapsed || !el.contains(value.startContainer) || !el.contains(value.endContainer)) return false;
+      const walker = doc.createTreeWalker(el, view.NodeFilter.SHOW_ELEMENT | view.NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.nodeType === 3) {
+          if (value.comparePoint(node, 0) !== 0 || value.comparePoint(node, node.length) !== 0) return false;
+        } else if (!node.childNodes.length) {
+          const offset = Array.prototype.indexOf.call(node.parentNode.childNodes, node);
+          if (value.comparePoint(node.parentNode, offset) !== 0 || value.comparePoint(node.parentNode, offset + 1) !== 0) return false;
+        }
+      }
+      return true;
+    };
+    const focused = () => (root.activeElement || doc.activeElement) === el;
+    const current = () => el.isConnected && el.ownerDocument === doc && doc.defaultView === view
+      && view.document === doc && el.getRootNode() === root && doc.URL === url
+      && _axDocumentToken() === documentToken && window.__wb_ax_lookup?.(ref) === el && focused()
+      && _sameNativeChatCaretContext(context, _nativeChatCaretContext(el));
+    const selected = selection();
+    if (!current() || selected?.rangeCount !== 1) return { success: false };
+    const range = selected.getRangeAt(0);
+    if (!fullySelected() || !el.contains(range.startContainer) || !el.contains(range.endContainer)
+        || range.cloneContents().textContent !== el.textContent) return { success: false };
+    const token = crypto.randomUUID();
+    const record = { el, doc, view, context, current, listeners: [], selected: 0, deleted: 0, before: 0,
+      inputs: 0, released: 0, invalid: false, caret: null, settledRange: null, pendingDeleteRecords: [] };
+    const originalRange = range.cloneRange();
+    record.selectionCurrent = () => sameRange(rangeNow(), record.settledRange);
+    const relevant = mutation => !(mutation.type === 'attributes'
+      && ['data-webbrain-native-target', 'data-webbrain-page-revision'].includes(mutation.attributeName))
+      && (originalNodes.has(mutation.target) || mutation.target === el || el.contains(mutation.target)
+        || (mutation.type === 'attributes' && ancestors.includes(mutation.target))
+        || identityNodes.some(node => mutation.target === node
+          || (node !== context.owner && node.contains(mutation.target)))
+        || (mutation.type === 'childList' && [...mutation.addedNodes, ...mutation.removedNodes]
+          .some(node => node === el || node.contains?.(el) || identityNodes.includes(node))));
+    const nativeDeleteMutation = mutation => ['childList', 'characterData'].includes(mutation.type)
+      && (originalNodes.has(mutation.target) || mutation.target === el || el.contains(mutation.target));
+    record.observer = new view.MutationObserver(records => {
+      const changes = records.filter(relevant);
+      if (!changes.length) return;
+      // Capture listeners in another world can yield before our trusted input
+      // callback. Only that exact pending native Delete may consume this buffer.
+      if (record.deleted === 1 && record.before === 1 && record.inputs === 0 && current()
+          && changes.every(nativeDeleteMutation) && record.pendingDeleteRecords.length + changes.length <= 128) {
+        record.pendingDeleteRecords.push(...changes);
+      } else record.invalid = true;
+    });
+    record.observer.observe(doc.documentElement, { subtree: true, attributes: true, childList: true, characterData: true, characterDataOldValue: true });
+    const drain = nativeDelete => {
+      const changes = [...record.pendingDeleteRecords, ...record.observer.takeRecords()]; record.pendingDeleteRecords = [];
+      for (const mutation of changes.filter(relevant)) {
+        if (!nativeDelete || !nativeDeleteMutation(mutation)) { record.invalid = true; continue; }
+        if (mutation.type === 'characterData') {
+          if (!originalText.has(mutation.target) || mutation.oldValue !== originalText.get(mutation.target)
+              || mutation.target.nodeValue !== '' || deletedTextNodes.has(mutation.target)) record.invalid = true;
+          deletedTextNodes.add(mutation.target);
+        } else if (!originalNodes.has(mutation.target)
+            || [...mutation.removedNodes].some(node => !originalNodes.has(node))
+            || [...mutation.addedNodes].some(node => node !== el.firstChild || node.nodeName !== 'BR'
+              || node.attributes.length !== 0 || originalBreaks.has(node))) record.invalid = true;
+      }
+    };
+    record.drain = drain;
+    const handlers = {
+      keydown(event) {
+        if (!event.isTrusted || event.target !== el || !current()) { record.invalid = true; return; }
+        if (/^(?:Control|Meta)(?:Left|Right)$/.test(event.code) && !record.selected && !record.deleted
+            && !record.modifierCode && !event.altKey && !event.shiftKey) { record.modifierCode = event.code; return; }
+        if (event.code === 'KeyA' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+            && !record.selected && !record.deleted) { record.selected++; return; }
+        if (event.code === 'Delete' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+            && record.selected === 1 && !record.deleted && fullySelected()) { record.deleted++; return; }
+        record.invalid = true;
+      },
+      keyup(event) {
+        if (!event.isTrusted || event.target !== el) { record.invalid = true; return; }
+        if (event.code === record.modifierCode && record.selected === 1 && !record.deleted
+            && !record.modifierReleased) { record.modifierReleased = true; return; }
+        if (event.code === 'KeyA' && record.selected === 1 && !record.deleted) return;
+        if (event.code === 'Delete' && record.deleted === 1 && !record.released) { record.released++; return; }
+        record.invalid = true;
+      },
+      beforeinput(event) {
+        drain(false);
+        if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+            || record.selected !== 1 || record.deleted !== 1 || record.before || !current() || !fullySelected()) record.invalid = true;
+        else record.before++;
+      },
+      input(event) {
+        if (!event.isTrusted || event.target !== el || event.inputType !== 'deleteContentForward'
+            || record.before !== 1 || record.inputs || !current()) { record.invalid = true; return; }
+        drain(true); record.inputs++;
+        const caret = _singleEditableCaretBreak(el); record.caret = originalBreaks.has(caret) ? null : caret;
+        record.settledRange = rangeNow()?.cloneRange();
+      },
+      selectionchange() {
+        const value = rangeNow();
+        if (record.inputs ? !sameRange(value, record.settledRange)
+          : (!record.selected && !sameRange(value, originalRange))
+            || !value || !el.contains(value.startContainer) || !el.contains(value.endContainer)) record.invalid = true;
+      },
+      focusin(event) { if (event.target !== el) record.invalid = true; },
+      focusout() { record.invalid = true; }, pointerdown() { record.invalid = true; },
+      wheel() { record.invalid = true; }, paste() { record.invalid = true; }, drop() { record.invalid = true; },
+    };
+    for (const [name, listener] of Object.entries(handlers)) {
+      // Capture above existing document listeners: their callback checkpoint
+      // must not deliver this exact native deletion as an unrelated mutation.
+      view.addEventListener(name, listener, true); record.listeners.push([name, listener]);
+    }
+    while (_nativeChatClearPreparations.size >= 8) _releaseNativeChatClear(_nativeChatClearPreparations.keys().next().value);
+    record.timer = setTimeout(() => _releaseNativeChatClear(token), 5000);
+    _nativeChatClearPreparations.set(token, record);
+    return { success: true, token };
+  }
+
+  function _verifyNativeChatClear(ref, token) {
+    const record = _nativeChatClearPreparations.get(token);
+    if (!record) return { success: false };
+    record.drain(false);
+    const valid = !record.invalid && record.current() && window.__wb_ax_lookup?.(ref) === record.el
+      && record.selected === 1 && record.deleted === 1 && record.before === 1 && record.inputs === 1
+      && record.released === 1 && record.selectionCurrent() && record.caret && record.caret === _singleEditableCaretBreak(record.el);
+    _releaseNativeChatClear(token);
+    if (!valid) return { success: false };
+    _rememberNativeChatEmptyCaret(record.el, record.context);
+    return { success: _nativeChatCaretValueIsEmpty(record.el) };
+  }
+
+  function _rememberNativeChatEmptyCaret(el, context) {
+    const br = _singleEditableCaretBreak(el);
+    if (br && _sameNativeChatCaretContext(context, _nativeChatCaretContext(el))) {
+      _nativeChatEmptyCaretReceipts.set(el, { context, br });
+    }
+  }
+
+  function _nativeChatCaretValueIsEmpty(el) {
+    const receipt = _nativeChatEmptyCaretReceipts.get(el);
+    if (!receipt) return false;
+    if (receipt.br === _singleEditableCaretBreak(el)
+        && _sameNativeChatCaretContext(receipt.context, _nativeChatCaretContext(el))) return true;
+    _nativeChatEmptyCaretReceipts.delete(el);
+    return false;
+  }
+
   function _editableTextValue(el) {
-    return typeof el.innerText === 'string' ? el.innerText : (el.textContent || '');
+    const semantic = isDraftJsEditor(el) ? readDraftJsText(el) : (readProseMirrorText(el) ?? readEmptyCaretText(el));
+    // Only a successful explicit native-chat delete may certify this exact
+    // caret node as empty. Generic editors and authored LF/BR keep raw readback.
+    return semantic !== null ? semantic : _nativeChatCaretValueIsEmpty(el) ? ''
+      : (typeof el.innerText === 'string' ? el.innerText : (el.textContent || ''));
   }
 
   // Synthetic (isTrusted:false) Enter events never trigger native submission —
@@ -3228,6 +4512,82 @@
   // popup is open is usually wrong.
   function _setFieldUsesNativeSubmit(isCombobox, isContentEditable, form) {
     return !isCombobox && !isContentEditable && !!form && typeof form.requestSubmit === 'function';
+  }
+
+  function _attachMessageRecipientBoundUpload(params = {}, deadlineExpired = () => false) {
+    const fail = (error, extra = {}) => ({ success: false, dispatched: false, noDispatch: true,
+      messageRecipientGuard: true, error, ...extra });
+    const target = _messageRecipientUploadTarget(params.selector);
+    const expected = _messageRecipientDispatchBindings.get(String(params.messageRecipientDispatchBinding?.token || ''));
+    if (!target || !expected || expected.tool !== 'upload_file' || expected.actionTarget !== target) {
+      return fail('Attachment blocked because the exact verified file input is unavailable.',
+        { reasonCode: 'recipient_dispatch_binding_stale' });
+    }
+    if (deadlineExpired()) return fail('Upload action deadline expired before attachment.', { deadlineExpired: true });
+    const base64 = params.base64;
+    // Match the existing Firefox upload cap and reject oversized data before
+    // allocation or file assignment. These bytes come from the private source
+    // resolver, never a model argument or page attribute.
+    if (typeof base64 !== 'string' || base64.length > Math.ceil(25 * 1024 * 1024 / 3) * 4) {
+      return fail('Recipient-bound attachment exceeds the 25MB limit or has no file data.');
+    }
+    let file, transfer;
+    try {
+      const binary = atob(base64);
+      if (binary.length > 25 * 1024 * 1024) return fail('Recipient-bound attachment exceeds the 25MB limit.');
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      file = new File([bytes], String(params.filename || 'attachment'),
+        { type: String(params.mimeType || 'application/octet-stream') });
+      transfer = new DataTransfer();
+      transfer.items.add(file);
+    } catch { return fail('Recipient-bound attachment data could not be decoded.'); }
+    const typeCheck = globalThis.__wbFileUploadPolicy?.validateUploadFile(target.getAttribute('accept'), params);
+    if (!typeCheck?.success) return typeCheck || fail('The file type validator is unavailable. Re-observe before attaching.');
+    const pageGuard = params.pageFeedbackGuard;
+    const monitor = window.__wbPageMonitor;
+    if (pageGuard?.operationId) {
+      if (typeof monitor?.activatePreparedDispatch !== 'function' || typeof monitor?.withPreparedDispatch !== 'function') {
+        return fail('The page monitor is unavailable before attachment.', { pageFeedbackPending: true });
+      }
+      monitor.activatePreparedDispatch({ operationId: pageGuard.operationId, kind: 'input', element: target });
+    }
+    if (deadlineExpired()) return fail('Upload action deadline expired before attachment.', { deadlineExpired: true });
+    const guard = _consumeMessageRecipientDispatchBinding(params, target);
+    if (!guard.success) return guard;
+    let dispatched = false;
+    try {
+      const attach = () => {
+        monitor?.beforeLocalDispatch?.({ kind: 'input', target });
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'files')?.set;
+        if (!setter) throw new Error('Native file-input assignment is unavailable.');
+        setter.call(target, transfer.files);
+        const assignedFiles = [...target.files || []];
+        dispatched = true;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        // An input handler may synchronously switch a conversation. Never
+        // follow it with a change event against a different recipient.
+        const stillBound = _validateMessageRecipientDispatchBinding(expected, params, target, true);
+        if (!stillBound.success) return { ...stillBound, dispatched: true, noDispatch: false,
+          outcomeUnknown: true, retryable: false };
+        const currentFiles = [...target.files || []];
+        if (assignedFiles.length !== currentFiles.length || assignedFiles.some((file, index) => file !== currentFiles[index])) {
+          return { ...fail('The page changed the attached file during its input handler. Inspect the conversation before retrying.',
+            { reasonCode: 'recipient_upload_file_changed_during_dispatch' }), dispatched: true, noDispatch: false,
+            outcomeUnknown: true, retryable: false };
+        }
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+        return { success: true, dispatched: true, file: file.name,
+          attached: { name: file.name, size: file.size }, verified: false,
+          attachmentState: target.isConnected && target.files?.length ? 'input_attached' : 'page_consumed',
+          remoteStateVerified: false };
+      };
+      return pageGuard?.operationId ? monitor.withPreparedDispatch(pageGuard.operationId, attach) : attach();
+    } catch (error) {
+      if (error?.code === 'page_feedback_pending') throw error;
+      return { success: false, dispatched, noDispatch: !dispatched, outcomeUnknown: dispatched,
+        retryable: !dispatched, messageRecipientGuard: true, error: error?.message || String(error) };
+    }
   }
 
   // Above this length the per-candidate rescan below stops being worth its
@@ -3334,6 +4694,14 @@
         tag,
         type: fieldType,
         contentEditable: !!el.isContentEditable,
+        // Locale-independent file-editor structure: CodeMirror (GitHub's
+        // file editor) marks its editable lineage with stable classes that
+        // survive UI translation, unlike accessible labels.
+        codeMirror: (() => {
+          try {
+            return !!el.isContentEditable && !!el.closest?.('.cm-content, .cm-editor, .CodeMirror');
+          } catch { return false; }
+        })(),
         name: el.getAttribute ? el.getAttribute('name') : null,
         id: elId,
         role: el.getAttribute ? el.getAttribute('role') : null,
@@ -3350,46 +4718,49 @@
     } catch { return null; }
   }
 
-  async function _retryFieldWithExecCommand(el, expected, actionDeadlineExpired = () => false) {
+  // Derive a document-unique selector for a verified field so the agent can
+  // re-digest the SAME element later (e.g. pre-submit proof refresh after
+  // focus moved). Each candidate is accepted only when it resolves back
+  // to exactly this element — never a hard-coded guess that could match a
+  // different field. Returns null when nothing identifies it uniquely.
+  function _stableFieldSelector(el) {
     try {
-      if (actionDeadlineExpired()) return false;
-      el.focus({ preventScroll: true });
-      if (actionDeadlineExpired()) return false;
+      if (!el || el.nodeType !== 1 || !el.isConnected) return null;
+      const resolvesUniquelyToEl = (selector) => {
+        try {
+          if (!selector) return false;
+          const matches = document.querySelectorAll(selector);
+          return matches.length === 1 && matches[0] === el;
+        } catch { return false; }
+      };
+      const quoted = (value) => String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const elId = el.id || null;
+      if (elId) {
+        let selector = null;
+        try {
+          selector = (window.CSS && typeof window.CSS.escape === 'function')
+            ? `#${window.CSS.escape(elId)}`
+            : `#${quoted(elId)}`;
+        } catch { selector = null; }
+        if (selector && resolvesUniquelyToEl(selector)) return selector;
+      }
+      const tag = String(el.tagName || '').toLowerCase();
+      const name = typeof el.getAttribute === 'function' ? el.getAttribute('name') : null;
+      if (tag && name) {
+        const selector = `${tag}[name="${quoted(name)}"]`;
+        if (resolvesUniquelyToEl(selector)) return selector;
+      }
+      const ariaLabel = typeof el.getAttribute === 'function' ? el.getAttribute('aria-label') : null;
+      if (tag && ariaLabel) {
+        const selector = `${tag}[aria-label="${quoted(ariaLabel)}"]`;
+        if (resolvesUniquelyToEl(selector)) return selector;
+      }
       if (el.isContentEditable) {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        selection.removeAllRanges();
-        selection.addRange(range);
-      } else if (typeof el.select === 'function') {
-        if (actionDeadlineExpired()) return false;
-        el.select();
-      } else if (typeof el.setSelectionRange === 'function') {
-        if (actionDeadlineExpired()) return false;
-        el.setSelectionRange(0, String(el.value || '').length);
+        const selector = '[contenteditable="true"]';
+        if (resolvesUniquelyToEl(selector)) return selector;
       }
-      if (actionDeadlineExpired()) return false;
-      const inserted = document.execCommand('insertText', false, expected);
-      if (actionDeadlineExpired()) return false;
-      if (!inserted) {
-        if (el.isContentEditable) {
-          el.textContent = expected;
-        } else {
-          const proto = el.tagName === 'TEXTAREA'
-            ? window.HTMLTextAreaElement.prototype
-            : window.HTMLInputElement.prototype;
-          const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-          if (actionDeadlineExpired()) return false;
-          if (setter) setter.call(el, expected); else el.value = expected;
-        }
-        if (actionDeadlineExpired()) return false;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      if (actionDeadlineExpired()) return false;
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-      await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
-      return !actionDeadlineExpired();
-    } catch { return false; }
+      return null;
+    } catch { return null; }
   }
 
   function _richTextToolbarContextForElement(el) {
@@ -3495,6 +4866,268 @@
   }
 
   const _messageRecipientDispatchBindings = new Map();
+  const _nativeChatPreparedDrafts = new Map();
+  const _nativeTelegramReadBindings = new Map();
+  const _nativeIdentityPreparationBindings = new Map();
+  let _nativeTelegramReadOwner = '';
+
+  function _setNativeTelegramReadOwner(value) {
+    const owner = typeof value === 'string' && value.length <= 16000 ? value : '';
+    if (owner === _nativeTelegramReadOwner) return;
+    _nativeTelegramReadOwner = owner;
+    for (const record of _nativeTelegramReadBindings.values()) {
+      record.observer.disconnect(); clearTimeout(record.timer);
+    }
+    _nativeTelegramReadBindings.clear();
+    for (const record of _nativeIdentityPreparationBindings.values()) {
+      record.observer.disconnect(); clearTimeout(record.timer);
+    }
+    _nativeIdentityPreparationBindings.clear();
+  }
+
+  function _nativeTelegramReadRendered(node) {
+    if (!node?.isConnected || node.ownerDocument !== document) return false;
+    const rect = node.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    for (let ancestor = node, depth = 0; ancestor; ancestor = ancestor.parentElement) {
+      if (++depth > 128) return false;
+      const style = getComputedStyle(ancestor);
+      if (ancestor.hidden || ancestor.inert || ancestor.getAttribute('aria-hidden') === 'true'
+          || style.display === 'none' || ['hidden','collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+    }
+    return true;
+  }
+
+  function _nativeTelegramReadControl(target) {
+    const context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context || !_nativeTelegramReadRendered(target)
+        || target.closest('form,[contenteditable="true"],input,textarea,select,a[href],[onclick],[data-action]')) return null;
+    const nativeNodes = [context.root,context.transcript,context.composer,context.header,context.carrier,context.peerIdentity];
+    if (nativeNodes.some(node => !_nativeTelegramReadRendered(node))) return null;
+    const titleTarget = target === context.carrier || target === context.peerIdentity
+      || (target.matches('span.i18n') && target.childElementCount === 0 && context.peerIdentity.contains(target));
+    if (titleTarget && !target.closest('button,[role="button"],[role="menuitem"],[data-action],.emoji-status')) {
+      return {context,target,control:context.carrier,phase:'open_profile',nodes:[...nativeNodes,target]};
+    }
+    const visible = selector => Array.from(document.querySelectorAll(selector)).filter(_nativeTelegramReadRendered);
+    const triggers = visible('#column-left .sidebar-header .sidebar-tools-button.btn-menu-toggle.is-visible');
+    const trigger = triggers.length === 1 ? triggers[0] : null;
+    if (!trigger || !trigger.matches('button,[role="button"]') || trigger.matches(':disabled,[aria-disabled="true"]')) return null;
+    const control = target.closest('button,[role="button"]');
+    if (control === trigger && (target === trigger || (trigger.contains(target) && target.matches('span,svg,path')))) {
+      // Only open a closed native tools menu; never toggle an existing menu a
+      // second time as a fallback for the same prepared action.
+      if (trigger.classList.contains('menu-open')) return null;
+      return {context,target,control:trigger,phase:'open_menu',nodes:[...nativeNodes,trigger,target]};
+    }
+    const openTriggers = visible('.btn-menu-toggle.menu-open');
+    const menus = visible('.btn-menu.active');
+    const menu = menus.length === 1 ? menus[0] : null;
+    if (openTriggers.length !== 1 || openTriggers[0] !== trigger || !menu
+        || menu.parentElement !== document.body || !menu.matches('.bottom-right.was-open')
+        || !control?.matches('.btn-menu-item[role="button"]') || control.parentElement !== menu
+        || control.matches('[aria-disabled="true"]') || !menu.contains(target)) return null;
+    const items = Array.from(menu.children).filter(node => node.matches('.btn-menu-item[role="button"]'));
+    const settings = items.filter(item => {
+      const icons = Array.from(item.querySelectorAll(':scope > .tgico.btn-menu-item-icon')).filter(_nativeTelegramReadRendered);
+      return icons.length === 1 && icons[0].textContent === '\uea22';
+    });
+    if (settings.length !== 1 || settings[0] !== control
+        || _hasMessageCommitName(control.getAttribute('aria-label') || control.textContent || '')) return null;
+    const icon = control.querySelector(':scope > .tgico.btn-menu-item-icon');
+    return {context,target,control,phase:'open_settings',nodes:[...nativeNodes,trigger,menu,control,icon,target]};
+  }
+
+  function _sameNativeTelegramReadContext(before, after) {
+    return !!before && !!after && ['root','transcript','composer','header','carrier','peerIdentity','peer','alias','url','timeOrigin']
+      .every(key => before[key] === after[key]);
+  }
+
+  window.__wb_get_native_telegram_alias_preparation_target = preparation => {
+    try {
+      if (!_sameNativeTelegramReadContext(preparation,window.__wb_get_native_telegram_alias_preparation?.())) return null;
+      // This native hint chooses a read-only affordance; it never certifies
+      // self identity. Ordinary aliases must inspect their current peer profile.
+      const candidates = preparation.peerIdentity?.getAttribute('data-me-as-notes') === '1' ? [
+        ...document.querySelectorAll('body > .btn-menu.active.bottom-right.was-open > .btn-menu-item[role="button"]'),
+        ...document.querySelectorAll('#column-left .sidebar-header .sidebar-tools-button.btn-menu-toggle.is-visible'),
+      ] : [preparation.carrier];
+      for (const target of candidates) {
+        const proof = _nativeTelegramReadControl(target);
+        if (proof && _sameNativeTelegramReadContext(preparation,proof.context)) return {
+          target,phase:proof.phase === 'open_settings' ? 'open_self_settings' : proof.phase,
+        };
+      }
+      return null;
+    } catch { return null; }
+  };
+
+  function _bindNativeTelegramRead(target) {
+    if (!_nativeTelegramReadOwner) return null;
+    const proof = _nativeTelegramReadControl(target);
+    if (!proof) return null;
+    while (_nativeTelegramReadBindings.size >= 8) {
+      const [token, old] = _nativeTelegramReadBindings.entries().next().value;
+      old.observer.disconnect();clearTimeout(old.timer);_nativeTelegramReadBindings.delete(token);
+    }
+    const token = 'wbtr_' + globalThis.crypto.randomUUID();
+    const record = {...proof,owner:_nativeTelegramReadOwner,documentToken:_axDocumentToken(),
+      humanRevision:_messageRecipientHumanRevision,expiresAt:Date.now()+30000,stale:false};
+    record.isMaterial = mutation => _nativeTelegramReadMaterialMutation(record, mutation);
+    record.observer = new MutationObserver(records => { if (records.some(record.isMaterial)) record.stale=true; });
+    record.observer.observe(document.documentElement,{subtree:true,childList:true,characterData:true,attributes:true,
+      attributeFilter:_nativeTelegramReadMaterialAttributes});
+    record.timer=setTimeout(()=>{record.observer.disconnect();_nativeTelegramReadBindings.delete(token);},30000);
+    _nativeTelegramReadBindings.set(token,record);
+    return {token};
+  }
+
+  function _consumeNativeTelegramRead(params, target) {
+    const token = String(params.nativeTelegramReadRepairBinding?.token || '');
+    const record = _nativeTelegramReadBindings.get(token);
+    if (record) { _nativeTelegramReadBindings.delete(token); clearTimeout(record.timer); }
+    if (record?.observer.takeRecords().some(record.isMaterial)) record.stale=true;
+    record?.observer.disconnect();
+    const current = _nativeTelegramReadControl(target);
+    return record && !record.stale && record.expiresAt >= Date.now()
+      && record.owner === _nativeTelegramReadOwner && record.owner === params._nativeChatOwner
+      && record.documentToken === _axDocumentToken() && record.humanRevision === _messageRecipientHumanRevision
+      && record.target === target && current?.control === record.control && current?.phase === record.phase
+      && current.nodes.length === record.nodes.length && current.nodes.every((node,index)=>node===record.nodes[index])
+      && _sameNativeTelegramReadContext(record.context,current.context) ? record : null;
+  }
+
+  function _nativeTelegramReadStillCurrent(record) {
+    let context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context && record) {
+      const verified = window.__wb_get_native_chat_context?.(record.context.composer);
+      if (verified?.service === 'telegram' && verified.alias) context = {...verified,
+        composer:record.context.composer,url:location.href,timeOrigin:performance.timeOrigin};
+    }
+    return !!record && record.owner === _nativeTelegramReadOwner
+      && record.documentToken === _axDocumentToken() && record.humanRevision === _messageRecipientHumanRevision
+      && _sameNativeTelegramReadContext(record.context,context);
+  }
+  // Private, read-only adapter evidence captured before inference. It does not
+  // replace the independent one-use recipient/dispatch token obtained later.
+  const _nativeTelegramReadMaterialAttributes = ['class','style','hidden','inert','aria-hidden','data-peer-id','data-thread-id','role','type','href','onclick','data-action','data-action-id',
+    'aria-disabled','aria-label','aria-labelledby','aria-describedby','aria-controls','aria-haspopup','aria-expanded','aria-selected','aria-pressed','aria-checked',
+    'title','disabled','name','id','form','formaction','formmethod','formtarget','action','method','target','download','tabindex','contenteditable','readonly'];
+  function _nativeTelegramReadMaterialMutation(record, mutation) {
+    if (mutation.type === 'attributes') return record.nodes.some(node => mutation.target === node || mutation.target.contains(node))
+      || (mutation.attributeName === 'data-peer-id' && record.context.transcript.contains(mutation.target));
+    // Transcript rows may arrive or be edited during read-only preparation.
+    // Their peer identity is independently rechecked; the exact transcript
+    // container, editor, current header and prepared control remain pinned.
+    const textPins = record.nodes.filter(node => node !== record.context.root && node !== record.context.transcript);
+    if (mutation.type === 'characterData') return textPins.some(node => node.contains(mutation.target));
+    if ([...mutation.removedNodes].some(node => record.nodes.some(pin => node === pin || node.contains?.(pin)))) return true;
+    if (record.context.transcript.contains(mutation.target)) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        const peers = [node, ...node.querySelectorAll('[data-peer-id]')].filter(candidate => candidate.hasAttribute('data-peer-id'));
+        if (peers.length > 256 || peers.some(candidate => candidate.getAttribute('data-peer-id') !== record.context.peer)) return true;
+      }
+    }
+    if (!textPins.some(node => node === mutation.target || node.contains(mutation.target))) return false;
+    const changed = [...mutation.addedNodes, ...mutation.removedNodes];
+    if (record.context.composer === mutation.target || record.context.composer.contains(mutation.target)
+        || record.context.peerIdentity === mutation.target || record.context.peerIdentity.contains(mutation.target)) return changed.length > 0;
+    return changed.some(node => window.__wbPageMonitor?.isReadonlyPreparationDecoration?.(node) !== true);
+  }
+  window.__wb_get_readonly_identity_preparation = (owner, target = null, captureAuthority = null) => {
+    if (!owner || window.__wbPageMonitor?.active !== true) return null;
+    // Only the current pre-inference monitor capture may initialize a cold
+    // private owner. A model parameter or a retained capture cannot adopt it.
+    if (captureAuthority) {
+      if (window.__wbPageMonitor.currentIdentityPreparationCapture?.(captureAuthority, owner) !== true) return null;
+      _setNativeTelegramReadOwner(owner);
+    }
+    if (owner !== _nativeTelegramReadOwner) return null;
+    const context = window.__wb_get_native_telegram_alias_preparation?.();
+    if (!context) return null;
+    target ||= window.__wb_get_native_telegram_alias_preparation_target?.(context)?.target;
+    const proof = _nativeTelegramReadControl(target);
+    if (!proof || !_sameNativeTelegramReadContext(context, proof.context)) return null;
+    while (_nativeIdentityPreparationBindings.size >= 4) {
+      const [key, old] = _nativeIdentityPreparationBindings.entries().next().value;
+      old.observer.disconnect(); clearTimeout(old.timer); _nativeIdentityPreparationBindings.delete(key);
+    }
+    const token = 'wbip_' + globalThis.crypto.randomUUID();
+    const nodes = [...new Set(proof.nodes)];
+    const record = { ...proof, owner, nodes, documentToken: _axDocumentToken(),
+      humanRevision: _messageRecipientHumanRevision, expiresAt: Date.now() + 120000, stale: false };
+    record.isMaterial = mutation => _nativeTelegramReadMaterialMutation(record, mutation);
+    record.observer = new MutationObserver(records => { if (records.some(record.isMaterial)) record.stale = true; });
+    record.observer.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true,
+      attributeFilter: _nativeTelegramReadMaterialAttributes });
+    const snapshot = Object.freeze({ schema: 'webbrain.readonly-identity-preparation/1', readonly: true, owner, token,
+      documentToken: record.documentToken, phase: proof.phase, target, action: proof.control,
+      scope: proof.control.parentElement, nodes: Object.freeze(nodes), identities: Object.freeze([context.peerIdentity]),
+      signature: JSON.stringify([context.peer, context.alias, context.url, context.timeOrigin,
+        record.documentToken, record.humanRevision, proof.phase]), allowedTools: Object.freeze(['click_ax']) });
+    record.snapshot = snapshot;
+    record.timer = setTimeout(() => { record.observer.disconnect(); _nativeIdentityPreparationBindings.delete(token); }, 120000);
+    _nativeIdentityPreparationBindings.set(token, record);
+    return snapshot;
+  };
+  window.__wb_readonly_identity_preparation_matches = snapshot => {
+    const record = _nativeIdentityPreparationBindings.get(snapshot?.token);
+    if (!record || record.snapshot !== snapshot || record.owner !== _nativeTelegramReadOwner
+        || record.expiresAt < Date.now() || window.__wbPageMonitor?.active !== true) return false;
+    if (record.observer.takeRecords().some(record.isMaterial)) record.stale = true;
+    const current = _nativeTelegramReadControl(record.target);
+    const currentNodes = [...new Set(current?.nodes || [])];
+    return !record.stale && record.documentToken === _axDocumentToken()
+      && record.humanRevision === _messageRecipientHumanRevision
+      && current?.control === record.control && current?.phase === record.phase
+      && currentNodes.length === record.nodes.length && currentNodes.every((node, index) => node === record.nodes[index])
+      && _sameNativeTelegramReadContext(record.context, current.context);
+  };
+  const _twitterHistoryObservations = new WeakMap();
+
+  function _settledTwitterHistory(log, messageIds = []) {
+    if (!log?.isConnected) return false;
+    let loading = false;
+    let completionSignal = false;
+    try {
+      const ariaBusy = log.getAttribute('aria-busy');
+      loading = ariaBusy === 'true'
+        || !!log.querySelector('[aria-busy="true"],[role="progressbar"]');
+      // X's explicit idle state is a direct history-completion signal. Empty
+      // logs may alternatively use X's own empty-state marker.
+      completionSignal = ariaBusy === 'false'
+        || (!(Array.isArray(messageIds) && messageIds.length > 0)
+          && !!log.querySelector('[data-testid="dm-empty-state"],[data-testid="empty_state"],[data-testid="empty-state"]'));
+    } catch {}
+    if (loading) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    if (completionSignal) {
+      _twitterHistoryObservations.delete(log);
+      return true;
+    }
+    // Without an explicit X completion marker, an empty history remains
+    // ambiguous. A nonempty history must retain the same row identities long
+    // enough to rule out an in-progress history append.
+    if (!Array.isArray(messageIds) || messageIds.length === 0) {
+      _twitterHistoryObservations.delete(log);
+      return false;
+    }
+    const now = Date.now();
+    const signature = Array.isArray(messageIds) ? messageIds.join('\u001f') : '';
+    const prior = _twitterHistoryObservations.get(log);
+    const observation = prior?.signature === signature
+      ? { firstSeenAt: prior.firstSeenAt, count: prior.count + 1 }
+      : { firstSeenAt: now, count: 1, signature };
+    _twitterHistoryObservations.set(log, { ...observation, signature });
+    // A nonempty history without an explicit idle marker can append old
+    // messages. Require the same snapshot to survive two reads before using
+    // it as a dispatch baseline.
+    return observation.count >= 2 && now - observation.firstSeenAt >= 300;
+  }
 
   function _messageRecipientIdentityKey(values = []) {
     return JSON.stringify(Array.from(new Set((Array.isArray(values) ? values : [])
@@ -3522,6 +5155,70 @@
     return _messageRecipientDispatchControl(expected) === _messageRecipientDispatchControl(actual);
   }
 
+  let _messageRecipientHumanRevision = 0;
+  let _messageRecipientOwnedInputScope = null;
+  for (const type of ['pointerdown', 'mousedown', 'keydown', 'input', 'change', 'wheel', 'touchmove']) {
+    document.addEventListener(type, event => {
+      if (!event.isTrusted) return;
+      _messageRecipientHumanRevision++;
+      // Only the exact synchronous native writer owns these input events.
+      // Physical keys, pointer/scroll and later input still change the fence.
+      if (type === 'input' && _messageRecipientOwnedInputScope?.el === event.target)
+        _messageRecipientOwnedInputScope.count++;
+    }, true);
+  }
+
+  function _messageRecipientUploadTarget(selector) {
+    if (window !== window.top || typeof selector !== 'string' || !selector.trim()) return null;
+    try {
+      const matches = [];
+      const visit = root => {
+        matches.push(...root.querySelectorAll(selector));
+        for (const el of root.querySelectorAll('*')) if (el.shadowRoot) visit(el.shadowRoot);
+      };
+      visit(document);
+      const target = matches.length === 1 ? matches[0] : null;
+      return target instanceof HTMLInputElement && target.type === 'file'
+        && !target.disabled && !target.matches(':disabled')
+        && target.getAttribute('aria-disabled') !== 'true' && target.isConnected ? target : null;
+    } catch { return null; }
+  }
+
+  function _messageRecipientUploadOwner(target, composer) {
+    if (!target || !composer || target.ownerDocument !== document || composer.ownerDocument !== document) return null;
+    const composerForm = _composedClosestElement(composer, 'form');
+    if (target.form || target.hasAttribute('form')) {
+      const modal = _findTopmostBlockingModal();
+      return target.form && target.form === composerForm
+        && (!modal || (_isComposedAncestor(modal, target) && _isComposedAncestor(modal, composer)))
+        ? target.form : null;
+    }
+    // A hidden input can be a sibling of the editor. Require a local shared
+    // compose container rather than treating the whole page as its owner.
+    for (let owner = _composedParent(target), depth = 0; owner && depth < 8;
+      owner = _composedParent(owner), depth++) {
+      if (owner === document.body || owner === document.documentElement || owner === document) return null;
+      if (owner.nodeType !== 1 || /^(?:MAIN|HTML|BODY)$/.test(owner.tagName)
+          || owner.getAttribute('role') === 'main') continue;
+      if (_isComposedAncestor(owner, composer)) {
+        const modal = _findTopmostBlockingModal();
+        return !modal || _isComposedAncestor(modal, owner) ? owner : null;
+      }
+    }
+    return null;
+  }
+
+  function _messageRecipientUploadInputSignature(target) {
+    return JSON.stringify(['type','accept','multiple','name','id','form','capture','webkitdirectory']
+      .map(name => target?.getAttribute?.(name))
+      .concat([!!target?.disabled, target?.getAttribute?.('aria-disabled'),
+        target?.form?.action || '', target?.form?.method || '']));
+  }
+
+  function _messageRecipientUploadFilesSignature(target) {
+    return JSON.stringify(Array.from(target?.files || []).map(file => [file.name, file.size, file.type, file.lastModified]));
+  }
+
   function _rememberMessageRecipientDispatchBinding(composer, identities, dispatch = {}) {
     const tool = String(dispatch.tool || '');
     const actionTarget = dispatch.actionTarget || null;
@@ -3545,13 +5242,31 @@
           )).filter(value => value.identity && /^(?:to|cc|bcc)$/.test(value.role)).slice(0, 16)
         : [],
       supportsRecipientSets: dispatch.supportsRecipientSets === true,
+      conversationRecipientEvidence: dispatch.conversationRecipientEvidence || null,
       identityKey,
       messageBody: String(dispatch.messageBody || ''),
       messageBodyBaselineCount: Number(dispatch.messageBodyBaselineCount || 0),
+      nativeTelegramBaseline: dispatch.nativeChatMessageBaseline?.complete === true
+        && dispatch.nativeChatMessageBaseline.coverage === 'mounted_native_id_floor'
+        ? Object.freeze({ threadKey: dispatch.nativeChatMessageBaseline.threadKey,
+            messageIds: Object.freeze([...dispatch.nativeChatMessageBaseline.messageIds]) }) : null,
+      ...(Array.isArray(dispatch.existingMessageIds) ? { existingMessageIds: [...dispatch.existingMessageIds] } : {}),
+      twitterEmptyConversationBaseline: dispatch.twitterEmptyConversationBaseline === true,
       gmailComposeFlow: dispatch.gmailComposeFlow === true,
       composerSubject: String(dispatch.composerSubject || ''),
       composerSubjectAvailable: dispatch.composerSubjectAvailable === true,
       pageUrl: location.href,
+      documentToken: _axDocumentToken(),
+      messageAttachment: dispatch.messageAttachment === true,
+      uploadSourceKey: String(dispatch.uploadSourceKey || ''),
+      uploadOwner: dispatch.messageAttachment === true ? _messageRecipientUploadOwner(actionTarget, composer) : null,
+      uploadInputSignature: dispatch.messageAttachment === true ? _messageRecipientUploadInputSignature(actionTarget) : '',
+      uploadFilesSignature: dispatch.messageAttachment === true ? _messageRecipientUploadFilesSignature(actionTarget) : '',
+      uploadFiles: dispatch.messageAttachment === true ? Array.from(actionTarget.files || []) : [],
+      humanRevision: _messageRecipientHumanRevision,
+      nativeOwner: String(dispatch.nativeOwner || ''),
+      nativeChatBaseline: dispatch.nativeChatMessageBaseline?.complete === true
+        ? JSON.parse(JSON.stringify(dispatch.nativeChatMessageBaseline)) : null,
       timer: null,
     };
     _messageRecipientDispatchBindings.set(token, record);
@@ -3563,11 +5278,143 @@
     return token;
   }
 
+  function _disposeNativeChatDraft(token) {
+    const record = _nativeChatPreparedDrafts.get(token);
+    if (record) { record.observer.disconnect(); clearTimeout(record.timer); }
+    _nativeChatPreparedDrafts.delete(token);
+  }
+
+  // This lease witnesses an owned draft and an explicitly blocked submit
+  // boundary. It never proves that typing had no page-side effect.
+  // This predicate preserves an owned draft for read-only latest repair only.
+  // It cannot authorize Enter or replace the full dispatch validator.
+  function _nativeChatDraftLatestOnly(recipient, params, el) {
+    if (!recipient || recipient.nativeOwner !== params._nativeChatOwner
+        || recipient.humanRevision + (recipient.nativeDraftOwnInputs?.el === el
+          ? recipient.nativeDraftOwnInputs.count : 0) !== _messageRecipientHumanRevision
+        || recipient.documentToken !== _axDocumentToken() || recipient.pageUrl !== location.href
+        || recipient.composer !== el || recipient.actionTarget !== el || !el?.isConnected
+        || typeof params.text !== 'string' || _editableTextValue(el) !== params.text) return false;
+    const native = window.__wb_get_native_chat_context?.(el);
+    if (native?.service !== 'telegram' || native.latestPositionVerified !== true || native.atLatest !== false) return false;
+    // Pending native status is material even when the mounted ID set is unchanged.
+    if (native.transcript.querySelector(native.webA
+        ? '.MessageOutgoingStatus .icon-message-pending,.MessageOutgoingStatus .icon-message-failed'
+        : '.bubble.is-sending,.bubble.is-error,.bubble.is-outgoing')) return false;
+    const identity = _probeMessageRecipientGuard({ tool:'observe_active_conversation', args:{},
+      adapterName:recipient.adapterName,
+      expectedConversationRecipientEvidence:recipient.conversationRecipientEvidence });
+    const baseline = identity.nativeChatMessageBaseline, expected = recipient.nativeTelegramBaseline;
+    return identity.success === true && identity.conclusive === true && identity.messageSend === false
+      && _messageRecipientIdentityKey(identity.strongRecipientCandidates) === recipient.identityKey
+      && identity.messageBody === recipient.messageBody
+      && baseline?.coverage === 'mounted_native_id_floor' && !!expected
+      && baseline.threadKey === expected.threadKey
+      && JSON.stringify(baseline.messageIds) === JSON.stringify(expected.messageIds);
+  }
+
+  function _nativeChatDraftClassTokens(value) {
+    if (typeof value !== 'string' || value.length > 2048) return null;
+    const tokens = value.trim().split(/\s+/).filter(Boolean);
+    return tokens.length <= 128 ? new Set(tokens) : null;
+  }
+
+  // Only one-way cleanup of classes introduced by this exact synchronous
+  // native writer is presentation. Every other class transition is material.
+  function _nativeChatDraftHasMaterialMutation(record, mutations) {
+    if (mutations.length > 256) return true;
+    for (let index = 0; index < mutations.length; index++) {
+      const mutation = mutations[index];
+      if (mutation.type !== 'attributes' || mutation.attributeName !== 'class'
+          || mutation.target !== record.el) return true;
+      const next = mutations.slice(index + 1).find(item => item.type === 'attributes'
+        && item.attributeName === 'class' && item.target === record.el);
+      const before = _nativeChatDraftClassTokens(mutation.oldValue || '');
+      const after = _nativeChatDraftClassTokens(next ? next.oldValue || '' : record.el.getAttribute('class') || '');
+      if (!before || !after || [...after].some(token => !before.has(token))) return true;
+      const retained = [...before].filter(token => after.has(token));
+      if (JSON.stringify(retained) !== JSON.stringify([...after])) return true;
+      const removed = [...before].filter(token => !after.has(token));
+      if (removed.some(token => !record.classRemovalTokens.has(token))) return true;
+      for (const token of removed) record.classRemovalTokens.delete(token);
+    }
+    return false;
+  }
+
+  function _nativeChatDraftCurrent(params, element = null, observeOnly = false) {
+    const token = String(params._nativeChatDraftBinding?.token || '');
+    const record = _nativeChatPreparedDrafts.get(token);
+    if (!record) return null;
+    if (_nativeChatDraftHasMaterialMutation(record, record.observer.takeRecords())) record.changed = true;
+    const el = element || window.__wb_ax_lookup?.(params.ref_id || record.ref);
+    if (record.changed || record.owner !== params._nativeChatOwner || !record.owner
+        || record.humanRevision !== _messageRecipientHumanRevision
+        || record.documentToken !== _axDocumentToken() || record.url !== location.href
+        || record.el !== el || !el?.isConnected
+        || (params.text !== undefined && params.text !== record.body)
+        || _editableTextValue(el) !== record.body) {
+      _disposeNativeChatDraft(token); return null;
+    }
+    if (_validateMessageRecipientDispatchBinding(record.recipient, params, el).success) return record;
+    // Retain only a read-only witness while the same native Telegram viewport
+    // is temporarily away from latest. Dispatch still requires full validation.
+    if (observeOnly && _nativeChatDraftLatestOnly(record.recipient,
+        { ...params, text:record.body }, el)) return { ...record, waitingForLatest:true };
+    _disposeNativeChatDraft(token); return null;
+  }
+
+  function _rememberNativeChatDraft(params, el, recipient) {
+    const native = window.__wb_get_native_chat_context?.(el);
+    if (params._nativeChatDraftPreparation !== true
+        || !recipient?.nativeOwner || recipient.nativeOwner !== params._nativeChatOwner
+        || !recipient.nativeChatBaseline?.complete
+        || !['telegram','whatsapp'].includes(native?.service)
+        || !recipient.conversationRecipientEvidence?.contextNodes?.length
+        || recipient.humanRevision + (recipient.nativeDraftOwnInputs?.el === el
+          ? recipient.nativeDraftOwnInputs.count : 0) !== _messageRecipientHumanRevision
+        || recipient.documentToken !== _axDocumentToken() || recipient.pageUrl !== location.href
+        || recipient.composer !== el || recipient.actionTarget !== el || !el?.isConnected
+        || typeof params.text !== 'string' || _editableTextValue(el) !== params.text
+        || (!_validateMessageRecipientDispatchBinding(recipient, params, el).success
+          && !_nativeChatDraftLatestOnly(recipient, params, el))) return null;
+    while (_nativeChatPreparedDrafts.size >= 8) _disposeNativeChatDraft(_nativeChatPreparedDrafts.keys().next().value);
+    const token = crypto.randomUUID();
+    const record = { el, ref:params.ref_id, body:String(params.text), recipient,
+      owner:params._nativeChatOwner, documentToken:_axDocumentToken(), url:location.href,
+      humanRevision:_messageRecipientHumanRevision, changed:false, observer:null, timer:null,
+      classRemovalTokens:new Set(recipient.nativeDraftOwnInputs?.classRemovalTokens || []) };
+    record.observer = new MutationObserver(mutations => {
+      if (_nativeChatDraftHasMaterialMutation(record, mutations)) record.changed = true;
+    });
+    // Scroll geometry is read again at recovery. Any material node/identity or
+    // draft change, including change-and-return, retires the original lease.
+    for (const node of new Set(recipient.conversationRecipientEvidence.contextNodes)) {
+      record.observer.observe(node, { attributes:true, attributeOldValue:true, attributeFilter:['id','role','aria-label','aria-labelledby','aria-disabled','disabled','contenteditable','data-peer-id','data-list-key','data-testid','data-id','inert','aria-hidden','class'], childList:true, subtree:true, characterData:true });
+    }
+    record.observer.observe(native.transcript, { subtree:true, childList:true, characterData:true, attributes:true, attributeOldValue:true });
+    _nativeChatPreparedDrafts.set(token, record);
+    record.timer = setTimeout(() => _disposeNativeChatDraft(token), 60000);
+    return { token };
+  }
+
   function _consumeMessageRecipientDispatchBinding(params = {}, actualTarget = null) {
     const token = String(params.messageRecipientDispatchBinding?.token || '');
     const expected = token ? _messageRecipientDispatchBindings.get(token) : null;
     if (token) _messageRecipientDispatchBindings.delete(token);
     if (expected?.timer) clearTimeout(expected.timer);
+    const validated = _validateMessageRecipientDispatchBinding(expected, params, actualTarget);
+    if (validated.success === true && window.__wb_get_native_chat_context?.(expected?.composer)?.service === 'whatsapp'
+        && window.__wb_prepare_native_chat_send?.(expected.composer, expected.messageBody) !== true) {
+      const nativeChatReadRepair = window.__wb_native_chat_read_repair?.(expected.composer);
+      return { success: false, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        reasonCode: 'native_chat_baseline_unavailable',
+        ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+        error: nativeChatReadRepair?.message || 'The native WhatsApp live message tail cannot establish a send baseline. Observe the latest messages before sending.' };
+    }
+    return validated;
+  }
+
+  function _validateMessageRecipientDispatchBinding(expected, params = {}, actualTarget = null, afterAttachment = false) {
     let pointTarget = null;
     const pointX = Number(params.dispatchPoint?.x);
     const pointY = Number(params.dispatchPoint?.y);
@@ -3577,6 +5424,16 @@
     const dispatchedTarget = actualTarget || pointTarget;
     if (!expected || !expected.composer?.isConnected || !expected.actionTarget?.isConnected
       || expected.pageUrl !== location.href
+      || expected.documentToken !== _axDocumentToken()
+      || (expected.messageAttachment && (window !== window.top
+        || expected.humanRevision !== _messageRecipientHumanRevision
+        || dispatchedTarget !== expected.actionTarget
+        || params.uploadSourceKey !== expected.uploadSourceKey
+        || _messageRecipientUploadOwner(expected.actionTarget, expected.composer) !== expected.uploadOwner
+        || _messageRecipientUploadInputSignature(expected.actionTarget) !== expected.uploadInputSignature
+        || (!afterAttachment && (_messageRecipientUploadFilesSignature(expected.actionTarget) !== expected.uploadFilesSignature
+          || Array.from(expected.actionTarget.files || []).some((file, index) => file !== expected.uploadFiles[index])
+          || expected.actionTarget.files.length !== expected.uploadFiles.length))))
       || (dispatchedTarget && !_messageRecipientDispatchTargetsMatch(expected.actionTarget, dispatchedTarget))) {
       return {
         success: false,
@@ -3596,6 +5453,8 @@
       adapterName: expected.adapterName,
       expectedRecipients: expected.expectedRecipients,
       supportsRecipientSets: expected.supportsRecipientSets,
+      uploadSourceKey: expected.uploadSourceKey,
+      expectedConversationRecipientEvidence: expected.conversationRecipientEvidence,
     });
     if (live?.dispatchTargetChanged === true) {
       return {
@@ -3612,10 +5471,22 @@
         ? live.strongRecipientCandidates
         : live?.strongIdentityCandidates,
     );
+    if (expected.nativeTelegramBaseline && (live?.nativeChatMessageBaseline?.complete !== true
+        || live.nativeChatMessageBaseline.coverage !== 'mounted_native_id_floor'
+        || live.nativeChatMessageBaseline.threadKey !== expected.nativeTelegramBaseline.threadKey
+        || JSON.stringify(live.nativeChatMessageBaseline.messageIds) !== JSON.stringify(expected.nativeTelegramBaseline.messageIds))) {
+      return { success: false, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        reasonCode: 'native_chat_baseline_changed_before_dispatch',
+        error: 'The latest native Telegram message baseline changed after send preparation. No message was sent. Observe the current conversation before deciding whether to send; the draft may remain in the composer.' };
+    }
     if (live?.success !== true || live?.conclusive !== true || live?.messageSend !== true
       || liveIdentityKey !== expected.identityKey
-      || !expected.messageBody
+      || (expected.messageAttachment ? live?.messageAttachment !== true : !expected.messageBody)
       || live?.messageBody !== expected.messageBody
+      || (expected.existingMessageIds
+        && JSON.stringify(live?.existingMessageIds) !== JSON.stringify(expected.existingMessageIds))
+      || (expected.twitterEmptyConversationBaseline === true
+        && live?.twitterEmptyConversationBaseline !== true)
       || (expected.gmailComposeFlow === true && live?.gmailComposeFlow !== true)
       || (expected.composerSubjectAvailable === true
         && (live?.composerSubjectAvailable !== true || live?.composerSubject !== expected.composerSubject))) {
@@ -3853,7 +5724,89 @@
   // conversation before a message can be sent. It deliberately ignores input
   // values and ordinary page text: a searched recipient name is not proof that
   // the corresponding conversation is active.
-  function _probeMessageRecipientGuard(params = {}) {
+  function prepareBidiTarget(el, token) {
+    if (!/^[a-f0-9-]{36}$/.test(token || '') || !el?.isConnected) {
+      return { success: false, dispatched: false, noDispatch: true, error: 'Invalid trusted-input target' };
+    }
+    el.setAttribute('data-webbrain-bidi', token);
+    setTimeout(() => { if (el.getAttribute('data-webbrain-bidi') === token) el.removeAttribute('data-webbrain-bidi'); }, 10000);
+    const rect = el.getBoundingClientRect();
+    return { bidiPrepared: true, success: false, dispatched: false, noDispatch: true, url: location.href,
+      fieldMeta: _fieldMeta(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } };
+  }
+
+  const _COMPOSER_UTILITY_LABEL_RE = new RegExp(
+    '^(?:save\\s*(?:&|and)?\\s*(?:close|draft|draft\\s*&\\s*close)|save\\s*&\\s*close'
+    + '|minimi[sz]e|exit\\s+full\\s+screen|full\\s+screen|pop-?out|expand|collapse'
+    + '|discard(?:\\s+draft)?|delete\\s+draft|print|check\\s+spelling|plain\\s+text(?:\\s+mode)?'
+    + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
+    + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
+    + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
+    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode)',
+    'i',
+  );
+
+  function _isComposerUtilityControl(el) {
+    if (!el) return false;
+    try {
+      const label = String(
+        el.getAttribute?.('aria-label')
+        || el.getAttribute?.('title')
+        || el.getAttribute?.('data-tooltip')
+        || el.value
+        || el.innerText
+        || el.textContent
+        || '',
+      ).replace(/\s+/g, ' ').trim();
+      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
+      const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
+      if (formattingScope && formattingScope !== el) return true;
+      return !!el.hasAttribute?.('aria-pressed');
+    } catch {
+      return false;
+    }
+  }
+
+  const _MESSAGE_COMMIT_LABEL_RE = new RegExp(
+    '(?:^|[^\\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\\p{L}]|$)',
+    'iu',
+  );
+
+  function _hasMessageCommitName(value) {
+    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+    return !!text && _MESSAGE_COMMIT_LABEL_RE.test(text);
+  }
+
+  // Isolated-world, read-only bridge for private pre-inference footprints.
+  // Only controls in the verified composer's own native footer are eligible;
+  // neither runtime params nor the page's main world receive DOM references.
+  window.__wb_get_message_conversation_context = target => {
+    try {
+      if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)
+          || target?.nodeType !== 1 || !target.isConnected || target.ownerDocument !== document) return null;
+      const footer = target.closest('footer');
+      const control = target.closest('button,[role="button"],input,select,textarea,'
+        + '[contenteditable="true"],[contenteditable=""],[role="textbox"]');
+      const excluded = 'aside,nav,search,[role="navigation"],[role="complementary"],[role="search"],'
+        + '[role="searchbox"],[role="log"],[role="listbox"],[role="menu"],'
+        + '[data-message-id],[data-message-direction],[data-outgoing],article';
+      if (!footer || !control || !footer.contains(control) || target.closest(excluded)
+          || /^search$/i.test(control.getAttribute('type') || '')) return null;
+      let context = null;
+      _probeMessageRecipientGuard({ tool: 'observe_active_conversation', adapterName: 'generic-messaging', args: {} }, evidence => {
+        if (evidence?.footer !== footer || evidence.composer?.closest('footer') !== footer
+            || !footer.contains(target) || !evidence.pane.contains(evidence.carrier)) return null;
+        context = Object.freeze({ ...evidence, name: evidence.aliases[0],
+          aliases: Object.freeze([...evidence.aliases]),
+          labelledByNodes: Object.freeze([...evidence.labelledByNodes]),
+          contextNodes: Object.freeze([...evidence.contextNodes]) });
+        return null;
+      });
+      return context;
+    } catch { return null; }
+  };
+
+  function _probeMessageRecipientGuard(params = {}, receiveConversationContext = null) {
     try {
       const tool = String(params.tool || '');
       const observationOnly = tool === 'observe_active_conversation';
@@ -3871,6 +5824,9 @@
       const visible = (el) => {
         if (!el || el.nodeType !== 1 || !el.isConnected) return false;
         try {
+          for (let ancestor = el; ancestor; ancestor = ancestor.parentElement) {
+            if (ancestor.getAttribute?.('aria-hidden') === 'true') return false;
+          }
           const style = getComputedStyle(el);
           const rect = el.getBoundingClientRect();
           return style.display !== 'none'
@@ -3964,9 +5920,41 @@
         }
         return null;
       };
+      const twitterConversation = params.adapterName === 'twitter'
+        && /^\/i\/chat\/[^/]+\/?$/.test(location.pathname);
+      const twitterLogs = twitterConversation
+        ? Array.from(document.querySelectorAll('[role="log"][data-testid="dm-message-scroller"]')).filter(visible) : [];
+      // Keep all mounted identities, including hidden and pending rows. A
+      // virtualized row becoming visible or an old retry becoming sent must
+      // never look like the message dispatched by this run.
+      const twitterRows = twitterLogs.length === 1
+        ? Array.from(twitterLogs[0].querySelectorAll('[data-testid^="message-"]'))
+            .filter(row => /^message-(?!text-)[a-zA-Z0-9_-]{1,128}$/.test(row.getAttribute('data-testid') || ''))
+        : [];
+      const twitterMessageIds = twitterRows.map(row => row.getAttribute('data-testid'));
+      const twitterHistorySettled = twitterLogs.length === 1
+        && _settledTwitterHistory(twitterLogs[0], twitterMessageIds);
+      const twitterEmptyConversationBaseline = twitterRows.length === 0 && twitterHistorySettled;
+      // A mounted X log can still append older history. Empty conversations
+      // need a positive X completion signal; other histories need that signal
+      // or a stable row snapshot before they become dispatch baselines.
+      const twitterBaselineComplete = twitterLogs.length === 1 && twitterRows.length <= 2000
+        && new Set(twitterMessageIds).size === twitterMessageIds.length
+        && (twitterRows.length > 0 ? twitterHistorySettled : twitterEmptyConversationBaseline);
+      const matchingTwitterMessageIds = expectedBody => {
+        const expected = normalizedMessageBody(expectedBody);
+        if (!expected || !twitterBaselineComplete) return [];
+        return twitterRows.filter(row => visible(row) && row.classList.contains('justify-end')
+          && row.getAttribute('data-send-status') === 'sent')
+          .filter(row => {
+            const body = row.querySelector('[data-testid^="message-text-"] span[dir="auto"]');
+            return visible(body) && normalizedMessageBody(body.innerText || body.textContent) === expected;
+          }).map(row => row.getAttribute('data-testid'));
+      };
       const matchingMessageBodyCount = (expectedBody, activeComposer = null) => {
         const expected = normalizedMessageBody(expectedBody);
         if (!expected) return 0;
+        if (twitterConversation) return matchingTwitterMessageIds(expected).length;
         let candidates = [];
         try {
           candidates = Array.from(document.querySelectorAll(
@@ -4007,25 +5995,56 @@
       let target = null;
       let dispatchTarget = null;
       let targetResolved = observationOnly || tool === 'press_keys';
-      if (tool === 'click_ax' || tool === 'set_field') {
+      if (tool === 'upload_file') {
+        target = _messageRecipientUploadTarget(args.selector);
+        targetResolved = !!target;
+      } else if (tool === 'click_ax' || tool === 'set_field') {
         const refId = String(args.ref_id || '');
         if (refId && typeof window.__wb_ax_lookup === 'function') target = window.__wb_ax_lookup(refId);
         targetResolved = !!target;
       } else if (tool === 'click') {
-        if (typeof args.selector === 'string' && args.selector) {
-          try { target = document.querySelector(args.selector); } catch {}
-        } else if (Number.isInteger(args.index) && args.index >= 0) {
+        // Match dispatch precedence, modal scope, candidate text and match
+        // mode. A supplied selector must not approve a different text click.
+        if (typeof args.ref_id === 'string' && args.ref_id
+            && typeof window.__wb_ax_lookup === 'function') {
+          target = window.__wb_ax_lookup(args.ref_id);
+        }
+        if (!target && typeof args.text === 'string' && args.text) {
+          const needle = args.text.toLowerCase();
+          const scope = _findTopmostModal() || document;
+          const candidates = _clickTextCandidates(scope);
+          const modes = args.textMatch ? [args.textMatch] : ['exact', 'prefix', 'contains'];
+          for (const mode of modes) {
+            let matches = candidates.filter(({ txt }) => mode === 'exact' ? txt === needle
+              : mode === 'prefix' ? txt.startsWith(needle)
+                : mode === 'contains' ? txt.includes(needle) : false);
+            // Dispatch prefers the sole visible-text match over an
+            // attribute-derived needle on a different control, then the sole
+            // interactive match over passive labels. Multiple matches of the
+            // same tier must still stop at this match tier.
+            if (matches.length > 1) {
+              const primaryMatch = _preferredPrimaryTextClickMatch(matches);
+              if (primaryMatch) matches = [primaryMatch];
+              const interactiveMatches = matches.filter(({ e }) => _isInteractive(e));
+              if (interactiveMatches.length === 1) matches = interactiveMatches;
+              else {
+                const hitTargetPool = (interactiveMatches.length > 1 ? interactiveMatches : matches)
+                  .filter(({ e }) => _isEligibleTextClickTarget(e));
+                if (hitTargetPool.length === 1) matches = hitTargetPool;
+                else if (hitTargetPool.length > 1 && hitTargetPool.length < matches.length) {
+                  matches = hitTargetPool;
+                }
+              }
+            }
+            if (matches.length === 1) target = _resolveInteractiveAncestor(matches[0].e);
+            if (matches.length) break;
+          }
+        } else if (!target && typeof args.selector === 'string' && args.selector) {
+          target = safeIndexedQuerySelector(args.selector, args.matchIndex).element;
+        } else if (!target && Number.isInteger(args.index) && args.index >= 0) {
           target = queryInteractiveForToolIndex()[args.index] || null;
-        } else if (Number.isFinite(args.x) && Number.isFinite(args.y)) {
-          target = document.elementFromPoint(args.x, args.y);
-        } else if (typeof args.text === 'string' && args.text.trim()) {
-          const needle = compact(args.text).toLocaleLowerCase();
-          const matches = Array.from(document.querySelectorAll(
-            'button,[role="button"],input[type="submit"],input[type="button"],[data-action]'
-          )).filter((el) => compact(
-            el.innerText || el.value || el.getAttribute?.('aria-label') || el.getAttribute?.('title')
-          ).toLocaleLowerCase() === needle);
-          if (matches.length === 1) target = matches[0];
+        } else if (!target && Number.isFinite(args.x) && Number.isFinite(args.y)) {
+          target = _shadowAwareElementFromPoint(args.x, args.y);
         }
         targetResolved = !!target;
       }
@@ -4049,16 +6068,12 @@
           || ((br.width * br.height) - (ar.width * ar.height));
       });
       const viewportHeight = Math.max(0, Number(window.innerHeight) || 0);
-      const layoutCandidate = composerCandidates[0] || null;
+      const twitterComposers = twitterConversation
+        ? composerCandidates.filter(el => el.matches('textarea[data-testid="dm-composer-textarea"]')) : [];
+      const layoutCandidate = twitterConversation
+        ? (twitterComposers.length === 1 ? twitterComposers[0] : null)
+        : composerCandidates[0] || null;
       const layoutCandidateRect = layoutCandidate?.getBoundingClientRect?.();
-      // A recipient/search field can be the only focused editable while the
-      // real composer is temporarily hidden. Never promote an upper-page
-      // editable into the message composer merely because it is focused.
-      const layoutComposer = layoutCandidate
-        && (!viewportHeight || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
-        ? layoutCandidate
-        : null;
-
       const independentScrollableRegion = (el, excluded) => {
         let node = el || null;
         while (node && node !== document.body) {
@@ -4089,7 +6104,15 @@
         // Prefer the semantic conversation row over a nested action link. A
         // plain navigation link can itself be the row only when no stronger
         // row container exists.
+        const nativeLinkedInRow = params.adapterName === 'linkedin'
+          && /^\/messaging(?:\/|$)/.test(location.pathname)
+          ? clicked.closest?.('li') : null;
+        const nativeConversationRow = nativeLinkedInRow
+          && nativeLinkedInRow.parentElement?.matches(
+            'ul.msg-conversations-container__conversations-list,ul[aria-label="Conversation List"],ol[aria-label="Conversation List"]',
+          ) ? nativeLinkedInRow : null;
         const row = clicked.closest?.(semanticRowSelector)
+          || nativeConversationRow
           || clicked.closest?.('a[href]')
           || null;
         if (!row || !visible(row) || editable(row)) return false;
@@ -4111,9 +6134,18 @@
           if (nestedAction && nestedAction !== row && row.contains?.(nestedAction)) return false;
         }
 
+        if (row === nativeConversationRow) {
+          const rect = clicked.getBoundingClientRect();
+          const hit = _shadowAwareElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          if (!_isComposedAncestor(clicked, hit)) return false;
+          for (let node = hit; node && node !== clicked; node = _composedParent(node)) {
+            if (_isInteractive(node) || node.matches?.('label,option,summary,[contenteditable], [role=checkbox],[role=radio],[role=switch]')) return false;
+          }
+        }
+
         const role = String(row.getAttribute?.('role') || '').toLowerCase();
         const tag = String(row.tagName || '').toLowerCase();
-        const hasRowSemantics = /^(option|listitem|treeitem|tab)$/.test(role)
+        const hasRowSemantics = row === nativeConversationRow || /^(option|listitem|treeitem|tab)$/.test(role)
           || row.hasAttribute?.('aria-selected')
           || row.hasAttribute?.('aria-current')
           || ['data-conversation-id', 'data-thread-id', 'data-chat-id']
@@ -4135,18 +6167,403 @@
           && railRect.right <= composerRect.left + 64;
       };
 
+      const verifiedLinkedInImagePreview = clicked => {
+        if (params.adapterName !== 'linkedin') return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button) return false;
+        // Reject other controls before preview-specific style and hit probes.
+        if (!_composedClosestElement(button, '[role="log"],.msg-s-message-list,.msg-s-event-listitem')) return false;
+        const painted = el => {
+          if (!visible(el) || !_hasVisibleBox(el)) return false;
+          for (let node = el; node?.nodeType === 1; node = _composedParent(node)) {
+            if (getComputedStyle(node).opacity === '0') return false;
+          }
+          return true;
+        };
+        if (!button || !painted(button) || button.disabled || button.matches(':disabled')
+            || button.getAttribute('aria-disabled') === 'true'
+            || (button.hasAttribute('type') && String(button.getAttribute('type')).toLowerCase() !== 'button')
+            || button.form || button.hasAttribute('form') || button.hasAttribute('download')
+            || /^(?:true|menu|listbox|tree|grid)$/.test(button.getAttribute('aria-haspopup') || '')
+            || _composedClosestElement(button, 'form,.msg-form,[contenteditable]:not([contenteditable="false"])')) return false;
+        // Attachment previews live in history, not in the composer. Proximity
+        // to the composer cannot turn this verified viewer into a send; labels
+        // alone cannot exempt a message commit or an unrelated image button.
+        if ([button.getAttribute('aria-label'), button.getAttribute('title'), button.getAttribute('data-tooltip'), button.innerText || button.textContent]
+            .some(_hasMessageCommitName)) return false;
+        const rect = button.getBoundingClientRect();
+        const hit = _shadowAwareElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+        // LinkedIn localizes the preview label. Verify the attachment itself
+        // at the dispatch point instead; small avatar/reaction/menu icons do
+        // not prove that a button opens an image viewer.
+        return _isComposedAncestor(button, hit) && Array.from(button.querySelectorAll('img[src]')).some(image => {
+          const imageRect = image.getBoundingClientRect();
+          return painted(image) && imageRect.width >= 64 && imageRect.height >= 64
+            && _isComposedAncestor(image, hit);
+        });
+      };
+
+      const classifyLinkedInNavigation = (clicked, blockingModal = null) => {
+        if (params.adapterName !== 'linkedin' || !clicked) return 'none';
+        const link = _composedClosestElement(clicked, 'a[href]');
+        if (!link || !visible(link)) return 'none';
+        // A navigation-looking descendant of a composer/action is not a
+        // navigation escape hatch. Keep actual sends and modal controls on
+        // the existing recipient-verification path.
+        if (_composedClosestElement(clicked, 'button,[role="button"],input,select,textarea,[contenteditable]:not([contenteditable="false"]),[onclick],[data-action]')
+            || _composedClosestElement(link, 'form')
+            || link.hasAttribute?.('download')
+            || (link.getAttribute?.('role') && link.getAttribute('role') !== 'link')) return 'blocked';
+        const heuristicModalSelector = '[data-overlay],.modal.show,.modal-overlay,.overlay,'
+          + '[class*="modal"][class*="open"],[class*="overlay"][class*="active"],'
+          + '[class*="DialogOverlay"],[class*="ModalOverlay"]';
+        const dialogContentSelector = '[class*="DialogContent"],[class*="ModalContent"]';
+        const composedModal = _composedClosestElement(
+          link,
+          `dialog,[role="dialog"],[role="alertdialog"],${heuristicModalSelector},${dialogContentSelector}`,
+        );
+        const modal = composedModal
+          || (blockingModal && _isComposedAncestor(blockingModal, link) ? blockingModal : null);
+        const contentHasVisibleOverlaySibling = (() => {
+          if (!modal?.matches?.(dialogContentSelector)) return false;
+          const parent = modal.parentElement || modal.parentNode;
+          if (!parent) return false;
+          return Array.from(parent.children).some((sibling) => sibling !== modal
+            && sibling.matches?.('[class*="DialogOverlay"],[class*="ModalOverlay"]')
+            && _hasVisibleBox(sibling, 100, 100));
+        })();
+        const modalIsBlocking = !!modal && (
+          modal === blockingModal
+          || (modal.tagName === 'DIALOG' && modal.hasAttribute('open') && _isNativeBlockingDialog(modal))
+          || (/^(?:dialog|alertdialog)$/.test(modal.getAttribute?.('role') || '')
+            && modal.getAttribute?.('aria-modal') === 'true')
+          || contentHasVisibleOverlaySibling
+          || (() => {
+            if (!modal.matches?.(heuristicModalSelector)) return false;
+            const rect = modal.getBoundingClientRect();
+            return rect.width > 100 && rect.height > 100;
+          })()
+        );
+        const unresolved = () => modal ? 'blocked' : 'none';
+        try {
+          const href = String(link.getAttribute('href') || '').trim();
+          if (!href || href.startsWith('#')) return unresolved();
+          const destination = new URL(href, document.baseURI);
+          if (!/^https?:$/.test(destination.protocol)) return unresolved();
+          const isLinkedInHost = (hostname) => {
+            const normalized = String(hostname || '').toLowerCase().replace(/\.$/, '');
+            return normalized === 'linkedin.com' || normalized.endsWith('.linkedin.com');
+          };
+          const linkedInDestination = isLinkedInHost(destination.hostname);
+          const redirectPath = /^\/(?:safety\/go|redir\/redirect)\/?$/.test(destination.pathname);
+          let verifiedExternalRedirect = false;
+          if (linkedInDestination && redirectPath) {
+            const redirectValue = destination.searchParams.get('url') || '';
+            try {
+              const redirectDestination = new URL(redirectValue);
+              verifiedExternalRedirect = /^https?:$/.test(redirectDestination.protocol)
+                && !isLinkedInHost(redirectDestination.hostname);
+            } catch {}
+          }
+          if (modal) {
+            const contactInfoOverlay = /^\/in\/([^/]+)\/overlay\/contact-info\/?$/.exec(location.pathname);
+            const profilePath = contactInfoOverlay ? `/in/${contactInfoOverlay[1]}` : '';
+            const ownsContactInfoRoute = modalIsBlocking && !!profilePath
+              && _someComposedDescendant(modal, 'a[href]', (candidate) => {
+                try {
+                  const candidateUrl = new URL(candidate.getAttribute('href'), document.baseURI);
+                  return isLinkedInHost(candidateUrl.hostname)
+                    && candidateUrl.pathname.replace(/\/+$/, '') === profilePath;
+                } catch {
+                  return false;
+                }
+              });
+            if (!ownsContactInfoRoute || !verifiedExternalRedirect) return 'blocked';
+            return 'navigation';
+          }
+          if (!linkedInDestination) return 'navigation';
+          if (redirectPath) return 'blocked';
+          if (/^\/messaging\/(?:send|compose)\/?$/.test(destination.pathname)) return 'blocked';
+          return (/^\/(?:feed|jobs|mynetwork|messaging|notifications)\/?$/.test(destination.pathname)
+            || /^\/in\/[^/]+\/overlay\/contact-info\/?$/.test(destination.pathname))
+            ? 'navigation'
+            : 'none';
+        } catch {
+          return unresolved();
+        }
+      };
+
+      const verifiedDiscordManagementControl = (clicked) => {
+        if (params.adapterName !== 'discord'
+            || !/^(?:www\.)?discord\.com$/.test(location.hostname)
+            || !/^\/channels\/(?:\d+|@me)(?:\/\d+){0,2}\/?$/.test(location.pathname)) return false;
+        const control = _composedClosestElement(clicked,
+          'button,a[href],input,select,textarea,[role="textbox"],[role="button"],[role="menuitem"],[role="tab"],[role="treeitem"],[role="switch"],[role="radio"],[role="checkbox"]');
+        if (!control || !visible(control) || control.disabled
+            || control.getAttribute('aria-disabled') === 'true'
+            || _composedClosestElement(control,
+              'article,[role="log"],[data-message-id],[data-list-item-id^="chat-messages"]')) return false;
+        const label = compact(control.getAttribute('aria-label') || control.innerText || control.textContent);
+        const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu;
+        const actionLabels = [control.getAttribute('aria-label'), control.getAttribute('title'),
+          ...(!editable(control) ? [control.innerText || control.textContent, control.value] : [])];
+        if (actionLabels.some(value => messageCommit.test(value || ''))) return false;
+        const modal = _findTopmostBlockingModal();
+        if (modal && !_isComposedAncestor(modal, control)) return false;
+        const rect = control.getBoundingClientRect();
+        if (!_isComposedAncestor(control, _shadowAwareElementFromPoint(
+          rect.left + rect.width / 2, rect.top + rect.height / 2))) return false;
+        const dialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
+        if (dialog) {
+          // Discord keeps the channel composer mounted behind its settings.
+          // Only the owning management dialog is a non-message surface.
+          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[role="textbox"][aria-label^="Message " i],[role="log"] article')) return false;
+          const dialogId = dialog.getAttribute('id');
+          const creationHeading = dialogId && Array.from(dialog.querySelectorAll('h1'))
+            .some(el => visible(el) && el.id === `heading-${dialogId}`);
+          const creationInputs = Array.from(dialog.querySelectorAll('input[type="text"],input:not([type])'))
+            .filter(visible);
+          const creationRadios = Array.from(dialog.querySelectorAll('input[type="radio"],[role="radio"]'))
+            .filter(visible);
+          const creation = dialog.getAttribute('data-dialog') === 'modal'
+            && creationHeading && creationInputs.length === 1
+            && Array.from(dialog.querySelectorAll('input[type="checkbox"],[role="switch"]')).some(visible)
+            && Array.from(dialog.querySelectorAll('button[type="submit"],input[type="submit"]')).some(visible)
+            && (creationRadios.length === 0 || creationRadios.length >= 2);
+          const settingsNav = dialog.querySelector('nav [role="tablist"],[role="navigation"] [role="tablist"]');
+          const hasSettingsTabs = !!settingsNav
+            && Array.from(settingsNav.querySelectorAll('[role="tab"]')).some(visible);
+          const serverSettings = dialog.getAttribute('data-layer') === 'GUILD_SETTINGS' && hasSettingsTabs;
+          const channelSettings = dialog.getAttribute('data-layer') === 'CHANNEL_SETTINGS'
+            && hasSettingsTabs;
+          const userSettings = !!dialog.id
+            && dialog.getAttribute('aria-modal') === 'true'
+            && dialog.getAttribute('aria-labelledby') === `heading-${dialog.id}`
+            && !!dialog.querySelector('nav [data-settings-sidebar-item="account_panel"]')
+            && !!dialog.querySelector('nav [data-settings-sidebar-item="appearance_panel"]');
+          if (!channelSettings && dialog.querySelector('[data-slate-editor]')) return false;
+          return (creation || serverSettings || channelSettings || userSettings) && !control.hasAttribute('form');
+        }
+        if (editable(control) || control.form || control.hasAttribute('form')
+            || _composedClosestElement(control, 'form')) return false;
+        const menu = _composedClosestElement(control, '[role="menu"]');
+        if (menu) {
+          const menuActionIds = new Set([
+            'guild-header-popout-settings',
+            'guild-header-popout-create-channel',
+            'guild-header-popout-create-category',
+          ]);
+          return menu.id === 'guild-header-popout'
+            && control.getAttribute('role') === 'menuitem'
+            && menuActionIds.has(control.id);
+        }
+        const accountSettingsPanel = _composedClosestElement(control, 'section[class*="panels"]');
+        if (accountSettingsPanel?.querySelector('[class*="accountPopoutButtonWrapper"]')
+            && control.matches('button:not([role])')
+            && control.parentElement?.matches('[class*="buttons"]')) return true;
+        const nav = _composedClosestElement(control, 'nav,[role="navigation"]');
+        if (!nav) return false;
+        const serverRailItem = _composedClosestElement(control, '[role="treeitem"][data-list-item-id^="guildsnav___"]');
+        if (serverRailItem) {
+          const guildsTree = _composedClosestElement(serverRailItem, '[role="tree"][data-list-id="guildsnav"]');
+          return /^guildsnav___(?:home|\d+)$/.test(serverRailItem.getAttribute('data-list-item-id') || '')
+            && !!guildsTree && _isComposedAncestor(nav, guildsTree);
+        }
+        if (control.matches('a[href][data-list-item-id^="private-channels-"]')) {
+          try {
+            const destination = new URL(control.getAttribute('href'), location.href);
+            return destination.origin === location.origin && !destination.search && !destination.hash
+              && !destination.username && !destination.password
+              && /^\/channels\/@me(?:\/\d+)?\/?$/.test(destination.pathname);
+          } catch { return false; }
+        }
+        const channelsList = nav?.querySelector('#channels');
+        const serverHeader = nav?.querySelector('header');
+        if (!channelsList || !serverHeader) return false;
+        if (control.matches('a[href]')) {
+          const destination = new URL(control.getAttribute('href'), location.href);
+          return destination.origin === location.origin && !destination.search && !destination.hash
+            && !destination.username && !destination.password
+            && /^\/channels\/\d+\/\d+\/?$/.test(destination.pathname);
+        }
+        if (control.hasAttribute('aria-expanded') && _isComposedAncestor(serverHeader, control)) return true;
+        const channelControl = /^(?:button|input)$/i.test(control.tagName)
+          || control.getAttribute('role') === 'button';
+        return channelControl && _isComposedAncestor(channelsList, control);
+      };
+
+      const verifiedLinkedInPostEntry = (clicked) => {
+        if (params.adapterName !== 'linkedin' || !/^\/feed\/?$/.test(location.pathname)) return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || !visible(button) || button.disabled
+            || button.getAttribute?.('aria-disabled') === 'true'
+            || String(button.getAttribute?.('type') || 'button').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute?.('form')) return false;
+        // The feed entry only opens a public-post composer. Do not infer this
+        // from the requested text, a nearby editor, or a control inside a post,
+        // conversation, or dialog: those can send or publish existing drafts.
+        if (!_composedClosestElement(button, 'main,[role="main"]')
+            || _composedClosestElement(button,
+              'form,article,dialog,[role="dialog"],[role="alertdialog"],[role="log"],'
+              + '[data-message-id],[data-thread-id],[data-conversation-id],'
+              + '[contenteditable]:not([contenteditable="false"])')) return false;
+        const labels = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
+          .map(value => compact(value).toLowerCase()).filter(Boolean);
+        if (!labels.length || !labels.every(label => label === 'start a post')) return false;
+        // A shadow-root dialog may not appear in the document's modal query.
+        // Require the actual painted control, descending through open roots.
+        const rect = button.getBoundingClientRect();
+        const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+        const hit = _shadowAwareElementFromPoint(x, y);
+        return !!hit && _isComposedAncestor(button, hit);
+      };
+
+      const verifiedTwitterNavigation = clicked => {
+        if (!twitterConversation) return false;
+        const control = _composedClosestElement(clicked, 'a[href],button,[role="button"]');
+        if (!control || !visible(control) || control.disabled
+            || control.getAttribute('aria-disabled') === 'true'
+            || _composedClosestElement(control, 'form,dialog,[role="dialog"],[role="log"],[contenteditable="true"]')
+            || control.hasAttribute('form') || control.hasAttribute('download')) return false;
+        if (control.matches('button[data-testid="dm-conversation-back-button"]')) {
+          return String(control.getAttribute('type') || 'button').toLowerCase() === 'button';
+        }
+        if (!control.matches('a[href]') || control.hasAttribute('onclick') || control.hasAttribute('data-action')) return false;
+        try {
+          const destination = new URL(control.getAttribute('href'), location.href);
+          if (!/^https?:$/.test(destination.protocol) || destination.username || destination.password
+              || !/^(?:www\.)?(?:x|twitter)\.com$/.test(destination.hostname)) return false;
+          const isProfile = /^\/[a-zA-Z0-9_]{1,15}\/?$/.test(destination.pathname);
+          const header = control.querySelector('[data-testid="dm-conversation-username"]');
+          if (header && visible(header)) return isProfile;
+          return !!_composedClosestElement(control, 'nav,[role="navigation"]')
+            && (isProfile || /^\/(?:home|explore|notifications|messages|i\/chat)\/?$/.test(destination.pathname));
+        } catch { return false; }
+      };
+
+      const verifiedLinkedInPublicPostControl = (clicked) => {
+        if (params.adapterName !== 'linkedin') return false;
+        const button = _composedClosestElement(clicked, 'button,[role="button"]');
+        if (!button || !visible(button) || button.disabled
+            || button.getAttribute?.('aria-disabled') === 'true'
+            || String(button.getAttribute?.('type') || 'button').toLowerCase() !== 'button'
+            || button.form || button.hasAttribute?.('form')) return false;
+        const messageScope = 'form,[role="log"],[data-message-id],[data-thread-id],[data-conversation-id],'
+          + '.msg-form,.msg-overlay-conversation-bubble,.msg-convo-wrapper';
+        if (_composedClosestElement(button, messageScope)) return false;
+        if (compact(button.getAttribute?.('data-control-name')).toLowerCase() !== 'share.post') return false;
+        // Identify the public composer itself, not merely a nearby textbox.
+        // LinkedIn's dedicated compose route may render as a whole page.
+        const root = _composedClosestElement(button, 'dialog,[role="dialog"],.share-box')
+          || (/^\/sharing\/compose\/?$/.test(location.pathname)
+            ? (_composedClosestElement(button, 'main,[role="main"]') || document.body) : null);
+        if (!root) return false;
+        const owned = el => visible(el) && !_composedClosestElement(el, messageScope)
+          && (_composedClosestElement(el, 'dialog,[role="dialog"],.share-box') || root) === root;
+        const editors = Array.from(root.querySelectorAll('[contenteditable="true"],textarea'))
+          .filter(owned);
+        return editors.length === 1;
+      };
+
+      // A recipient/search field can be the only focused editable while the
+      // real composer is temporarily hidden. Focus alone is not compose proof.
+      // Upper-page dialogs also contain search and filter fields. Exempt a
+      // message-body editor from the position rule only when its own dialog
+      // exposes a send control or a verified LinkedIn public-post control.
+      const dialogSelector = 'dialog,[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
+      const layoutDialog = layoutCandidate?.closest?.(dialogSelector);
+      // Empty Gmail drafts can have a disabled Send button. Their dedicated
+      // body editor is compose evidence; a generic filter textarea is not.
+      const verifiedGmailBody = params.adapterName === 'gmail'
+        && layoutCandidate?.matches?.('[contenteditable="true"][role="textbox"]')
+        && (layoutCandidate.getAttribute('g_editable') === 'true'
+          || !!layoutDialog?.querySelector?.('input[name="subjectbox"]'));
+      const layoutInComposeDialog = !!layoutDialog
+        && !verifiedNavigationEditable(layoutCandidate)
+        && layoutCandidate.matches?.('textarea,[contenteditable="true"],[role="textbox"]:not(input)')
+        && Array.from(layoutDialog.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],[data-action]'))
+          .some(control => visible(control) && control.closest(dialogSelector) === layoutDialog
+            && ((_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
+                && (_isEligibleTextClickTarget(control) || verifiedGmailBody))
+              || verifiedLinkedInPublicPostControl(control)));
+      const nativeLayoutContext = typeof window.__wb_get_native_chat_context === 'function'
+        ? window.__wb_get_native_chat_context(layoutCandidate) : null;
+      if (!observationOnly && tool === 'click_ax' && targetResolved && params.bindDispatch === true
+          && typeof params._nativeChatOwner === 'string' && params._nativeChatOwner === _nativeTelegramReadOwner) {
+        const nativeTelegramReadRepairBinding = _bindNativeTelegramRead(target);
+        if (nativeTelegramReadRepairBinding) return {success:true,messageSend:false,conclusive:true,
+          nativeTelegramRepair:true,nativeTelegramReadRepairBinding,identityCandidates:[]};
+      }
+      const nativeWhatsappComposer = location.hostname === 'web.whatsapp.com'
+        && layoutCandidate?.matches?.('[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
+      if (nativeWhatsappComposer && nativeLayoutContext?.service !== 'whatsapp-self') {
+        const repair = window.__wb_get_native_whatsapp_repair?.();
+        if (!observationOnly && tool === 'click_ax' && targetResolved
+            && window.__wb_native_whatsapp_repair_action?.(target)) {
+          return { success: true, messageSend: false, conclusive: true, composerAvailable: true,
+            nativeWhatsappRepair: true, identityCandidates: [] };
+        }
+        if (nativeLayoutContext?.service !== 'whatsapp') {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, nativeWhatsappRepairAvailable: !!repair,
+            reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [],
+            error: 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
+        }
+      }
+      const layoutComposer = layoutCandidate
+        && (nativeLayoutContext?.service === 'telegram' || layoutInComposeDialog
+          || !viewportHeight
+          || layoutCandidateRect?.bottom >= viewportHeight * 0.5)
+        ? layoutCandidate
+        : null;
+
       let composer = null;
       let messageSend = null;
-      if (observationOnly) {
+      const discordManagementTarget = tool === 'press_keys' && String(args.key) === 'Enter'
+        ? active : (targetResolved ? target : null);
+      if (!observationOnly && ['click', 'click_ax', 'set_field', 'press_keys'].includes(tool)
+          && verifiedDiscordManagementControl(discordManagementTarget)) {
+        return {
+          success: true, messageSend: false, conclusive: true,
+          nonMessagingTarget: true, reasonCode: 'non_messaging_target', identityCandidates: [],
+        };
+      }
+      if (tool === 'upload_file') {
+        composer = layoutComposer;
+        const uploadOwner = _messageRecipientUploadOwner(target, composer);
+        const linkedInPrivateComposer = params.adapterName !== 'linkedin'
+          || (/^\/messaging(?:\/|$)/.test(location.pathname)
+            || !!_composedClosestElement(uploadOwner, '.msg-form,.msg-overlay-conversation-bubble,.msg-convo-wrapper'));
+        const linkedInPublicComposer = params.adapterName === 'linkedin'
+          && (!!_composedClosestElement(composer, '.share-box')
+            || !!uploadOwner?.querySelector?.('[data-control-name="share.post"]'));
+        if (!targetResolved || !composer || !String(params.uploadSourceKey || '')
+            || !uploadOwner || !linkedInPrivateComposer || linkedInPublicComposer) {
+          return { success: true, messageSend: null, conclusive: false,
+            composerAvailable: !!composer, reasonCode: 'recipient_upload_target_unverifiable', identityCandidates: [] };
+        }
+        dispatchTarget = target;
+        messageSend = true;
+      } else if (observationOnly) {
         composer = layoutComposer;
       } else if (tool === 'press_keys') {
         if (!editable(active) || !visible(active) || !layoutComposer) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         if (active !== layoutComposer) {
-          return verifiedNavigationEditable(active)
-            ? { success: true, messageSend: false, conclusive: true, identityCandidates: [] }
-            : { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+          if (verifiedNavigationEditable(active)) {
+            return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+          }
+          try {
+            const composeScopeOf = (el) => el?.closest?.(
+              'form, [role="dialog"], [role="form"], [aria-label*="compose" i], [class*="compose" i]',
+            );
+            const activeScope = composeScopeOf(active);
+            if (activeScope && activeScope === composeScopeOf(layoutComposer)) {
+              return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
+            }
+          } catch { /* fall through to the conservative result */ }
+          return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         composer = layoutComposer;
         dispatchTarget = active;
@@ -4171,8 +6588,46 @@
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
         }
         const control = target.closest?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') || target;
-        if (!visible(control)) {
+        const modal = _findTopmostBlockingModal();
+        if (!visible(control) || (modal && !_isComposedAncestor(modal, target))) {
           return { success: true, messageSend: null, conclusive: false, identityCandidates: [] };
+        }
+        if (verifiedLinkedInImagePreview(target)) {
+          return { success: true, messageSend: false, conclusive: true, imagePreview: true, identityCandidates: [] };
+        }
+        if (verifiedTwitterNavigation(target)) {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
+        }
+        if (verifiedLinkedInPostEntry(target)) {
+          return { success: true, messageSend: false, conclusive: true, composerSetup: true, identityCandidates: [] };
+        }
+        if (verifiedLinkedInPublicPostControl(target)) {
+          // Public publication still goes through the normal submission gates;
+          // a private-message recipient is irrelevant to this composer.
+          return { success: true, messageSend: false, conclusive: true, publicPost: true, identityCandidates: [] };
+        }
+        const linkedInNavigation = classifyLinkedInNavigation(target, modal);
+        if (linkedInNavigation === 'navigation') {
+          return { success: true, messageSend: false, conclusive: true, navigation: true, identityCandidates: [] };
+        }
+        if (linkedInNavigation === 'blocked') {
+          return {
+            success: true,
+            messageSend: null,
+            conclusive: false,
+            navigationBlocked: true,
+            identityCandidates: [],
+          };
+        }
+        if (_isComposerUtilityControl(control)) {
+          return {
+            success: true,
+            messageSend: false,
+            conclusive: true,
+            composerUtility: true,
+            reasonCode: 'non_messaging_target',
+            identityCandidates: [],
+          };
         }
         composer = layoutComposer;
         if (!composer) {
@@ -4187,16 +6642,61 @@
           );
           const composerSetup = params.adapterName === 'gmail'
             && /^(?:reply|reply all|forward)$/i.test(actionLabel);
+          const messageCommit = _hasMessageCommitName(actionLabel);
+          const messagingSurface = (() => {
+            try {
+              return !!control.closest?.('[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]');
+            } catch { return false; }
+          })();
+          // Known compose surfaces and unverified composer openers stay protected.
+          // Ordinary feed/profile controls do not become message actions merely
+          // because LinkedIn's navigation classifier has no matching route.
+          const composeDialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
+          const linkedInComposeSurface = params.adapterName === 'linkedin' && (
+            /^start a post$/i.test(actionLabel)
+            || /^\/(?:messaging(?:\/|$)|sharing\/compose(?:\/|$))/.test(location.pathname)
+            || !!_composedClosestElement(control, '.share-box,[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]')
+            || (composeDialog && Array.from(composeDialog.querySelectorAll('[contenteditable="true"],textarea')).some(visible))
+          );
+          const linkedInUnverified = linkedInComposeSurface && (
+            control.matches?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') === true
+            || (control.matches?.('a[href]') === true && linkedInNavigation === 'none')
+          );
+          if (!composerSetup && !linkedInUnverified && !messageCommit && !messagingSurface) {
+            return {
+              success: true,
+              messageSend: false,
+              conclusive: true,
+              composerAvailable: false,
+              nonMessagingTarget: true,
+              reasonCode: 'non_messaging_target',
+              identityCandidates: [],
+            };
+          }
+          if (linkedInUnverified) {
+            // No reasonCode: the agent maps a LinkedIn composer-less failure
+            // to its own contract (message_send_classification_inconclusive,
+            // retryable: false, "no message composer" guidance). Naming a
+            // reason here would override that contract.
+            return {
+              success: true,
+              messageSend: null,
+              conclusive: false,
+              composerAvailable: false,
+              identityCandidates: [],
+            };
+          }
           return {
             success: true,
             messageSend: null,
             conclusive: false,
             composerAvailable: false,
+            reasonCode: messageCommit ? 'message_commit_without_composer' : 'no_composer_surface',
             ...(composerSetup ? { composerSetup: true } : {}),
             identityCandidates: [],
           };
         }
-        if (editable(target) && target !== composer) {
+        if (editable(target) && (target !== composer || twitterConversation)) {
           return { success: true, messageSend: false, conclusive: true, identityCandidates: [] };
         }
         if (verifiedConversationSelection(target, composer)) {
@@ -4255,6 +6755,9 @@
       const strongIdentities = [];
       const strongRecipients = [];
       const strongSeen = new Set();
+      const observedRecipientCandidates = [];
+      let conversationRecipientEvidence = null;
+      let nativeChatMessageBaseline = null;
       const gmailRecipientMode = params.adapterName === 'gmail';
       const inConversationHeaderBand = (el) => {
         if (headerBandBottom <= 0) return false;
@@ -4279,7 +6782,75 @@
       };
 
       let gmailComposeRoot = null;
-      if (gmailRecipientMode) {
+      const nativeTelegramComposer = /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(location.hostname)
+        && composer.matches?.('.input-message-input[contenteditable="true"],#editable-message-text[contenteditable="true"][role="textbox"]');
+      if (nativeLayoutContext?.service === 'whatsapp') {
+        const context = nativeLayoutContext;
+        const footer = composer.closest('footer');
+        const contextNodes = [context.carrier, context.header, context.root, context.transcript, context.selectedRow, context.selected, context.rowTitle, footer, composer];
+        if (composer !== layoutCandidate || !footer || contextNodes.some(node => !node?.isConnected)) {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, identityCandidates: [], reasonCode: 'native_whatsapp_contact_binding_required' };
+        }
+        conversationRecipientEvidence = { carrier: context.carrier, header: context.header, pane: context.root,
+          footer, composer, labelledByNodes: [], contextNodes, aliases: [context.id, context.name],
+          signature: JSON.stringify([context.id, context.name, location.href,
+            contextNodes.map(node => ['data-testid','aria-selected','aria-label','hidden','inert','aria-hidden'].map(attribute => node.getAttribute(attribute)))]) };
+        const nativeRows = Array.from(context.transcript.querySelectorAll('[role="row"] [data-id][data-testid^="conv-msg-"]'));
+        const nativeIds = nativeRows.map(node => node.getAttribute('data-id'));
+        const pendingNative = nativeRows.some(node => node.querySelector('[data-icon="tail-out"]')
+          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]')).some(status => /^(?:read|delivered)$/i.test(compact(status.getAttribute('aria-label')))));
+        nativeChatMessageBaseline = { schema: 'webbrain-native-opaque-baseline/1', threadKey: 'dom:' + context.id,
+          documentEpoch: context.documentEpoch, timeOrigin: context.timeOrigin, url: context.url,
+          tailId: context.id + ':' + nativeIds.at(-1),
+          messageIds: nativeIds.map(id => context.id + ':' + id),
+          complete: context.atLatest && nativeRows.length > 0 && nativeRows.length <= 200
+            && nativeIds.every((id, index) => id && nativeRows[index].getAttribute('data-testid') === 'conv-msg-' + id)
+            && new Set(nativeIds).size === nativeIds.length && !pendingNative };
+        strongIdentities.push(context.id);
+        strongRecipients.push({ identity: context.id, role: 'to' });
+        observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name] });
+      } else if (nativeTelegramComposer) {
+        const context = typeof window.__wb_get_native_chat_context === 'function'
+          ? window.__wb_get_native_chat_context(composer) : null;
+        const modal = typeof _findTopmostBlockingModal === 'function' ? _findTopmostBlockingModal() : null;
+        if (context?.service !== 'telegram' || !context.carrier || !context.header
+            || (modal && (!modal.contains(composer) || !modal.contains(context.header)))) {
+          return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
+            composerAvailable: true, identityCandidates: [], strongIdentityCandidates: [],
+            error: 'The native Telegram route, header, composer and transcript do not identify one active peer.' };
+        }
+        if (!observationOnly && messageSend === true && context.atLatest !== true) {
+          const nativeChatReadRepair = window.__wb_native_chat_read_repair?.(composer);
+          return { success: true, messageSend: null, conclusive: false, composerAvailable: true,
+            identityCandidates: [], strongIdentityCandidates: [], reasonCode: 'native_telegram_latest_required',
+            ...(nativeChatReadRepair ? { nativeChatReadRepair } : {}),
+            error: nativeChatReadRepair?.message || 'The native Telegram latest message position is not verified. Observe its latest messages before sending.' };
+        }
+        const footer = composer.parentElement;
+        const contextNodes = new Set([context.carrier, context.header, context.root, context.transcript, context.scrollPane, context.latestMarker, footer, composer,
+          ...(context.aliasWitnessNodes ? [context.peerIdentity, ...context.aliasWitnessNodes] : [])].filter(Boolean));
+        for (const start of [context.carrier, composer]) {
+          for (let node = start.parentElement; node && node !== context.root; node = node.parentElement) contextNodes.add(node);
+        }
+        const identityAttributes = ['id','role','aria-hidden','inert','data-peer-id','data-list-key'];
+        conversationRecipientEvidence = { carrier: context.carrier, header: context.header, pane: context.root,
+          footer, composer, labelledByNodes: [], contextNodes: [...contextNodes],
+          signature: JSON.stringify([context.id, context.name, location.href,
+            ...(context.aliasWitnessSignature ? [context.aliasWitnessSignature] : []),
+            [...contextNodes].map(node => identityAttributes.map(attribute => node.getAttribute(attribute)))]) };
+        nativeChatMessageBaseline = window.__wb_get_native_telegram_message_baseline?.(composer) || null;
+        if (!observationOnly && messageSend === true && nativeChatMessageBaseline?.complete !== true) {
+          return { success: true, messageSend: null, conclusive: false, composerAvailable: true,
+            nativeChatMessageBaseline, identityCandidates: [], strongIdentityCandidates: [],
+            reasonCode: 'native_telegram_baseline_unavailable',
+            error: 'The native latest Telegram message IDs or pending statuses cannot establish a send baseline. Observe the current conversation before sending; do not repeat an uncertain send.' };
+        }
+        strongIdentities.push(context.id);
+        strongRecipients.push({ identity: context.id, role: 'to' });
+        observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name,
+          ...(context.alias ? [context.alias, '@' + context.alias] : [])] });
+      } else if (gmailRecipientMode) {
         const recipientRole = (el, root = null) => {
           const roleFromAttribute = (attribute, value) => {
             const text = compact(value, 120).toLowerCase();
@@ -4335,6 +6906,17 @@
             ].map(value => compact(value, 240)).find(value => /@/.test(value)) || '';
             if (!email) continue;
             const aliases = new Map();
+            const addAlias = (val) => {
+              const alias = compact(val, 240);
+              const normalized = normalizedIdentity(alias);
+              if (alias && normalized && !aliases.has(normalized)) aliases.set(normalized, alias);
+              const angleMatch = alias.match(/^([^<@]+)<[^>]+>$/);
+              if (angleMatch) {
+                const nameOnly = compact(angleMatch[1], 240);
+                const normName = normalizedIdentity(nameOnly);
+                if (nameOnly && normName && !aliases.has(normName)) aliases.set(normName, nameOnly);
+              }
+            };
             for (const value of [
               email,
               el.getAttribute?.('name'),
@@ -4343,9 +6925,7 @@
               el.innerText,
               el.textContent,
             ]) {
-              const alias = compact(value, 240);
-              const normalized = normalizedIdentity(alias);
-              if (alias && normalized && !aliases.has(normalized)) aliases.set(normalized, alias);
+              addAlias(value);
             }
             const key = normalizedIdentity(email);
             if (!key) continue;
@@ -4374,6 +6954,55 @@
         })();
         gmailComposeRoot = composeRoot;
         const recipients = collectGmailRecipients(composeRoot);
+        // A typed, uncommitted Gmail address only exists in the visible
+        // recipient input. Include it so confirmation remains bound to what
+        // is actually on screen before the UI turns it into a chip.
+        const collectRecipientInputValues = (root) => {
+          if (!root?.querySelectorAll) return;
+          let inputs = [];
+          try {
+            inputs = Array.from(root.querySelectorAll(
+              'input, textarea, [contenteditable="true"], [contenteditable=""]',
+            )).slice(0, 40);
+          } catch {
+            return;
+          }
+          for (const input of inputs) {
+            if (!visible(input) || input === composer || composer?.contains?.(input)) continue;
+            const role = recipientRole(input, root);
+            if (!role) continue;
+            const raw = String('value' in input ? (input.value || '') : (input.innerText || input.textContent || ''));
+            if (!raw || raw.length > 2000) continue;
+            for (const piece of raw.split(/[,;\n]+/)) {
+              const candidate = compact(piece, 240);
+              const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+              if (!match) continue;
+              const email = match[0];
+              const key = normalizedIdentity(email);
+              if (!key) continue;
+              const recipientKey = `${role}:${key}`;
+              const prior = recipients.get(recipientKey) || { identity: email, role, aliases: new Map() };
+              prior.aliases.set(key, email);
+              const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+              if (display && display !== email) {
+                const normalizedDisplay = normalizedIdentity(display);
+                if (normalizedDisplay && !prior.aliases.has(normalizedDisplay)) {
+                  prior.aliases.set(normalizedDisplay, display);
+                }
+              }
+              recipients.set(recipientKey, prior);
+            }
+          }
+        };
+        collectRecipientInputValues(composeRoot);
+        for (const [recipientKey, recipient] of recipients) {
+          const emailKey = recipientKey.slice(recipientKey.indexOf(':') + 1);
+          const identity = recipient.aliases.get(emailKey) || [...recipient.aliases.values()][0] || recipient.identity || '';
+          if (identity) {
+            const aliasList = Array.from(new Set([identity, ...recipient.aliases.values()])).filter(Boolean);
+            observedRecipientCandidates.push({ identity, role: recipient.role, aliases: aliasList });
+          }
+        }
         // Match the complete authorized To/CC/BCC set. Each expected identity
         // must resolve to exactly one distinct chip and no additional chip may
         // remain; duplicate display names therefore fail closed.
@@ -4420,6 +7049,45 @@
             }
           }
         }
+      } else if (twitterConversation) {
+        const headers = Array.from(document.querySelectorAll('[data-testid="dm-conversation-username"]'))
+          .filter(el => visible(el) && inConversationHeaderBand(el) && !independentScrollableRegion(el, composer));
+        if (headers.length === 1) {
+          const header = headers[0];
+          const link = header.closest('a[href]');
+          let handle = '';
+          try {
+            const url = new URL(link?.getAttribute('href'), location.href);
+            if (/^(?:www\.)?(?:x|twitter)\.com$/.test(url.hostname)) {
+              handle = url.pathname.match(/^\/([a-zA-Z0-9_]{1,15})\/?$/)?.[1] || '';
+            }
+          } catch {}
+          if (handle) {
+            const identity = '@' + handle.toLowerCase();
+            strongIdentities.push(identity);
+            strongRecipients.push({ identity, role: 'to' });
+            observedRecipientCandidates.push({ identity, role: 'to', aliases: [identity, handle, compact(header.innerText)] });
+          } else {
+            // X group DM headers name the conversation instead of linking to a
+            // single account. Bind the visible header to the canonical chat
+            // route so a later conversation cannot inherit this authorization.
+            let groupIdentity = '';
+            try {
+              const groupId = new URL(location.href).pathname
+                .match(/^\/i\/chat\/([a-zA-Z0-9_-]{1,128})\/?$/)?.[1] || '';
+              if (groupId && compact(header.innerText)) groupIdentity = `x-dm-group:${groupId}`;
+            } catch {}
+            if (groupIdentity) {
+              strongIdentities.push(groupIdentity);
+              strongRecipients.push({ identity: groupIdentity, role: 'to' });
+              observedRecipientCandidates.push({
+                identity: groupIdentity,
+                role: 'to',
+                aliases: [groupIdentity, compact(header.innerText)],
+              });
+            }
+          }
+        }
       } else {
         for (const el of document.querySelectorAll(
           '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
@@ -4437,7 +7105,200 @@
           addStrongIdentity(el);
           if (strongIdentities.length >= 8) break;
         }
-        for (const identity of strongIdentities) strongRecipients.push({ identity, role: 'to' });
+        if (!strongIdentities.length && params.adapterName === 'generic-messaging'
+            && params.supportsRecipientSets !== true) {
+          // Some conversation headers expose the contact name as a button
+          // rather than a heading. A shared local header/footer pane proves
+          // ownership; a page-wide button or a sidebar name proves nothing.
+          try {
+            const footer = composer.closest?.('footer');
+            const excluded = 'aside,nav,[role="navigation"],[role="complementary"],[role="log"],'
+              + '[role="listbox"],[role="menu"],[role="toolbar"],[data-message-id],[data-message-direction],[data-outgoing],article';
+            const actionLabel = /^(?:call(?:\s|$)|(?:voice|video|audio)\s+call(?:\s|$)|search(?:\s|$)|menu(?:\s|$)|more(?:\s|$)|settings(?:\s|$)|back(?:\s|$)|close(?:\s|$)|arama(?:\s|$)|ara(?:\s|$)|suchen(?:\s|$)|rechercher(?:\s|$)|buscar(?:\s|$)|llamar(?:\s|$)|appel(?:\s|$))/iu;
+            if (footer && !footer.closest(excluded)) {
+              for (let pane = footer.parentElement, depth = 0; pane && depth < 8
+                && pane !== document.body && pane !== document.documentElement; pane = pane.parentElement, depth++) {
+                if (pane.closest(excluded)) break;
+                const ownedHeader = header => {
+                  let branch = header;
+                  for (let level = 0; level < 4; level++) {
+                    const parent = branch.parentElement;
+                    if (parent === pane) return true;
+                    if (parent?.tagName !== 'DIV' || parent.children.length !== 1) return false;
+                    branch = parent;
+                  }
+                  return false;
+                };
+                const headers = Array.from(pane.querySelectorAll('header')).filter(header => (
+                  ownedHeader(header) && visible(header) && !footer.contains(header) && !header.closest(excluded)
+                    && inConversationHeaderBand(header) && !independentScrollableRegion(header, composer)
+                ));
+                if (!headers.length) continue;
+                // Stop at the closest pane with a header, including when its
+                // evidence is ambiguous. A broader app header cannot rescue it.
+                if (headers.length !== 1 || composerCandidates.some(editor => editor !== composer
+                    && pane.contains(editor) && !composer.contains(editor) && !editor.contains(composer)
+                    && !verifiedNavigationEditable(editor))) break;
+                const header = headers[0];
+                const modal = typeof _findTopmostBlockingModal === 'function' ? _findTopmostBlockingModal() : null;
+                if (modal && (!modal.contains(composer) || !modal.contains(header))) break;
+                const contacts = Array.from(header.querySelectorAll('button,[role="button"]')).filter(control => {
+                  if (!visible(control) || editable(control) || control.closest('header') !== header
+                      || control.closest(excluded) || control.disabled || control.getAttribute('aria-disabled') === 'true'
+                      || control.form || control.hasAttribute('form') || !inConversationHeaderBand(control)
+                      || independentScrollableRegion(control, composer)) return false;
+                  const name = String(control.innerText || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+                  const labels = [name, control.getAttribute('aria-label'), control.getAttribute('title')].filter(Boolean);
+                  return !!name && name.length <= 120 && !labels.some(label => actionLabel.test(String(label).trim())
+                    || _hasMessageCommitName(label) || _COMPOSER_UTILITY_LABEL_RE.test(String(label).trim()));
+                });
+                if (contacts.length !== 1) break;
+                const carrier = contacts[0];
+                const name = compact(carrier.innerText, 120);
+                const labelledByNodes = [];
+                let labelledByValid = true;
+                for (const id of String(composer.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
+                  const matches = composer.getRootNode().querySelectorAll(`[id="${CSS.escape(id)}"]`);
+                  if (matches.length !== 1) { labelledByValid = false; break; }
+                  labelledByNodes.push(matches[0]);
+                }
+                if (!labelledByValid) break;
+                const identityAttributes = ['id','role','aria-label','title','aria-labelledby','aria-hidden','inert',
+                  'data-recipient-id','data-conversation-id','data-thread-id','data-chat-id'];
+                const contextNodes = new Set([carrier, header, pane, footer, composer]);
+                for (const start of [carrier, composer]) {
+                  for (let node = start.parentElement; node && node !== pane; node = node.parentElement) contextNodes.add(node);
+                }
+                conversationRecipientEvidence = { carrier, header, pane, footer, composer, labelledByNodes, contextNodes: [...contextNodes],
+                  signature: JSON.stringify([name,
+                    [...contextNodes].map(node => identityAttributes.map(attribute => node.getAttribute(attribute))),
+                    ['aria-label','aria-labelledby','placeholder','title'].map(attribute => composer.getAttribute(attribute)),
+                    labelledByNodes.map(node => node.textContent)]) };
+                strongIdentities.push(name);
+                const phone = String(composer.getAttribute('aria-label') || '').trim()
+                  .match(/^(?:type|write|send)\s+(?:a\s+)?message\s+to\s+(\+?[\d ()-]{7,32})$/i)?.[1]?.trim() || '';
+                const phoneDigits = phone.replace(/\D/g, '').length;
+                conversationRecipientEvidence.aliases = phone && phoneDigits >= 7 && phoneDigits <= 15
+                  ? [name, phone] : [name];
+                break;
+              }
+            }
+          } catch { /* An unsupported header remains unverified. */ }
+        }
+        for (const identity of strongIdentities) {
+          const item = { identity, role: 'to', aliases: conversationRecipientEvidence?.aliases || [identity] };
+          strongRecipients.push({ identity, role: 'to' });
+          observedRecipientCandidates.push(item);
+        }
+      }
+
+      // The isolated monitor reads this exact local proof synchronously. Its
+      // closure-only callback never participates in the public message API,
+      // authorizes an action, or needs the expensive message-history scan.
+      if (typeof receiveConversationContext === 'function') {
+        return receiveConversationContext(observationOnly && params.adapterName === 'generic-messaging'
+          && params.supportsRecipientSets !== true ? conversationRecipientEvidence : null);
+      }
+
+      // Generic mail surfaces expose recipient fields and chips without a
+      // provider-specific adapter. Read only explicit recipient semantics;
+      // an ordinary contact form's email field must not become a message
+      // recipient, and a generic chat still requires one header identity.
+      if (observedRecipientCandidates.length === 0) {
+        const genericMailRecipientMode = params.adapterName === 'generic-messaging'
+          && params.supportsRecipientSets === true;
+        const RECIPIENT_FIELD_RE = new RegExp(
+          '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
+          + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
+          + '|\\u6536\\u4ef6\\u4eba|\\u5b9b\\u5148|\\ubc1b\\ub294\\s*\\uc0ac\\ub78c)(?:[^\\p{L}]|$)',
+          'iu',
+        );
+        const fieldLooksLikeRecipient = (el) => {
+          try {
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return genericMailRecipientMode;
+            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode;
+            const haystack = [
+              el.getAttribute?.('name'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('placeholder'),
+              el.getAttribute?.('id'),
+              el.getAttribute?.('data-testid'),
+              el.getAttribute?.('autocomplete'),
+              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
+            ].filter(Boolean).join(' ');
+            return !!haystack && RECIPIENT_FIELD_RE.test(haystack);
+          } catch { return false; }
+        };
+        const pushRecipient = (identity, extraAliases = []) => {
+          const raw = compact(identity, 240);
+          const normalized = raw ? normalizedIdentity(raw) : '';
+          if (!normalized) return;
+          const existing = observedRecipientCandidates.find(
+            item => normalizedIdentity(item.identity) === normalized,
+          );
+          const aliases = Array.from(new Set([
+            raw, ...extraAliases, ...(existing?.aliases || []),
+          ].filter(Boolean)));
+          const entry = { identity: raw, role: 'to', aliases };
+          if (existing) Object.assign(existing, entry);
+          else observedRecipientCandidates.push(entry);
+          if (!strongRecipients.some(item => normalizedIdentity(item.identity) === normalized)) {
+            strongRecipients.push({ identity: raw, role: 'to' });
+          }
+        };
+        const extractAddresses = (rawValue) => {
+          const raw = String(rawValue || '');
+          if (!raw || raw.length > 2000) return;
+          for (const piece of raw.split(/[,;\n]+/)) {
+            const candidate = compact(piece, 240);
+            const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
+            if (!match) continue;
+            const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
+            pushRecipient(match[0], display && display !== match[0] ? [display] : []);
+          }
+        };
+        try {
+          for (const el of Array.from(document.querySelectorAll(
+            'input, textarea, [contenteditable="true"], [contenteditable=""]',
+          )).slice(0, 60)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!fieldLooksLikeRecipient(el)) continue;
+            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''));
+          }
+        } catch { /* structural read is best-effort */ }
+        try {
+          const chipScope = composer.closest?.('[role="dialog"],form,[role="main"]') || document;
+          for (const el of Array.from(chipScope.querySelectorAll(
+            '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
+          )).slice(0, 40)) {
+            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+            if (!genericMailRecipientMode
+                && /^email$/i.test(String(el.getAttribute?.('type') || ''))) continue;
+            const mailto = String(el.getAttribute?.('href') || '')
+              .replace(/^mailto:/i, '').split('?')[0];
+            const address = [
+              el.getAttribute?.('email'), el.getAttribute?.('data-email'),
+              el.getAttribute?.('data-hovercard-id'), mailto,
+              'value' in el ? el.value : '',
+            ].map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '';
+            if (!address) continue;
+            const display = compact(el.innerText || el.textContent, 240);
+            pushRecipient(address, display && display !== address ? [display] : []);
+          }
+        } catch { /* structural read is best-effort */ }
+      }
+
+      const expectedConversation = params.expectedConversationRecipientEvidence;
+      if (expectedConversation && (!conversationRecipientEvidence
+          || ['carrier','header','pane','footer'].some(key => expectedConversation[key] !== conversationRecipientEvidence[key])
+          || expectedConversation.signature !== conversationRecipientEvidence.signature
+          || expectedConversation.contextNodes.length !== conversationRecipientEvidence.contextNodes.length
+          || expectedConversation.contextNodes.some((node, index) => node !== conversationRecipientEvidence.contextNodes[index])
+          || expectedConversation.labelledByNodes.length !== conversationRecipientEvidence.labelledByNodes.length
+          || expectedConversation.labelledByNodes.some((node, index) => node !== conversationRecipientEvidence.labelledByNodes[index]))) {
+        return { success: false, messageSend: null, conclusive: false, dispatchTargetChanged: true,
+          identityCandidates: [], strongIdentityCandidates: [],
+          error: 'The verified conversation header or composer destination changed before dispatch.' };
       }
 
       const composerText = (() => {
@@ -4475,7 +7336,8 @@
       );
       const messageRecipientDispatchToken = params.bindDispatch === true
         && messageSend === true
-        && !!messageBody
+        && (tool === 'upload_file' || !!messageBody)
+        && (!twitterConversation || twitterBaselineComplete)
         && (params.supportsRecipientSets === true
           ? strongRecipients.length > 0
           : strongRecipients.length === 1)
@@ -4486,18 +7348,34 @@
             adapterName: params.adapterName,
             expectedRecipients: params.expectedRecipients,
             supportsRecipientSets: params.supportsRecipientSets,
+            conversationRecipientEvidence,
             messageBody,
             messageBodyBaselineCount,
+            nativeChatMessageBaseline,
+            nativeOwner: params._nativeChatOwner,
+            messageAttachment: tool === 'upload_file',
+            uploadSourceKey: params.uploadSourceKey,
+            ...(twitterConversation ? {
+              existingMessageIds: twitterMessageIds,
+              ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+            } : {}),
             gmailComposeFlow,
             composerSubject,
             composerSubjectAvailable,
-          })
+        })
         : '';
+      let composerRef = '';
+      try {
+        if (typeof window.__wb_ax_ref === 'function') composerRef = window.__wb_ax_ref(composer) || '';
+      } catch {}
       return {
         success: true,
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
         composerAvailable: true,
+        ...(nativeChatMessageBaseline ? { nativeChatMessageBaseline } : {}),
+        ...(tool === 'upload_file' ? { messageAttachment: true } : {}),
+        ...(composerRef ? { composerRef } : {}),
         composerEmpty: composerText.replace(/[\u200b-\u200d\ufeff]/g, '').trim() === '',
         messageBody,
         messageBodyBaselineCount,
@@ -4506,24 +7384,41 @@
         composerSubjectAvailable,
         composerStatusMessages,
         matchingOutgoingMessageCount,
+        ...(twitterConversation && twitterBaselineComplete ? {
+          existingMessageIds: twitterMessageIds,
+          matchingOutgoingMessageIds: matchingTwitterMessageIds(params.expectedMessageBody),
+          ...(twitterEmptyConversationBaseline ? { twitterEmptyConversationBaseline: true } : {}),
+        } : {}),
         // Only recipient-specific header evidence is authoritative. Ordinary
         // message text, test-id containers, and other leaf content are never
         // returned as dispatch identities.
         identityCandidates: strongIdentities.slice(0, 16),
         strongIdentityCandidates: strongIdentities.slice(0, 16),
         strongRecipientCandidates: strongRecipients.slice(0, 16),
+        observedRecipientCandidates: observedRecipientCandidates.slice(0, 16),
         ...(messageRecipientDispatchToken
           ? { messageRecipientDispatchBinding: { token: messageRecipientDispatchToken } }
           : {}),
       };
     } catch (error) {
-      return { success: false, messageSend: null, conclusive: false, identityCandidates: [], error: error?.message || String(error) };
+      if (error?.code === 'page_feedback_pending') throw error;
+      return {
+        success: false,
+        messageSend: null,
+        conclusive: false,
+        identityCandidates: [],
+        strongIdentityCandidates: [],
+        strongRecipientCandidates: [],
+        observedRecipientCandidates: [],
+        error: error?.message || String(error),
+      };
     }
   }
 
   // --- Message handler ---
   browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.target !== 'content') return;
+    if (msg.target !== 'content' || msg.action?.startsWith('page_monitor_')) return;
+    if (WEBBRAIN_GENERATION !== (Number(window.__webbrain_generation) || 0)) return;
     const actionDeadlineAt = Number(msg.actionDeadlineAt) || 0;
     const actionDeadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
     if (actionDeadlineExpired()) {
@@ -4538,9 +7433,28 @@
       return;
     }
 
+    const jevBinding = msg.params?._jevBinding;
+    if (jevBinding && (jevBinding.documentToken !== _axDocumentToken()
+        || window.__wb_jev_validate?.(jevBinding) !== true)) {
+      sendResponse({ success: false, noDispatch: true, dispatched: false, staleJevTarget: true,
+        error: 'The observed target or form context changed. Read the page again before acting.' });
+      return;
+    }
+
+    if (location.hostname === 'web.whatsapp.com'
+        && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
+      window.__wb_update_native_chat_owner?.(msg.params?._nativeChatOwner || '', msg.params?._nativeChatPendingRestore || null);
+    }
+
+    if (location.hostname === 'web.telegram.org' && /^\/k\/?$/.test(location.pathname)
+        && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
+      _setNativeTelegramReadOwner(msg.params?._nativeChatOwner || '');
+    }
+
     const handlers = {
+      'jev_validate_target': () => ({ success: !!jevBinding }),
       'get_page_info': () => getPageInfo(msg.params || {}),
-      'get_page_info_cdp': () => getPageInfoFull(msg.params || {}),
+      'get_page_info_cdp': () => ({ ...getPageInfoFull(msg.params || {}), tableCount: document.querySelectorAll('table').length }),
       'get_interactive_elements': () => getInteractiveElements(),
       'get_interactive_elements_cdp': () => getInteractiveElementsFull(),
       'get_file_input_targets': () => getFileInputTargets(),
@@ -4551,10 +7465,22 @@
       'release_dispatch_binding': () => _releaseDispatchBinding(msg.params || {}),
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
       'consume_message_recipient_dispatch_binding': () => _consumeMessageRecipientDispatchBinding(msg.params || {}),
+      'attach_message_recipient_bound_upload': () => _attachMessageRecipientBoundUpload(msg.params || {}, actionDeadlineExpired),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
       'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
+      'observe_chat': () => {
+        if (typeof window.__wb_observe_chat_dom !== 'function') {
+          return { success: false, error: 'chat-observation.js not injected' };
+        }
+        const params = msg.params && typeof msg.params === 'object' ? msg.params : {};
+        const probe = _probeMessageRecipientGuard({ ...params, tool: 'observe_active_conversation', args: {} });
+        const observation = window.__wb_observe_chat_dom({ ...params, probe });
+        const draft = _nativeChatDraftCurrent(params, null, true);
+        return { ...observation, ...(draft ? (draft.waitingForLatest
+          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}) };
+      },
       'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
       'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),
       'extract_data': () => extractData(msg.params || {}),
@@ -4567,6 +7493,7 @@
         try {
           return { success: true, started: startAttentionFlash() };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error?.message || String(error) };
         }
       },
@@ -4575,6 +7502,7 @@
           stopAttentionFlash();
           return { success: true };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error?.message || String(error) };
         }
       },
@@ -4600,9 +7528,11 @@
         let dispatched = false;
         try {
           const fn = new Function(msg.params.code);
+          window.__wbPageMonitor?.beforeLocalDispatch();
           dispatched = true;
           return { success: true, dispatched: true, result: fn() };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           const errMsg = (e && e.message) || String(e);
           const isCspBlock =
             (e && e.name === 'EvalError') ||
@@ -4671,13 +7601,17 @@
             const prepared = await window.__wb_expand_gmail_conversation_for_read(ref_id);
             conversationAutoExpanded = prepared?.attempted === true && prepared?.expanded === true;
           }
+          const tree = window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision);
+          const jev = window.__wb_jev_snapshot?.();
           return {
-            ...window.__generateAccessibilityTree(filter, maxDepth, maxChars, ref_id, page, tree_revision),
+            ...tree,
+            ...(jev ? { _jevSnapshot: { ...jev, documentToken, pageUrl: refScopeUrl } } : {}),
             ...(conversationAutoExpanded ? { conversationAutoExpanded: true } : {}),
             documentToken,
             refScopeUrl,
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { error: 'Failed to build accessibility tree: ' + (e && e.message || String(e)) };
         }
       },
@@ -4701,6 +7635,7 @@
               }
             : { success: true };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, error: e?.message || String(e) };
         }
       },
@@ -4728,6 +7663,7 @@
             refScopeUrl: location.href,
           };
         } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
           return { success: false, error: error?.message || String(error) };
         }
       },
@@ -4794,8 +7730,11 @@
           const canonicalTargetName = _axCanonicalName(el);
           const targetName = canonicalTargetName || _axAccessibleName(el);
           if (!_isFullyVisibleForInteraction(el)) {
-            try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+            try {
+              _scrollElementIntoClearView(el);
+            } catch {}
           }
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
           try { el.focus({ preventScroll: true }); } catch {}
           const rect = el.getBoundingClientRect();
           if (!el.isConnected || rect.width < 1 || rect.height < 1) {
@@ -4910,6 +7849,7 @@
                 messageDispatched: false,
                 messageRecipientGuard: true,
                 reasonCode: recipientValidation.reasonCode,
+                ...(recipientValidation.nativeChatReadRepair ? { nativeChatReadRepair: recipientValidation.nativeChatReadRepair } : {}),
               });
             }
           }
@@ -4926,8 +7866,38 @@
               { deadlineExpired: true, retryable: true },
             );
           }
-          dispatched = true;
-          const filePickerGuard = clickWithoutNativeFilePicker(() => el.click());
+          if (msg.params?._bidiPrepare) {
+            return {
+              ...prepareBidiTarget(el, msg.params._bidiPrepare),
+              ...(nativeCheckable ? {
+                checkable: {
+                  inputType,
+                  checkedBefore,
+                  desiredChecked: inputType === 'radio' ? true : !checkedBefore,
+                  checkboxIdentity: _axCheckboxIdentity(el, ref_id),
+                },
+              } : {}),
+              _filePickerGuardId: clickWithoutNativeFilePicker(() => {}).guardId,
+            };
+          }
+          const syntheticClickStartedAt = Date.now();
+          const syntheticClickDispatchStartedAt = performance.now();
+          let nativeWhatsappRepairSnapshot = null;
+          let nativeTelegramReadRecord = null;
+          const filePickerGuard = withLocalPageDispatch(() => {
+            if (msg.params?._nativeTelegramReadRepairRequired === true) {
+              nativeTelegramReadRecord = _consumeNativeTelegramRead(msg.params,el);
+              if (!nativeTelegramReadRecord || actionDeadlineExpired()) return {nativeTelegramReadBlocked:true};
+            }
+            nativeWhatsappRepairSnapshot = window.__wb_native_whatsapp_repair_snapshot?.(el) || null;
+            window.__wb_prepare_native_chat_contact?.(el);
+            dispatched = true;
+            return clickWithoutNativeFilePicker(() => el.click());
+          });
+          const syntheticClickDispatchMs = Math.max(0, performance.now() - syntheticClickDispatchStartedAt);
+          if (filePickerGuard.nativeTelegramReadBlocked) return failure(
+            'The native Telegram profile preparation changed. Re-observe the current chat and choose its exact native read-only control.',
+            {reasonCode:'native_telegram_read_preparation_stale'});
           if (filePickerGuard.blocked) {
             return failure(
               filePickerBlockedResponse(filePickerGuard.blocked, targetName || '').error,
@@ -4950,8 +7920,13 @@
             const resp = {
               success: true,
               method: 'click_ax',
+              ...(window.__wb_native_whatsapp_repair_matches?.(nativeWhatsappRepairSnapshot)
+                ? { _nativeWhatsappReadRepair: true } : {}),
+              ...(_nativeTelegramReadStillCurrent(nativeTelegramReadRecord) ? {_nativeTelegramReadRepair:true} : {}),
               ref_id,
               tag,
+              _syntheticClickStartedAt: syntheticClickStartedAt,
+              _syntheticClickDispatchMs: syntheticClickDispatchMs,
               rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
               ...(targetContext ? { targetContext } : {}),
               ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}),
@@ -5045,6 +8020,7 @@
                 try {
                   resolve(buildResponse());
                 } catch (e) {
+                  if (e?.code === 'page_feedback_pending') throw e;
                   resolve(failure(e && e.message || String(e)));
                 }
               }, responseDelayMs);
@@ -5052,6 +8028,7 @@
           }
           return buildResponse();
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
       },
@@ -5098,8 +8075,9 @@
             return failure(`set_checked only supports native input[type="checkbox"] controls; ${ref_id} resolved to ${tag || 'unknown'}${inputType ? `[type="${inputType}"]` : ''}.`);
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
+          window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
           try { el.focus({ preventScroll: true }); } catch {}
           if (actionDeadlineExpired()) return deadlineFailure();
           const rect = el.getBoundingClientRect();
@@ -5140,8 +8118,10 @@
             };
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          dispatched = true;
-          el.click();
+          withLocalPageDispatch(() => {
+            dispatched = true;
+            el.click();
+          });
           if (actionDeadlineExpired()) return deadlineFailure();
           await new Promise(resolve => setTimeout(resolve, SET_FIELD_VERIFY_DELAY_MS));
           if (actionDeadlineExpired()) return deadlineFailure();
@@ -5175,8 +8155,20 @@
             }),
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
+      },
+      'bidi_prepare_upload': () => {
+        const params = msg.params || {};
+        let matches;
+        try { matches = document.querySelectorAll(params.selector); } catch { return { success: false, dispatched: false, noDispatch: true, error: 'Invalid file selector' }; }
+        if (matches.length !== 1 || matches[0].tagName !== 'INPUT' || matches[0].type !== 'file' || matches[0].disabled) {
+          return { success: false, dispatched: false, noDispatch: true, error: 'Choose one enabled file input', ambiguous: matches.length > 1, matchCount: matches.length };
+        }
+        const typeCheck = globalThis.__wbFileUploadPolicy?.validateUploadFile(matches[0].getAttribute('accept'), params);
+        if (!typeCheck?.success) return typeCheck || { success: false, dispatched: false, noDispatch: true, error: 'The file type validator is unavailable.' };
+        return prepareBidiTarget(matches[0], params._bidiPrepare);
       },
       'type_ax': async () => {
         let dispatched = false;
@@ -5207,9 +8199,9 @@
             return failure(`ref_id ${ref_id} not found. Re-read the accessibility tree to get fresh ids.`, { suggestions });
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.focus({ preventScroll: true }); } catch {}
+          try { _withTypingPreparation('focus', el, () => el.focus({ preventScroll: true })); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'type_ax');
           const typeRect = (() => {
@@ -5219,32 +8211,20 @@
             } catch { return null; }
           })();
           const fieldMeta = _fieldMeta(el);
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'fresh_tree', retryable: false },
+          );
+          if (msg.params?._bidiPrepare && el.tagName !== 'SELECT') {
+            if (!_isTypeableElement(el)) return failure('Target is not editable');
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
+          }
           let previous = '';
           let method = '';
           let selectExpected = null;
           if (el.isContentEditable) {
-            if (actionDeadlineExpired()) return deadlineFailure();
-            dispatched = true;
-            previous = _editableTextValue(el);
-            if (clear) {
-              try {
-                const sel = window.getSelection();
-                const r = document.createRange();
-                r.selectNodeContents(el);
-                sel.removeAllRanges();
-                sel.addRange(r);
-                if (actionDeadlineExpired()) return deadlineFailure();
-                document.execCommand('delete');
-              } catch {}
-            }
-            if (actionDeadlineExpired()) return deadlineFailure();
-            try { document.execCommand('insertText', false, text); } catch {
-              if (actionDeadlineExpired()) return deadlineFailure();
-              el.textContent = (clear ? '' : previous) + text;
-              if (actionDeadlineExpired()) return deadlineFailure();
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            method = 'type_ax_contenteditable';
+            const native = await _insertContentEditableText(el, text, !!clear, actionDeadlineExpired);
+            return { ...native, ref_id, rect: typeRect, fieldMeta };
           } else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
             if (el.tagName === 'INPUT') {
               const inputType = (el.type || 'text').toLowerCase();
@@ -5268,6 +8248,7 @@
                 return failure(`No <option> matching "${text}" in select ref_id ${ref_id}.`);
               }
               if (actionDeadlineExpired()) return deadlineFailure();
+              window.__wbPageMonitor?.beforeLocalDispatch();
               dispatched = true;
               const selSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')?.set;
               if (selSetter) selSetter.call(el, match.value); else el.value = match.value;
@@ -5279,6 +8260,7 @@
               method = 'type_ax_select';
             } else {
               if (actionDeadlineExpired()) return deadlineFailure();
+              window.__wbPageMonitor?.beforeLocalDispatch();
               dispatched = true;
               previous = el.value || '';
               if (clear) el.value = '';
@@ -5305,28 +8287,21 @@
           if (!el.isConnected) {
             return failure(
               `ref_id ${ref_id} was replaced while the value was being typed. Re-read the accessibility tree and retry with the current field ref_id.`,
-              { ref_id, verified: false, recoveryRequired: 'fresh_tree', failureScope: `field-value:${ref_id}`, retryable: false, fieldMeta },
+              { ref_id, verified: false, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false, fieldMeta },
             );
           }
-          let actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          let verified = selectExpected !== null
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
+          );
+          const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verified = selectExpected !== null
             ? actual === selectExpected
-            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable);
-          let fallbackAttempted = false;
-          if (!verified && selectExpected === null) {
-            if (actionDeadlineExpired()) return deadlineFailure();
-            fallbackAttempted = await _retryFieldWithExecCommand(
-              el,
-              clear ? text : previous + text,
-              actionDeadlineExpired,
-            );
-            if (actionDeadlineExpired()) return deadlineFailure();
-            actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-            verified = _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable);
-          }
+            : _setFieldValueMatches(actual, previous, text, !!clear, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
+          const fallbackAttempted = false;
           if (!verified) {
             return failure(
-              'The field value did not exactly match the requested text after the page settled. Re-read the field and retry with a fresh ref_id.',
+              'The field value did not exactly match the requested text after the page settled. Repeat the original replacement text and target for readback-only recovery, or restore the editor before another write.',
               {
                 method,
                 ref_id,
@@ -5335,7 +8310,7 @@
                 actual: actual.slice(0, 200),
                 fieldMeta,
                 fallbackAttempted,
-                recoveryRequired: 'fresh_tree',
+                recoveryRequired: 'verify_or_restore_field',
                 failureScope: `field-value:${ref_id}`,
                 retryable: false,
               },
@@ -5347,17 +8322,25 @@
             method: fallbackAttempted ? 'type_ax_execcommand_fallback' : method,
             ref_id,
             rect: typeRect,
-            ...(selectExpected !== null ? { value: actual } : {}),
+            ...(selectExpected !== null ? {
+              value: actual,
+              ...(el.selectedOptions?.length === 1
+                ? { selectedText: String(el.selectedOptions[0].textContent || '').replace(/\s+/g, ' ').trim() } : {}),
+            } : {}),
             fieldMeta,
             fallbackAttempted,
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
         }
       },
       'set_field': async () => {
         let dispatched = false;
         let submissionDispatched = false;
+        let submissionBlockedBeforeDispatch = false;
+        let submissionBlockReason = '';
+        let nativeDraftBinding = null;
         const failure = (error, extra = {}) => ({
           success: false,
           error,
@@ -5388,9 +8371,19 @@
           const el = window.__wb_ax_lookup(ref_id);
           if (!el) return failure(`ref_id ${ref_id} not found. Re-read the accessibility tree.`);
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          const recoveringDraft = msg.params?._nativeChatDraftBinding
+            ? _nativeChatDraftCurrent(msg.params, el) : null;
+          if (msg.params?._nativeChatDraftBinding && !recoveringDraft) return failure(
+            'The owned draft changed before recovery. Observe the conversation and reconcile the remaining draft.',
+            { reasonCode:'native_chat_draft_changed', submitted:false, submissionDispatched:false });
+          const preparedRecipient = msg.params?._nativeChatDraftPreparation === true
+            ? _messageRecipientDispatchBindings.get(String(msg.params?.messageRecipientDispatchBinding?.token || ''))
+            : null;
+          const originalRecipient = preparedRecipient
+            ? { ...preparedRecipient, nativeDraftOwnInputs:{ el, count:0 } } : null;
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.focus({ preventScroll: true }); } catch {}
+          try { _withTypingPreparation('focus', el, () => el.focus({ preventScroll: true })); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           showAgentWorkingTarget(el, 'set_field');
           const rect = (() => {
@@ -5417,35 +8410,32 @@
           } else if (!el.isContentEditable && el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') {
             return failure(`ref_id ${ref_id} is not a text field (tag=${el.tagName}). set_field works on input/textarea/contenteditable only.`);
           }
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
+            { ref_id, verified: false, fieldMeta: _fieldMeta(el), recoveryRequired: 'fresh_tree', retryable: false },
+          );
+          if (msg.params?._bidiPrepare) {
+            if (submit && msg.params.messageRecipientGuardRequired) {
+              const validation = _consumeMessageRecipientDispatchBinding(msg.params, el);
+              if (validation.success !== true) return validation;
+            }
+            return prepareBidiTarget(el, msg.params._bidiPrepare);
+          }
           let prevValue = '';
+          let pageHandledBeforeInput = false;
+          let pageHandledPaste = false;
           if (actionDeadlineExpired()) return deadlineFailure();
+          window.__wbPageMonitor?.beforeLocalDispatch();
           dispatched = true;
-          if (el.isContentEditable) {
+          if (recoveringDraft) {
             prevValue = _editableTextValue(el);
-            if (clear) {
-              try {
-                if (actionDeadlineExpired()) return deadlineFailure();
-                const sel = window.getSelection();
-                const r = document.createRange();
-                r.selectNodeContents(el);
-                sel.removeAllRanges();
-                sel.addRange(r);
-                if (actionDeadlineExpired()) return deadlineFailure();
-                document.execCommand('delete');
-                if (actionDeadlineExpired()) return deadlineFailure();
-              } catch {}
-            }
-            try {
-              if (actionDeadlineExpired()) return deadlineFailure();
-              document.execCommand('insertText', false, text);
-              if (actionDeadlineExpired()) return deadlineFailure();
-            } catch {
-              if (actionDeadlineExpired()) return deadlineFailure();
-              el.textContent = (clear ? '' : prevValue) + text;
-              if (actionDeadlineExpired()) return deadlineFailure();
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-              if (actionDeadlineExpired()) return deadlineFailure();
-            }
+          } else if (el.isContentEditable) {
+            prevValue = _editableTextValue(el);
+            const native = await _insertContentEditableText(el, text, clear, actionDeadlineExpired, originalRecipient?.nativeDraftOwnInputs);
+            if (!native.success) return { ...native, ref_id, rect, fieldMeta: _fieldMeta(el) };
+            dispatched = native.dispatched === true;
+              pageHandledBeforeInput = native.pageHandledBeforeInput === true;
+              pageHandledPaste = native.pageHandledPaste === true;
           } else {
             prevValue = el.value || '';
             const proto = el.tagName === 'TEXTAREA'
@@ -5472,29 +8462,22 @@
               {
                 ref_id,
                 verified: false,
-                recoveryRequired: 'fresh_tree',
+                recoveryRequired: 'verify_or_restore_field',
                 failureScope: `field-value:${ref_id}`,
                 retryable: false,
               },
             );
           }
           const fieldMeta = _fieldMeta(el);
-          let actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-          let verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
-          let fallbackAttempted = false;
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
+            'The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
+          );
+          const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null));
+          const fallbackAttempted = false;
           let nativeSubmitAttempted = false;
           let submissionOutcomeUnknown = false;
-          if (!verified) {
-            fallbackAttempted = true;
-            await _retryFieldWithExecCommand(
-              el,
-              (clear ? '' : prevValue) + text,
-              actionDeadlineExpired,
-            );
-            if (actionDeadlineExpired()) return deadlineFailure();
-            actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
-            verified = _setFieldValueMatches(actual, prevValue, text, clear, el.isContentEditable);
-          }
 
           if (submit && verified) {
             if (actionDeadlineExpired()) return deadlineFailure();
@@ -5521,7 +8504,9 @@
                 const result = { dispatched: false, completedWithinDeadline: false };
                 if (actionDeadlineExpired()) return result;
                 const eventInit = { key, code: key, keyCode, bubbles: true, cancelable: true };
+                window.__wbPageMonitor?.beforeLocalDispatch();
                 result.dispatched = true;
+                if (key === 'Enter') submissionDispatched = true;
                 el.dispatchEvent(new KeyboardEvent('keydown', eventInit));
                 const expiredAfterKeydown = actionDeadlineExpired();
                 if (!expiredAfterKeydown && includeKeypress) {
@@ -5539,15 +8524,33 @@
               const usesNativeSubmit = _setFieldUsesNativeSubmit(isCombobox, el.isContentEditable, form);
               let submissionObserved = false;
               let submissionCancelled = false;
+              if (recoveringDraft) {
+                if (!_nativeChatDraftCurrent(msg.params, el)) return failure(
+                  'The owned draft changed during action preparation. Observe it again before sending.',
+                  { reasonCode:'native_chat_draft_changed', submitted:false, submissionDispatched:false });
+                _disposeNativeChatDraft(msg.params._nativeChatDraftBinding.token);
+              }
               if (msg.params?.messageRecipientGuardRequired === true) {
                 const recipientValidation = _consumeMessageRecipientDispatchBinding(msg.params, el);
                 if (recipientValidation.success !== true) {
+                  submissionBlockedBeforeDispatch = true;
+                  submissionBlockReason = recipientValidation.reasonCode;
+                  nativeDraftBinding = !pageHandledBeforeInput
+                    ? _rememberNativeChatDraft(msg.params, el, originalRecipient) : null;
                   return failure(recipientValidation.error, {
                     verified: true,
                     submitted: false,
                     messageDispatched: false,
+                    submissionDispatched: false,
+                    submissionOutcomeUnknown: false,
+                    submissionBlockedBeforeDispatch: true,
+                    submissionBlockReason,
+                    draftMutationDispatched: dispatched,
+                    outcomeUnknown: dispatched,
+                    ...(nativeDraftBinding ? { _nativeChatDraftBinding: nativeDraftBinding } : {}),
                     messageRecipientGuard: true,
                     reasonCode: recipientValidation.reasonCode,
+                    ...(recipientValidation.nativeChatReadRepair ? { nativeChatReadRepair: recipientValidation.nativeChatReadRepair } : {}),
                   });
                 }
               }
@@ -5611,13 +8614,19 @@
               } finally {
                 removeSubmitObserver();
               }
-            } catch {
+            } catch (error) {
               submissionOutcomeUnknown = true;
+              if (error?.code === 'page_feedback_pending' && !submissionDispatched
+                  && !pageHandledBeforeInput) {
+                submissionBlockedBeforeDispatch = true;
+                submissionBlockReason = 'page_feedback_pending';
+                nativeDraftBinding = _rememberNativeChatDraft(msg.params, el, originalRecipient);
+              }
             }
           }
           if (!verified) {
             return failure(
-              'The field value did not exactly match the requested text after the page settled. Re-read the field and retry with a fresh ref_id.',
+              'The field value did not exactly match the requested text after the page settled. Repeat the original replacement text and target for readback-only recovery, or restore the editor before another write.',
               {
                 method: 'set_field',
                 ref_id,
@@ -5626,7 +8635,7 @@
                 actual: actual.slice(0, 200),
                 fieldMeta,
                 fallbackAttempted,
-                recoveryRequired: 'fresh_tree',
+                recoveryRequired: 'verify_or_restore_field',
                 failureScope: `field-value:${ref_id}`,
                 retryable: false,
               },
@@ -5634,7 +8643,10 @@
           }
           return {
             success: true,
+            dispatched,
             method: 'set_field',
+            ...(pageHandledBeforeInput ? { dispatched: true, pageHandledBeforeInput: true, nativeBeforeInputCancelled: true } : {}),
+            ...(pageHandledPaste ? { pageHandledPaste: true } : {}),
             ref_id,
             rect,
             verified: true,
@@ -5642,9 +8654,120 @@
             fallbackAttempted,
             submitted: nativeSubmitAttempted || undefined,
             outcomeUnknown: submissionOutcomeUnknown || undefined,
+            ...(submit ? { submissionDispatched, submissionBlockedBeforeDispatch } : {}),
+            ...(submissionBlockReason ? { submissionBlockReason } : {}),
+            ...(nativeDraftBinding ? { _nativeChatDraftBinding: nativeDraftBinding } : {}),
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return failure(e && e.message || String(e));
+        }
+      },
+      // Private native-clear receipts do not authorize another input command.
+      'ax_prepare_native_chat_clear': () => _prepareNativeChatClear(msg.params?.ref_id),
+      'ax_verify_native_chat_clear': () => _verifyNativeChatClear(msg.params?.ref_id, msg.params?.token),
+      'ax_release_native_chat_clear': () => { _releaseNativeChatClear(msg.params?.token); return { success: true }; },
+      'ax_verify_field_value': () => {
+        try {
+          const { ref_id, expected, appendText } = msg.params || {};
+          if (typeof ref_id !== 'string' || typeof expected !== 'string') {
+            return { success: false, verified: false, error: 'ref_id and expected are required' };
+          }
+          if (typeof window.__wb_ax_lookup !== 'function') return { success: false, verified: false, error: 'accessibility-tree.js not injected' };
+          const el = window.__wb_ax_lookup(ref_id);
+          if (!el || !el.isConnected) return { success: false, verified: false, error: `ref_id ${ref_id} is stale` };
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null)
+            return { success: false, verified: false, error: 'The DraftJS editor structure cannot establish its exact document text.' };
+          const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
+          const verifiesAppend = el.isContentEditable && typeof appendText === 'string';
+          const expectedPrefix = verifiesAppend
+            ? expected.slice(0, expected.length - appendText.length)
+            : '';
+          return {
+            success: true,
+            verified: verifiesAppend && !expected.endsWith(appendText)
+              ? false
+              : _setFieldValueMatches(
+                  actual,
+                  expectedPrefix,
+                  verifiesAppend ? appendText : expected,
+                  !verifiesAppend,
+                  el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null),
+                ),
+            actual: actual.slice(0, 200),
+            fieldMeta: _fieldMeta(el),
+          };
+        } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
+          return { success: false, verified: false, error: error && error.message || String(error) };
+        }
+      },
+      'field_value_digest': async () => {
+        try {
+          const { ref_id, selector, expected, focused } = msg.params || {};
+          let el = null;
+          if (typeof ref_id === 'string' && ref_id) {
+            if (typeof window.__wb_ax_lookup !== 'function') {
+              return { success: false, error: 'accessibility-tree.js not injected' };
+            }
+            el = window.__wb_ax_lookup(ref_id);
+          } else if (typeof selector === 'string' && selector.trim()) {
+            const queryDeep = (root) => {
+              const match = root.querySelector(selector.trim());
+              if (match) return match;
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let node = walker.currentNode;
+              while (node) {
+                if (node.shadowRoot) {
+                  const nested = queryDeep(node.shadowRoot);
+                  if (nested) return nested;
+                }
+                node = walker.nextNode();
+              }
+              return null;
+            };
+            el = queryDeep(document);
+          } else if (focused === true) {
+            // Focused-field proof path for selectorless type_text({text}).
+            // Digests the deep active element so a verified focused write can
+            // bind to live field metadata. Failures still carry the live
+            // documentToken/refScopeUrl via the dispatcher scope wrap, so the
+            // agent's live-scope check can use this as a document oracle.
+            try {
+              let active = document.activeElement;
+              while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+              el = active && active !== document.body && active !== document.documentElement ? active : null;
+            } catch { el = null; }
+            if (!el || !el.isConnected) return { success: false, error: 'no focused editable element' };
+          } else {
+            return { success: false, error: 'ref_id or selector is required' };
+          }
+          if (!el || !el.isConnected) return { success: false, error: 'field is stale or unavailable' };
+          const tag = String(el.tagName || '').toUpperCase();
+          if (!(el.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA')) {
+            return { success: false, error: 'target is not a text field' };
+          }
+          if (isDraftJsEditor(el) && readDraftJsText(el) === null)
+            return { success: false, verified: false, error: 'The DraftJS editor structure cannot establish its exact document text.' };
+          const value = String(el.isContentEditable ? _editableTextValue(el) : (el.value || ''));
+          if (!globalThis.crypto?.subtle) return { success: false, error: 'SHA-256 is unavailable' };
+          const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+          const valueSha256 = [...new Uint8Array(digest)]
+            .map(byte => byte.toString(16).padStart(2, '0'))
+            .join('');
+          return {
+            success: true,
+            ...(typeof expected === 'string' ? {
+              verified: _setFieldValueMatches(value, '', expected, true, el.isContentEditable, (readProseMirrorText(el) !== null || readDraftJsText(el) !== null || readEmptyCaretText(el) !== null)),
+            } : {}),
+            valueLength: value.length,
+            valueSha256,
+            fieldMeta: _fieldMeta(el),
+            stableSelector: _stableFieldSelector(el),
+          };
+        } catch (error) {
+          if (error?.code === 'page_feedback_pending') throw error;
+          return { success: false, error: error && error.message || String(error) };
         }
       },
       // ── hover ──────────────────────────────────────────────────────────────
@@ -5681,14 +8804,16 @@
             return { success: false, error: `ref_id ${ref_id} not found.`, suggestions };
           }
           if (actionDeadlineExpired()) return deadlineFailure();
-          try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {}
+          try { _scrollElementIntoClearView(el); } catch (error) { if (error?.code === 'page_feedback_pending') throw error; }
           if (actionDeadlineExpired()) return deadlineFailure();
           const r = el.getBoundingClientRect();
           const cx = r.left + r.width / 2;
           const cy = r.top + r.height / 2;
+          if (msg.params?._bidiPrepare) return prepareBidiTarget(el, msg.params._bidiPrepare);
           const eventInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
           const dispatchHover = (EventType, type) => {
             if (actionDeadlineExpired()) return false;
+            window.__wbPageMonitor?.beforeLocalDispatch();
             dispatched = true;
             el.dispatchEvent(new EventType(type, eventInit));
             return !actionDeadlineExpired();
@@ -5718,6 +8843,7 @@
             note: 'Synthetic hover (Firefox has no CDP). isTrusted=false — sites that gate hover-reveal on event.isTrusted will not respond. Re-read the tree to confirm a menu/tooltip appeared.',
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, error: e && e.message || String(e) };
         }
       },
@@ -5790,6 +8916,7 @@
             if (actionDeadlineExpired()) return false;
             const ev = mk(type, x, y, target);
             if (ev) {
+              window.__wbPageMonitor?.beforeLocalDispatch();
               dispatched = true;
               try { target.dispatchEvent(ev); } catch {}
             }
@@ -5798,6 +8925,7 @@
           const dispatchCleanup = (type, x, y, target) => {
             const ev = mk(type, x, y, target);
             if (!ev) return;
+            window.__wbPageMonitor?.beforeLocalDispatch();
             dispatched = true;
             try { target.dispatchEvent(ev); } catch {}
           };
@@ -5858,6 +8986,7 @@
             note: 'Synthetic drag (Firefox has no CDP). isTrusted=false — some sites with strict event verification will not respond. Re-read the tree to confirm the order/position changed. If nothing moved, the site needs Chrome (CDP-trusted) drag.',
           };
         } catch (e) {
+          if (e?.code === 'page_feedback_pending') throw e;
           return { success: false, error: e && e.message || String(e) };
         }
       },
@@ -5986,16 +9115,57 @@
       return;
     }
 
-    const result = handler();
+    // Readback probes double as live document-identity oracles: the agent
+    // uses their token to tell a same-document route change (keep text
+    // guards) from a full navigation no AX scope ever observed (drop stale
+    // debt). Attach on every return path, including failures.
+    const withLiveDocumentScope = (value) => {
+      finishPageAction();
+      if ((msg.action === 'field_value_digest' || msg.action === 'ax_verify_field_value')
+          && value && typeof value === 'object') {
+        try {
+          if (!value.documentToken) value.documentToken = _axDocumentToken();
+          if (!value.refScopeUrl) value.refScopeUrl = location.href;
+        } catch { /* identity is best-effort; never break the response */ }
+      }
+      return value;
+    };
+
+    let result;
+    let finishPageAction = () => {};
+    try {
+      finishPageAction = window.__wbPageMonitor?.beginContentAction(msg.action, msg.params || {}) || finishPageAction;
+      result = handler();
+    } catch (err) {
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true, ...(err.pagePreparationVeto ? { preparationVeto: err.pagePreparationVeto } : {}) } : {}),
+        error: `${msg.action} failed: ${err?.message || String(err)}`,
+      }));
+      return;
+    }
     if (result instanceof Promise) {
       // Always settle sendResponse — a rejecting handler (e.g. a throwing
       // DOM API) must not leave the caller's await hanging forever.
-      result.then(sendResponse, (err) => {
-        sendResponse({ success: false, error: `${msg.action} failed: ${err?.message || String(err)}` });
-      });
+      result.then(
+        (value) => sendResponse(withLiveDocumentScope(value)),
+        (err) => sendResponse(withLiveDocumentScope({
+          success: false,
+          ...(err?.code === 'page_feedback_pending' ? { dispatched: err.dispatched === true, noDispatch: err.dispatched !== true, pageFeedbackPending: true, outcomeUnknown: err.dispatched === true, ...(err.pagePreparationVeto ? { preparationVeto: err.pagePreparationVeto } : {}) } : {}),
+          error: `${msg.action} failed: ${err?.message || String(err)}`,
+        })),
+      );
       return true; // async
     }
-    sendResponse(result);
+    if (result === undefined || result === null) {
+      sendResponse(withLiveDocumentScope({
+        success: false,
+        noResult: true,
+        error: `${msg.action} returned no result (handler produced no payload).`,
+      }));
+      return;
+    }
+    sendResponse(withLiveDocumentScope(result));
   });
 
   // ─── Tab attention flash ────────────────────────────────────────────

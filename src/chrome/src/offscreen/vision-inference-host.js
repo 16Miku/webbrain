@@ -22,6 +22,9 @@ let visionPreloadKey = '';
 let visionPreloadLifecycle = null;
 const timedOutVisionRequests = new Map();
 const WORKER_INITIALIZATION_TIMEOUT_MS = 15_000;
+const VISION_WORKER_RECYCLE_COOLDOWN_MS = 30_000;
+// Start one full window in the past so the first signal always recycles.
+let lastVisionWorkerRecycleAt = -VISION_WORKER_RECYCLE_COOLDOWN_MS;
 const VISION_INFERENCE_TIMEOUT_MS = 90_000;
 const CANCELLATION_GRACE_PERIOD_MS = 5_000;
 const DOWNLOAD_STALL_TIMEOUT_MS = 2 * 60_000;
@@ -328,25 +331,37 @@ function isActiveTextTransfer(state) {
   return TEXT_TRANSFER_STATUSES.has(String(state?.status || '').toLowerCase());
 }
 
-async function probeExistingTextWorkerStatus(modelId) {
+async function probeExistingTextWorkerStatus(modelId = '', options = {}) {
   try {
+    const payload = modelId ? { modelId, ...options } : { ...options };
     if (isBitgpuTextModel(modelId)) {
       if (!bonsaiWorker) return null;
-      return await sendBonsaiWorkerMessage('text-download-status', { modelId });
+      return await sendBonsaiWorkerMessage('text-download-status', payload);
     }
     if (!visionWorker) return null;
-    return await sendVisionWorkerMessage('text-download-status', { modelId });
+    return await sendVisionWorkerMessage('text-download-status', payload);
   } catch {
     return null;
   }
 }
 
 async function findActiveTextTransfer(requestedModel) {
-  const otherModel = isBitgpuTextModel(requestedModel)
-    ? WEBGPU_LFM25_MODEL_ID
-    : WEBGPU_BONSAI27_MODEL_ID;
-  const other = await probeExistingTextWorkerStatus(otherModel);
-  return isActiveTextTransfer(other) ? other : null;
+  // Probe both runtimes: the other worker (Bonsai vs ONNX) and the requested
+  // worker itself for a different model. Probing only the other runtime misses
+  // same-worker transfers (e.g. ONNX A downloading while status for ONNX B is
+  // requested), leaving Settings with no Stop control for the running transfer.
+  const probes = isBitgpuTextModel(requestedModel)
+    ? [
+      probeExistingTextWorkerStatus('', { probeActive: true }),
+      probeExistingTextWorkerStatus(WEBGPU_BONSAI27_MODEL_ID, { probeActive: true }),
+    ]
+    : [
+      probeExistingTextWorkerStatus(WEBGPU_BONSAI27_MODEL_ID, { probeActive: true }),
+      probeExistingTextWorkerStatus('', { probeActive: true }),
+    ];
+  const results = await Promise.all(probes);
+  const transfers = results.filter(isActiveTextTransfer);
+  return transfers.find(state => state.status !== 'paused') || transfers[0] || null;
 }
 
 function startExclusiveTextDownload(message) {
@@ -437,7 +452,11 @@ async function sendTextWorkerMessage(modelId, type, payload = {}, { exclusive = 
 function defaultVisionWorkerTimeout(type) {
   if (type === 'init') return WORKER_INITIALIZATION_TIMEOUT_MS;
   if (type === 'chat') return VISION_INFERENCE_TIMEOUT_MS;
-  if (type === 'preload' || type === 'text-chat' || type === 'download-text' || type === 'start-download-text') return 0;
+  // Cache removal is serialized behind model work and can take longer than
+  // initialization. Keep its caller attached until the worker acknowledges
+  // completion (or fails), so provider fallback cannot miss a late deletion.
+  if (type === 'stop-text-download') return 0;
+  if (type === 'preload' || type === 'text-chat' || type === 'multimodal-text-chat' || type === 'download-text' || type === 'start-download-text') return 0;
   return WORKER_INITIALIZATION_TIMEOUT_MS;
 }
 
@@ -480,6 +499,23 @@ async function ensureVisionWorker() {
   visionWorker = worker;
   worker.addEventListener('message', event => {
     if (visionWorker !== worker) return;
+    // The worker asks for a fresh context when its WebGPU device dies:
+    // onnxruntime-web initializes its Dawn device once per worker lifetime,
+    // so no in-worker session rebuild can recover. Terminate and recreate;
+    // the next request re-initializes and reloads weights from the cache.
+    // Stale workers (already replaced) are ignored by the guard above.
+    if (event.data?.type === 'webgpu-device-dead') {
+      // A persistently poisoned GPU process would otherwise recycle (and
+      // reload ~2 GB into) every attempt; back off instead and surface errors
+      // until the window passes, then recycle on the next signal.
+      if (Date.now() - lastVisionWorkerRecycleAt < VISION_WORKER_RECYCLE_COOLDOWN_MS) return;
+      lastVisionWorkerRecycleAt = Date.now();
+      resetVisionWorker(deadlineError(
+        'webgpu_device_recreated',
+        `The WebGPU device died (${event.data?.reason || 'execution failure'}); the worker was recreated.`,
+      ));
+      return;
+    }
     settleVisionRequest(event.data);
   });
   worker.addEventListener('error', event => {
@@ -681,7 +717,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === 'webgpu-chat') {
-        sendResponse(await sendTextWorkerMessage(message.model, 'text-chat', {
+        const workerMessageType = message.runtime === 'onnx-vl'
+          ? 'multimodal-text-chat'
+          : 'text-chat';
+        sendResponse(await sendTextWorkerMessage(message.model, workerMessageType, {
           modelId: message.model,
           device: message.device,
           dtype: message.dtype,

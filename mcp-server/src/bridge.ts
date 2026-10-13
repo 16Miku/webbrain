@@ -19,6 +19,7 @@
 
 import { WebSocketServer, type WebSocket } from "ws";
 import { config } from "./config.js";
+import { BOT_MEMORY_CAPABILITY, validateTaskMemory, taskMemoryPrivateValues, redactTaskMemory, redactMemoryRunResponse } from "./task-memory.js";
 
 /** Actions already present in the extension's ALLOWED_BRIDGE_ACTIONS set. */
 export type BridgeAction =
@@ -35,6 +36,7 @@ export interface CloudSnapshot {
   task?: string;
   structured?: boolean;
   pendingInput?: {
+    promptKind?: string;
     clarifyId?: string;
     clarify_id?: string;
     question?: string;
@@ -58,6 +60,10 @@ interface Pending {
   resolve: (value: unknown) => void;
   reject: (reason: Error) => void;
   timer: NodeJS.Timeout;
+  protectedRequest?: boolean;
+  runId?: string;
+  memoryValues?: ReadonlySet<string>;
+  memoryStart?: boolean;
 }
 
 export class BridgeError extends Error {
@@ -100,6 +106,10 @@ export class WebBrainBridge {
   private extensionProtocol: number | null = null;
   private handshakenSocket: WebSocket | null = null;
   private waiters: Array<() => void> = [];
+  private memoryPrivateValues = new Set<string>();
+  private memoryProtectedRunIds = new Set<string>();
+  private memoryRunValues = new Map<string, ReadonlySet<string>>();
+  private protectedMemoryRequests = 0;
 
   async start(): Promise<void> {
     if (this.wss) return;
@@ -174,7 +184,7 @@ export class WebBrainBridge {
       });
 
       socket.on("error", (error) => {
-        log("socket error:", error instanceof Error ? error.message : String(error));
+        log("socket error:", redactTaskMemory(error instanceof Error ? error.message : String(error), this.memoryPrivateValues));
       });
     });
 
@@ -228,10 +238,20 @@ export class WebBrainBridge {
 
     if (msg.ok === false) {
       const status = typeof msg.status === "number" ? msg.status : undefined;
-      entry.reject(new BridgeError(String(msg.error || "Unknown bridge error"), status));
+      entry.reject(new BridgeError(String(redactMemoryRunResponse(msg.error || "Unknown bridge error", this.memoryPrivateValues,
+        this.memoryProtectedRunIds, entry.protectedRequest, { runValues: this.memoryRunValues, requestRunId: entry.runId, requestValues: entry.memoryValues })), status));
       return;
     }
-    entry.resolve(msg.result);
+    if (entry.memoryStart && msg.result && typeof msg.result === "object") {
+      const result = msg.result as Record<string, unknown>;
+      const runId = result.runId || result.run_id;
+      if (typeof runId === "string") {
+        this.memoryProtectedRunIds.add(runId);
+        if (entry.memoryValues) this.memoryRunValues.set(runId, new Set([...(this.memoryRunValues.get(runId) || []), ...entry.memoryValues]));
+      }
+    }
+    entry.resolve(redactMemoryRunResponse(msg.result, this.memoryPrivateValues, this.memoryProtectedRunIds,
+      entry.protectedRequest, { runValues: this.memoryRunValues, requestRunId: entry.runId, requestValues: entry.memoryValues }));
   }
 
   private failAllPending(error: Error): void {
@@ -280,9 +300,37 @@ export class WebBrainBridge {
     if (!socket || !this.isConnected()) {
       throw new BridgeError(
         "No WebBrain extension is connected. Open the browser, then set " +
-          "WebBrain → Settings → General → Advanced → MCP to " +
-          `ws://127.0.0.1:${config.bridgePort}${config.bridgePath} and enable it.`,
+          "WebBrain → Settings → Bridge to " +
+          `ws://127.0.0.1:${config.bridgePort}${config.bridgePath} and enable the MCP bridge.`,
       );
+    }
+
+    let memoryValues: ReadonlySet<string> | undefined;
+    if (payload.task_memory !== undefined || (action !== "cloud_run" && payload.taskMemory !== undefined)) {
+      throw new BridgeError("task_memory is supported only through the private cloud_run transport.", 400);
+    }
+    if (action === "cloud_run" && payload.taskMemory !== undefined) {
+      let memory;
+      try { memory = validateTaskMemory(payload.taskMemory); }
+      catch { throw new BridgeError("Invalid task_memory envelope.", 400); }
+      if (!this.capabilities().includes(BOT_MEMORY_CAPABILITY)) {
+        throw new BridgeError("Update the browser extension before starting a task with bot memory.", 409);
+      }
+      // Retain privacy through failed/late runs; never evict an old scope and
+      // then accidentally expose its data when status is queried again.
+      if (this.protectedMemoryRequests >= 256) {
+        throw new BridgeError("Private memory relay capacity reached. Restart the MCP server before starting another memory run.", 409);
+      }
+      this.protectedMemoryRequests += 1;
+      payload = { ...payload, taskMemory: memory };
+      memoryValues = taskMemoryPrivateValues(memory);
+      this.memoryPrivateValues.add(memory.callbackToken);
+      this.memoryPrivateValues.add(memory.callbackUrl);
+      if (typeof payload.runId === "string") {
+        this.memoryProtectedRunIds.add(payload.runId);
+        memoryValues = new Set([...(this.memoryRunValues.get(payload.runId) || []), ...memoryValues]);
+        this.memoryRunValues.set(payload.runId, memoryValues);
+      }
     }
 
     const id = this.nextId++;
@@ -301,7 +349,11 @@ export class WebBrainBridge {
         );
       }, responseTimeoutMs);
 
-      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer });
+      this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, timer,
+        runId: typeof payload.runId === "string" ? payload.runId : undefined,
+        memoryValues: memoryValues || (typeof payload.runId === "string" ? this.memoryRunValues.get(payload.runId) : undefined),
+        memoryStart: action === "cloud_run" && payload.taskMemory !== undefined,
+        protectedRequest: payload.taskMemory !== undefined || (typeof payload.runId === "string" && this.memoryProtectedRunIds.has(payload.runId)) });
 
       try {
         socket.send(frame);
@@ -310,7 +362,9 @@ export class WebBrainBridge {
         clearTimeout(timer);
         reject(
           new BridgeError(
-            `Failed to send '${action}': ${error instanceof Error ? error.message : String(error)}`,
+            `Failed to send '${action}': ${String(redactMemoryRunResponse(error instanceof Error ? error.message : String(error),
+              this.memoryPrivateValues, this.memoryProtectedRunIds, payload.taskMemory !== undefined,
+              { runValues: this.memoryRunValues, requestRunId: typeof payload.runId === "string" ? payload.runId : undefined, requestValues: memoryValues }))}`,
           ),
         );
       }
@@ -319,6 +373,10 @@ export class WebBrainBridge {
 
   async stop(): Promise<void> {
     this.failAllPending(new BridgeError("Bridge shutting down."));
+    this.memoryPrivateValues.clear();
+    this.memoryProtectedRunIds.clear();
+    this.memoryRunValues.clear();
+    this.protectedMemoryRequests = 0;
     if (this.socket) {
       try {
         this.socket.close(1001, "Server shutting down");

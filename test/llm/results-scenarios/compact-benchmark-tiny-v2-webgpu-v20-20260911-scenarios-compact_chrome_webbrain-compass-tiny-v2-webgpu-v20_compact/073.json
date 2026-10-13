@@ -1,0 +1,41 @@
+{
+  "id": "073",
+  "category": "cross-lingual",
+  "description": "Turkish user, English wiki article. Read + answer in Turkish.",
+  "mode": "ask",
+  "browser": "chrome",
+  "latencyMs": 23855,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "summary": "**Kapanış (closure)**, bir fonksiyonun **dış dünyadan başka bir bilgiye veya bir değişkeni** ile birlikte olup, **özelliklerini veya özel içeriklerini** kapsamına alan bir fonksiyon veya **dış dünyadan başka bir özellik veya değişkeni** olarak tanımlanır.\n\nÖzetle:\n\n- Bir fonksiyon **dış dünyadan başka bir özellik veya değişkeni** ile birlikte oluşturulur.\n- Bu özellikler ve değişkenler, fonksiyonun **dış dünyadan başka** kapsamına alınır.\n- Bu özellikler ve değişkenler, fonksiyonun **dış dünyadan başka** bir **düzenli bir içerik** olarak kullanılır.\n\nÖrneğin, bir fonksiyonun içinde bir **dünyadaki bir değişkeni** veya **dünyadan bir özellikini** alır ve bu özellikleri bir fonksiyonun içinde kullanır; bu durumu **closure** olarak adlarak edilir. Örneğin, `function outer(x) { let y = x; return function() { return y; }; }` içinde `y` bir closure olarak kullanılır."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "Kapanış (closure), bir fonksiyonun tanımlandığı leksik çevre ile birlikte paketlenmiş halidir — yani dış kapsamın değişkenlerine, o kapsam döndükten sonra bile erişebilir."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "done({summary:\"A closure is a function bundled with...\"})",
+        "reason": "User asked in Turkish — answer in Turkish."
+      }
+    ],
+    "successRubric": "Answer in the user's language. Read English source, translate gist into Turkish."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "ideal_name",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"summary\"><![CDATA[**Kapanış (closure)**, bir fonksiyonun **dış dünyadan başka bir bilgiye veya bir değişkeni** ile birlikte olup, **özelliklerini veya özel içeriklerini** kapsamına alan bir fonksiyon veya **dış dünyadan başka bir özellik veya değişkeni** olarak tanımlanır.\n\nÖzetle:\n\n- Bir fonksiyon **dış dünyadan başka bir özellik veya değişkeni** ile birlikte oluşturulur.\n- Bu özellikler ve değişkenler, fonksiyonun **dış dünyadan başka** kapsamına alınır.\n- Bu özellikler ve değişkenler, fonksiyonun **dış dünyadan başka** bir **düzenli bir içerik** olarak kullanılır.\n\nÖrneğin, bir fonksiyonun içinde bir **dünyadaki bir değişkeni** veya **dünyadan bir özellikini** alır ve bu özellikleri bir fonksiyonun içinde kullanır; bu durumu **closure** olarak adlarak edilir. Örneğin, `function outer(x) { let y = x; return function() { return y; }; }` içinde `y` bir closure olarak kullanılır.]]></param></function>",
+  "usage": {
+    "prompt_tokens": 8103,
+    "completion_tokens": 410,
+    "total_tokens": 8513
+  }
+}

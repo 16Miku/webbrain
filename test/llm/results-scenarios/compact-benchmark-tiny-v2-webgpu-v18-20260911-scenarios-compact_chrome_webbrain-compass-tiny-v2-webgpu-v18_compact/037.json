@@ -1,0 +1,47 @@
+{
+  "id": "037",
+  "category": "truncation-cascade",
+  "description": "read_page truncated; agent has the headers but the answer is below the fold. Use targeted extraction, not refetch.",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 7092,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t safely answer or fill in the rest of the document. The current page only shows the first few headings, and the text is truncated, so I can’t verify the exact wording of section 5. Please provide the section or the surrounding text, or tell me if you want me to read the full section from the page."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "scroll",
+      "args": {
+        "direction": "down",
+        "amount": 3000
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "read_page({})",
+        "reason": "Re-reading without scrolling won't reveal section 5."
+      },
+      {
+        "match": "fetch_url({url:\"https://www.example.com/long-doc\"})",
+        "reason": "Same URL."
+      }
+    ],
+    "successRubric": "Scroll down to bring section 5 into view, then read_page again. read_page is viewport-aware."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t safely answer or fill in the rest of the document. The current page only shows the first few headings, and the text is truncated, so I can’t verify the exact wording of section 5. Please provide the section or the surrounding text, or tell me if you want me to read the full section from the page.</param></function>",
+  "usage": {
+    "prompt_tokens": 9800,
+    "completion_tokens": 88,
+    "total_tokens": 9888
+  }
+}

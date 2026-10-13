@@ -78,6 +78,11 @@ automatic answers cannot authorize that third-party disclosure.
 ## Rules for contributors
 
 ### Adding a tool that READS page content
+`recall_memcode` returns user-account content from an external service. It is
+classified as both fixed-host network egress and untrusted content in both
+browser builds; the returned memory never enters the trusted local-memory
+system prompt.
+
 Add its name to `UNTRUSTED_CONTENT_TOOLS` in `permission-gate.js` (both builds).
 The exhaustiveness test will fail until every act-mode tool is classified.
 
@@ -192,3 +197,5 @@ These are conscious trade-offs, not oversights.
   page or prompt text (that approach was tried and removed — it was English-only
   and leaky). The gate is deterministic capability×origin with the human as the
   trust anchor.
+
+  _Last update: 10/11/2026_

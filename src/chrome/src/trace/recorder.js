@@ -13,6 +13,9 @@ import {
 } from './repair.js';
 import { createTraceStats, addTraceEvent, aggregateTraceRuns } from './stats.js';
 import { projectTraceEventData, projectTraceRun } from './privacy.js';
+import { toolOutcome } from './tool-outcome.js';
+import { feedbackRecordingPolicy, feedbackRunsToEvict, FEEDBACK_RUN_BYTES, FEEDBACK_HISTORY_BYTES } from './feedback-policy.js';
+import { normalizeRejectedToolResponse } from '../agent/model-output-diagnostics.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -24,9 +27,10 @@ import { projectTraceEventData, projectTraceRun } from './privacy.js';
  *   - shots      keyPath=[runId, seq]           // screenshot Blobs
  *
  * All writes are fire-and-forget. Recording is gated on the `tracingEnabled`
- * setting. When disabled, every call is a cheap no-op.
+ * setting, explicit forced runs, or bounded automatic feedback diagnostics.
  */
 
+const traceStorage = () => (typeof browser !== 'undefined' ? browser : chrome).storage.local;
 const DB_NAME = 'webbrain_traces';
 const DB_VERSION = 2;
 
@@ -95,29 +99,27 @@ function promisifyReq(req) {
 async function tracingEnabled() {
   try {
     if (typeof indexedDB === 'undefined') return false;
-    const { tracingEnabled } = await chrome.storage.local.get(['tracingEnabled']);
+    const { tracingEnabled } = await traceStorage().get(['tracingEnabled']);
     return tracingEnabled === true;
-  } catch { return false; }
-}
-
-// Opt-in lossless tier: same event pipeline, full request payloads instead of
-// content-free provenance. Read once per run at startRun; never per event.
-async function losslessTraceEnabled() {
-  try {
-    if (typeof indexedDB === 'undefined') return false;
-    const { losslessTrace } = await chrome.storage.local.get(['losslessTrace']);
-    return losslessTrace === true;
   } catch { return false; }
 }
 
 async function isForcedTraceRun(runId) {
   if (!runId) return false;
+  if (_runState.get(runId)?.feedbackOnly === true) {
+    const settings = await traceStorage().get('feedbackDiagnosticsEnabled');
+    return settings.feedbackDiagnosticsEnabled !== false;
+  }
   if (_runState.get(runId)?.forced === true) return true;
   try {
     const db = await openDB();
     const record = await promisifyReq(
       tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
     );
+    if (record?.feedbackOnly === true) {
+      const settings = await traceStorage().get('feedbackDiagnosticsEnabled');
+      return settings.feedbackDiagnosticsEnabled !== false;
+    }
     return record?.forced === true;
   } catch { return false; }
 }
@@ -133,7 +135,7 @@ async function peekRunFlags(db, runId) {
     const record = await promisifyReq(
       tx(db, ['runs'], 'readonly').objectStore('runs').get(runId),
     );
-    return { forced: record?.forced === true, lossless: record?.lossless === true, losslessBytes: record?.losslessBytes || 0, losslessBytesEncoding: record?.losslessBytesEncoding || '' };
+    return { forced: record?.forced === true, feedbackOnly: record?.feedbackOnly === true, feedbackBytes: record?.feedbackBytes || 0, lossless: record?.lossless === true, losslessBytes: record?.losslessBytes || 0, losslessBytesEncoding: record?.losslessBytesEncoding || '' };
   } catch { return { forced: false, lossless: false, losslessBytes: 0 }; }
 }
 
@@ -198,7 +200,7 @@ async function _ensureRunState(runId, db = null) {
       const resolvedDb = db || await openDB();
       const seq = await _peekSeq(resolvedDb, runId);
       const flags = await peekRunFlags(resolvedDb, runId);
-      const state = { seq, forced: flags.forced, lossless: flags.lossless, losslessBytes: Number(flags.losslessBytes) || 0, losslessBytesEncoding: flags.losslessBytesEncoding };
+      const state = { seq, forced: flags.forced, feedbackOnly: flags.feedbackOnly, feedbackBytes: flags.feedbackBytes, lossless: flags.lossless, losslessBytes: Number(flags.losslessBytes) || 0, losslessBytesEncoding: flags.losslessBytesEncoding };
       _runState.set(runId, state);
       return state;
     } catch { return null; }
@@ -311,7 +313,8 @@ function losslessBudgetMarker(kind, data) {
     step: data?.step ?? null,
     name: String(data?.name || '').slice(0, 120),
     args: null,
-    result: { _truncated: true, length, head: budgetHead },
+    result: { ...data?.outcome, _truncated: true, length, head: budgetHead },
+    outcome: data?.outcome || {},
     latencyMs: data?.latencyMs ?? null,
     losslessBudgetOmitted: true,
   };
@@ -370,7 +373,7 @@ function _newSeq(runId) {
 
 function normalizeTraceAttachments(attachments) {
   return (Array.isArray(attachments) ? attachments : []).slice(0, 20).map(attachment => ({
-    kind: ['image', 'document', 'text'].includes(attachment?.kind) ? attachment.kind : 'document',
+    kind: ['image', 'document', 'text', 'video'].includes(attachment?.kind) ? attachment.kind : 'document',
     name: String(attachment?.name || 'attachment').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 240),
     mimeType: String(attachment?.mimeType || '').slice(0, 120),
     size: Number.isFinite(Number(attachment?.size)) ? Math.max(0, Number(attachment.size)) : 0,
@@ -381,15 +384,18 @@ function normalizeTraceAttachments(attachments) {
 // ----- Public API ------------------------------------------------------------
 
 export async function startRun(meta = {}) {
-  const forced = meta.force === true;
-  if (!forced && !(await tracingEnabled())) return null;
   try {
+    if (typeof indexedDB === 'undefined') return null;
+    const settings = await traceStorage().get(['tracingEnabled', 'losslessTrace', 'feedbackDiagnosticsEnabled']);
+    const policy = feedbackRecordingPolicy(settings, meta.force === true);
+    if (!policy.enabled) return null;
+    const forced = meta.force === true || policy.feedbackOnly;
     const db = await openDB();
     const runId = meta.runId || `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const lineage = normalizeRunHeader(meta) || {};
     // Tier is decided once per run: explicit caller override wins, otherwise
     // the opt-in setting. Never forced for local runs by default.
-    const lossless = meta.lossless === true || await losslessTraceEnabled();
+    const lossless = !policy.feedbackOnly && (meta.lossless === true || policy.lossless);
     const record = projectTraceRun({
       runId,
       // Stable per-conversation id so the Traces UI can group sibling runs
@@ -419,6 +425,7 @@ export async function startRun(meta = {}) {
       attachments: normalizeTraceAttachments(meta.attachments),
       ...(lossless ? { lossless: true, losslessBytes: 0, losslessBytesEncoding: 'utf8' } : {}),
       forced,
+      ...(policy.feedbackOnly ? { feedbackOnly: true, feedbackHistoryOmitted: true, feedbackBytes: 0 } : {}),
       stepCount: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
@@ -432,8 +439,31 @@ export async function startRun(meta = {}) {
       totalToolLatencyMs: 0,
       finalContent: null,
     }, { includeContent: lossless });
-    await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
-    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
+    if (policy.feedbackOnly) {
+      await pruneFeedbackDiagnostics();
+      // Reserve room for final statistics and omission flags as well as events.
+      record.feedbackBytes = utf8ByteLength(JSON.stringify(record)) + 1024;
+    }
+    if (policy.feedbackOnly) {
+      const saved = await new Promise((resolve, reject) => {
+        const transaction = tx(db, ['runs']);
+        const store = transaction.objectStore('runs');
+        const request = store.getAll();
+        let inserted = false;
+        request.onsuccess = () => {
+          const total = request.result.filter(row => row.feedbackOnly)
+            .reduce((sum, row) => sum + (Number(row.feedbackBytes) || 0), 0);
+          if (record.feedbackBytes > FEEDBACK_RUN_BYTES
+            || total + record.feedbackBytes > FEEDBACK_HISTORY_BYTES - 4096) return;
+          store.put(record); inserted = true;
+        };
+        transaction.oncomplete = () => resolve(inserted);
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error);
+      });
+      if (!saved) return null;
+    } else await promisifyReq(tx(db, ['runs']).objectStore('runs').put(record));
+    _runState.set(runId, { seq: 0, model: record.model, providerId: record.providerId, forced, feedbackOnly: policy.feedbackOnly, feedbackBytes: record.feedbackBytes || 0, lossless, losslessBytes: 0, losslessBytesEncoding: lossless ? 'utf8' : '' });
     _workflowTraceCaptures.set(runId, {
       run: {
         runId,
@@ -474,6 +504,30 @@ function _putEventWithLosslessTotal(db, runId, event, losslessBytes) {
   });
 }
 
+// A scheduler verifier can finish after endRun. Persist its event and the
+// completed run's usage totals atomically, on the existing serialized queue.
+function _putAuxiliaryUsage(db, runId, event) {
+  return new Promise((resolve, reject) => {
+    const transaction = tx(db, ['runs', 'events']);
+    transaction.objectStore('events').put(event);
+    const store = transaction.objectStore('runs');
+    const request = store.get(runId);
+    request.onsuccess = () => {
+      const run = request.result;
+      if (!run || run.status === 'running') return;
+      const stats = { ...createTraceStats(), ...run };
+      addTraceEvent(stats, event);
+      for (const key of Object.keys(createTraceStats())) {
+        if (key !== 'hasLoopError') run[key] = stats[key];
+      }
+      store.put(run);
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error || new Error('Auxiliary trace write aborted'));
+  });
+}
+
 async function _appendEventNow(runId, kind, data) {
   if (!(await tracingEnabledForRun(runId))) return;
   try {
@@ -509,6 +563,9 @@ async function _appendEventNow(runId, kind, data) {
       console.warn('[trace] dropped invalid event:', kind);
       return null;
     }
+    if (state?.feedbackOnly === true) {
+      return await writeFeedbackEvent(db, runId, ev, state);
+    }
     if (state?.lossless === true && (kind === 'llm_request' || kind === 'tool')) {
       if (losslessBudgetOmitted) {
         await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
@@ -522,6 +579,8 @@ async function _appendEventNow(runId, kind, data) {
         state.losslessBytesEncoding = 'utf8';
         await evictOldestLosslessRuns(runId, bytes);
       }
+    } else if (kind === 'note' && resolvedData?.note === 'system_one' && resolvedData.extra?.decision === 'usage') {
+      await _putAuxiliaryUsage(db, runId, ev);
     } else {
       await promisifyReq(tx(db, ['events']).objectStore('events').put(ev));
     }
@@ -529,6 +588,58 @@ async function _appendEventNow(runId, kind, data) {
   } catch (e) {
     console.warn('[trace] appendEvent failed:', e);
   }
+}
+
+let _feedbackWriteQueue = Promise.resolve();
+
+// Serialize the shared byte budget across concurrently running tabs.
+function writeFeedbackEvent(db, runId, event, state) {
+  const pending = _feedbackWriteQueue.catch(() => {}).then(async () => {
+    const bytes = utf8ByteLength(JSON.stringify(event));
+    return new Promise((resolve, reject) => {
+      const transaction = tx(db, ['runs', 'events']);
+      const store = transaction.objectStore('runs');
+      // Read the budget and write the event in one transaction. Other
+      // extension contexts can prune/start runs without invalidating a cache.
+      const request = store.getAll();
+      let saved = false;
+      request.onsuccess = () => {
+        const run = request.result.find(row => row.runId === runId);
+        const total = request.result.filter(row => row.feedbackOnly)
+          .reduce((sum, row) => sum + (Number(row.feedbackBytes) || 0), 0);
+        if (!run?.feedbackOnly) return;
+        // Reserve a little space for final statistics and omission flags.
+        if ((run.feedbackBytes || 0) + bytes > FEEDBACK_RUN_BYTES
+          || total + bytes > FEEDBACK_HISTORY_BYTES - 4096) {
+          run.feedbackEventsOmitted = true;
+          store.put(run);
+          return;
+        }
+        run.feedbackBytes = (run.feedbackBytes || 0) + bytes;
+        store.put(run);
+        transaction.objectStore('events').put(event);
+        saved = true;
+      };
+      transaction.oncomplete = () => {
+        if (saved) state.feedbackBytes += bytes;
+        resolve(saved ? event.seq : null);
+      };
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error || new Error('Feedback diagnostic write aborted.'));
+    });
+  });
+  _feedbackWriteQueue = pending;
+  return pending;
+}
+
+export async function pruneFeedbackDiagnostics({ clear = false, now = Date.now() } = {}) {
+  if (typeof indexedDB === 'undefined') return;
+  const db = await openDB();
+  const rows = await promisifyReq(tx(db, ['runs'], 'readonly').objectStore('runs').getAll());
+  const ids = clear ? rows.filter(run => run.feedbackOnly === true).map(run => run.runId)
+    : [...new Set([...feedbackRunsToEvict(rows, now), ...rows.filter(run => run.feedbackOnly === true
+      && now - (run.startedAt || 0) > 7 * 24 * 60 * 60 * 1000).map(run => run.runId)])];
+  for (const id of ids) { await deleteRun(id); if (clear) _runState.delete(id); }
 }
 
 // Retain the active run and evict completed lossless runs oldest first when
@@ -703,6 +814,7 @@ export function recordLLMResponse(runId, step, {
   outputTokens,
   requestedMaxTokens,
   recoveryAttempt,
+  rejectedToolResponse,
 }) {
   return _appendEvent(runId, 'llm_response', {
     step,
@@ -731,6 +843,7 @@ export function recordLLMResponse(runId, step, {
     ...(Number.isInteger(outputTokens) ? { outputTokens } : {}),
     ...(Number.isInteger(requestedMaxTokens) ? { requestedMaxTokens } : {}),
     ...(Number.isInteger(recoveryAttempt) && recoveryAttempt > 0 ? { recoveryAttempt } : {}),
+    ...(normalizeRejectedToolResponse(rejectedToolResponse) ? { rejectedToolResponse: normalizeRejectedToolResponse(rejectedToolResponse) } : {}),
   });
 }
 
@@ -754,17 +867,18 @@ export function recordToolCall(runId, step, { name, args, result, latencyMs }) {
   // 20KB verbatim by default — plenty for debugging flow — and 200KB in the
   // opt-in lossless tier; note the truncation either way.
   return _appendEvent(runId, 'tool', (state) => {
+    const outcome = toolOutcome(name, args, result);
     if (state?.lossless === true && (state.losslessBytes || 0) >= LOSSILESS_RUN_CAP) {
       let length = null;
       try { const s = JSON.stringify(result); length = s ? utf8ByteLength(s) : 0; } catch {}
-      return { step, name, args: args || null, result: { _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
+      return { step, name, args: args || null, outcome, result: { ...outcome, _truncated: true, length, head: '(per-run lossless budget reached)' }, latencyMs: latencyMs || null };
     }
     const remainingBytes = Math.max(0, LOSSILESS_RUN_CAP - (state?.losslessBytes || 0));
     const cap = state?.lossless === true
       ? Math.min(LOSSILESS_RESULT_CAP, remainingBytes)
       : 20_000;
     const shortResult = clampUtf8Value(result, cap);
-    return { step, name, args: args || null, result: shortResult, latencyMs: latencyMs || null };
+    return { step, name, args: args || null, outcome, result: shortResult, latencyMs: latencyMs || null };
   });
 }
 
@@ -797,6 +911,7 @@ export function recordScreenshot(runId, step, dataUrl, caption = '') {
         projectTraceEventData('screenshot', { step, caption }, { includeContent: state?.lossless === true }),
       );
       if (marker) {
+        if (state?.feedbackOnly === true) return await writeFeedbackEvent(db, runId, marker, state);
         await promisifyReq(tx(db, ['events']).objectStore('events').put(marker));
       }
       return seq;
@@ -985,8 +1100,11 @@ export async function endRun(runId, { status = 'done', finalContent = null } = {
     } finally {
       _runState.delete(runId);
     }
+    // Retention may delete this run and its transient capture. Keep the
+    // completed workflow independent of which diagnostics remain on disk.
     const workflowCapture = _workflowTraceCaptures.get(runId) || null;
     _workflowTraceCaptures.delete(runId);
+    await pruneFeedbackDiagnostics().catch(() => {});
     if (!workflowCapture) return null;
     workflowCapture.run.status = resolvedStatus;
     return { run: workflowCapture.run, events: workflowCapture.events };
@@ -1051,7 +1169,15 @@ export async function repairStaleRuns({
 
 // ----- Reader API (used by traces.html) --------------------------------------
 
+// Before another extension context reads the database, settle the writes that
+// were already queued. Snapshot the queue so an active run cannot postpone an
+// export indefinitely by continuing to record new events.
+export async function flushPendingWrites() {
+  await Promise.all([..._runWriteQueues.values()]);
+}
+
 export async function listRuns({ limit = 500, conversationId = null } = {}) {
+  await pruneFeedbackDiagnostics();
   const db = await openDB();
   const store = tx(db, ['runs'], 'readonly').objectStore('runs');
   const sessionQuery = Boolean(conversationId && store.indexNames.contains('sessionId'));

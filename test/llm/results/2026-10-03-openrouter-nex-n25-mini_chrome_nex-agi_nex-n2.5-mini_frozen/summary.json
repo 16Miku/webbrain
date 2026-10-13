@@ -1,0 +1,28 @@
+{
+  "runTag": "2026-10-03-openrouter-nex-n25-mini",
+  "model": "nex-agi/nex-n2.5-mini",
+  "browser": "chrome",
+  "base": "https://openrouter.ai/api/v1",
+  "saveRequest": true,
+  "tier": null,
+  "modeOverride": null,
+  "chatTemplateCompat": "off",
+  "structuredToolsSent": true,
+  "reasoningEffort": null,
+  "replay": null,
+  "freeze": {
+    "path": "test/llm/freeze/baseline-2026-05-23.json",
+    "sourceRun": "anthropic/claude-sonnet-4.6",
+    "sourceRunTag": "2026-05-23T18-47-31-246Z",
+    "systemHash": "5c4fac1387025050d002fb87fb6ae02af2fba0e232cd40737f844a3a5c4e7abf",
+    "toolCount": 41
+  },
+  "cases": 100,
+  "totalLatencyMs": 1782,
+  "errors": 100,
+  "withToolCall": 0,
+  "withToolCallFromContent": 0,
+  "byTool": {
+    "(error)": 100
+  }
+}

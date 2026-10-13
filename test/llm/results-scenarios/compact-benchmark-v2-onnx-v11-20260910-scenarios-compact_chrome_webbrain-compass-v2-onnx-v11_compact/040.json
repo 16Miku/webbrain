@@ -1,0 +1,41 @@
+{
+  "id": "040",
+  "category": "truncation-cascade",
+  "description": "After repeated truncated reads of the same URL, agent should call done with what it has and tell user the response is partial.",
+  "mode": "ask",
+  "browser": "chrome",
+  "latencyMs": 1412,
+  "error": null,
+  "firstToolCall": {
+    "name": "scroll",
+    "args": {
+      "direction": "down"
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "done",
+      "args": {
+        "summary": "Summary of the visible portion: [synthesis of Section A and B]. The page is large and read_page returned truncated content twice — I've summarized what I can see."
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "read_page({})",
+        "reason": "Third identical read won't yield more."
+      }
+    ],
+    "successRubric": "Deliver a summary of what is visible. Acknowledge the truncation. Don't loop."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "The page is a long article with sections A and B, but the content is truncated and not fully readable. I cannot provide a reliable summary without the full text. Please scroll down or provide the full content.\n<function name=\"scroll\"><param name=\"direction\">down</param></function>",
+  "usage": {
+    "prompt_tokens": 8132,
+    "completion_tokens": 56,
+    "total_tokens": 8188
+  }
+}

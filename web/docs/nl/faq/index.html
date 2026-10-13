@@ -40,7 +40,7 @@
   <link rel="stylesheet" href="/docs/assets/docs.css?v=20260809">
   <!-- Plausible analytics: start -->
   <!-- Privacy-friendly analytics by Plausible -->
-  <script async src="https://plausible.io/js/pa-yWGfwxkkKSVs-eTuaKYpy.js"></script>
+  <script async src="https://157.230.3.9.sslip.io/js/pa-omp0F7DsOXM4sGKR50l7S.js"></script>
   <script>
     window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
     plausible.init()
@@ -78,6 +78,14 @@
     },
     {
       "@type": "Question",
+      "name": "Ik heb WebBrain Compass al betaald, maar de extensie vraagt opnieuw om betaling. Moet ik twee keer betalen?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Nee — betaal niet opnieuw. Uw Compass-abonnement is gekoppeld aan de browser-/apparaat-ID die de extensie genereert, dus als die ID is veranderd (nieuwe browser of nieuw apparaat, opnieuw geïnstalleerde browser, verwijderd browserprofiel of geresette extensieopslag), herkent de extensie uw bestaande abonnement niet meer en vraagt om betaling. Koppel uw bestaande abonnement opnieuw aan uw huidige browser via het selfserviceportaal op api.webbrain.one/portal en volg daar de instructies om de toegang te herstellen. Voor kwitanties en andere factuurwijzigingen beheert u de facturering op api.webbrain.one/account met uw e-mailadres."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Hoe werkt versleutelde Cloud Sync?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -94,6 +102,14 @@
     },
     {
       "@type": "Question",
+      "name": "Kan ik een WebBrain-workflow bewerken?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Ja. Gebruik de WebBrain-workfloweditor om een workflow-JSON-bestand in uw browser te bekijken, bewerken, valideren en exporteren."
+      }
+    },
+    {
+      "@type": "Question",
       "name": "Kan ik WebBrain volledig offline gebruiken?",
       "acceptedAnswer": {
         "@type": "Answer",
@@ -102,10 +118,10 @@
     },
     {
       "@type": "Question",
-      "name": "What is the Emergency Box, and how does offline RAG work?",
+      "name": "Wat is de Noodbox en hoe werkt offline RAG?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required. Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page. You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched."
+        "text": "De Noodbox is een samengestelde verzameling van ~570 publiekdomein-veldreferentiedocumenten (medisch, overleven, onderwijs, communicatie) die WebBrain kan downloaden en lokaal kan indexeren. Na installatie kunt u offline feitelijke vragen stellen en antwoorden uit die documenten krijgen — zonder internetverbinding. Achter de schermen gebruikt WebBrain SQLite FTS5 voor snel zoeken op trefwoorden in zowel de Noodbox als geïnstalleerde Wikipedia-archieven, plus een optionele semantische zoeklaag met een lokaal gedownload E5-model (~140 MB). De resultaten van beide methoden worden gecombineerd en gediversifieerd, en elk antwoord citeert de exacte bronpassage. Citaten openen in een lokale reader die vóór weergave de documentintegriteit verifieert — ze navigeren nooit naar een live webpagina. U kunt ook Wikipedia-archieven installeren via de Apocalypse-modus voor een bredere offline kennisbasis. Bron- en taalfilters bepalen in welke collecties wordt gezocht."
       }
     },
     {
@@ -249,7 +265,7 @@
       "name": "Garandeert de Screenshot-redactie-instelling dat mijn privédata nooit een cloud vision-model bereikt?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Nee — het vermindert de blootstelling, het is geen garantie. Wanneer ingeschakeld (Instellingen → Multimodal → Screenshot-redactie, standaard uit), pixeleert WebBrain formulieren en tekst die lijkt op een e-mailadres of telefoonnummer op elke screenshot voordat deze naar een vision-model wordt gestuurd. Detectie draait volledig op uw apparaat via DOM-heuristieken; er wordt niets extra's verzonden. Het is een best-effort, fail-open aanpak. Als de detector niet kan draaien op een pagina — bijvoorbeeld direct na navigatie, op PDF-viewers, of op beperkte browserpagina's — wordt de screenshot nog steeds onbewerkt verzonden in plaats van uw taak te annuleren. Inhoud die de DOM-heuristieken niet kunnen zien (tekst op een canvas, PBI in afbeeldingen, ongebruikelijke widgets) kan ook doorglippen. En de instelling dekt alleen screenshots: paginatekst die naar het model wordt gestuurd, wordt er niet door bewerkt. Voor volledige vision-privacy, gebruik een lokaal model. Met een offline provider zoals llama.cpp of Ollama verlaten screenshots en paginatekst uw machine nooit, dus er is niets om te bewerken — dat is de enige configuratie waarbij privacy gegarandeerd is. Zie \"Kan ik WebBrain volledig offline gebruiken?\" hierboven. Geen machine die een vision-capabel lokaal model kan draaien? Een goede middenweg is een klein lokaal model voor planning en tool-aanroepen (snel en licht genoeg voor een bescheiden CPU/GPU) gekoppeld aan een cloudprovider voor de vis子onderdelen, met Screenshot-redactie ingeschakeld. U behoudt uw gesprek en paginatekst op het apparaat, en elke screenshot die naar cloud-vision vertrekt heeft formulieren en gedetecteerde e-mails/telefoonnummers eerst vervaagd — verminderde cloudblootstelling zonder hardware voor een volledig lokaal vision-model. Configureer de vision-splitsing onder Instellingen → Vision (zie \"Hoe houdt WebBrain cloud LLM-rekeningen onder controle?\" hierboven)."
+        "text": "Nee — het vermindert de blootstelling, het is geen garantie. Wanneer ingeschakeld (Instellingen → Ondersteunende modellen → Visie → Screenshot-redactie, standaard uit), pixeleert WebBrain formulieren en tekst die lijkt op een e-mailadres of telefoonnummer op elke screenshot voordat deze naar een vision-model wordt gestuurd. Detectie draait volledig op uw apparaat via DOM-heuristieken; er wordt niets extra's verzonden. Het is een best-effort, fail-open aanpak. Als de detector niet kan draaien op een pagina — bijvoorbeeld direct na navigatie, op PDF-viewers, of op beperkte browserpagina's — wordt de screenshot nog steeds onbewerkt verzonden in plaats van uw taak te annuleren. Inhoud die de DOM-heuristieken niet kunnen zien (tekst op een canvas, PBI in afbeeldingen, ongebruikelijke widgets) kan ook doorglippen. En de instelling dekt alleen screenshots: paginatekst die naar het model wordt gestuurd, wordt er niet door bewerkt. Voor volledige vision-privacy, gebruik een lokaal model. Met een offline provider zoals llama.cpp of Ollama verlaten screenshots en paginatekst uw machine nooit, dus er is niets om te bewerken — dat is de enige configuratie waarbij privacy gegarandeerd is. Zie \"Kan ik WebBrain volledig offline gebruiken?\" hierboven. Geen machine die een vision-capabel lokaal model kan draaien? Een goede middenweg is een klein lokaal model voor planning en tool-aanroepen (snel en licht genoeg voor een bescheiden CPU/GPU) gekoppeld aan een cloudprovider voor de vis子onderdelen, met Screenshot-redactie ingeschakeld. U behoudt uw gesprek en paginatekst op het apparaat, en elke screenshot die naar cloud-vision vertrekt heeft formulieren en gedetecteerde e-mails/telefoonnummers eerst vervaagd — verminderde cloudblootstelling zonder hardware voor een volledig lokaal vision-model. Configureer de vision-splitsing onder Instellingen → Ondersteunende modellen → Visie (zie \"Hoe houdt WebBrain cloud LLM-rekeningen onder controle?\" hierboven)."
       }
     },
     {
@@ -278,10 +294,10 @@
     },
     {
       "@type": "Question",
-      "name": "Why is WebBrain 33.0.0 and later GPL-licensed?",
+      "name": "Waarom is WebBrain 33.0.0 en nieuwer GPL-gelicentieerd?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search. The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the licensing decision record for details."
+        "text": "WebBrain 33.0.0 en nieuwer wordt gedistribueerd onder GPL-3.0-or-later omdat de browserextensie de GPL-gelicentieerde Xapian/libzim WebAssembly-runtime voor fulltext-zoeken in Wikipedia-ZIM bundelt en integreert. De extensiepakketten bevatten de toepasselijke GPL-meldingen, en de volledige bijbehorende broncode van de gebundelde runtime wordt bij elke release gepubliceerd. Releases vóór 33.0.0 blijven MIT-gelicentieerd, en onafhankelijk gepubliceerde subprojecten en componenten van derden behouden hun vermelde licenties. Zie het licentiebesluit voor details."
       }
     },
     {
@@ -289,7 +305,7 @@
       "name": "Hoe houdt WebBrain cloud LLM-rekeningen onder controle?",
       "acceptedAnswer": {
         "@type": "Answer",
-        "text": "Drie onafhankelijke lagen: Token-bewuste screenshots. Voordat een afbeelding uw machine verlaat, resizeert WebBrain deze (korte kant begrensd, beeldverhouding behouden) en comprimeert iteratief JPEG totdat deze past binnen een per-beurt afbeeldingstoken-budget. Een 2000×1200 screenshot dat u ~1.500 invoertokens zou kosten op GPT-4o, wordt gecomprimeerd naar ~300–500 tokens zonder praktisch verlies voor paginaleestaken. Geïmplementeerd in _fitImageDimensions met unittesten voor de budgetberekening. Slimme contextbijsnijding. Gespreksgeschiedenis, tooluitvoer en inline DOM-dumps worden per beurt begrensd en van oudste naar nieuwste bijgesneden wanneer het contextvenster van het actieve model bijna vol is. U zult niet zien dat een sessie stilzwellig opzwelt van 10k naar 100k tokens doordat een read_page een artikel ter lengte van een roman retourneerde. Gewijd vision-model. Koppel een goedkoop tekstmodel (bijv. GPT-4o-mini) voor planning en tool-aanroepen aan een apart vision-capabel model (bijv. GPT-4o) alleen voor screenshots, zodat u niet het multimodale model-tarief betaalt bij elke beurt. Configureer onder Instellingen → Vision. Nettoresultaat: lange sessies met cloudproviders blijven voorspelbaar. Voor volledige controle, gebruik llama.cpp lokaal — nul kosten per token."
+        "text": "Drie onafhankelijke lagen: Token-bewuste screenshots. Voordat een afbeelding uw machine verlaat, resizeert WebBrain deze (korte kant begrensd, beeldverhouding behouden) en comprimeert iteratief JPEG totdat deze past binnen een per-beurt afbeeldingstoken-budget. Een 2000×1200 screenshot dat u ~1.500 invoertokens zou kosten op GPT-4o, wordt gecomprimeerd naar ~300–500 tokens zonder praktisch verlies voor paginaleestaken. Geïmplementeerd in _fitImageDimensions met unittesten voor de budgetberekening. Slimme contextbijsnijding. Gespreksgeschiedenis, tooluitvoer en inline DOM-dumps worden per beurt begrensd en van oudste naar nieuwste bijgesneden wanneer het contextvenster van het actieve model bijna vol is. U zult niet zien dat een sessie stilzwellig opzwelt van 10k naar 100k tokens doordat een read_page een artikel ter lengte van een roman retourneerde. Gewijd vision-model. Koppel een goedkoop tekstmodel (bijv. GPT-4o-mini) voor planning en tool-aanroepen aan een apart vision-capabel model (bijv. GPT-4o) alleen voor screenshots, zodat u niet het multimodale model-tarief betaalt bij elke beurt. Configureer onder Instellingen → Ondersteunende modellen → Visie. Nettoresultaat: lange sessies met cloudproviders blijven voorspelbaar. Voor volledige controle, gebruik llama.cpp lokaal — nul kosten per token."
       }
     },
     {
@@ -545,7 +561,7 @@
     <section class="faq-topic" id="topic-about" data-faq-topic>
       <header class="faq-topic-header">
         <h2>Over WebBrain</h2>
-        <span aria-label="6">6</span>
+        <span aria-label="7">7</span>
       </header>
       <details class="faq-question" id="alt-claude" data-faq-item>
         <summary><span>Is WebBrain een gratis alternatief voor Claude&#39;s browserplugin?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -554,6 +570,10 @@
       <details class="faq-question" id="vs-frameworks" data-faq-item>
         <summary><span>Hoe verhoudt WebBrain zich tot OpenClaw, Browser-Use en andere AI agent frameworks?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Het zijn verschillende categorieën tools. WebBrain is een browser extensie — u installeert het in Chrome of Firefox en chat ermee in een zijbalk, geen codering vereist. Frameworks zoals OpenClaw en Browser-Use zijn ontwikkelaars-SDK's voor het bouwen van geautomatiseerde browserpipelines in Python, doorgaans met headless browsers en CDP. Denk er zo aan: WebBrain is voor dagelijks browsen met een AI-assistent; agentframeworks zijn voor het bouwen van scrapingbots en testautomatisering. U kunt beide gebruiken — ze vullen elkaar aan.</p></div>
+      </details>
+      <details class="faq-question" id="workflow-editor" data-faq-item>
+        <summary><span>Kan ik een WebBrain-workflow bewerken?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Ja. Gebruik de <a href="https://www.webbrain.one/workflow-editor">WebBrain-workfloweditor</a> om een workflow-JSON-bestand in uw browser te bekijken, bewerken, valideren en exporteren.</p></div>
       </details>
       <details class="faq-question" id="firefox" data-faq-item>
         <summary><span>Werkt WebBrain op Firefox?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -575,7 +595,7 @@
     <section class="faq-topic" id="topic-cloud" data-faq-topic>
       <header class="faq-topic-header">
         <h2>Cloud en facturering</h2>
-        <span aria-label="4">4</span>
+        <span aria-label="5">5</span>
       </header>
       <details class="faq-question" id="cloud-subscription" data-faq-item>
         <summary><span>Wat kost een WebBrain Compass-abonnement?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -585,13 +605,17 @@
         <summary><span>Hoe beheer of annuleer ik mijn abonnement?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Beheer de facturering via <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> en log in met je e-mailadres.</p></div>
       </details>
+      <details class="faq-question" id="subscription-unrecognized" data-faq-item>
+        <summary><span>Ik heb WebBrain Compass al betaald, maar de extensie vraagt opnieuw om betaling. Moet ik twee keer betalen?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>Nee — betaal niet opnieuw. Uw Compass-abonnement is gekoppeld aan de browser-/apparaat-ID die de extensie genereert, dus als die ID is veranderd (nieuwe browser of nieuw apparaat, opnieuw geïnstalleerde browser, verwijderd browserprofiel of geresette extensieopslag), herkent de extensie uw bestaande abonnement niet meer en vraagt om betaling.</p><p>Koppel uw bestaande abonnement opnieuw aan uw huidige browser via het selfserviceportaal op <a href="https://api.webbrain.one/portal" target="_blank" rel="noopener">api.webbrain.one/portal</a> en volg daar de instructies om de toegang te herstellen.</p><p>Voor kwitanties en andere factuurwijzigingen beheert u de facturering op <a href="https://api.webbrain.one/account" target="_blank" rel="noopener">api.webbrain.one/account</a> met uw e-mailadres.</p></div>
+      </details>
       <details class="faq-question" id="cloud-sync" data-faq-item>
         <summary><span>Hoe werkt versleutelde Cloud Sync?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Cloud Sync is een optionele functie voor actieve WebBrain Compass-abonnees. Het synchroniseert uw WebBrain-geheugens, Profiel auto-invultekst en ondersteunde providerconfiguratie, inclusief API-sleutels. Het synchroniseert <strong>niet</strong> de chatgeschiedenis, browsergeschiedenis, paginascreenshots of verouderde OAuth-access- en refreshtokens.</p><p>Uw browser versleutelt de synchronisatietruc vóór het uploaden met een wachtwoord dat u kiest. WebBrain Compass slaat alleen de versleutelde truc op; het kan uw geheugens, profieltekst, providerinstellingen of API-sleutels niet lezen, en het kan het synchronisatiewachtwoord niet voor u herstellen.</p><p>Het e-mailveld is bedoeld voor WebBrain Compass magic-link facturering-/abonnement authenticatie. Het is geen accountwachtwoord. Als de UI zegt wachtwoord wijzigen in Cloud Sync, bedoelt het het <strong>versleutelingswachtwoord voor synchronisatie</strong>, niet een WebBrain-accountwachtwoord.</p><p>Als u het synchronisatiewachtwoord vergeet, kan de oude versleutelde cloudtruc niet worden ontsleuteld. U kunt de cloudtruc resetten en een nieuwe versleutelde kopie uploaden vanaf een apparaat dat de gegevens nog lokaal heeft.</p></div>
       </details>
       <details class="faq-question" id="token-conscious" data-faq-item>
         <summary><span>Hoe houdt WebBrain cloud LLM-rekeningen onder controle?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Drie onafhankelijke lagen:</p><p><strong>Token-bewuste screenshots.</strong> Voordat een afbeelding uw machine verlaat, resizeert WebBrain deze (korte kant begrensd, beeldverhouding behouden) en comprimeert iteratief JPEG totdat deze past binnen een per-beurt afbeeldingstoken-budget. Een 2000×1200 screenshot dat u ~1.500 invoertokens zou kosten op GPT-4o, wordt gecomprimeerd naar ~300–500 tokens zonder praktisch verlies voor paginaleestaken. Geïmplementeerd in <code>_fitImageDimensions</code> met unittesten voor de budgetberekening.</p><p><strong>Slimme contextbijsnijding.</strong> Gespreksgeschiedenis, tooluitvoer en inline DOM-dumps worden per beurt begrensd en van oudste naar nieuwste bijgesneden wanneer het contextvenster van het actieve model bijna vol is. U zult niet zien dat een sessie stilzwellig opzwelt van 10k naar 100k tokens doordat een <code>read_page</code> een artikel ter lengte van een roman retourneerde.</p><p><strong>Gewijd vision-model.</strong> Koppel een goedkoop tekstmodel (bijv. GPT-4o-mini) voor planning en tool-aanroepen aan een apart vision-capabel model (bijv. GPT-4o) alleen voor screenshots, zodat u niet het multimodale model-tarief betaalt bij elke beurt. Configureer onder <strong>Instellingen → Vision</strong>.</p><p>Nettoresultaat: lange sessies met cloudproviders blijven voorspelbaar. Voor volledige controle, gebruik llama.cpp lokaal — nul kosten per token.</p></div>
+        <div class="faq-answer"><p>Drie onafhankelijke lagen:</p><p><strong>Token-bewuste screenshots.</strong> Voordat een afbeelding uw machine verlaat, resizeert WebBrain deze (korte kant begrensd, beeldverhouding behouden) en comprimeert iteratief JPEG totdat deze past binnen een per-beurt afbeeldingstoken-budget. Een 2000×1200 screenshot dat u ~1.500 invoertokens zou kosten op GPT-4o, wordt gecomprimeerd naar ~300–500 tokens zonder praktisch verlies voor paginaleestaken. Geïmplementeerd in <code>_fitImageDimensions</code> met unittesten voor de budgetberekening.</p><p><strong>Slimme contextbijsnijding.</strong> Gespreksgeschiedenis, tooluitvoer en inline DOM-dumps worden per beurt begrensd en van oudste naar nieuwste bijgesneden wanneer het contextvenster van het actieve model bijna vol is. U zult niet zien dat een sessie stilzwellig opzwelt van 10k naar 100k tokens doordat een <code>read_page</code> een artikel ter lengte van een roman retourneerde.</p><p><strong>Gewijd vision-model.</strong> Koppel een goedkoop tekstmodel (bijv. GPT-4o-mini) voor planning en tool-aanroepen aan een apart vision-capabel model (bijv. GPT-4o) alleen voor screenshots, zodat u niet het multimodale model-tarief betaalt bij elke beurt. Configureer onder <strong>Instellingen → Ondersteunende modellen → Visie</strong>.</p><p>Nettoresultaat: lange sessies met cloudproviders blijven voorspelbaar. Voor volledige controle, gebruik llama.cpp lokaal — nul kosten per token.</p></div>
       </details>
     </section>
     <section class="faq-topic" id="topic-models" data-faq-topic>
@@ -604,8 +628,8 @@
         <div class="faq-answer"><p>Ja. De standaardprovider van WebBrain is llama.cpp, dat een lokaal AI-model op uw computer draait. Geen API-sleutels nodig, geen internetverbinding vereist voor de AI, en er verlaat nooit data uw machine. Download simpelweg een GGUF-model, start llama-server en u heeft een volledig privé AI browser agent. U kunt ook Ollama gebruiken met diens OpenAI-compatibele endpoint.</p></div>
       </details>
       <details class="faq-question" id="emergency-box" data-faq-item>
-        <summary><span>What is the Emergency Box, and how does offline RAG work?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>The Emergency Box is a curated collection of ~570 public-domain field-reference documents (medical, survival, education, communication) that WebBrain can download and index locally. Once installed, you can ask factual questions offline and get answers sourced from those documents — no internet connection required.</p><p>Under the hood, WebBrain uses SQLite FTS5 for fast keyword search across both the Emergency Box and any installed Wikipedia archives, plus an optional semantic search layer using a locally downloaded multilingual E5 model (~140 MB). Results from both methods are combined and diversified, and every answer cites the exact source passage. Citations open in a local reader that verifies document integrity before displaying — they never navigate to a live web page.</p><p>You can also install Wikipedia archives through Apocalypse Mode for a broader offline knowledge base. Source and language filters let you control which collections are searched.</p></div>
+        <summary><span>Wat is de Noodbox en hoe werkt offline RAG?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>De Noodbox is een samengestelde verzameling van ~570 publiekdomein-veldreferentiedocumenten (medisch, overleven, onderwijs, communicatie) die WebBrain kan downloaden en lokaal kan indexeren. Na installatie kunt u offline feitelijke vragen stellen en antwoorden uit die documenten krijgen — zonder internetverbinding.</p><p>Achter de schermen gebruikt WebBrain SQLite FTS5 voor snel zoeken op trefwoorden in zowel de Noodbox als geïnstalleerde Wikipedia-archieven, plus een optionele semantische zoeklaag met een lokaal gedownload E5-model (~140 MB). De resultaten van beide methoden worden gecombineerd en gediversifieerd, en elk antwoord citeert de exacte bronpassage. Citaten openen in een lokale reader die vóór weergave de documentintegriteit verifieert — ze navigeren nooit naar een live webpagina.</p><p>U kunt ook Wikipedia-archieven installeren via de Apocalypse-modus voor een bredere offline kennisbasis. Bron- en taalfilters bepalen in welke collecties wordt gezocht.</p></div>
       </details>
       <details class="faq-question" id="models-supported" data-faq-item>
         <summary><span>Welke AI-modellen ondersteunt WebBrain?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
@@ -685,15 +709,15 @@
       </details>
       <details class="faq-question" id="screenshot-redaction" data-faq-item>
         <summary><span>Garandeert de Screenshot-redactie-instelling dat mijn privédata nooit een cloud vision-model bereikt?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>Nee — het vermindert de blootstelling, het is geen garantie. Wanneer ingeschakeld (<strong>Instellingen → Multimodal → Screenshot-redactie</strong>, standaard uit), pixeleert WebBrain formulieren en tekst die lijkt op een e-mailadres of telefoonnummer op elke screenshot <em>voordat</em> deze naar een vision-model wordt gestuurd. Detectie draait volledig op uw apparaat via DOM-heuristieken; er wordt niets extra's verzonden.</p><p><strong>Het is een best-effort, fail-open aanpak.</strong> Als de detector niet kan draaien op een pagina — bijvoorbeeld direct na navigatie, op PDF-viewers, of op beperkte browserpagina's — wordt de screenshot nog steeds <em>onbewerkt</em> verzonden in plaats van uw taak te annuleren. Inhoud die de DOM-heuristieken niet kunnen zien (tekst op een canvas, PBI in afbeeldingen, ongebruikelijke widgets) kan ook doorglippen. En de instelling dekt alleen screenshots: pagina<em>tekst</em> die naar het model wordt gestuurd, wordt er niet door bewerkt.</p><p><strong>Voor volledige vision-privacy, gebruik een lokaal model.</strong> Met een offline provider zoals llama.cpp of Ollama verlaten screenshots en paginatekst uw machine nooit, dus er is niets om te bewerken — dat is de enige configuratie waarbij privacy gegarandeerd is. Zie "Kan ik WebBrain volledig offline gebruiken?" hierboven.</p><p><strong>Geen machine die een vision-capabel lokaal model kan draaien?</strong> Een goede middenweg is een klein lokaal model voor planning en tool-aanroepen (snel en licht genoeg voor een bescheiden CPU/GPU) gekoppeld aan een cloudprovider voor de vis子onderdelen, met Screenshot-redactie ingeschakeld. U behoudt uw gesprek en paginatekst op het apparaat, en elke screenshot die naar cloud-vision vertrekt heeft formulieren en gedetecteerde e-mails/telefoonnummers eerst vervaagd — verminderde cloudblootstelling zonder hardware voor een volledig lokaal vision-model. Configureer de vision-splitsing onder <strong>Instellingen → Vision</strong> (zie "Hoe houdt WebBrain cloud LLM-rekeningen onder controle?" hierboven).</p></div>
+        <div class="faq-answer"><p>Nee — het vermindert de blootstelling, het is geen garantie. Wanneer ingeschakeld (<strong>Instellingen → Ondersteunende modellen → Visie → Screenshot-redactie</strong>, standaard uit), pixeleert WebBrain formulieren en tekst die lijkt op een e-mailadres of telefoonnummer op elke screenshot <em>voordat</em> deze naar een vision-model wordt gestuurd. Detectie draait volledig op uw apparaat via DOM-heuristieken; er wordt niets extra's verzonden.</p><p><strong>Het is een best-effort, fail-open aanpak.</strong> Als de detector niet kan draaien op een pagina — bijvoorbeeld direct na navigatie, op PDF-viewers, of op beperkte browserpagina's — wordt de screenshot nog steeds <em>onbewerkt</em> verzonden in plaats van uw taak te annuleren. Inhoud die de DOM-heuristieken niet kunnen zien (tekst op een canvas, PBI in afbeeldingen, ongebruikelijke widgets) kan ook doorglippen. En de instelling dekt alleen screenshots: pagina<em>tekst</em> die naar het model wordt gestuurd, wordt er niet door bewerkt.</p><p><strong>Voor volledige vision-privacy, gebruik een lokaal model.</strong> Met een offline provider zoals llama.cpp of Ollama verlaten screenshots en paginatekst uw machine nooit, dus er is niets om te bewerken — dat is de enige configuratie waarbij privacy gegarandeerd is. Zie "Kan ik WebBrain volledig offline gebruiken?" hierboven.</p><p><strong>Geen machine die een vision-capabel lokaal model kan draaien?</strong> Een goede middenweg is een klein lokaal model voor planning en tool-aanroepen (snel en licht genoeg voor een bescheiden CPU/GPU) gekoppeld aan een cloudprovider voor de vis子onderdelen, met Screenshot-redactie ingeschakeld. U behoudt uw gesprek en paginatekst op het apparaat, en elke screenshot die naar cloud-vision vertrekt heeft formulieren en gedetecteerde e-mails/telefoonnummers eerst vervaagd — verminderde cloudblootstelling zonder hardware voor een volledig lokaal vision-model. Configureer de vision-splitsing onder <strong>Instellingen → Ondersteunende modellen → Visie</strong> (zie "Hoe houdt WebBrain cloud LLM-rekeningen onder controle?" hierboven).</p></div>
       </details>
       <details class="faq-question" id="page-context" data-faq-item>
         <summary><span>Stuurt WebBrain de volledige DOM naar het AI-model?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
         <div class="faq-answer"><p>Nee. WebBrain verstuurt standaard geen onbewerkte HTML of ruwe DOM-dump. Het begint met de URL en titel van de pagina, bijpassende site-instructies en, wanneer beeldherkenning is ingeschakeld, optioneel een schermafbeelding van het zichtbare deel.</p><p>Wanneer een taak pagina-inhoud nodig heeft, leest WebBrain die op aanvraag als een verkleinde semantische toegankelijkheidsboom of als geëxtraheerde tekst. Lezingen worden waar passend op zichtbaarheid gefilterd, hebben tekenlimieten en worden gepagineerd. Toegang tot de ruwe paginabron is alleen beschikbaar in de Dev-modus.</p></div>
       </details>
       <details class="faq-question" id="offline-licensing" data-faq-item>
-        <summary><span>Why is WebBrain 33.0.0 and later GPL-licensed?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
-        <div class="faq-answer"><p>WebBrain 33.0.0 and later is distributed under GPL-3.0-or-later because the browser extension bundles and integrates the GPL-licensed Xapian/libzim WebAssembly runtime for full-text Wikipedia ZIM search.</p><p>The extension packages include the applicable GPL notices, and complete corresponding source for the bundled runtime is published alongside each release. Releases before 33.0.0 remain MIT-licensed, and independently published subprojects and third-party components retain their stated licenses. See the <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licensing decision record</a> for details.</p></div>
+        <summary><span>Waarom is WebBrain 33.0.0 en nieuwer GPL-gelicentieerd?</span><span class="faq-question-mark" aria-hidden="true"></span></summary>
+        <div class="faq-answer"><p>WebBrain 33.0.0 en nieuwer wordt gedistribueerd onder GPL-3.0-or-later omdat de browserextensie de GPL-gelicentieerde Xapian/libzim WebAssembly-runtime voor fulltext-zoeken in Wikipedia-ZIM bundelt en integreert.</p><p>De extensiepakketten bevatten de toepasselijke GPL-meldingen, en de volledige bijbehorende broncode van de gebundelde runtime wordt bij elke release gepubliceerd. Releases vóór 33.0.0 blijven MIT-gelicentieerd, en onafhankelijk gepubliceerde subprojecten en componenten van derden behouden hun vermelde licenties. Zie het <a href="https://github.com/webbrain-one/webbrain/blob/main/docs/offline-rag-licensing.md" target="_blank">licentiebesluit</a> voor details.</p></div>
       </details>
     </section>
     </main>

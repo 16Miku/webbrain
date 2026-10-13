@@ -8,6 +8,9 @@ function byteLength(value) {
 }
 
 function capText(value, maxChars, marker, state) {
+  // Authority-bearing text must retain the exact parent-task hash. Its data
+  // URLs are part of that text; quota handling may fail, but cannot rewrite it.
+  if (maxChars === Infinity) return String(value || '');
   const sanitized = String(value || '').replace(DATA_URL_RE, () => {
     state.compacted = true;
     return '[embedded binary data omitted from session recovery]';
@@ -62,6 +65,9 @@ function sanitizeContent(message, state, caps) {
       state.compacted = true;
       return { type: 'text', text: attachmentPlaceholder(message, 'document') };
     }
+    if (caps.textChars === Infinity && block?.type === 'text' && typeof block.text === 'string') {
+      return { ...sanitizeValue({ ...block, text: '' }, state), text: capText(block.text, caps.textChars, '[large content truncated for session recovery]', state) };
+    }
     return sanitizeValue(block, state);
   });
 }
@@ -70,7 +76,9 @@ function sanitizeMessage(message, state, caps) {
   if (!message || typeof message !== 'object') return message;
   const out = { ...message, content: sanitizeContent(message, state, caps) };
   if (Array.isArray(message.tool_calls)) {
-    out.tool_calls = message.tool_calls.slice(0, 50).map(call => ({
+    // Calls and results are one protocol group. A count-only cutoff silently
+    // orphans results even when the complete group fits the byte budget.
+    out.tool_calls = message.tool_calls.map(call => ({
       ...call,
       function: call?.function ? {
         ...call.function,
@@ -82,12 +90,33 @@ function sanitizeMessage(message, state, caps) {
   return out;
 }
 
+function pruneOrphanedToolResults(messages, state) {
+  let pending = new Set();
+  let writeIndex = 0;
+  for (const message of messages) {
+    if (message?.role === 'tool') {
+      // IDs may be reused by a provider across turns. A later assistant with
+      // the same ID cannot authorize an earlier, compacted turn's result.
+      if (!pending.delete(message.tool_call_id)) {
+        state.compacted = true;
+        continue;
+      }
+    } else {
+      pending = new Set(message?.role === 'assistant' && Array.isArray(message.tool_calls)
+        ? message.tool_calls.map(call => call?.id).filter(id => typeof id === 'string')
+        : []);
+    }
+    messages[writeIndex++] = message;
+  }
+  messages.length = writeIndex;
+}
+
 function reduceToBudget(messages, maxBytes, state, preserveMessageIndices = []) {
   if (byteLength(messages) <= maxBytes) return messages;
   const out = messages.map(message => ({ ...message }));
   const preserved = new Set(
     Array.isArray(preserveMessageIndices)
-      ? preserveMessageIndices.filter(index => Number.isInteger(index) && index >= 0 && index < out.length)
+      ? preserveMessageIndices.filter(index => Number.isInteger(index) && index >= 0 && index < out.length).map(index => out[index])
       : [],
   );
   let keepRecentFrom = Math.max(1, out.length - 14);
@@ -98,7 +127,7 @@ function reduceToBudget(messages, maxBytes, state, preserveMessageIndices = []) 
     // messages intact even when a long tool loop pushes them outside the
     // ordinary recent-message window; otherwise a worker restart can promote
     // only the latest answer fragment as a new task.
-    if (!message || message.role === 'system' || preserved.has(index)) continue;
+    if (!message || message.role === 'system' || preserved.has(message)) continue;
     state.compacted = true;
     out[index] = {
       role: message.role,
@@ -112,31 +141,16 @@ function reduceToBudget(messages, maxBytes, state, preserveMessageIndices = []) 
       content: '[Earlier message omitted from bounded session recovery snapshot.]',
     };
   }
-  // A compacted assistant message loses its tool_calls, which orphans the
-  // paired `tool` result messages that carry the same tool_call_id. Restoring
-  // such a snapshot into the live conversation makes the next provider call
-  // fail with "tool call ID not found", so drop every `tool` message whose id
-  // is no longer referenced by any remaining assistant tool_calls.
+  // A compacted assistant loses its tool_calls. Drop its paired results
+  // before measuring the remaining budget, using adjacent groups rather than
+  // a global ID lookup that could match a different assistant turn.
   if (state.compacted) {
-    const presentCallIds = new Set();
-    for (const message of out) {
-      if (message?.role !== 'assistant' || !Array.isArray(message.tool_calls)) continue;
-      for (const call of message.tool_calls) {
-        if (call && typeof call.id === 'string') presentCallIds.add(call.id);
-      }
-    }
-    for (let index = out.length - 1; index >= 0; index--) {
-      const message = out[index];
-      if (message?.role === 'tool' && typeof message.tool_call_id === 'string' && !presentCallIds.has(message.tool_call_id)) {
-        state.compacted = true;
-        out.splice(index, 1);
-      }
-    }
+    pruneOrphanedToolResults(out, state);
     keepRecentFrom = Math.max(1, out.length - 14);
   }
   for (let index = keepRecentFrom; index < out.length && byteLength(out) > maxBytes; index++) {
     const message = out[index];
-    if (!message || typeof message.content !== 'string' || message.content.length <= 4_000) continue;
+    if (!message || preserved.has(message) || typeof message.content !== 'string' || message.content.length <= 4_000) continue;
     state.compacted = true;
     out[index] = { ...message, content: `${message.content.slice(0, 3_900)}\n[content truncated for session recovery]` };
   }
@@ -156,15 +170,7 @@ function reduceToBudget(messages, maxBytes, state, preserveMessageIndices = []) 
     droppedReplay = true;
   }
   if (droppedReplay) {
-    const presentCallIds = new Set(out.flatMap(message => (
-      message?.role === 'assistant' && Array.isArray(message.tool_calls)
-        ? message.tool_calls.map(call => call?.id).filter(Boolean)
-        : []
-    )));
-    for (let index = out.length - 1; index >= 0; index--) {
-      const message = out[index];
-      if (message?.role === 'tool' && !presentCallIds.has(message.tool_call_id)) out.splice(index, 1);
-    }
+    pruneOrphanedToolResults(out, state);
   }
   return out;
 }
@@ -176,7 +182,14 @@ export function serializeConversationForSession(messages, options = {}) {
     ? { textChars: 16_000, toolChars: 8_000, toolArgsChars: 8_000 }
     : { textChars: 96_000, toolChars: 32_000, toolArgsChars: 24_000 };
   const state = { compacted: false };
-  const sanitized = Array.isArray(messages) ? messages.map(message => sanitizeMessage(message, state, caps)) : [];
+  // Task-authority messages must survive recovery verbatim. If their text
+  // alone exceeds storage limits, persistence reports degradation instead of
+  // restoring a truncated correction under its original authorization hash.
+  const preserved = new Set(Array.isArray(options.preserveMessageIndices) ? options.preserveMessageIndices : []);
+  const sanitized = Array.isArray(messages) ? messages.map((message, index) => sanitizeMessage(
+    message, state, preserved.has(index) && message?.role === 'user'
+      ? { ...caps, textChars: Infinity } : caps,
+  )) : [];
   const bounded = reduceToBudget(sanitized, maxBytes, state, options.preserveMessageIndices);
   return { messages: bounded, bytes: byteLength(bounded), compacted: state.compacted };
 }

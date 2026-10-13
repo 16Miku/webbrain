@@ -53,6 +53,12 @@
   if (!window.__wbElementMap) window.__wbElementMap = Object.create(null);
   if (typeof window.__wbRefCounter !== 'number') window.__wbRefCounter = 0;
 
+  function formatTreeHref(href) {
+    const escaped = String(href).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\s/g, ' ');
+    if (escaped.length <= 512) return ' href="' + escaped + '"';
+    return ' [long href omitted; use this element ref to navigate]';
+  }
+
   function mintRefScopeId() {
     try {
       const words = new Uint32Array(2);
@@ -155,6 +161,21 @@
       ['.publish-btn', '发布'],
       ['.publish-button', '发布'],
     ],
+    baiduTieba: [
+      // Match the stable action wrapper, then inspect SVG href/xlink:href via
+      // the DOM API because namespaced attribute selectors vary by engine.
+      ['.pc-pb-first-floor-interactive .action-item', '转发', '#share_pb'],
+      ['.pc-pb-first-floor-interactive .action-item', '点赞', '#agree_pb'],
+      ['.pc-pb-first-floor-interactive .action-item', '收藏', '#collect'],
+      ['.pc-pb-first-floor-interactive .more-action', '更多', '#ellipsis'],
+      ['.pc-pb-comments-desc .zan-container-dark', '赞', '#agree_comment'],
+      ['.pc-pb-comments-desc .reply-container', '回复', '#comment_comment'],
+      ['.pc-pb-comments-desc .more-action', '更多', '#ellipsis_comment'],
+      ['.follow-person-btn', '关注楼主'],
+      ['.follow-forum-btn', '关注本吧'],
+      ['.pc-pb-reply-box', '回复'],
+      ['.pc-pb-reply-box .publish-btn', '发布'],
+    ],
   };
 
   function currentSiteInteractionConfig() {
@@ -162,6 +183,7 @@
     const onHost = (domain) => hostname === domain || hostname.endsWith(`.${domain}`);
     if (onHost('bilibili.com')) return { key: 'bilibili', rules: SITE_INTERACTION_RULES.bilibili };
     if (onHost('xiaohongshu.com')) return { key: 'xiaohongshu', rules: SITE_INTERACTION_RULES.xiaohongshu };
+    if (onHost('tieba.baidu.com')) return { key: 'baiduTieba', rules: SITE_INTERACTION_RULES.baiduTieba };
     // LinkedIn's interop shell renders major surfaces (the post composer
     // dialog among them) inside the open #interop-outlet shadow root. No
     // custom interaction rules needed — piercing alone makes the dialog's
@@ -172,11 +194,18 @@
 
   function getSiteInteractionDescriptor(el) {
     if (!el || typeof el.matches !== 'function') return null;
-    for (const [selector, label] of currentSiteInteractionConfig().rules) {
+    for (const [selector, label, iconHref] of currentSiteInteractionConfig().rules) {
       try {
         if (!el.matches(selector)) continue;
       } catch {
         continue;
+      }
+      if (iconHref) {
+        const hasIcon = Array.from(el.querySelectorAll?.('use') || []).some(use => (
+          use.getAttribute('href') === iconHref
+          || use.getAttribute('xlink:href') === iconHref
+        ));
+        if (!hasIcon) continue;
       }
       const explicit = String(
         el.getAttribute('aria-label') || el.getAttribute('title') || ''
@@ -262,6 +291,46 @@
     } catch {
       return '';
     }
+  }
+
+  function nativeSectionPurpose(section) {
+    if (section?.tagName !== 'SECTION' || section.ownerDocument !== document || !section.isConnected
+        || (section.getAttribute('role') && section.getAttribute('role') !== 'region')) return null;
+    for (let node = section; node; node = node.parentElement || node.getRootNode?.().host) {
+      const style = getComputedStyle(node);
+      if (node.inert || node.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+          || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0
+          || style.contentVisibility === 'hidden') return null;
+    }
+    if (!isVisible(section)) return null;
+    // Native sections often use a plain caption instead of an h2/aria-label.
+    // Name only current rendered noninteractive text, never field values or
+    // text belonging to a nested entity/control. The monitor separately binds
+    // the complete section identity before certifying an action.
+    const excluded = 'button,a,input,textarea,select,option,[contenteditable]:not([contenteditable="false"]),'
+      + '[role="button"],[role="link"],[role="textbox"],[role="combobox"],[role="checkbox"],[role="radio"],'
+      + '[role="switch"],[role="tab"],[role="menuitem"],[role="slider"],[role="spinbutton"]';
+    const stack = [...section.childNodes].reverse();
+    let visited = 0;
+    while (stack.length) {
+      if (++visited > 256) return null;
+      const node = stack.pop();
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.data.replace(/\s+/g, ' ').trim(), parent = node.parentElement;
+        if (text.length >= 3 && text.length <= 512 && parent && isVisible(parent)
+            && !parent.closest(excluded)) return { text, node: parent };
+        continue;
+      }
+      if (!(node instanceof Element) || node.matches('script,style,template,section,article,aside,nav,form,dialog,'
+          + '[role="region"],[role="dialog"],[role="alertdialog"],[role="article"],[role="listitem"],'+excluded)) continue;
+      const style = getComputedStyle(node);
+      if (node.inert || node.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+          || ['hidden', 'collapse'].includes(style.visibility) || Number(style.opacity) === 0
+          || style.contentVisibility === 'hidden') continue;
+      if (node.shadowRoot) return null;
+      stack.push(...[...node.childNodes].reverse());
+    }
+    return null;
   }
 
   // ── Accessible name (matches Claude's priority order) ───────────────────
@@ -444,6 +513,11 @@
       } catch {}
     }
 
+    if (tag === 'section') {
+      const purpose = nativeSectionPurpose(el);
+      if (purpose) return purpose.text.length > MAX_NAME_LEN ? purpose.text.slice(0, MAX_NAME_LEN) + '...' : purpose.text;
+    }
+
     // Fallback: direct text children only, at least 3 chars.
     let text = '';
     for (const child of el.childNodes) {
@@ -463,6 +537,17 @@
     if (cs.visibility === 'hidden') return false;
     if (cs.opacity === '0') return false;
     if (el.offsetWidth <= 0 || el.offsetHeight <= 0) return false;
+    return true;
+  }
+
+  function isRenderedDropdownMenu(el) {
+    if (!el?.isConnected || el.getClientRects().length === 0) return false;
+    for (let node = el; node instanceof Element; node = node.parentElement) {
+      const style = window.getComputedStyle(node);
+      if (node.hidden || node.inert || node.getAttribute('aria-hidden') === 'true'
+          || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+          || Number(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+    }
     return true;
   }
 
@@ -563,6 +648,13 @@
       : null;
   }
 
+  function isComposedAncestor(ancestor, node) {
+    for (let current = node; current; current = composedParent(current)) {
+      if (current === ancestor) return true;
+    }
+    return false;
+  }
+
   function deepestOpenShadowHit(x, y) {
     let hit = document.elementFromPoint(x, y);
     const seen = new Set();
@@ -573,6 +665,58 @@
       hit = inner;
     }
     return hit;
+  }
+
+  function isNodeOccluded(el) {
+    if (!el || !el.isConnected || el.nodeType !== Node.ELEMENT_NODE) return false;
+    try {
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return false;
+      const vw = window.innerWidth || 800;
+      const vh = window.innerHeight || 600;
+      if (r.top >= vh || r.bottom <= 0 || r.left >= vw || r.right <= 0) return false;
+
+      const cx = r.left + r.width / 2;
+      const cy = r.top + r.height / 2;
+      if (cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
+        const hit = deepestOpenShadowHit(cx, cy);
+        if (hit && isComposedAncestor(el, hit)) return false;
+      }
+
+      const sampleOffsets = [
+        [cx, Math.round(r.top + Math.max(2, Math.min(8, r.height * 0.2)))],
+        [cx, Math.round(r.bottom - Math.max(2, Math.min(8, r.height * 0.2)))],
+        [Math.round(r.left + Math.max(2, Math.min(8, r.width * 0.2))), cy],
+        [Math.round(r.right - Math.max(2, Math.min(8, r.width * 0.2))), cy],
+      ];
+      for (const [sx, sy] of sampleOffsets) {
+        if (sx < 0 || sy < 0 || sx > vw || sy > vh) continue;
+        const sampleHit = deepestOpenShadowHit(sx, sy);
+        if (sampleHit && isComposedAncestor(el, sampleHit)) {
+          return false;
+        }
+      }
+
+      if (document.elementsFromPoint && cx >= 0 && cx <= vw && cy >= 0 && cy <= vh) {
+        const elements = document.elementsFromPoint(cx, cy);
+        const targetIdx = elements.indexOf(el);
+        if (targetIdx > 0) {
+          const allAboveNone = elements.slice(0, targetIdx).every(item => {
+            try {
+              const pe = window.getComputedStyle(item).pointerEvents;
+              return pe === 'none' || isComposedAncestor(el, item);
+            } catch {
+              return false;
+            }
+          });
+          if (allAboveNone) return false;
+        }
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   function visualTargetEligibility(el) {
@@ -687,11 +831,71 @@
     }
   }
 
+
+  // Internal Jev inventory is collected by the existing AX walker. It never
+  // parses page-authored ref strings and cannot target frames or shadow roots.
+  let jevCollector = null;
+  let lastJevSnapshot = null;
+  let jevSensitiveControlSeen = false;
+  function jevControl(el) {
+    if (window.top !== window || el.getRootNode() !== document || !isInteractive(el)) return null;
+    const tag = el.tagName.toLowerCase();
+    const type = String(el.type || '').toLowerCase();
+    const name = String(getAccessibleName(el) || '').slice(0, 120);
+    const identity = [name, el.name, el.id, el.autocomplete].join(' ');
+    if (['password', 'file', 'hidden'].includes(type)
+        || /\b(?:password|passwd|passcode|pin|otp|token|secret|cvv|cvc|csc|ssn|iban)\b|\bcc-(?:name|given-name|additional-name|family-name|number|exp|exp-month|exp-year|csc|type)\b|api.?key|one[-_\s]?time(?:[-_\s]?code)?|verification.?code|security.?code|auth(?:entication)?.?code|credit.?card|card.?number|social.?security|(?:routing|account).?number/i.test(identity)) {
+      jevSensitiveControlSeen = true;
+      return null;
+    }
+    const role = getRole(el);
+    const kinds = [];
+    if (tag === 'select') kinds.push('select');
+    else if (type === 'checkbox' || role === 'checkbox' || role === 'switch') kinds.push('check');
+    else if ((tag === 'input' && !['submit', 'button', 'reset', 'image', 'radio', 'range', 'color'].includes(type)) || tag === 'textarea') kinds.push('fill');
+    else if (['button', 'a', 'option'].includes(tag) || ['button', 'link', 'option', 'menuitem', 'tab', 'radio'].includes(role)) kinds.push('click');
+    if (!kinds.length) return null;
+    const disabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' || !!el.readOnly;
+    const control = { ref: getOrMintRef(el), role, name, kinds, disabled,
+      form: el.form ? getOrMintRef(el.form) : '',
+      value: kinds.includes('fill') ? String(el.value || '').slice(0, 500) : '',
+      checked: kinds.includes('check') ? (el.checked === true || el.getAttribute('aria-checked') === 'true') : null,
+      options: tag === 'select' ? Array.from(el.options).filter(o => !o.disabled).slice(0, 20).map(o => ({ value: o.value, label: o.text.slice(0, 100) })) : [],
+    };
+    // The signature remains internal. A changed destination or field identity
+    // invalidates a selected target even if its DOM node/ref survived.
+    control.signature = fingerprintTreeContent(JSON.stringify({ ...control, id: el.id, fieldName: el.name, href: el.getAttribute('href'), type }));
+    return control;
+  }
+  function collectJevControl(el) {
+    if (!jevCollector) return;
+    try {
+      const control = jevControl(el);
+      if (control && jevCollector.size < 24) jevCollector.set(control.ref, control);
+    } catch { /* Optional inventory must not break the normal AX reader. */ }
+  }
+  function jevSnapshot() { return lastJevSnapshot; }
+  function jevValidate(binding) {
+    if (!binding || binding.pageUrl !== location.href) return false;
+    generateAccessibilityTree('interactive', 10, 3500);
+    const snapshot = lastJevSnapshot;
+    if (!snapshot || snapshot.hasSensitiveControls === true || snapshot.structure !== binding.structure) return false;
+    const target = snapshot.controls.find(c => c.ref === binding.ref);
+    const el = lookup(binding.ref);
+    if (!target || target.disabled || target.signature !== binding.signature || !el || el.getRootNode() !== document) return false;
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    if (rect.width <= 0 || rect.height <= 0 || x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return false;
+    const hit = document.elementFromPoint(x, y);
+    return hit === el || el.contains(hit);
+  }
+
   // ── Line formatting ────────────────────────────────────────────────────
-  function formatLine(el, depth) {
+  function formatLine(el, depth, origin = null) {
     const role = getRole(el);
     let name = getAccessibleName(el);
     const ref = getOrMintRef(el);
+    if (origin) origin.ref = ref;
     const tag = el.tagName.toLowerCase();
 
     let line = ' '.repeat(depth) + role;
@@ -702,7 +906,10 @@
     line += ' [' + ref + ']';
 
     const href = el.getAttribute('href');
-    if (href) line += ' href="' + href + '"';
+    // Tracking URLs can occupy an entire tree chunk before any result appears.
+    // Keep the live href on the element/ref; never present a shortened URL as
+    // a navigable href. The agent can click the ref and read the final URL.
+    if (href) line += formatTreeHref(href);
     const type = el.getAttribute('type');
     if (type) line += ' type="' + type + '"';
     // A React-style form can replace a control node on every change, which
@@ -797,6 +1004,11 @@
         }
       } catch {}
     }
+    try {
+      if (isInteractive(el) && isNodeOccluded(el)) {
+        line += ' occluded=true';
+      }
+    } catch {}
     if (inputType === 'checkbox' || inputType === 'radio') {
       line += ` checked=${el.checked ? 'true' : 'false'}`;
     } else if (['checkbox', 'radio', 'switch'].includes(attrRole) || el.hasAttribute('aria-checked')) {
@@ -875,8 +1087,9 @@
     return line;
   }
 
-  function formatOption(opt, depth) {
+  function formatOption(opt, depth, origin = null) {
     const ref = getOrMintRef(opt);
+    if (origin) origin.ref = ref;
     const rawName = opt.textContent ? opt.textContent.trim() : '';
     const name = rawName.replace(/\s+/g, ' ').substring(0, MAX_NAME_LEN).replace(/"/g, '\\"');
     let line = ' '.repeat(depth) + 'option';
@@ -887,6 +1100,44 @@
       line += ' value="' + opt.value.replace(/"/g, '\\"') + '"';
     }
     return line;
+  }
+
+  // Formatter-owned origins stay private: page text may contain real ref
+  // tokens in names, roles or attributes, so text matching is not authority.
+  const treeLineOrigins = new WeakMap();
+  const TREE_REF_ORIGIN = Symbol('formatter-owned-AX-refs');
+  function pushTreeLine(lines, node, depth, offscreen = false, option = false) {
+    const origin = {};
+    const text = option ? formatOption(node, depth, origin) : formatLine(node, depth, origin);
+    const records = treeLineOrigins.get(lines) || [];
+    records.push({ index: lines.length, ref: origin.ref, node: new WeakRef(node) });
+    treeLineOrigins.set(lines, records);
+    lines.push(text + (offscreen && !isInViewport(node) ? ' offscreen=true' : ''));
+  }
+  function formatterRefs(lines, start = 0, end = lines.length, prefixLength = 0) {
+    const records = new Map((treeLineOrigins.get(lines) || []).map(record => [record.index, record]));
+    const refs = [];
+    let offset = prefixLength;
+    for (let index = start; index < end; index++) {
+      const record = records.get(index);
+      if (record) refs.push(Object.freeze({ ref: record.ref, node: record.node, end: offset + lines[index].length }));
+      offset += lines[index].length + 1;
+    }
+    return refs;
+  }
+  function withFormatterRefs(result, lines, start = 0, end = lines.length, prefixLength = 0) {
+    // Enumerable Symbols survive our object spreads but are omitted by JSON
+    // and runtime message serialization. No values or nodes enter public output.
+    result[TREE_REF_ORIGIN] = Object.freeze({ text: result.pageContent,
+      refs: Object.freeze(formatterRefs(lines, start, end, prefixLength)) });
+    return result;
+  }
+  function observedTreeRefs(tree, visibleLength = tree?.pageContent?.length) {
+    const origin = tree?.[TREE_REF_ORIGIN];
+    if (!origin || origin.text !== tree.pageContent || !Number.isSafeInteger(visibleLength)
+        || visibleLength < 0 || visibleLength > origin.text.length) return [];
+    return origin.refs.filter(record => record.end <= visibleLength
+      && record.node.deref() === lookup(record.ref)).map(({ ref, end }) => ({ ref, end }));
   }
 
   // ── Walker ─────────────────────────────────────────────────────────────
@@ -928,16 +1179,18 @@
     return false;
   }
 
-  function walk(el, depth, opts, lines) {
+  function walk(el, depth, opts, lines, hoistedRoot = false) {
     if (!el || !el.tagName) return;
+    // A native popup may hide through a parent transition while its buttons
+    // retain their own rects. Do not leak its hidden options into visible AX.
+    if (opts.filter !== 'all' && el.matches?.('.dropdown-menu') && !isRenderedDropdownMenu(el)) return;
 
     // Skip nodes already emitted in the priority/action prelude.
     if (depth > 0 && opts._skipPrioritySet && opts._skipPrioritySet.has(el)) return;
 
-    // Skip nodes already emitted in the hoisted-overlay prelude. depth>0
-    // guard ensures we still enter the overlay itself when it's the
-    // explicit walk root.
-    if (depth > 0 && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
+    // Skip nodes already emitted in the hoisted-overlay prelude. An
+    // unlabelled wrapper can still be at depth 0 during the body walk.
+    if (!hoistedRoot && opts._skipOverlaySet && opts._skipOverlaySet.has(el)) return;
 
     if (depth > opts.maxDepth) {
       if (shouldInclude(el, opts) || omittedDescendantWouldBeIncluded(el, opts)) {
@@ -950,12 +1203,16 @@
     // it wouldn't normally pass the include filter.
     const included = shouldInclude(el, opts) || (opts.refId != null && depth === 0);
 
-    if (included) {
-      lines.push(formatLine(el, depth));
+    if (included && !opts._emittedRefs?.has(getOrMintRef(el))) {
+      opts._emittedRefs?.add(getOrMintRef(el));
+      opts._onIncluded?.(el);
+      pushTreeLine(lines, el, depth, opts._markOffscreen);
 
       if (el.tagName.toLowerCase() === 'select' && el.options) {
         for (const opt of el.options) {
-          lines.push(formatOption(opt, depth + 1));
+          if (opts._emittedRefs?.has(getOrMintRef(opt))) continue;
+          opts._emittedRefs?.add(getOrMintRef(opt));
+          pushTreeLine(lines, opt, depth + 1, false, true);
         }
       }
     }
@@ -975,6 +1232,108 @@
       }
     } else if (nodeHasWalkableChildren(el) && omittedDescendantWouldBeIncluded(el, opts)) {
       opts.depthTruncated = true;
+    }
+  }
+
+  // Fresh portals are interaction context for rooted reads as well as
+  // full-page reads. Their public inventory uses the same bounded tree and
+  // continuation; the underlying article scope does not become a page read.
+  function hoistOpenOverlays(opts, lines) {
+    // Hoist "overlay" surfaces (open listboxes, menus, dialogs,
+    // alertdialogs, expanded comboboxes, aria-modal containers) to the
+    // TOP of the tree output. Portals often render these as children of
+    // <body> positioned AFTER lots of base page content, which means a
+    // DOM-order walk under soft-truncation commonly misses them entirely.
+    // Without this, the model can't see the currency picker, timezone
+    // picker, confirmation dialog, etc. that just opened in response to
+    // its last click. Emitting them first guarantees they survive any
+    // later truncation.
+    const overlaySelectors = [
+      '.dropdown-menu',
+      '[role=listbox]',
+      '[role=menu]',
+      '[role=dialog]',
+      '[role=alertdialog]',
+      '[aria-modal="true"]',
+      '[role=combobox][aria-expanded="true"]',
+      'dialog[open]',
+      '[data-overlay]',
+      '.modal.show',
+      '.modal-overlay',
+      '.modal.open',
+      '[class*="DialogContent"]',
+      '[class*="ModalContent"]',
+      '[data-state="open"][role="dialog"]',
+    ];
+    const overlayEls = [];
+    const seen = new WeakSet();
+    // On pierce-enabled sites (LinkedIn's interop shell, Bilibili), the
+    // dialog we must hoist can live inside an open shadow root where
+    // document.querySelectorAll can't see it. Collect those roots so the
+    // overlay scan covers them too — without piercing, a freshly-opened
+    // composer dialog is completely absent from the tree output and the
+    // model falls back to blind coordinate clicks.
+    const overlayRoots = [document];
+    if (window.__wbSiteInteractions.shouldPierceShadowRoots()) {
+      const collectShadowRoots = (root, depth) => {
+        if (depth > 4) return;
+        let hosts;
+        try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const host of hosts) {
+          if (host.shadowRoot) {
+            overlayRoots.push(host.shadowRoot);
+            collectShadowRoots(host.shadowRoot, depth + 1);
+          }
+        }
+      };
+      collectShadowRoots(document, 0);
+    }
+    try {
+      for (const sel of overlaySelectors) {
+        for (const root of overlayRoots) {
+          const nodes = root.querySelectorAll(sel);
+          for (const n of nodes) {
+            if (seen.has(n)) continue;
+            if (!n.isConnected) continue;
+            if (n.matches('.dropdown-menu') && !isRenderedDropdownMenu(n)) continue;
+            // Quick visibility gate — don't emit hidden overlay shells.
+            try {
+              const r = n.getBoundingClientRect();
+              if (r.width < 1 || r.height < 1) continue;
+              const s = window.getComputedStyle(n);
+              if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
+            } catch (e) { continue; }
+            // Selector order may find a dialog before its modal wrapper.
+            // Keep only the outermost visible overlay in either order.
+            if (overlayEls.some(existing => isComposedAncestor(existing, n))) continue;
+            let insertionIndex = overlayEls.length;
+            for (let i = overlayEls.length - 1; i >= 0; i--) {
+              if (!isComposedAncestor(n, overlayEls[i])) continue;
+              seen.delete(overlayEls[i]);
+              overlayEls.splice(i, 1);
+              insertionIndex = i;
+            }
+            seen.add(n);
+            overlayEls.splice(insertionIndex, 0, n);
+          }
+        }
+      }
+    } catch (e) {}
+    if (overlayEls.length) {
+      lines.push(opts._emittedRefs ? '[open overlays — current context after requested subtree]' : '[open overlays — rendered first so they survive truncation]');
+      for (const n of overlayEls) {
+        if (n.matches('.dropdown-menu')) {
+          // Mastodon's native portal has no ARIA menu role and may extend
+          // below the viewport. Publish its exact root and rendered action
+          // inventory, with explicit offscreen metadata; ordinary AX
+          // slicing still bounds large menus. Reading never activates it.
+          const menuOpts = { ...opts, refId: getOrMintRef(n), _markOffscreen: true };
+          walk(n, 0, menuOpts, lines, true);
+          opts.depthTruncated ||= menuOpts.depthTruncated;
+        } else walk(n, 0, opts, lines, true);
+      }
+      lines.push('[/open overlays]');
+      opts._skipOverlaySet = seen;
     }
   }
 
@@ -1126,7 +1485,7 @@
       pageContent += `\n[tree truncated: ${omittedAfter} more nodes omitted to stay under ${chunkSize} chars. Before scrolling or answering a whole-document question, call get_accessibility_tree(${JSON.stringify(continuationArgs)}) exactly for the next chunk.]`;
     }
 
-    return {
+    return withFormatterRefs({
       pageContent,
       truncated: hasMore,
       hasMore,
@@ -1136,7 +1495,8 @@
       totalChars: output.length,
       chunkStart: chunk.charStart,
       chunkEnd: chunk.charEnd,
-    };
+    }, lines, chunk.startNode, chunk.endNode,
+      safePage > 1 ? `[tree page ${safePage}; ${omittedBefore} earlier nodes omitted]\n`.length : 0);
   }
 
   function fingerprintTreeContent(output) {
@@ -1174,9 +1534,7 @@
   function actionableTreeSnapshotSignatures(lines) {
     const signatures = [];
     const seen = new Set();
-    for (const line of lines) {
-      const match = String(line || '').match(/\[(ref_\d+)\]/);
-      const refId = match?.[1];
+    for (const { ref: refId } of formatterRefs(lines)) {
       if (!refId || seen.has(refId)) continue;
       seen.add(refId);
       const el = window.__wbElementMap[refId]?.deref?.();
@@ -1202,9 +1560,11 @@
     if (!(window.__wbAxTreeSnapshots instanceof Map)) window.__wbAxTreeSnapshots = new Map();
     const key = treeSnapshotKey(scope, treeRevision);
     window.__wbAxTreeSnapshots.delete(key);
+    const snapshotLines = lines.slice();
+    treeLineOrigins.set(snapshotLines, (treeLineOrigins.get(lines) || []).slice());
     window.__wbAxTreeSnapshots.set(key, {
       output,
-      lines: lines.slice(),
+      lines: snapshotLines,
       treeRevision,
       actionSignatures: actionableTreeSnapshotSignatures(lines),
     });
@@ -1282,9 +1642,31 @@
     return null;
   }
 
+  function isSingleMessageGmailThread(conversationRoot) {
+    if (!conversationRoot || typeof conversationRoot.querySelectorAll !== 'function') return false;
+    try {
+      const gmailMessages = Array.from(conversationRoot.querySelectorAll('.adn,.ads,[data-message-id]'));
+      if (gmailMessages.length) {
+        const topLevelGmailMessages = gmailMessages.filter(msg => (
+          !msg.closest?.('.a3s,.ii') && (!msg.parentElement || !msg.parentElement.closest?.('.adn,.ads,[data-message-id]'))
+        ));
+        return topLevelGmailMessages.length === 1;
+      }
+      const semanticMessages = Array.from(conversationRoot.querySelectorAll('[role="article"]'));
+      if (semanticMessages.length) {
+        const topLevelSemantic = semanticMessages.filter(msg => (
+          !msg.closest?.('.a3s,.ii') && (!msg.parentElement || !msg.parentElement.closest?.('[role="article"]'))
+        ));
+        return topLevelSemantic.length === 1;
+      }
+    } catch (e) {}
+    return false;
+  }
+
   function detectGmailConversationExpansionState(conversationRoot) {
     if (!isGmailConversationRoute() || !conversationRoot) return null;
     let collapsed = false;
+    let scanned = false;
     try {
       for (const control of conversationRoot.querySelectorAll('button,[role="button"]')) {
         if (!isVisible(control)) continue;
@@ -1296,8 +1678,16 @@
         if (state === 'expanded') return state;
         if (state === 'collapsed') collapsed = true;
       }
+      scanned = true;
     } catch (e) {}
-    return collapsed ? 'collapsed' : null;
+    if (collapsed) return 'collapsed';
+    // A thread with a single message exposes neither Expand all nor Collapse
+    // all. Report that as its own state so the read-completeness guard can tell
+    // "nothing to expand" apart from "not checked yet"; conflating the two left
+    // `done` permanently blocked on threads that were already fully readable.
+    // Only a scan that ran to completion on a verified single-message thread
+    // may report it; a multi-message thread missing controls must stay unconfirmed.
+    return (scanned && isSingleMessageGmailThread(conversationRoot)) ? 'not_applicable' : null;
   }
 
   function findGmailConversationExpandAll(conversationRoot) {
@@ -1346,6 +1736,9 @@
   }
 
   function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
+    jevCollector = filter === 'interactive' && !refId && (!page || page === 1) ? new Map() : null;
+    lastJevSnapshot = null;
+    jevSensitiveControlSeen = false;
     try {
       ensureRefScope();
       const effFilter = filter || 'all';
@@ -1355,6 +1748,7 @@
         ? detectGmailConversationExpansionState(conversationRoot)
         : null;
       const conversationMetadata = {
+        tableCount: document.querySelectorAll('table').length,
         ...(conversationRootRefId ? { conversationRootRefId } : {}),
         ...(conversationExpansionState ? { conversationExpansionState } : {}),
       };
@@ -1370,6 +1764,7 @@
                           : 6000;
       const opts = {
         filter: effFilter,
+        _onIncluded: collectJevControl,
         maxDepth: maxDepth != null ? maxDepth : defaultDepth,
         refId: refId || null,
       };
@@ -1429,90 +1824,23 @@
             };
           }
         }
-        walk(el, 0, opts, lines);
+        // A scoped read budgets its requested subtree first. Fresh portals
+        // remain available afterwards through the same bounded continuation.
+        // Shared refs prevent an anchored popup or item being emitted twice.
+        opts._emittedRefs = new Set();
+        const scopedOpts = { ...opts, _markOffscreen: !!el.closest('.dropdown-menu') };
+        walk(el, 0, scopedOpts, lines);
+        opts.depthTruncated ||= scopedOpts.depthTruncated;
+        hoistOpenOverlays(opts, lines);
       } else if (document.body) {
-        // Hoist "overlay" surfaces (open listboxes, menus, dialogs,
-        // alertdialogs, expanded comboboxes, aria-modal containers) to the
-        // TOP of the tree output. Portals often render these as children of
-        // <body> positioned AFTER lots of base page content, which means a
-        // DOM-order walk under soft-truncation commonly misses them entirely.
-        // Without this, the model can't see the currency picker, timezone
-        // picker, confirmation dialog, etc. that just opened in response to
-        // its last click. Emitting them first guarantees they survive any
-        // later truncation.
-        const overlaySelectors = [
-          '[role=listbox]',
-          '[role=menu]',
-          '[role=dialog]',
-          '[role=alertdialog]',
-          '[aria-modal="true"]',
-          '[role=combobox][aria-expanded="true"]',
-          'dialog[open]',
-        ];
-        const overlayEls = [];
-        const seen = new WeakSet();
-        // On pierce-enabled sites (LinkedIn's interop shell, Bilibili), the
-        // dialog we must hoist can live inside an open shadow root where
-        // document.querySelectorAll can't see it. Collect those roots so the
-        // overlay scan covers them too — without piercing, a freshly-opened
-        // composer dialog is completely absent from the tree output and the
-        // model falls back to blind coordinate clicks.
-        const overlayRoots = [document];
-        if (window.__wbSiteInteractions.shouldPierceShadowRoots()) {
-          const collectShadowRoots = (root, depth) => {
-            if (depth > 4) return;
-            let hosts;
-            try { hosts = root.querySelectorAll('*'); } catch (e) { return; }
-            for (const host of hosts) {
-              if (host.shadowRoot) {
-                overlayRoots.push(host.shadowRoot);
-                collectShadowRoots(host.shadowRoot, depth + 1);
-              }
-            }
-          };
-          collectShadowRoots(document, 0);
-        }
-        try {
-          for (const sel of overlaySelectors) {
-            for (const root of overlayRoots) {
-              const nodes = root.querySelectorAll(sel);
-              for (const n of nodes) {
-                if (seen.has(n)) continue;
-                if (!n.isConnected) continue;
-                // Skip if ancestor already collected — avoids emitting a
-                // nested listbox twice when its ancestor dialog is also hit.
-                let ancIsOverlay = false;
-                for (let p = n.parentElement; p; p = p.parentElement) {
-                  if (seen.has(p)) { ancIsOverlay = true; break; }
-                }
-                if (ancIsOverlay) continue;
-                // Quick visibility gate — don't emit hidden overlay shells.
-                try {
-                  const r = n.getBoundingClientRect();
-                  if (r.width < 1 || r.height < 1) continue;
-                  const s = window.getComputedStyle(n);
-                  if (s.visibility === 'hidden' || s.display === 'none' || parseFloat(s.opacity) === 0) continue;
-                } catch (e) { continue; }
-                seen.add(n);
-                overlayEls.push(n);
-              }
-            }
-          }
-        } catch (e) {}
-        if (overlayEls.length) {
-          lines.push('[open overlays — rendered first so they survive truncation]');
-          for (const n of overlayEls) {
-            walk(n, 0, opts, lines);
-          }
-          lines.push('[/open overlays]');
-          opts._skipOverlaySet = seen;
-        }
+        hoistOpenOverlays(opts, lines);
         if (effFilter === 'visible') {
           const priority = collectPriorityActionSurfaces();
           if (priority.elements.length) {
             lines.push('[priority action surfaces - editable/focused/submit controls rendered first]');
             for (const n of priority.elements) {
-              lines.push(formatLine(n, 0));
+              collectJevControl(n);
+              pushTreeLine(lines, n, 0);
             }
             lines.push('[/priority action surfaces]');
             opts._skipPrioritySet = priority.set;
@@ -1604,13 +1932,20 @@
         return { error: hint, pageContent: '', viewport };
       }
 
-      return { pageContent: output, viewport, treeRevision, depthTruncated, ...conversationMetadata };
+      return withFormatterRefs({ pageContent: output, viewport, treeRevision, depthTruncated, ...conversationMetadata }, lines);
     } catch (e) {
       return {
         error: 'Error generating accessibility tree: ' + (e && e.message || 'Unknown error'),
         pageContent: '',
         viewport: { width: window.innerWidth, height: window.innerHeight },
       };
+    } finally {
+      if (jevCollector) {
+        const controls = [...jevCollector.values()];
+        const structure = fingerprintTreeContent(JSON.stringify(controls.map(({ value, checked, signature, ...control }) => control)));
+        lastJevSnapshot = { controls, structure, progress: fingerprintTreeContent(JSON.stringify(controls)) + ':' + Math.round(scrollY), hasSensitiveControls: jevSensitiveControlSeen };
+      }
+      jevCollector = null;
     }
   }
 
@@ -1701,13 +2036,17 @@
     return generateAccessibilityTree(filter, maxDepth, maxChars, getOrMintRef(rootElement), page);
   }
 
+  window.__wb_jev_snapshot = jevSnapshot;
+  window.__wb_jev_validate = jevValidate;
   window.__generateAccessibilityTree = generateAccessibilityTree;
   window.__generateAccessibilitySubtree = generateAccessibilitySubtree;
   window.__wb_expand_gmail_conversation_for_read = expandGmailConversationForRead;
   window.__wb_ax_lookup = lookup;
   window.__wb_ax_ref = getOrMintRef;
+  window.__wb_ax_observed_refs = observedTreeRefs;
   window.__wb_ax_name = getAccessibleName;
   window.__wb_ax_role = getRole;
+  window.__wb_ax_section_purpose = nativeSectionPurpose;
   window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;
   window.__wb_ax_suggest = suggestNearRefs;
 })();

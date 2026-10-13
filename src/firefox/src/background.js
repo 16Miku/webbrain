@@ -1,3 +1,17 @@
+import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
+import { d1Request } from './providers/d1.js';
+import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
+import { D1_CONSENT_KEY, D1_CONSENT_VERSION } from './providers/d1-config.js';
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && (changes.systemOneEnabled?.newValue === false || (changes.decisionProvider && changes.decisionProvider.newValue !== 'webgpu_d1') || (changes[D1_CONSENT_KEY] && changes[D1_CONSENT_KEY].newValue !== D1_CONSENT_VERSION) || changes.strictSecretMode?.newValue === true)) void d1Request('reset').catch(() => {});
+});
+import { probeDecisionVision } from './agent/decision-vision-probe.js';
+import { installSafeSocialBackground } from './safesocial/background.js';
+import { createFeedbackHandoff } from './feedback-handoff.js';
+const feedbackHandoff = createFeedbackHandoff(browser);
+import { createSafeSocialHost } from './safesocial/host.js';
+import { firefoxBidi } from './bidi/client.js';
 import { ProviderManager } from './providers/manager.js';
 import { Agent } from './agent/agent.js';
 import {
@@ -13,11 +27,14 @@ import {
   refreshBuiltInSkillRecord,
 } from './agent/skills.js';
 import { ScheduledJobManager } from './agent/scheduler.js';
+import { cloudSafeScheduledJob, createCloudRunController } from './cloud-runs.js';
+import { createCloudBridge } from './cloud-bridge.js';
 import { APOCALYPSE_DOWNLOAD_ALARM, APOCALYPSE_UPDATE_ALARM, createApocalypseController, sweepOpfsSwapFiles } from './agent/apocalypse-mode.js';
 import { createEmergencyDownloadController } from './agent/emergency-download-controller.js';
 import { createHostedOfflineRagIndexClient } from './agent/offline-rag-index-host.js';
 import { getSharedOfflineSemanticReranker } from './agent/offline-semantic-runtime.js';
 import { EMERGENCY_DOWNLOAD_ACTION } from './ui/emergency-download-client.js';
+import { readPdfResponseBytes } from './agent/pdf-stream.js';
 import {
   compileWorkflowFromDemonstration,
   compileLatestSuccessfulWorkflow,
@@ -36,6 +53,13 @@ import {
 } from './providers/oauth-claude.js';
 import { getBalance as capsolverGetBalance } from './agent/captcha-solver.js';
 import { isCapsolverEnabled } from './agent/capsolver-config.js';
+import { testImageGenProvider } from './agent/fal-media.js';
+import { IMAGE_GEN_MODEL_KEY } from './agent/media-config.js';
+import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders } from './agent/captcha-provider-config.js';
+import { createCaptchaBridgeRegistration } from './agent/captcha-bridge-registration.js';
+import { getAdditionalCaptchaBalance } from './agent/captcha-additional-providers.js';
+import { getTwoCaptchaBalance } from './agent/two-captcha.js';
+import { createSystemOneJudge } from './agent/systemone-judge.js';
 import {
   SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
@@ -61,7 +85,7 @@ import {
   uiScaleCommandAction,
 } from './ui/ui-scale.js';
 import { normalizeOllamaLaunchHandoff } from './ollama-handoff.js';
-import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest } from './run-ui-journal.js';
+import { RunUiJournal, RunUiPersistenceScheduler, compactRunUiSnapshotForPersist, runUiSnapshotForRequest, runUiUpdatesForCurrentTask } from './run-ui-journal.js';
 import {
   USER_MEMORY_AUTO_CAPTURE_KEY,
   USER_MEMORY_ENABLED_KEY,
@@ -80,6 +104,7 @@ import {
   parseUserMemoryExtractionResult,
 } from './agent/user-memory.js';
 import { PROFILE_SYNC_DATA_KEYS, PROFILE_SYNC_KEYS, ProfileSyncManager } from './profile-sync.js';
+import { createMemcodeRecall } from './agent/memcode-recall.js';
 import { shouldAutoGroupTabs } from './tab-group-preference.js';
 import {
   SHORTCUT_COMMAND_STORAGE_KEY,
@@ -104,6 +129,9 @@ import {
  * WebBrain Background Script (Firefox)
  * Routes messages between sidebar, content scripts, and the agent.
  */
+
+const safeSocialHost = createSafeSocialHost();
+installSafeSocialBackground(browser, (command, payload) => safeSocialHost.handle(command, payload));
 
 const providerManager = new ProviderManager();
 const apocalypseController = createApocalypseController(browser);
@@ -139,13 +167,15 @@ Promise.all([
   console.warn('[WebBrain] Apocalypse Mode schedules could not be restored:', error);
 });
 const agent = new Agent(providerManager);
+agent.strictSecretMode = false;
 const ALWAYS_ALLOW_API_MUTATIONS_KEY = 'alwaysAllowApiMutations';
 const alwaysAllowApiMutationsReady = browser.storage.local
-  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: false })
+  .get({ [ALWAYS_ALLOW_API_MUTATIONS_KEY]: true })
   .then((stored) => {
     agent.setAlwaysAllowApiMutations(stored[ALWAYS_ALLOW_API_MUTATIONS_KEY] === true);
   })
   .catch(() => {
+    // An unreadable setting must not bypass a stored opt-out.
     agent.setAlwaysAllowApiMutations(false);
   });
 agent.setConversationScopeChangeListener((tabId, state) => {
@@ -158,14 +188,20 @@ agent.setConversationScopeChangeListener((tabId, state) => {
   }).catch(() => {});
 });
 const userMemoryStore = createUserMemoryStore(browser.storage.local);
+const memcodeRecall = createMemcodeRecall({ storage: browser.storage.local, identity: browser.identity });
+agent.memcodeRecall = memcodeRecall;
 const savedWorkflowStore = createSavedWorkflowStore(browser.storage.local);
 const teacherSessionStore = createTeacherSessionStore(browser.storage.session);
 const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
   automationOwnsTab: (tabId) => agent.isRunning(tabId)
     || detachedRunStarts.has(tabId)
-    || scheduler.isRunning(tabId),
+    || scheduler.isRunning(tabId)
+    || cloudRunController.isRunning(tabId),
 });
-agent.setRunStartGuard((tabId) => teacherRunInterlock.guardRunStart(tabId));
+agent.setRunStartGuard(async (tabId, context) => {
+  await cloudRunController.guardRunStart(tabId, context);
+  return teacherRunInterlock.guardRunStart(tabId);
+});
 const profileSync = new ProfileSyncManager(browser.storage.local);
 const runCaptureController = createRunCaptureController({
   api: browser,
@@ -174,12 +210,19 @@ const runCaptureController = createRunCaptureController({
 const scheduler = new ScheduledJobManager({
   api: browser,
   agent,
+  systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
+    await imageGenConfigReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
-  sendUpdate: (tabId, type, data) => {
+  sendUpdate: (tabId, type, data, owner) => {
+    if (owner?.executionId) {
+      sendScheduledAgentUpdate(tabId, type, data, owner);
+      return;
+    }
     browser.runtime.sendMessage({
       target: 'sidepanel',
       action: 'agent_update',
@@ -196,14 +239,31 @@ const scheduler = new ScheduledJobManager({
 agent.setScheduler(scheduler);
 scheduler.start();
 
+// Firefox has no offscreen document, so the Cloud Bridge socket lives in this
+// background page and hands commands straight to handleMessage.
+const cloudBridge = createCloudBridge({ dispatch: (msg) => handleMessage(msg, null) });
+const cloudRunController = createCloudRunController({
+  chromeApi: browser,
+  agent,
+  bridge: cloudBridge,
+  sendIndicator: (tabId, type) => sendIndicatorMessage(tabId, type),
+  workflowTrace,
+});
+alwaysAllowApiMutationsReady
+  .then(() => cloudRunController.syncBridge())
+  .catch(() => {});
+
 const MAX_AGENT_STEPS_DEFAULT = 130;
 const MAX_AGENT_STEPS_UNLIMITED_SENTINEL = 200;
 const CONTEXT_MENU_ASK_SELECTION_ID = 'webbrain-ask-selection';
 const CONTEXT_MENU_OPEN_CHAT_ID = 'webbrain-selection-open-chat';
+const CONTEXT_MENU_OPEN_PDF_VIEWER_ID = 'webbrain-open-pdf-viewer';
 const CONTEXT_MENU_ACTION_PREFIX = 'webbrain-selection-action-';
 const CONTEXT_MENU_TRANSLATE_ID = 'webbrain-selection-translate';
 const CONTEXT_MENU_TRANSLATE_PREFIX = 'webbrain-selection-translate-';
 const CONTEXT_MENU_GENERIC_ASK_ID = 'webbrain-selection-generic-ask';
+const pdfResponseTabs = new Set();
+const pdfOcrRequests = new Map();
 function resolveStoredSelectionShortcutLocale(value) {
   return normalizeSelectionShortcutLocale(
     value || (typeof navigator !== 'undefined' ? navigator.language : 'en'),
@@ -223,6 +283,76 @@ function getContextMenuApi() {
 
 function getContextMenuPromptStore() {
   return browser.storage?.session || browser.storage?.local || null;
+}
+
+function safeOnlinePdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function isPdfUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return ['http:', 'https:'].includes(url.protocol) && /\.pdf$/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function trackPdfResponse(details) {
+  if (!Number.isInteger(details?.tabId) || details.tabId < 0) return;
+  agent.noteDocumentMime(details);
+  const contentType = (details.responseHeaders || [])
+    .find(header => String(header?.name || '').toLowerCase() === 'content-type')?.value;
+  if (/^application\/pdf(?:\s*;|$)/i.test(String(contentType))) pdfResponseTabs.add(details.tabId);
+  else pdfResponseTabs.delete(details.tabId);
+}
+
+function getPdfHandlerBaseUrl() {
+  try {
+    return browser.runtime.getURL('src/ui/pdf-handler.html');
+  } catch {
+    return '';
+  }
+}
+
+// The PDF viewer is an extension page, so sender.tab is empty. Scope the
+// request to the handler that sent it: the sender must be our viewer and,
+// when the sender URL carries an explicit tabId, it must match msg.tabId.
+function isPdfHandlerSender(sender, tabId) {
+  if (!sender || sender.id !== browser.runtime.id) return false;
+  const senderUrl = String(sender?.url || '');
+  const base = getPdfHandlerBaseUrl();
+  if (!base || !senderUrl.startsWith(base)) return false;
+  try {
+    const senderTabId = new URL(senderUrl).searchParams.get('tabId');
+    if (senderTabId != null && Number(senderTabId) !== tabId) return false;
+  } catch {
+    return false;
+  }
+  return true;
+}
+
+async function fetchPdfDocumentForViewer(url) {
+  const maxPdfBytes = 64 * 1024 * 1024;
+  const response = await fetch(url, { credentials: 'include', redirect: 'follow' });
+  if (!response.ok) throw new Error(`Firefox PDF fetch returned HTTP ${response.status}.`);
+  // Require the proxied URL to actually be a PDF so the credentialed
+  // fetch cannot be pointed at arbitrary HTML the viewer did not open.
+  const contentType = String(response.headers.get('content-type') || '');
+  if (!/^application\/pdf(?:\s*;|$)/i.test(contentType)) {
+    throw new Error('The requested URL did not return a PDF document.');
+  }
+  const bytes = await readPdfResponseBytes(response, {
+    maxBytes: maxPdfBytes,
+    emptyMessage: 'Firefox returned an empty PDF stream.',
+    unreadableMessage: 'Firefox PDF stream could not be read safely.',
+  });
+  return { ok: true, bytes: bytes.buffer };
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
@@ -292,6 +422,12 @@ async function createContextMenus() {
     }
     createItem({ id: 'webbrain-selection-separator-2', parentId: CONTEXT_MENU_ASK_SELECTION_ID, type: 'separator', contexts: ['selection'] });
     createItem({ id: CONTEXT_MENU_GENERIC_ASK_ID, parentId: CONTEXT_MENU_ASK_SELECTION_ID, title: strings.askAbout, contexts: ['selection'] });
+    createItem({
+      id: CONTEXT_MENU_OPEN_PDF_VIEWER_ID,
+      title: 'Open PDF with WebBrain',
+      contexts: ['page'],
+      visible: false,
+    });
   };
 
   try {
@@ -368,10 +504,16 @@ async function loadResearchEscalation() {
 const researchEscalationReady = loadResearchEscalation().catch(() => {});
 
 async function loadStrictSecretMode() {
-  const stored = await browser.storage.local.get('strictSecretMode');
-  if (stored.strictSecretMode != null) agent.strictSecretMode = !!stored.strictSecretMode;
+  const stored = await browser.storage.local.get('strictSecretMode').catch(() => ({}));
+  agent.strictSecretMode = stored?.strictSecretMode === true;
 }
-loadStrictSecretMode();
+const strictSecretModeReady = loadStrictSecretMode().catch(() => {});
+
+async function loadImageGenConfig() {
+  const stored = await browser.storage.local.get(IMAGE_GEN_MODEL_KEY).catch(() => ({}));
+  agent.setImageGenConfig(stored?.[IMAGE_GEN_MODEL_KEY]);
+}
+const imageGenConfigReady = loadImageGenConfig();
 
 async function loadProfile() {
   const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
@@ -519,16 +661,16 @@ async function saveUserMemoryExtractionQueue(queue) {
 }
 
 async function isUserMemoryExtractionEnabled() {
-  const stored = await browser.storage.local.get([
-    USER_MEMORY_ENABLED_KEY,
-    USER_MEMORY_AUTO_CAPTURE_KEY,
-  ]);
+  const stored = await browser.storage.local.get({
+    [USER_MEMORY_ENABLED_KEY]: true,
+    [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+  });
   return stored[USER_MEMORY_ENABLED_KEY] !== false
     && stored[USER_MEMORY_AUTO_CAPTURE_KEY] === true;
 }
 
 async function isUserMemoryFormCaptureEnabled() {
-  const stored = await browser.storage.local.get(USER_MEMORY_FORM_CAPTURE_KEY);
+  const stored = await browser.storage.local.get({ [USER_MEMORY_FORM_CAPTURE_KEY]: true });
   return stored[USER_MEMORY_FORM_CAPTURE_KEY] === true;
 }
 
@@ -866,17 +1008,17 @@ async function loadCustomSkills() {
 }
 const customSkillsReady = loadCustomSkills();
 
-// A valid key plus explicit consent enables CapSolver. Requiring the existing
-// boolean preserves legacy profiles that saved a key while the old switch was
-// off; pressing Save Key in the new UI sets consent to true.
+// Local browsers require a valid key and explicit consent. Managed Cloud
+// browsers use the broker flag and never use a CapSolver key from storage.
+const captchaBridgeRegistration = createCaptchaBridgeRegistration(browser);
 async function loadCaptchaSolver() {
-  const stored = await browser.storage.local.get(['capsolverApiKey', 'captchaSolverEnabled']);
-  agent.captchaSolverEnabled = isCapsolverEnabled(
-    stored.capsolverApiKey,
-    stored.captchaSolverEnabled,
-  );
+  const stored = await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS);
+  const providers = getCaptchaProviders(stored);
+  agent.captchaProviderIds = providers.map(provider => provider.id);
+  agent.captchaSolverEnabled = providers.length > 0;
+  await captchaBridgeRegistration.sync(agent.captchaSolverEnabled);
 }
-loadCaptchaSolver();
+loadCaptchaSolver().catch(error => console.warn('[WebBrain] CAPTCHA settings could not be loaded', error));
 
 function normalizePlanBeforeActMode(stored = {}) {
   if (stored.planBeforeActMode === 'try' || stored.planBeforeActMode === 'strict' || stored.planBeforeActMode === 'off') {
@@ -958,6 +1100,7 @@ browser.runtime.onInstalled.addListener(async (details) => {
   await loadClarifyTimeout();
   await loadAutoScreenshot();
   await syncAgentUserMemoryFromStorage().catch(() => {});
+  await cloudRunController.syncBridge().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
   console.log('[WebBrain] Extension installed, providers loaded.');
 });
@@ -965,11 +1108,12 @@ browser.runtime.onInstalled.addListener(async (details) => {
 browser.runtime.onStartup?.addListener?.(async () => {
   await createContextMenus();
   syncAgentUserMemoryFromStorage().catch(() => {});
+  cloudRunController.syncBridge().catch(() => {});
   scheduleUserMemoryExtractionDrain(5000);
 });
 
 // Listen for setting changes
-browser.storage.onChanged.addListener((changes) => {
+browser.storage.onChanged.addListener((changes, areaName) => {
   if (changes.wbLocale) {
     selectionShortcutLocale = normalizeSelectionShortcutLocale(changes.wbLocale.newValue);
     createContextMenus().catch(() => {});
@@ -986,8 +1130,12 @@ browser.storage.onChanged.addListener((changes) => {
     agent.autoScreenshot = changes.autoScreenshot.newValue;
   }
   let refreshPrompts = false;
+  if (areaName === 'local' && changes[IMAGE_GEN_MODEL_KEY]) {
+    agent.setImageGenConfig(changes[IMAGE_GEN_MODEL_KEY].newValue);
+  }
   if (changes[ALWAYS_ALLOW_API_MUTATIONS_KEY]) {
-    agent.setAlwaysAllowApiMutations(changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue === true);
+    const value = changes[ALWAYS_ALLOW_API_MUTATIONS_KEY].newValue;
+    agent.setAlwaysAllowApiMutations(value === undefined || value === true);
     refreshPrompts = true;
   }
   if (changes.useSiteAdapters) {
@@ -1004,10 +1152,15 @@ browser.storage.onChanged.addListener((changes) => {
     refreshPrompts = true;
   }
   if (changes[API_MUTATION_OBSERVER_KEY]) {
-    setApiMutationObserverEnabled(changes[API_MUTATION_OBSERVER_KEY].newValue === true);
+    const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
+    setApiMutationObserverEnabled(value === undefined || value === true);
+  }
+  if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
+    || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
+    cloudRunController.syncBridge().catch(() => {});
   }
   if (changes.strictSecretMode) {
-    agent.strictSecretMode = !!changes.strictSecretMode.newValue;
+    agent.strictSecretMode = changes.strictSecretMode.newValue === true;
     // Strict mode also appends a global system note after enabled skills, so
     // refresh live conversations immediately as well as rebuilding at turn start.
     refreshPrompts = true;
@@ -1061,10 +1214,10 @@ browser.storage.onChanged.addListener((changes) => {
     }
     refreshPrompts = true;
   }
-  if (changes.capsolverApiKey || changes.captchaSolverEnabled) {
+  if (CAPTCHA_SETTINGS_KEYS.some(key => changes[key])) {
     loadCaptchaSolver()
       .then(() => agent._refreshSystemPrompts())
-      .catch((error) => console.warn('[WebBrain] CapSolver setting could not be refreshed', error));
+      .catch((error) => console.warn('[WebBrain] CAPTCHA settings could not be refreshed', error));
   }
   if (changes.planBeforeActMode || changes.planBeforeAct) {
     applyPlanBeforeActMode(normalizePlanBeforeActMode({
@@ -1099,9 +1252,8 @@ browser.alarms.onAlarm.addListener((alarm) => {
 // Same UX shape as the Chrome build (see src/chrome/src/background.js):
 // when automatic grouping is enabled and the user clicks the browser
 // action, the source tab joins (or seeds) a colored "WebBrain" tab group
-// for that window. Agent-spawned tabs (new_tab tool, target=_blank
-// redirects) auto-join the same group via agent.js's
-// `_addToWebBrainGroup`.
+// for that window. Internal helper tabs and target=_blank redirects auto-join
+// the same group via agent.js's `_addToWebBrainGroup`.
 //
 // What we DON'T do on Firefox: scope the sidebar's visibility to group
 // membership. browser.sidebarAction is window-level, not per-tab —
@@ -1241,6 +1393,15 @@ function openSidebarForContextMenu(tab) {
 async function handleContextMenuAsk(info, tab) {
   if (!tab?.id) return;
   const menuItemId = String(info?.menuItemId || '');
+  if (menuItemId === CONTEXT_MENU_OPEN_PDF_VIEWER_ID) {
+    const pdfUrl = safeOnlinePdfUrl(tab.url);
+    if (!pdfUrl || (!pdfResponseTabs.has(tab.id) && !isPdfUrl(pdfUrl))) return;
+    const viewerUrl = browser.runtime.getURL(
+      `src/ui/pdf-handler.html?url=${encodeURIComponent(pdfUrl)}&tabId=${encodeURIComponent(tab.id)}`,
+    );
+    await browser.tabs.update(tab.id, { url: viewerUrl });
+    return;
+  }
   if (menuItemId === CONTEXT_MENU_OPEN_CHAT_ID) {
     openSidebarForContextMenu(tab);
     return;
@@ -1280,6 +1441,19 @@ async function handleContextMenuAsk(info, tab) {
 getContextMenuApi()?.onClicked?.addListener?.((info, tab) => {
   handleContextMenuAsk(info, tab).catch(() => {});
 });
+getContextMenuApi()?.onShown?.addListener?.((info, tab) => {
+  const menuApi = getContextMenuApi();
+  const tabId = Number(tab?.id);
+  const visible = Number.isInteger(tabId) && tabId >= 0
+    && (pdfResponseTabs.has(tabId) || isPdfUrl(info?.pageUrl || tab?.url));
+  (async () => {
+    try {
+      await menuApi?.update?.(CONTEXT_MENU_OPEN_PDF_VIEWER_ID, { visible });
+      await menuApi?.refresh?.();
+    } catch {}
+  })();
+});
+browser.tabs.onRemoved?.addListener?.((tabId) => pdfResponseTabs.delete(tabId));
 
 // Only this instance knows which runs are live in memory, so it owns the
 // stale-run repair whenever it is reachable.
@@ -1300,9 +1474,7 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 // sidebarAction.open() gesture. Persist and notify the existing sidebar when
 // it is open; otherwise startup recovery will consume the prompt after the
 // user opens WebBrain manually.
-browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
-  const tab = sender?.tab;
+function queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse) {
   const selectionAction = normalizeSelectionAction(msg.action);
   const includePageContext = selectionAction === 'custom' && msg.includePageContext === true;
   const sourceGrounding = includePageContext
@@ -1321,7 +1493,7 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     );
   if (!tab?.id || !text) {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid selection shortcut request.' });
-    return;
+    return false;
   }
   const payload = {
     id: `selection-${tab.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1344,6 +1516,36 @@ browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })().then(sendResponse).catch((error) => {
     sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: error?.message || String(error) });
   });
+  return true;
+}
+
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_SELECTION_SHORTCUT_SUBMIT') return;
+  return queueFirefoxSelectionShortcutPrompt(msg, sender?.tab, sendResponse);
+});
+
+// The explicit Firefox viewer is an extension page, so sender.tab is not a
+// reliable source of scope. Resolve the live tab from the handler-provided id
+// before handing the selected OCR/PDF text to the normal prompt storage path.
+browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== 'WB_PDF_SELECTION_SHORTCUT_SUBMIT') return;
+  const tabId = Number(msg.tabId);
+  if (!Number.isInteger(tabId) || tabId < 0) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection tab.' });
+    return;
+  }
+  if (!isPdfHandlerSender(sender, tabId)) {
+    sendResponse({ ok: false, queued: false, requiresManualOpen: true, error: 'Invalid PDF selection sender.' });
+    return;
+  }
+  browser.tabs.get(tabId)
+    .then(tab => queueFirefoxSelectionShortcutPrompt(msg, tab, sendResponse))
+    .catch(error => sendResponse({
+      ok: false,
+      queued: false,
+      requiresManualOpen: true,
+      error: error?.message || 'The PDF tab is no longer available.',
+    }));
   return true;
 });
 
@@ -1402,6 +1604,7 @@ const TEACHER_EXPLICIT_NAVIGATION_TYPES = new Set([
 ]);
 
 browser.webNavigation?.onCommitted?.addListener?.((details) => {
+  agent.observePageNavigation(details, 'committed');
   if (details.frameId !== 0) return;
   agent.clearLastTypeFieldIdent(details.tabId);
   agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
@@ -1411,6 +1614,7 @@ browser.webNavigation?.onCommitted?.addListener?.((details) => {
   invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onHistoryStateUpdated?.addListener?.((details) => {
+  agent.observePageNavigation(details, 'history');
   if (details.frameId !== 0) return;
   agent.clearLastTypeFieldIdent(details.tabId);
   agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
@@ -1418,6 +1622,7 @@ browser.webNavigation?.onHistoryStateUpdated?.addListener?.((details) => {
   invalidateContextMenuForTab(details.tabId);
 });
 browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
+  agent.observePageNavigation(details, 'fragment');
   if (details.frameId !== 0) return;
   agent.clearLastTypeFieldIdent(details.tabId);
   agent.observeCloudflareManagedChallengeNavigation(details).catch(() => {});
@@ -1429,6 +1634,7 @@ browser.webNavigation?.onReferenceFragmentUpdated?.addListener?.((details) => {
 // challenge-platform requests alone are not sufficient because ordinary bot
 // detection and embedded widgets may use the same managed endpoint.
 const observeCloudflareManagedChallengeResponse = details => {
+  trackPdfResponse(details);
   agent.observeCloudflareManagedChallengeResponse(details).catch(() => {});
 };
 const observeCloudflareChallengePlatformRequest = details => {
@@ -1452,7 +1658,7 @@ browser.webRequest?.onBeforeRequest?.addListener?.(
 // tokens and form bodies do not get printed into model context.
 const API_REQUESTS_PER_TAB_LIMIT = 40;
 const API_MUTATION_OBSERVER_KEY = 'apiMutationObserverEnabled';
-const API_MUTATION_OBSERVER_DEFAULT = false;
+const API_MUTATION_OBSERVER_DEFAULT = true;
 const API_REPLAY_BODY_LIMIT = 16000;
 const apiRequestsByTab = new Map(); // tabId -> [{ url, method, ts, replayRequestId, ... }]
 const apiRequestReplayById = new Map(); // replayRequestId -> captured same-origin replay options
@@ -1598,7 +1804,8 @@ async function loadApiMutationObserverSetting() {
     const stored = await browser.storage.local.get({ [API_MUTATION_OBSERVER_KEY]: API_MUTATION_OBSERVER_DEFAULT });
     setApiMutationObserverEnabled(stored[API_MUTATION_OBSERVER_KEY] === true);
   } catch (e) {
-    setApiMutationObserverEnabled(API_MUTATION_OBSERVER_DEFAULT);
+    // Do not capture requests when a stored opt-out cannot be read.
+    setApiMutationObserverEnabled(false);
   }
 }
 
@@ -1898,11 +2105,11 @@ function persistRunUiSnapshot(tabId, snapshot) {
   const write = previous.catch(() => false).then(async () => {
     if (runUiPersistenceFailures.get(tabId) === requestId) return false;
     try {
-      await browser.storage.session?.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
+      await browser.storage.session.set({ [RUN_UI_PREFIX + tabId]: stableSnapshot });
       return true;
     } catch {
       try {
-        await browser.storage.session?.set({
+        await browser.storage.session.set({
           [RUN_UI_PREFIX + tabId]: compactRunUiSnapshotForPersist(stableSnapshot, { tight: true }),
         });
         return true;
@@ -1938,8 +2145,10 @@ const runUiJournal = new RunUiJournal({
     void runUiSnapshotPersistence.persistNow(tabId, snapshot);
   },
 });
+const runUiSnapshotReads = new Map();
 
 function beginRunUiSnapshot(tabId, requestId, metadata = {}) {
+  runUiSnapshotReads.delete(tabId);
   runUiPersistenceFailures.delete(tabId);
   return runUiJournal.begin(tabId, requestId, metadata);
 }
@@ -1967,32 +2176,50 @@ function isPlannerRequestFailureUpdate(update) {
     && update?.data?.code === 'planner_request_failed';
 }
 
+function isPersistenceDegradedRunUpdate(update) {
+  return update?.type === 'run_status'
+    && update?.data?.status === 'persistence_degraded';
+}
+
+function isPublicationAuditFailureUpdate(update) {
+  return (update?.type === 'run_status' && update?.data?.status === 'publication_audit_failed')
+    || (update?.type === 'failure_recovery' && update?.data?.stage === 'publication_audit');
+}
+
+function isActionPreparationFailureUpdate(update) {
+  return update?.type === 'failure_recovery' && update?.data?.stage === 'action_preparation'
+    && ['action_context_unverified', 'page_unstable'].includes(update?.data?.code);
+}
+
 function runUpdatesSucceeded(updates = []) {
   return !updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
     || isClarificationRequiredRunUpdate(update)
+    || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || isPlannerRequestFailureUpdate(update)
   ));
 }
 
 function terminalRunUiStatus(content, updates = [], error = null) {
   if (error) return 'failed';
+  updates = runUiUpdatesForCurrentTask(updates);
   const text = String(content || '');
   if (/stopped by user|aborted by user/i.test(text)) return 'stopped';
   if (/before executing requested tool calls/i.test(text)) return 'cancelled';
-  if (updates.some(update => update?.type === 'error' || isPlannerRequestFailureUpdate(update))) return 'failed';
+  if (updates.some(update => update?.type === 'error'
+    || isPlannerRequestFailureUpdate(update) || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
+    || update?.type === 'quota')) return 'failed';
   if (updates.some(isClarificationRequiredRunUpdate)) return 'clarification_required';
   return 'completed';
 }
 
-function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false) {
-  const snapshot = runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId));
-  if (snapshot) {
-    // The journal carries an exact successful-'done' predicate for Act runs;
-    // Ask replies are classified by the caller and OR-ed in for badge styling.
-    snapshot.runSucceeded = snapshot.successfulDone === true || askSucceeded === true;
-  }
-  return snapshot;
+function finishRunUiSnapshot(tabId, requestId, status, finalContent = '', askSucceeded = false, allowSuccess = true) {
+  // Keep classification in the journal's atomic terminal persistence update.
+  return runUiJournal.finish(tabId, requestId, status, finalContent, agent.currentRunId.get(tabId), { askSucceeded, allowSuccess });
 }
 
 // Mirror the sidepanel's successful-Ask classification for badge styling
@@ -2003,8 +2230,12 @@ const BADGE_SUBSCRIBE_ERROR_RE = /(Subscribe for more usage|Upgrade to WebBrain 
 const BADGE_COST_ALLOWANCE_ERROR_RE = /Cloud cost allowance reached:\s*(this session|total cloud\/router usage)\s+is\s+\$[\d.]+\s+against\s+the\s+\$([\d.]+)\s+limit\./i;
 function askCompletionSucceededForBadge(result, updates = [], error = null) {
   if (error) return false;
+  updates = runUiUpdatesForCurrentTask(updates);
   if (updates.some(update => (
-    update?.type === 'error'
+    update?.type === 'error' || update?.type === 'quota'
+    || isPersistenceDegradedRunUpdate(update)
+    || isPublicationAuditFailureUpdate(update)
+    || isActionPreparationFailureUpdate(update)
     || update?.type === 'attachment_rejected'
     || update?.type === 'max_steps_reached'
     || update?.error
@@ -2020,18 +2251,36 @@ function askCompletionSucceededForBadge(result, updates = [], error = null) {
 async function getRunUiSnapshot(tabId) {
   const live = runUiJournal.get(tabId);
   if (live) return live;
-  try {
-    const key = RUN_UI_PREFIX + tabId;
-    const stored = await browser.storage.session?.get(key);
-    const snapshot = stored?.[key];
-    if (snapshot && typeof snapshot === 'object') {
-      return runUiJournal.restore(tabId, snapshot);
-    }
-  } catch {}
-  return null;
+  const pendingRead = runUiSnapshotReads.get(tabId);
+  if (pendingRead) return pendingRead.promise;
+  const read = {};
+  // Cold readers share ownership; only begin/clear may invalidate this read.
+  read.promise = Promise.resolve().then(async () => {
+    try {
+      const pending = runUiPersistenceQueues.get(tabId);
+      if (pending) await pending;
+      const current = runUiJournal.get(tabId);
+      if (current) return current;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const key = RUN_UI_PREFIX + tabId;
+      const stored = await browser.storage.session?.get(key);
+      const latest = runUiJournal.get(tabId);
+      if (latest) return latest;
+      if (runUiSnapshotReads.get(tabId) !== read) return null;
+      const snapshot = stored?.[key];
+      if (snapshot && typeof snapshot === 'object') {
+        return runUiJournal.restore(tabId, snapshot);
+      }
+    } catch {}
+    finally { if (runUiSnapshotReads.get(tabId) === read) runUiSnapshotReads.delete(tabId); }
+    return null;
+  });
+  runUiSnapshotReads.set(tabId, read);
+  return read.promise;
 }
 
 function clearRunUiSnapshot(tabId) {
+  runUiSnapshotReads.delete(tabId);
   runUiSnapshotPersistence.cancel(tabId);
   runUiJournal.clear(tabId);
   runUiPersistenceFailures.delete(tabId);
@@ -2046,11 +2295,43 @@ function clearRunUiSnapshot(tabId) {
 function sendAgentUpdate(tabId, requestId, type, data) {
   const event = recordRunUiEvent(tabId, requestId, type, data);
   if (!event) return;
+  if (type === 'clarify') agent._capturePendingClarificationForUi?.(tabId, requestId, event.data ?? data, event);
   browser.runtime.sendMessage({
     target: 'sidepanel', action: 'agent_update', tabId, requestId,
     runId: event?.runId || agent.currentRunId.get(tabId) || null,
     seq: event?.seq || null, type, data: event?.data ?? data,
   }).catch(() => {});
+}
+
+function sendScheduledAgentUpdate(tabId, type, data, owner) {
+  if (tabId == null || !owner?.jobId || !owner?.executionId) return;
+  const requestId = `scheduled:${owner.jobId}:${owner.executionId}`;
+  const terminal = new Set(['completed', 'stopped', 'failed', 'cancelled', 'clarification_required']);
+  let snapshot = runUiJournal.get(tabId);
+  if (type === 'scheduled_job' && data?.event === 'running') {
+    if (snapshot?.requestId === requestId && terminal.has(snapshot.status)) return;
+    // A foreground request owns its tab even before provider preparation ends.
+    // A restored scheduled journal can instead be replaced by a new execution.
+    if (snapshot && snapshot.requestId !== requestId && !terminal.has(snapshot.status)
+        && !snapshot.scheduledJobId) return;
+    if (snapshot?.requestId !== requestId) snapshot = beginRunUiSnapshot(tabId, requestId, {
+      mode: owner.mode || 'act', kind: owner.kind === 'resume' ? 'continue' : 'chat',
+      scheduledJobId: owner.jobId, scheduledExecutionId: owner.executionId,
+    });
+  }
+  if (!snapshot || snapshot.requestId !== requestId || terminal.has(snapshot.status)
+      || snapshot.scheduledJobId !== owner.jobId || snapshot.scheduledExecutionId !== owner.executionId) return;
+  sendAgentUpdate(tabId, requestId, type, data);
+  if (type !== 'scheduled_job') return;
+  const event = data?.event, job = data?.job;
+  if (!['completed', 'failed', 'cancelled', 'paused', 'clarification_required', 'polled', 'triggered', 'queued'].includes(event)) return;
+  const finalContent = String(job?.lastResult || job?.lastError || '');
+  const status = ['cancelled', 'paused'].includes(event) ? 'stopped'
+    : event === 'failed' ? 'failed' : event === 'clarification_required' ? 'clarification_required'
+      : terminalRunUiStatus(finalContent, snapshot.events || []);
+  const finished = finishRunUiSnapshot(tabId, requestId, status, finalContent,
+    owner.mode === 'ask' && job?.lastOutcome === 'success', job?.lastOutcome === 'success');
+  if (finished) void sendAgentRunComplete(tabId, finished).catch(() => {});
 }
 
 function assertNoActiveTabRun(tabId) {
@@ -2201,6 +2482,7 @@ function launchDetachedRun(action, msg, sender) {
   });
   entry.promise = task;
   task.catch((error) => {
+    agent._restoreFailureRecoveryStart?.(tabId, requestId);
     rememberDetachedRunFailure(tabId, requestId, error);
     console.warn(`[WebBrain] detached ${action} run failed:`, error);
   }).finally(() => {
@@ -2210,27 +2492,33 @@ function launchDetachedRun(action, msg, sender) {
 }
 
 async function sendAgentRunComplete(tabId, snapshot = null) {
-  if (tabId == null || !snapshot) return;
+  if (tabId == null || !snapshot || runUiJournal.get(tabId) !== snapshot) return;
+  const { requestId, status, endedAt, seq } = snapshot;
+  const isCurrent = () => runUiJournal.get(tabId) === snapshot
+    && snapshot.requestId === requestId && snapshot.status === status
+    && snapshot.endedAt === endedAt && snapshot.seq === seq;
+  if (endedAt == null || !['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(status)) return;
+  await flushRunUiSnapshot(tabId, snapshot.requestId);
+  if (!isCurrent()) return;
   // Live runs continue in the background even if their side panel is closed
   // or reloaded mid-run (and continuations settle here too), so terminal
   // attention flashes are owned here rather than by the panel. User stops
   // and cancellations never flash; the setting is honored inside
   // flashTabAttention.
   const liveStatus = String(snapshot.status || '');
-  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
-    // Badge styling uses the run's recorded outcome (successful done update
-    // or successful Ask reply), not just the terminal status — a completed
-    // status alone can still mean max-steps were reached without success.
-    flashTabAttention({
-      tabId,
-      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
-    }).catch(() => {});
-  }
   const submittedTurnDurable = snapshot.kind === 'continue'
     || await agent.hasDurableSubmittedTurn(
       tabId,
       snapshot.requestId,
     ).catch(() => false);
+  if (!isCurrent()) return;
+  if (liveStatus !== 'stopped' && liveStatus !== 'cancelled') {
+    // The classified snapshot still owns the tab after durable-turn lookup.
+    flashTabAttention({
+      tabId,
+      success: liveStatus === 'completed' && snapshot.runSucceeded === true,
+    }).catch(() => {});
+  }
   const attachmentCount = Math.max(0, Number(snapshot.attachmentCount || 0));
   const attachmentDeliveryState = attachmentCount
     ? (snapshot.attachmentDeliveryState === 'not-sent'
@@ -2244,6 +2532,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
       attachmentDeliveryState,
     ) || snapshot;
     await flushRunUiSnapshot(tabId, snapshot.requestId);
+    if (!isCurrent()) return;
   }
   browser.runtime.sendMessage({
     target: 'sidepanel',
@@ -2256,6 +2545,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     data: {
       status: snapshot.status || 'completed',
       finalContent: snapshot.finalContent || '',
+      quota: snapshot.quota || null,
       endedAt: snapshot.endedAt || Date.now(),
       submittedTurnDurable,
       attachmentDeliveryState,
@@ -2284,16 +2574,88 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 browser.runtime.onMessage.addListener((msg, sender) => {
   if (msg.target !== 'background') return;
 
-  return handleMessage(msg, sender).catch(e => ({ error: e.message }));
+  return handleMessage(msg, sender).catch(e => ({ error: e.message, quota: e.quota }));
 });
 
+function assertChatRequestInput(msg) {
+  const validTextType = msg.text == null || typeof msg.text === 'string';
+  const hasText = typeof msg.text === 'string' && msg.text.trim().length > 0;
+  const structuredInputAllowed = msg.action !== 'chat_stream';
+  const hasWorkflow = structuredInputAllowed && typeof msg.workflowId === 'string' && msg.workflowId.trim().length > 0;
+  const hasAttachment = structuredInputAllowed && Array.isArray(msg.attachments) && msg.attachments.some(attachment =>
+    attachment && typeof attachment === 'object'
+    && ['image', 'document', 'text', 'video'].includes(attachment.kind)
+    && ((typeof attachment.dataUrl === 'string' && attachment.dataUrl.startsWith('data:') && attachment.dataUrl.includes(','))
+      || (attachment.kind === 'text' && typeof attachment.textContent === 'string')));
+  if (validTextType && (hasText || hasWorkflow || hasAttachment)) return;
+  const error = new Error('A new chat request requires non-empty text, a supported attachment, or a saved workflow. Use continue_start for an explicit continuation.');
+  error.code = 'invalid_chat_input';
+  error.status = 400;
+  throw error;
+}
+
+async function handleFailureRecoveryResponse(msg, sender) {
+  if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('src/ui/sidepanel.html')) {
+    return { ok: false, error: 'Recovery choices are available from the chat panel only.' };
+  }
+  const tabId = Number(msg.tabId);
+  const recoveryId = typeof msg.recoveryId === 'string' ? msg.recoveryId : '';
+  const choice = msg.choice;
+  if (!Number.isSafeInteger(tabId) || tabId <= 0 || !recoveryId || !['retry', 'give_up'].includes(choice)) {
+    return { ok: false, error: 'Invalid recovery choice.' };
+  }
+  if (choice === 'retry' && typeof msg.requestId === 'string' && msg.requestId) {
+    // An acknowledgement may be lost while its run already started. Repeated
+    // delivery follows that same request rather than consuming a second offer.
+    if (detachedRunStarts.get(tabId)?.requestId === msg.requestId) {
+      return { ok: true, accepted: true, requestId: msg.requestId };
+    }
+    const snapshot = await getRunUiSnapshot(tabId);
+    if (snapshot?.requestId === msg.requestId && snapshot.kind === 'continue') {
+      return { ok: true, accepted: true, requestId: msg.requestId };
+    }
+  }
+  assertNoActiveTabRun(tabId);
+  const result = agent.requestFailureRecovery(tabId, recoveryId, choice, msg.requestId);
+  if (!result?.ok || choice === 'give_up' || result.continue !== true) return result;
+  try {
+    return launchDetachedRun('continue', msg, sender);
+  } catch (error) {
+    agent._restoreFailureRecoveryStart?.(tabId, msg.requestId);
+    throw error;
+  }
+}
+
 async function handleMessage(msg, sender) {
+  if (msg.action === 'failure_recovery_response') return handleFailureRecoveryResponse(msg, sender);
+  if (['chat_start', 'chat', 'chat_stream'].includes(msg.action)) assertChatRequestInput(msg);
+  if (msg.action === 'get_page_monitor_state') return agent.pageMonitorState(sender, msg.documentToken, msg.frameName);
+  if (msg.action === 'page_feedback') return agent.observePageFeedback(sender, msg.feedback);
+  if (String(msg.action || '').startsWith('feedback_')) return feedbackHandoff.handle(msg, sender);
+  if (msg.action === 'chat_steer') {
+    // Content scripts must never turn page text into a trusted human correction.
+    if (sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('src/ui/sidepanel.html')) {
+      throw new Error('Steering is available from the chat panel only.');
+    }
+    return agent.steerMessage(Number(msg.tabId), msg.text, {
+      requestId: msg.requestId, messageId: msg.messageId,
+    });
+  }
+
+  // Only Settings may start OAuth or change the user's remote-memory choice.
+  // Content scripts share this message bus and must not control the connection.
+  if (String(msg.action || '').startsWith('memcode_recall_')
+    && sender?.url?.split(/[?#]/)[0] !== browser.runtime.getURL('src/ui/settings.html')) {
+    return { ok: false, error: 'MemCode connection controls are available in Settings only.' };
+  }
   const lightweightAction = [
     'persist_tab_chat',
     'load_tab_chat',
     'clear_tab_chat',
     'release_context_menu_prompt_claim',
     'capture_screenshot_redaction_snapshot',
+    'fetch_pdf_document',
+    'cancel_pdf_ocr',
     EMERGENCY_DOWNLOAD_ACTION,
     'flash_tab_attention',
   ].includes(msg.action);
@@ -2303,8 +2665,9 @@ async function handleMessage(msg, sender) {
     }
     // Hydrate agent toggles and prompt add-ons once at boot (not per message);
     // onChanged keeps them in sync afterward.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady]);
     await alwaysAllowApiMutationsReady;
+    await strictSecretModeReady;
     await screenshotRedactionReady;
     await imageBudgetReady;
     await researchEscalationReady;
@@ -2326,12 +2689,12 @@ async function handleMessage(msg, sender) {
     case 'profile_sync_reset': return { ok: true, ...(await profileSync.reset(String(msg.password || ''))) };
     case 'get_user_memory': {
       const store = await userMemoryStore.load();
-      const settings = await browser.storage.local.get([
-        USER_MEMORY_ENABLED_KEY,
-        USER_MEMORY_AUTO_CAPTURE_KEY,
-        USER_MEMORY_FORM_CAPTURE_KEY,
-        USER_MEMORY_MAX_PROMPT_CHARS_KEY,
-      ]);
+      const settings = await browser.storage.local.get({
+        [USER_MEMORY_ENABLED_KEY]: true,
+        [USER_MEMORY_AUTO_CAPTURE_KEY]: true,
+        [USER_MEMORY_FORM_CAPTURE_KEY]: true,
+        [USER_MEMORY_MAX_PROMPT_CHARS_KEY]: normalizeUserMemoryMaxPromptChars(),
+      });
       return {
         ok: true,
         store,
@@ -2341,6 +2704,16 @@ async function handleMessage(msg, sender) {
         formCaptureEnabled: settings[USER_MEMORY_FORM_CAPTURE_KEY] === true,
         maxPromptChars: normalizeUserMemoryMaxPromptChars(settings[USER_MEMORY_MAX_PROMPT_CHARS_KEY]),
       };
+    }
+
+    case 'memcode_recall_status':
+      return { ok: true, ...(await memcodeRecall.status()) };
+    case 'memcode_recall_connect':
+      return { ok: true, ...(await memcodeRecall.connect()) };
+    case 'memcode_recall_disconnect':
+      return { ok: true, ...(await memcodeRecall.disconnect()) };
+    case 'memcode_recall_enable': {
+      return { ok: true, ...(await memcodeRecall.setRecallEnabled(msg.enabled === true)) };
     }
 
     case 'add_user_memory': {
@@ -2544,6 +2917,20 @@ async function handleMessage(msg, sender) {
         ok: true,
         ...(await agent.getConversationState(tabId, msg.mode || 'ask')),
       };
+    }
+
+    case 'fork_standalone_conversation': {
+      const sourceTabId = Number(msg.sourceTabId);
+      const forkTabId = Number(msg.forkTabId || sender.tab?.id);
+      if (!Number.isFinite(sourceTabId) || !Number.isFinite(forkTabId)) {
+        throw new Error('No source or fork tab ID');
+      }
+      const fork = await agent.forkConversation(sourceTabId, forkTabId);
+      if (!fork?.resumed) {
+        const sourceChat = await tabChatHandoff.load(sourceTabId, { waitForHandoff: true });
+        if (sourceChat?.found) await tabChatHandoff.save(forkTabId, sourceChat.html);
+      }
+      return { ok: true, ...fork };
     }
 
     case 'chat_start': {
@@ -2895,7 +3282,7 @@ async function handleMessage(msg, sender) {
           throw new Error('Could not durably clear the tab transcript.');
         }
         clearedContextMenuPromptId = tabChatClearResult.clearedContextMenuPromptId || null;
-        agent.clearConversation(tabId);
+        await agent.clearConversation(tabId);
         clearRunUiSnapshot(tabId);
         browser.runtime.sendMessage({
           target: 'sidepanel',
@@ -2931,7 +3318,7 @@ async function handleMessage(msg, sender) {
         const sourceTabId = agent.researchEscalationSourceTab(tabId);
         cancelDetachedRunStart(tabId);
         if (sourceTabId) cancelDetachedRunStart(sourceTabId);
-        agent.abort(tabId);
+        agent.abort(sourceTabId || tabId);
       }
       return { ok: true };
     }
@@ -2954,12 +3341,23 @@ async function handleMessage(msg, sender) {
           : false);
       const conversationState = await agent.getConversationState(tabId);
       const activeState = agent.activeRunState(tabId);
+      const pendingFailureRecovery = agent._pendingFailureRecoveryForUi?.(tabId) || null;
+      const pendingClarification = activeState.pendingCurrentClarification;
+      const currentRunUi = runUiJournal.get(tabId);
+      if (pendingClarification && (!activeState.running || currentRunUi !== runUiSnapshot
+          || !requestedRunUi || pendingClarification.requestId !== requestedRunUi.requestId
+          || pendingClarification.runId !== activeState.runId
+          || (requestedRunUi.runId && pendingClarification.runId !== requestedRunUi.runId)
+          || ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(requestedRunUi.status))) {
+        activeState.pendingCurrentClarification = null;
+      }
       const runUiDurable = !runUiSnapshot
         || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || '');
       return {
         ok: true,
         ...conversationState,
         ...activeState,
+        pendingFailureRecovery,
         starting: !!starting,
         startingRequestId: starting?.requestId || null,
         submittedTurnDurable,
@@ -2986,7 +3384,7 @@ async function handleMessage(msg, sender) {
     case 'export_traces': {
       const tabId = msg.tabId || sender.tab?.id;
       if (!tabId) return { ok: false, error: 'No tab ID' };
-      return { ok: true, ...(await agent.exportTraces(tabId)) };
+      return { ok: true, ...(await agent.exportTraces(tabId, { full: msg.full === true })) };
     }
 
     case 'export_config': {
@@ -3023,6 +3421,7 @@ async function handleMessage(msg, sender) {
         loadResearchEscalation(),
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
+        loadImageGenConfig(),
         loadProfile(),
         syncAgentUserMemoryFromStorage(),
         loadCustomSkills(),
@@ -3260,6 +3659,44 @@ async function handleMessage(msg, sender) {
       return { ok: true, enabled: msg.enabled };
     }
 
+    case 'cloud_run':
+      return await cloudRunController.startRun(msg);
+    case 'cloud_workflow_compile':
+      return await cloudRunController.compileWorkflow(msg);
+    case 'cloud_workflow_run':
+      return await cloudRunController.startWorkflowRun(msg);
+    case 'cloud_status':
+      return await cloudRunController.status(msg);
+    case 'cloud_scheduled_jobs': {
+      const jobIds = [...new Set((msg.jobIds || msg.job_ids || [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean))].slice(0, 100);
+      if (!jobIds.length) {
+        return { error: 'cloud_scheduled_jobs requires expected job IDs.', status: 400 };
+      }
+      const expected = new Set(jobIds);
+      const jobs = await scheduler.listJobs({ tabId: null });
+      return {
+        ok: true,
+        jobs: jobs
+          .filter(job => expected.has(String(job?.id || '')))
+          .map(job => cloudSafeScheduledJob(job, { strictSecretMode: agent.strictSecretMode === true })),
+      };
+    }
+    case 'cloud_respond':
+      return await cloudRunController.respond(msg);
+    case 'cloud_pause':
+      return await cloudRunController.pause(msg);
+    case 'cloud_resume':
+      return await cloudRunController.resume(msg);
+    case 'cloud_abort':
+      return await cloudRunController.abort(msg);
+    case 'cloud_bridge_start':
+      return await cloudRunController.startBridge(msg.url);
+    case 'cloud_bridge_stop':
+      return await cloudRunController.stopBridge();
+    case 'cloud_bridge_status':
+      return await cloudRunController.bridgeStatus();
     case 'get_providers': {
       return {
         providers: providerManager.getAll({ includeSidepanelOnly: msg.includeSidepanelOnly === true }),
@@ -3320,6 +3757,74 @@ async function handleMessage(msg, sender) {
       return await providerManager.testTranscriptionProvider();
     }
 
+    case 'test_image_gen_provider': {
+      return await testImageGenProvider();
+    }
+
+    case 'd1_control': {
+      const api = globalThis.browser || globalThis.chrome;
+      const settingsUrl = api.runtime.getURL('src/ui/settings.html');
+      if (sender.id !== api.runtime.id || String(sender.url || '').split('#')[0] !== settingsUrl) return { success: false, error: 'D1 model controls are available only from extension Settings.' };
+      try {
+        await strictSecretModeReady;
+        if (agent.strictSecretMode && !['dispose', 'reset', 'stop', 'clear', 'status'].includes(msg.command)) throw new Error('D1 is disabled in Strict Secret Mode.');
+        if (!['status', 'probe', 'download', 'load', 'stop', 'dispose', 'clear', 'reset', 'consent'].includes(msg.command)) throw new Error('Invalid D1 model command.');
+        if (['download', 'load', 'consent'].includes(msg.command)) {
+          if (msg.consent !== true || msg.consentVersion !== D1_CONSENT_VERSION) throw new Error('Explicit D1 experimental-model consent is required.');
+          await api.storage.local.set({ [D1_CONSENT_KEY]: D1_CONSENT_VERSION });
+        }
+        return { success: true, result: msg.command === 'consent' ? { consented: true } : await d1Request(msg.command, { consentVersion: D1_CONSENT_VERSION }) };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+    case 'list_decision_models': {
+      await strictSecretModeReady;
+      try {
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        const models = await listDecisionModels(resolveDecisionConfig(msg.settings || {}));
+        return { success: true, models };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+    case 'test_system_one': {
+      await strictSecretModeReady;
+      try {
+        if (agent.strictSecretMode) throw new Error('Decision requests are disabled in Strict Secret Mode.');
+        if (Object.hasOwn(msg, 'localFixture')) {
+          const result = await evaluateD1LocalFixture({ fixture: msg.localFixture, sender, api: browser, strictSecretMode: agent.strictSecretMode, agent, client: createSystemOneJudge({ maxRetries: 0 }) });
+          return { success: true, result };
+        }
+        let config = msg.settings ? resolveDecisionConfig(msg.settings) : undefined;
+        if (config?.provider === 'openrouter' && (!msg.settings.decisionVisionMode || msg.settings.decisionVisionMode === 'auto')) {
+          try { const card = (await listDecisionModels(config)).find(m => m.id === config.model); if (card) config = { ...config, supportsVision: card.supportsVision }; } catch {}
+        }
+        const client = createSystemOneJudge({ maxRetries: 0 });
+        const evaluate = args => agent.evaluateSystemOne(null, client, { ...args, config, apiKey: msg.apiKey });
+        const result = await evaluate({ state: { color: 'blue' }, questions: { test: { type: 'noul', instructions: 'Is the color blue?' } } });
+        if (result.answers.test.noul < .9) throw new Error('Decision connection test was inconclusive.');
+        let visionVerified = false;
+        if (config?.supportsVision) try {
+          if (config.provider === 'openrouter') await new Promise(resolve => setTimeout(resolve, 1100));
+          visionVerified = await probeDecisionVision(config, args => agent.evaluateSystemOne(null, client, args));
+        } catch {}
+        return { success: true, model: result.model, visionTested: config?.supportsVision === true, visionVerified };
+      } catch (error) { return { success: false, error: error.message }; }
+    }
+
+    case 'test_captcha_provider_balance': {
+      try {
+        return { ok: true, ...await getAdditionalCaptchaBalance(msg.provider, String(msg.apiKey || '').trim()) };
+      } catch (error) { return { ok: false, error: error.message }; }
+    }
+
+    case 'test_two_captcha_balance': {
+      try {
+        const key = String(msg.apiKey || '').trim();
+        if (!key) return { ok: false, error: 'No API key provided' };
+        return { ok: true, ...await getTwoCaptchaBalance(key) };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }
+
     case 'test_capsolver_balance': {
       try {
         const key = String(msg.apiKey || '').trim();
@@ -3348,7 +3853,9 @@ async function handleMessage(msg, sender) {
     }
 
     case 'list_provider_models': {
-      return await providerManager.listProviderModels(msg.providerId);
+      return await providerManager.listProviderModels(msg.providerId, {
+        detectServerIdentity: msg.detectServerIdentity === true,
+      });
     }
 
     case 'list_ollama_models': {
@@ -3396,9 +3903,58 @@ async function handleMessage(msg, sender) {
     case 'get_recording_state':
       return { ok: true, state: { recording: false, supported: false } };
 
+    case 'capture_full_page_screenshot': {
+      const tabId = msg.tabId || sender.tab?.id;
+      return await agent.captureFullPageScreenshotForUser(tabId);
+    }
     case 'capture_viewport_screenshot': {
       const tabId = msg.tabId || sender.tab?.id;
       return await agent.captureViewportScreenshotForUser(tabId);
+    }
+    case 'ocr_pdf_page': {
+      const tabId = Number(msg.tabId);
+      if (!Number.isInteger(tabId) || tabId < 0) {
+        return { success: false, error: 'Invalid PDF OCR tab.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { success: false, error: 'Invalid PDF OCR sender.' };
+      }
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      if (!tab) return { success: false, error: 'The PDF tab is no longer available.' };
+      const requestId = String(msg.requestId || '').trim();
+      const controller = new AbortController();
+      if (requestId) pdfOcrRequests.set(requestId, controller);
+      try {
+        return await agent.ocrPdfPageWithVision(tabId, msg.imageDataUrl, msg.pageNumber, controller.signal);
+      } finally {
+        if (requestId && pdfOcrRequests.get(requestId) === controller) pdfOcrRequests.delete(requestId);
+      }
+    }
+    case 'cancel_pdf_ocr': {
+      const requestId = String(msg.requestId || '').trim();
+      const controller = pdfOcrRequests.get(requestId);
+      if (!controller) return { ok: false, error: 'The PDF OCR request is no longer active.' };
+      const reason = new Error('PDF OCR cancelled by the user.');
+      reason.code = 'pdf_ocr_cancelled';
+      controller.abort(reason);
+      return { ok: true };
+    }
+    case 'fetch_pdf_document': {
+      const tabId = Number(msg.tabId);
+      const url = safeOnlinePdfUrl(msg.url);
+      if (!Number.isInteger(tabId) || tabId < 0 || !url) {
+        return { ok: false, error: 'Invalid Firefox PDF viewer request.' };
+      }
+      if (!isPdfHandlerSender(sender, tabId)) {
+        return { ok: false, error: 'Invalid Firefox PDF viewer sender.' };
+      }
+      const tab = await browser.tabs.get(tabId).catch(() => null);
+      if (!tab) return { ok: false, error: 'The PDF tab is no longer available.' };
+      try {
+        return await fetchPdfDocumentForViewer(url);
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
     }
     case 'capture_screenshot_redaction_snapshot': {
       const tabId = msg.tabId || sender.tab?.id;
@@ -3455,4 +4011,15 @@ browser.commands.onCommand.addListener(async (command, tab) => {
   } catch (err) {
     console.error('[WebBrain] failed to dispatch command:', command, err);
   }
+});
+
+// Connection controls belong only to the packaged Settings page, never a tab.
+browser.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'WB_BIDI_CONNECT' && message?.type !== 'WB_BIDI_DISCONNECT') return;
+  if (sender.id !== browser.runtime.id || sender.url !== browser.runtime.getURL('src/ui/settings.html')) return;
+  if (message.type === 'WB_BIDI_DISCONNECT') { firefoxBidi.disconnect(); return Promise.resolve({ success: true }); }
+  return firefoxBidi.connect().then(() => ({ success: true }), error => ({ success: false, error: error.message }));
+});
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && ['firefoxBidiEnabled', 'firefoxBidiPort'].some(key => changes[key] && changes[key].oldValue !== changes[key].newValue)) firefoxBidi.disconnect();
 });

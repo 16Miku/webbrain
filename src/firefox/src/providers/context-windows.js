@@ -1,3 +1,5 @@
+import { deepSeekModelCapabilities } from './deepseek-config.js';
+
 export const DEFAULT_LOCAL_CONTEXT_WINDOW = 16384;
 export const DEFAULT_CLOUD_CONTEXT_WINDOW = 128000;
 export const MIN_CONTEXT_WINDOW = 4096;
@@ -277,12 +279,13 @@ export function inferContextWindow(config = {}) {
   if (!model) return DEFAULT_CLOUD_CONTEXT_WINDOW;
 
   // OpenAI
+  if (/(?:^|\/)gpt-6(?:\.1)?-(?:luna-pro|sol|astra)(?:[.\-:]|$)/.test(model)) return 1050000;
   if (/^gpt-5\.6(?:[.\-]|$)/.test(model) || model.includes('/gpt-5.6')) return 1050000;
   if (model.includes('gpt-5.5-pro')) return 1050000;
   if (/^gpt-5(?:[.\-]|$)/.test(model) || model.includes('/gpt-5')) return 400000;
 
   // Anthropic Claude
-  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) return M1;
+  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|haiku-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) return M1;
   if (model.includes('claude-')) return 200000;
 
   // Google Gemini
@@ -294,8 +297,11 @@ export function inferContextWindow(config = {}) {
   // Mistral
   if (/mistral-medium-(?:3\.5|2604)/.test(model)) return K256;
 
-  // DeepSeek
-  if (model.includes('deepseek-v4')) return M1;
+  // DeepSeek: 1M for the V4.1-Flash family (including the retired
+  // `deepseek-v4-flash` aliases), a conservative 64K for retired and unknown
+  // DeepSeek ids. Numbers live in deepseek-config.js.
+  const deepSeek = deepSeekModelCapabilities(model);
+  if (deepSeek) return deepSeek.contextWindow;
 
   // xAI
   if (/grok-4\.[56](?:$|[^0-9])/.test(model)) return 500000;
@@ -347,13 +353,14 @@ export function inferMaxOutputTokens(config = {}) {
   if (!model) return null;
 
   // OpenAI and router slugs
+  if (/^gpt-6(?:\.1)?-(?:luna-pro|sol|astra)(?:[.\-:]|$)/.test(model) || model.includes('/gpt-6.1-sol')) return 128000;
   if (/^gpt-5(?:[.\-]|$)/.test(model) || model.includes('/gpt-5')) return 128000;
   if (/(?:^|\/)o[1-4](?:[.\-]|$)/.test(model)) return 100000;
   if (model.includes('gpt-4.1')) return 32768;
   if (model.includes('gpt-4o')) return 16384;
 
   // Anthropic Claude (direct, Bedrock, Vertex, and router slugs)
-  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) {
+  if (/claude-(?:fable-5|mythos-5|mythos|opus-5|sonnet-5|haiku-5|opus-4-[6-8]|sonnet-4-6)/.test(model)) {
     return 128000;
   }
   if (/claude-haiku-4-5/.test(model)) return 64000;
@@ -363,9 +370,10 @@ export function inferMaxOutputTokens(config = {}) {
   if (/claude-3/.test(model)) return 4096;
   if (model.includes('claude-')) return 64000;
 
-  // DeepSeek
-  if (model.includes('deepseek-v4')) return 384000;
-  if (model.includes('deepseek')) return 8192;
+  // DeepSeek: 384K for the V4.1-Flash family, 8K for the retired ids (and the
+  // unsupported V4 Pro id). Numbers live in deepseek-config.js.
+  const deepSeek = deepSeekModelCapabilities(model);
+  if (deepSeek) return deepSeek.maxOutputTokens;
 
   return null;
 }

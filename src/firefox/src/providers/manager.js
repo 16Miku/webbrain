@@ -1,11 +1,20 @@
 import { LlamaCppProvider } from './llamacpp.js';
 import { OpenAICompatibleProvider } from './openai.js';
+import { DeepSeekProvider } from './deepseek.js';
 import { AzureOpenAIProvider } from './azure-openai.js';
 import { AnthropicProvider, AnthropicOAuthProvider } from './anthropic.js';
 import { VertexAnthropicProvider } from './vertex-anthropic.js';
 import { signOutClaude } from './oauth-claude.js';
 import { AwsBedrockProvider } from './aws-bedrock.js';
 import { ADDITIONAL_PROVIDER_DEFAULTS } from './provider-catalog.js';
+import { purgeShareGenerations } from '../trace/webbrain-share-outbox.js';
+import {
+  DEEPSEEK_BASE_URL,
+  DEEPSEEK_DEFAULT_MODEL,
+  DEEPSEEK_LEGACY_DEFAULT_BASE_URL,
+  DEEPSEEK_LEGACY_DEFAULT_MODEL,
+  isDeepSeekModel,
+} from './deepseek-config.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
   VISION_MODES,
@@ -30,6 +39,7 @@ import {
   shouldApplyDetectedContextWindow,
 } from './context-windows.js';
 import {
+  isDirectDeepSeekConfig,
   normalizeOpenAICompatibleBaseUrl,
   openAiCompatiblePayloadError,
   unsupportedVisionGenerationControl,
@@ -48,7 +58,7 @@ const WEBBRAIN_CLOUD_PROVIDER_IDS = new Set([
 ]);
 const WEBBRAIN_CLOUD_PROVIDER_LABEL = 'WebBrain Compass';
 const DUPLICATE_PROVIDER_SUFFIX = '__duplicate';
-const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'];
+const LOCAL_MODEL_LIST_PROVIDER_IDS = ['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth', 'freebuff2api'];
 const WEBBRAIN_CLOUD_CONTEXT_WINDOW = 1000000;
 const WEBBRAIN_CLOUD_LEGACY_CONTEXT_WINDOW = 256000;
 const WEBBRAIN_DEVICE_GUID_KEY = 'webbrainDeviceGuid';
@@ -57,9 +67,6 @@ const OPENROUTER_DEFAULT_MODEL = 'openrouter/free';
 const OPENROUTER_LEGACY_DEFAULT_MODEL = 'stepfun/step-3.7-flash';
 const OPENAI_DEFAULT_MODEL = 'gpt-5.6-terra';
 const OPENAI_LEGACY_DEFAULT_MODEL = 'gpt-5.5';
-const DEEPSEEK_DEFAULT_BASE_URL = 'https://api.deepseek.com';
-const DEEPSEEK_LEGACY_DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
-const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-flash';
 const OPENCODE_LEGACY_DEFAULT_MODEL = 'ring-2.6-1t-free';
 const SUPPORTED_PROVIDER_TYPES = new Set(['llamacpp', 'openai', 'azure_openai', 'aws_bedrock', 'anthropic', 'anthropic_oauth', 'vertex_anthropic']);
 const SAFE_PROVIDER_ID_RE = /^[A-Za-z0-9_-]+$/;
@@ -250,6 +257,7 @@ const DUPLICATE_BLANK_CONFIG_KEYS = [
   'outputCostPerMillionUsd',
   'promptTier',
   'routingVariant',
+  'toolsMode',
   'visionMode',
   'visionDetection',
   'supportsVision',
@@ -324,6 +332,14 @@ export class ProviderManager {
         ...this._storedDefaultOverride(config, storedConfig),
         configured,
       };
+      // Voluntary research sharing is opt-in per provider and default-off
+      // (never on for WebBrain Compass itself, which already shares via its
+      // own outbox). Applied in the field-level merge so existing stored
+      // configs without the key inherit the off state without polluting the
+      // default catalog snapshots.
+      if (id !== WEBBRAIN_CLOUD_PROVIDER_ID && !Object.hasOwn(configs[id], 'shareQueriesForResearch')) {
+        configs[id].shareQueriesForResearch = false;
+      }
       if (Object.hasOwn(configs[id], 'duplicateOf')) {
         delete configs[id].duplicateOf;
         providerStateMigrated = true;
@@ -389,7 +405,7 @@ export class ProviderManager {
   }
 
   _defaultConfigs() {
-    return {
+    const defaults = {
       webbrain_cloud: {
         type: 'openai',
         category: 'cloud',
@@ -457,6 +473,21 @@ export class ProviderManager {
         visionDetection: null,
         enabled: true,
       },
+      ods: {
+        type: 'openai',
+        category: 'local',
+        label: 'ODS (Local)',
+        providerName: 'ods',
+        requiresModel: true,
+        baseUrl: 'http://localhost:11434/v1',
+        model: '',
+        contextWindow: 16384,
+        apiKey: '',
+        supportsAskStreaming: true,
+        visionMode: 'auto',
+        visionDetection: null,
+        enabled: true,
+      },
       lmstudio: {
         type: 'openai',
         category: 'local',
@@ -469,6 +500,20 @@ export class ProviderManager {
         supportsAskStreaming: true,
         visionMode: 'auto',
         visionDetection: null,
+        enabled: true,
+      },
+      osaurus: {
+        type: 'openai',
+        category: 'local',
+        label: 'Osaurus (Local)',
+        providerName: 'osaurus',
+        requiresModel: true,
+        baseUrl: 'http://127.0.0.1:1337/v1',
+        model: '',
+        contextWindow: 16384,
+        apiKey: '',
+        supportsAskStreaming: true,
+        supportsVision: false,
         enabled: true,
       },
       jan: {
@@ -690,12 +735,17 @@ export class ProviderManager {
         category: 'cloud',
         label: 'DeepSeek',
         providerName: 'deepseek',
-        baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
+        baseUrl: DEEPSEEK_BASE_URL,
         model: DEEPSEEK_DEFAULT_MODEL,
         contextWindow: 1000000,
         maxOutputTokens: 384000,
-        inputCostPerMillionUsd: 0.27,
-        outputCostPerMillionUsd: 1.1,
+        // `deepseek-flash` off-peak list price, CNY per 1M tokens: 1 input,
+        // 0.02 cache-hit input, 4 output (peak is 2 / 0.04 / 8), converted at
+        // 1 USD = 7.1 CNY.
+        // https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+        inputCostPerMillionUsd: 0.14,
+        cacheReadCostPerMillionUsd: 0.0028,
+        outputCostPerMillionUsd: 0.56,
         supportsStreamUsageOptions: true,
         supportsAskStreaming: true,
         apiKey: '',
@@ -851,6 +901,7 @@ export class ProviderManager {
       },
       ...ADDITIONAL_PROVIDER_DEFAULTS,
     };
+    return defaults;
   }
 
   _migrateStoredProviderConfigs(stored) {
@@ -879,18 +930,26 @@ export class ProviderManager {
         model: OPENROUTER_DEFAULT_MODEL,
       };
     }
+    // DeepSeek renamed its shipped default model to `deepseek-flash`. The
+    // retired `deepseek-v4-flash` id (plus the old /v1 base path and the
+    // pre-V4.1 prices) identifies a card the user never touched, so the rename
+    // and the new price sheet can be applied without overriding a real choice.
     const storedDeepSeek = migrated.deepseek;
     const deepSeekBaseUrl = String(storedDeepSeek?.baseUrl || '').replace(/\/+$/, '');
-    const untouchedDeepSeekDefault = storedDeepSeek?.model === DEEPSEEK_DEFAULT_MODEL
+    const untouchedDeepSeekDefault = storedDeepSeek?.model === DEEPSEEK_LEGACY_DEFAULT_MODEL
       && storedDeepSeek?.configured !== true
       && !String(storedDeepSeek?.apiKey || '').trim()
-      && deepSeekBaseUrl === DEEPSEEK_LEGACY_DEFAULT_BASE_URL
+      && (deepSeekBaseUrl === DEEPSEEK_LEGACY_DEFAULT_BASE_URL || deepSeekBaseUrl === DEEPSEEK_BASE_URL)
       && (storedDeepSeek?.inputCostPerMillionUsd == null || Number(storedDeepSeek.inputCostPerMillionUsd) === 0.27)
       && (storedDeepSeek?.outputCostPerMillionUsd == null || Number(storedDeepSeek.outputCostPerMillionUsd) === 1.1);
     if (untouchedDeepSeekDefault) {
       migrated.deepseek = {
         ...storedDeepSeek,
-        baseUrl: DEEPSEEK_DEFAULT_BASE_URL,
+        baseUrl: DEEPSEEK_BASE_URL,
+        model: DEEPSEEK_DEFAULT_MODEL,
+        inputCostPerMillionUsd: 0.14,
+        cacheReadCostPerMillionUsd: 0.0028,
+        outputCostPerMillionUsd: 0.56,
       };
     }
     this._migrateUntouchedShippedDefaults(migrated);
@@ -1086,12 +1145,21 @@ export class ProviderManager {
     return String(config?.duplicateOf || id || '');
   }
 
-  _duplicateProviderId(id) {
-    return `${id}${DUPLICATE_PROVIDER_SUFFIX}`;
+  _duplicateProviderId(id, number = 1) {
+    return `${id}${DUPLICATE_PROVIDER_SUFFIX}${number === 1 ? '' : `_${number}`}`;
+  }
+
+  _duplicateProviderNumber(id, sourceId) {
+    const prefix = this._duplicateProviderId(sourceId);
+    if (id === prefix) return 1;
+    if (!id.startsWith(`${prefix}_`)) return 0;
+    const suffix = id.slice(prefix.length + 1);
+    const number = Number(suffix);
+    return Number.isSafeInteger(number) && number >= 2 && String(number) === suffix ? number : 0;
   }
 
   _canDuplicateProvider(id, config = this.providers.get(id)?.config) {
-    return !!config && !config.duplicateOf && !WEBBRAIN_CLOUD_PROVIDER_IDS.has(id) && config.type !== 'webgpu';
+    return !!config && !WEBBRAIN_CLOUD_PROVIDER_IDS.has(this._providerDefinitionId(id, config)) && config.type !== 'webgpu';
   }
 
   _isValidDuplicateConfig(id, config, configs) {
@@ -1099,8 +1167,9 @@ export class ProviderManager {
     const sourceConfig = configs[sourceId];
     return typeof sourceId === 'string' &&
       SAFE_PROVIDER_ID_RE.test(sourceId) &&
-      id === this._duplicateProviderId(sourceId) &&
+      this._duplicateProviderNumber(id, sourceId) > 0 &&
       !!sourceConfig &&
+      !sourceConfig.duplicateOf &&
       this._canDuplicateProvider(sourceId, sourceConfig) &&
       sourceConfig.configured === true &&
       sourceConfig.type === config.type;
@@ -1115,7 +1184,7 @@ export class ProviderManager {
   static categoryFor(id, config) {
     if (config && config.category) return config.category;
     if (config?.type === 'llamacpp') return 'local';
-    if (['llamacpp', 'ollama', 'lmstudio', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'].includes(id)) return 'local';
+    if (['llamacpp', 'ollama', 'ods', 'lmstudio', 'osaurus', 'jan', 'vllm', 'sglang', 'localai', 'gpt4all', 'local_openai_proxy', 'unsloth'].includes(id)) return 'local';
     if (ROUTER_PROVIDER_IDS.includes(id)) return 'router';
     return 'cloud';
   }
@@ -1156,7 +1225,13 @@ export class ProviderManager {
       case 'llamacpp':
         return new LlamaCppProvider(normalizedConfig);
       case 'openai':
-        return new OpenAICompatibleProvider(normalizedConfig);
+        // All non-local DeepSeek cards use the dedicated capability hooks. Only
+        // direct cards opt into DeepSeek's native request contract; router cards
+        // retain their existing OpenRouter compatibility preset.
+        return (isDirectDeepSeekConfig(normalizedConfig)
+          || (normalizedConfig.category !== 'local' && isDeepSeekModel(normalizedConfig.model)))
+          ? new DeepSeekProvider(normalizedConfig)
+          : new OpenAICompatibleProvider(normalizedConfig);
       case 'azure_openai':
         return new AzureOpenAIProvider(normalizedConfig);
       case 'aws_bedrock':
@@ -1183,6 +1258,32 @@ export class ProviderManager {
     return provider;
   }
 
+  /** Get a provider without changing the user's globally selected provider. */
+  getProvider(id) {
+    const provider = this.providers.get(id);
+    if (!provider) throw new Error(`Provider not found: ${id}`);
+    return provider;
+  }
+
+  /**
+   * Stable provider-config ids currently opted into voluntary research
+   * sharing. The share outbox purges queued entries for any other id before
+   * delivery so revoking the toggle is honored immediately. Keyed by config
+   * id (not providerName): duplicates share one providerName, and some
+   * built-ins have none at all.
+   */
+  consentedShareProviderIds() {
+    const ids = new Set();
+    try {
+      for (const [id, provider] of this.providers?.entries?.() || []) {
+        if (provider?.config?.shareQueriesForResearch !== true) continue;
+        const pid = String(provider.config._providerId || id || '');
+        if (pid) ids.add(pid);
+      }
+    } catch {}
+    return ids;
+  }
+
   async _fetchVisionCapability(providerId, provider, identity) {
     const root = identity.baseUrl.replace(/\/v1$/i, '');
     const headers = this._modelListHeaders(provider);
@@ -1203,7 +1304,7 @@ export class ProviderManager {
     };
     const request = (async () => {
       try {
-        if (providerId === 'llamacpp') {
+        if (providerId === 'llamacpp' || providerId === 'ods') {
           const query = identity.model ? `?model=${encodeURIComponent(identity.model)}` : '';
           const result = await fetchJson(`${root}/props${query}`);
           if (!result.ok) return result;
@@ -1471,6 +1572,12 @@ export class ProviderManager {
     }
     const current = this.providers.get(id).config;
     const updates = this._storedDefaultOverride(current, config);
+    if (Object.hasOwn(updates, 'label')) {
+      if (typeof updates.label !== 'string' || !updates.label.trim() || updates.label.trim().length > 120) {
+        throw new Error('Provider title must contain between 1 and 120 characters.');
+      }
+      updates.label = updates.label.trim();
+    }
     for (const key of ['id', 'duplicateOf', 'sourceProviderId', 'isDuplicate', 'hasDuplicate', 'canDuplicate']) {
       delete updates[key];
     }
@@ -1510,6 +1617,12 @@ export class ProviderManager {
       }
     }
     this.providers.set(id, this._createProvider(id, merged));
+    // Revocation is permanent for queued data, even if sharing is enabled
+    // again before another agent run. Await deletion before acknowledging it.
+    // Explicit off updates also retry a previously failed purge.
+    if (Object.hasOwn(updates, 'shareQueriesForResearch') && merged.shareQueriesForResearch !== true) {
+      await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+    }
     await this.save();
   }
 
@@ -1528,19 +1641,19 @@ export class ProviderManager {
     if (source.config.configured !== true) {
       throw new Error(`Save provider before duplicating it: ${id}`);
     }
-    const duplicateId = this._duplicateProviderId(id);
-    if (this.providers.has(duplicateId) || [...this.providers.values()].some(provider => provider.config?.duplicateOf === id)) {
-      throw new Error(`${source.config.label || id} already has a duplicate.`);
-    }
+    const sourceId = this._providerDefinitionId(id, source.config);
+    let number = 1;
+    while (this.providers.has(this._duplicateProviderId(sourceId, number))) number++;
+    const duplicateId = this._duplicateProviderId(sourceId, number);
 
-    const baseline = this._defaultConfigs()[id];
+    const baseline = this._defaultConfigs()[sourceId];
     if (!baseline || baseline.type !== source.config.type) {
       throw new Error(`Provider definition not found: ${id}`);
     }
     const duplicateConfig = structuredClone(baseline);
     for (const key of DUPLICATE_BLANK_CONFIG_KEYS) delete duplicateConfig[key];
-    duplicateConfig.duplicateOf = id;
-    duplicateConfig.label = `${baseline.label || id} 2`;
+    duplicateConfig.duplicateOf = sourceId;
+    duplicateConfig.label = `${baseline.label || sourceId} ${number + 1}`;
     duplicateConfig.configured = false;
     this.providers.set(duplicateId, this._createProvider(duplicateId, duplicateConfig));
     try {
@@ -1549,7 +1662,7 @@ export class ProviderManager {
       this.providers.delete(duplicateId);
       throw error;
     }
-    return { providerId: duplicateId, sourceProviderId: id };
+    return { providerId: duplicateId, sourceProviderId: sourceId };
   }
 
   /** Keep the persisted active ID valid when the selected duplicate disappears. */
@@ -1568,6 +1681,9 @@ export class ProviderManager {
         : WEBBRAIN_CLOUD_PROVIDER_ID;
     }
     try {
+      if (duplicate.config?.shareQueriesForResearch === true) {
+        await purgeShareGenerations(entry => String(entry?.provider_id || '') === id);
+      }
       await this.save();
     } catch (error) {
       this.providers.set(id, duplicate);
@@ -1594,18 +1710,22 @@ export class ProviderManager {
     const duplicateEntriesBySourceId = new Map();
     for (const entry of this.providers) {
       const sourceId = entry[1].config?.duplicateOf;
-      if (sourceId) duplicateEntriesBySourceId.set(sourceId, entry);
+      if (!sourceId) continue;
+      if (!duplicateEntriesBySourceId.has(sourceId)) duplicateEntriesBySourceId.set(sourceId, []);
+      duplicateEntriesBySourceId.get(sourceId).push(entry);
+    }
+    for (const [sourceId, entries] of duplicateEntriesBySourceId) {
+      entries.sort((a, b) => this._duplicateProviderNumber(a[0], sourceId) - this._duplicateProviderNumber(b[0], sourceId));
     }
     const orderedEntries = [];
     for (const entry of this.providers) {
       const [id, provider] = entry;
       if (provider.config?.duplicateOf) continue;
       orderedEntries.push(entry);
-      const duplicateEntry = duplicateEntriesBySourceId.get(id);
-      if (duplicateEntry) orderedEntries.push(duplicateEntry);
+      orderedEntries.push(...(duplicateEntriesBySourceId.get(id) || []));
     }
-    for (const entry of duplicateEntriesBySourceId.values()) {
-      if (!this.providers.has(entry[1].config?.duplicateOf)) orderedEntries.push(entry);
+    for (const [sourceId, entries] of duplicateEntriesBySourceId) {
+      if (!this.providers.has(sourceId)) orderedEntries.push(...entries);
     }
     for (const [id, provider] of orderedEntries) {
       const config = provider.config;
@@ -1619,7 +1739,7 @@ export class ProviderManager {
         sourceProviderId: this._providerDefinitionId(id, config),
         isDuplicate,
         hasDuplicate,
-        canDuplicate: this._canDuplicateProvider(id, config) && !hasDuplicate,
+        canDuplicate: this._canDuplicateProvider(id, config),
       };
     }
     return result;
@@ -1796,11 +1916,11 @@ export class ProviderManager {
 
   /**
    * Fetch selectable models for local providers. Ollama uses its native
-   * /api/tags endpoint; llama.cpp, LM Studio, Jan, vLLM, SGLang, LocalAI,
+   * /api/tags endpoint; ODS, llama.cpp, LM Studio, Osaurus, Jan, vLLM, SGLang, LocalAI,
    * GPT4All, Unsloth Studio, and generic local proxies use
    * OpenAI-compatible /v1/models.
    */
-  async listProviderModels(id) {
+  async listProviderModels(id, { detectServerIdentity = false } = {}) {
     const provider = this.providers.get(id);
     if (!provider) return { ok: false, error: 'Provider not found' };
     const definitionId = this._providerDefinitionId(id, provider.config);
@@ -1872,6 +1992,22 @@ export class ProviderManager {
           continue;
         }
         const data = await res.json();
+        // ODS commonly shares Ollama's port. During automatic onboarding,
+        // require its llama-server /props endpoint before offering an ODS card.
+        if (detectServerIdentity && provider.config.configured !== true && definitionId === 'ods') {
+          try {
+            const root = candidate.configBaseUrl.replace(/\/v1$/i, '');
+            const identity = await fetchWithTimeout(`${root}/props`, { method: 'GET', headers });
+            if (!identity.ok) return { ok: true, models: [] };
+          } catch { return { ok: true, models: [] }; }
+        }
+        // Jan and Osaurus share port 1337. Successful OpenAI model discovery
+        // alone cannot identify which server answered an unconfigured card.
+        if (detectServerIdentity && provider.config.configured !== true
+            && ['jan', 'osaurus'].includes(definitionId)) {
+          const isOsaurus = await this._isOsaurusDiscoveryServer(data, candidate.requestBaseUrl, headers);
+          if (isOsaurus !== (definitionId === 'osaurus')) return { ok: true, models: [] };
+        }
         const models = this._extractModelIds(definitionId, data);
         const result = { ok: true, models };
         if (candidate.configBaseUrl !== observedBaseUrl) {
@@ -1897,6 +2033,28 @@ export class ProviderManager {
       }
     }
     return firstFailure || { ok: false, error: 'Failed to load models' };
+  }
+
+  async _isOsaurusDiscoveryServer(data, requestBaseUrl, headers) {
+    if (Array.isArray(data?.data) && data.data.some(model =>
+      String(model?.owned_by || '').trim().toLowerCase() === 'osaurus'
+    )) return true;
+
+    // A cloud-only Osaurus catalog may contain only upstream owners. Its
+    // public root greeting identifies the server without depending on models.
+    const root = requestBaseUrl.replace(/\/v1$/i, '');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1500);
+    try {
+      const response = await fetch(`${root}/`, {
+        method: 'GET', headers, signal: controller.signal,
+      });
+      return response.ok && (await response.text()).trim().startsWith('Osaurus Server is running!');
+    } catch {
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async listOllamaModels(id) {
@@ -2083,7 +2241,7 @@ export class ProviderManager {
         };
       }
 
-      if (definitionId === 'llamacpp') {
+      if (definitionId === 'llamacpp' || definitionId === 'ods') {
         const res = await fetch(`${root}/props`, { method: 'GET', headers });
         if (!res.ok) return null;
         const contextWindow = parseLlamaCppPropsContextWindow(await res.json());

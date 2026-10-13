@@ -155,10 +155,27 @@ No finite observation window can prove application-internal state that produces 
 
 ### `type_ax({ref_id, text, clear})`
 
-1. Resolves `ref_id`
-2. Uses `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value)` to bypass React/Vue controlled-component wrappers
-3. Dispatches `input` + `change` events
-4. For contenteditable: sets `textContent` + dispatches `beforeinput` + `input`
+The handler resolves the original `ref_id`, prepares that exact editor and verifies
+the resulting text. Native input fields use the prototype value setter plus input
+events where supported. Model-managed rich-text editors use their supported input
+transport instead of replacing their rendered DOM; Chrome uses trusted browser
+input and Firefox uses trusted automation when enabled. DraftJS multiline input
+uses a single public plain-text paste. See [rich-text input](rich-text-input.md)
+for editor detection, frame ownership and exact full-document readback.
+
+Chrome selector typing also verifies the complete current selection before
+replacing a DraftJS or ProseMirror document with one native `Input.insertText`.
+It keeps the existing draft intact when selection cannot be proved. Deleting
+first can mount a placeholder and disable Publish, invalidating preparation
+before replacement text arrives. Explicit empty clears and generic editor
+clearing retain native deletion and clear receipts; Firefox uses its existing
+editor and companion paths.
+
+Before each model decision, a sole visible dialog is captured by its subtree,
+including the normal overlay context and any explicitly requested observation
+scope. This avoids repeatedly formatting an occluded live timeline. Ordinary
+AX reads retain full-page pagination, and only targets whose complete identity
+was actually exposed in the current observation can receive action authority.
 
 Rejects non-typeable input types (checkbox, radio, submit, file) with a clear error.
 
@@ -233,8 +250,8 @@ When an embedded app or form remains difficult to inspect or target reliably,
 `promote_iframe` navigates the **current run tab** to that child frame's own
 standalone URL. Subsequent tools operate on the standalone page, and normal
 browser Back history is preserved so `go_back` or the browser Back button can
-return to the embedding page. This is a same-tab handoff, not a background
-`new_tab`.
+return to the embedding page. This is a same-tab handoff, not background-tab
+creation.
 
 Use this workflow **before editing** the iframe:
 

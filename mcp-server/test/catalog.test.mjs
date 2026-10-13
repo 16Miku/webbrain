@@ -47,10 +47,19 @@ test("MCP catalog exposes structured extraction alongside run controls", async (
     );
 
     const extract = tools.find((tool) => tool.name === "webbrain_extract");
+    const run = tools.find((tool) => tool.name === "webbrain_run");
+    assert.equal(run.inputSchema.properties.task_memory.type, "object");
+    assert.ok(run.inputSchema.properties.task_memory.required.includes("callbackToken"));
+    assert.equal(run.inputSchema.required.includes("task_memory"), false);
     assert.ok(extract, "structured extraction tool is missing");
     assert.deepEqual(extract.inputSchema.required, ["task", "output_schema"]);
     assert.equal(extract.inputSchema.properties.output_schema.type, "object");
     assert.match(extract.description, /always uses WebBrain Ask mode/i);
+
+    const respond = tools.find((tool) => tool.name === "webbrain_respond");
+    assert.ok(respond, "respond tool is missing");
+    assert.match(respond.description, /exact stable value shown by WebBrain: 'once', 'always', or 'deny'/i);
+    assert.match(respond.inputSchema.properties.answer.description, /one-time approval maps to 'once'/i);
   } finally {
     await client.close().catch(() => {});
   }

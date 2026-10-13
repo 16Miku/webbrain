@@ -49,11 +49,14 @@ import {
   isActionMode,
   isFrozen,
   getFrozenMeta,
+  isRunnableModeTier,
   loadFrozenBaseline,
   normalizeMode,
   normalizeTier,
 } from './lib/build-payload.mjs';
 import { scoreVerdict } from './lib/score.mjs';
+import { extractToolCallFromContent as extractLfm2AwareToolCallFromContent } from './lib/content-tool-call-parser.mjs';
+import { loadReplay, replayCase } from './lib/replay-payload.mjs';
 import {
   chatTemplateCompatLabel,
   getChatTemplateCompat,
@@ -96,6 +99,7 @@ Selection:
   --mode ask|act|dev                 Override scenario mode; Dev requires Mid/Full tier
   --tier full|mid|compact            Prompt/tool tier; ignored with --freeze
   --freeze PATH                      Pin system prompt + tools to a snapshot
+  --replay PATH                      Replay saved per-case messages and mode-specific tools
   --unprotected                      Strip wrapper + untrusted-content instructions
 
 Run:
@@ -157,6 +161,8 @@ const MODE_OVERRIDE = args.mode == null ? null : normalizeMode(args.mode);
 // --unprotected: ABLATION. Strip BOTH the untrusted-content wrapper from the
 // seed AND the untrusted-content instructions from the system prompt.
 const UNPROTECTED = !!args.unprotected;
+const REPLAY = loadReplay(args.replay, { browser: BROWSER, tier: TIER,
+  incompatible: isFrozen() || !!MODE_OVERRIDE || UNPROTECTED || CHAT_TEMPLATE_COMPAT.mode !== 'off' });
 
 const onlySet = args.only && args.only !== true
   ? new Set(String(args.only).split(',').map(s => String(parseInt(s, 10)).padStart(3, '0')))
@@ -258,10 +264,42 @@ function safeParse(s) { try { return JSON.parse(s); } catch { return {}; } }
 
 async function runOne(scenario) {
   const mode = MODE_OVERRIDE || normalizeMode(scenario.mode);
-  const payload = buildScenarioPayload({ ...scenario, browser: scenario.browser || BROWSER, mode }, { tier: TIER, unprotected: UNPROTECTED });
+  const replay = replayCase(REPLAY, 'scenarios', scenario.id, MODEL);
+  if (replay?.expected) scenario = { ...scenario, expected: replay.expected };
+
+  // A scenario whose mode has no payload at this tier is not a failure of the
+  // model — it simply does not apply to the surface under test (Compact Dev is
+  // blocked in production, and csp-blocked-eval replays a Dev-only tool). Send
+  // nothing and report it as skipped so it stays out of every denominator.
+  // Freeze mode replays a captured prompt and ignores the tier, so it never
+  // skips.
+  if (replay?.skipped || (!REPLAY && !isFrozen() && !isRunnableModeTier(mode, TIER))) {
+    const skipped = replay?.skipped || `${mode} mode has no ${TIER}-tier payload; pass --mode to run this scenario here`;
+    return {
+      id: scenario.id,
+      category: scenario.category,
+      description: scenario.description,
+      mode,
+      browser: scenario.browser || BROWSER,
+      latencyMs: 0,
+      error: null,
+      skipped,
+      firstToolCall: null,
+      toolCallSource: null,
+      expected: scenario.expected,
+      matchedAntiPattern: null,
+      verdict: scoreVerdict({ skipped, expected: scenario.expected }).verdict,
+      scoreNote: null,
+      finishReason: null,
+      content: null,
+      usage: null,
+    };
+  }
+
+  const payload = replay ? replay.body : buildScenarioPayload({ ...scenario, browser: scenario.browser || BROWSER, mode }, { tier: TIER, unprotected: UNPROTECTED });
   const messages = prepareMessagesForChatTemplate(payload.messages, CHAT_TEMPLATE_COMPAT, { tools: payload.tools });
   const tools = prepareToolsForChatTemplate(payload.tools, CHAT_TEMPLATE_COMPAT);
-  const body = {
+  const body = replay?.body || {
     model: MODEL,
     temperature: isActionMode(mode) ? 0.15 : 0.3,
     max_tokens: 4096,
@@ -302,7 +340,7 @@ async function runOne(scenario) {
     firstToolCall = { name: tc.function.name, args: pa };
     toolCallSource = 'tool_calls';
   } else if (msg?.content) {
-    const fb = extractToolCallFromContent(msg.content);
+    const fb = extractLfm2AwareToolCallFromContent(msg.content, { tools });
     if (fb) { firstToolCall = fb; toolCallSource = 'content_fallback'; }
   }
 
@@ -335,10 +373,8 @@ async function runOne(scenario) {
     finishReason: response?.choices?.[0]?.finish_reason || null,
     content: msg?.content || null,
     usage: response?.usage || null,
-    request: SAVE_REQUEST ? {
-      messages: body.messages,
-      tools_summary: { count: payload.tools.length, sent: !!tools },
-    } : undefined,
+    response,
+    request: SAVE_REQUEST ? body : undefined,
   };
 }
 
@@ -357,7 +393,9 @@ async function runAll() {
           .then(r => {
             results.push(r);
             writeFileSync(join(runDir, `${r.id}.json`), JSON.stringify(r, null, 2) + '\n');
-            const tag = r.error ? `✗ ${r.error.slice(0, 50)}` : `[${r.verdict}] ${r.firstToolCall?.name || '(no tool)'}`;
+            const tag = r.skipped ? `— skipped: ${r.skipped}`
+              : r.error ? `✗ ${r.error.slice(0, 50)}`
+                : `[${r.verdict}] ${r.firstToolCall?.name || '(no tool)'}`;
             console.error(`[${n}/${scenarios.length}] ${r.id} (${r.category}) ${tag} ${r.latencyMs}ms`);
           })
           .catch(e => {
@@ -384,7 +422,7 @@ const byVerdict = results.reduce((a, r) => { a[r.verdict] = (a[r.verdict] || 0) 
 const byCategory = {};
 for (const r of results) {
   const c = r.category || 'unknown';
-  if (!byCategory[c]) byCategory[c] = { ideal: 0, ideal_name: 0, anti: 0, other: 0, no_tool: 0, empty: 0, error: 0 };
+  if (!byCategory[c]) byCategory[c] = { ideal: 0, ideal_name: 0, anti: 0, other: 0, no_tool: 0, empty: 0, error: 0, skipped: 0 };
   byCategory[c][r.verdict] = (byCategory[c][r.verdict] || 0) + 1;
 }
 
@@ -395,6 +433,7 @@ const summary = {
   unprotected: UNPROTECTED,
   chatTemplateCompat: CHAT_TEMPLATE_COMPAT.mode,
   structuredToolsSent: !CHAT_TEMPLATE_COMPAT.omitStructuredTools,
+  replay: REPLAY?.meta || null,
   freeze: isFrozen() ? {
     path: args.freeze && args.freeze !== true ? args.freeze : (process.env.WB_FREEZE_BASELINE || null),
     sourceRun: getFrozenMeta()?.sourceRun || null,
@@ -403,6 +442,7 @@ const summary = {
     toolCount: getFrozenMeta()?.toolCount || null,
   } : null,
   scenarios: results.length,
+  skipped: results.filter(r => r.verdict === 'skipped').length,
   totalLatencyMs: elapsed,
   byVerdict,
   byCategory,
@@ -413,9 +453,12 @@ console.error(`\n▸ done in ${elapsed}ms`);
 console.error(`▸ verdicts:`, byVerdict);
 console.error(`▸ by category:`);
 for (const [cat, dist] of Object.entries(byCategory)) {
-  const total = Object.values(dist).reduce((a, b) => a + b, 0);
+  const skipped = dist.skipped || 0;
+  // Skipped cases never reached a model, so they are not part of the score.
+  const total = Object.values(dist).reduce((a, b) => a + b, 0) - skipped;
   const ideal = (dist.ideal || 0) + (dist.ideal_name || 0);
   const anti = dist.anti || 0;
-  console.error(`    ${cat.padEnd(20)} ideal=${ideal}/${total}  anti=${anti}  other=${dist.other || 0}  no_tool=${dist.no_tool || 0}  empty=${dist.empty || 0}`);
+  const skipNote = skipped ? `  skipped=${skipped}` : '';
+  console.error(`    ${cat.padEnd(20)} ideal=${ideal}/${total}  anti=${anti}  other=${dist.other || 0}  no_tool=${dist.no_tool || 0}  empty=${dist.empty || 0}${skipNote}`);
 }
 console.error(`▸ ${join(runDir, 'summary.json')}`);

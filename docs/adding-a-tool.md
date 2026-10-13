@@ -411,10 +411,10 @@ if (name === 'chrome_only_tool') {
 Every new tool should be classified for security:
 
 1. **Can it read or exfiltrate data from the page?** → Add credential-field sensitivity checks if it reads input values.
-2. **Can it perform destructive mutations?** → Consider whether it should be gated behind `/allow-api`.
+2. **Can it perform destructive mutations?** → Classify it under the normal permission gate. The persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override waives prompts only for write-method network egress, not other mutating capabilities.
 3. **Can it be prompt-injected?** → If the tool accepts user-provided strings that end up in tool-call arguments, document the injection surface in the tool description.
 4. **Which mode/tier should expose it?** → Ask-only semantic read goes in `ASK_ONLY_TOOLS`; common action tools should join the smallest normal tier that can reliably use them; developer-only source/style/debug tools go in Dev-only; Full fallbacks that Mid should get only during debugging go in Dev-extended.
-5. **Can it shortcut repeated UI actions to network calls?** → Keep the UI-first policy intact. The background API observer may surface exact XHR/fetch URL+method hints during click loops, plus an opaque `replayRequestId` when same-origin body/header replay material is available. Mutating `fetch_url` calls still need the conversation's `/allow-api` state, and hidden form tokens must stay behind the replay id rather than being exposed to the model. GET requests and non-network capabilities still use the normal permission gate.
+5. **Can it shortcut repeated UI actions to network calls?** → Keep the UI-first policy intact. The background API observer may surface exact XHR/fetch URL+method hints during click loops, plus an opaque `replayRequestId` when same-origin body/header replay material is available. Write-method `fetch_url` / `research_url` calls are authorized by the persistent **Always allow API mutations** setting (on by default) or the conversation's `/allow-api` override. An unreadable persistent setting grants no authorization, and hidden form tokens must stay behind the replay id rather than being exposed to the model. GET requests and non-network capabilities still use the normal permission gate.
 
 See `docs/security-model.md` for the full threat model.
 

@@ -1,0 +1,42 @@
+{
+  "id": "043",
+  "category": "counter-polarity",
+  "description": "X counter shows \"0\" — text is exactly at the 280 limit. Safe (but barely).",
+  "mode": "act",
+  "browser": "chrome",
+  "latencyMs": 5492,
+  "error": null,
+  "firstToolCall": {
+    "name": "done",
+    "args": {
+      "outcome": "failed",
+      "summary": "I can’t safely post the draft because the visible form only shows the textarea and the draft is not present in the current page context. Please paste the draft text or provide the exact content you want posted."
+    }
+  },
+  "toolCallSource": "tool_calls",
+  "expected": {
+    "idealNextToolCall": {
+      "name": "click",
+      "args": {
+        "text": "Post"
+      }
+    },
+    "antiPatterns": [
+      {
+        "match": "set_field({ref_id:\"...\", clear:true, text:\"...\"})",
+        "reason": "0 means exactly at limit, which is allowed."
+      }
+    ],
+    "successRubric": "X allows posts at exactly the limit (counter shows 0 chars remaining). Submit."
+  },
+  "matchedAntiPattern": null,
+  "verdict": "other",
+  "scoreNote": null,
+  "finishReason": "tool_calls",
+  "content": "<function name=\"done\"><param name=\"outcome\">failed</param><param name=\"summary\">I can’t safely post the draft because the visible form only shows the textarea and the draft is not present in the current page context. Please paste the draft text or provide the exact content you want posted.</param></function>",
+  "usage": {
+    "prompt_tokens": 9779,
+    "completion_tokens": 62,
+    "total_tokens": 9841
+  }
+}

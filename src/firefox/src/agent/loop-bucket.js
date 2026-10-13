@@ -79,6 +79,8 @@ export const URL_FAMILY_TOOLS = new Set([
  *     git/trees/, /repos/o/r/git/refs/, /o/r/blob/<ref>/, /o/r/raw/<ref>/,
  *     /o/r/edit/<ref>/, /o/r/tree/<ref>/, /o/r/commits/<ref>/,
  *     /o/r/commit/<ref>/.
+ *   - WordPress query-form REST URLs keep the installation path and decoded
+ *     rest_route. Other query parameters do not change resource identity.
  *   - For everything else we keep the lowercased hostname and the last
  *     three path segments. That's a backstop, not authoritative — it
  *     trades some over-bucketing (different files in the same /a/b/foo/
@@ -105,6 +107,15 @@ export function resourceBucket(rawUrl) {
   // path because the gist id is the resource identity.
   const ghBucket = _ghResourceBucket(rawHost, rawPath);
   if (ghBucket !== null) return `github.com::${ghBucket}`;
+
+  // Without pretty permalinks, every WordPress REST endpoint shares a path;
+  // dropping rest_route makes normal discovery look like repeated fetches.
+  // URLSearchParams decodes equivalent route encodings. Ignore trailing
+  // slashes and unrelated query variations so real repeats still collide.
+  const restRoute = u.searchParams.get('rest_route');
+  if (restRoute?.startsWith('/')) {
+    return `${rawHost}::${rawPath}|rest_route:${restRoute.replace(/\/+$/, '') || '/'}`;
+  }
 
   // Non-GitHub: keep the lowercased hostname and the last 3 path segments.
   // Loose by design — trades some over-bucketing (siblings in the same
@@ -147,8 +158,53 @@ function _ghResourceBucket(host, path) {
 }
 
 /**
+ * Deterministic JSON with object keys in sorted order.
+ *
+ * `JSON.stringify` preserves insertion order, so `{selector:"#a",text:"x"}`
+ * and `{text:"x",selector:"#a"}` — the same rejected call — hash to two
+ * different loop keys. A model that keeps re-emitting the same invalid
+ * argument object can then permute key order on every attempt and never
+ * reach the rejection limit. Sorting keys collapses those variants into one
+ * identity. Array order is preserved because element order is meaningful.
+ *
+ * `undefined`/function/symbol values are dropped from objects and become
+ * `null` inside arrays, exactly as `JSON.stringify` does, so an absent
+ * argument and an explicitly undefined one stay one identity.
+ */
+function canonicalJson(value, seen = new Set()) {
+  if (value === null) return 'null';
+  if (typeof value !== 'object') return _canonicalScalar(value);
+  if (seen.has(value)) return '"[circular]"';
+  seen.add(value);
+  let encoded;
+  if (Array.isArray(value)) {
+    encoded = `[${value.map(entry => canonicalJson(entry, seen)).join(',')}]`;
+  } else {
+    const members = [];
+    for (const key of Object.keys(value).sort()) {
+      if (_isOmittable(value[key])) continue;
+      members.push(`${JSON.stringify(key)}:${canonicalJson(value[key], seen)}`);
+    }
+    encoded = `{${members.join(',')}}`;
+  }
+  seen.delete(value);
+  return encoded;
+}
+
+function _isOmittable(value) {
+  return value === undefined || typeof value === 'function' || typeof value === 'symbol';
+}
+
+function _canonicalScalar(value) {
+  if (typeof value === 'bigint') return JSON.stringify(value.toString());
+  if (typeof value === 'number') return Number.isFinite(value) ? JSON.stringify(value) : 'null';
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
  * Build the loop-detector key for a tool call. URL-family tools bucket
- * by resource + method; other tools fall back to exact JSON args.
+ * by resource + method; other tools fall back to key-order-independent
+ * JSON args.
  *
  * Returns the args-portion of the loop key. Caller appends `|name|errored`.
  */
@@ -160,7 +216,7 @@ export function bucketArgsKey(name, args) {
     const fetchTextWindow = name === 'fetch_url' ? _fetchTextWindowKey(args) : '';
     return `url:${bucket}|${method}${pageSourceRange}${fetchTextWindow}`;
   }
-  return JSON.stringify(args || {});
+  return canonicalJson(args || {});
 }
 
 function _pageSourceRangeKey(args) {

@@ -42,7 +42,7 @@ function normalizeText(value, max = 20000) {
 
 function normalizeAttachment(attachment) {
   return {
-    kind: ['image', 'document', 'text'].includes(attachment?.kind) ? attachment.kind : 'document',
+    kind: ['image', 'document', 'text', 'video'].includes(attachment?.kind) ? attachment.kind : 'document',
     name: normalizeText(attachment?.name || 'attachment', 240),
     mimeType: normalizeText(attachment?.mimeType || '', 120),
     size: Number.isFinite(Number(attachment?.size)) ? Math.max(0, Number(attachment.size)) : 0,
