@@ -249,10 +249,11 @@ for (const browser of ['chrome', 'firefox']) {
     f.agent._storeContinuationExecutionEvidence(f.tabId);
     // Compact revision/tool turns while retaining the initiating task anchor.
     // No compiler state is needed to preserve the app-owned correction sources.
+    // The Continue command's turn is stored marked as a continuation.
     f.agent.conversations.set(f.tabId, [
       { role: 'system', content: 'system' },
       { role: 'user', content: 'Post Monday on X' },
-      { role: 'user', content: 'Continue' },
+      { role: 'user', content: 'Continue', webbrainTurnKind: 'continue' },
     ]);
     f.agent._startPlanExecutionGuard(f.tabId, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true }, { trustedContinuation: true });
     assert.deepEqual(f.agent._socialPublicationSources(f.tabId), expected);
