@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
+import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
+
+// The questions a messaging page's own checks read its texts with.
+const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 
 // Whole installed MV3. Native selectors come from the privacy-safe current
 // WhatsApp contact/header/drawer/message captures; all people, phones, bodies,
@@ -539,9 +543,6 @@ for (const name of ['_nativeChatTerminalEvidence', '_completionSubmissionEvidenc
   };
 }
 import { cdpClient as ownedDiagnosticCdp } from './cdp/cdp-client.js';
-import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
-// The questions a messaging page's own checks read its texts with.
-const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 for (const [object, name, doneOnly] of [[agent, '_executeToolImpl', true], [agent, '_captureViewportProbe', false],
   [ownedDiagnosticCdp, 'attach', false], [ownedDiagnosticCdp, 'sendCommand', false]]) {
   const original = object[name];
