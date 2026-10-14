@@ -294,7 +294,7 @@ export async function detectCaptcha(tabId, constraints = {}) {
     frames = [{ frameId: 0, url: '' }];
   }
   if (!Array.isArray(frames) || !frames.length) frames = [{ frameId: 0, parentFrameId: -1, url: '' }];
-  const matcherOptions = JSON.stringify(captchaChallengeMatcherOptions());
+  const matcherOptions = JSON.stringify(captchaChallengeMatcherOptions(constraints?.challengeReadings));
   const code = `(() => {
     const detect = ${detectCaptchaCandidatesInPage.toString()};
     const matcherOptions = ${matcherOptions};

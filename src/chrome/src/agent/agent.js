@@ -111,7 +111,7 @@ import { AWS_WAF_COOKIE_PATHS, awsWafTaskRoute, describeAwsWafObservation, getCa
 import { applyNativeCaptchaSolution, captureCaptchaDocuments, captchaAnswerDocumentStatus, requiresCaptchaUserAgent } from './captcha-solution-application.js';
 import { solveCaptchaWithProviders, detectCaptcha, injectToken, ensureCaptchaCallbackBridge, readCaptchaFrameUserAgent, captchaParamError, captchaAutomaticDispatchError, captchaTypesMatch, captchaWebsiteUrl } from './captcha-solver.js';
 import { CAPTCHA_SETTINGS_KEYS, getCaptchaProviders, captchaProviderSupportsType } from './captcha-provider-config.js';
-import { captchaChallengeKey, captchaChallengeMatcherOptions, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
+import { captchaChallengeKey, captchaChallengeMatcherOptions, challengeDialogTitles, challengeTitleText, detectChallengeDialog, detectChallengeDialogInPage } from './captcha-gate.js';
 import { applyCaptchaFrameVisibility, observeAwsWafChallengeInPage } from './captcha-frame-runtime.js';
 import {
   cloudflareChallengeNavigationTransition,
@@ -11697,7 +11697,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       let oldCleared = previous.status === 'cleared';
       if (!oldCleared && previous.captchaCandidateIdentity) {
         try {
-          const detection = await detectCaptcha(tabId);
+          const detection = await detectCaptcha(tabId, { challengeReadings: this._challengeTitleReadings() });
           const state = captchaPostSolveTokenState(detection, previous.captchaCandidateIdentity);
           const identity = previous.captchaCandidateIdentity;
           const oldWidgetPresent = (detection.candidates || []).some(candidate =>
@@ -12031,12 +12031,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!navigationFrames.length) {
       navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
     }
+    // The scan takes the dialog title readings the agent holds at each run.
     const execute = target => chrome.scripting.executeScript({
       target,
       func: detectChallengeDialogInPage,
       args: [{
         includeFrameContext: true,
-        ...captchaChallengeMatcherOptions(),
+        ...captchaChallengeMatcherOptions(this._challengeTitleReadings()),
       }],
     });
     const inspected = (results) => {
@@ -12049,6 +12050,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (!label) return [];
         const normalized = detectChallengeDialog(
           `dialog ${JSON.stringify(label.slice(0, 200))}`,
+          this._challengeTitleReader(),
         );
         if (!normalized?.normalizedLabel) return [];
         return [{
@@ -12078,24 +12080,61 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         : challenge;
     };
-    try {
-      const results = await execute({ tabId, allFrames: true });
-      return inspected(results);
-    } catch {
+    const scan = async () => {
       try {
-        const results = await execute({ tabId });
-        return inspected(results);
+        return await execute({ tabId, allFrames: true });
       } catch {
-        return includeStatus
-          ? {
-              challenge: null,
-              challengeHidden: false,
-              hiddenChallenges: [],
-              inspectionComplete: false,
-            }
-          : null;
+        return execute({ tabId });
       }
+    };
+    let results;
+    try {
+      results = await scan();
+    } catch {
+      return includeStatus
+        ? {
+            challenge: null,
+            challengeHidden: false,
+            hiddenChallenges: [],
+            inspectionComplete: false,
+          }
+        : null;
     }
+    let outcome = inspected(results);
+    // Visible dialog titles nobody has read are read, in any language, and
+    // the page scanned again with those readings.
+    const unread = (results || []).flatMap(entry => (Array.isArray(entry?.result?.unreadTitles) ? entry.result.unreadTitles : []));
+    if (!(includeStatus ? outcome.challenge : outcome) && unread.length && await this._readChallengeTitles(tabId, unread)) {
+      try { outcome = inspected(await scan()); } catch {}
+    }
+    return outcome;
+  }
+
+  // The page_blocker readings of dialog titles the agent holds, by title, for
+  // the CAPTCHA scans that run in the page.
+  _challengeTitleReadings() {
+    return this._pageTextReadingsByCaption('page_blocker');
+  }
+
+  _challengeTitleReader() {
+    return title => this._pageTextReading('page_blocker', title);
+  }
+
+  // Reads dialog titles, in any language, as asking to prove the person is
+  // human or not: the decision model first, the active model within four
+  // seconds unless `mainModel` is false. True when any of them was read.
+  async _readChallengeTitles(tabId, titles = [], { mainModel = true } = {}) {
+    const pending = [...new Set((Array.isArray(titles) ? titles : [])
+      .map(title => challengeTitleText(title)).filter(Boolean))]
+      .filter(title => !this._pageTextReading('page_blocker', title)).slice(0, 12);
+    if (!pending.length) return false;
+    try {
+      await this._readPageTexts(tabId, 'page_blocker', pending, {},
+        { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS, mainModel });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
+    return pending.some(title => !!this._pageTextReading('page_blocker', title));
   }
 
   async _captchaMutationPreflight(tabId, toolName, toolArgs = {}, abortSignal = null) {
@@ -12184,10 +12223,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? toolResult.captchaChallengeFrameId
       : null;
     let observedChallengeFrameUrl = String(toolResult.captchaChallengeFrameUrl || '');
-    let challenge = detectChallengeDialog(toolResult.pageContent);
+    // The tree's dialog titles are read first, in any language, unless they
+    // name a CAPTCHA product: by the decision model alone here, so a read
+    // waits for no other model. A title still unread is read before the next
+    // page action, the active model too when needed.
+    await this._readChallengeTitles(tabId, challengeDialogTitles(toolResult.pageContent), { mainModel: false });
+    const readTitle = this._challengeTitleReader();
+    let challenge = detectChallengeDialog(toolResult.pageContent, readTitle);
     if (!challenge && toolResult.pageGate?.surface === 'dialog' && toolResult.pageGate?.label) {
       challenge = detectChallengeDialog(
         `dialog ${JSON.stringify(String(toolResult.pageGate.label).slice(0, 200))}`,
+        readTitle,
       );
     }
     if (
@@ -12202,6 +12248,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (recheck.challenge?.label) {
         challenge = detectChallengeDialog(
           `dialog ${JSON.stringify(String(recheck.challenge.label).slice(0, 200))}`,
+          readTitle,
         );
         observedChallengeFrameId = Number.isInteger(recheck.challenge.frameId)
           ? recheck.challenge.frameId
@@ -12234,7 +12281,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (detectionAttempted) return;
       detectionAttempted = true;
       try {
-        detection = await detectCaptcha(tabId);
+        detection = await detectCaptcha(tabId, { challengeReadings: this._challengeTitleReadings() });
       } catch (error) {
         detectionFailed = true;
         failedDiagnostics = error?.captchaDiagnostics || null;
@@ -12347,7 +12394,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       if (frameInspection.challenge?.label) {
         challenge = detectChallengeDialog(
-          `dialog ${JSON.stringify(String(frameInspection.challenge.label).slice(0, 200))}`
+          `dialog ${JSON.stringify(String(frameInspection.challenge.label).slice(0, 200))}`,
+          readTitle,
         );
       } else if (!frameInspection.inspectionComplete) {
         const guardedState = normalizeCaptchaGateState(activeGate);
@@ -41263,6 +41311,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               frameId,
               framePath,
               websiteKey,
+              challengeReadings: this._challengeTitleReadings(),
             });
           } catch (detectionError) {
             const explicitTokenOnlyFallback = args?.inject === false && !!type && !!websiteKey;

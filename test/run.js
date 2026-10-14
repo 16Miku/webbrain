@@ -1,5 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
-import { fixtureControlEffectReading, fixtureFollowStateReading, fixtureHomeInstanceReading, fixturePageTextReading, fixtureProgressActionReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { fixtureControlEffectReading, fixtureFollowStateReading, fixtureHomeInstanceReading, fixturePageBlockerReading, fixturePageTextReading, fixtureProgressActionReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -783,9 +783,43 @@ const CloudflareChallengeCh = await import(
 const CloudflareChallengeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
 );
+// The page_blocker readings a model would give any dialog title, as the
+// readings the agent passes to the scans that run in the page.
+const captchaTitleReadings = new Proxy({}, {
+  get: (_target, title) => (typeof title === 'string' ? fixturePageBlockerReading(title) : undefined),
+  getOwnPropertyDescriptor: (_target, title) => {
+    const value = typeof title === 'string' ? fixturePageBlockerReading(title) : null;
+    return value ? { value, enumerable: true, configurable: true, writable: false } : undefined;
+  },
+});
+const readCaptchaTitle = title => fixturePageBlockerReading(title);
+// A model stand-in that reads only dialog titles (page_blocker), so a CAPTCHA
+// test's other readings stay as unread as before.
+const stubCaptchaTitleReadings = agent => stubPageTextReadings(agent,
+  (kind, item) => (kind === 'page_blocker' ? fixturePageBlockerReading(item.text) : null));
+// The page_blocker readings a model would give the titles of fake page nodes,
+// as the plain object the agent passes to the scans in the page.
+function captchaTitleReadingsFor(nodes) {
+  const readings = {};
+  const add = value => {
+    for (const line of String(value || '').split(/\r?\n/)) {
+      const title = line.replace(/\s+/g, ' ').trim().slice(0, 200);
+      const reading = title && fixturePageBlockerReading(title);
+      if (reading) readings[title] = reading;
+    }
+  };
+  (function walk(list) {
+    for (const node of list || []) {
+      add(node.innerText); add(node.textContent);
+      for (const name of ['aria-label', 'title']) add(node.getAttribute?.(name));
+      walk(node.children); walk(node.shadowRoot?.children);
+    }
+  })(nodes);
+  return readings;
+}
 function detectCaptchaChallengeInPage(gate, options = null) {
   return gate.detectChallengeDialogInPage({
-    ...gate.captchaChallengeMatcherOptions(),
+    ...gate.captchaChallengeMatcherOptions(captchaTitleReadings),
     ...(options || {}),
   });
 }
@@ -18270,7 +18304,7 @@ button "Continue" [ref_3] type="submit"`;
   for (const [label, Detector, gate] of builds) {
     const detector = new Detector();
     const observe = (tree) => {
-      const challenge = gate.detectChallengeDialog(tree);
+      const challenge = gate.detectChallengeDialog(tree, readCaptchaTitle);
       return detector._checkVerificationChallengeLoop('verification-tab', {
         pageUrl,
         dialogLabel: challenge?.normalizedLabel || '',
@@ -18315,14 +18349,14 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   ];
   for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
     for (const example of cases) {
-      const challenge = gate.detectChallengeDialog(example.tree);
+      const challenge = gate.detectChallengeDialog(example.tree, readCaptchaTitle);
       assert.equal(challenge?.label, example.label, `${build}: failed to parse ${example.tree}`);
       assert.match(challenge?.normalizedLabel || '', example.normalized, `${build}: normalized challenge label missing`);
     }
     const genericFailure = 'dialog "Email verification failed" [ref_6]';
-    assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
+    assert.equal(gate.detectChallengeDialog(genericFailure, readCaptchaTitle), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
     assert.equal(
-      gate.detectChallengeDialog(genericFailure),
+      gate.detectChallengeDialog(genericFailure, readCaptchaTitle),
       null,
       `${build}: generic failure became positive CAPTCHA evidence after a prior gate`,
     );
@@ -18331,6 +18365,57 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
       'CAPTCHA verification failed',
       `${build}: contextual CAPTCHA failure was missed`,
     );
+  }
+});
+
+test('a human-verification dialog in any language arms the CAPTCHA gate once a model reads its title', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    // An accessibility-tree read: the dialog's title is read first, and a
+    // Turkish "Güvenlik doğrulaması" reads as a human check.
+    const turkishTree = 'dialog "Güvenlik doğrulaması" [ref_1]\n button "Kapat" [ref_2]';
+    const agent = new AgentClass({});
+    const asked = stubCaptchaTitleReadings(agent);
+    const observation = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: turkishTree, pageUrl: 'https://www.linkedin.com/signup/cold-join', captchaChallengeVisibilityConfirmed: true }, {});
+    assert.ok(observation.gate, `${build}: a Turkish security verification dialog armed no gate`);
+    assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', 'Güvenlik doğrulaması']]);
+    // A title the model cannot read, or reads as something else, arms nothing.
+    const unread = new AgentClass({});
+    stubPageTextReadings(unread, () => null);
+    assert.equal((await unread._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: turkishTree, pageUrl: 'https://www.linkedin.com/signup/cold-join', captchaChallengeVisibilityConfirmed: true }, {})).gate, null,
+      `${build}: an unread title armed the gate`);
+    const cookie = new AgentClass({});
+    stubCaptchaTitleReadings(cookie);
+    assert.equal((await cookie._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: 'dialog "Çerez tercihleri" [ref_1]\n button "Kabul et" [ref_2]', pageUrl: 'https://example.test/', captchaChallengeVisibilityConfirmed: true }, {})).gate,
+      null, `${build}: a cookie dialog armed the gate`);
+    // A dialog naming a CAPTCHA product needs no reading.
+    const branded = new AgentClass({});
+    const brandedAsked = stubCaptchaTitleReadings(branded);
+    assert.ok((await branded._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: 'dialog "reCAPTCHA doğrulaması" [ref_1]', pageUrl: 'https://example.test/', captchaChallengeVisibilityConfirmed: true }, {})).gate);
+    assert.deepEqual(brandedAsked, [], `${build}: a branded dialog title was sent to a model`);
+
+    // The scan before a mutation reports the visible dialog titles nobody has
+    // read; the agent reads them once and scans again with the readings.
+    const nodes = [captchaEl('div', { role: 'dialog', 'aria-label': 'Güvenlik doğrulaması' }, [
+      captchaEl('h2', { textContent: 'Güvenlik doğrulaması' }),
+      captchaEl('button', { textContent: 'Kapat', innerText: 'Kapat' }),
+    ])];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const preflight = new AgentClass({});
+      const preflightAsked = stubCaptchaTitleReadings(preflight);
+      const found = await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(found.challenge?.label, 'Güvenlik doğrulaması', `${build}: the preflight missed a Turkish verification dialog`);
+      assert.equal(preflightAsked.length, 1);
+      await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(preflightAsked.length, 1, `${build}: a read title was asked about again`);
+      const none = new AgentClass({});
+      stubPageTextReadings(none, () => null);
+      assert.equal((await none._detectChallengeDialogBeforeMutation(1, { includeStatus: true })).challenge, null,
+        `${build}: an unread title stopped a mutation`);
+    });
   }
 });
 
@@ -18875,7 +18960,7 @@ test('backgrounds wire Cloudflare detection to narrow response and platform filt
   }
 });
 
-test('CAPTCHA English matcher has one canonical source with Chrome and Firefox parity', () => {
+test('CAPTCHA product-name matcher has one canonical source with Chrome and Firefox parity', () => {
   assert.equal(
     CaptchaGateCh.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
     CaptchaGateFx.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
@@ -18899,7 +18984,7 @@ test('CAPTCHA English matcher has one canonical source with Chrome and Firefox p
       );
       return count + source.split(gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE).length - 1;
     }, 0);
-    assert.equal(sourceCopies, 1, `${build}: CAPTCHA English matcher source is duplicated`);
+    assert.equal(sourceCopies, 1, `${build}: CAPTCHA product-name matcher source is duplicated`);
   }
 });
 
@@ -18929,6 +19014,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
       await withCaptchaFakePage(build, [dialog], async () => {
         assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: inactive dialog armed the mutation preflight`);
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         const observation = await agent._observeCaptchaChallenge(
           1,
           'get_accessibility_tree',
@@ -18987,7 +19073,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
           },
           document: globalThis.document,
         },
-        gate.captchaChallengeMatcherOptions(),
+        gate.captchaChallengeMatcherOptions(captchaTitleReadings),
       );
       const candidate = detected.candidates.find(
         entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
@@ -19079,6 +19165,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
         `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
       );
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const observation = await agent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19103,6 +19190,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       }),
     ], async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const recheck = await agent._detectChallengeDialogBeforeMutation(1, {
         includeStatus: true,
       });
@@ -19126,6 +19214,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
 
       const sameLabelAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(sameLabelAgent);
       const sameLabelObservation = await sameLabelAgent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19147,6 +19237,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
     });
 
     const crossFrameAgent = new AgentClass({});
+
+    stubCaptchaTitleReadings(crossFrameAgent);
     crossFrameAgent._detectChallengeDialogBeforeMutation = async () => ({
       challenge: null,
       challengeHidden: true,
@@ -19196,6 +19288,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       globalThis.chrome.scripting.executeScript = async () => { throw new Error('injection blocked'); };
       globalThis.browser.tabs.executeScript = async () => { throw new Error('injection blocked'); };
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const observation = await agent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19298,7 +19391,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('frame-backed CAPTCHA gate ignores English matcher misses after one solve', async () => {
+test('frame-backed CAPTCHA gate ignores dialog-title misses after one solve', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -121988,14 +122081,14 @@ async function withCaptchaFakePage(build, nodes, callback) {
 async function detectCaptchaOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return (await mod.detectCaptcha(1)).selected;
+    return (await mod.detectCaptcha(1, { challengeReadings: captchaTitleReadingsFor(nodes) })).selected;
   });
 }
 
 async function detectCaptchaDetailsOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return mod.detectCaptcha(1);
+    return mod.detectCaptcha(1, { challengeReadings: captchaTitleReadingsFor(nodes) });
   });
 }
 
@@ -122008,6 +122101,7 @@ test('CAPTCHA providers: hCaptcha stays manual when CapSolver is also enabled', 
     ])];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['2captcha'];
       agent._currentUrl = async () => 'https://example.test/form';
@@ -122439,6 +122533,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, supportedNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122459,6 +122554,8 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(agent._captchaGateBlockResult(1, 'click')?.solveCaptchaRequired, true, `${build}: Dismiss/Continue click was not blocked`);
 
       const disabledAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(disabledAgent);
       disabledAgent.captchaSolverEnabled = false;
       disabledAgent._currentUrl = async () => 'https://example.test/signup';
       const disabledObservation = await disabledAgent._observeCaptchaChallenge(
@@ -122475,6 +122572,8 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(enabledGate?.status, 'solve_required', `${build}: enabling the solver did not re-evaluate the manual gate before mutation`);
 
       const transientAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(transientAgent);
       transientAgent.captchaSolverEnabled = true;
       transientAgent.captchaProviderIds = ['capsolver'];
       transientAgent._currentUrl = async () => 'https://example.test/signup';
@@ -122538,6 +122637,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, invisibleV3Nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122561,6 +122661,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, unrelatedV3Nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122590,6 +122691,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, unrelatedVisibleNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122626,6 +122728,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, arkoseNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122697,6 +122800,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
     for (const example of supportedCases) {
       await withCaptchaFakePage(build, example.nodes, async () => {
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
@@ -122733,6 +122837,8 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
 
         const disabledAgent = new AgentClass({});
+
+        stubCaptchaTitleReadings(disabledAgent);
         disabledAgent.captchaSolverEnabled = false;
         disabledAgent._currentUrl = async () => 'https://example.test/signup';
         const disabled = await disabledAgent._observeCaptchaChallenge(
@@ -122753,6 +122859,8 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
 
         const preflightAgent = new AgentClass({});
+
+        stubCaptchaTitleReadings(preflightAgent);
         preflightAgent.captchaSolverEnabled = true;
         preflightAgent.captchaProviderIds = ['capsolver'];
         preflightAgent._currentUrl = async () => 'https://example.test/signup';
@@ -122822,6 +122930,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         ]),
       ], async () => {
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
@@ -122853,6 +122962,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       }),
     ], async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -123151,6 +123261,7 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
     ];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -123161,6 +123272,8 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.solveCaptchaRequired, true, `${build}: detected Dismiss click was not blocked`);
 
       const disabledAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(disabledAgent);
       disabledAgent.captchaSolverEnabled = false;
       disabledAgent._currentUrl = async () => 'https://example.test/signup';
       const disabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
@@ -123170,6 +123283,8 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(disabledAgent._captchaGateBlockResult(2, 'click_ax')?.manualCompletionRequired, true, `${build}: disabled preflight allowed the challenge mutation`);
 
       const abandonmentAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(abandonmentAgent);
       abandonmentAgent.captchaSolverEnabled = false;
       const abandonmentGate = await abandonmentAgent._captchaMutationPreflight(
         3,
@@ -123360,6 +123475,7 @@ test('Chrome CAPTCHA detection preserves navigation-frame diagnostics when scrip
 test('challenge dialog with no enabled supported solver stops the batch for manual completion', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    stubCaptchaTitleReadings(agent);
     const tabId = label === 'chrome' ? 8811 : 8812;
     const messages = [];
     const updates = [];
@@ -123398,6 +123514,7 @@ test('CAPTCHA batch routing offers native tools only in Act/Dev mid/full and exi
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
       await withCaptchaFakePage(build, [], async () => {
         const agent = new AgentClass({ getActive: () => ({ promptTier: tier }), getVisionProvider: async () => null });
+        stubCaptchaTitleReadings(agent);
         agent.conversationModes.set(1, mode);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
@@ -124196,7 +124313,7 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
       },
     };
 
-    const detection = await firefoxMod.detectCaptcha(91);
+    const detection = await firefoxMod.detectCaptcha(91, { challengeReadings: captchaTitleReadingsFor([verificationDialog]) });
     assert.equal(sawBlankMatching, true, 'Firefox detector did not request about:blank matching');
     assert.equal(detection.error, null, 'srcdoc CAPTCHA detection failed');
     assert.equal(detection.selected.websiteKey, 'KEY_SRCDOC', 'srcdoc site key was lost');
