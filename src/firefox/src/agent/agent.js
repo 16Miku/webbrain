@@ -39268,7 +39268,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           options.onUpdate?.('tool_result', {
             name: 'staged_screenshot',
-            result: { success: true, method: 'vision_describe', model: desc.model, visionRoute: stagedVisionRoute.route },
+            result: {
+              success: true,
+              method: 'vision_describe',
+              model: desc.model,
+              visionRoute: stagedVisionRoute.route,
+              description: desc.text,
+            },
           });
           continue;
         }
