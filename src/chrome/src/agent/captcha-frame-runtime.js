@@ -1502,8 +1502,11 @@ export function observeAwsWafChallengeInPage() {
   const jsapiScript = awsScript('jsapi');
   const challengeScript = awsScript('challenge');
   const captchaScript = awsScript('captcha');
-  const fullPage = !!(goku?.key && (challengeScript || captchaScript)
-    && /let['’]s confirm you are human/i.test(document.body?.innerText || ''));
+  // AWS WAF's own interstitial publishes gokuProps and loads its CAPTCHA
+  // script only when it asks for a puzzle; a silent challenge loads the
+  // challenge script alone and resolves by itself. That holds in every
+  // language the interstitial is shown in, unlike its heading.
+  const fullPage = !!(goku?.key && captchaScript);
   return {
     pageUrl: String(location.href),
     websiteKey: text(goku?.key),

@@ -83,6 +83,23 @@ for (const browser of ['chrome','firefox']) {
     assert.equal(native.describeAwsWafObservation(providers, { pageUrl: observed.pageUrl }), null);
   });
 
+  test(`${browser}: an AWS WAF puzzle page is known by its own script in any language, not by its English heading`, async () => {
+    const runtime = await import(`../src/${browser}/src/agent/captcha-frame-runtime.js`);
+    const observe = ({ goku = true, scripts }) => {
+      const saved = { window: globalThis.window, document: globalThis.document, location: globalThis.location };
+      globalThis.window = goku ? { gokuProps: { key: 'AQIDAHjc', iv: 'CgAH', context: 'ctx' } } : {};
+      globalThis.document = { scripts: scripts.map(src => ({ src })), querySelector: () => null,
+        body: { innerText: 'Potwierdźmy, że jesteś człowiekiem\nRozpocznij' } };
+      globalThis.location = { href: 'https://site.test/join' };
+      try { return runtime.observeAwsWafChallengeInPage(); } finally { Object.assign(globalThis, saved); }
+    };
+    const base = 'https://abc.edge.token.awswaf.com/abc/def';
+    assert.equal(observe({ scripts: [`${base}/challenge.js`, `${base}/captcha.js`] }).active, true, 'a Polish puzzle page');
+    assert.equal(observe({ scripts: [`${base}/challenge.js`] }).active, false, 'a silent challenge resolves by itself');
+    assert.equal(observe({ goku: false, scripts: [`${base}/captcha.js`] }).active, false, 'a site\'s own CAPTCHA script with no interstitial');
+    assert.equal(observe({ scripts: ['https://evil.test/awswaf.com/captcha.js'] }).active, false, 'a script off awswaf.com');
+  });
+
   test(`${browser}: every CapMonster recognition model uses the documented wire discriminator`,()=>{
     const names={bills_audio:'bills_audio',shein:'shein',bls:'bls_3x3',baidu:'baidu',betpunch_3x3_rotate:'betpunch_3x3_rotate',oocl_rotate_double_new:'oocl_rotate_double_new',oocl_rotate_new:'oocl_rotate_new',dli_ensemble:'dli',mathsum:'MathSum',portugal_text_find_icon:'portugal_text_find_icon'};
     for(const [id,Task] of Object.entries(names)) {

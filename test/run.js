@@ -82528,6 +82528,20 @@ test('GitHub edit-file workflow verifies the exact committed raw blob', async ()
           fields: [{ label: 'Editing file contents' }],
         },
       ), null, `${label}: the reversible commit-dialog launcher was blocked before its message field existed`);
+      // A commit message field beside the control, known by GitHub's own id in
+      // any interface language, means the click commits rather than opening
+      // the dialog.
+      assert.equal((await agent._workflowPreSubmitDispatchBlock(
+        tabId,
+        'click_ax',
+        {},
+        {
+          isSubmit: true,
+          validationSubmitEvidence: 'heuristic',
+          githubCommitDialogLauncher: true,
+          fields: [{ label: 'Editing file contents' }, { label: 'Wiadomość zatwierdzenia', id: 'commit-message-input' }],
+        },
+      ))?.noDispatch, true, `${label}: a launcher beside a commit message field was taken for the reversible dialog launcher`);
       assert.equal((await agent._workflowPreSubmitDispatchBlock(
         tabId,
         'click_ax',
@@ -85039,7 +85053,7 @@ test('submit detector source covers submit controls, Enter, set_field, iframes, 
     assert.match(agent, /publicationAccountIdentityComplete: publicationAccount\.complete/, `${label}: account evidence completeness should survive the page probe`);
     assert.match(agent, /evidence\.strong \? 'strong' : 'heuristic'/, `${label}: custom submit probes should label strong and heuristic evidence`);
     assert.match(agent, /detected\.validationSubmitEvidence === 'strong' \? 'strong' : 'heuristic'/, `${label}: submit evidence strength should survive page-probe normalization`);
-    assert.match(agent, /githubCommitDialogLauncher: githubEditPage[\s\S]*!controlInModal[\s\S]*commit changes/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
+    assert.match(agent, /githubCommitDialogLauncher: githubEditPage\s*&& !controlInModal\s*&& \(\/\(\?:\\\.\{3\}\|…\)\$\/u\.test\(controlLabel\) \|\| controlOpensDialog\)/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
     assert.match(agent, /const findTopmostModal = \(\) => \{[\s\S]*dialog\[open\][\s\S]*\[role="dialog"\]\[aria-modal="true"\][\s\S]*\[class\*="DialogOverlay"\]/, `${label}: text submit probing should mirror modal scoping`);
     assert.match(agent, /Array\.from\(\(findTopmostModal\(\) \|\| doc\)\.querySelectorAll/, `${label}: text submit probing should search inside the topmost modal when present`);
   }

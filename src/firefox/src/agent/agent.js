@@ -2527,9 +2527,9 @@ export class Agent extends LoopDetector {
       ...(Array.isArray(detectedSubmit?.fields) ? detectedSubmit.fields : []),
       ...(Array.isArray(detectedSubmit?.changedFields) ? detectedSubmit.changedFields : []),
     ];
-    const hasCommitMessageField = detectedFields.some(field => (
-      /\bcommit[\s_-]*message\b/i.test(String(field?.label || ''))
-    ));
+    // The commit message fields are known by GitHub's own ids and names, in
+    // any language of its interface.
+    const hasCommitMessageField = detectedFields.some(field => this._isGithubCommitMessageField(field));
     // GitHub's first "Commit changes..." control only opens the commit dialog.
     // It can live inside the editor form and therefore look like a heuristic
     // submit, but the commit-message field is not present until the dialog is
@@ -25641,9 +25641,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         transactionOrderIdsComplete: formOrders.complete,
         transactionPageOrderIds: pageOrders.ids,
         transactionPageOrderIdsComplete: pageOrders.complete,
+        // A caption that ends in an ellipsis opens a dialog to finish the
+        // action, the way user interfaces mark it in every language.
         githubCommitDialogLauncher: githubEditPage
           && !controlInModal
-          && (/^commit changes(?:\.{3}|…)?$/i.test(controlLabel) || controlOpensDialog),
+          && (/(?:\.{3}|…)$/u.test(controlLabel) || controlOpensDialog),
         // The activated control's captions read as only searching,
         // filtering or showing something, in any language.
         searchSubmitCaption: captionsReading(controlCaptions(control)) === 'view',
