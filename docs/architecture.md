@@ -104,10 +104,15 @@ that a model answers from the correction as the user wrote it, in any language
 post is an edit; removing the post or record itself makes deleting the original
 a prerequisite. An unsure answer, or none, publishes or submits nothing.
 
-A deletion of a record that has a permalink is bound to that URL. A deletion
+Whether a clicked control deletes one item or several, publishes, commits,
+moves to a next step, only edits the draft or only changes the view is what a
+model read its captions as (see `control_effect` below); no word list decides
+it. A deletion of a record that has a permalink is bound to that URL. A deletion
 of a record without one (a cart item, a mail or table row) is bound to the
-record instead. The page probe takes the nearest row, list item or article
-holding no other visible deletion control, or else a bounded container that
+record instead; a caption read as deleting several or the selected items gets
+no record. The page probe takes the nearest row, list item or article
+holding no other visible deletion control (one repeating the clicked control's
+own caption, or read as a deletion), or else a bounded container that
 stops at lists, landmarks, editors, headings, other records, other deletion
 controls (including hover-only ones) and 2,000 characters, and keeps its
 visible text without the control's own caption, together with the text of up
@@ -871,21 +876,42 @@ headings and status regions, the statuses observed after the submit, and the
 lines of a page short enough to be a confirmation page. Those are read only
 once the rest of the workflow's evidence is in place.
 
-What a clicked control does is read from its caption the same way
-(`control_effect`: it commits something, moves a form to its next step, only
-edits the form or draft, or something else), once per caption, after a click
-that page structure does not decide: a control the probe saw inside a form, or
-any click in a run that has to prove a submission. A field, a link, a draft
-tool, a popup launcher, an ordinary control the probe resolved, a plain
-`type=button` and a real submit control are never read. Form validation waits
-for a rejection after a caption read as a commit or a next step; a workflow
-click submits its form by structure or a caption read as a commit; and a rapid
-second text click is a duplicate only for a caption read as a commit, asked
-then if the first click left it unread. Words in a CSS selector are not read.
-At a successful done, a visible form made only of search fields, sent with
-GET and holding no other task evidence, counts as a task form still on screen
-unless every one of its submit captions is read as `other` (showing, filtering
-or searching); an empty or unread caption keeps it counted.
+What a clicked control does is read from its captions the same way
+(`control_effect`: it publishes, commits, deletes one saved item, deletes
+several or the selected items, moves a form to its next step, only edits the
+form or draft, only changes the view, or is unclear), once per caption. The
+submit probe classifies every click by these readings before it is sent. The
+agent passes the readings it holds; on a collect pass the probe returns the
+activated control's unread captions (its text, ARIA and title names, action
+name and an input's value and labels, plus the other controls of a dialog it
+sits in) before it changes any page state, the decision model reads them (the
+active model within four seconds when there is none), and a final pass
+decides. Fields and plain links have no captions to read. A caption no model
+could read decides nothing, which is what any caption in a language the former
+word lists lacked always did: the control is ordinary unless page structure
+says otherwise. While the active model decides on a page, the decision model
+alone pre-reads the captions of the buttons, menu items and tabs its
+accessibility tree shows, so a click usually finds them read.
+
+Readings decide: a deletion (the record binding above, or no record for
+several items); a draft tool (a composer control not read as a commit, and a
+deletion or draft edit only when the removed item is visibly an attachment);
+an ordinary control (outside a form, not read as a publication, commit or
+deletion; for an X or Bluesky control with a non-publish test id or a popup
+launcher, a publication reading does not count); strong submit evidence for a
+`type=button` control in a form (a caption read as a commit, publication or
+next step); an unnamed X or Bluesky composer control read as a publication; a
+named button outside any form read as only changing the view (closing,
+cancelling, going back), which is not a submit; and Mastodon's own "…" menu
+and dangerous item. Form validation waits for a rejection after a caption read
+as a commit, a publication or a next step; a workflow click submits its form by
+structure or such a caption; and a rapid second text click is a duplicate only
+for a caption read as a commit or publication, asked then if the first click
+left it unread. Words in a CSS selector are not read. At a successful done, a
+visible form made only of search fields, sent with GET and holding no other
+task evidence, counts as a task form still on screen unless every one of its
+submit captions is read as `view` (showing, filtering or searching); an empty,
+unread or unclear caption keeps it counted.
 
 Chrome's one trusted retry click on a generic element whose synthetic click
 changed nothing visible (see `accessibility-tree-and-refs.md`) is decided the

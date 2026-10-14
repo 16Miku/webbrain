@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
-import { defaultDecide, installModelStub } from './semantic-decision-stub.mjs';
+import { defaultDecide, installModelStub, probeWithReadings } from './semantic-decision-stub.mjs';
 
 // Deletions without a permalink: a Delete/Remove proceeds only when a model,
 // reading the latest request as the user wrote it (any language) together
@@ -466,9 +466,12 @@ for (const build of ['chrome', 'firefox']) {
         if (page.url() !== url) await page.goto(url);
         await page.setContent(`<style>button,[role=button],[role=menuitem]{display:inline-block;min-width:40px;min-height:24px}</style>${html}`);
       };
-      const probe = (selector, overrides = {}) => page.evaluate(({ source, selector, overrides }) =>
-        (0, eval)(`(${source})`)('click', { selector, __wbResourceRunToken: 'owned-run', __wbResourceTaskKey: 'owned-task', ...overrides }),
-      { source, selector, overrides });
+      // The production probe reads captions the way the agent runs it: unread
+      // ones are read by the fixtures' model oracle before the final pass.
+      const runProbe = (tool, args) => page.evaluate(({ source, tool, args }) => (0, eval)(`(${source})`)(tool, args),
+        { source, tool, args });
+      const probe = (selector, overrides = {}) => probeWithReadings(runProbe, 'click',
+        { selector, __wbResourceRunToken: 'owned-run', __wbResourceTaskKey: 'owned-task', ...overrides });
       const record = async (selector, overrides) => (await probe(selector, overrides))?.actionRecord || null;
       try {
         await t.test('table rows, list items and grid rows are separate records with their neighbours', async () => {
@@ -743,6 +746,9 @@ for (const build of ['chrome', 'firefox']) {
               const guard = agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
               agent._beginCompletionInvariant(1);
               const calls = installModelStub(agent, { decide });
+              // The deletion decisions among the model calls; button captions
+              // are read before them.
+              calls.decisions = () => calls.filter(call => call.kind === 'deletion_request');
               const gate = async selector => {
                 const detected = await agent._detectLikelySubmitAction(1, 'click', { selector });
                 return { detected, block: await agent._resourceMutationPreSubmitBlock(1, 'click', { selector }, detected, provider) };
@@ -760,7 +766,7 @@ for (const build of ['chrome', 'firefox']) {
             assert.deepEqual(detected.actionRecord.siblings, ['Hat — Size L — $20 Remove']);
             assert.equal(detected.actionRecord.footprint.length, 64);
             assert.ok(probeArgs.every(args => !('__wbUnboundDeletionNaming' in args)), 'The probe never receives request words');
-            assert.deepEqual(f.calls[0].page, { item: 'Wool socks — Size L — $12', link: '', stage: 'record', dialog: '',
+            assert.deepEqual(f.calls.decisions()[0].page, { item: 'Wool socks — Size L — $12', link: '', stage: 'record', dialog: '',
               siblings: ['Hat — Size L — $20 Remove'] });
             await page.click('#t');
             f.dispatch(detected, '#t');
@@ -769,8 +775,8 @@ for (const build of ['chrome', 'firefox']) {
             assert.equal(confirmation.detected.actionRecord.stage, 'confirmation');
             assert.equal(confirmation.detected.actionRecord.footprint, detected.actionRecord.footprint);
             assert.equal(confirmation.block, null);
-            assert.equal(f.calls.at(-1).page.stage, 'confirmation');
-            assert.equal(f.calls.at(-1).page.dialog, 'Remove this item? Cancel Remove');
+            assert.equal(f.calls.decisions().at(-1).page.stage, 'confirmation');
+            assert.equal(f.calls.decisions().at(-1).page.dialog, 'Remove this item? Cancel Remove');
             f.dispatch(confirmation.detected, '#confirm');
             // A confirmed launch is not offered again, and the dialog alone names nothing.
             assert.equal((await f.gate('#confirm')).block.actionGuard.reason, 'resource_unresolved');
@@ -794,23 +800,25 @@ for (const build of ['chrome', 'firefox']) {
             const stale = await f.gate('#confirm');
             assert.notEqual(stale.detected.actionRecord?.stage, 'confirmation');
             assert.equal(stale.block?.noDispatch, true);
-            assert.equal(f.calls.length, 1, 'The already open dialog never reached a decision');
+            assert.equal(f.calls.decisions().length, 1, 'The already open dialog never reached a decision');
             // Requests in other languages reach the model as written, with the
             // row and its neighbours; the model's reading decides.
             await open('<ul class="cart"><li>Mavi Tişört — 129 TL <button id="tee" type="button">Kaldır</button></li>'
               + '<li>Mavi Kot Pantolon — 349 TL <button id="jeans" type="button">Kaldır</button></li></ul>');
-            const tee = (kind, question) => question.page.item.startsWith('Mavi Tişört')
-              ? { choice: 'delete_this', evidence: 'mavi tişörtü kaldır' } : { choice: 'other_item', evidence: '' };
+            const tee = (kind, question) => (kind !== 'deletion_request' ? defaultDecide(kind, question)
+              : question.page.item.startsWith('Mavi Tişört')
+                ? { choice: 'delete_this', evidence: 'mavi tişörtü kaldır' } : { choice: 'other_item', evidence: '' });
             f = setup('Sepetten mavi tişörtü kaldır', tee);
             assert.equal((await f.gate('#tee')).block, null);
-            assert.equal(f.calls.at(-1).request, 'Sepetten mavi tişörtü kaldır');
+            assert.equal(f.calls.decisions().at(-1).request, 'Sepetten mavi tişörtü kaldır');
             assert.equal((await f.gate('#jeans')).block.actionGuard.reason, 'record_not_named_in_request');
             await open('<ul><li>蓝色T恤 ¥89 <button id="tee" type="button">删除</button></li><li>蓝色牛仔裤 ¥199 <button id="jeans" type="button">删除</button></li></ul>');
-            f = setup('删除蓝色T恤', (kind, question) => question.page.item.startsWith('蓝色T恤')
-              ? { choice: 'delete_this', evidence: '删除蓝色T恤' } : { choice: 'other_item', evidence: '' });
+            f = setup('删除蓝色T恤', (kind, question) => (kind !== 'deletion_request' ? defaultDecide(kind, question)
+              : question.page.item.startsWith('蓝色T恤')
+                ? { choice: 'delete_this', evidence: '删除蓝色T恤' } : { choice: 'other_item', evidence: '' }));
             assert.equal((await f.gate('#tee')).block, null);
             assert.equal((await f.gate('#jeans')).block.actionGuard.reason, 'record_not_named_in_request');
-            assert.equal(f.calls.length, 2);
+            assert.equal(f.calls.decisions().length, 2);
           } finally {
             globalThis.chrome = originalChrome;
             globalThis.browser = originalBrowser;

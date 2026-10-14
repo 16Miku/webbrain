@@ -9,17 +9,34 @@ import assert from 'node:assert/strict';
 import { SEMANTIC_QUESTIONS } from '../src/chrome/src/agent/semantic-decisions.js';
 
 export function semanticQuestionOf(agent, messages) {
+  const data = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
   return {
     request: JSON.parse(messages[1].content).request,
-    page: JSON.parse(agent._unwrapUntrusted(messages.at(-1).content)).page,
+    page: data.page,
+    ...(Array.isArray(data.items) ? { items: data.items } : {}),
     system: messages[0].content,
     wrapped: messages.at(-1).content,
   };
 }
 
+// Questions about page texts, read item by item with the fixture oracles
+// below (the answer quotes each item, as a model must).
+const PAGE_TEXT_ORACLES = {
+  control_effect: item => fixtureControlEffectReading(item?.text),
+  control_repeat: item => fixtureControlRepeatReading(item?.text),
+  status_message: item => fixtureStatusReading(item?.text),
+  workflow_state: item => fixtureWorkflowStateReading(item?.state, item?.text),
+};
+
 const words = value => String(value || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
 
-export function defaultDecide(kind, { request, page }) {
+export function defaultDecide(kind, { request, page, items }) {
+  if (Array.isArray(items) && PAGE_TEXT_ORACLES[kind]) {
+    return { answers: items.flatMap((item, index) => {
+      const choice = PAGE_TEXT_ORACLES[kind](item);
+      return choice ? [{ item: index, choice, evidence: String(item?.text ?? '') }] : [];
+    }) };
+  }
   const text = String(request || '');
   if (kind === 'deletion_request') {
     if (/\b(?:don'?t|do not|never|without)\b[^.]*\b(?:delet|remov)/i.test(text)) return { choice: 'forbidden', evidence: text };
@@ -180,13 +197,31 @@ export function fixtureWorkflowStateReading(state, text) {
 // the test fixtures, the way a model would read them; the product never reads
 // these words.
 const END = '(?=$|[\\s!.,:;?…])';
+const WORD = '(?:^|[^\\p{L}])';
+const WEND = '(?=[^\\p{L}]|$)';
+const DELETE_WORDS = 'delete|remove|trash|erase|destroy|discard|sil|kaldır|supprimer|eliminar|borrar|löschen|entfernen|удалить|törlés|törlése|radera|删除|刪除|削除|삭제';
+const BULK_WORDS = 'all|selected|checked|everything|bulk|tüm\\p{L}*|hepsi\\p{L}*|seçil\\p{L}*|tous|toutes|sélectionn\\p{L}*|todos|todas|seleccionad\\p{L}*|alle|ausgewählt\\p{L}*|все|выбранн\\p{L}*';
 export function fixtureControlEffectReading(text) {
   const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  const has = words => new RegExp(`${WORD}(?:${words})${WEND}`, 'iu').test(value);
+  const hasCjk = /删除|刪除|削除|삭제|送信|发送|發送|보내/u.test(value);
+  if (/^(?:compose(?: new)? post|new post|new message|cancel|keep editing|close|back|open|show more|more|menu|settings)$/i.test(value)) return 'view';
+  if (has('remove|clear|kaldır|temizle') && has('filters?|filtre\\p{L}*|filtro\\p{L}*|фильтр\\p{L}*|facets?|sort(?:ing)?|search(?:es)?|quer(?:y|ies)|selection|formatting')
+    && !has('delete|trash|erase|destroy|sil|supprimer|eliminar|borrar|löschen|удалить')) return 'view';
+  if (has(DELETE_WORDS) || /删除|刪除|削除|삭제/u.test(value)) {
+    if (has(BULK_WORDS)) return 'delete_many';
+    if (has('remove|kaldır|discard') && has('attachments?|attached|files?|images?|photos?|pictures?|media|videos?|gifs?|uploads?|documents?|draft|ek(?:i|ler\\p{L}*)?|dosya\\p{L}*|görsel\\p{L}*|resim\\p{L}*|fotoğraf\\p{L}*|medya\\p{L}*')) return 'form_edit';
+    if (has('discard')) return 'form_edit';
+    return 'delete_one';
+  }
   if (new RegExp(`^(?:continue|next|sign in|log in|devam|ileri|weiter|suivant|siguiente|次へ)${END}`, 'iu').test(value)) return 'next_step';
+  if (has('post|post all|publish|reply|tweet|yayınla|yanıtla|paylaş|publier|publicar|veröffentlichen')) return 'publish';
   if (/^add to (?:cart|bag|basket)\b/i.test(value)) return 'commit';
-  if (new RegExp(`^(?:add|choose|select|attach|insert|format|bold|italic|ekle|seç)${END}`, 'iu').test(value) || /emoji/i.test(value)) return 'form_edit';
-  if (new RegExp(`^(?:save|submit|post|publish|send|confirm|commit|resolve|pay|purchase|buy|checkout|place order|create|update|apply|finish|done|sign up|register|reply|gönder|kaydet|yayınla|onayla|öde|enviar|guardar|envoyer|enregistrer|senden|speichern|送信|保存|发送|提交)${END}`, 'iu').test(value)) return 'commit';
-  return 'other';
+  if (new RegExp(`^(?:add|choose|select|attach|insert|format|bold|italic|ekle|seç)${END}`, 'iu').test(value) || /emoji|gif|sticker/i.test(value)) return 'form_edit';
+  if (has('save|submit|send|confirm|commit|resolve|pay|purchase|buy|checkout|place order|confirm order|complete order|create|update|apply|finish|done|sign up|register|gönder|kaydet|onayla|öde|enviar|guardar|envoyer|enregistrer|senden|speichern|verzenden|invia|отправить|إرسال|ارسال|保存|提交') || hasCjk) return 'commit';
+  if (/^(?:search|filter|go|ara|suchen|buscar|rechercher|cerca|zoeken|filtrele|検索|搜索)$/iu.test(value)) return 'view';
+  return 'unclear';
 }
 
 // How a model reads the name of an element whose first click changed
@@ -198,6 +233,23 @@ export function fixtureControlRepeatReading(text) {
   if (!value) return null;
   if (/(?:^|[^\p{L}])(?:send|submit|save|buy|pay|order now|book now|place order|delete|remove|publish|share|like|follow|subscribe|block|report|accept|invite|install|sign up|download|export|gönder|kaydet|sil|kaldır|öde|satın al|takip et|beğen|löschen|senden|supprimer|envoyer|eliminar|enviar|törlés|törlése|radera|διαγραφή)(?=$|[^\p{L}])|削除|送信|删除|发送|삭제/iu.test(value)) return 'changes';
   return 'harmless';
+}
+
+// Runs the submit probe the way the agent does: a collect pass reports the
+// activated control's unread captions, a model (the fixture oracle by
+// default) reads them, and a final pass decides with those readings.
+// `evaluate(toolName, args)` runs the probe in the page and returns its
+// result.
+export async function probeWithReadings(evaluate, toolName, args = {}, read = fixtureControlEffectReading) {
+  const readings = { ...(args.__wbCaptionReadings || {}) };
+  const first = await evaluate(toolName, { ...args, __wbCaptionPass: 'collect', __wbCaptionReadings: readings });
+  const needed = Array.isArray(first?.captionsNeeded) ? first.captionsNeeded : [];
+  if (!needed.length) return first;
+  for (const caption of needed) {
+    const choice = read(caption);
+    if (choice) readings[caption] = choice;
+  }
+  return evaluate(toolName, { ...args, __wbCaptionPass: 'final', __wbCaptionReadings: readings });
 }
 
 // Stands in for the model that reads page texts in unit tests (status

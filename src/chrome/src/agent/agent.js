@@ -11,7 +11,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
+import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
@@ -1667,7 +1667,7 @@ export class Agent extends LoopDetector {
     await this._readPageTexts(tabId, 'control_effect', candidates.flatMap(form => form.submitLabels), {},
       { maxChars: 200, mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
     for (const form of candidates) {
-      if (!form.submitLabels.every(label => this._controlEffectReading(String(label).replace(/\s+/g, ' ').trim()) === 'other')) continue;
+      if (!form.submitLabels.every(label => this._controlEffectReading(String(label).replace(/\s+/g, ' ').trim()) === 'view')) continue;
       form.relevant = false;
       form.utility = true;
       form.utilityReason = form.searchUtilityReason;
@@ -7441,7 +7441,7 @@ export class Agent extends LoopDetector {
   // in any language, and remembered per text for the synchronous checks that
   // follow. Longer texts are not read; an unanswered text is asked again next
   // time.
-  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300, mainTimeoutMs } = {}) {
+  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300, mainTimeoutMs, mainModel = true } = {}) {
     this._pageTextReadings ??= new Map();
     const pending = [...new Set((Array.isArray(texts) ? texts : [])
       .map(text => String(text ?? '').replace(/\s+/g, ' ').trim())
@@ -7449,7 +7449,7 @@ export class Agent extends LoopDetector {
       .filter(text => !this._pageTextReadings.has(this._pageTextKey(kind, text, context)));
     if (!pending.length) return;
     const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) },
-      mainTimeoutMs ? { mainTimeoutMs } : {});
+      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel });
     pending.forEach((text, index) => {
       if (readings[index]?.choice) this._pageTextReadings.set(this._pageTextKey(kind, text, context), readings[index].choice);
     });
@@ -20453,7 +20453,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._formValidationActionHasStrongSubmitEvidence(name, args, result, detectedSubmit)) return true;
     if (/type\s*=\s*["']?submit\b/i.test(String(args?.selector || ''))) return true;
     // What the caption means, as a model read it in any language.
-    return this._controlEffectReading(this._controlCaption(name, args, result)) === 'commit';
+    return controlEffectCommits(this._controlEffectReading(this._controlCaption(name, args, result)));
   }
 
   // An iframe write never happens in the outer document, and iframe inventory
@@ -24666,7 +24666,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // that commits something or moves a form to its next step can be
     // rejected by the form. An unread caption is no evidence either way.
     const effect = this._controlEffectReading(this._controlCaption(name, args, result));
-    return effect === 'commit' || effect === 'next_step'
+    return controlEffectCommits(effect) || effect === 'next_step'
       || /type\s*=\s*["']?(?:submit|image)/.test(String(args?.selector || '').toLowerCase());
   }
 
@@ -24691,6 +24691,53 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._checkAbort(tabId)) throw error;
     }
     return this._controlEffectReading(caption);
+  }
+
+  // Reads, in any language, the captions the submit probe reported unread
+  // (the decision model first, the active model within four seconds). A
+  // caption no model could read stays unread and decides nothing.
+  async _readControlEffects(tabId, captions = []) {
+    const list = [...new Set((Array.isArray(captions) ? captions : [])
+      .map(caption => String(caption ?? '').replace(/\s+/g, ' ').trim())
+      .filter(caption => caption && caption.length <= 200))].slice(0, 24);
+    if (!list.length) return;
+    try {
+      await this._readPageTexts(tabId, 'control_effect', list, {}, { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
+  }
+
+  // While the active model decides on a page, the decision model alone reads
+  // the captions of the buttons, menu items and tabs that page shows (its
+  // accessibility tree), so the submit probe usually finds a click's captions
+  // already read. Nothing is read without a decision model, and nothing waits.
+  _preReadControlCaptions(tabId, pageContent) {
+    if (typeof pageContent !== 'string' || !pageContent) return;
+    const captions = [];
+    const role = /^\s*(?:button|menuitem|menuitemcheckbox|menuitemradio|tab|option|switch|checkbox|radio)\s+("(?:[^"\\]|\\.)*")/gm;
+    for (const match of pageContent.slice(0, 60000).matchAll(role)) {
+      let caption = '';
+      try { caption = JSON.parse(match[1]); } catch { continue; }
+      caption = String(caption).replace(/\s+/g, ' ').trim();
+      if (caption && caption.length <= 200 && this._controlEffectReading(caption) === null) captions.push(caption);
+    }
+    const unread = [...new Set(captions)].slice(0, 48);
+    if (!unread.length) return;
+    this._readPageTexts(tabId, 'control_effect', unread, {}, { maxChars: 200, mainModel: false }).catch(() => {});
+  }
+
+  // The control_effect readings the agent holds, by caption, for the submit
+  // probe: the 400 most recent.
+  _controlEffectReadingsForProbe() {
+    const prefix = this._pageTextKey('control_effect', '', {});
+    const readings = {};
+    const entries = [...(this._pageTextReadings || new Map()).entries()].filter(([key]) => key.startsWith(prefix));
+    for (const [key, choice] of entries.slice(-400)) {
+      const caption = key.slice(prefix.length);
+      if (caption) readings[caption] = choice;
+    }
+    return readings;
   }
 
   // What a second click on an element whose first click changed nothing
@@ -27123,24 +27170,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         __wbNativeResourceAdapter: getActiveAdapter(currentUrl)?.name || '' };
       const unboundDeletionLaunch = this._unboundDeletionLaunch(tabId);
       if (unboundDeletionLaunch) probeArgs = { ...probeArgs, __wbUnboundDeletionLaunch: unboundDeletionLaunch };
-      let rawResults = [];
-      if (globalThis.chrome?.scripting?.executeScript) {
-        rawResults = await chrome.scripting.executeScript({
-          target: { tabId, ...(allFrames ? { allFrames: true } : {}) },
-          func: Agent._submitActionProbe,
-          args: [name, probeArgs],
-        });
-        rawResults = Array.isArray(rawResults) ? rawResults.map(item => item?.result
-          ? { ...item.result, frameId: item.frameId } : null) : [];
-      } else if (globalThis.browser?.tabs?.executeScript) {
-        const code = `(() => {
-          const [__wbName, __wbArgs] = arguments;
-          const __wbSubmitProbe = {
-            _submitActionProbe: ${Agent._submitActionProbe.toString()}
-          };
-          return __wbSubmitProbe._submitActionProbe(__wbName, __wbArgs);
-        })()`;
-        rawResults = await browser.tabs.executeScript(tabId, { code, allFrames, args: [name, probeArgs] });
+      // The probe runs once to collect the activated control's unread
+      // captions; once a model has read them, it runs again with those
+      // readings and decides.
+      const runProbe = async pass => {
+        const passArgs = { ...probeArgs, __wbCaptionPass: pass, __wbCaptionReadings: this._controlEffectReadingsForProbe() };
+        let results = [];
+        if (globalThis.chrome?.scripting?.executeScript) {
+          results = await chrome.scripting.executeScript({
+            target: { tabId, ...(allFrames ? { allFrames: true } : {}) },
+            func: Agent._submitActionProbe,
+            args: [name, passArgs],
+          });
+          results = Array.isArray(results) ? results.map(item => item?.result
+            ? { ...item.result, frameId: item.frameId } : null) : [];
+        } else if (globalThis.browser?.tabs?.executeScript) {
+          const code = `(() => {
+            const [__wbName, __wbArgs] = arguments;
+            const __wbSubmitProbe = {
+              _submitActionProbe: ${Agent._submitActionProbe.toString()}
+            };
+            return __wbSubmitProbe._submitActionProbe(__wbName, __wbArgs);
+          })()`;
+          results = await browser.tabs.executeScript(tabId, { code, allFrames, args: [name, passArgs] });
+        }
+        return results;
+      };
+      let rawResults = await runProbe('collect');
+      const captionsNeeded = (Array.isArray(rawResults) ? rawResults : [])
+        .flatMap(item => (Array.isArray(item?.captionsNeeded) ? item.captionsNeeded : []));
+      if (captionsNeeded.length) {
+        await this._readControlEffects(tabId, captionsNeeded);
+        rawResults = await runProbe('final');
       }
       const detected = (Array.isArray(rawResults) ? rawResults : [])
         .find(item => item && item.isSubmit === true);
@@ -27379,6 +27440,51 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    */
   static _submitActionProbe = function _submitActionProbe(toolName, args = {}) {
     const compact = (value, max = 160) => String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+    // What a control's caption means (it publishes, commits, deletes one or
+    // several items, moves to a next step, edits the draft, only changes the
+    // view, or is unclear) is read by a model in any language, never matched
+    // against words: the agent passes the control_effect readings it holds
+    // by caption. A caption with no reading decides nothing. On a collect
+    // pass the probe first reports the activated control's unread captions,
+    // before it changes any page state, so the agent can read them and probe
+    // again.
+    const captionReadings = args.__wbCaptionReadings && typeof args.__wbCaptionReadings === 'object'
+      && !Array.isArray(args.__wbCaptionReadings) ? args.__wbCaptionReadings : {};
+    const captionKey = value => String(value ?? '').replace(/\s+/g, ' ').trim();
+    const captionWeight = { delete_many: 7, delete_one: 6, publish: 5, commit: 4, next_step: 3, form_edit: 2, view: 1, unclear: 0 };
+    const captionReading = value => {
+      const key = captionKey(value);
+      if (!key || key.length > 200 || !Object.prototype.hasOwnProperty.call(captionReadings, key)) return null;
+      const choice = captionReadings[key];
+      return typeof choice === 'string' && Object.prototype.hasOwnProperty.call(captionWeight, choice) ? choice : null;
+    };
+    // An element's captions: its text, ARIA and title names, its action
+    // name, and an input button's value, alternative text and labels.
+    const controlCaptions = el => {
+      if (!el || el.nodeType !== 1) return [];
+      const values = [el.textContent, el.getAttribute?.('aria-label'), el.getAttribute?.('title'), el.getAttribute?.('data-action')];
+      if (String(el.tagName || '').toLowerCase() === 'input') {
+        if (/^(?:button|submit|reset|image)$/i.test(String(el.type || ''))) values.push(el.value, el.getAttribute?.('alt'));
+        try { for (const label of el.labels || []) values.push(label.textContent); } catch {}
+      }
+      return [...new Set(values.map(captionKey).filter(key => key && key.length <= 200))];
+    };
+    // The most consequential reading among captions. Captions that are not
+    // all read, none of them as a publication, commit or deletion, have no
+    // reading.
+    const captionsReading = values => {
+      let best = null, unread = false;
+      for (const value of values) {
+        const key = captionKey(value);
+        if (!key || key.length > 200) continue;
+        const choice = captionReading(key);
+        if (!choice) { unread = true; continue; }
+        if (!best || captionWeight[choice] > captionWeight[best]) best = choice;
+      }
+      return unread && !['delete_many', 'delete_one', 'publish', 'commit'].includes(best) ? null : best;
+    };
+    const commitReading = choice => choice === 'publish' || choice === 'commit';
+    const deletionReading = choice => choice === 'delete_one' || choice === 'delete_many';
     const doc = document;
     const host = (() => {
       try { return location.hostname || location.host || ''; } catch { return ''; }
@@ -28006,15 +28112,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Both apps label the control that only *opens* a composer "Post" too.
       // When the app names the control, that name decides: a test id that is
       // not the publish one is rejected outright rather than rescued by its
-      // label. Label matching is the fallback for an unnamed control only.
+      // caption. For an unnamed control only, a caption a model read as a
+      // publication is the fallback.
       if (testId) {
         if (!publishTestId) return { isSubmit: false, strong: false };
       } else {
-        const label = compact(
-          candidate.innerText || candidate.textContent || candidate.getAttribute?.('aria-label') || '',
-          120,
-        ).trim();
-        if (!/^(?:post|post all|publish|reply)$/i.test(label)) return { isSubmit: false, strong: false };
+        if (captionsReading(controlCaptions(candidate)) !== 'publish') return { isSubmit: false, strong: false };
         let inNavigation = false;
         try {
           inNavigation = !!candidate.closest?.('nav,[role="navigation"],header,[role="banner"]');
@@ -28094,14 +28197,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!form && nativeConfirmationCommit(candidate)) return { isSubmit: true, strong: true };
       if (!form) return socialPublishControlEvidence(candidate);
       const inlineHandler = String(candidate.getAttribute?.('onclick') || '');
-      const dataAction = String(candidate.getAttribute?.('data-action') || '');
-      const label = compact(
-        candidate.innerText || candidate.textContent || candidate.getAttribute?.('aria-label') || '',
-        120,
-      );
+      // A button-typed control submits its form only by script: a handler
+      // that calls requestSubmit or submit, or a caption or action name a
+      // model read as a commit, a publication or a next step, is strong
+      // evidence.
+      const captionChoice = captionsReading(controlCaptions(candidate));
       const explicitJsSubmit = /\brequestSubmit\s*\(|\.submit\s*\(|\bdispatchEvent\s*\([^)]*\bsubmit\b/i.test(inlineHandler)
-        || /^(?:submit|checkout|pay|place[-_ ]?order|confirm[-_ ]?order|complete[-_ ]?order|purchase|register|sign[-_ ]?in|log[-_ ]?in)$/i.test(dataAction.trim())
-        || /^(?:submit|checkout|pay|place order|confirm order|complete order|purchase|register|sign in|log in)$/i.test(label.trim());
+        || commitReading(captionChoice) || captionChoice === 'next_step';
       if (tag === 'input') {
         if (type === 'submit' || type === 'image') return { isSubmit: true, strong: true };
         if (type === 'button') return { isSubmit: true, strong: explicitJsSubmit };
@@ -28660,19 +28762,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const control = target?.closest?.('button,input,[role="button"],[role="menuitem"]');
       const actionWords = [control?.textContent, control?.getAttribute?.('aria-label'),
         control?.getAttribute?.('title'), control?.getAttribute?.('data-action')];
-      const consequentialCaption = value => /(?:^|[^\p{L}])(?:post|publish|reply|submit|send|save|confirm|commit|pay|purchase|checkout|delete|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-      const removalCaption = value => /(?:^|[^\p{L}])(?:remove|kaldır)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-      // Removing a filter, sort or search term changes what the page shows; it
-      // does not destroy a record. Only the weak removal verbs qualify: delete,
-      // trash and their translations keep their deletion meaning.
-      const weakRemovalWord = /(?:^|[^\p{L}])(?:remove|clear|kaldır)(?=[^\p{L}]|$)/giu;
-      const viewStateRemoval = value => {
-        const text = String(value || '');
-        return /(?:^|[^\p{L}])(?:remove|clear|kaldır)(?:[^\p{L}]|$)/iu.test(text)
-          && /(?:^|[^\p{L}])(?:filters?|filtre\p{L}*|filtro\p{L}*|фильтр\p{L}*|facets?|sort(?:ing)?|search(?:es)?|quer(?:y|ies)|selection|formatting)(?:[^\p{L}]|$)/iu.test(text)
-          && !/(?:^|[^\p{L}])(?:delete|trash|erase|destroy|sil|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(text);
-      };
-      const withoutViewStateRemoval = value => (viewStateRemoval(value) ? String(value).replace(weakRemovalWord, ' ') : value);
+      // A click is judged by its activated control's captions and by those of
+      // the control that owns its activation. On a collect pass, unread ones
+      // are reported before anything else; fields and plain links have none.
+      if (args.__wbCaptionPass === 'collect' && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && target && !isEditableActivationTarget(target)) {
+        const subject = labelControlFor(target) || target;
+        const subjects = [control, subject.closest?.('button,input,[role="button"],[onclick],[data-action]'),
+          subject.closest?.('button,input,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],summary')];
+        // In a dialog, its other controls are read too, so a second deletion
+        // there makes a confirmation ambiguous in any language.
+        const dialog = subject.closest?.('dialog[open],[role="dialog"],[role="alertdialog"]');
+        if (dialog) subjects.push(...[...dialog.querySelectorAll('button,input[type="button"],input[type="submit"],[role="button"],[role="menuitem"]')].slice(0, 24));
+        const needed = [...new Set(subjects.filter(el => el && !isEditableActivationTarget(el)).flatMap(controlCaptions))]
+          .filter(key => !captionReading(key));
+        if (needed.length) return { captionsNeeded: needed.slice(0, 24) };
+      }
+      const actionReading = captionsReading(actionWords);
       // A typeless button outside any form does nothing natively, so its
       // caption can decide. On X and Bluesky an app control id the probe does
       // not recognize outranks that caption, as for the recovery controls.
@@ -28704,9 +28810,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return null;
       };
       // Removing an attachment edits the draft only when the removed item is
-      // visibly an attachment: named as one, or shown as media or a file name.
+      // visibly an attachment: shown as media or a file name.
       const draftAttachmentEvidence = (el, composer) => {
-        if (actionWords.some(value => /(?:^|[^\p{L}])(?:attachments?|attached|files?|images?|photos?|pictures?|media|videos?|gifs?|uploads?|documents?|ek(?:i|ler\p{L}*)?|dosya\p{L}*|görsel\p{L}*|resim\p{L}*|fotoğraf\p{L}*|medya\p{L}*)(?:[^\p{L}]|$)/iu.test(String(value || '')))) return true;
         for (let node = el.parentElement; node && node !== composer; node = node.parentElement) {
           if (node.querySelector('img,video,picture,canvas,audio')) return true;
           const text = String(node.textContent || '').replace(String(el.textContent || ''), ' ');
@@ -28719,10 +28824,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             || !isVisible(control) || control.disabled || control.getAttribute('aria-disabled') === 'true'
             || control.matches('[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
             || socialPublishControlEvidence(control).isSubmit || sendMarker(control)
-            || actionWords.some(consequentialCaption)) return false;
+            || commitReading(actionReading)) return false;
         // A saved-record control cannot borrow an editor elsewhere on the page.
         if (control.closest('article,[role="article"],[role="listitem"],[itemid]')) return false;
-        if (control.closest('[contenteditable="true"]') && !actionWords.some(removalCaption)) return true;
+        // Inside the editor, a control edits the draft unless its caption
+        // reads as a deletion or as editing the draft (removing something).
+        if (control.closest('[contenteditable="true"]') && !deletionReading(actionReading) && actionReading !== 'form_edit') return true;
         const toolbarDraft = (() => {
           const toolbar = control.closest('[role="toolbar"]');
           const root = toolbar?.closest('form,dialog,[role="dialog"],section,[role="region"]')
@@ -28733,9 +28840,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (toolbar) {
             const ids = String(toolbar.getAttribute('aria-controls') || control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
             // The editor target proves a local formatting operation, but it
-            // cannot turn a resource-removal caption into a formatting command.
-            const formattingRemoval = !actionWords.some(value => removalCaption(value) && !/format(?:ting)?/iu.test(String(value || '')));
-            return formattingRemoval && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
+            // cannot turn a deletion caption into a formatting command.
+            return !deletionReading(actionReading) && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
           }
           const preview = control.closest('figure,[role="group"]');
           const staged = [...root.querySelectorAll('input[type="file"]')].some(input => input.files?.length > 0);
@@ -28745,7 +28851,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (toolbarDraft) return true;
         const composer = draftComposerFor(control);
         if (!composer) return false;
-        if (actionWords.some(removalCaption)) return draftAttachmentEvidence(control, composer);
+        // A caption read as a deletion or as editing the draft removes or
+        // changes an attachment only when the item is visibly one.
+        if (deletionReading(actionReading) || actionReading === 'form_edit') {
+          if (draftAttachmentEvidence(control, composer)) return true;
+          if (deletionReading(actionReading)) return false;
+        }
         // Other composer tools (emoji, media pickers, polls) are local only in
         // an app-identified post composer; a generic "Add" or "Create" button
         // beside a text field may itself be the commit.
@@ -28756,8 +28867,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         isSubmit: false, resolvedNonSubmitTarget: true, resolvedDraftControl: true, host, url,
         frameDocumentIdentity: [url, performance.timeOrigin].join('|'),
       };
-      const deleteAction = value => /(?:^|[^\p{L}])(?:delete|remove|trash|erase|destroy|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
-      const deletionCaption = value => deleteAction(withoutViewStateRemoval(value));
       // A GET link whose query names a destructive action (WordPress
       // action=trash, admin panels' action=delete, _method=DELETE) mutates
       // when followed. Path segments such as /trash or /delete/ usually name a
@@ -28789,9 +28898,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const proof = resourceProofFor(control);
         const more = control.closest('.status__action-bar,.detailed-status__action-bar')
           && control.querySelector('svg.icon-ellipsis-h');
-        const dangerousCaption = value => /(?:^|[^\p{L}])(?:publish|submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال)(?:[^\p{L}]|$)/iu.test(String(value || '').trim());
+        // The "…" button opens the post's menu: a caption read as a commit or
+        // a deletion would be another control. The menu's dangerous item read
+        // as deleting the post opens Mastodon's own confirmation.
+        const dangerousCaption = commitReading(actionReading) || deletionReading(actionReading);
         const menuDelete = control.matches('.dropdown-menu__item--dangerous > button[data-index]')
-          && /^(?:delete|sil|supprimer|eliminar|borrar|löschen|удалить|删除|刪除|削除|삭제)$/iu.test(String(control.textContent || '').trim());
+          && actionReading === 'delete_one';
         // Mastodon supports direct deletion when its confirmation preference
         // is disabled. Only its explicit enabled native setting can prove
         // that this menu entry opens a confirmation rather than committing.
@@ -28800,7 +28912,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (state && state.textContent.length <= 2500000) deleteConfirmationEnabled = JSON.parse(state.textContent)?.meta?.delete_modal === true;
         } catch {}
         const kind = proof?.nativeAdapter === 'mastodon' && proof.complete
-          ? more && !actionWords.some(dangerousCaption) ? 'menu' : menuDelete && deleteConfirmationEnabled ? 'confirmation' : '' : '';
+          ? more && !dangerousCaption ? 'menu' : menuDelete && deleteConfirmationEnabled ? 'confirmation' : '' : '';
         if (kind) {
           const popupLauncherToken = rememberPopupLauncher(control, proof, kind);
           if (popupLauncherToken) return { isSubmit: false, host, url, resolvedOrdinaryActivationTarget: true,
@@ -28839,7 +28951,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // (with marks), at least three letters/digits.
       const recordTokens = value => (String(value || '').normalize('NFC').toLowerCase().match(/[\p{L}\p{N}\p{M}]+/gu) || [])
         .filter(token => (token.match(/[\p{L}\p{N}]/gu) || []).length >= 3);
-      const recordHasIdentity = text => recordTokens(text).some(token => !deleteAction(token));
+      // A record's identity is not the deletion control's own caption, which
+      // can repeat in the row (a second "Sil", a "Delete" tooltip).
+      const activationCaptionKeys = new Set(controlCaptions(control));
+      const activationCaptionTokens = new Set([...activationCaptionKeys].flatMap(recordTokens));
+      const recordHasIdentity = text => recordTokens(text).some(token => !activationCaptionTokens.has(token)
+        && !deletionReading(captionReading(token)));
       const recordRendered = element => {
         try {
           if (typeof element.checkVisibility === 'function') {
@@ -28893,16 +29010,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         return false;
       };
-      // Deletion-captioned controls of one root: visible ones, and hidden ones
-      // that only wait for hover or focus. Items of a closed menu or dialog
-      // belong to no record.
+      // Deletion controls of one root: those repeating the activated
+      // control's own caption, and any whose caption a model read as a
+      // deletion; visible ones, and hidden ones that only wait for hover or
+      // focus. Items of a closed menu or dialog belong to no record.
       const recordDeletionControlCache = new Map();
       const recordDeletionControls = root => {
         if (recordDeletionControlCache.has(root)) return recordDeletionControlCache.get(root);
         const candidates = [...root.querySelectorAll('button,input[type="button"],input[type="submit"],input[type="image"],[role="button"],[role="menuitem"],a[href]')];
-        const controls = candidates.slice(0, 4000).filter(element => [String(element.textContent || '').slice(0, 400),
-          element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('data-action'),
-          String(element.tagName).toLowerCase() === 'input' ? element.value : ''].some(deletionCaption)
+        const controls = candidates.slice(0, 4000).filter(element => controlCaptions(element)
+          .some(key => activationCaptionKeys.has(key) || deletionReading(captionReading(key)))
           && (isVisible(element) || !recordHiddenInClosedPopup(element)));
         const result = { controls, complete: candidates.length <= 4000 };
         recordDeletionControlCache.set(root, result);
@@ -29086,14 +29203,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             || (labelledBy.length && (!launcher.id || !labelledBy.includes(launcher.id)))) return null;
         return launcher;
       };
-      // Selection and bulk captions act on more than one record.
-      const bulkDeletionCaption = value => /(?:^|[^\p{L}])(?:all|selected|checked|everything|bulk|tüm\p{L}*|hepsi\p{L}*|seçil\p{L}*|tous|toutes|sélectionn\p{L}*|todos|todas|seleccionad\p{L}*|alle|ausgewählt\p{L}*|все|выбранн\p{L}*)(?:[^\p{L}]|$)/iu
-        .test(String(value || ''));
       const unboundDeletionRecord = activation => {
         try {
           // Native Mastodon menus and confirmations belong to the native resource path.
           if (args.__wbNativeResourceAdapter === 'mastodon' && activation.closest('.dropdown-menu,.modal-root__modal')) return null;
-          if (actionWords.some(bulkDeletionCaption)) return null;
+          // A caption read as deleting several or the selected items acts on
+          // more than one record.
+          if (actionReading === 'delete_many') return null;
           const popup = activation.closest(recordPopupSelector);
           let resolved = null;
           if (popup && !popup.matches(recordDialogSelector) && popup.matches(recordMenuSelector)) {
@@ -29126,7 +29242,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
       const nativeDeletionConfirmation = nativeConfirmationCommit(control) && resourceProofFor(control)?.nativeAdapter === 'mastodon';
       if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName) && !navigationOwnsActivation
-          && (actionWords.some(deletionCaption) || nativeDeletionConfirmation)
+          && (deletionReading(actionReading) || nativeDeletionConfirmation)
           && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true') {
         const info = submitInfo(control.form || control.closest('form'), 'resource deletion activation', null, null, 'strong', control);
         const actionResource = resourceProofFor(target);
@@ -29168,9 +29284,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       // Ordinary-control evidence shared by standalone activations and by
       // in-form controls whose submit classification is only heuristic.
-      const commitWordList = 'submit|send|save|confirm|commit|pay|purchase|checkout|delete|remove|trash|erase|destroy|enviar|envoyer|invia|senden|verzenden|gönder|sil|kaldır|supprimer|eliminar|borrar|löschen|удалить|отправить|送信|发送|發送|删除|刪除|削除|보내|삭제|إرسال|ارسال';
-      const captionHas = (value, words) => new RegExp(`(?:^|[^\\p{L}])(?:${words})(?:[^\\p{L}]|$)`, 'iu')
-        .test(String(withoutViewStateRemoval(value) || '').trim());
       const ordinaryControlFor = el => {
         const owner = labelControlFor(el) || el;
         return owner?.closest?.('button,input,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],summary') || null;
@@ -29180,13 +29293,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           || ordinary.hasAttribute('popovertarget');
         // An app's own control name decides publication capability on X and
         // Bluesky (socialPublishControlEvidence). A non-publish test id
-        // disproves publication words such as Reply or Schedule post, while
-        // deletion, send, save and payment words still mark a commit.
+        // disproves a caption read as a publication, such as Reply or
+        // Schedule post, while a caption read as a deletion, send, save or
+        // payment still marks a commit. A popup launcher may name the post it
+        // operates on; actual composer submits are identified above.
         const appNamedNonPublish = !!socialPublishAdapterName() && !!ordinary.getAttribute('data-testid') && !sendMarker(ordinary);
-        // A popup launcher may mention the resource it operates on. Actual
-        // composer submits are identified above; other commit words stay gated.
-        const words = popupTarget || appNamedNonPublish
-          ? `${appNamedNonPublish ? '' : 'publish|'}${commitWordList}` : `post|publish|reply|${commitWordList}`;
+        const captionChoice = captionsReading(labels);
+        const consequential = popupTarget || appNamedNonPublish
+          ? captionChoice === 'commit' || deletionReading(captionChoice)
+          : commitReading(captionChoice) || deletionReading(captionChoice);
         let uniqueTarget = true;
         if (args.text) {
           const needle = compact(args.text).toLowerCase();
@@ -29207,7 +29322,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // A nested plain file input only opens the file chooser.
           && ![...ordinary.querySelectorAll('[onclick],[data-action],button,input,[role="button"],a[href]')]
             .some(child => !child.matches('input[type="file"]:not([onclick]):not([data-action]):not([onchange]):not([oninput])'))
-          && !sendMarker(ordinary) && !labels.some(value => captionHas(value, words))
+          && !sendMarker(ordinary) && !consequential
           && !socialPublishControlEvidence(ordinary).isSubmit;
       };
       const ordinaryLabels = ordinary => {
@@ -29240,39 +29355,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
         return info;
       }
-      const blueskyComposerLauncher = socialPublishAdapterName() === 'bluesky'
-        ? target?.closest?.('button,[role="button"]') : null;
-      if (blueskyComposerLauncher
-          && ['click', 'click_ax', 'iframe_click'].includes(toolName)
-          && !blueskyComposerLauncher.form
-          && !blueskyComposerLauncher.closest?.('form,dialog,[role="dialog"],[role="alertdialog"]')
-          && !blueskyComposerLauncher.hasAttribute?.('data-testid')
-          && /^(?:compose (?:new )?post|new post)$/i.test(compact(
-            blueskyComposerLauncher.getAttribute?.('aria-label') || blueskyComposerLauncher.textContent || '',
-          ))) {
+      if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)
+          && target.closest?.('[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton"],[data-testid="composeFAB"],[data-testid="addButton"],[data-testid="attachments"],[data-testid="fileInput"],[data-testid="app-bar-back"],[data-testid="closeButton"]')) {
         return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
       }
-      // Bluesky's Cancel/Keep editing controls have no test IDs. Resolve
-      // the actual modal button, reject conflicting publish labels/markers,
-      // and exempt only these reversible composer recovery controls.
-      const recoveryControl = target?.closest?.('button,[role="button"]');
-      const recoveryModal = recoveryControl?.closest?.('dialog,[role="dialog"],[role="alertdialog"]');
-      if (socialPublishAdapterName() === 'bluesky' && recoveryModal
-          && ['click', 'click_ax', 'iframe_click'].includes(toolName)
-          && !recoveryControl.form && !recoveryControl.closest?.('form')
-          && !recoveryControl.hasAttribute?.('data-testid')
-          && String(recoveryControl.getAttribute?.('type') || 'button').toLowerCase() === 'button') {
-        const labels = [recoveryControl.textContent, recoveryControl.getAttribute?.('aria-label')]
-          .map(value => compact(value || '')).filter(Boolean);
-        const label = labels[0];
-        const composer = recoveryModal.querySelector('textarea,[contenteditable="true"],[role="textbox"]');
-        if (labels.length && labels.every(value => value.toLowerCase() === label.toLowerCase())
-            && ((/^cancel$/i.test(label) && composer) || /^keep editing$/i.test(label))) {
-          return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
-        }
-      }
-      if (target && ['click', 'click_ax', 'iframe_click'].includes(toolName)
-          && target.closest?.('[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton"],[data-testid="composeFAB"],[data-testid="addButton"],[data-testid="attachments"],[data-testid="fileInput"],[data-testid="app-bar-back"],[data-testid="closeButton"],button[aria-label="Close"]')) {
+      // A named button outside any form whose captions a model read as only
+      // changing the view (closing, cancelling, going back), in any language,
+      // is not a submit; app publish and send controls never are this.
+      const viewButton = target?.closest?.('button');
+      if (viewButton && ['click', 'click_ax', 'iframe_click'].includes(toolName) && viewButton.hasAttribute('aria-label')
+          && !viewButton.form && !viewButton.closest('form') && !sendMarker(viewButton)
+          && !socialPublishControlEvidence(viewButton).isSubmit && captionsReading(controlCaptions(viewButton)) === 'view') {
         return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
       }
       if (target

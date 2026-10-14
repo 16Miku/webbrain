@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { probeWithReadings } from '../semantic-decision-stub.mjs';
 
 export function registerMessageRecipientNavigationFixtures({
   test, firefoxTest, setupContentHtml, call, Agent, FirefoxAgent,
@@ -112,8 +113,11 @@ export function registerMessageRecipientNavigationFixtures({
         agent.conversations.set(1, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Inspect the previous publication.' }]);
         const guard = agent._startPlanExecutionGuard(1, 'act', { requiresStateChange: true });
         guard.steeringPriorSubmission = { dispatched: true, observedAfterSubmit: false };
-        const probe = (tool, args) => page.evaluate(({ source, tool, args }) =>
-          Function('return (' + source + ')')()(tool, args), { source: AgentClass._submitActionProbe.toString(), tool, args });
+        // Captions are read the way the agent runs the probe: unread ones by
+        // the fixtures' model oracle before the final pass.
+        const probe = (tool, args) => probeWithReadings((name, passArgs) => page.evaluate(({ source, tool, args }) =>
+          Function('return (' + source + ')')()(tool, args), { source: AgentClass._submitActionProbe.toString(), tool: name, args: passArgs }),
+        tool, args);
         const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxChars: 20000 });
         const ref = new RegExp(`button "${label}" \\[([^\\]]+)\\]`).exec(tree.pageContent)?.[1];
         assert.ok(ref, tree.pageContent);

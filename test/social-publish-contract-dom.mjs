@@ -4,7 +4,7 @@ import { strict as assert } from 'node:assert';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { fixtureControlEffectReading } from './semantic-decision-stub.mjs';
+import { defaultDecide, fixtureControlEffectReading, semanticQuestionOf } from './semantic-decision-stub.mjs';
 const browser = await chromium.launch({headless:true});
 let checked=0;
 try {
@@ -212,25 +212,34 @@ try {
       scopeAgent.conversations.set(scopeTab,[{role:'system',content:'system'},{role:'user',content:'Save my profile settings. Do not publish anything.'}]);
       const scopeGuard=scopeAgent._startPlanExecutionGuard(scopeTab,'act',{requestKind:'execute',requiresStateChange:true,requiresSubmission:true});
       let scopeCalls=0;
-      scopeAgent._chatWithCostAllowance=async()=>{scopeCalls++;return {content:JSON.stringify({version:1,status:'none',actions:[],requirements:null,prohibited:[],reason:'Settings only.'})};};
+      // Button captions are read by a model (the fixtures' oracle) before a
+      // click; only publication model calls are counted.
+      scopeAgent._chatWithCostAllowance=async(_provider,messages,_options,_cost,meta)=>{
+        const kind=String(meta?.generationName||'').match(/^semantic_(.+)$/)?.[1];
+        if(kind) return {content:JSON.stringify(defaultDecide(kind,semanticQuestionOf(scopeAgent,messages)))};
+        scopeCalls++;return {content:JSON.stringify({version:1,status:'none',actions:[],requirements:null,prohibited:[],reason:'Settings only.'})};};
       const previousChrome=globalThis.chrome;
       globalThis.chrome={scripting:{executeScript:async({func,args})=>[{result:await page.evaluate(({source,args})=>Function('return ('+source+')')()(...args),{source:func.toString(),args})}]}};
       try {
         // Bluesky's desktop launcher has an accessible name but no composeFAB
-        // test ID. Visible text, icon-only and nested targets all open a draft.
+        // test ID. Visible text, icon-only and nested targets all open a draft:
+        // a model reads the caption as opening an editor, in any language.
         const launchers = platform === 'bluesky' ? [
           '<button id="launch" type="button" aria-label="Compose new post"><span>New Post</span></button>',
           '<button id="launch" type="button" aria-label="Compose new post"><svg width="30" height="30"></svg></button>',
           '<div id="launch" role="button" aria-label="Compose new post"><span>New Post</span></div>',
+          '<div role="dialog"><button id="launch" type="button" aria-label="Compose new post">New Post</button></div>',
           '<button id="launch" data-testid="composeFAB">Compose new post</button>',
         ] : ['<button id="launch" data-testid="SideNav_NewTweet_Button">Compose new post</button>'];
+        const notSubmit = detected => detected?.isSubmit === false
+          && (detected.resolvedNonSubmitTarget === true || detected.resolvedOrdinaryActivationTarget === true);
         for (const html of launchers) {
           await page.setContent(html);
           await page.evaluate(() => { window.__wb_ax_lookup = () => document.getElementById('launch'); });
           const clickText = await page.locator('#launch').evaluate(el => el.innerText || el.ariaLabel);
           for (const [name, args] of [['click_ax', {ref_id:'launch'}], ['click', {text:clickText,textMatch:'exact'}], ['click', {selector:'#launch'}]]) {
             const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,name,args);
-            assert.equal(detected?.resolvedNonSubmitTarget,true,`${build}/${platform}: launcher ${name}`);
+            assert.equal(notSubmit(detected),true,`${build}/${platform}: launcher ${name}`);
             assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,name,args,detected,providerScope),null);
             checked++;
           }
@@ -260,7 +269,7 @@ try {
               await page.evaluate(() => { window.__wb_ax_lookup = () => document.querySelector('#recover span'); });
               for (const [name,args] of [['click_ax',{ref_id:'recover'}],['click',{text:label,textMatch:'exact'}],['click',{selector:'#recover span'}]]) {
                 const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,name,args);
-                assert.equal(detected?.resolvedNonSubmitTarget,true,`${build}: ${label}/${name}`);
+                assert.equal(notSubmit(detected),true,`${build}: ${label}/${name}`);
                 assert.equal(await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,name,args,detected,providerScope),null);
                 checked++;
               }
@@ -268,20 +277,19 @@ try {
             for (const attrs of ['data-testid="composerPublishBtn"','data-testid="unknown"','aria-label="Publish post"','type="submit"']) {
               await page.setContent(composer.replace('CONTROL',`<button id="recover" ${attrs}>${label}</button>`));
               const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,'click',{selector:'#recover'});
-              assert.notEqual(detected?.resolvedNonSubmitTarget,true,'conflicting publish/form identity must remain guarded');
+              assert.notEqual(notSubmit(detected),true,'conflicting publish/form identity must remain guarded');
               assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'click',{selector:'#recover'},detected,providerScope)).noDispatch);
               checked++;
             }
           }
           for (const html of [
             '<button id="launch" type="button" aria-label="Publish post">Post</button>',
-            '<div role="dialog"><button id="launch" type="button" aria-label="Compose new post">New Post</button></div>',
             '<form><button id="launch" type="submit" aria-label="Compose new post">New Post</button><textarea>Hello</textarea><button data-testid="composerPublishBtn">Post</button></form>',
             '<div role="dialog"><div contenteditable="true">Hello</div><button id="launch" data-testid="composerPublishBtn" aria-label="Compose new post">Post</button></div>',
           ]) {
             await page.setContent(html);
             const detected = await scopeAgent._detectLikelySubmitAction(scopeTab,'click',{selector:'#launch'});
-            assert.notEqual(detected?.resolvedNonSubmitTarget,true,'publish/form/dialog controls cannot claim the launcher exemption');
+            assert.notEqual(notSubmit(detected),true,'publish and form controls are not ordinary launchers');
             assert((await scopeAgent._workflowPreSubmitDispatchBlock(scopeTab,'click',{selector:'#launch'},detected,providerScope)).noDispatch);
             checked++;
           }

@@ -94,8 +94,8 @@ for (const build of ['chrome', 'firefox']) {
     const asked = stubPageTextReadings(agent);
     const state = { relevantFormCount: 5, formDescriptors: [form(['Ara']), form(['Suchen', 'Kaydet']), form(['']),
       form(['Ara'], { submitCount: 2 }), { label: 'Profil', relevant: true, utility: false, submitCount: 1 }] };
-    // The fixtures' oracle reads "Ara" and "Suchen" as other, "Kaydet" as a commit.
-    agent._pageTextReading = (kind, text) => (kind === 'control_effect' && ['Ara', 'Suchen'].includes(text) ? 'other'
+    // The fixtures' oracle reads "Ara" and "Suchen" as only changing the view, "Kaydet" as a commit.
+    agent._pageTextReading = (kind, text) => (kind === 'control_effect' && ['Ara', 'Suchen'].includes(text) ? 'view'
       : kind === 'control_effect' && text === 'Kaydet' ? 'commit' : null);
     await agent._readCompletionFormSubmits(1, state);
     assert.deepEqual(state.formDescriptors.map(item => item.relevant), [false, true, true, true, true]);

@@ -1017,6 +1017,7 @@ export const pageFeedbackMethods = {
           if (capture.observationScopeCaptured === false) run.actionObservationScope = null;
           run.actionCaptureTarget = null;
           state.page = run.latestPage = capture.page;
+          this._preReadControlCaptions?.(tabId, capture.page.pageContent);
           for (let index = messages.length - 1; index >= 0; index--) {
             if (messages[index]?.webbrainAppOwnedKind === 'page_action_observation') messages.splice(index, 1);
           }

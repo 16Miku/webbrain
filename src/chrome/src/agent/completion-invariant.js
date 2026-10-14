@@ -204,12 +204,12 @@ export function classifyCompletionForm({
     && normalizedFields.every(field => semanticSearchField(field) || conventionalSearchField(field));
   // What a submit control's caption means is read by a model in any language
   // (the agent's control_effect readings, `submitReadings` by label): only
-  // controls read as showing, filtering or searching ("other") leave a
+  // controls read as showing, filtering or searching ("view") leave a
   // search form a search form. An unread caption is no evidence, so it keeps
   // the form relevant here; `searchCandidate` tells the agent to read it.
   const readings = submitReadings && typeof submitReadings === 'object' ? submitReadings : {};
   const readingOf = control => (Object.prototype.hasOwnProperty.call(readings, control.label) ? readings[control.label] : null);
-  const searchSubmitsOnly = normalizedSubmits.every(control => readingOf(control) === 'other');
+  const searchSubmitsOnly = normalizedSubmits.every(control => readingOf(control) === 'view');
   const searchStructureHasTaskEvidence = !!(
     insideDialog
     || normalizedMethod !== 'get'
@@ -226,7 +226,7 @@ export function classifyCompletionForm({
   const safeSearchOnly = searchFieldsOnly && !searchHasTaskEvidence;
   const hasSemanticSearchField = normalizedFields.some(semanticSearchField);
   const searchCandidate = searchFieldsOnly && !searchStructureHasTaskEvidence && !searchSubmitsOnly
-    && normalizedSubmits.every(control => readingOf(control) === null || readingOf(control) === 'other');
+    && normalizedSubmits.every(control => readingOf(control) === null || readingOf(control) === 'view');
 
   const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
   const passiveUtilityShell = !!(

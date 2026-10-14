@@ -26997,7 +26997,7 @@ test('completion form classification ignores passive localized utility shells wi
         ],
         submits: [{ label: 'Filter' }],
         // What a model read the caption as.
-        submitReadings: { Filter: 'other' },
+        submitReadings: { Filter: 'view' },
       }),
       {
         label: '',
@@ -27017,7 +27017,7 @@ test('completion form classification ignores passive localized utility shells wi
           { tag: 'select', type: '', role: '', name: 'filter', value: 'recent' },
         ],
         submits: [{ label: 'Search' }],
-        submitReadings: { Search: 'other' },
+        submitReadings: { Search: 'view' },
       }),
       {
         label: '',
@@ -27034,13 +27034,13 @@ test('completion form classification ignores passive localized utility shells wi
     // showing or searching is task evidence.
     const searchForm = { outsidePrimaryContent: false,
       editable: [{ tag: 'input', type: 'search', role: '', name: 'q', value: '' }] };
-    assert.equal(classify({ ...searchForm, submits: [{ label: 'Ara' }], submitReadings: { Ara: 'other' } }).utility, true,
+    assert.equal(classify({ ...searchForm, submits: [{ label: 'Ara' }], submitReadings: { Ara: 'view' } }).utility, true,
       `${label}: a search form with a Turkish search button stayed a task form`);
     assert.deepEqual(classify({ ...searchForm, submits: [{ label: 'Ara' }] }), {
       label: '', relevant: true, utility: false, utilityReason: null, editableCount: 1, submitCount: 1,
       searchCandidate: true, searchUtilityReason: 'semantic_search', submitLabels: ['Ara'],
     }, `${label}: an unread search caption was decided without a reading`);
-    for (const reading of ['commit', 'next_step', 'form_edit']) {
+    for (const reading of ['commit', 'publish', 'next_step', 'form_edit', 'delete_one', 'unclear']) {
       const result = classify({ ...searchForm, submits: [{ label: 'Ekle' }], submitReadings: { Ekle: reading } });
       assert.equal(result.relevant, true, `${label}: a ${reading} caption hid a task form`);
       assert.equal(result.searchCandidate, undefined, `${label}: a ${reading} caption asked for another reading`);

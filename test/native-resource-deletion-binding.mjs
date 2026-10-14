@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
-import { defaultDecide, installModelStub } from './semantic-decision-stub.mjs';
+import { defaultDecide, installModelStub, probeWithReadings } from './semantic-decision-stub.mjs';
 
 const url = 'https://mastoturk.org/@ownedqa';
 const resource = `${url}/200`;
@@ -27,11 +27,13 @@ for (const build of ['chrome', 'firefox']) {
         await page.route('**/*', route => route.fulfill({ contentType: 'text/html', body: html }));
         await page.goto(url);
         let scope;
-        const probe = (selector, overrides = {}) => page.evaluate(({ source, selector, scope, overrides }) =>
-          (0, eval)(`(${source})`)('click', { selector, __wbNativeResourceAdapter: 'mastodon',
-            __wbResourceRunToken: 'owned-run', __wbResourceTaskKey: 'owned-task',
-            ...(scope ? { __wbOwnedResourceScope: scope } : {}), ...overrides }),
-        { source: Agent._submitActionProbe.toString(), selector, scope, overrides });
+        // Captions are read the way the agent runs the probe: unread ones by
+        // the fixtures' model oracle before the final pass.
+        const runProbe = (tool, args) => page.evaluate(({ source, tool, args }) => (0, eval)(`(${source})`)(tool, args),
+          { source: Agent._submitActionProbe.toString(), tool, args });
+        const probe = (selector, overrides = {}) => probeWithReadings(runProbe, 'click', { selector,
+          __wbNativeResourceAdapter: 'mastodon', __wbResourceRunToken: 'owned-run', __wbResourceTaskKey: 'owned-task',
+          ...(scope ? { __wbOwnedResourceScope: scope } : {}), ...overrides });
         const adopt = result => { scope = { ...result.actionResource, document: result.frameDocumentIdentity,
           taskKey: 'owned-task', popupLauncherToken: result.popupLauncherToken, launcherDispatched: true }; };
         const click = async selector => { await page.click(selector); await page.waitForTimeout(20); };

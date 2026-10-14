@@ -7,12 +7,12 @@ export const SUBMIT_CLICK_WINDOW_MS = 45_000;
  * Record a text click and reject a rapid duplicate of a committing control on
  * the same tab and URL. Returns the tool result to emit when blocked,
  * otherwise null. What the caption means is read by a model in any language:
- * `readCaption(text, { read })` resolves to 'commit', another reading, or null
- * when it was not read; with `read: false` it only reports a reading already
- * made, and with `read: true` it may ask for one. A caption read as anything
- * but a commit never duplicates anything and needs no tab lookup; an unread
- * caption is recorded, and a rapid second click blocks only once its caption
- * is read as a commit. An `_allowResubmit` retry is allowed through but
+ * `readCaption(text, { read })` resolves to 'commit', 'publish', another
+ * reading, or null when it was not read; with `read: false` it only reports a
+ * reading already made, and with `read: true` it may ask for one. A caption
+ * read as anything but a commit or publication never duplicates anything and
+ * needs no tab lookup; an unread caption is recorded, and a rapid second click
+ * blocks only once its caption is read as one. An `_allowResubmit` retry is allowed through but
  * re-recorded, so a further rapid duplicate needs its own acknowledgement.
  */
 export async function guardRecentSubmitClick(
@@ -41,8 +41,9 @@ export async function guardRecentSubmitClick(
     try { return typeof readCaption === 'function' ? await readCaption(rawText, { read }) : null; }
     catch { return null; }
   };
+  const commits = choice => choice === 'commit' || choice === 'publish';
   const known = await reading(false);
-  if (known && known !== 'commit') return null;
+  if (known && !commits(known)) return null;
 
   let currentUrl = '';
   try {
@@ -63,7 +64,7 @@ export async function guardRecentSubmitClick(
     return null;
   }
 
-  if (match && (known || await reading(true)) !== 'commit') {
+  if (match && !commits(known || await reading(true))) {
     // Not a commit, or not readable: a repeat is an ordinary click.
     match.ts = timestamp;
     match.url = currentUrl;
