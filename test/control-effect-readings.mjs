@@ -15,6 +15,20 @@ for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const { guardRecentSubmitClick } = await import(`../src/${build}/src/agent/submit-click-guard.js`);
 
+  test(`${build}: a saved-workflow replay reads page texts with the decision model alone`, async () => {
+    const agent = new Agent({ getActive: () => ({}) });
+    const mainModel = [];
+    agent._semanticDecisions = async (_tab, _kind, { items = [] } = {}, options = {}) => {
+      mainModel.push(options.mainModel);
+      return items.map(() => ({ choice: 'view', evidence: '', source: 'decision_model' }));
+    };
+    await agent._readPageTexts(7, 'control_effect', ['Kapat'], {}, { maxChars: 200 });
+    // The tab a deterministic replay runs in asks no active model.
+    agent._workflowReplayTabs = new Set([8]);
+    await agent._readPageTexts(8, 'control_effect', ['Pencereyi kapat'], {}, { maxChars: 200 });
+    assert.deepEqual(mainModel, [true, false]);
+  });
+
   test(`${build}: a rapid repeat is blocked only for a caption a model read as a commit, in any language`, async () => {
     const page = 'https://shop.example.test/sepet';
     for (const [caption, blocked] of [['Kaydet', true], ['Onayla', true], ['Gönder', true], ['送信', true],

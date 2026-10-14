@@ -7449,7 +7449,7 @@ export class Agent extends LoopDetector {
       .filter(text => !this._pageTextReadings.has(this._pageTextKey(kind, text, context)));
     if (!pending.length) return;
     const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) },
-      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel });
+      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel: mainModel && !this._workflowReplayTabs?.has(tabId) });
     pending.forEach((text, index) => {
       if (readings[index]?.choice) this._pageTextReadings.set(this._pageTextKey(kind, text, context), readings[index].choice);
     });
@@ -28824,12 +28824,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             || !isVisible(control) || control.disabled || control.getAttribute('aria-disabled') === 'true'
             || control.matches('[formaction],[formmethod],[formtarget],[command],[commandfor],[onclick],[data-action]')
             || socialPublishControlEvidence(control).isSubmit || sendMarker(control)
-            || commitReading(actionReading)) return false;
+            // A caption read as a publication, commit or deletion is never
+            // draft-local.
+            || commitReading(actionReading) || deletionReading(actionReading)) return false;
         // A saved-record control cannot borrow an editor elsewhere on the page.
         if (control.closest('article,[role="article"],[role="listitem"],[itemid]')) return false;
         // Inside the editor, a control edits the draft unless its caption
-        // reads as a deletion or as editing the draft (removing something).
-        if (control.closest('[contenteditable="true"]') && !deletionReading(actionReading) && actionReading !== 'form_edit') return true;
+        // reads as editing the draft (removing something from it).
+        if (control.closest('[contenteditable="true"]') && actionReading !== 'form_edit') return true;
         const toolbarDraft = (() => {
           const toolbar = control.closest('[role="toolbar"]');
           const root = toolbar?.closest('form,dialog,[role="dialog"],section,[role="region"]')
@@ -28839,9 +28841,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (editors.length !== 1) return false;
           if (toolbar) {
             const ids = String(toolbar.getAttribute('aria-controls') || control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
-            // The editor target proves a local formatting operation, but it
-            // cannot turn a deletion caption into a formatting command.
-            return !deletionReading(actionReading) && ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
+            // The editor target proves a local formatting operation.
+            return ids.length === 1 && doc.getElementById(ids[0]) === editors[0];
           }
           const preview = control.closest('figure,[role="group"]');
           const staged = [...root.querySelectorAll('input[type="file"]')].some(input => input.files?.length > 0);
@@ -28851,12 +28852,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (toolbarDraft) return true;
         const composer = draftComposerFor(control);
         if (!composer) return false;
-        // A caption read as a deletion or as editing the draft removes or
-        // changes an attachment only when the item is visibly one.
-        if (deletionReading(actionReading) || actionReading === 'form_edit') {
-          if (draftAttachmentEvidence(control, composer)) return true;
-          if (deletionReading(actionReading)) return false;
-        }
+        // A caption read as editing the draft removes or changes an
+        // attachment when the item is visibly one.
+        if (actionReading === 'form_edit' && draftAttachmentEvidence(control, composer)) return true;
         // Other composer tools (emoji, media pickers, polls) are local only in
         // an app-identified post composer; a generic "Add" or "Create" button
         // beside a text field may itself be the commit.
@@ -29289,17 +29287,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return owner?.closest?.('button,input,[role="button"],[role="menuitem"],[role="menuitemradio"],[role="menuitemcheckbox"],[role="tab"],[role="option"],[role="treeitem"],[role="switch"],[role="checkbox"],[role="radio"],summary') || null;
       };
       const ordinaryControlEvidence = (ordinary, labels) => {
-        const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(ordinary.getAttribute('aria-haspopup') || '')
-          || ordinary.hasAttribute('popovertarget');
         // An app's own control name decides publication capability on X and
         // Bluesky (socialPublishControlEvidence). A non-publish test id
         // disproves a caption read as a publication, such as Reply or
         // Schedule post, while a caption read as a deletion, send, save or
-        // payment still marks a commit. A popup launcher may name the post it
-        // operates on; actual composer submits are identified above.
+        // payment still marks a commit. A popup launcher that only names the
+        // post it operates on ("Post actions") reads as opening a menu; one
+        // whose caption reads as publishing stays a commit.
         const appNamedNonPublish = !!socialPublishAdapterName() && !!ordinary.getAttribute('data-testid') && !sendMarker(ordinary);
         const captionChoice = captionsReading(labels);
-        const consequential = popupTarget || appNamedNonPublish
+        const consequential = appNamedNonPublish
           ? captionChoice === 'commit' || deletionReading(captionChoice)
           : commitReading(captionChoice) || deletionReading(captionChoice);
         let uniqueTarget = true;
@@ -29359,11 +29356,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && target.closest?.('[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton"],[data-testid="composeFAB"],[data-testid="addButton"],[data-testid="attachments"],[data-testid="fileInput"],[data-testid="app-bar-back"],[data-testid="closeButton"]')) {
         return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
       }
-      // A named button outside any form whose captions a model read as only
-      // changing the view (closing, cancelling, going back), in any language,
-      // is not a submit; app publish and send controls never are this.
+      // A dialog's named button outside any form whose captions a model read
+      // as only changing the view (closing, cancelling, going back), in any
+      // language, is not a submit; app publish and send controls never are this.
       const viewButton = target?.closest?.('button');
       if (viewButton && ['click', 'click_ax', 'iframe_click'].includes(toolName) && viewButton.hasAttribute('aria-label')
+          && viewButton.closest('dialog,[role="dialog"],[role="alertdialog"]')
           && !viewButton.form && !viewButton.closest('form') && !sendMarker(viewButton)
           && !socialPublishControlEvidence(viewButton).isSubmit && captionsReading(controlCaptions(viewButton)) === 'view') {
         return { isSubmit: false, host, url, resolvedNonSubmitTarget: true };
@@ -37730,6 +37728,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? runOptions?.parentSessionId || null
       : null;
     await this._claimRunEntry(tabId, 'workflow', runOptions);
+    // A deterministic replay asks no model: page texts its checks read are
+    // read by the decision model alone, if at all.
+    this._workflowReplayTabs ??= new Set();
+    this._workflowReplayTabs.add(tabId);
     const feedbackRun = this._pageFeedbackRuns?.get(tabId);
     if (feedbackRun) feedbackRun.onUpdate = onUpdate;
     let completionRunToken = '';
@@ -37796,7 +37798,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           try {
             await cdpClient.cleanupRun(tabId);
           } catch { /* preserve the original setup failure */ }
-          finally { this._releaseRunEntry(tabId); }
+          finally { this._workflowReplayTabs?.delete(tabId); this._releaseRunEntry(tabId); }
         }
       }
       throw error;
@@ -38111,6 +38113,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               await cdpClient.cleanupRun(tabId);
             } catch { /* the debugger may already be detached during teardown */ }
             finally {
+              this._workflowReplayTabs?.delete(tabId);
               this._releaseRunEntry(tabId);
             }
           }

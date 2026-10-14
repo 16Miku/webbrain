@@ -15,7 +15,7 @@ import { fixtureControlEffectReading, probeWithReadings, stubPageTextReadings } 
 const READINGS = {
   Törlés: 'delete_one', 'Fiók törlése': 'delete_one', 'Összes törlése': 'delete_many', 'Szűrő eltávolítása': 'view',
   'Melléklet eltávolítása': 'form_edit', Közzététel: 'publish', Küldés: 'commit', Mentés: 'commit', Bezárás: 'view',
-  'Tümünü sil': 'delete_many', 'Mavi Tişört': 'unclear',
+  'Tümünü sil': 'delete_many', 'Mavi Tişört': 'unclear', 'Bejegyzés műveletei': 'view',
 };
 const read = caption => READINGS[caption] ?? fixtureControlEffectReading(caption);
 const pageUrl = 'https://shop.example/cart';
@@ -66,6 +66,25 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal((await probe('#t')).resolvedDraftControl, true, 'a removed file shown beside the draft is a draft edit');
         });
 
+        await t.test('a launcher read as publishing, a deletion beside a draft file and a view button outside a dialog keep their checks', async () => {
+          // A menu launcher whose caption reads as publishing is a commit; one
+          // that names the post its menu acts on only opens the menu.
+          await open('<article><p>Bejegyzés</p><button id="t" type="button" aria-haspopup="menu" aria-label="Közzététel">…</button></article>');
+          assert.notEqual((await probe('#t'))?.resolvedOrdinaryActivationTarget, true, 'a publishing launcher');
+          await open('<article><p>Bejegyzés</p><button id="t" type="button" aria-haspopup="menu" aria-label="Bejegyzés műveletei">…</button></article>');
+          assert.equal((await probe('#t')).resolvedOrdinaryActivationTarget, true, 'a post menu launcher');
+          // A caption read as a deletion is no draft edit, even beside a file.
+          await open('<section><textarea aria-label="Üzenet">Szia</textarea><div class="attachment"><span>jelentes.pdf</span>'
+            + '<button id="t" type="button">Törlés</button></div><button type="button">Küldés</button></section>');
+          assert.notEqual((await probe('#t')).resolvedDraftControl, true, 'a deletion beside a draft file');
+          // A named button read as only changing the view is a non-submit in a
+          // dialog, and an ordinary control elsewhere.
+          await open('<div role="dialog"><p>Szűrők</p><button id="t" type="button" aria-label="Bezárás">×</button></div>');
+          assert.equal((await probe('#t')).resolvedNonSubmitTarget, true, 'a dialog view button');
+          await open('<div class="chips"><button id="t" type="button" aria-label="Szűrő eltávolítása">L ×</button></div>');
+          assert.equal((await probe('#t')).resolvedOrdinaryActivationTarget, true, 'a filter chip');
+        });
+
         await t.test('commit and publication captions keep their checks; a composer tool read as a commit is not a draft tool', async () => {
           await open('<section><textarea aria-label="Üzenet">Szia</textarea><button id="t" type="button">Küldés</button></section>');
           let result = await probe('#t');
@@ -79,7 +98,7 @@ for (const build of ['chrome', 'firefox']) {
           await open('<button id="t" type="button">Bezárás</button>');
           assert.equal((await probe('#t')).resolvedOrdinaryActivationTarget, true);
           await open('<button id="t" type="button" aria-label="Bezárás">×</button>');
-          assert.equal((await probe('#t')).resolvedNonSubmitTarget, true, 'a named button read as closing');
+          assert.equal((await probe('#t')).resolvedOrdinaryActivationTarget, true, 'a named button read as closing');
         });
 
         await t.test('the collect pass reports unread captions before changing the page, and an unread caption decides nothing', async () => {

@@ -207,6 +207,9 @@ export function fixtureControlEffectReading(text) {
   const has = words => new RegExp(`${WORD}(?:${words})${WEND}`, 'iu').test(value);
   const hasCjk = /删除|刪除|削除|삭제|送信|发送|發送|보내/u.test(value);
   if (/^(?:compose(?: new)? post|new post|new message|cancel|keep editing|close|back|open|show more|more|menu|settings)$/i.test(value)) return 'view';
+  // "More …", "Menu …" and "… actions" buttons open a menu, whatever they
+  // name.
+  if (/^(?:more|menu|options)\s/i.test(value) || /\s(?:actions|options|menu)$/i.test(value)) return 'view';
   if (has('remove|clear|kaldır|temizle') && has('filters?|filtre\\p{L}*|filtro\\p{L}*|фильтр\\p{L}*|facets?|sort(?:ing)?|search(?:es)?|quer(?:y|ies)|selection|formatting')
     && !has('delete|trash|erase|destroy|sil|supprimer|eliminar|borrar|löschen|удалить')) return 'view';
   if (has(DELETE_WORDS) || /删除|刪除|削除|삭제/u.test(value)) {

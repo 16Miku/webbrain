@@ -894,16 +894,18 @@ alone pre-reads the captions of the buttons, menu items and tabs its
 accessibility tree shows, so a click usually finds them read.
 
 Readings decide: a deletion (the record binding above, or no record for
-several items); a draft tool (a composer control not read as a commit, and a
-deletion or draft edit only when the removed item is visibly an attachment);
-an ordinary control (outside a form, not read as a publication, commit or
-deletion; for an X or Bluesky control with a non-publish test id or a popup
-launcher, a publication reading does not count); strong submit evidence for a
+several items); a draft tool (a composer control not read as a commit, a
+publication or a deletion, and a draft edit only when the removed item is
+visibly an attachment); an ordinary control (outside a form, not read as a
+publication, commit or deletion; for an X or Bluesky control with a
+non-publish test id a publication reading does not count, while a popup
+launcher read as publishing stays a commit); strong submit evidence for a
 `type=button` control in a form (a caption read as a commit, publication or
 next step); an unnamed X or Bluesky composer control read as a publication; a
-named button outside any form read as only changing the view (closing,
-cancelling, going back), which is not a submit; and Mastodon's own "…" menu
-and dangerous item. Form validation waits for a rejection after a caption read
+dialog's named button outside any form read as only changing the view
+(closing, cancelling, going back), which is not a submit; and Mastodon's own
+"…" menu and dangerous item. A saved workflow's deterministic replay asks the
+decision model alone for these readings, never the active model. Form validation waits for a rejection after a caption read
 as a commit, a publication or a next step; a workflow click submits its form by
 structure or such a caption; and a rapid second text click is a duplicate only
 for a caption read as a commit or publication, asked then if the first click
