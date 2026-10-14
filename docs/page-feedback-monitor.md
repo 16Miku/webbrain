@@ -242,6 +242,18 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   control is bound by its `datetime` value rather than its rendered text, so a
   relative timestamp ticking over ("2 min" to "3 min") is not a change of
   context, while a changed `datetime` still is.
+- Inside an unnamed region, or outside any entity, the nearest focusable item
+  the page names for assistive technology owns the controls inside it: an
+  element in the tab order (`tabindex` 0 or more), with no role or
+  `role="group"`, named by its own `aria-label` or a complete
+  `aria-labelledby`, that links somewhere (its permalink or author), holds no
+  field or editor, and stays within 256 elements and 64 controls. This is how
+  Mastodon marks a post shown on its own page and each reply around it. The
+  item's name, controls, images and attributes stay bound, so another post
+  taking its place or a change to its own controls invalidates the decision,
+  while changes in the replies around it do not. Forms, landmarks, toolbars,
+  menus, grids, other entities, unnamed or unfocusable wrappers and items that
+  link nowhere gain nothing from this rule.
 - Noninteractive `aria-hidden` icon labels inside an exact control remain
   privately bound without requiring model-visible dialog identity from an AX
   hidden node. The bounded predicate is rechecked for every hidden descendant;
