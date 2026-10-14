@@ -110,6 +110,12 @@ after the dispatch and before a write is recorded for the field it wrote. A
 requested value has to read back from exactly one field read as that detail; a
 label nobody has read holds no detail, so it cannot prove a value and is not
 counted as a second field for one.
+GitHub's resolve-review-threads job inventories the resolve control of each
+unresolved review thread. Which buttons resolve one is read from their labels by
+a model in any language (`review_thread_control`) before the read is recorded;
+a read whose button labels are not all read yet leaves the inventory
+incomplete, so the job's empty-inventory no-op cannot stand for a page whose
+resolve controls nobody read.
 Depth truncation is form-relevant (an omitted includable descendant). Empty
 or erroring third-party frames are omitted only when another frame already
 inventoried form controls; a lone failed cross-origin application frame stays

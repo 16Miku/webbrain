@@ -12881,6 +12881,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // edit of an item's details reads the labels of the field it wrote.
       await this._readWorkflowUploadLines(tabId, fnName, toolResult);
       await this._readWorkflowAuthoredFieldLabels(tabId, fnName, fnArgs, toolResult);
+      await this._readWorkflowReviewThreadControls(tabId, fnName, toolResult);
       const completionStateAfterTool = this._recordCompletionToolResult(
         tabId,
         fnName,
@@ -16927,15 +16928,44 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       incomplete: !compatible || fields.some(field => field.unbound) };
   }
 
-  // GitHub ships a localized UI, so an English-only label match would read a
-  // page full of unresolved threads as an empty inventory and let this job's
-  // empty-inventory no-op report success without resolving anything.
-  _workflowResolveThreadControlLabel(label) {
-    let text = String(label || '');
-    try { text = text.normalize('NFKC'); } catch {}
-    text = text.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (!text) return false;
-    return /^(?:resolve (?:conversation|thread)|resolver (?:la )?(?:conversaci[oó]n|conversa|conversação)|r[ée]soudre (?:la )?(?:conversation|discussion)|(?:unterhaltung|konversation|diskussion) aufl[öo]sen|risolvi (?:la )?conversazione|conversa(?:zione)? risolta|konuşmayı çöz|çözümle|解决对话|解決對話|解决此对话|会話を解決(?:する)?|スレッドを解決(?:する)?|대화 ?해결|스레드 ?해결|разрешить (?:обсуждение|беседу))$/u.test(text);
+  // GitHub ships a localized UI, so the resolve control of each unresolved
+  // review thread is known by a model's reading of its label, in any language
+  // (review_thread_control), read before the observation is recorded. A label
+  // nobody could read leaves the inventory incomplete instead of empty, so this
+  // job's empty-inventory no-op cannot report success over unresolved threads.
+  _workflowIsReviewThreadJob(siteWorkflow) {
+    return siteWorkflow?.adapterName === 'github' && siteWorkflow?.job?.id === 'resolve-review-threads';
+  }
+
+  // The named buttons of an accessibility-tree read, labelled as the
+  // inventory labels them.
+  _workflowReviewThreadButtonLabels(text) {
+    const labels = new Set();
+    for (const line of String(text || '').split(/\r?\n/)) {
+      if (!/^\s*button\b/i.test(line) || !/\[ref_[A-Za-z0-9_.:-]+\]/.test(line)) continue;
+      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+      if (label) labels.add(label);
+    }
+    return [...labels];
+  }
+
+  _workflowResolvesReviewThread(label) {
+    return this._pageTextReading('review_thread_control', label) === 'resolve';
+  }
+
+  async _readWorkflowReviewThreadControls(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || !this._workflowIsReviewThreadJob(guard.siteWorkflow)
+        || name !== 'get_accessibility_tree' || !this._isSuccessfulExecutionEvidence(result)) return;
+    const text = [result?.pageContent, result?.text].find(value => typeof value === 'string' && value.trim()) || '';
+    const labels = this._workflowReviewThreadButtonLabels(text);
+    if (!labels.length) return;
+    try {
+      await this._readPageTexts(tabId, 'review_thread_control', labels, {},
+        { maxChars: 160, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
   }
 
   // prepare-form and prepare-application exist to leave the form unsubmitted.
@@ -17052,8 +17082,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ).slice(0, 500);
     const items = [];
     const seen = new Set();
-    const reviewThreadInventory = siteWorkflow?.adapterName === 'github'
-      && siteWorkflow?.job?.id === 'resolve-review-threads';
+    const reviewThreadInventory = this._workflowIsReviewThreadJob(siteWorkflow);
     const reviewThreadReplyRefs = reviewThreadInventory
       ? this._workflowReviewThreadReplyRefs(text)
       : null;
@@ -17067,7 +17096,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         .replace(/\s+/g, ' ').trim().slice(0, 160);
       const reviewThreadReply = reviewThreadInventory && reviewThreadReplyRefs.has(refMatch[1]);
       if (reviewThreadInventory && !reviewThreadReply) {
-        if (role !== 'button' || !this._workflowResolveThreadControlLabel(label)) continue;
+        if (role !== 'button' || !this._workflowResolvesReviewThread(label)) continue;
       }
       // Native file inputs are emitted as role=button. Include only those
       // buttons whose app-owned AX line preserves type="file"; ordinary
@@ -17150,9 +17179,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (pendingDistance > 12) pendingRef = '';
       if (!roleMatch || !refMatch) continue;
       const role = roleMatch[1].toLowerCase();
-      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || '').replace(/\s+/g, ' ').trim();
+      const label = (/^\s*[a-z]+\s+"([^"]+)"/i.exec(line)?.[1] || '').replace(/\s+/g, ' ').trim().slice(0, 160);
       if (role === 'button') {
-        if (pendingRef && this._workflowResolveThreadControlLabel(label)) refs.add(pendingRef);
+        if (pendingRef && this._workflowResolvesReviewThread(label)) refs.add(pendingRef);
         pendingRef = '';
         continue;
       }
@@ -18004,7 +18033,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     const priorDocument = documents[documentKey];
-    const rootReadComplete = inventoryRead.rootReadComplete;
+    // A review-thread read whose buttons are not all read yet cannot close
+    // the inventory: an unread resolve control would leave it empty.
+    const rootReadComplete = inventoryRead.rootReadComplete
+      && !(this._workflowIsReviewThreadJob(siteWorkflow)
+        && this._workflowReviewThreadButtonLabels([result?.pageContent, result?.text]
+          .find(value => typeof value === 'string' && value.trim()) || '')
+          .some(label => !this._pageTextReading('review_thread_control', label)));
     // A fresh root read restarts this document's coverage, so while its
     // continuation pages are still arriving the earlier completion no longer
     // describes the item set being rebuilt.

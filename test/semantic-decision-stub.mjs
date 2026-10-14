@@ -35,6 +35,7 @@ const PAGE_TEXT_ORACLES = {
   progress_action: item => fixtureProgressActionReading(item?.text, item?.action),
   metadata_field: item => fixtureWorkflowFieldReading('metadata_field', item?.text),
   publication_field: item => fixtureWorkflowFieldReading('publication_field', item?.text),
+  review_thread_control: item => fixtureReviewThreadControlReading(item?.text),
 };
 
 const words = value => String(value || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
@@ -362,6 +363,18 @@ export function fixtureWorkflowFieldReading(kind, label) {
   return field || 'other';
 }
 
+// How a model reads whether a code review page's button resolves a review
+// conversation (review_thread_control), for the fixtures' own labels. The
+// product never matches these words.
+export function fixtureReviewThreadControlReading(text) {
+  let value = String(text || '');
+  try { value = value.normalize('NFKC'); } catch {}
+  value = value.toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  return /^(?:resolve (?:conversation|thread)|resolver (?:la )?(?:conversaci[oó]n|conversa|conversação)|r[ée]soudre (?:la )?(?:conversation|discussion)|(?:unterhaltung|konversation|diskussion) aufl[öo]sen|risolvi (?:la )?conversazione|konuşmayı çöz|rozwiąż (?:konwersację|wątek)|解决对话|解決對話|解决此对话|会話を解決(?:する)?|スレッドを解決(?:する)?|대화 ?해결|스레드 ?해결|разрешить (?:обсуждение|беседу))$/u
+    .test(value) ? 'resolve' : 'other';
+}
+
 // How a model reads a fediverse page's follow controls and fields
 // (follow_state), whether a request names a domain as the user's own server
 // (home_instance), and whether a clicked label does a ledger action
@@ -503,7 +516,7 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
     if (['message_control', 'message_field', 'message_author', 'message_status', 'form_field_match', 'follow_state',
-      'progress_action', 'metadata_field', 'publication_field'].includes(question.kind)) {
+      'progress_action', 'metadata_field', 'publication_field', 'review_thread_control'].includes(question.kind)) {
       return fixturePageTextReading(question.kind, item?.text, item);
     }
     if (question.kind === 'home_instance') return fixtureHomeInstanceReading(question.request, item?.text);
@@ -541,6 +554,7 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'home_instance') return fixtureHomeInstanceReading(context?.request, text);
   if (kind === 'progress_action') return fixtureProgressActionReading(text, context?.action);
   if (kind === 'metadata_field' || kind === 'publication_field') return fixtureWorkflowFieldReading(kind, text);
+  if (kind === 'review_thread_control') return fixtureReviewThreadControlReading(text);
   return null;
 }
 
@@ -551,5 +565,5 @@ export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
   return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control', 'message_field',
     'message_author', 'message_status', 'form_field_match', 'follow_state', 'home_instance', 'progress_action',
-    'metadata_field', 'publication_field'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
+    'metadata_field', 'publication_field', 'review_thread_control'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }

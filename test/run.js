@@ -95515,6 +95515,7 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
 test('GitHub review-thread workflow inventories only unresolved thread controls', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the buttons' labels as doing
     agent.useSiteAdapters = true;
     const tabId = 8937 + index;
     const pullUrl = 'https://github.com/esokullu/webbrain/pull/320';
@@ -95730,6 +95731,69 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
   }
 });
 
+
+test('review-thread resolve controls are read by a model in any language before the read is recorded', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const pullUrl = 'https://github.com/esokullu/webbrain/pull/321';
+    const start = (agent, tabId) => {
+      agent.useSiteAdapters = true;
+      const selected = agent._resolvePlannerSiteWorkflow(pullUrl, { request_kind: 'execute', site_job: 'resolve-review-threads' });
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: 'Rozwiąż wszystkie otwarte wątki.' }]);
+      const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: selected,
+      });
+      agent._lastAxScopes.set(tabId, { documentToken: `polish-pr-${tabId}`, pageUrl: pullUrl });
+      return guard;
+    };
+    const polishTree = {
+      success: true,
+      pageUrl: pullUrl,
+      pageContent: [
+        'textbox "Odpowiedz" [ref_reply_1] value=""',
+        'button "Rozwiąż wątek" [ref_resolve_1]',
+        'button "Dodaj komentarz" [ref_add_comment]',
+        'textbox "Odpowiedz" [ref_reply_2] value=""',
+        'button "Rozwiąż wątek" [ref_resolve_2]',
+      ].join('\n'),
+      treeRevision: 'polish-review-threads',
+    };
+
+    // The agent loop reads the read's button labels first (here a model
+    // stand-in answers), then records the read: a Polish GitHub's resolve
+    // controls are the job's rows, and the comment button is not one.
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent);
+    const tabId = 8975 + index;
+    start(agent, tabId);
+    await agent._readWorkflowReviewThreadControls?.(tabId, 'get_accessibility_tree', polishTree);
+    assert.deepEqual(asked.filter(item => item.kind === 'review_thread_control').map(item => item.text).sort(),
+      ['Dodaj komentarz', 'Rozwiąż wątek'], `${AgentClass.name}: the read's button labels were not each asked about once`);
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, polishTree);
+    assert.equal(inventory?.complete, true);
+    assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_reply_1', 'ref_resolve_1', 'ref_reply_2', 'ref_resolve_2'],
+      `${AgentClass.name}: Polish resolve controls were not the review-thread inventory`);
+
+    // A label no model could read leaves the read incomplete instead of an
+    // empty inventory, so the empty no-op cannot report success over it.
+    const unreadAgent = new AgentClass({});
+    stubPageTextReadings(unreadAgent, () => null);
+    const unreadTabId = 8977 + index;
+    const unreadGuard = start(unreadAgent, unreadTabId);
+    await unreadAgent._readWorkflowReviewThreadControls?.(unreadTabId, 'get_accessibility_tree', polishTree);
+    const unread = unreadAgent._rememberWorkflowInventoryObservation(unreadTabId, 'get_accessibility_tree', {}, polishTree);
+    assert.equal(unread?.itemCount, 0);
+    assert.equal(unread?.complete, false, `${AgentClass.name}: unread button labels closed an empty review-thread inventory`);
+    assert.equal(unreadAgent._workflowEmptyInventoryNoOp(unreadGuard), false,
+      `${AgentClass.name}: unread resolve controls became a successful no-op`);
+
+    // Read once, the same page closes the inventory with its rows.
+    stubPageTextReadings(unreadAgent);
+    await unreadAgent._readWorkflowReviewThreadControls?.(unreadTabId, 'get_accessibility_tree', polishTree);
+    const reread = unreadAgent._rememberWorkflowInventoryObservation(unreadTabId, 'get_accessibility_tree', {}, polishTree);
+    assert.equal(reread?.complete, true);
+    assert.equal(reread?.itemCount, 4);
+  }
+});
 test('accessibility trees surface native and ARIA metadata choice values', () => {
   for (const [label, rel] of [
     ['chrome', 'src/chrome/src/content/accessibility-tree.js'],
