@@ -115179,7 +115179,7 @@ test('all locales translate the run-progress replay-gap notice', async () => {
     const panel = fs.readFileSync(path.join(ROOT, panelRel), 'utf8');
     assert.match(
       panel,
-      /function addRunProgressReplayGapNote\(\) \{[\s\S]*?note\.textContent = t\('sp\.run_progress_replay_gap'\)/,
+      /function addRunProgressReplayGapNote\([\s\S]*?\) \{[\s\S]*?run-progress-replay-gap-note[\s\S]*?t\(options\?\.terminal \? 'sp\.run_progress_replay_gap_terminal' : 'sp\.run_progress_replay_gap'\)/,
       `${label}: replay-gap notice should render through the locale layer`,
     );
     for (const filename of fs.readdirSync(path.join(ROOT, localeDir)).filter((name) => name.endsWith('.js'))) {
@@ -115187,10 +115187,15 @@ test('all locales translate the run-progress replay-gap notice', async () => {
       const message = locale['sp.run_progress_replay_gap'];
       assert.equal(typeof message, 'string', `${label}/${filename}: missing translated run-progress replay-gap notice`);
       assert.ok(message.trim().length > 0, `${label}/${filename}: replay-gap notice must not be empty`);
+      const terminalMessage = locale['sp.run_progress_replay_gap_terminal'];
+      assert.equal(typeof terminalMessage, 'string', `${label}/${filename}: missing translated terminal run-progress replay-gap notice`);
+      assert.ok(terminalMessage.trim().length > 0, `${label}/${filename}: terminal replay-gap notice must not be empty`);
       // The whole point of the separate notice: replay loss is UI history loss,
       // so no locale may reuse its context-compaction copy for it.
       assert.notEqual(message, locale['sp.context_compacted'], `${label}/${filename}: replay loss needs copy distinct from context compaction`);
       assert.notEqual(message, locale['sp.context_compacted_manual'], `${label}/${filename}: replay loss needs copy distinct from manual context compaction`);
+      assert.notEqual(terminalMessage, locale['sp.context_compacted'], `${label}/${filename}: terminal replay loss needs copy distinct from context compaction`);
+      assert.notEqual(terminalMessage, locale['sp.context_compacted_manual'], `${label}/${filename}: terminal replay loss needs copy distinct from manual context compaction`);
     }
   }
 });
@@ -116225,8 +116230,9 @@ test('reconnect protocol is wired through both sidepanels and backgrounds', () =
     assert.match(panel, /sendPlanReviewDecisionWithReconnect\(/, `${label}: plan decisions should survive a lost response channel`);
     assert.match(panel, /showActivity\('Reconnecting…'\)/, `${label}: reconnect attempts should be visible`);
     assert.match(panel, /onState: state => applyActiveRunState\(tabId, state\)/, `${label}: reconnect probes should replay missed UI journal events`);
-    assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?const replayGapNoted = runAssistantEl\.dataset\.replayGapNoted === 'true'[\s\S]*?Number\(runAssistantEl\.dataset\.replayGapBeforeSeq \|\| 0\) > 0;[\s\S]*?unavailableBeforeSeq > lastRenderedSeq[\s\S]*?!replayGapNoted[\s\S]*?addRunProgressReplayGapNote\(\);[\s\S]*?dataset\.replayGapNoted = 'true'/, `${label}: replay-gap notices should render once per run without advancing the rendered-event cursor`);
-    assert.match(panel, /function addRunProgressReplayGapNote\(\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?t\('sp\.run_progress_replay_gap'\)/, `${label}: replay loss needs distinct non-context-compaction copy`);
+    assert.match(panel, /const unavailableBeforeSeq = runUiUnavailableBeforeSeq\(runUi\);[\s\S]*?const replayGapNoted = runAssistantEl\.dataset\.replayGapNoted === 'true'[\s\S]*?Number\(runAssistantEl\.dataset\.replayGapBeforeSeq \|\| 0\) > 0;[\s\S]*?unavailableBeforeSeq > lastRenderedSeq[\s\S]*?!replayGapNoted[\s\S]*?addRunProgressReplayGapNote\(\{ terminal: isFinishedRunUiStatus\(runUi\.status\) \}\);[\s\S]*?dataset\.replayGapNoted = 'true'/, `${label}: replay-gap notices should render once per run without advancing the rendered-event cursor`);
+    assert.match(panel, /function isFinishedRunUiStatus\(status\) \{\s*return isTerminalRunUiStatus\(status\) && String\(status \|\| ''\) !== 'clarification_required';\s*\}/, `${label}: finished-run copy must exclude clarification_required, which is paused awaiting input`);
+    assert.match(panel, /function addRunProgressReplayGapNote\([\s\S]*?\)[\s\S]*?run-progress-replay-gap-note[\s\S]*?t\(options\?\.terminal \? 'sp\.run_progress_replay_gap_terminal' : 'sp\.run_progress_replay_gap'\)/, `${label}: replay loss needs distinct non-context-compaction copy`);
     assert.doesNotMatch(panel, /addContextCompactedNote\(\{ message: 'Some hidden-tab progress was compacted\.' \}\)/, `${label}: replay loss must not masquerade as model-context compaction`);
     assert.match(panel, /void adoptRestoredRunState\(numericTabId, state\)/, `${label}: remounted sidepanels should adopt orphaned run monitors`);
     assert.match(panel, /probeFirst: true,[\s\S]*?requireDurableSubmittedTurn:/, `${label}: remount adoption should probe before any safe continuation`);

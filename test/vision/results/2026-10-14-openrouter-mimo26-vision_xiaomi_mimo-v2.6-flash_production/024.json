@@ -1,0 +1,222 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-10-13T22:58:04.592Z",
+  "id": "024",
+  "model": "xiaomi/mimo-v2.6-flash",
+  "endpoint": "https://openrouter.ai/api/v1/chat/completions",
+  "promptMode": "production",
+  "question": {
+    "schemaVersion": 1,
+    "id": "024",
+    "difficulty": {
+      "level": 2,
+      "slug": "basic",
+      "label": "Basic"
+    },
+    "category": "form-validation",
+    "title": "Shipping details",
+    "image": "images/024.png",
+    "question": "Which field is invalid, what value does it contain, and what exact error is shown? Focus on the “Shipping details” screen.",
+    "defaultPromptMode": "production"
+  },
+  "image": {
+    "path": "images/024.png",
+    "bytes": 123466,
+    "sha256": "b36fa493114875bc8650465cd9e25d272ea14258e3406cf21ed63b67b4fbc885"
+  },
+  "request": {
+    "systemPrompt": "You are the vision subsystem of a web-automation agent. A screenshot of the current browser viewport is attached. Describe what is on screen so the planning agent can decide its next action.\n\nFormat — keep it terse, structured, no flowery prose:\n\n1) Page purpose: one line (e.g. \"GitHub repo issue list\", \"Gmail compose\", \"Stripe checkout form\").\n2) Visible text: list the EXACT strings on buttons, links, headings, tabs, and menu items. Quote them verbatim. Do not paraphrase.\n3) Inputs: list each visible form field with its label, placeholder, current value, and whether it is focused/disabled.\n4) State signals: loading spinners, toasts, modals, error banners, success messages, CAPTCHAs, cookie/consent banners, overlays.\n5) Blockers: anything that would prevent the next likely action (overlay, disabled submit, missing data, auth prompt).\n6) Unknowns: if you cannot read something clearly, say so. Do not guess numbers, names, or identifiers.\n\nRules: no prose intro, no conclusion, no \"this screenshot shows...\", no layout description unless it matters (e.g. \"left nav is collapsed\"). If the page is blank or still loading, say that in one line and stop.",
+    "userText": "Describe this screenshot of the current browser viewport for a web-automation agent. Follow the format in the system prompt.",
+    "foldSystem": false,
+    "temperature": 0,
+    "maxTokens": 800,
+    "chatTemplateKwargs": {
+      "enable_thinking": false,
+      "think": false,
+      "thinking": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content": "1) Page purpose: WebScene shipping details form (checkout step).\n\n2) Visible text:\n- Nav: \"WebScene\", \"Home\", \"Workspace\", \"Activity\"\n- Heading: \"Shipping details\"\n- Subtext: \"Complete the required details.\"\n- Labels: \"Postal code\", \"Notes\"\n- Error message: \"Enter a valid postal code\"\n- Placeholder: \"Optional\"\n- Button: \"Continue\"\n\n3) Inputs:\n- \"Postal code\" — value: \"10A2\", focused (red error border), not disabled\n- \"Notes\" — placeholder \"Optional\", value empty, not focused, not disabled\n\n4) State signals: Inline validation error under Postal code (red border + \"⚠ Enter a valid postal code\"). No toasts, modals, spinners, CAPTCHAs, or cookie banners.\n\n5) Blockers: Invalid postal code value (\"10A2\") will likely block \"Continue\" submission until corrected.\n\n6) Unknowns: Whether \"Continue\" is currently disabled is not visually confirmed (button appears solid/enabled but validation error is present).",
+    "reasoningChars": 0,
+    "usage": {
+      "prompt_tokens": 1186,
+      "completion_tokens": 226,
+      "total_tokens": 1412,
+      "cost": 0.00021746,
+      "is_byok": false,
+      "prompt_tokens_details": {
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "audio_tokens": 0,
+        "video_tokens": 0
+      },
+      "cost_details": {
+        "upstream_inference_cost": 0.00021746,
+        "upstream_inference_prompt_cost": 0.00015418,
+        "upstream_inference_completions_cost": 0.00006328
+      },
+      "completion_tokens_details": {
+        "reasoning_tokens": 0,
+        "image_tokens": 0,
+        "audio_tokens": 0
+      }
+    },
+    "timings": null,
+    "provider": "Makora",
+    "finishReason": "stop",
+    "raw": "data: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"1\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\") Page purpose: Web\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Scene shipping\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" details form (checkout\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" step\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\").\\n\\n2) Visible text:\\n-\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Nav: \\\"WebScene\\\",\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Home\\\", \\\"Workspace\\\", \\\"Activity\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"\\n- Heading: \\\"Shipping details\\\"\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"- Subtext: \\\"Complete the required\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" details.\\\"\\n- Labels: \\\"Postal code\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\", \\\"Notes\\\"\\n- Error message\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\": \\\"Enter\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" a valid postal code\\\"\\n- Placeholder:\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"Optional\\\"\\n- Button: \\\"Continue\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\\"\\n\\n3) Inputs:\\n- \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Postal code\\\" — value\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\":\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"10A2\\\", focused\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" (red error\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" border), not disabled\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n- \\\"Notes\\\" — placeholder \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Optional\\\", value empty, not focused\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\", not\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" disabled\\n\\n4) State signals:\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Inline\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" validation error under\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Postal code (\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"red border + \\\"⚠\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Enter a valid postal code\\\").\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" No toasts, mod\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"als, spinners\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\", CAP\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"TCH\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"As, or cookie\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" banners.\\n\\n\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"5) Blockers:\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Invalid postal code value\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" (\\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"10A2\\\") will likely\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" block \\\"Continue\\\" submission\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" until corrected.\\n\\n6) Unknowns:\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Whether\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" \\\"\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Continue\\\" is currently\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" disabled is\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" not visually\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" confirmed\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" (button\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" appears solid\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"/en\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"abled but\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" validation\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" error\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" is\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" present).\",\"role\":\"assistant\"},\"finish_reason\":null,\"native_finish_reason\":null}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"gen-1791932284-TRkDjF1U1PBYUtPE8lP6\",\"object\":\"chat.completion.chunk\",\"created\":1791932284,\"model\":\"xiaomi/mimo-v2.6-flash\",\"provider\":\"Makora\",\"service_tier\":null,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\",\"role\":\"assistant\"},\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1186,\"completion_tokens\":226,\"total_tokens\":1412,\"cost\":0.00021746,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.00021746,\"upstream_inference_prompt_cost\":0.00015418,\"upstream_inference_completions_cost\":0.00006328},\"completion_tokens_details\":{\"reasoning_tokens\":0,\"image_tokens\":0,\"audio_tokens\":0}}}\n\ndata: [DONE]\n\n"
+  },
+  "latencyMs": {
+    "headers": 436,
+    "total": 1887
+  },
+  "score": {
+    "success": false,
+    "ratio": 0.8,
+    "earned": 8,
+    "possible": 10,
+    "threshold": 0.72,
+    "sectionCount": 6,
+    "criticalFailures": [
+      "input"
+    ],
+    "dimensions": {
+      "page_purpose": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      },
+      "visible_text": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "inputs": {
+        "earned": 0,
+        "possible": 2,
+        "ratio": 0
+      },
+      "state_signals": {
+        "earned": 2,
+        "possible": 2,
+        "ratio": 1
+      },
+      "blockers": {
+        "earned": 1,
+        "possible": 1,
+        "ratio": 1
+      }
+    },
+    "checks": [
+      {
+        "id": "purpose",
+        "dimension": "page_purpose",
+        "section": 1,
+        "kind": "any",
+        "values": [
+          "form",
+          "profile",
+          "shipping",
+          "invite",
+          "dataset",
+          "tax"
+        ],
+        "weight": 1,
+        "critical": false,
+        "passed": true,
+        "matched": [
+          "form",
+          "shipping"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "heading",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Shipping details",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Shipping details"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "button",
+        "dimension": "visible_text",
+        "section": 2,
+        "kind": "literal",
+        "value": "Continue",
+        "weight": 1,
+        "critical": false,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Continue"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "input",
+        "dimension": "inputs",
+        "section": 3,
+        "kind": "all",
+        "values": [
+          "Postal code",
+          "10A2",
+          "5 digits"
+        ],
+        "weight": 2,
+        "critical": true,
+        "passed": false,
+        "matched": [
+          "Postal code",
+          "10A2"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "error",
+        "dimension": "state_signals",
+        "section": 4,
+        "kind": "literal",
+        "value": "Enter a valid postal code",
+        "weight": 2,
+        "critical": true,
+        "caseSensitive": true,
+        "passed": true,
+        "matched": [
+          "Enter a valid postal code"
+        ],
+        "scopeFound": true
+      },
+      {
+        "id": "blocker",
+        "dimension": "blockers",
+        "section": 5,
+        "kind": "any",
+        "values": [
+          "invalid",
+          "required",
+          "incomplete",
+          "missing",
+          "format"
+        ],
+        "weight": 1,
+        "critical": true,
+        "passed": true,
+        "matched": [
+          "invalid"
+        ],
+        "scopeFound": true
+      }
+    ]
+  },
+  "error": null
+}

@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-14",
+  "stage": "preflight",
+  "startedAt": "2026-10-13T22:56:57.546Z",
+  "finishedAt": "2026-10-13T22:57:29.595Z",
+  "authentication": "validated before inference; credentials not saved",
+  "concurrency": {
+    "plannerPerModel": 3,
+    "visionPerModel": 2
+  },
+  "reasoningOverride": null,
+  "retries": 0,
+  "runs": [
+    {
+      "model": "tencent/hy4-preview",
+      "track": "planner",
+      "dir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182-preflight_chrome_tencent_hy4-preview",
+      "exitCode": 0,
+      "wallTimeMs": 8896
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "track": "planner",
+      "dir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182-preflight_chrome_xiaomi_mimo-v2.6-pro",
+      "exitCode": 0,
+      "wallTimeMs": 32040
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "track": "vision",
+      "dir": "test/vision/results/2026-10-14-openrouter-mimo26-vision-preflight_xiaomi_mimo-v2.6-pro_production",
+      "exitCode": 0,
+      "wallTimeMs": 5023
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "track": "planner",
+      "dir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182-preflight_chrome_xiaomi_mimo-v2.6-flash",
+      "exitCode": 0,
+      "wallTimeMs": 5044
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "track": "vision",
+      "dir": "test/vision/results/2026-10-14-openrouter-mimo26-vision-preflight_xiaomi_mimo-v2.6-flash_production",
+      "exitCode": 0,
+      "wallTimeMs": 6096
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "track": "planner",
+      "dir": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182-preflight_chrome_liquid_lfm-2.5-24b-a2b",
+      "exitCode": 0,
+      "wallTimeMs": 3336
+    }
+  ]
+}

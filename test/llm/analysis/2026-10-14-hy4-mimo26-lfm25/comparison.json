@@ -1,0 +1,6737 @@
+{
+  "date": "2026-10-14",
+  "status": "complete",
+  "sourceCommit": "7182c21f58a94689c2ac3b547a279b9c5e699283",
+  "replaySha256": "3d27c43da02747496dbd050a366ef6188f14eaf99a5b41de35e5c55581669062",
+  "casesPerPlannerModel": 100,
+  "actTools": 48,
+  "consensusModels": 17,
+  "comparisonsPerModel": 1600,
+  "historicalPlannerModels": 13,
+  "newPlannerModels": 4,
+  "newVisionModels": 2,
+  "historicalVisionModels": 3,
+  "method": "Leave-one-out consensus across all 17 models, comparing the first proposed tool call per response. Recursive object-key sorting only; preserve argument values, defaults, and extra arguments. Additional tool calls are counted separately and not executed or scored. No-tool/no-tool agrees; rejected API requests are excluded from quality. Consensus is agreement, not ground truth.",
+  "caveat": "Only the four October 14 planner models and two MiMo vision runs are new. Historical requests were omitted and are reconstructed from pinned source; full historical body equality is unprovable. Serving dates, provider routes, caches and bills differ. No browser tools are executed.",
+  "results": [
+    {
+      "rank": 1,
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "label": "DeepSeek V4 Flash 0731",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-deepseek-v4-flash-full_chrome_deepseek_deepseek-v4-flash-0731",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 90,
+      "nativeToolCalls": 90,
+      "schemaValidToolCalls": 90,
+      "idealToolMatches": 39,
+      "exactIdealMatches": 18,
+      "promptTokens": 2365949,
+      "completionTokens": 13566,
+      "cachedPromptTokens": 2291072,
+      "reasoningTokens": 7494,
+      "costRecords": 100,
+      "usageCost": 0.050420106,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 44,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 10,
+      "noToolCaseIds": [
+        "065",
+        "069",
+        "071",
+        "073",
+        "080",
+        "082",
+        "085",
+        "086",
+        "088",
+        "094"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 23,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 44,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 2,
+        "download_social_media": 2,
+        "scroll": 1,
+        "(no-tool)": 10,
+        "get_selection": 1,
+        "clarify": 1,
+        "progress_read": 1,
+        "fetch_url": 1,
+        "done": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 1579.5,
+      "p95LatencyMs": 5241,
+      "cachedPromptSharePct": 96.83522341352244,
+      "exactActionMatches": 814,
+      "toolNameMatches": 1274,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 50.9,
+      "toolNameConsensusPct": 79.6
+    },
+    {
+      "rank": 2,
+      "model": "tencent/hy3",
+      "label": "Tencent HY3",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-tencent-hy3-full_chrome_tencent_hy3",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 90,
+      "nativeToolCalls": 90,
+      "schemaValidToolCalls": 90,
+      "idealToolMatches": 41,
+      "exactIdealMatches": 18,
+      "promptTokens": 2368947,
+      "completionTokens": 18328,
+      "cachedPromptTokens": 772096,
+      "reasoningTokens": 13365,
+      "costRecords": 100,
+      "usageCost": 0.24594068400000005,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 42,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 10,
+      "noToolCaseIds": [
+        "065",
+        "068",
+        "069",
+        "074",
+        "080",
+        "082",
+        "084",
+        "085",
+        "086",
+        "088"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 23,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 42,
+        "read_page": 4,
+        "extract_data": 2,
+        "click": 1,
+        "download_files": 2,
+        "download_social_media": 1,
+        "scroll": 1,
+        "(no-tool)": 10,
+        "get_selection": 1,
+        "clarify": 6,
+        "scratchpad_write": 1,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 5118,
+      "p95LatencyMs": 8982,
+      "cachedPromptSharePct": 32.592371209655596,
+      "exactActionMatches": 758,
+      "toolNameMatches": 1245,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 47.4,
+      "toolNameConsensusPct": 77.8
+    },
+    {
+      "rank": 3,
+      "model": "xiaomi/mimo-v2.6-pro",
+      "label": "MiMo-V2.6-Pro",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-pro",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 95,
+      "nativeToolCalls": 95,
+      "schemaValidToolCalls": 95,
+      "idealToolMatches": 44,
+      "exactIdealMatches": 16,
+      "promptTokens": 2334035,
+      "completionTokens": 13593,
+      "cachedPromptTokens": 2089520,
+      "reasoningTokens": 9517,
+      "costRecords": 100,
+      "usageCost": 0.124612667,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 43,
+      "attempts": 100,
+      "multiToolCallResponses": 3,
+      "noToolResponses": 5,
+      "noToolCaseIds": [
+        "065",
+        "082",
+        "084",
+        "085",
+        "086"
+      ],
+      "multiToolCallCaseIds": [
+        "039",
+        "075",
+        "089"
+      ],
+      "providers": {
+        "DeepInfra": 94,
+        "Novita": 6
+      },
+      "byTool": {
+        "navigate": 24,
+        "list_downloads": 2,
+        "new_tab": 2,
+        "get_accessibility_tree": 43,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "(no-tool)": 5,
+        "get_selection": 1,
+        "clarify": 6,
+        "go_back": 1,
+        "scratchpad_write": 1,
+        "done": 2,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 6123,
+      "p95LatencyMs": 46683,
+      "cachedPromptSharePct": 89.52393601638364,
+      "exactActionMatches": 697,
+      "toolNameMatches": 1257,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 43.6,
+      "toolNameConsensusPct": 78.6
+    },
+    {
+      "rank": 4,
+      "model": "anthropic/claude-sonnet-5",
+      "label": "anthropic/claude-sonnet-5",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-claude-sonnet5-full_chrome_anthropic_claude-sonnet-5",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 98,
+      "nativeToolCalls": 98,
+      "schemaValidToolCalls": 98,
+      "idealToolMatches": 47,
+      "exactIdealMatches": 17,
+      "promptTokens": 3537629,
+      "completionTokens": 14671,
+      "cachedPromptTokens": 0,
+      "reasoningTokens": 3325,
+      "costRecords": 100,
+      "usageCost": 7.221967999999999,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 42,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 2,
+      "noToolCaseIds": [
+        "065",
+        "086"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 25,
+        "list_downloads": 2,
+        "get_accessibility_tree": 42,
+        "read_page": 3,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "fetch_url": 2,
+        "scroll": 1,
+        "(no-tool)": 2,
+        "get_selection": 1,
+        "clarify": 8,
+        "progress_read": 1,
+        "done": 6,
+        "new_tab": 2
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 4062,
+      "p95LatencyMs": 8278,
+      "cachedPromptSharePct": 0,
+      "exactActionMatches": 696,
+      "toolNameMatches": 1196,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 43.5,
+      "toolNameConsensusPct": 74.8
+    },
+    {
+      "rank": 5,
+      "model": "google/gemini-3.6-flash",
+      "label": "google/gemini-3.6-flash",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-gemini36-flash-full-7182_chrome_google_gemini-3.6-flash",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 100,
+      "nativeToolCalls": 100,
+      "schemaValidToolCalls": 100,
+      "idealToolMatches": 36,
+      "exactIdealMatches": 14,
+      "promptTokens": 2125079,
+      "completionTokens": 23087,
+      "cachedPromptTokens": 1594265,
+      "reasoningTokens": 20869,
+      "costRecords": 100,
+      "usageCost": 1.20851325,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 59,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 0,
+      "noToolCaseIds": [],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 18,
+        "list_downloads": 2,
+        "new_tab": 2,
+        "get_accessibility_tree": 59,
+        "read_page": 3,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "done": 6,
+        "get_selection": 1,
+        "go_back": 1,
+        "progress_read": 1,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 1980,
+      "p95LatencyMs": 3706,
+      "cachedPromptSharePct": 75.02144626152722,
+      "exactActionMatches": 693,
+      "toolNameMatches": 1215,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 43.3,
+      "toolNameConsensusPct": 75.9
+    },
+    {
+      "rank": 6,
+      "model": "z-ai/glm-5.2",
+      "label": "GLM-5.2",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-glm52-full_chrome_z-ai_glm-5.2",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 86,
+      "idealToolMatches": 39,
+      "exactIdealMatches": 20,
+      "promptTokens": 2275921,
+      "completionTokens": 7496,
+      "cachedPromptTokens": 2070582,
+      "reasoningTokens": 4202,
+      "costRecords": 100,
+      "usageCost": 0.5452242279999999,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 40,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "012",
+        "065",
+        "070",
+        "072",
+        "073",
+        "080",
+        "085",
+        "086",
+        "088",
+        "090",
+        "094"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "(no-tool)": 11,
+        "get_accessibility_tree": 40,
+        "fetch_url": 3,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "get_selection": 1,
+        "clarify": 3,
+        "go_back": 1,
+        "progress_read": 1,
+        "done": 2
+      },
+      "schemaErrors": [
+        {
+          "id": "032",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "045",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "046",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1732.5,
+      "p95LatencyMs": 4436,
+      "cachedPromptSharePct": 90.97776240915216,
+      "exactActionMatches": 685,
+      "toolNameMatches": 1214,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 42.8,
+      "toolNameConsensusPct": 75.9
+    },
+    {
+      "rank": 7,
+      "model": "xiaomi/mimo-v2.6-flash",
+      "label": "MiMo-V2.6-Flash",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-flash",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 97,
+      "nativeToolCalls": 97,
+      "schemaValidToolCalls": 96,
+      "idealToolMatches": 37,
+      "exactIdealMatches": 17,
+      "promptTokens": 2333851,
+      "completionTokens": 3159,
+      "cachedPromptTokens": 2291456,
+      "reasoningTokens": 0,
+      "costRecords": 100,
+      "usageCost": 0.010978782000000001,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 49,
+      "attempts": 100,
+      "multiToolCallResponses": 11,
+      "noToolResponses": 3,
+      "noToolCaseIds": [
+        "065",
+        "082",
+        "096"
+      ],
+      "multiToolCallCaseIds": [
+        "031",
+        "039",
+        "057",
+        "058",
+        "075",
+        "089",
+        "090",
+        "094",
+        "095",
+        "098",
+        "100"
+      ],
+      "providers": {
+        "Makora": 100
+      },
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 49,
+        "read_page": 3,
+        "extract_data": 3,
+        "verify_form": 1,
+        "download_social_media": 3,
+        "fetch_url": 1,
+        "scroll": 1,
+        "(no-tool)": 3,
+        "get_selection": 1,
+        "clarify": 3,
+        "go_back": 1,
+        "progress_read": 1,
+        "research_url": 1,
+        "done": 2,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "058",
+          "call": {
+            "name": "extract_data",
+            "args": {
+              "headings": ""
+            }
+          },
+          "errors": [
+            "$.type: missing"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1195,
+      "p95LatencyMs": 4259,
+      "cachedPromptSharePct": 98.1834744377426,
+      "exactActionMatches": 671,
+      "toolNameMatches": 1168,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 41.9,
+      "toolNameConsensusPct": 73
+    },
+    {
+      "rank": 8,
+      "model": "moonshotai/kimi-k3",
+      "label": "moonshotai/kimi-k3",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-kimi-k3-full_chrome_moonshotai_kimi-k3",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 97,
+      "nativeToolCalls": 97,
+      "schemaValidToolCalls": 97,
+      "idealToolMatches": 44,
+      "exactIdealMatches": 18,
+      "promptTokens": 2184113,
+      "completionTokens": 25148,
+      "cachedPromptTokens": 1987734,
+      "reasoningTokens": 17188,
+      "costRecords": 100,
+      "usageCost": 1.5626771999999995,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 45,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 3,
+      "noToolCaseIds": [
+        "065",
+        "084",
+        "086"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 24,
+        "list_downloads": 2,
+        "new_tab": 2,
+        "get_accessibility_tree": 45,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "(no-tool)": 3,
+        "get_selection": 1,
+        "clarify": 4,
+        "go_back": 1,
+        "progress_read": 1,
+        "done": 4,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 7598,
+      "p95LatencyMs": 26154,
+      "cachedPromptSharePct": 91.00875275226144,
+      "exactActionMatches": 669,
+      "toolNameMatches": 1264,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 41.8,
+      "toolNameConsensusPct": 79
+    },
+    {
+      "rank": 9,
+      "model": "minimax/minimax-m3",
+      "label": "MiniMax M3",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-minimax-m3-full_chrome_minimax_minimax-m3",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 86,
+      "idealToolMatches": 33,
+      "exactIdealMatches": 17,
+      "promptTokens": 2293065,
+      "completionTokens": 13130,
+      "cachedPromptTokens": 832640,
+      "reasoningTokens": 8954,
+      "costRecords": 100,
+      "usageCost": 0.5038419,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 45,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "069",
+        "071",
+        "073",
+        "080",
+        "082",
+        "083",
+        "084",
+        "085",
+        "086",
+        "088",
+        "098"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 22,
+        "list_downloads": 2,
+        "new_tab": 2,
+        "get_accessibility_tree": 45,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 2,
+        "download_social_media": 1,
+        "scroll": 1,
+        "done": 1,
+        "get_selection": 1,
+        "(no-tool)": 11,
+        "scratchpad_write": 1,
+        "clarify": 2,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "030",
+          "call": {
+            "name": "extract_data",
+            "args": {
+              "type": "links"
+            }
+          },
+          "errors": [
+            "$.type: invalid enum"
+          ]
+        },
+        {
+          "id": "077",
+          "call": {
+            "name": "clarify",
+            "args": {
+              "options": [
+                {
+                  "value": "Inbox only (what's currently shown)"
+                },
+                {
+                  "value": "All Mail (every email across all folders, including Sent)"
+                },
+                {
+                  "value": "Inbox + Spam + Trash"
+                }
+              ],
+              "question": "Which emails should I delete?",
+              "reason": "\"All my emails\" is ambiguous — the Inbox only has received/unread mail, while All Mail contains everything including Sent. Deleting from All Mail is the most thorough option but also the most destructive."
+            }
+          },
+          "errors": [
+            "$.options[0]: expected string",
+            "$.options[1]: expected string",
+            "$.options[2]: expected string"
+          ]
+        },
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 2864,
+      "p95LatencyMs": 7341,
+      "cachedPromptSharePct": 36.31122536866596,
+      "exactActionMatches": 650,
+      "toolNameMatches": 1193,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 40.6,
+      "toolNameConsensusPct": 74.6
+    },
+    {
+      "rank": 10,
+      "model": "poolside/laguna-xs-2.1",
+      "label": "Poolside Laguna XS 2.1",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-laguna-xs-full-7182_chrome_poolside_laguna-xs-2.1",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 88,
+      "idealToolMatches": 31,
+      "exactIdealMatches": 5,
+      "promptTokens": 2333108,
+      "completionTokens": 16306,
+      "cachedPromptTokens": 2301344,
+      "reasoningTokens": 7963,
+      "costRecords": 100,
+      "usageCost": 0.07290288000000006,
+      "lengthLimited": 1,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 45,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "065",
+        "069",
+        "071",
+        "073",
+        "075",
+        "080",
+        "082",
+        "084",
+        "085",
+        "086",
+        "088"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 19,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "read_page": 9,
+        "get_accessibility_tree": 45,
+        "research_url": 2,
+        "click": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "(no-tool)": 11,
+        "get_selection": 1,
+        "go_back": 1,
+        "fetch_url": 1,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1146,
+      "p95LatencyMs": 2147,
+      "cachedPromptSharePct": 98.63855423752351,
+      "exactActionMatches": 633,
+      "toolNameMatches": 1171,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 39.6,
+      "toolNameConsensusPct": 73.2
+    },
+    {
+      "rank": 11,
+      "model": "qwen/qwen3.6-27b",
+      "label": "qwen/qwen3.6-27b",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-qwen36-27b-full_chrome_qwen_qwen3.6-27b",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 92,
+      "nativeToolCalls": 92,
+      "schemaValidToolCalls": 83,
+      "idealToolMatches": 36,
+      "exactIdealMatches": 17,
+      "promptTokens": 2240915,
+      "completionTokens": 8890,
+      "cachedPromptTokens": 1958464,
+      "reasoningTokens": 5186,
+      "costRecords": 100,
+      "usageCost": 0.6698491209999997,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 44,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 8,
+      "noToolCaseIds": [
+        "065",
+        "069",
+        "073",
+        "080",
+        "084",
+        "085",
+        "086",
+        "088"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 44,
+        "read_page": 7,
+        "extract_data": 2,
+        "click_ax": 1,
+        "download_files": 2,
+        "scroll": 1,
+        "(no-tool)": 8,
+        "get_selection": 1,
+        "get_interactive_elements": 1,
+        "clarify": 2,
+        "go_back": 1,
+        "scratchpad_write": 1,
+        "done": 1,
+        "research_url": 1,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "033",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "\"visible\"",
+              "maxDepth": 10
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "043",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "\"visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "045",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "maxDepth": 10,
+              "filter": "\"visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "048",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "maxDepth": 8,
+              "filter": "\"visible"
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "049",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "\"visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "077",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "maxDepth": 6,
+              "filter": "\"visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "079",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "\"visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        },
+        {
+          "id": "094",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "maxDepth": 8,
+              "filter": "\"visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 2268.5,
+      "p95LatencyMs": 19355,
+      "cachedPromptSharePct": 87.39572897677958,
+      "exactActionMatches": 614,
+      "toolNameMatches": 1184,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 38.4,
+      "toolNameConsensusPct": 74
+    },
+    {
+      "rank": 12,
+      "model": "x-ai/grok-4.5",
+      "label": "x-ai/grok-4.5",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-grok45-full-7182_chrome_x-ai_grok-4.5",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 94,
+      "nativeToolCalls": 94,
+      "schemaValidToolCalls": 94,
+      "idealToolMatches": 36,
+      "exactIdealMatches": 17,
+      "promptTokens": 2393185,
+      "completionTokens": 7716,
+      "cachedPromptTokens": 1504896,
+      "reasoningTokens": 4423,
+      "costRecords": 100,
+      "usageCost": 2.2743427999999994,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 49,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 6,
+      "noToolCaseIds": [
+        "065",
+        "080",
+        "082",
+        "085",
+        "086",
+        "088"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 49,
+        "read_page": 5,
+        "extract_data": 2,
+        "verify_form": 1,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "(no-tool)": 6,
+        "get_selection": 1,
+        "clarify": 3,
+        "go_back": 1,
+        "progress_read": 1,
+        "done": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 2615.5,
+      "p95LatencyMs": 4848,
+      "cachedPromptSharePct": 62.882560270100306,
+      "exactActionMatches": 572,
+      "toolNameMatches": 1271,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 35.8,
+      "toolNameConsensusPct": 79.4
+    },
+    {
+      "rank": 13,
+      "model": "thinkingmachines/inkling-small",
+      "label": "thinkingmachines/inkling-small",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-inkling-small-full_chrome_thinkingmachines_inkling-small",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 84,
+      "nativeToolCalls": 84,
+      "schemaValidToolCalls": 84,
+      "idealToolMatches": 32,
+      "exactIdealMatches": 15,
+      "promptTokens": 2162719,
+      "completionTokens": 10091,
+      "cachedPromptTokens": 2125184,
+      "reasoningTokens": 6064,
+      "costRecords": 100,
+      "usageCost": 0.24339510000000006,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 45,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 16,
+      "noToolCaseIds": [
+        "048",
+        "065",
+        "068",
+        "069",
+        "070",
+        "071",
+        "072",
+        "073",
+        "075",
+        "077",
+        "080",
+        "081",
+        "082",
+        "084",
+        "086",
+        "098"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 22,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 45,
+        "read_page": 4,
+        "extract_data": 1,
+        "(no-tool)": 16,
+        "download_files": 1,
+        "download_social_media": 1,
+        "scroll": 1,
+        "get_selection": 1,
+        "get_interactive_elements": 1,
+        "go_back": 1,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 1049.5,
+      "p95LatencyMs": 2064,
+      "cachedPromptSharePct": 98.26445321837926,
+      "exactActionMatches": 544,
+      "toolNameMatches": 1179,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 34,
+      "toolNameConsensusPct": 73.7
+    },
+    {
+      "rank": 14,
+      "model": "tencent/hy4-preview",
+      "label": "Tencent HY4 Preview",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_tencent_hy4-preview",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 98,
+      "nativeToolCalls": 98,
+      "schemaValidToolCalls": 98,
+      "idealToolMatches": 36,
+      "exactIdealMatches": 16,
+      "promptTokens": 2317050,
+      "completionTokens": 12780,
+      "cachedPromptTokens": 2064832,
+      "reasoningTokens": 9158,
+      "costRecords": 100,
+      "usageCost": 0.29613198240000005,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 52,
+      "attempts": 100,
+      "multiToolCallResponses": 6,
+      "noToolResponses": 2,
+      "noToolCaseIds": [
+        "082",
+        "084"
+      ],
+      "multiToolCallCaseIds": [
+        "015",
+        "054",
+        "073",
+        "075",
+        "083",
+        "089"
+      ],
+      "providers": {
+        "Tencent": 100
+      },
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 52,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_social_media": 2,
+        "scroll": 1,
+        "done": 4,
+        "get_selection": 1,
+        "progress_read": 2,
+        "go_back": 1,
+        "(no-tool)": 2,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 5805.5,
+      "p95LatencyMs": 11638,
+      "cachedPromptSharePct": 89.11469325219568,
+      "exactActionMatches": 440,
+      "toolNameMatches": 1257,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 27.5,
+      "toolNameConsensusPct": 78.6
+    },
+    {
+      "rank": 15,
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "label": "Liquid LFM2.5-24B-A2B",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_liquid_lfm-2.5-24b-a2b",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 95,
+      "nativeToolCalls": 95,
+      "schemaValidToolCalls": 94,
+      "idealToolMatches": 23,
+      "exactIdealMatches": 6,
+      "promptTokens": 2412778,
+      "completionTokens": 30106,
+      "cachedPromptTokens": 2353680,
+      "reasoningTokens": 28066,
+      "costRecords": 100,
+      "usageCost": 0.08287109999999995,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 56,
+      "attempts": 100,
+      "multiToolCallResponses": 1,
+      "noToolResponses": 5,
+      "noToolCaseIds": [
+        "065",
+        "082",
+        "084",
+        "085",
+        "086"
+      ],
+      "multiToolCallCaseIds": [
+        "089"
+      ],
+      "providers": {
+        "Liquid": 100
+      },
+      "byTool": {
+        "navigate": 22,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "go_back": 2,
+        "get_accessibility_tree": 56,
+        "research_url": 1,
+        "read_page": 3,
+        "download_resource_from_page": 1,
+        "fetch_url": 2,
+        "scroll": 1,
+        "(no-tool)": 5,
+        "press_keys": 1,
+        "get_window_info": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1832,
+      "p95LatencyMs": 6677,
+      "cachedPromptSharePct": 97.5506242182248,
+      "exactActionMatches": 398,
+      "toolNameMatches": 1091,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 24.9,
+      "toolNameConsensusPct": 68.2
+    },
+    {
+      "rank": 16,
+      "model": "openai/gpt-5.6-luna-pro",
+      "label": "openai/gpt-5.6-luna-pro",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-gpt56-luna-full_chrome_openai_gpt-5.6-luna-pro",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 89,
+      "idealToolMatches": 32,
+      "exactIdealMatches": 3,
+      "promptTokens": 7266644,
+      "completionTokens": 37589,
+      "cachedPromptTokens": 5810652,
+      "reasoningTokens": 24088,
+      "costRecords": 100,
+      "usageCost": 0.22788836999999995,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 54,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "065",
+        "071",
+        "073",
+        "080",
+        "081",
+        "082",
+        "084",
+        "085",
+        "086",
+        "088",
+        "090"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 15,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 54,
+        "read_page": 3,
+        "extract_data": 2,
+        "download_social_media": 2,
+        "(no-tool)": 11,
+        "get_selection": 1,
+        "clarify": 5,
+        "go_back": 1,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 5125,
+      "p95LatencyMs": 7958,
+      "cachedPromptSharePct": 79.96335034439556,
+      "exactActionMatches": 199,
+      "toolNameMatches": 1197,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 12.4,
+      "toolNameConsensusPct": 74.8
+    },
+    {
+      "rank": 17,
+      "model": "openai/gpt-5.6-terra-pro",
+      "label": "openai/gpt-5.6-terra-pro",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-gpt56-terra-full_chrome_openai_gpt-5.6-terra-pro",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 94,
+      "nativeToolCalls": 94,
+      "schemaValidToolCalls": 94,
+      "idealToolMatches": 12,
+      "exactIdealMatches": 2,
+      "promptTokens": 7263146,
+      "completionTokens": 32506,
+      "cachedPromptTokens": 5829694,
+      "reasoningTokens": 18680,
+      "costRecords": 100,
+      "usageCost": 2.23778015,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 80,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 6,
+      "noToolCaseIds": [
+        "065",
+        "080",
+        "082",
+        "084",
+        "085",
+        "086"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "get_accessibility_tree": 80,
+        "new_tab": 2,
+        "navigate": 2,
+        "read_page": 2,
+        "download_resource_from_page": 1,
+        "download_social_media": 2,
+        "list_downloads": 1,
+        "(no-tool)": 6,
+        "get_selection": 1,
+        "clarify": 3
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 4921.5,
+      "p95LatencyMs": 7694,
+      "cachedPromptSharePct": 80.26403434544756,
+      "exactActionMatches": 125,
+      "toolNameMatches": 944,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 7.8,
+      "toolNameConsensusPct": 59
+    }
+  ],
+  "primaryComparison": [
+    {
+      "rank": 1,
+      "model": "deepseek/deepseek-v4-flash-0731",
+      "label": "DeepSeek V4 Flash 0731",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-deepseek-v4-flash-full_chrome_deepseek_deepseek-v4-flash-0731",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 90,
+      "nativeToolCalls": 90,
+      "schemaValidToolCalls": 90,
+      "idealToolMatches": 39,
+      "exactIdealMatches": 18,
+      "promptTokens": 2365949,
+      "completionTokens": 13566,
+      "cachedPromptTokens": 2291072,
+      "reasoningTokens": 7494,
+      "costRecords": 100,
+      "usageCost": 0.050420106,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 44,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 10,
+      "noToolCaseIds": [
+        "065",
+        "069",
+        "071",
+        "073",
+        "080",
+        "082",
+        "085",
+        "086",
+        "088",
+        "094"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 23,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 44,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 2,
+        "download_social_media": 2,
+        "scroll": 1,
+        "(no-tool)": 10,
+        "get_selection": 1,
+        "clarify": 1,
+        "progress_read": 1,
+        "fetch_url": 1,
+        "done": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 1579.5,
+      "p95LatencyMs": 5241,
+      "cachedPromptSharePct": 96.83522341352244,
+      "exactActionMatches": 814,
+      "toolNameMatches": 1274,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 50.9,
+      "toolNameConsensusPct": 79.6
+    },
+    {
+      "rank": 2,
+      "model": "tencent/hy3",
+      "label": "Tencent HY3",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-tencent-hy3-full_chrome_tencent_hy3",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 90,
+      "nativeToolCalls": 90,
+      "schemaValidToolCalls": 90,
+      "idealToolMatches": 41,
+      "exactIdealMatches": 18,
+      "promptTokens": 2368947,
+      "completionTokens": 18328,
+      "cachedPromptTokens": 772096,
+      "reasoningTokens": 13365,
+      "costRecords": 100,
+      "usageCost": 0.24594068400000005,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 42,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 10,
+      "noToolCaseIds": [
+        "065",
+        "068",
+        "069",
+        "074",
+        "080",
+        "082",
+        "084",
+        "085",
+        "086",
+        "088"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 23,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 42,
+        "read_page": 4,
+        "extract_data": 2,
+        "click": 1,
+        "download_files": 2,
+        "download_social_media": 1,
+        "scroll": 1,
+        "(no-tool)": 10,
+        "get_selection": 1,
+        "clarify": 6,
+        "scratchpad_write": 1,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 5118,
+      "p95LatencyMs": 8982,
+      "cachedPromptSharePct": 32.592371209655596,
+      "exactActionMatches": 758,
+      "toolNameMatches": 1245,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 47.4,
+      "toolNameConsensusPct": 77.8
+    },
+    {
+      "rank": 3,
+      "model": "xiaomi/mimo-v2.6-pro",
+      "label": "MiMo-V2.6-Pro",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-pro",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 95,
+      "nativeToolCalls": 95,
+      "schemaValidToolCalls": 95,
+      "idealToolMatches": 44,
+      "exactIdealMatches": 16,
+      "promptTokens": 2334035,
+      "completionTokens": 13593,
+      "cachedPromptTokens": 2089520,
+      "reasoningTokens": 9517,
+      "costRecords": 100,
+      "usageCost": 0.124612667,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 43,
+      "attempts": 100,
+      "multiToolCallResponses": 3,
+      "noToolResponses": 5,
+      "noToolCaseIds": [
+        "065",
+        "082",
+        "084",
+        "085",
+        "086"
+      ],
+      "multiToolCallCaseIds": [
+        "039",
+        "075",
+        "089"
+      ],
+      "providers": {
+        "DeepInfra": 94,
+        "Novita": 6
+      },
+      "byTool": {
+        "navigate": 24,
+        "list_downloads": 2,
+        "new_tab": 2,
+        "get_accessibility_tree": 43,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "(no-tool)": 5,
+        "get_selection": 1,
+        "clarify": 6,
+        "go_back": 1,
+        "scratchpad_write": 1,
+        "done": 2,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 6123,
+      "p95LatencyMs": 46683,
+      "cachedPromptSharePct": 89.52393601638364,
+      "exactActionMatches": 697,
+      "toolNameMatches": 1257,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 43.6,
+      "toolNameConsensusPct": 78.6
+    },
+    {
+      "rank": 6,
+      "model": "z-ai/glm-5.2",
+      "label": "GLM-5.2",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-glm52-full_chrome_z-ai_glm-5.2",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 86,
+      "idealToolMatches": 39,
+      "exactIdealMatches": 20,
+      "promptTokens": 2275921,
+      "completionTokens": 7496,
+      "cachedPromptTokens": 2070582,
+      "reasoningTokens": 4202,
+      "costRecords": 100,
+      "usageCost": 0.5452242279999999,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 40,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "012",
+        "065",
+        "070",
+        "072",
+        "073",
+        "080",
+        "085",
+        "086",
+        "088",
+        "090",
+        "094"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "(no-tool)": 11,
+        "get_accessibility_tree": 40,
+        "fetch_url": 3,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "scroll": 1,
+        "get_selection": 1,
+        "clarify": 3,
+        "go_back": 1,
+        "progress_read": 1,
+        "done": 2
+      },
+      "schemaErrors": [
+        {
+          "id": "032",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "045",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        },
+        {
+          "id": "046",
+          "call": {
+            "name": "get_accessibility_tree",
+            "args": {
+              "filter": "visible\""
+            }
+          },
+          "errors": [
+            "$.filter: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1732.5,
+      "p95LatencyMs": 4436,
+      "cachedPromptSharePct": 90.97776240915216,
+      "exactActionMatches": 685,
+      "toolNameMatches": 1214,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 42.8,
+      "toolNameConsensusPct": 75.9
+    },
+    {
+      "rank": 7,
+      "model": "xiaomi/mimo-v2.6-flash",
+      "label": "MiMo-V2.6-Flash",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_xiaomi_mimo-v2.6-flash",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 97,
+      "nativeToolCalls": 97,
+      "schemaValidToolCalls": 96,
+      "idealToolMatches": 37,
+      "exactIdealMatches": 17,
+      "promptTokens": 2333851,
+      "completionTokens": 3159,
+      "cachedPromptTokens": 2291456,
+      "reasoningTokens": 0,
+      "costRecords": 100,
+      "usageCost": 0.010978782000000001,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 49,
+      "attempts": 100,
+      "multiToolCallResponses": 11,
+      "noToolResponses": 3,
+      "noToolCaseIds": [
+        "065",
+        "082",
+        "096"
+      ],
+      "multiToolCallCaseIds": [
+        "031",
+        "039",
+        "057",
+        "058",
+        "075",
+        "089",
+        "090",
+        "094",
+        "095",
+        "098",
+        "100"
+      ],
+      "providers": {
+        "Makora": 100
+      },
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 49,
+        "read_page": 3,
+        "extract_data": 3,
+        "verify_form": 1,
+        "download_social_media": 3,
+        "fetch_url": 1,
+        "scroll": 1,
+        "(no-tool)": 3,
+        "get_selection": 1,
+        "clarify": 3,
+        "go_back": 1,
+        "progress_read": 1,
+        "research_url": 1,
+        "done": 2,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "058",
+          "call": {
+            "name": "extract_data",
+            "args": {
+              "headings": ""
+            }
+          },
+          "errors": [
+            "$.type: missing"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1195,
+      "p95LatencyMs": 4259,
+      "cachedPromptSharePct": 98.1834744377426,
+      "exactActionMatches": 671,
+      "toolNameMatches": 1168,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 41.9,
+      "toolNameConsensusPct": 73
+    },
+    {
+      "rank": 9,
+      "model": "minimax/minimax-m3",
+      "label": "MiniMax M3",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-minimax-m3-full_chrome_minimax_minimax-m3",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 86,
+      "idealToolMatches": 33,
+      "exactIdealMatches": 17,
+      "promptTokens": 2293065,
+      "completionTokens": 13130,
+      "cachedPromptTokens": 832640,
+      "reasoningTokens": 8954,
+      "costRecords": 100,
+      "usageCost": 0.5038419,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 45,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "069",
+        "071",
+        "073",
+        "080",
+        "082",
+        "083",
+        "084",
+        "085",
+        "086",
+        "088",
+        "098"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 22,
+        "list_downloads": 2,
+        "new_tab": 2,
+        "get_accessibility_tree": 45,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_files": 2,
+        "download_social_media": 1,
+        "scroll": 1,
+        "done": 1,
+        "get_selection": 1,
+        "(no-tool)": 11,
+        "scratchpad_write": 1,
+        "clarify": 2,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "030",
+          "call": {
+            "name": "extract_data",
+            "args": {
+              "type": "links"
+            }
+          },
+          "errors": [
+            "$.type: invalid enum"
+          ]
+        },
+        {
+          "id": "077",
+          "call": {
+            "name": "clarify",
+            "args": {
+              "options": [
+                {
+                  "value": "Inbox only (what's currently shown)"
+                },
+                {
+                  "value": "All Mail (every email across all folders, including Sent)"
+                },
+                {
+                  "value": "Inbox + Spam + Trash"
+                }
+              ],
+              "question": "Which emails should I delete?",
+              "reason": "\"All my emails\" is ambiguous — the Inbox only has received/unread mail, while All Mail contains everything including Sent. Deleting from All Mail is the most thorough option but also the most destructive."
+            }
+          },
+          "errors": [
+            "$.options[0]: expected string",
+            "$.options[1]: expected string",
+            "$.options[2]: expected string"
+          ]
+        },
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 2864,
+      "p95LatencyMs": 7341,
+      "cachedPromptSharePct": 36.31122536866596,
+      "exactActionMatches": 650,
+      "toolNameMatches": 1193,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 40.6,
+      "toolNameConsensusPct": 74.6
+    },
+    {
+      "rank": 10,
+      "model": "poolside/laguna-xs-2.1",
+      "label": "Poolside Laguna XS 2.1",
+      "date": "2026-08-02",
+      "source": "test/llm/results/2026-08-02-laguna-xs-full-7182_chrome_poolside_laguna-xs-2.1",
+      "fresh": false,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 89,
+      "nativeToolCalls": 89,
+      "schemaValidToolCalls": 88,
+      "idealToolMatches": 31,
+      "exactIdealMatches": 5,
+      "promptTokens": 2333108,
+      "completionTokens": 16306,
+      "cachedPromptTokens": 2301344,
+      "reasoningTokens": 7963,
+      "costRecords": 100,
+      "usageCost": 0.07290288000000006,
+      "lengthLimited": 1,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 45,
+      "attempts": 100,
+      "multiToolCallResponses": 0,
+      "noToolResponses": 11,
+      "noToolCaseIds": [
+        "065",
+        "069",
+        "071",
+        "073",
+        "075",
+        "080",
+        "082",
+        "084",
+        "085",
+        "086",
+        "088"
+      ],
+      "multiToolCallCaseIds": [],
+      "providers": {},
+      "byTool": {
+        "navigate": 19,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "read_page": 9,
+        "get_accessibility_tree": 45,
+        "research_url": 2,
+        "click": 2,
+        "download_files": 1,
+        "download_social_media": 2,
+        "(no-tool)": 11,
+        "get_selection": 1,
+        "go_back": 1,
+        "fetch_url": 1,
+        "press_keys": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1146,
+      "p95LatencyMs": 2147,
+      "cachedPromptSharePct": 98.63855423752351,
+      "exactActionMatches": 633,
+      "toolNameMatches": 1171,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 39.6,
+      "toolNameConsensusPct": 73.2
+    },
+    {
+      "rank": 14,
+      "model": "tencent/hy4-preview",
+      "label": "Tencent HY4 Preview",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_tencent_hy4-preview",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 98,
+      "nativeToolCalls": 98,
+      "schemaValidToolCalls": 98,
+      "idealToolMatches": 36,
+      "exactIdealMatches": 16,
+      "promptTokens": 2317050,
+      "completionTokens": 12780,
+      "cachedPromptTokens": 2064832,
+      "reasoningTokens": 9158,
+      "costRecords": 100,
+      "usageCost": 0.29613198240000005,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 52,
+      "attempts": 100,
+      "multiToolCallResponses": 6,
+      "noToolResponses": 2,
+      "noToolCaseIds": [
+        "082",
+        "084"
+      ],
+      "multiToolCallCaseIds": [
+        "015",
+        "054",
+        "073",
+        "075",
+        "083",
+        "089"
+      ],
+      "providers": {
+        "Tencent": 100
+      },
+      "byTool": {
+        "navigate": 21,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "get_accessibility_tree": 52,
+        "read_page": 6,
+        "extract_data": 2,
+        "download_social_media": 2,
+        "scroll": 1,
+        "done": 4,
+        "get_selection": 1,
+        "progress_read": 2,
+        "go_back": 1,
+        "(no-tool)": 2,
+        "fetch_url": 1
+      },
+      "schemaErrors": [],
+      "medianLatencyMs": 5805.5,
+      "p95LatencyMs": 11638,
+      "cachedPromptSharePct": 89.11469325219568,
+      "exactActionMatches": 440,
+      "toolNameMatches": 1257,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 27.5,
+      "toolNameConsensusPct": 78.6
+    },
+    {
+      "rank": 15,
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "label": "Liquid LFM2.5-24B-A2B",
+      "date": "2026-10-14",
+      "source": "test/llm/results/2026-10-14-openrouter-hy4-mimo26-lfm25-full-7182_chrome_liquid_lfm-2.5-24b-a2b",
+      "fresh": true,
+      "cases": 100,
+      "errors": 0,
+      "responses": 100,
+      "emittedToolCalls": 95,
+      "nativeToolCalls": 95,
+      "schemaValidToolCalls": 94,
+      "idealToolMatches": 23,
+      "exactIdealMatches": 6,
+      "promptTokens": 2412778,
+      "completionTokens": 30106,
+      "cachedPromptTokens": 2353680,
+      "reasoningTokens": 28066,
+      "costRecords": 100,
+      "usageCost": 0.08287109999999995,
+      "lengthLimited": 0,
+      "contentFallbackCalls": 0,
+      "accessibilityTreeFirstCalls": 56,
+      "attempts": 100,
+      "multiToolCallResponses": 1,
+      "noToolResponses": 5,
+      "noToolCaseIds": [
+        "065",
+        "082",
+        "084",
+        "085",
+        "086"
+      ],
+      "multiToolCallCaseIds": [
+        "089"
+      ],
+      "providers": {
+        "Liquid": 100
+      },
+      "byTool": {
+        "navigate": 22,
+        "list_downloads": 2,
+        "new_tab": 3,
+        "go_back": 2,
+        "get_accessibility_tree": 56,
+        "research_url": 1,
+        "read_page": 3,
+        "download_resource_from_page": 1,
+        "fetch_url": 2,
+        "scroll": 1,
+        "(no-tool)": 5,
+        "press_keys": 1,
+        "get_window_info": 1
+      },
+      "schemaErrors": [
+        {
+          "id": "092",
+          "call": {
+            "name": "press_keys",
+            "args": {
+              "key": "m"
+            }
+          },
+          "errors": [
+            "$.key: invalid enum"
+          ]
+        }
+      ],
+      "medianLatencyMs": 1832,
+      "p95LatencyMs": 6677,
+      "cachedPromptSharePct": 97.5506242182248,
+      "exactActionMatches": 398,
+      "toolNameMatches": 1091,
+      "comparisons": 1600,
+      "exactActionConsensusPct": 24.9,
+      "toolNameConsensusPct": 68.2
+    }
+  ],
+  "visionResults": [
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "label": "MiMo-V2.6-Flash",
+      "date": "2026-10-14",
+      "fresh": true,
+      "path": "test/vision/results/2026-10-14-openrouter-mimo26-vision_xiaomi_mimo-v2.6-flash_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 81,
+      "meanScore": 0.9428800088800087,
+      "meanLatencyMs": 2235.84,
+      "medianLatencyMs": 1908,
+      "p95LatencyMs": 4586,
+      "costRecords": 100,
+      "usageCost": 0.021394496,
+      "promptTokens": 118600,
+      "completionTokens": 21842,
+      "cachedTokens": 1088,
+      "reasoningTokens": 0,
+      "sixSections": 100,
+      "emptyOutputs": 0,
+      "lengthLimited": 0,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 17
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 15
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 18
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 15
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 16
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 4
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 4
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 5
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 5
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 5
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 5
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 5
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 5
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 3
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 5
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 5
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 4
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 4
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 4
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 4
+        }
+      },
+      "providers": {
+        "Makora": {
+          "cases": 100,
+          "passes": 81
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": true,
+          "ratio": 0.8,
+          "criticalFailures": []
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "017",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "018",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.6363636363636364,
+          "criticalFailures": [
+            "label",
+            "captcha-signal"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": false,
+          "ratio": 0.5714285714285714,
+          "criticalFailures": [
+            "selected-event"
+          ]
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "038",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "target"
+          ]
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "058",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "059",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "input",
+            "blocker"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.7777777777777778,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "070",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": false,
+          "ratio": 0.5714285714285714,
+          "criticalFailures": [
+            "selected-event"
+          ]
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "082",
+          "pass": false,
+          "ratio": 0.9166666666666666,
+          "criticalFailures": [
+            "notice"
+          ]
+        },
+        {
+          "id": "083",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "096",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.45454545454545453,
+          "criticalFailures": [
+            "heading",
+            "input",
+            "status"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        }
+      ]
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "label": "Qwen3.8 Flash",
+      "date": "2026-08-27",
+      "path": "test/vision/results/2026-08-27-openrouter-full_qwen_qwen3.8-flash_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 79,
+      "meanScore": 0.9476381766381763,
+      "meanLatencyMs": 8824.91,
+      "medianLatencyMs": 8495,
+      "p95LatencyMs": 13428,
+      "costRecords": 100,
+      "usageCost": 0.04105615000000001,
+      "promptTokens": 123400,
+      "completionTokens": 45345,
+      "cachedTokens": 0,
+      "reasoningTokens": 19241,
+      "sixSections": 99,
+      "emptyOutputs": 0,
+      "lengthLimited": null,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 14
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 17
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 17
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 16
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 15
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 5
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 4
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 5
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 5
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 5
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 5
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 5
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 4
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 5
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 4
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 4
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 2
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 4
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 4
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 4
+        }
+      },
+      "providers": {
+        "not recorded": {
+          "cases": 100,
+          "passes": 79
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": true,
+          "ratio": 0.8,
+          "criticalFailures": []
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": false,
+          "ratio": 0.5555555555555556,
+          "criticalFailures": [
+            "caption"
+          ]
+        },
+        {
+          "id": "017",
+          "pass": false,
+          "ratio": 0.7777777777777778,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "018",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "target"
+          ]
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "label"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "038",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": true,
+          "ratio": 0.9629629629629629,
+          "criticalFailures": []
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "status"
+          ]
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "058",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "059",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.7777777777777778,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "070",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "082",
+          "pass": false,
+          "ratio": 0.9166666666666666,
+          "criticalFailures": [
+            "notice"
+          ]
+        },
+        {
+          "id": "083",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "route-alert"
+          ]
+        },
+        {
+          "id": "096",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        }
+      ]
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "label": "MiMo-V2.6-Pro",
+      "date": "2026-10-14",
+      "fresh": true,
+      "path": "test/vision/results/2026-10-14-openrouter-mimo26-vision_xiaomi_mimo-v2.6-pro_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 77,
+      "meanScore": 0.9398419080919076,
+      "meanLatencyMs": 6465.45,
+      "medianLatencyMs": 5728,
+      "p95LatencyMs": 11589,
+      "costRecords": 100,
+      "usageCost": 0.06448215880000002,
+      "promptTokens": 118400,
+      "completionTokens": 29227,
+      "cachedTokens": 27808,
+      "reasoningTokens": 1438,
+      "sixSections": 100,
+      "emptyOutputs": 0,
+      "lengthLimited": 0,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 17
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 16
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 16
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 13
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 15
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 4
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 4
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 4
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 5
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 5
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 5
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 4
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 4
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 4
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 4
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 5
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 2
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 5
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 4
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 4
+        }
+      },
+      "providers": {
+        "DeepInfra": {
+          "cases": 100,
+          "passes": 77
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": true,
+          "ratio": 0.8,
+          "criticalFailures": []
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.625,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "017",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "018",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "label"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": false,
+          "ratio": 0.8461538461538461,
+          "criticalFailures": [
+            "banner"
+          ]
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "038",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 0.9166666666666666,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "status"
+          ]
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "058",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "059",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.6666666666666666,
+          "criticalFailures": [
+            "purpose",
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "070",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "highest-label"
+          ]
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": false,
+          "ratio": 0.5714285714285714,
+          "criticalFailures": [
+            "selected-event"
+          ]
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "082",
+          "pass": false,
+          "ratio": 0.9166666666666666,
+          "criticalFailures": [
+            "notice"
+          ]
+        },
+        {
+          "id": "083",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "route-alert"
+          ]
+        },
+        {
+          "id": "096",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.6363636363636364,
+          "criticalFailures": [
+            "input",
+            "status"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        }
+      ]
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "label": "GLM-5.3 Flash",
+      "date": "2026-08-27",
+      "path": "test/vision/results/2026-08-27-openrouter-full_z-ai_glm-5.3-flash_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 76,
+      "meanScore": 0.9382857420357417,
+      "meanLatencyMs": 5859.7,
+      "medianLatencyMs": 5490.5,
+      "p95LatencyMs": 8917,
+      "costRecords": 100,
+      "usageCost": 0.02105408,
+      "promptTokens": 150200,
+      "completionTokens": 45116,
+      "cachedTokens": 24832,
+      "reasoningTokens": 19049,
+      "sixSections": 100,
+      "emptyOutputs": 0,
+      "lengthLimited": null,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 16
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 14
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 17
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 16
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 13
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 2
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 5
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 5
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 5
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 5
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 5
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 5
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 3
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 5
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 4
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 5
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 3
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 3
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 4
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 3
+        }
+      },
+      "providers": {
+        "not recorded": {
+          "cases": 100,
+          "passes": 76
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "017",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "018",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.6363636363636364,
+          "criticalFailures": [
+            "label",
+            "security-blocker"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "input",
+            "blocker"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "038",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "target"
+          ]
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "status"
+          ]
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "058",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "059",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.5555555555555556,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "070",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 0.875,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": false,
+          "ratio": 0.8461538461538461,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "082",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "083",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": false,
+          "ratio": 0.8333333333333334,
+          "criticalFailures": [
+            "external-blocker"
+          ]
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "route-alert"
+          ]
+        },
+        {
+          "id": "096",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.5454545454545454,
+          "criticalFailures": [
+            "input",
+            "status"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "cover"
+          ]
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        }
+      ]
+    },
+    {
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "label": "Ling 3.0 Flash VL",
+      "date": "2026-10-07",
+      "rawStreams": true,
+      "path": "test/vision/results/2026-10-07-openrouter-ling30-budget_inclusionai_ling-3.0-flash-vl_production",
+      "cases": 100,
+      "errors": 0,
+      "passes": 65,
+      "meanScore": 0.8809624264624261,
+      "meanLatencyMs": 3572.28,
+      "medianLatencyMs": 3458.5,
+      "p95LatencyMs": 4878,
+      "costRecords": 100,
+      "usageCost": 0.005382260800000002,
+      "promptTokens": 120800,
+      "completionTokens": 51778,
+      "cachedTokens": 20480,
+      "reasoningTokens": 33885,
+      "sixSections": 98,
+      "emptyOutputs": 0,
+      "lengthLimited": 22,
+      "byDifficulty": {
+        "easy": {
+          "cases": 20,
+          "passes": 14
+        },
+        "basic": {
+          "cases": 20,
+          "passes": 14
+        },
+        "intermediate": {
+          "cases": 20,
+          "passes": 13
+        },
+        "advanced": {
+          "cases": 20,
+          "passes": 14
+        },
+        "challenging": {
+          "cases": 20,
+          "passes": 10
+        }
+      },
+      "byCategory": {
+        "authentication": {
+          "cases": 5,
+          "passes": 2
+        },
+        "search-results": {
+          "cases": 5,
+          "passes": 4
+        },
+        "checkout": {
+          "cases": 5,
+          "passes": 3
+        },
+        "form-validation": {
+          "cases": 5,
+          "passes": 1
+        },
+        "modal-overlay": {
+          "cases": 5,
+          "passes": 0
+        },
+        "toast-notification": {
+          "cases": 5,
+          "passes": 4
+        },
+        "loading-state": {
+          "cases": 5,
+          "passes": 3
+        },
+        "consent-banner": {
+          "cases": 5,
+          "passes": 2
+        },
+        "dashboard": {
+          "cases": 5,
+          "passes": 4
+        },
+        "chart-reading": {
+          "cases": 5,
+          "passes": 5
+        },
+        "data-table": {
+          "cases": 5,
+          "passes": 5
+        },
+        "email-compose": {
+          "cases": 5,
+          "passes": 3
+        },
+        "kanban-board": {
+          "cases": 5,
+          "passes": 5
+        },
+        "calendar": {
+          "cases": 5,
+          "passes": 5
+        },
+        "map-and-travel": {
+          "cases": 5,
+          "passes": 4
+        },
+        "photo-understanding": {
+          "cases": 5,
+          "passes": 4
+        },
+        "multilingual-ocr": {
+          "cases": 5,
+          "passes": 3
+        },
+        "occlusion-and-contrast": {
+          "cases": 5,
+          "passes": 2
+        },
+        "security-challenge": {
+          "cases": 5,
+          "passes": 2
+        },
+        "uncertainty-calibration": {
+          "cases": 5,
+          "passes": 4
+        }
+      },
+      "providers": {
+        "Novita": {
+          "cases": 100,
+          "passes": 65
+        }
+      },
+      "caseScores": [
+        {
+          "id": "001",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": []
+        },
+        {
+          "id": "002",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "003",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "004",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "005",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "006",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "007",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "008",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "consent-signal"
+          ]
+        },
+        {
+          "id": "009",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "010",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "011",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "012",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "013",
+          "pass": true,
+          "ratio": 0.9047619047619048,
+          "criticalFailures": []
+        },
+        {
+          "id": "014",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "015",
+          "pass": true,
+          "ratio": 0.75,
+          "criticalFailures": []
+        },
+        {
+          "id": "016",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "017",
+          "pass": true,
+          "ratio": 0.8888888888888888,
+          "criticalFailures": []
+        },
+        {
+          "id": "018",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "cover"
+          ]
+        },
+        {
+          "id": "019",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "label"
+          ]
+        },
+        {
+          "id": "020",
+          "pass": true,
+          "ratio": 0.8333333333333334,
+          "criticalFailures": []
+        },
+        {
+          "id": "021",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "022",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "023",
+          "pass": false,
+          "ratio": 0.8461538461538461,
+          "criticalFailures": [
+            "banner"
+          ]
+        },
+        {
+          "id": "024",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "025",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "026",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "027",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "028",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "consent-signal"
+          ]
+        },
+        {
+          "id": "029",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "030",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "031",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "032",
+          "pass": true,
+          "ratio": 0.9,
+          "criticalFailures": []
+        },
+        {
+          "id": "033",
+          "pass": true,
+          "ratio": 0.8571428571428571,
+          "criticalFailures": []
+        },
+        {
+          "id": "034",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "035",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "036",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "037",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "038",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "target"
+          ]
+        },
+        {
+          "id": "039",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "040",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "041",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "042",
+          "pass": true,
+          "ratio": 0.9166666666666666,
+          "criticalFailures": []
+        },
+        {
+          "id": "043",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "044",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "045",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "046",
+          "pass": false,
+          "ratio": 0.3333333333333333,
+          "criticalFailures": [
+            "toast",
+            "detail"
+          ]
+        },
+        {
+          "id": "047",
+          "pass": true,
+          "ratio": 0.9090909090909091,
+          "criticalFailures": []
+        },
+        {
+          "id": "048",
+          "pass": true,
+          "ratio": 0.9,
+          "criticalFailures": []
+        },
+        {
+          "id": "049",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "050",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "051",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "052",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "purpose",
+            "status"
+          ]
+        },
+        {
+          "id": "053",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "054",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "055",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "056",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "057",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "058",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "cover"
+          ]
+        },
+        {
+          "id": "059",
+          "pass": false,
+          "ratio": 0.6363636363636364,
+          "criticalFailures": [
+            "captcha-signal",
+            "security-blocker"
+          ]
+        },
+        {
+          "id": "060",
+          "pass": true,
+          "ratio": 0.9,
+          "criticalFailures": []
+        },
+        {
+          "id": "061",
+          "pass": true,
+          "ratio": 0.9230769230769231,
+          "criticalFailures": []
+        },
+        {
+          "id": "062",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "063",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "064",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "input"
+          ]
+        },
+        {
+          "id": "065",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "066",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "067",
+          "pass": false,
+          "ratio": 0.6666666666666666,
+          "criticalFailures": [
+            "heading"
+          ]
+        },
+        {
+          "id": "068",
+          "pass": true,
+          "ratio": 0.9,
+          "criticalFailures": []
+        },
+        {
+          "id": "069",
+          "pass": false,
+          "ratio": 0.75,
+          "criticalFailures": [
+            "alert"
+          ]
+        },
+        {
+          "id": "070",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "071",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "072",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "073",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "074",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "075",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "076",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "077",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "078",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "079",
+          "pass": false,
+          "ratio": 0.2727272727272727,
+          "criticalFailures": [
+            "label",
+            "captcha-signal",
+            "security-blocker"
+          ]
+        },
+        {
+          "id": "080",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "visible-fragment"
+          ]
+        },
+        {
+          "id": "081",
+          "pass": false,
+          "ratio": 0.8461538461538461,
+          "criticalFailures": [
+            "purpose"
+          ]
+        },
+        {
+          "id": "082",
+          "pass": false,
+          "ratio": 0.8333333333333334,
+          "criticalFailures": [
+            "purpose",
+            "notice"
+          ]
+        },
+        {
+          "id": "083",
+          "pass": false,
+          "ratio": 0.8461538461538461,
+          "criticalFailures": [
+            "blocked"
+          ]
+        },
+        {
+          "id": "084",
+          "pass": false,
+          "ratio": 0.7,
+          "criticalFailures": [
+            "input",
+            "blocker"
+          ]
+        },
+        {
+          "id": "085",
+          "pass": false,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": [
+            "modal-signal"
+          ]
+        },
+        {
+          "id": "086",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "087",
+          "pass": true,
+          "ratio": 0.8181818181818182,
+          "criticalFailures": []
+        },
+        {
+          "id": "088",
+          "pass": false,
+          "ratio": 0.5,
+          "criticalFailures": [
+            "title",
+            "choice-1",
+            "consent-blocker"
+          ]
+        },
+        {
+          "id": "089",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "090",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "091",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "092",
+          "pass": false,
+          "ratio": 0.5833333333333334,
+          "criticalFailures": [
+            "purpose",
+            "status",
+            "external-blocker"
+          ]
+        },
+        {
+          "id": "093",
+          "pass": true,
+          "ratio": 0.8571428571428571,
+          "criticalFailures": []
+        },
+        {
+          "id": "094",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "095",
+          "pass": false,
+          "ratio": 0.8,
+          "criticalFailures": [
+            "route-alert"
+          ]
+        },
+        {
+          "id": "096",
+          "pass": false,
+          "ratio": 0.5555555555555556,
+          "criticalFailures": [
+            "caption"
+          ]
+        },
+        {
+          "id": "097",
+          "pass": false,
+          "ratio": 0.5454545454545454,
+          "criticalFailures": [
+            "input",
+            "status"
+          ]
+        },
+        {
+          "id": "098",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "099",
+          "pass": true,
+          "ratio": 1,
+          "criticalFailures": []
+        },
+        {
+          "id": "100",
+          "pass": true,
+          "ratio": 0.9,
+          "criticalFailures": []
+        }
+      ]
+    }
+  ],
+  "pairwise": [
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "deepseek/deepseek-v4-flash-0731",
+      "exactMatches": 35,
+      "toolMatches": 85,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "tencent/hy3",
+      "exactMatches": 33,
+      "toolMatches": 78,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "anthropic/claude-sonnet-5",
+      "exactMatches": 28,
+      "toolMatches": 76,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "google/gemini-3.6-flash",
+      "exactMatches": 24,
+      "toolMatches": 87,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "z-ai/glm-5.2",
+      "exactMatches": 33,
+      "toolMatches": 78,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "minimax/minimax-m3",
+      "exactMatches": 26,
+      "toolMatches": 80,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "poolside/laguna-xs-2.1",
+      "exactMatches": 19,
+      "toolMatches": 79,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "moonshotai/kimi-k3",
+      "exactMatches": 39,
+      "toolMatches": 87,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "qwen/qwen3.6-27b",
+      "exactMatches": 40,
+      "toolMatches": 78,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "x-ai/grok-4.5",
+      "exactMatches": 45,
+      "toolMatches": 85,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "thinkingmachines/inkling-small",
+      "exactMatches": 27,
+      "toolMatches": 74,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "openai/gpt-5.6-luna-pro",
+      "exactMatches": 8,
+      "toolMatches": 76,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "openai/gpt-5.6-terra-pro",
+      "exactMatches": 4,
+      "toolMatches": 59,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "exactMatches": 33,
+      "toolMatches": 82,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "exactMatches": 27,
+      "toolMatches": 81,
+      "cases": 100
+    },
+    {
+      "model": "tencent/hy4-preview",
+      "peer": "liquid/lfm-2.5-24b-a2b",
+      "exactMatches": 19,
+      "toolMatches": 72,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "deepseek/deepseek-v4-flash-0731",
+      "exactMatches": 65,
+      "toolMatches": 83,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "tencent/hy3",
+      "exactMatches": 60,
+      "toolMatches": 87,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "anthropic/claude-sonnet-5",
+      "exactMatches": 56,
+      "toolMatches": 83,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "google/gemini-3.6-flash",
+      "exactMatches": 54,
+      "toolMatches": 78,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "z-ai/glm-5.2",
+      "exactMatches": 52,
+      "toolMatches": 81,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "minimax/minimax-m3",
+      "exactMatches": 49,
+      "toolMatches": 78,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "poolside/laguna-xs-2.1",
+      "exactMatches": 44,
+      "toolMatches": 74,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "moonshotai/kimi-k3",
+      "exactMatches": 59,
+      "toolMatches": 93,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "qwen/qwen3.6-27b",
+      "exactMatches": 45,
+      "toolMatches": 76,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "x-ai/grok-4.5",
+      "exactMatches": 46,
+      "toolMatches": 83,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "thinkingmachines/inkling-small",
+      "exactMatches": 39,
+      "toolMatches": 76,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "openai/gpt-5.6-luna-pro",
+      "exactMatches": 11,
+      "toolMatches": 79,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "openai/gpt-5.6-terra-pro",
+      "exactMatches": 6,
+      "toolMatches": 59,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "tencent/hy4-preview",
+      "exactMatches": 33,
+      "toolMatches": 82,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "exactMatches": 53,
+      "toolMatches": 77,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "liquid/lfm-2.5-24b-a2b",
+      "exactMatches": 25,
+      "toolMatches": 68,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "deepseek/deepseek-v4-flash-0731",
+      "exactMatches": 63,
+      "toolMatches": 78,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "tencent/hy3",
+      "exactMatches": 57,
+      "toolMatches": 74,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "anthropic/claude-sonnet-5",
+      "exactMatches": 58,
+      "toolMatches": 76,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "google/gemini-3.6-flash",
+      "exactMatches": 64,
+      "toolMatches": 82,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "z-ai/glm-5.2",
+      "exactMatches": 53,
+      "toolMatches": 74,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "minimax/minimax-m3",
+      "exactMatches": 47,
+      "toolMatches": 69,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "poolside/laguna-xs-2.1",
+      "exactMatches": 43,
+      "toolMatches": 67,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "moonshotai/kimi-k3",
+      "exactMatches": 55,
+      "toolMatches": 76,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "qwen/qwen3.6-27b",
+      "exactMatches": 39,
+      "toolMatches": 70,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "x-ai/grok-4.5",
+      "exactMatches": 39,
+      "toolMatches": 77,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "thinkingmachines/inkling-small",
+      "exactMatches": 34,
+      "toolMatches": 70,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "openai/gpt-5.6-luna-pro",
+      "exactMatches": 8,
+      "toolMatches": 71,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "openai/gpt-5.6-terra-pro",
+      "exactMatches": 4,
+      "toolMatches": 58,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "tencent/hy4-preview",
+      "exactMatches": 27,
+      "toolMatches": 81,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "exactMatches": 53,
+      "toolMatches": 77,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "liquid/lfm-2.5-24b-a2b",
+      "exactMatches": 27,
+      "toolMatches": 68,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "deepseek/deepseek-v4-flash-0731",
+      "exactMatches": 30,
+      "toolMatches": 70,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "tencent/hy3",
+      "exactMatches": 28,
+      "toolMatches": 66,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "anthropic/claude-sonnet-5",
+      "exactMatches": 26,
+      "toolMatches": 66,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "google/gemini-3.6-flash",
+      "exactMatches": 29,
+      "toolMatches": 72,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "z-ai/glm-5.2",
+      "exactMatches": 27,
+      "toolMatches": 66,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "minimax/minimax-m3",
+      "exactMatches": 29,
+      "toolMatches": 68,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "poolside/laguna-xs-2.1",
+      "exactMatches": 32,
+      "toolMatches": 69,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "moonshotai/kimi-k3",
+      "exactMatches": 24,
+      "toolMatches": 67,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "qwen/qwen3.6-27b",
+      "exactMatches": 33,
+      "toolMatches": 68,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "x-ai/grok-4.5",
+      "exactMatches": 25,
+      "toolMatches": 70,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "thinkingmachines/inkling-small",
+      "exactMatches": 26,
+      "toolMatches": 69,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "openai/gpt-5.6-luna-pro",
+      "exactMatches": 10,
+      "toolMatches": 69,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "openai/gpt-5.6-terra-pro",
+      "exactMatches": 8,
+      "toolMatches": 63,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "tencent/hy4-preview",
+      "exactMatches": 19,
+      "toolMatches": 72,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "exactMatches": 25,
+      "toolMatches": 68,
+      "cases": 100
+    },
+    {
+      "model": "liquid/lfm-2.5-24b-a2b",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "exactMatches": 27,
+      "toolMatches": 68,
+      "cases": 100
+    }
+  ],
+  "visionPairwise": [
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "qwen/qwen3.8-flash",
+      "bothPass": 75,
+      "modelOnlyPass": 6,
+      "peerOnlyPass": 4,
+      "neitherPass": 15,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "bothPass": 75,
+      "modelOnlyPass": 6,
+      "peerOnlyPass": 2,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "z-ai/glm-5.3-flash",
+      "bothPass": 73,
+      "modelOnlyPass": 8,
+      "peerOnlyPass": 3,
+      "neitherPass": 16,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-flash",
+      "peer": "inclusionai/ling-3.0-flash-vl",
+      "bothPass": 63,
+      "modelOnlyPass": 18,
+      "peerOnlyPass": 2,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "bothPass": 75,
+      "modelOnlyPass": 4,
+      "peerOnlyPass": 6,
+      "neitherPass": 15,
+      "cases": 100
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "bothPass": 73,
+      "modelOnlyPass": 6,
+      "peerOnlyPass": 4,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "peer": "z-ai/glm-5.3-flash",
+      "bothPass": 72,
+      "modelOnlyPass": 7,
+      "peerOnlyPass": 4,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "qwen/qwen3.8-flash",
+      "peer": "inclusionai/ling-3.0-flash-vl",
+      "bothPass": 62,
+      "modelOnlyPass": 17,
+      "peerOnlyPass": 3,
+      "neitherPass": 18,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "bothPass": 75,
+      "modelOnlyPass": 2,
+      "peerOnlyPass": 6,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "qwen/qwen3.8-flash",
+      "bothPass": 73,
+      "modelOnlyPass": 4,
+      "peerOnlyPass": 6,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "z-ai/glm-5.3-flash",
+      "bothPass": 70,
+      "modelOnlyPass": 7,
+      "peerOnlyPass": 6,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "xiaomi/mimo-v2.6-pro",
+      "peer": "inclusionai/ling-3.0-flash-vl",
+      "bothPass": 62,
+      "modelOnlyPass": 15,
+      "peerOnlyPass": 3,
+      "neitherPass": 20,
+      "cases": 100
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "bothPass": 73,
+      "modelOnlyPass": 3,
+      "peerOnlyPass": 8,
+      "neitherPass": 16,
+      "cases": 100
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "peer": "qwen/qwen3.8-flash",
+      "bothPass": 72,
+      "modelOnlyPass": 4,
+      "peerOnlyPass": 7,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "bothPass": 70,
+      "modelOnlyPass": 6,
+      "peerOnlyPass": 7,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "peer": "inclusionai/ling-3.0-flash-vl",
+      "bothPass": 62,
+      "modelOnlyPass": 14,
+      "peerOnlyPass": 3,
+      "neitherPass": 21,
+      "cases": 100
+    },
+    {
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "peer": "xiaomi/mimo-v2.6-flash",
+      "bothPass": 63,
+      "modelOnlyPass": 2,
+      "peerOnlyPass": 18,
+      "neitherPass": 17,
+      "cases": 100
+    },
+    {
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "peer": "qwen/qwen3.8-flash",
+      "bothPass": 62,
+      "modelOnlyPass": 3,
+      "peerOnlyPass": 17,
+      "neitherPass": 18,
+      "cases": 100
+    },
+    {
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "peer": "xiaomi/mimo-v2.6-pro",
+      "bothPass": 62,
+      "modelOnlyPass": 3,
+      "peerOnlyPass": 15,
+      "neitherPass": 20,
+      "cases": 100
+    },
+    {
+      "model": "inclusionai/ling-3.0-flash-vl",
+      "peer": "z-ai/glm-5.3-flash",
+      "bothPass": 62,
+      "modelOnlyPass": 3,
+      "peerOnlyPass": 14,
+      "neitherPass": 21,
+      "cases": 100
+    }
+  ],
+  "campaign": {
+    "benchmarkRequests": 600,
+    "preflightRequests": 6,
+    "totalRecordedRequests": 606,
+    "inferenceResponses": 606,
+    "apiErrors": 0,
+    "retries": 0,
+    "benchmarkCostUsd": 0.6004711862000001,
+    "preflightCostUsd": 0.0330258888,
+    "totalReportedCostUsd": 0.6334970750000001,
+    "startedAt": "2026-10-13T22:57:35.082Z",
+    "finishedAt": "2026-10-13T23:05:02.014Z",
+    "wallTimeMs": 446932,
+    "concurrency": {
+      "plannerPerModel": 3,
+      "visionPerModel": 2
+    },
+    "note": "Six runners execute concurrently. All individual request latencies include network/provider/generation time; historical infrastructure, caches, prices and concurrency conditions differ."
+  }
+}

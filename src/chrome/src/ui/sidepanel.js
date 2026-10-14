@@ -5571,6 +5571,15 @@ function isTerminalRunUiStatus(status) {
   return ['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(String(status || ''));
 }
 
+/**
+ * Finished-run copy ("the final result is below") must only apply when the
+ * run actually ended. clarification_required is terminal for adoption but
+ * paused awaiting input, so it keeps the live-progress copy.
+ */
+function isFinishedRunUiStatus(status) {
+  return isTerminalRunUiStatus(status) && String(status || '') !== 'clarification_required';
+}
+
 async function adoptRestoredRunState(tabId, state) {
   const runUi = state?.runUi && typeof state.runUi === 'object' ? state.runUi : null;
   const requestId = String(runUi?.requestId || '');
@@ -5798,7 +5807,7 @@ async function applyActiveRunState(numericTabId, state, { shouldContinue = () =>
       || Number(runAssistantEl.dataset.replayGapBeforeSeq || 0) > 0;
     if (unavailableBeforeSeq > lastRenderedSeq
         && !replayGapNoted) {
-      addRunProgressReplayGapNote();
+      addRunProgressReplayGapNote({ terminal: isFinishedRunUiStatus(runUi.status) });
       // Keep replay-loss notice deduplication separate from the rendered-event
       // cursor. A terminal snapshot can be fully acknowledged (and therefore
       // absent from events) while finalContent still needs to be restored.
@@ -13386,10 +13395,10 @@ function addContextCompactedNote(data) {
  * Run-journal replay loss is UI history loss, not model-context compaction.
  * Keep the styling subtle but use a distinct class and unambiguous copy.
  */
-function addRunProgressReplayGapNote() {
+function addRunProgressReplayGapNote(options = {}) {
   const note = document.createElement('div');
   note.className = 'context-compacted-note run-progress-replay-gap-note';
-  note.textContent = t('sp.run_progress_replay_gap');
+  note.textContent = t(options?.terminal ? 'sp.run_progress_replay_gap_terminal' : 'sp.run_progress_replay_gap');
   const stepsContainer = getOrCreateStepsContainer();
   if (stepsContainer) {
     stepsContainer.appendChild(note);
