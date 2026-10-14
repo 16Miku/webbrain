@@ -800,6 +800,28 @@ object is recognized by its shape, and one the model rates at zero confidence
 is its refusal; a plain final message in an Act run gets one recovery whatever
 it says. No word list reads a summary or a final message.
 
+A request that contains one arithmetic expression (found by structure: the
+one span the calculator accepts, not digits inside a word or code) is read with
+the `calculation_request` question when the planner gave it no page reads,
+state changes or submissions. Only a sure "only the result" reading limits the
+run to the calculator and lets the calculator's receipt complete it while the
+page keeps changing. When the request also sets a form for the answer, the
+active model writes it down (only the number, the number last, an ending and
+other required texts), each text copied exactly from the request and checked
+against it; a form it cannot write down that way is left to the completion
+judge, with the calculator's result as evidence. The reading and the form are
+kept on the execution guard and read again only when the request changes.
+
+Questions about several items (`missing_value`, and the page readings that
+follow) are batched: the decision model gets one question per item in chunks of
+16, and the active model answers up to 64 items in one reply. A required value
+of an expected item that only says it is missing ("unknown", "bilinmiyor", "—")
+is found this way once, at a successful done, among values of 40 characters or
+fewer; no sure answer leaves the value counted as given. Missing values are
+otherwise JSON null. Action names in progress rows and requested field names
+are the canonical names the models are given; another word for one is rejected
+(progress_update) or names no field (the requirement stays incomplete).
+
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is
 returned as its exact first and last words, and the runtime copies the text

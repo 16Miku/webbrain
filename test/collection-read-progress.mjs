@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { fixedChoiceQuestion, withFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 
 const PAGE_URL = 'https://example.com/repositories';
 const DATA_URL = 'https://example.com/data.json';
@@ -47,10 +48,17 @@ const checkRead = (agent, tab, args, result, name = 'fetch_url') => agent._check
   tab, name, args, result, { enforceTerminal: true },
 );
 
-function makeIntegrationAgent(Agent, next) {
+function makeIntegrationAgent(Agent, next, readings = []) {
+  // The collected values are real ones; a model reading them at done says so.
+  const answered = withFixedChoiceAnswers(next, { missing_value: 'value' });
   const provider = {
     name: 'collection read regression', model: 'test', promptTier: 'full', contextWindow: 128000,
-    supportsTools: true, supportsVision: false, chat: next,
+    supportsTools: true, supportsVision: false,
+    chat: (messages, options) => {
+      const question = fixedChoiceQuestion(messages);
+      if (question) readings.push({ kind: question.kind, items: question.items.length });
+      return answered(messages, options);
+    },
     async *chatStream(messages) {
       const response = await next(messages);
       if (response.content) yield { type: 'text', content: response.content };
@@ -275,7 +283,8 @@ for (const build of ['chrome', 'firefox']) {
       })) });
       return call('finished', 'done', { summary: answer, outcome: 'success' });
     };
-    const agent = makeIntegrationAgent(Agent, next);
+    const readings = [];
+    const agent = makeIntegrationAgent(Agent, next, readings);
     agent.executeTool = async (_tab, name, args) => {
       if (name === 'get_accessibility_tree') return { success: true, pageContent: 'heading "Repositories" [ref_1]' };
       if (name === 'done') return { done: true, success: true, summary: args.summary, outcome: args.outcome };
@@ -292,6 +301,9 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(result.split('\n\nProgress ledger:')[0], answer, JSON.stringify(updates.filter(entry => entry.type === 'warning')));
     assert.match(result, /174 row\(s\), 174 processed/);
     assert.equal(requests, 17);
+    // Each of the 174 required values was read once, in a few long lists.
+    assert.deepEqual(readings.map(reading => reading.kind), ['missing_value', 'missing_value', 'missing_value']);
+    assert.equal(readings.reduce((sum, reading) => sum + reading.items, 0), 174);
     assert.equal(dispatched.length, 15);
     assert.equal(updates.some(entry => entry.type === 'warning' && /observation tools are now stopping/.test(entry.data.message)), false);
   });

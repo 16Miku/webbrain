@@ -170,6 +170,14 @@ const server = http.createServer(async (request, response) => {
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Hello.' }, finish_reason: 'stop' }] })); return;
     }
+    if (textOf(input.messages?.[0]?.content).startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
+      // WebBrain reads some short texts with a fixed-choice question (what a
+      // final summary does, for example). This fixture's model has no reading
+      // to give, which leaves every check as it was.
+      metrics.fixedChoiceQuestions = (metrics.fixedChoiceQuestions || 0) + 1;
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '{"choice":"","evidence":""}' }, finish_reason: 'stop' }] })); return;
+    }
     if (!JSON.stringify(input.messages).includes(marker)) {
       metrics.unmatchedRequest = { systemPrefix: textOf(input.messages?.[0]?.content).slice(0, 100),
         roles: input.messages?.map(message => message.role), lengths: input.messages?.map(message => textOf(message.content).length) };

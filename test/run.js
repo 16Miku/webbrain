@@ -86615,17 +86615,23 @@ test('colon-namespaced action ids share identities with recorded clicks', () => 
   }
 });
 
-test('progress ledger rejects malformed statuses and normalizes null-like fields', () => {
+test('progress ledger rejects malformed statuses and keeps only JSON null as a missing value', () => {
   assert.equal(isValidLedgerStatus('pending'), true);
   assert.equal(isValidLedgerStatus('「pending」'), true);
   assert.equal(isValidLedgerStatusFx('processed'), true);
   assert.equal(isValidLedgerStatusFx('done'), false);
 
-  const state = upsertLedgerItems([], [
-    { id: 'rafi', label: 'rafi', status: 'processed', fields: { email: 'null', note: 'not found' } },
-  ], { source: 'model', now: 100 });
-  assert.equal(state.rows[0].fields.email, null);
-  assert.equal(state.rows[0].fields.note, null);
+  // The literal null a model wrote as a string is null; any other text is
+  // the model's own value. Whether it only says "missing" is read by a model
+  // where it matters (the expected-items check), in any language.
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    const state = upsert([], [
+      { id: 'rafi', label: 'rafi', status: 'processed', fields: { email: 'null', note: 'not found', other: 'bulunamadı' } },
+    ], { source: 'model', now: 100 });
+    assert.equal(state.rows[0].fields.email, null);
+    assert.equal(state.rows[0].fields.note, 'not found');
+    assert.equal(state.rows[0].fields.other, 'bulunamadı');
+  }
 
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
@@ -87016,7 +87022,7 @@ test('eligible complete-thread reads coordinate a 12k tree page with a parseable
   }
 });
 
-test('progress_update aliases legacy scrape actions to process_item', () => {
+test('progress_update takes only canonical action names and sends any other word back', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = 778;
@@ -87026,23 +87032,78 @@ test('progress_update aliases legacy scrape actions to process_item', () => {
       { role: 'user', content: 'Scrape every search result on this page.' },
     ]);
 
+    // Another word for an action, in any language, is rejected like a bad
+    // status, with the canonical names to use instead; nothing is recorded.
+    for (const action of ['scrape', 'kazı', 'collect emails', 'visit page']) {
+      const rejected = agent._progressUpdate(tabId, {
+        items: [{ id: 'result-1', label: 'Result 1', action, status: 'pending' }],
+      });
+      assert.equal(rejected.success, false, `${AgentClass.name}: ${action} was accepted`);
+      assert.match(rejected.error, /unknown action value/i);
+      assert.match(rejected.error, /process_item/);
+      assert.equal(agent.progressLedgers.get(tabId)?.length || 0, 0, `${AgentClass.name}: ${action} recorded a row`);
+    }
+
     const created = agent._progressUpdate(tabId, {
-      items: [{ id: 'result-1', label: 'Result 1', action: 'scrape', status: 'pending' }],
+      items: [{ id: 'result-1', label: 'Result 1', action: 'process_item', status: 'pending' }],
     });
-    assert.equal(created.success, true, `${AgentClass.name}: scrape action update was rejected`);
-    assert.equal(agent.progressSessions.get(tabId)?.allowedActions[0], 'process_item', `${AgentClass.name}: scrape did not activate process_item session`);
-    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item', `${AgentClass.name}: scrape row was not stored canonically`);
+    assert.equal(created.success, true, `${AgentClass.name}: canonical action update was rejected`);
+    assert.equal(agent.progressSessions.get(tabId)?.allowedActions[0], 'process_item');
     assert.deepEqual(agent._progressRead(tabId).rows.map(row => [row.id, row.action, row.status]), [
       ['result-1', 'process_item', 'pending'],
     ]);
-    assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: aliased scrape row did not block unfinished done`);
-
+    assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: unfinished row did not block done`);
+    // Case and separators are not words: "Process-Item" is the same name.
     const closed = agent._progressUpdate(tabId, {
-      items: [{ id: 'result-1', label: 'Result 1', action: 'scrape', status: 'processed' }],
+      items: [{ id: 'result-1', label: 'Result 1', action: 'Process-Item', status: 'processed' }],
     });
-    assert.equal(closed.success, true, `${AgentClass.name}: aliased scrape close was rejected`);
-    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item', `${AgentClass.name}: closed scrape row lost canonical action`);
-    assert.equal(agent._shouldBlockDoneForProgress(tabId), false, `${AgentClass.name}: closed aliased scrape row still blocked done`);
+    assert.equal(closed.success, true);
+    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item');
+    assert.equal(agent._shouldBlockDoneForProgress(tabId), false, `${AgentClass.name}: closed row still blocked done`);
+  }
+  // The tool tells the model the names.
+  for (const build of ['chrome', 'firefox']) {
+    const { AGENT_TOOLS } = await import(`../src/${build}/src/agent/tools.js`);
+    const tool = AGENT_TOOLS.find(entry => entry.function.name === 'progress_update');
+    assert.ok(tool.function.parameters.properties.items.items.properties.action.enum.includes('process_item'));
+  }
+});
+
+test('a required value that only says it is missing is read by a model at done, in any language', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 1778;
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'List the two hotel names.' }]);
+    agent.progressExpectedItems.set(tabId, { count: 2, item_type: 'hotel', ordered: true, required_fields: ['hotel_name'] });
+    agent._currentTaskLedgerRows = () => [
+      { id: 'expected:1', status: 'processed', fields: { expectedOrdinal: 1, hotel_name: 'Hotel Pera' } },
+      { id: 'expected:2', status: 'processed', fields: { expectedOrdinal: 2, hotel_name: 'bilinmiyor' } },
+    ];
+    const asked = [];
+    agent._semanticDecisions = async (_tab, kind, { items }) => {
+      asked.push(...items.map(item => [kind, item.field, item.value]));
+      return items.map(item => ({ choice: item.value === 'bilinmiyor' ? 'missing' : 'value', evidence: '', source: 'decision_model' }));
+    };
+    // Before any reading, the text counts as a value (as for any language
+    // nothing has read).
+    assert.equal(agent._expectedItemsDoneBlock(tabId), null);
+    await agent._prepareMissingValueReadings(tabId);
+    assert.deepEqual(asked, [['missing_value', 'hotel_name', 'Hotel Pera'], ['missing_value', 'hotel_name', 'bilinmiyor']]);
+    const blocked = agent._expectedItemsDoneBlock(tabId);
+    assert.equal(blocked?.blocked, true, `${AgentClass.name}: a value read as missing completed the list`);
+    assert.match(blocked.error, /missing required fields: hotel_name/);
+    // Each value is read once.
+    await agent._prepareMissingValueReadings(tabId);
+    assert.equal(asked.length, 2);
+    // A real value, or no sure reading, completes it.
+    agent._currentTaskLedgerRows = () => [
+      { id: 'expected:1', status: 'processed', fields: { expectedOrdinal: 1, hotel_name: 'Hotel Pera' } },
+      { id: 'expected:2', status: 'processed', fields: { expectedOrdinal: 2, hotel_name: 'Otel Bilge' } },
+    ];
+    agent._semanticDecisions = async (_tab, _kind, { items }) => items.map(() => ({ choice: null, evidence: '', source: 'unavailable' }));
+    await agent._prepareMissingValueReadings(tabId);
+    assert.equal(agent._expectedItemsDoneBlock(tabId), null);
   }
 });
 
@@ -96736,10 +96797,14 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       `${AgentClass.name}: plural tags lost its YouTube field`);
     assert.equal(agent._workflowMetadataFieldKey('release notes'), 'notes');
     assert.equal(agent._workflowMetadataFieldKey('post body'), 'body');
+    // The intent model names fields with the canonical names its prompt
+    // lists; another name (a plural, a translation) names no field.
     assert.deepEqual(agent._normalizeWorkflowMetadataRequirements([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
-      { field: 'playlists', value: 'Favorites' },
+      { field: 'Playlist', value: 'Favorites' },
+      { field: 'playlists', value: 'Other' },
+      { field: 'başlık', value: 'Başka' },
       { field: 'title', value: 'Duplicate' },
     ]), [
       { field: 'title', value: 'Launch Video' },
@@ -96748,11 +96813,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
     const discarded = agent._normalizeWorkflowMetadataRequirementsDetails([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
-      { field: 'playlists', value: 'Favorites' },
+      { field: 'playlist', value: 'Favorites' },
     ]);
     assert.equal(discarded.incomplete, true,
       `${AgentClass.name}: discarded classifier fields were treated as complete requirements`);
     assert.deepEqual(discarded.items.map(item => item.field), ['title', 'playlist']);
+    for (const key of ['commit message', 'commit-message', 'COMMIT_MESSAGE']) assert.equal(agent._workflowCanonicalFieldKey(key), 'commit_message');
+    for (const key of ['playlists', 'release notes', 'başlık', '标题', '']) assert.equal(agent._workflowCanonicalFieldKey(key), '');
 
     const longDescription = 'Launch the product with a detailed description that exceeds sixty characters and must still verify after save.';
     assert.ok(longDescription.length > 60);

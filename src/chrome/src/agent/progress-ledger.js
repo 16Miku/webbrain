@@ -24,11 +24,14 @@ function normalizeStatus(value, fallback = 'pending') {
   return normalizeLedgerStatus(value, fallback);
 }
 
+// A missing value is JSON null (or the literal "null" a model wrote as a
+// string). Whether some other text only says the value is missing, in any
+// language, is read by a model where it matters: the expected-items check.
 function sanitizeFieldValue(value) {
   if (value == null) return null;
   if (typeof value === 'string') {
     const text = sanitizeText(value, 500);
-    if (/^(null|none|n\/a|not found|no email|unknown)$/i.test(text)) return null;
+    if (/^null$/i.test(text)) return null;
     return text;
   }
   if (typeof value === 'number' || typeof value === 'boolean') return value;

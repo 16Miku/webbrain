@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixtureCalculationScope, withFixtureCalculationReadings } from './calculation-fixture-readings.mjs';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
@@ -21,7 +22,7 @@ let nextTab = 2600;
 function makeAgent(Agent, next) {
   const provider = {
     name: 'feedback progress test', model: 'test', promptTier: 'full', contextWindow: 128000,
-    supportsTools: true, supportsVision: false, chat: next,
+    supportsTools: true, supportsVision: false, chat: withFixtureCalculationReadings(next),
     async *chatStream(messages, options) {
       const response = await next(messages, options);
       if (response.content) yield { type: 'text', content: response.content };
@@ -86,38 +87,43 @@ const scope = { readScope: 'none', deliverables: ['The exact result of 123456789
 
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
-  const { isLiteralCalculationTask, literalCalculationTaskExpression } = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+  const policy = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+  const { isLiteralCalculationTask, literalCalculationTaskExpression } = policy;
 
-  test(`${build}: final-response formatting never authorizes outgoing replies or additional work`, () => {
-    for (const description of ['A final reply ending with MIDRUN-CALCULATE-QA-20261008',
-      'The final response finishing with marker RESULT_2026', 'Final answer ending with RESULT_2026']) {
+  test(`${build}: what a request asks for comes from its reading, never from the planner's deliverable words`, () => {
+    // The planner's deliverables are its own description; no word in them
+    // grants or removes the arithmetic-only scope.
+    for (const deliverables of [['Exact arithmetic result', 'A final reply ending with MIDRUN-CALCULATE-QA-20261008'],
+      ['A final reply ending with RESULT_2026 and send it to Alice'], ['Read the page and return the result'], []]) {
       assert.equal(isLiteralCalculationTask(ORIGINAL_CALC_CORRECTION, expression,
-        { ...scope, deliverables: ['Exact arithmetic result', description] }), true);
+        fixtureCalculationScope(policy, ORIGINAL_CALC_CORRECTION, { deliverables })), true, deliverables.join(' / '));
     }
-    for (const description of ['A final reply ending with RESULT_2026 and send it to Alice',
-      'Reply to Alice with the exact calculation result', 'A final reply sent to the current chat',
-      'A final reply ending with RESULT_2026 using page evidence', 'Read the page and return the result']) {
-      assert.equal(isLiteralCalculationTask(ORIGINAL_CALC_CORRECTION, expression,
-        { ...scope, deliverables: ['Exact arithmetic result', description] }), false);
-    }
-    assert.equal(isLiteralCalculationTask(`Only calculate ${expression}. Return the result and DM Alice.`, expression, scope), false);
-    assert.equal(isLiteralCalculationTask(ORIGINAL_CALC_CORRECTION, expression, { ...scope, readScope: 'visible' }), false);
+    // A request read as other work, or a planner that reads pages, keeps the
+    // ordinary path.
+    const mixed = `Only calculate ${expression}. Return the result and DM Alice.`;
+    assert.equal(isLiteralCalculationTask(mixed, expression, fixtureCalculationScope(policy, mixed)), false);
+    assert.equal(isLiteralCalculationTask(ORIGINAL_CALC_CORRECTION, expression,
+      fixtureCalculationScope(policy, ORIGINAL_CALC_CORRECTION, { readScope: 'visible' })), false);
   });
 
   test(`${build}: calculation receipt matches whitespace between exact arithmetic tokens only`, () => {
+    const scope = fixtureCalculationScope(policy, ORIGINAL_CALC_CORRECTION);
     for (const toolExpression of [expression, expression.replace(/\s/g, ''), expression.replace(/ /g, '\t')]) {
       assert.equal(isLiteralCalculationTask(ORIGINAL_CALC_CORRECTION, toolExpression, scope), true);
     }
+    const readingOf = (task, taskExpression) => fixtureCalculationScope(policy, task, { expression: taskExpression });
     for (const [taskExpression, toolExpression] of [
       ['sum ( 1 , - 2.5e+2 )', 'sum(1,-2.5e+2)'], ['( 1 + 2 ) / + 3', '(1+2)/+3'],
-    ]) assert.equal(isLiteralCalculationTask(`Only calculate ${taskExpression}`, toolExpression), true);
-    assert.equal(isLiteralCalculationTask('Only calculate 1 + 1.', '1+1'), true);
+    ]) assert.equal(isLiteralCalculationTask(`Only calculate ${taskExpression}`, toolExpression,
+      readingOf(`Only calculate ${taskExpression}`, taskExpression)), true);
+    assert.equal(isLiteralCalculationTask('Only calculate 1 + 1.', '1+1', readingOf('Only calculate 1 + 1.', '1 + 1.')), true);
     for (const [taskExpression, toolExpression] of [
       ['12', '1 2'], ['1.2', '1 .2'], ['1e2', '1 e2'], ['1e-2', '1 e - 2'],
       ['sum(1,2)', 'su m(1,2)'], ['1 2', '12'], ['1 .2', '1.2'], ['1 e2', '1e2'],
       ['su m(1,2)', 'sum(1,2)'], ['123', '23'], ['0.125', '.125'],
       ['1.25', '1.2'], ['1e2', '1'], ['1', '01'], ['1+2', '1-2'], ['1+2', '2+1'],
-    ]) assert.equal(isLiteralCalculationTask(`Only calculate ${taskExpression}`, toolExpression), false,
+    ]) assert.equal(isLiteralCalculationTask(`Only calculate ${taskExpression}`, toolExpression,
+      readingOf(`Only calculate ${taskExpression}`, taskExpression)), false,
       `${taskExpression} cannot establish receipt for ${toolExpression}`);
     for (const task of [
       `Only calculate ${expression} and ${expression.replace(/\s/g, '')}. Return the result.`,
@@ -125,13 +131,16 @@ for (const build of ['chrome', 'firefox']) {
       `Only calculate ${expression}. Return the result using the current page.`,
       `Only calculate ${expression}. Return the result and calculate 5 + 7.`,
       `Only calculate ${expression}. Report the result and send it.`,
-    ]) assert.equal(isLiteralCalculationTask(task, expression.replace(/\s/g, ''), scope), false);
+    ]) assert.equal(isLiteralCalculationTask(task, expression.replace(/\s/g, ''), readingOf(task, expression)), false, task);
   });
 
   test(`${build}: pre-tool response scope comes from the full genuine arithmetic-only task, never a plan alone`, () => {
-    assert.equal(literalCalculationTaskExpression(ORIGINAL_CALC_CORRECTION, scope), expression);
-    assert.equal(literalCalculationTaskExpression(`Sadece ${expression} hesapla. Tam sonucu bildir ve marker "HESAP_2026_01" ile bitir.`, scope), expression);
-    assert.equal(literalCalculationTaskExpression('Only calculate sum ( 1 , -2.5e+2 ).', scope), 'sum ( 1 , -2.5e+2 )');
+    const scoped = task => literalCalculationTaskExpression(task, fixtureCalculationScope(policy, task));
+    assert.equal(scoped(ORIGINAL_CALC_CORRECTION), expression);
+    assert.equal(scoped(`Sadece ${expression} hesapla. Tam sonucu bildir ve marker "HESAP_2026_01" ile bitir.`), expression);
+    assert.equal(scoped('Only calculate sum ( 1 , -2.5e+2 ).'), 'sum ( 1 , -2.5e+2 )');
+    // A plan alone, without a reading of the request, is never the scope.
+    assert.equal(literalCalculationTaskExpression(ORIGINAL_CALC_CORRECTION, scope), null);
     for (const task of [
       'Only calculate 1 2.',
       'Only calculate 1 .2.',
@@ -142,7 +151,7 @@ for (const build of ['chrome', 'firefox']) {
       `Only calculate ${expression}. Report result and DM Alice.`,
       `Only calculate ${expression} and 1 + 1. Return the result.`,
       `Only calculate ${expression} and ${expression.replace(/\s/g, '')}. Return the result.`,
-    ]) assert.equal(literalCalculationTaskExpression(task, scope), null);
+    ]) assert.equal(scoped(task), null, task);
   });
 
   for (const streaming of [false, true]) for (const noSpaces of [false, true]) for (const refreshFails of [false, true]) {
@@ -350,7 +359,7 @@ for (const build of ['chrome', 'firefox']) {
         const guard = agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute',
           requiresStateChange: false, requiresSubmission: false,
           ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: scope.deliverables }) });
-        agent._beginCompletionInvariant(tab);
+        await agent._prepareCalculationReading(tab); agent._beginCompletionInvariant(tab);
         if (!beforeCalculation && change !== 'no_actual_receipt') {
           const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
           agent._markPlanExecutionToolCall(tab, 'calculate', result);

@@ -11,7 +11,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, boundedSemanticData, semanticDecisionMessages, semanticQuestion, semanticSystemOneQuestion } from './semantic-decisions.js';
+import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
@@ -56,7 +56,7 @@ const PRIVATE_FINAL_RESULT_NOTE = "PRIVATE FINAL DELIVERY: This Cloud run has an
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, progressIdentitiesAreUnique, progressIdentityKeys, reconcileLedgerItems, reconcilePersistedLedgerRows, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
-import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
+import { PROGRESS_ACTIONS, isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
 import { cdpClient, isCdpCommandNotSentError } from '../cdp/cdp-client.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getFullPageCapturePolicy, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, isPublicComposerRoute, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
@@ -197,6 +197,12 @@ import { chromeProtectedPageFailure, chromeProtectedPageForUrl, isChromeProtecte
 import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
+// The canonical names the intent model gives requested workflow fields; its
+// prompt lists them per workflow.
+const WORKFLOW_FIELD_KEYS = new Set(['alt_text', 'paid_promotion', 'recording_date', 'recording_location', 'comments',
+  'embedding', 'description', 'visibility', 'audience', 'playlist', 'language', 'category', 'license', 'tag', 'tags',
+  'notes', 'train', 'travel_date', 'departure', 'arrival', 'passenger', 'seat_class', 'account', 'attachment',
+  'subject', 'body', 'path', 'branch', 'commit_message', 'title']);
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const CHROME_WEB_STORE_GALLERY_PAGE = 'chrome-web-store-gallery';
 const CHROME_WEB_STORE_URL_READ_TOOLS = new Set(['fetch_url', 'research_url', 'read_page_source']);
@@ -2945,6 +2951,14 @@ export class Agent extends LoopDetector {
     return /\b(?:changes?\s+saved|saved\s+successfully|successfully\s+(?:saved|updated)|update\s+complete)\b|(?:保存成功|已保存|更新成功|başarıyla kaydedildi|modifications enregistrées|cambios guardados|変更を保存しました|저장되었습니다)/i.test(text);
   }
 
+  // A requested field's name as the intent model gives it: one of the
+  // canonical names its prompt lists. Another name, in any language, names no
+  // field, so the requirement stays incomplete instead of being guessed.
+  _workflowCanonicalFieldKey(value) {
+    const key = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return WORKFLOW_FIELD_KEYS.has(key) ? key : '';
+  }
+
   _workflowMetadataFieldKey(value) {
     let text = String(value || '');
     try { text = text.normalize('NFKC'); } catch {}
@@ -3039,7 +3053,7 @@ export class Agent extends LoopDetector {
         discarded += 1;
         continue;
       }
-      const field = this._workflowMetadataFieldKey(value.field);
+      const field = this._workflowCanonicalFieldKey(value.field);
       const attachment = field === 'alt_text'
         ? this._workflowMetadataValue(value.attachment ?? value.target ?? value.filename)
         : '';
@@ -7184,6 +7198,85 @@ export class Agent extends LoopDetector {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
     }
     return { choice: null, evidence: '', source: 'unavailable' };
+  }
+
+  /**
+   * The same fixed-choice question about several items (page labels, values
+   * a model wrote down), answered per item in as few requests as possible:
+   * the decision model first, then the active model for the items it was not
+   * sure about. Returns one { choice, evidence, source } per item, in order;
+   * choice is null where no sure answer was available. Each item's answer is
+   * remembered on its own, so a later batch asks only about new items.
+   */
+  async _semanticDecisions(tabId, kind, { request = '', items = [] } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
+    const spec = semanticQuestion(kind);
+    const trusted = String(request ?? '').slice(0, 6000);
+    const data = (Array.isArray(items) ? items : []).map(item => boundedSemanticData(item));
+    const keys = data.map(item => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, item])));
+    this._semanticDecisionCache ??= new Map();
+    const results = keys.map(key => {
+      const cached = this._semanticDecisionCache.get(key);
+      return cached ? { ...cached, source: 'cache' } : null;
+    });
+    const remember = (index, result) => {
+      results[index] = result;
+      this._semanticDecisionCache.set(keys[index], { choice: result.choice, evidence: result.evidence, answeredBy: result.source });
+      while (this._semanticDecisionCache.size > 512) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
+    };
+    const pending = () => results.map((result, index) => (result ? -1 : index)).filter(index => index >= 0);
+    const runSignal = signal || this._runAbortSignal(tabId);
+    const context = this.systemOneContext(tabId);
+    let open = pending();
+    if (open.length) {
+      try {
+        const settings = await this._jevSettings();
+        for (const chunk of settings ? semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.decision) : []) {
+          if (this._checkAbort(tabId)) break;
+          const indexes = chunk.map(position => open[position]);
+          const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 4000, maxRetries: 0 }), {
+            config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
+            state: { context: wrapSystemOneData(boundedSystemOneText(redactSystemOneText(JSON.stringify({
+              request: trusted, items: indexes.map(index => data[index]) })), 12000)) },
+            questions: semanticSystemOneBatchQuestions(kind, indexes.length),
+          }, context);
+          let sure = 0;
+          indexes.forEach((index, position) => {
+            const answer = verdict.answers?.[`item_${position}`];
+            const choice = confidentChoice(answer, spec.authorizing.includes(answer?.choice) ? 0.85 : 0.7);
+            if (choice) { sure += 1; remember(index, { choice, evidence: '', source: 'decision_model' }); }
+          });
+          this.recordSystemOneVerdict(tabId, { decision: sure ? 'semantic' : 'fallback',
+            reason: sure === indexes.length ? kind : `${kind}_low_confidence`, model: verdict.model }, context);
+        }
+      } catch (error) {
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_${systemOneFailureReason(error)}` }, context);
+      }
+    }
+    open = pending();
+    if (open.length && mainModel && provider?.chat && !this._checkAbort(tabId)) {
+      for (const chunk of semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.main)) {
+        const indexes = chunk.map(position => open[position]);
+        try {
+          const messages = semanticBatchDecisionMessages(kind, trusted, indexes.map(index => data[index]),
+            text => this._wrapUntrusted('read_page', text));
+          const response = await withCompletionTimeout(async completionSignal => {
+            await Promise.resolve();
+            this._throwIfAborted(completionSignal);
+            return this._chatWithCostAllowance(provider, messages, { temperature: 0, maxTokens: 120 + 60 * indexes.length, signal: completionSignal },
+              this.currentCostState.get(tabId) || null, { tabId, generationName: `semantic_${kind}` });
+          }, runSignal, 15000);
+          const accepted = acceptSemanticBatchAnswers(kind,
+            this._socialPublicationResponseObject(response, { maxTokens: 120 + 60 * indexes.length }), trusted, indexes.length);
+          indexes.forEach((index, position) => {
+            if (accepted[position]) remember(index, { ...accepted[position], source: 'main_model' });
+          });
+        } catch (error) {
+          if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        }
+      }
+    }
+    return results.map(result => result || { choice: null, evidence: '', source: 'unavailable' });
   }
 
   _jevValueContext(task, snapshot) {
@@ -13649,6 +13742,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const doneOutcome = fnName === 'done_json'
           ? 'success'
           : normalizeDoneOutcome(fnArgs?.outcome);
+        if (doneOutcome === 'success') await this._prepareMissingValueReadings(tabId);
         const progressBlock = this._shouldBlockDoneForProgress(tabId)
           ? this._progressDoneBlock(tabId, doneOutcome)
           : null;
@@ -32048,6 +32142,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error: `progress_update: invalid status value(s): ${invalid.slice(0, 6).join(', ')}. Use exactly one of pending, acted, processed, skipped, or failed.`,
       };
     }
+    // An action has to be one of the canonical names, as the tool lists them;
+    // another word for it, in any language, is sent back like a bad status.
+    const unknownActions = items
+      .filter(item => item && typeof item === 'object' && !Array.isArray(item)
+        && String(item.action ?? '').trim() && !normalizeProgressAction(item.action))
+      .map(item => `${item.id || item.label || '(missing id)'}:${String(item.action).slice(0, 60)}`);
+    if (unknownActions.length) {
+      return {
+        success: false,
+        error: `progress_update: unknown action value(s): ${unknownActions.slice(0, 6).join(', ')}. Use exactly one of ${PROGRESS_ACTIONS.join(', ')}, or omit action.`,
+      };
+    }
     const canonicalItems = this._canonicalizeProgressItems(items);
     const activeSession = this._currentProgressSession(tabId);
     const currentRows = this.progressLedgers.get(tabId) || [];
@@ -32735,6 +32841,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
   }
 
+  _missingValueKey(field, value) {
+    return `${String(field)}\u0000${String(value).trim()}`;
+  }
+
+  // Whether a short recorded value of a required field only says that the
+  // information is missing ("unknown", "n/a", "bilinmiyor", "—") is read by a
+  // model in any language, once per value, before the expected-items check at
+  // done. No sure answer leaves the value counted as given.
+  async _prepareMissingValueReadings(tabId) {
+    const expected = this.progressExpectedItems.get(tabId);
+    if (!expected?.required_fields?.length) return;
+    this._missingValueReadings ??= new Map();
+    const pending = new Map();
+    for (const row of this._currentTaskLedgerRows(tabId)) {
+      for (const field of expected.required_fields) {
+        const value = row?.fields?.[field];
+        if (typeof value !== 'string' || !value.trim() || value.trim().length > 40) continue;
+        const key = this._missingValueKey(field, value);
+        if (!this._missingValueReadings.has(key)) pending.set(key, { field, value: value.trim() });
+      }
+    }
+    if (!pending.size) return;
+    const entries = [...pending.entries()];
+    const readings = await this._semanticDecisions(tabId, 'missing_value', { items: entries.map(([, item]) => item) });
+    entries.forEach(([key], index) => this._missingValueReadings.set(key, readings[index]?.choice || null));
+    while (this._missingValueReadings.size > 512) this._missingValueReadings.delete(this._missingValueReadings.keys().next().value);
+  }
+
   _expectedItemsDoneBlock(tabId, outcome = null) {
     if (outcome === 'partial' || outcome === 'failed') return null;
     const expected = this.progressExpectedItems.get(tabId);
@@ -32760,7 +32894,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const incomplete = orderedRows.filter(row => String(row.status || '').toLowerCase() !== 'processed'
       || expected.required_fields.some(field => {
         const value = row?.fields?.[field];
-        return value == null || String(value).trim() === '';
+        return value == null || String(value).trim() === ''
+          || this._missingValueReadings?.get(this._missingValueKey(field, value)) === 'missing';
       }));
     if (incomplete.length) {
       return {
@@ -47428,6 +47563,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      await this._prepareCalculationReading(tabId);
       const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
       if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
@@ -48762,6 +48898,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      await this._prepareCalculationReading(tabId);
       const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
       if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
