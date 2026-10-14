@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
+import { fixtureMessageStatusReading } from './semantic-decision-stub.mjs';
 
 // Structural selectors/status come from the user's sanitized current Web DOM.
 // All requests are intercepted and all contacts/bodies/IDs below are fixtures.
@@ -19,6 +20,12 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await page.route('**/*', route => route.fulfill({ contentType: route.request().url().includes('/__qa/kernel.js') ? 'text/javascript' : 'text/html',
         body: route.request().url().includes('/__qa/kernel.js') ? kernel : fixture }));
       await page.goto('https://web.whatsapp.com/'); await page.addScriptTag({ content: observer });
+      // What a model reads these status labels as, in any language. content.js
+      // keeps the agent's readings; this observer-only page stands in for it.
+      const statusReadings = Object.fromEntries(['Read', 'Pending', 'Okundu'].map(text => [text, fixtureMessageStatusReading(text)]));
+      await page.evaluate(readings => {
+        window.__wb_page_reading = (kind, value) => (kind === 'message_status' ? readings[String(value).trim()] ?? null : null);
+      }, statusReadings);
       const result = await page.evaluate(async () => {
         const { createChatSession, advanceChatSession, markChatSendPending, decideChatSend, serializeChatSession } = await import('/__qa/kernel.js');
         const transcript = document.querySelector('[data-testid="conversation-panel-messages"]');
@@ -43,6 +50,11 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         pending.querySelector('[aria-label]').setAttribute('aria-label', ' Read ');
         const delivered = advanceChatSession(withheld.session, observe());
         session = delivered.session;
+        // A status in another language verifies a send once a model reads it
+        // as delivered; one nobody has read yet verifies nothing.
+        transcript.replaceChildren(row('opaque-tr-status', 'Turkish status note', 'Okundu'),
+          row('opaque-unread-status', 'Unread status note', 'Zugestellt'));
+        const localizedStatus = observe().messages.map(message => message.text);
         const originalKey = initial.threadKey;
         const rich = row('rich-body', 'Nested emoji ');
         const body = rich.querySelector('[data-testid="selectable-text"]');
@@ -81,7 +93,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           deltas, seenBound: session.seenMessageIds.length, noNumericWatermark: !session.telegramIncomingHighWater,
           historyMessages: history.messages.length, historyDelta: historyStep.newMessages.length, historyPending: !!historyPending,
           genericContact, switched, accountSwitchAction: advanceChatSession(session, switched).nextAction,
-          ambiguousTextMessages: observe().messages.length, originalKey, richMessage };
+          ambiguousTextMessages: observe().messages.length, originalKey, richMessage, localizedStatus };
       });
       assert.equal(result.initial.success, true);
       assert.equal(result.initial.conversationIdentity, 'Fixture QA');
@@ -90,6 +102,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.notEqual(result.initial.messages[0].id, result.initial.messages[1].id);
       assert.equal(result.pendingWithheld, true); assert.equal(result.pendingCleared, true);
       assert.equal(result.repeatRejected, 'already_sent');
+      assert.deepEqual(result.localizedStatus, ['Turkish status note']);
       assert.equal(result.richMessage.text, 'Nested emoji 🙂 fixture.example',
         'A nested native emoji or link belongs to one authored body and must not erase it or insert its alt description');
       assert.equal(result.deltas, 720); assert.equal(result.seenBound, 200); assert.equal(result.noNumericWatermark, true);

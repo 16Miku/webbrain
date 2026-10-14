@@ -23,7 +23,7 @@ ol {min-height:30px} main {position:fixed;left:320px;top:0;width:550px;height:70
 <header><div id="server" role="button" tabindex="0" aria-label="Test, sunucu işlemleri" aria-expanded="false"><h2>Test</h2></div></header>
 <div id="channels"><button id="create" type="button" aria-label="Kanal oluştur">+</button>
 <button id="category" type="button" aria-label="Metin kanalları (kategori)" aria-expanded="true">Metin kanalları</button>
-<a id="channel" href="/channels/123/456" aria-label="genel (metin kanalı)" aria-current="page">genel</a>
+<a id="channel" href="/channels/123/456" aria-label="general (metin kanalı)" aria-current="page">general</a>
 <button id="edit" type="button" aria-label="Kanalı düzenle">Kanalı düzenle</button>
 <button id="nav-send" type="button">Send message</button></div></nav>
 <section class="panels_fixture" aria-label="User status and settings"><div class="accountPopoutButtonWrapper_fixture"><img id="profile-avatar" src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></div><div class="nameTag_fixture"><div class="panelTitleContainer_fixture">WebBrain</div><div class="panelSubtext_fixture"><span class="hovered_fixture">webbrain_one</span></div></div><div class="buttons_fixture"><button id="user-settings-trigger" aria-label="Kullanıcı ayarları">⚙</button><button id="mute" role="switch" aria-label="Sessize al">●</button></div></section>
@@ -262,6 +262,11 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(result.threadKey,'dom:discord:dm:456');
           assert.equal(result.conversationIdentity,'direct-message-456');
           assert.equal(result.messages[0].id,'discord:456:1001');
+          // The selected rail link names the contact in any language: its text
+          // that the composer's label also contains, not a status line beside it.
+          await page.locator('#channel').evaluate(el=>{el.innerHTML='<span>Ada</span><span>Spielt gerade</span>';});
+          await page.locator('#composer').evaluate(el=>el.setAttribute('aria-label','Nachricht an @Ada'));
+          assert.equal((await observe()).conversationIdentity,'Ada');
 
           await page.locator('#channel').evaluate(el=>el.remove());
           assert.equal((await observe()).success,true,'matching message-row channel IDs bind the DM pane without an active rail link');
@@ -325,6 +330,7 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('section').evaluate(el=>el.setAttribute('aria-label','Benutzerstatus und Einstellungen'));
           const localized=await observe();
           assert.equal(localized.success,true,JSON.stringify(localized));
+          assert.equal(localized.conversationIdentity,'#general','the channel is named in any language');
           assert.equal(localized.conversationId,result.conversationId);
           assert.equal(localized.threadKey,result.threadKey);
           assert.deepEqual(localized.messages,result.messages);

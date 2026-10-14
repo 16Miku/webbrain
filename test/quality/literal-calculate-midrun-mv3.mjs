@@ -6,6 +6,8 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
 import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
+// The questions a messaging page's own checks read its texts with.
+const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 
 const workspace = path.resolve('.');
 const extension = path.resolve(process.env.WEBBRAIN_QUALITY_EXTENSION_SOURCE || path.join(workspace, 'src/chrome'));
@@ -102,8 +104,9 @@ const server = http.createServer(async (request, response) => {
       const readsCalculation = fixedChoice && system.includes('contains the arithmetic expression in `page.expression`');
       calls.push({ at: Date.now(), stage: fixedChoice ? 'reading' : 'answer_form', revised,
         kind: readsCalculation ? 'calculation_request' : fixedChoice ? 'other' : 'answer_form', correctionRead: request === correction });
-      // What the chat's controls do is read as a model would.
-      const controls = fixedChoice && fixedChoiceQuestion(input.messages)?.kind === 'message_control'
+      // The chat's controls, fields, message labels and statuses are read as a
+      // model would.
+      const controls = fixedChoice && MESSAGING_TEXT_KINDS.includes(fixedChoiceQuestion(input.messages)?.kind)
         ? fixtureFixedChoiceReply(input.messages) : null;
       const content = answerForm ? { only_result: false, result_last: false, ending: marker, include: [] }
         : readsCalculation && request === correction ? { choice: 'only_result_with_form', evidence: request } : { choice: '', evidence: '' };

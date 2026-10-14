@@ -995,16 +995,16 @@ export const pageFeedbackMethods = {
               && run.uploadObservationScope.url === url ? { uploadTargets: run.uploadObservationScope.selectors } : {}),
             ...(run.actionObservationScope ? { observationRef: run.actionObservationScope.ref } : {}),
             ...(run.actionCaptureTarget ? { actionTarget: run.actionCaptureTarget } : {}),
-            messageReadings: this._pageTextReadingsByCaption?.('message_control') || {} } }, { frameId: 0 }));
+            pageReadings: this._messagingPageReadings?.() || {} } }, { frameId: 0 }));
         let capture = await requestCapture();
         // Who a conversation's footer actions belong to depends on what its
-        // header controls do, read from their names in any language. Names the
+        // header controls do, read from their names in any language. Texts the
         // monitor consulted unread are read once, and the page captured again.
-        if (capture?.messageNamesUnread === true && typeof this._readMessageControls === 'function') {
-          const unread = await settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'take_unread_message_controls' },
+        if (capture?.pageTextsUnread === true && typeof this._readUnreadPageTexts === 'function') {
+          const unread = await settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'take_unread_page_texts' },
             { frameId: 0 })).catch(() => null);
-          if (Array.isArray(unread?.names) && unread.names.length) {
-            await this._readMessageControls(tabId, unread.names.slice(0, 48));
+          if (Array.isArray(unread?.texts) && unread.texts.length) {
+            await this._readUnreadPageTexts(tabId, unread.texts.slice(0, 64));
             stopIfAborted();
             capture = await requestCapture();
           }

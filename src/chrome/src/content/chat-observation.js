@@ -174,9 +174,20 @@
     const transcriptMatchesRoute = transcriptRows.length > 0
       && transcriptChannelIds.length === transcriptRows.length
       && transcriptChannelIds.every(id => id === channelId);
-    const name = /^Message #(.+)$/.exec(attribute(composer, 'aria-label'))?.[1]
-      || /^Messages in (.+)$/.exec(attribute(transcript, 'aria-label'))?.[1]
-      || /^(.+) \(channel\)$/.exec(attribute(root, 'aria-label'))?.[1]
+    // The channel's or contact's name, in any language: the longest text of
+    // the selected rail link that the composer's label also contains (Discord
+    // names the conversation inside its composer's label, in a phrase of the
+    // page's language). Without that link the route names it.
+    const composerLabel = attribute(composer, 'aria-label');
+    const linkTexts = [];
+    if (channelLink && composerLabel) {
+      const walker = document.createTreeWalker(channelLink, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(), count = 0; node && count < 40; node = walker.nextNode(), count++) {
+        const text = compact(node.nodeValue, 240);
+        if (text.length >= 2 && composerLabel.includes(text)) linkTexts.push(text);
+      }
+    }
+    const name = linkTexts.sort((left, right) => right.length - left.length)[0]
       || (directMessageRoute ? `direct-message-${channelId}` : `channel-${channelId}`);
     return transcript && (directMessageRoute
       ? !selectedDmRouteMismatch
@@ -593,12 +604,25 @@
         || /^\+[\d ()-]{7,40}$/.test(compact(node.innerText || node.textContent, 80)));
     });
   };
+  // The contact drawer's close control, in any language: the one named plain
+  // button in the drawer's own header (WhatsApp names it in the page's
+  // language). A drawer that was removed is judged as it was when it closed.
+  const whatsappDrawerClose = drawer => {
+    if (!drawer) return null;
+    const shown = node => !drawer.isConnected || whatsappRendered(node);
+    const header = query(drawer, 'header').find(shown);
+    const buttons = header ? query(header, 'button').filter(button => shown(button)
+      && button.closest('[data-testid="chat-info-drawer"]') === drawer && button.closest('header') === header) : [];
+    const button = buttons.length === 1 ? buttons[0] : null;
+    return button && attribute(button, 'aria-label') && button.type === 'button' && !button.disabled
+      && !button.form && !button.hasAttribute('form') ? button : null;
+  };
+  // The drawer closed through the exact control the guarded click armed,
+  // still named as it was then.
   const sameWhatsappCloseWitness = record => {
     const close = record?.closeWitness;
-    return !!close && close.owner === whatsappOwner && close.button?.closest('header')
-      && close.button.closest('[data-testid="chat-info-drawer"]') === record.drawer
-      && attribute(close.button, 'aria-label') === 'Close' && close.button.type === 'button'
-      && !close.button.disabled && !close.button.form && !close.button.hasAttribute('form');
+    return !!close?.button && close.owner === whatsappOwner && whatsappDrawerClose(record.drawer) === close.button
+      && attribute(close.button, 'aria-label') === close.label;
   };
   const captureWhatsappDrawer = () => {
     const record = whatsappPending;
@@ -695,12 +719,12 @@
     const record = whatsappPending;
     if (record?.drawer && record.id && record.owner === whatsappOwner && sameWhatsappPins(record.pins)
         && sameWhatsappDrawerIdentity(record) && window.__wb_native_whatsapp_repair_action?.(target)) {
-      const button = target?.closest?.('header button[aria-label="Close"]');
-      if (button && button.closest('[data-testid="chat-info-drawer"]') === record.drawer) {
+      const button = whatsappDrawerClose(record.drawer);
+      if (button && target && contains(button, target)) {
         // Only the shipped guarded click path can arm closure of this exact
         // freshly captured drawer. A hidden pane or page-driven removal is not
         // a canonical identity certificate.
-        record.closeWitness = { button, owner: whatsappOwner };
+        record.closeWitness = { button, owner: whatsappOwner, label: attribute(button, 'aria-label') };
         return true;
       }
     }
@@ -726,11 +750,9 @@
     if (!drawers.length) return contains(pins.carrier, target);
     if (drawers.length !== 1) return false;
     const subtitle = uniqueWhatsappNode(drawers[0], '[data-testid="contact-info-subtitle selectable-text"]');
-    const buttons = query(drawers[0], 'header button[aria-label="Close"]').filter(button => whatsappRendered(button)
-      && button.closest('[data-testid="chat-info-drawer"]') === drawers[0]
-      && button.type === 'button' && !button.disabled && !button.form && !button.hasAttribute('form'));
+    const close = whatsappDrawerClose(drawers[0]);
     return subtitle?.childElementCount === 0 && compact(subtitle.textContent, 240) === pins.name
-      && buttons.length === 1 && contains(buttons[0], target);
+      && !!close && contains(close, target);
   };
   window.__wb_native_whatsapp_repair_snapshot = target => window.__wb_native_whatsapp_repair_action(target)
     ? { pins: window.__wb_get_native_whatsapp_repair(), owner: whatsappOwner } : null;
@@ -739,7 +761,7 @@
     if (!pins || typeof window.__wb_ax_ref !== 'function') return null;
     const drawers = whatsappDrawers();
     const target = !drawers.length ? pins.carrier
-      : drawers.length === 1 ? uniqueWhatsappNode(drawers[0], 'header button[aria-label="Close"]') : null;
+      : drawers.length === 1 ? whatsappDrawerClose(drawers[0]) : null;
     if (!target || !window.__wb_native_whatsapp_repair_action(target)) return null;
     const ref_id = window.__wb_ax_ref(target);
     if (typeof ref_id !== 'string' || !/^ref_[A-Za-z0-9_:-]{1,100}$/.test(ref_id)) return null;
@@ -782,7 +804,7 @@
     const record = whatsappPending;
     if (drawers.length !== 1 || record?.drawer !== drawers[0] || !record.id
         || record.owner !== owner || !sameWhatsappDrawerIdentity(record)) return null;
-    const button = uniqueWhatsappNode(record.drawer, 'header button[aria-label="Close"]');
+    const button = whatsappDrawerClose(record.drawer);
     return button && window.__wb_native_whatsapp_repair_action(button)
       ? { owner, pins, phase: 'close_contact', target: button, record } : null;
   };
@@ -924,10 +946,13 @@
     if (booleanValue(attribute(node, 'data-incoming'), node.hasAttribute?.('data-incoming')) === true
       || booleanValue(attribute(node, 'data-is-incoming'), node.hasAttribute?.('data-is-incoming')) === true) return 'incoming';
     const className = compact(typeof node.className === 'string' ? node.className : '', 400).toLowerCase();
-    const aria = attribute(node, 'aria-label').toLowerCase();
-    if (/(?:^|[-_\s])(outgoing|sent|from-me|own-message|self-message)(?:$|[-_\s])/.test(className)
-      || /^(?:you(?:\s+sent\b|[:,])|outgoing message\b|sent by you\b)/.test(aria)) return 'outgoing';
+    if (/(?:^|[-_\s])(outgoing|sent|from-me|own-message|self-message)(?:$|[-_\s])/.test(className)) return 'outgoing';
     if (/(?:^|[-_\s])(incoming|received|from-them|other-message)(?:$|[-_\s])/.test(className)) return 'incoming';
+    // A message label saying the page's own user sent it ("You sent ...") is
+    // read by a model in any language (content.js keeps the readings); an
+    // unread label says nothing yet.
+    const aria = attribute(node, 'aria-label');
+    if (aria && window.__wb_page_reading?.('message_author', aria) === 'self') return 'outgoing';
     return 'unknown';
   };
 
@@ -1173,6 +1198,13 @@
     return messages;
   };
 
+  // Whether a sent message's status label ("Read", "Okundu", "Gelesen")
+  // says it reached the recipient. A model reads the label in any language
+  // (content.js keeps the readings); a label nobody has read yet says nothing,
+  // and the agent reads it before it observes the chat again.
+  const whatsappStatusDelivered = meta => query(meta, '[aria-label]').some(node => visible(node)
+    && window.__wb_page_reading?.('message_status', attribute(node, 'aria-label')) === 'delivered');
+
   const collectWhatsappSelfMessages = channel => {
     // A historical virtual viewport cannot establish a new send or delta.
     // Opaque native IDs have no numeric ordering; normal page tools still read
@@ -1187,12 +1219,11 @@
       const container = query(row, '[data-testid="msg-container"]')[0];
       if (!container) continue;
       const meta = query(container, '[data-testid="msg-meta"]')[0];
-      // The current verified DOM exposes a Read aria label on a span. Do not
-      // infer delivery from color, a tail glyph, clearing the composer, or an
-      // imagined sent/read data-icon. Unknown/localized status stays unverified.
-      const read = query(meta, '[aria-label]').some(node => visible(node)
-        && attribute(node, 'aria-label').toLowerCase() === 'read');
-      if (!read) continue;
+      // The current verified DOM exposes a status label ("Read") on a span. Do
+      // not infer delivery from color, a tail glyph, clearing the composer, or
+      // an imagined sent/read data-icon. A status a model has not read as
+      // delivered, in any language, stays unverified.
+      if (!whatsappStatusDelivered(meta)) continue;
       const textNodes = query(container, '[data-testid="selectable-text"]')
         .filter(node => visible(node) && !contains(meta, node)
           && !node.parentElement?.closest('[data-testid="selectable-text"]'));
@@ -1214,8 +1245,7 @@
       const container = uniqueWhatsappNode(row, '[data-testid="msg-container"]');
       if (!/^[A-Za-z0-9_-]{1,32}$/.test(id) || attribute(row, 'data-testid') !== `conv-msg-${id}` || !container) return null;
       const meta = query(container, '[data-testid="msg-meta"]')[0];
-      const status = query(meta, '[aria-label]').map(node => visible(node) ? attribute(node, 'aria-label').toLowerCase() : '');
-      const delivered = status.some(label => label === 'read' || label === 'delivered');
+      const delivered = whatsappStatusDelivered(meta);
       const tailOut = query(container, '[data-icon="tail-out"]').some(visible);
       const tailIn = query(container, '[data-icon="tail-in"]').some(visible);
       const prePlain = query(container, '[data-pre-plain-text]');

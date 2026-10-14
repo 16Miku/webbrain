@@ -23,16 +23,19 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) test
       for (const listener of qaHandlers) listener(message, {}, resolve);
     }), { target: 'content', action, params });
     const observe = currentOwner => call('observe_chat', { _nativeChatOwner: currentOwner || owner });
-    async function open() {
+    // `closeLabel` is the drawer's close control's name in the page's language;
+    // `extraHeaderButton` puts a second control in the drawer's header.
+    async function open({ closeLabel = 'Close', extraHeaderButton = false } = {}) {
       await page.goto('https://web.whatsapp.com/');
-      await page.evaluate(() => {
+      await page.evaluate(({ closeLabel, extraHeaderButton }) => {
         window.qaHandlers = []; window.qaOpened = 0; window.qaClosed = 0; window.qaSent = 0; window.qaCloseMode = '';
         const runtime = { getURL: x => x, onMessage: { addListener: fn => qaHandlers.push(fn) } };
         window.chrome = window.browser = { runtime };
         carrier.onclick = () => {
           qaOpened++;
           const drawer = document.createElement('div'); drawer.dataset.testid = 'chat-info-drawer';
-          drawer.innerHTML = '<header><button type="button" aria-label="Close"><span id="close-icon" aria-label="idle">×</span></button></header><div data-testid="contact-info-header">Contact info</div><span id="subtitle" data-testid="contact-info-subtitle selectable-text">Owned Contact</span><div><span id="phone" data-testid="selectable-text">+90 555 000 00 01</span></div><section id="media"><span data-testid="loading-spinner">Loading</span></section>';
+          drawer.innerHTML = '<header><button type="button" aria-label="' + closeLabel + '"><span id="close-icon" aria-label="idle">×</span></button>'
+            + (extraHeaderButton ? '<button type="button" aria-label="Düzenle">✎</button>' : '') + '</header><div data-testid="contact-info-header">Contact info</div><span id="subtitle" data-testid="contact-info-subtitle selectable-text">Owned Contact</span><div><span id="phone" data-testid="selectable-text">+90 555 000 00 01</span></div><section id="media"><span data-testid="loading-spinner">Loading</span></section>';
           drawer.querySelector('button').onclick = event => {
             qaClosed++;
             const icon = drawer.querySelector('#close-icon');
@@ -51,7 +54,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) test
           window.qaDrawer = drawer;
         };
         send.onclick = () => qaSent++;
-      });
+      }, { closeLabel, extraHeaderButton });
       for (const source of sources) await page.addScriptTag({ content: source });
       const first = await observe(); assert.equal(first.success, false);
       assert.equal(first.nativeWhatsappRepair?.phase, 'open_contact', JSON.stringify(first));
@@ -91,6 +94,24 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) test
         nativeSame: qaNativeNodes.every(node => node.isConnected), phoneSame: qaIdentityNodes.phone === qaDrawer.querySelector('#phone'),
         subtitleSame: qaIdentityNodes.subtitle === qaDrawer.querySelector('#subtitle') })),
         { opened: 1, closed: 1, sent: 0, nativeSame: true, phoneSame: true, subtitleSame: true });
+    });
+    // The drawer's close control is its header's one named button, whatever
+    // language names it; a header with two controls offers none.
+    await t.test('accept a close control named in another language', async () => {
+      await open({ closeLabel: 'Kapat' });
+      const closed = await guardedClose();
+      assert.equal(closed.available, true, 'A close control named in Turkish closes the drawer through the guarded path.');
+      assert.equal(closed.result.success, true, JSON.stringify(closed.result));
+      const observation = await observe(); assert.equal(observation.success, true, JSON.stringify(observation));
+      assert.match(observation.conversationId, /^whatsapp:phone:[a-f0-9]{32}$/);
+      assert.equal(await page.evaluate(() => qaSent), 0);
+    });
+    await t.test('reject a drawer header with two controls', async () => {
+      await open({ extraHeaderButton: true });
+      const closed = await guardedClose();
+      assert.equal(closed.available, false, 'Neither of two header controls is taken for the close control.');
+      assert.equal((await observe()).success, false);
+      assert.equal(await page.evaluate(() => qaSent), 0);
     });
     const invalid = ['phone-text','phone-return','phone-clone','subtitle-text','subtitle-return','subtitle-clone','different-phone','transient-phone','transient-subtitle','identity-clear-return','selected-return','header-clone','other-drawer-return'];
     for (const mutation of invalid) await t.test(`reject ${mutation}`, async () => {

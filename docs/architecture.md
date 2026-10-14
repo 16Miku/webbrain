@@ -916,30 +916,49 @@ submit captions is read as `view` (showing, filtering or searching); an empty,
 unread or unclear caption keeps it counted.
 
 On a page whose sends the recipient guard checks (see the messaging
-adapters below), what a control does is read the same way, from its name in
-any language (`message_control`: it sends something to someone, publishes,
-opens a reply or forward, opens a new message, opens a new post, only works on
-the draft being written, is one of the conversation's own tools such as a
-call, search, settings or back button, is something else such as a contact's
-name, or is unclear). The agent hands the readings it holds to the page with
-each guard check and chat observation; names the guard consulted unread come
-back, are read (the decision model first, the active model within four
-seconds) and the check runs once more. The page monitor's capture reports only
-that names were consulted unread; page feedback then asks for them, reads them
-and captures again, so the conversation that owns a footer action is decided
-with the readings. While the active model decides on such a page, the decision
-model alone pre-reads its button, menu item and tab names for this question
-too. Readings decide: without a composer, a control read as sending, or not
-read yet, stays guarded (an unread one is blocked as retryable, so the click
-can be tried again once read), while any other is not a message send; a
-composer control read as only working on the draft is a composer utility; a
-Gmail control read as opening a reply or forward is composer setup; LinkedIn's
-feed entry read as opening a new post opens one; a conversation header's
-controls read as actions are not its contact; and a Discord settings control,
-a LinkedIn image preview or Telegram's settings entry read as sending is not
-exempt. The content script keeps no word list: Discord's channel composer is
-found by its channelTextArea container, LinkedIn's conversation list by its
-class, and a formatting toolbar by its role.
+adapters below), the page's own texts are read the same way, by what they mean
+in any language: what a control does, from its name (`message_control`: it
+sends something to someone, publishes, opens a reply or forward, opens a new
+message, opens a new post, only works on the draft being written, is one of the
+conversation's own tools such as a call, search, settings or back button, is
+something else such as a contact's name, or is unclear); which row of a message
+a field or a group of address chips is, from its labels and names
+(`message_field`: To, Cc, Bcc, subject, body or something else); whether a
+message's label says the page's own user sent it (`message_author`: self or
+other); and what a sent message's status says (`message_status`: delivered or
+read, sent, pending or failed, unclear). The agent hands the readings it holds
+to the page with each guard check and chat observation; texts the check
+consulted unread come back, are read (the decision model first, the active
+model within four seconds) and the check runs again, up to three times while
+it reaches texts nobody has read (a send control's name first, the recipient
+rows behind it next). The page monitor's capture reports only that texts were
+consulted unread; page feedback then asks for them, reads them and captures
+again, so the conversation that owns a footer action is decided with the
+readings. While the active model decides on such a page, the decision model
+alone pre-reads its button, menu item and tab names for the control question
+too. Until a text is read each check takes it the cautious way: a control as
+one that could send, a field as holding no recipient, a message as nobody's in
+particular, a status as not delivered. Readings decide: without a composer, a
+control read as sending, or not read yet, stays guarded (an unread one is
+blocked as retryable, so the click can be tried again once read), while any
+other is not a message send; a composer control read as only working on the
+draft is a composer utility; a Gmail control read as opening a reply or forward
+is composer setup; LinkedIn's feed entry read as opening a new post opens one;
+a conversation header's controls read as actions are not its contact; a
+Discord settings control, a LinkedIn image preview or Telegram's settings
+entry read as sending is not exempt; a webmail field read as a To, Cc or Bcc
+row holds that row's addresses (an email-typed field on a mail page is a To
+row, and an address chip keeps the row its field gave it); a Gmail chip takes
+its row from the labelled row around it, after the app's own row names; a
+message whose label reads as the user's own counts toward the sent-body
+baseline and is outgoing in a chat observation; and a native WhatsApp message
+counts as sent once its status reads as delivered. The content script keeps no
+word list: Discord's channel composer is found by its channelTextArea
+container and a channel or contact is named by the longest text of its
+selected rail link that the composer's label also contains, LinkedIn's
+conversation list by its class, a formatting toolbar by its role, WhatsApp's
+contact drawer closes through its header's one named button, and a phone
+number in a composer's label is taken by its digits.
 
 Chrome's one trusted retry click on a generic element whose synthetic click
 changed nothing visible (see `accessibility-tree-and-refs.md`) is decided the

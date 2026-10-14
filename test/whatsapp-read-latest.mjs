@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 import { Agent as ChromeAgent } from '../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
+import { stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 // A real native scroll root 246 px short of its latest messages must not
 // establish a send floor. Every contact, message and browser request is owned.
@@ -46,6 +47,8 @@ for (const [build, engine, Agent] of [['chrome', chromium, ChromeAgent], ['firef
       for (const source of sources) await page.addScriptTag({ content: source });
       const provider = { model: 'owned-model', config: { model: 'owned-model' }, supportsVision: false };
       const agent = new Agent({ getActive: () => provider }), tabId = 94;
+      // A model reads the page's texts (a sent message's status) in any language.
+      stubPageTextReadings(agent);
       agent.conversations.set(tabId,[{role:'system',content:'Owned system.'},{role:'user',content:'Send this exact reply once to the currently open Owned Contact: '+body,webbrainResumeTaskId:'owned-latest-task'}]);
       agent._beginCompletionInvariant(tabId);
       agent._planExecutionGuards.set(tabId,{messaging:{target_kind:'named',recipients:['Owned Contact']},requiresSubmission:true});

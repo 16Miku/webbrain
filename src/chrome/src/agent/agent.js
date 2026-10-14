@@ -24754,35 +24754,57 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return this._pageTextReadingsByCaption('control_effect');
   }
 
-  // Reads, in any language, what the controls the recipient guard consulted
-  // do on a messaging page (the message_control question): the decision model
-  // first, the active model within four seconds. A name no model could read
-  // stays unread, and the guard keeps treating it as one that could send.
-  async _readMessageControls(tabId, captions = []) {
-    const list = [...new Set((Array.isArray(captions) ? captions : [])
-      .map(caption => String(caption ?? '').replace(/\s+/g, ' ').trim())
-      .filter(caption => caption && caption.length <= 400))].slice(0, 48);
-    if (!list.length) return;
-    try {
-      await this._readPageTexts(tabId, 'message_control', list, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
-    } catch (error) {
-      if (this._checkAbort(tabId)) throw error;
+  // The questions a messaging page's own checks read its texts with: what a
+  // control does, what an editor field holds, whose a message is, and what a
+  // sent message's status says.
+  static MESSAGING_PAGE_TEXT_KINDS = Object.freeze(['message_control', 'message_field', 'message_author', 'message_status']);
+
+  // The readings of a messaging page's texts the agent holds, for the checks
+  // that run in the page.
+  _messagingPageReadings() {
+    return Object.fromEntries(this.constructor.MESSAGING_PAGE_TEXT_KINDS
+      .map(kind => [kind, this._pageTextReadingsByCaption(kind)]));
+  }
+
+  // Reads, in any language, the texts of a messaging page its checks consulted
+  // unread ([{ kind, text }]): the decision model first, the active model
+  // within four seconds. A text no model could read stays unread, and each
+  // check keeps taking it the cautious way. True when any of them was read.
+  async _readUnreadPageTexts(tabId, texts = []) {
+    const byKind = new Map();
+    for (const item of (Array.isArray(texts) ? texts : []).slice(0, 64)) {
+      const kind = String(item?.kind || ''), text = String(item?.text ?? '').replace(/\s+/g, ' ').trim();
+      if (!this.constructor.MESSAGING_PAGE_TEXT_KINDS.includes(kind) || !text || text.length > 400) continue;
+      if (!byKind.has(kind)) byKind.set(kind, new Set());
+      byKind.get(kind).add(text);
     }
+    let read = false;
+    for (const [kind, list] of byKind) {
+      const pending = [...list].slice(0, 48);
+      try {
+        await this._readPageTexts(tabId, kind, pending, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+      } catch (error) {
+        if (this._checkAbort(tabId)) throw error;
+      }
+      read ||= pending.some(text => !!this._pageTextReading(kind, text));
+    }
+    return read;
   }
 
   // The recipient guard's check in the page, with the agent's readings of the
-  // messaging controls' names. Names it consulted unread are read, and the
-  // check runs once more with them.
+  // messaging page's texts. Texts it consulted unread are read, and the check
+  // runs again with them; a check that then reaches further texts (a send
+  // control's name first, the recipient rows behind it next) has those read
+  // too, up to three times.
   async _messageRecipientGuardProbe(tabId, params) {
-    const check = () => this._messageRecipientContentProbe(tabId,
-      { ...params, __wbMessageReadings: this._pageTextReadingsByCaption('message_control') });
-    const first = await check();
-    const unread = Array.isArray(first?.messageCaptionsNeeded) ? first.messageCaptionsNeeded : [];
-    if (!unread.length) return first;
-    await this._readMessageControls(tabId, unread);
-    const read = unread.some(caption => this._pageTextReading('message_control',
-      String(caption ?? '').replace(/\s+/g, ' ').trim()));
-    return read ? check() : first;
+    const check = () => this._messageRecipientContentProbe(tabId, { ...params, __wbPageReadings: this._messagingPageReadings() });
+    let result = await check();
+    for (let pass = 0; pass < 3; pass += 1) {
+      const unread = Array.isArray(result?.pageTextsNeeded) ? result.pageTextsNeeded : [];
+      if (!unread.length || !await this._readUnreadPageTexts(tabId, unread)) break;
+      result = await check();
+    }
+    return result;
   }
 
   // What a second click on an element whose first click changed nothing
@@ -25464,7 +25486,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       _nativeChatPendingRestore: this._nativeChatPendingRestore(tabId),
       ...(policy?.adapterName ? { adapterName: policy.adapterName } : {}),
       supportsRecipientSets: policy?.supportsRecipientSets === true,
-      __wbMessageReadings: this._pageTextReadingsByCaption('message_control'),
+      __wbPageReadings: this._messagingPageReadings(),
     };
   }
 
@@ -25552,12 +25574,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _readChatObservation(tabId) {
     try {
-      const params = await this._chatObservationParams(tabId);
-      const result = await this._sendDevContentAction(
-        tabId,
-        'observe_chat',
-        params,
-      );
+      // Texts the observation consulted unread (a message's status or label,
+      // a header control's name) are read, and it observes again, up to three
+      // times while it reaches texts nobody has read.
+      const observe = async () => {
+        const params = await this._chatObservationParams(tabId);
+        return { params, result: await this._sendDevContentAction(tabId, 'observe_chat', params) };
+      };
+      let { params, result } = await observe();
+      for (let pass = 0; pass < 3; pass += 1) {
+        const unread = Array.isArray(result?.pageTextsNeeded) ? result.pageTextsNeeded : [];
+        if (!unread.length || !await this._readUnreadPageTexts(tabId, unread)) break;
+        ({ params, result } = await observe());
+      }
+      if (result && typeof result === 'object' && 'pageTextsNeeded' in result) {
+        const { pageTextsNeeded: _unread, ...observation } = result;
+        result = observation;
+      }
       if ((/^https:\/\/web\.whatsapp\.com(?:\/|$)/i.test(result?.url || '')
             || /^dom:whatsapp:/.test(result?.threadKey || ''))
           && params._nativeChatOwner !== this._nativeChatOwnerScope(tabId)) {

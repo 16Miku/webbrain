@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
+import { guardProbeWithReadings } from './semantic-decision-stub.mjs';
 
 // Actual native shapes are grounded in the sanitized current WhatsApp capture.
 // All contacts, phone numbers, text and browser requests belong to this fixture.
@@ -56,7 +57,10 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         return JSON.stringify([run,current.taskKey,generation,provider,'owned-model',current.taskSha256,current.resumeTaskId,current.providerSha256]);
       };
       let owner = ownerFor(), restore = null;
-      const observe = () => call('observe_chat', { _nativeChatOwner: owner, _nativeChatPendingRestore: restore, adapterName: 'generic-messaging' });
+      // Observes the way the agent does: texts the observation consulted
+      // unread (a sent message's status) are read, and it observes again.
+      const observe = () => guardProbeWithReadings(params => call('observe_chat', params),
+        { _nativeChatOwner: owner, _nativeChatPendingRestore: restore, adapterName: 'generic-messaging' });
       const read = () => call('get_accessibility_tree', { filter: 'all' });
       const click = async selector => {
         await read();

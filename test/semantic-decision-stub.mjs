@@ -25,6 +25,9 @@ const PAGE_TEXT_ORACLES = {
   control_effect: item => fixtureControlEffectReading(item?.text),
   control_repeat: item => fixtureControlRepeatReading(item?.text),
   message_control: item => fixtureMessageControlReading(item?.text),
+  message_field: item => fixtureMessageFieldReading(item?.text),
+  message_author: item => fixtureMessageAuthorReading(item?.text),
+  message_status: item => fixtureMessageStatusReading(item?.text),
   status_message: item => fixtureStatusReading(item?.text),
   workflow_state: item => fixtureWorkflowStateReading(item?.state, item?.text),
 };
@@ -266,7 +269,7 @@ const MESSAGE_TOOL_NAMES = new RegExp(
 );
 const CONVERSATION_TOOL_NAMES = /^(?:call|(?:voice|video|audio)\s+call|start\s+(?:a\s+)?(?:voice|video)\s+call|search|menu|more|settings|back|close|arama|ara|suchen|rechercher|buscar|llamar|appel|anrufen)(?=$|[\s,.:;!?…])/iu;
 export function fixtureMessageControlReading(text) {
-  const value = String(text || '').replace(/[​-‍﻿]/g, '').replace(/\s+/g, ' ').trim();
+  const value = String(text || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
   if (!value) return null;
   if (new RegExp(`${WORD}(?:send|enviar|envoyer|invia|senden|verzenden|gönder\\p{L}*|отправить)${WEND}`, 'iu').test(value)
       || /送信|发送|發送|보내|إرسال|ارسال/u.test(value)) return 'send';
@@ -279,20 +282,55 @@ export function fixtureMessageControlReading(text) {
   return 'other';
 }
 
-// Runs the recipient guard's page check the way the agent does: names it
-// consulted unread are read by a model (the fixture oracle by default), and
-// the check runs once more with those readings. `evaluate(params)` runs the
-// check in the page and returns its result.
-export async function guardProbeWithReadings(evaluate, params = {}, read = fixtureMessageControlReading) {
-  const readings = { ...(params.__wbMessageReadings || {}) };
-  const first = await evaluate({ ...params, __wbMessageReadings: readings });
-  const needed = Array.isArray(first?.messageCaptionsNeeded) ? first.messageCaptionsNeeded : [];
-  if (!needed.length) return first;
-  for (const caption of needed) {
-    const choice = read(caption);
-    if (choice) readings[caption] = choice;
+// How a model reads the fixtures' own message editor field names (the
+// message_field question), message labels (message_author) and sent-message
+// statuses (message_status). Small oracles for the test fixtures, the way a
+// model would read them; the product never reads these words.
+export function fixtureMessageFieldReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  if (/(?:^|[^\p{L}])(?:bcc|blind carbon copy|gizli)(?=[^\p{L}]|$)/iu.test(value)) return 'bcc';
+  if (/(?:^|[^\p{L}])(?:cc|carbon copy|bilgi)(?=[^\p{L}]|$)/iu.test(value)) return 'cc';
+  if (/(?:^|[^\p{L}])(?:to|recipients?|send to|e-?mail(?: address)?|destinatario|destinataria|destinataire|para|aan|kime|alıcı\p{L}*|do|til|komu)(?=[^\p{L}]|$)|收件人|宛先|받는\s*사람|إلى/iu.test(value)) return 'to';
+  if (/(?:^|[^\p{L}])(?:subject|konu)(?=[^\p{L}]|$)/iu.test(value)) return 'subject';
+  if (/(?:^|[^\p{L}])(?:body|message body)(?=[^\p{L}]|$)/iu.test(value)) return 'body';
+  return 'other';
+}
+export function fixtureMessageAuthorReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  return /^(?:you(?:\s+sent\b|[:,])|outgoing message\b|sent by you\b|siz:|gönderdiğiniz)/iu.test(value) ? 'self' : 'other';
+}
+export function fixtureMessageStatusReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  if (/^(?:read|delivered|seen|okundu|iletildi|görüldü)$/iu.test(value)) return 'delivered';
+  if (/^(?:sent|gönderildi)$/iu.test(value)) return 'sent';
+  if (/^(?:pending|sending|failed|bekliyor)$/iu.test(value)) return 'pending';
+  return 'unclear';
+}
+
+// Runs the recipient guard's page check (or a chat observation) the way the
+// agent does: texts it consulted unread are read by a model (the fixture
+// oracles by default), and the check runs again with those readings, up to
+// three times while it reaches texts nobody has read. `evaluate(params)` runs
+// the check in the page and returns its result; `read(kind, text)` gives a
+// reading or null for no answer.
+export async function guardProbeWithReadings(evaluate, params = {}, read = fixturePageTextReading) {
+  const readings = {};
+  for (const [kind, texts] of Object.entries(params.__wbPageReadings || {})) readings[kind] = { ...texts };
+  let result = await evaluate({ ...params, __wbPageReadings: readings });
+  for (let pass = 0; pass < 3; pass += 1) {
+    const needed = Array.isArray(result?.pageTextsNeeded) ? result.pageTextsNeeded : [];
+    let readAny = false;
+    for (const { kind, text } of needed) {
+      const choice = read(kind, text);
+      if (choice) { (readings[kind] ??= {})[text] = choice; readAny = true; }
+    }
+    if (!readAny) break;
+    result = await evaluate({ ...params, __wbPageReadings: readings });
   }
-  return evaluate({ ...params, __wbMessageReadings: readings });
+  return result;
 }
 
 // Runs the submit probe the way the agent does: a collect pass reports the
@@ -319,7 +357,7 @@ export function stubPageTextReadings(agent, read = (kind, item) => (kind === 'st
   ? fixtureStatusReading(item.text) : kind === 'workflow_state' ? fixtureWorkflowStateReading(item.state, item.text)
     : kind === 'control_effect' ? fixtureControlEffectReading(item.text)
       : kind === 'control_repeat' ? fixtureControlRepeatReading(item.text)
-        : kind === 'message_control' ? fixtureMessageControlReading(item.text) : null)) {
+        : fixturePageTextReading(kind, item.text, item))) {
   const asked = [];
   agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}) => items.map(item => {
     asked.push({ kind, ...item });
@@ -343,7 +381,9 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'workflow_state') return fixtureWorkflowStateReading(item?.state, item?.text);
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
-    if (question.kind === 'message_control') return fixtureMessageControlReading(item?.text);
+    if (['message_control', 'message_field', 'message_author', 'message_status'].includes(question.kind)) {
+      return fixturePageTextReading(question.kind, item?.text);
+    }
     return answers[question.kind] ?? null;
   };
   const evidenceOf = item => (typeof item?.text === 'string' ? item.text : typeof item?.label === 'string' ? item.label : question.request);
@@ -370,6 +410,9 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'control_effect') return fixtureControlEffectReading(text);
   if (kind === 'control_repeat') return fixtureControlRepeatReading(text);
   if (kind === 'message_control') return fixtureMessageControlReading(text);
+  if (kind === 'message_field') return fixtureMessageFieldReading(text);
+  if (kind === 'message_author') return fixtureMessageAuthorReading(text);
+  if (kind === 'message_status') return fixtureMessageStatusReading(text);
   return null;
 }
 
@@ -378,6 +421,6 @@ export function fixturePageTextReading(kind, text, context = {}) {
 // fixed-choice questions themselves.
 export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
-  return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control'].includes(kind)
-    ? fixtureFixedChoiceReply(messages) : null;
+  return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control', 'message_field',
+    'message_author', 'message_status'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }

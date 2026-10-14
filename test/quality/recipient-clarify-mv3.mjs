@@ -6,6 +6,8 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { conformFixtureCompletionCall } from './completion-provider-contract.mjs';
 import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
+// The questions a messaging page's own checks read its texts with.
+const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 
 // The reported trace through the installed MV3 extension: the user asks to
 // send a photo to "gamze", and the open direct thread is "Gamze Çömlekçi".
@@ -74,8 +76,9 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
       completion = { role: 'assistant', content: JSON.stringify(approved
         ? { outcome: 'succeeded', reason: 'The thread shows the new outgoing attachment.' }
         : { outcome: 'failed', reason: 'The user declined the recipient; nothing was sent.' }) };
-    } else if (fixedChoiceQuestion(input.messages)?.kind === 'message_control') {
-      // What the chat's controls do, read as a model would.
+    } else if (MESSAGING_TEXT_KINDS.includes(fixedChoiceQuestion(input.messages)?.kind)) {
+      // The chat's controls, fields, message labels and statuses, read as a
+      // model would.
       completion = { role: 'assistant', content: fixtureFixedChoiceReply(input.messages) };
     } else if (!input.tools?.length) completion = { role: 'assistant', content: JSON.stringify(intent) };
     else {

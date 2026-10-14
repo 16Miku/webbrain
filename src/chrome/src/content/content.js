@@ -6455,50 +6455,75 @@
     }
   }
 
-  // What activating a control with a given caption does on a messaging
-  // page, read by a model in any language (the agent's message_control
-  // question): send, publish, reply, new_message, new_post, draft_tool,
-  // conversation_tool, other or unclear. The agent hands its readings to the
-  // page with each guard check, and the recipient guard and its dispatch
-  // checks consult them here. A caption nobody has read yet is kept for the
-  // agent to read; until then a check treats it as one that could send.
-  const _MESSAGE_CONTROL_CHOICES = new Set(['send', 'publish', 'reply', 'new_message', 'new_post',
-    'draft_tool', 'conversation_tool', 'other', 'unclear']);
+  // Texts of a messaging page read by a model in any language, by the agent's
+  // page-text question: what activating a control does (message_control:
+  // send, publish, reply, new_message, new_post, draft_tool,
+  // conversation_tool, other or unclear), what a message editor's field holds
+  // (message_field: to, cc, bcc, subject, body or other), whether a message's
+  // label says the page's own user sent it (message_author: self or other),
+  // and what a sent message's status says (message_status: delivered, sent,
+  // pending or unclear). The agent hands its readings to the page with each
+  // guard check and chat observation, and the recipient guard, its dispatch
+  // checks and the chat observer consult them here. A text nobody has read
+  // yet is kept for the agent to read; until then each check takes it the
+  // cautious way: a control as one that could send, a field as holding no
+  // recipient, a message as nobody's in particular, a status as not
+  // delivered.
+  const _PAGE_READING_CHOICES = Object.freeze({
+    message_control: new Set(['send', 'publish', 'reply', 'new_message', 'new_post', 'draft_tool', 'conversation_tool',
+      'other', 'unclear']),
+    message_field: new Set(['to', 'cc', 'bcc', 'subject', 'body', 'other']),
+    message_author: new Set(['self', 'other']),
+    message_status: new Set(['delivered', 'sent', 'pending', 'unclear']),
+  });
   // Readings that name an action of the control itself, never a contact's name.
   const _MESSAGE_CONTROL_ACTIONS = new Set(['send', 'publish', 'reply', 'new_message', 'new_post',
     'draft_tool', 'conversation_tool']);
-  const _messageControlReadings = new Map();
-  const _messageControlUnread = new Set();
+  const _pageReadings = new Map();
+  const _pageReadingsUnread = new Map();
 
-  function _messageControlCaption(value) {
+  function _pageReadingText(value) {
     return String(value ?? '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
   }
 
-  function _rememberMessageControlReadings(readings) {
+  // `readings` is { question: { text: choice } }.
+  function _rememberPageReadings(readings) {
     if (!readings || typeof readings !== 'object' || Array.isArray(readings)) return;
-    for (const [caption, choice] of Object.entries(readings).slice(0, 800)) {
-      const key = _messageControlCaption(caption);
-      if (!key || key.length > 400 || !_MESSAGE_CONTROL_CHOICES.has(choice)) continue;
-      _messageControlReadings.delete(key);
-      _messageControlReadings.set(key, choice);
-      _messageControlUnread.delete(key);
+    for (const [kind, texts] of Object.entries(readings).slice(0, 8)) {
+      const choices = Object.hasOwn(_PAGE_READING_CHOICES, kind) ? _PAGE_READING_CHOICES[kind] : null;
+      if (!choices || !texts || typeof texts !== 'object' || Array.isArray(texts)) continue;
+      for (const [value, choice] of Object.entries(texts).slice(0, 800)) {
+        const text = _pageReadingText(value);
+        if (!text || text.length > 400 || !choices.has(choice)) continue;
+        const key = `${kind}\u0000${text}`;
+        _pageReadings.delete(key);
+        _pageReadings.set(key, choice);
+        _pageReadingsUnread.delete(key);
+      }
     }
-    while (_messageControlReadings.size > 1600) _messageControlReadings.delete(_messageControlReadings.keys().next().value);
+    while (_pageReadings.size > 3200) _pageReadings.delete(_pageReadings.keys().next().value);
   }
 
-  // The reading of one caption: its choice, '' when there is no caption, or
-  // null when nobody has read it yet (it is then kept for the agent to read).
-  function _messageControlReading(value) {
-    const caption = _messageControlCaption(value);
-    if (!caption) return '';
-    // A text this long is not a control's name.
-    if (caption.length > 400) return 'other';
-    const choice = _messageControlReadings.get(caption);
+  // The reading of one text: its choice, '' when there is no text, or null
+  // when nobody has read it yet (it is then kept for the agent to read). A
+  // text longer than 400 characters is not read; it reads as `longText`.
+  function _pageReading(kind, value, longText = null) {
+    const text = _pageReadingText(value);
+    if (!text) return '';
+    if (text.length > 400) return longText;
+    const key = `${kind}\u0000${text}`;
+    const choice = _pageReadings.get(key);
     if (choice) return choice;
-    _messageControlUnread.delete(caption);
-    _messageControlUnread.add(caption);
-    while (_messageControlUnread.size > 48) _messageControlUnread.delete(_messageControlUnread.values().next().value);
+    _pageReadingsUnread.delete(key);
+    _pageReadingsUnread.set(key, { kind, text });
+    while (_pageReadingsUnread.size > 64) _pageReadingsUnread.delete(_pageReadingsUnread.keys().next().value);
     return null;
+  }
+
+  // What a control's caption reads as. A text this long is not a control's
+  // name.
+  function _messageControlReading(value) {
+    return _pageReading('message_control', value, 'other');
   }
 
   // A caption read as sending something to someone, or not read yet.
@@ -6507,21 +6532,24 @@
     return reading === 'send' || reading === null;
   }
 
-  function _takeUnreadMessageControls() {
-    const captions = [..._messageControlUnread];
-    _messageControlUnread.clear();
-    return captions;
+  function _takeUnreadPageTexts() {
+    const texts = [..._pageReadingsUnread.values()];
+    _pageReadingsUnread.clear();
+    return texts;
   }
 
-  // The page monitor's capture of a conversation's footer actions consults the
-  // same readings (who the conversation is depends on which header controls
-  // are actions), so it can hand over the agent's readings and tell the agent
-  // that names were consulted unread.
-  window.__wb_remember_message_control_readings = readings => {
-    if (WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)) _rememberMessageControlReadings(readings);
+  // The page monitor's capture of a conversation's footer actions and the chat
+  // observer consult the same readings (who the conversation is depends on
+  // which header controls are actions; whose a message is, on its label), so
+  // they can hand over the agent's readings, look one up, and tell the agent
+  // that texts were consulted unread.
+  window.__wb_remember_page_readings = readings => {
+    if (WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)) _rememberPageReadings(readings);
   };
-  window.__wb_message_controls_unread = () => WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)
-    && _messageControlUnread.size > 0;
+  window.__wb_page_reading = (kind, value) => (WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)
+    && Object.hasOwn(_PAGE_READING_CHOICES, kind) ? _pageReading(kind, value) : null);
+  window.__wb_page_texts_unread = () => WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)
+    && _pageReadingsUnread.size > 0;
 
   // Composer utilities sit at the composer's edge, so the geometry rule would
   // otherwise treat them as potential sends: Gmail's own toolbar exposes
@@ -6759,7 +6787,7 @@
         : [])
         .map(value => normalizedIdentity(value && typeof value === 'object' ? value.identity : value))
         .filter(Boolean);
-      const outgoingMessageContainer = (el) => {
+      const outgoingMessageContainer = (el, { byLabel = true } = {}) => {
         let current = el;
         for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
           const direction = normalizedIdentity([
@@ -6776,11 +6804,13 @@
           const className = normalizedIdentity(
             typeof current.className === 'string' ? current.className : '',
           );
-          const ariaLabel = normalizedIdentity(current.getAttribute?.('aria-label'));
+          // The app's own direction attributes and classes decide first; a
+          // message label saying the page's own user sent it ("You sent ...")
+          // is read by a model in any language.
           if (/\b(?:outgoing|sent|self|own|user|from-me)\b/.test(direction)
               || booleanOutgoing === 'true'
               || /(?:^|[-_\s])(?:outgoing|message-out|sent-message|is-sent|from-me|own-message|self-message)(?:$|[-_\s])/.test(className)
-              || /^(?:you(?:\s+sent\b|[:,])|outgoing message\b|sent by you\b)/.test(ariaLabel)) {
+              || (byLabel && _pageReading('message_author', current.getAttribute?.('aria-label')) === 'self')) {
             return current;
           }
           if (params.adapterName === 'gmail'
@@ -6849,13 +6879,23 @@
         const matches = candidates.filter((el) => {
           if (!visible(el) || editable(el)) return false;
           if (activeComposer && (el === activeComposer || activeComposer.contains?.(el))) return false;
-          if (!outgoingMessageContainer(el)) return false;
+          // The app's own direction markup decides cheaply. Otherwise only a
+          // labelled node holding exactly the body asks whose message it is.
+          const ownByMarkup = !!outgoingMessageContainer(el, { byLabel: false });
+          if (!ownByMarkup) {
+            let labelled = false;
+            for (let node = el, depth = 0; node && depth < 8; node = node.parentElement, depth += 1) {
+              if (node.hasAttribute?.('aria-label')) { labelled = true; break; }
+            }
+            if (!labelled) return false;
+          }
           try {
             if (el.closest?.('button,[role="button"],[role="alert"],[role="status"],[aria-live],nav,[role="navigation"]')) {
               return false;
             }
           } catch {}
-          return normalizedMessageBody(el.innerText || el.textContent || '') === expected;
+          if (normalizedMessageBody(el.innerText || el.textContent || '') !== expected) return false;
+          return ownByMarkup || !!outgoingMessageContainer(el);
         });
         // Nested wrappers often repeat the same innerText. Count only the
         // innermost exact nodes so the before/after cardinality is stable.
@@ -7714,8 +7754,11 @@
             contextNodes.map(node => ['data-testid','aria-selected','aria-label','hidden','inert','aria-hidden'].map(attribute => node.getAttribute(attribute)))]) };
         const nativeRows = Array.from(context.transcript.querySelectorAll('[role="row"] [data-id][data-testid^="conv-msg-"]'));
         const nativeIds = nativeRows.map(node => node.getAttribute('data-id'));
+        // An own message counts as settled once a model reads its status, in
+        // any language, as delivered or read; an unread status is not.
         const pendingNative = nativeRows.some(node => node.querySelector('[data-icon="tail-out"]')
-          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]')).some(status => /^(?:read|delivered)$/i.test(compact(status.getAttribute('aria-label')))));
+          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]'))
+            .some(status => _pageReading('message_status', status.getAttribute('aria-label')) === 'delivered'));
         nativeChatMessageBaseline = { schema: 'webbrain-native-opaque-baseline/1', threadKey: 'dom:' + context.id,
           documentEpoch: context.documentEpoch, timeOrigin: context.timeOrigin, url: context.url,
           tailId: context.id + ':' + nativeIds.at(-1),
@@ -7767,25 +7810,27 @@
         observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name,
           ...(context.alias ? [context.alias, '@' + context.alias] : [])] });
       } else if (gmailRecipientMode) {
+        // The To, Cc or Bcc row an element names. Both the chips and the
+        // typed addresses below use it.
+        const roleFromAttribute = (attribute, value) => {
+          const text = compact(value, 120).toLowerCase();
+          if (!text) return '';
+          // A row's or field's label names its role in the user's language,
+          // read by a model; the app's own names below do not.
+          if (attribute === 'aria-label') {
+            const role = _pageReading('message_field', compact(value, 120));
+            return ['to', 'cc', 'bcc'].includes(role) ? role : '';
+          }
+          if (attribute === 'name') {
+            return /^(?:to|cc|bcc)$/.test(text) ? text : '';
+          }
+          const tokens = text.split(/[^a-z]+/).filter(Boolean);
+          if (tokens.includes('bcc')) return 'bcc';
+          if (tokens.includes('cc')) return 'cc';
+          if (tokens.length === 1 && tokens[0] === 'to') return 'to';
+          return '';
+        };
         const recipientRole = (el, root = null) => {
-          const roleFromAttribute = (attribute, value) => {
-            const text = compact(value, 120).toLowerCase();
-            if (!text) return '';
-            if (attribute === 'aria-label') {
-              if (/^(?:bcc|blind\s+carbon\s+copy)(?:$|\s*[:,-]\s*)/.test(text)) return 'bcc';
-              if (/^(?:cc|carbon\s+copy)(?:$|\s*[:,-]\s*)/.test(text)) return 'cc';
-              if (/^to(?:$|\s*[:,-]\s*)/.test(text)) return 'to';
-              return '';
-            }
-            if (attribute === 'name') {
-              return /^(?:to|cc|bcc)$/.test(text) ? text : '';
-            }
-            const tokens = text.split(/[^a-z]+/).filter(Boolean);
-            if (tokens.includes('bcc')) return 'bcc';
-            if (tokens.includes('cc')) return 'cc';
-            if (tokens.length === 1 && tokens[0] === 'to') return 'to';
-            return '';
-          };
           let current = el;
           for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
             for (const attribute of ['data-recipient-type', 'data-type', 'name', 'aria-label']) {
@@ -8100,8 +8145,10 @@
                     ['aria-label','aria-labelledby','placeholder','title'].map(attribute => composer.getAttribute(attribute)),
                     labelledByNodes.map(node => node.textContent)]) };
                 strongIdentities.push(name);
-                const phone = String(composer.getAttribute('aria-label') || '').trim()
-                  .match(/^(?:type|write|send)\s+(?:a\s+)?message\s+to\s+(\+?[\d ()-]{7,32})$/i)?.[1]?.trim() || '';
+                // The composer's own label may name the destination's phone
+                // number, in any language; a single number there is an alias.
+                const numbers = String(composer.getAttribute('aria-label') || '').match(/\+?\d[\d ()-]{5,30}\d/g) || [];
+                const phone = numbers.length === 1 ? numbers[0].trim() : '';
                 const phoneDigits = phone.replace(/\D/g, '').length;
                 conversationRecipientEvidence.aliases = phone && phoneDigits >= 7 && phoneDigits <= 15
                   ? [name, phone] : [name];
@@ -8135,31 +8182,29 @@
       if (observedRecipientCandidates.length === 0) {
         const genericMailRecipientMode = params.adapterName === 'generic-messaging'
           && params.supportsRecipientSets === true;
-        const RECIPIENT_FIELD_RE = new RegExp(
-          '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
-          + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
-          + '|\\u6536\\u4ef6\\u4eba|\\u5b9b\\u5148|\\ubc1b\\ub294\\s*\\uc0ac\\ub78c)(?:[^\\p{L}]|$)',
-          'iu',
-        );
-        const fieldLooksLikeRecipient = (el) => {
+        // A field holds recipients when its labels and names read, in any
+        // language, as the message's To, Cc or Bcc row; an email-typed field
+        // is a To field on a mail page.
+        const fieldRecipientRole = (el) => {
           try {
-            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return genericMailRecipientMode;
-            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode;
-            const haystack = [
-              el.getAttribute?.('name'),
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))
+                || /^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode ? 'to' : '';
+            const names = [
+              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
               el.getAttribute?.('aria-label'),
               el.getAttribute?.('placeholder'),
+              el.getAttribute?.('name'),
               el.getAttribute?.('id'),
               el.getAttribute?.('data-testid'),
               el.getAttribute?.('autocomplete'),
-              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
-            ].filter(Boolean).join(' ');
-            return !!haystack && RECIPIENT_FIELD_RE.test(haystack);
-          } catch {
-            return false;
-          }
+            ].map(value => compact(value, 120)).filter(Boolean).join(' · ');
+            const role = _pageReading('message_field', names);
+            return ['to', 'cc', 'bcc'].includes(role) ? role : '';
+          } catch { return ''; }
         };
-        const pushRecipient = (identity, extraAliases = []) => {
+        // `role` is the row a field names; an address chip names none, so it
+        // keeps the row its field gave it, or To.
+        const pushRecipient = (identity, extraAliases = [], role = '') => {
           const raw = compact(identity, 240);
           const normalized = raw ? normalizedIdentity(raw) : '';
           if (!normalized) return;
@@ -8171,14 +8216,15 @@
             ...extraAliases,
             ...(existing?.aliases || []),
           ].filter(Boolean)));
-          const entry = { identity: raw, role: 'to', aliases };
+          const entryRole = role || existing?.role || 'to';
+          const entry = { identity: raw, role: entryRole, aliases };
           if (existing) Object.assign(existing, entry);
           else observedRecipientCandidates.push(entry);
           if (!strongRecipients.some(item => normalizedIdentity(item.identity) === normalized)) {
-            strongRecipients.push({ identity: raw, role: 'to' });
+            strongRecipients.push({ identity: raw, role: entryRole });
           }
         };
-        const extractAddresses = (rawValue) => {
+        const extractAddresses = (rawValue, role = 'to') => {
           const raw = String(rawValue || '');
           if (!raw || raw.length > 2000) return;
           for (const piece of raw.split(/[,;\n]+/)) {
@@ -8187,7 +8233,7 @@
             const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
             if (!match) continue;
             const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
-            pushRecipient(match[0], display && display !== match[0] ? [display] : []);
+            pushRecipient(match[0], display && display !== match[0] ? [display] : [], role);
           }
         };
         try {
@@ -8195,8 +8241,9 @@
             'input, textarea, [contenteditable="true"], [contenteditable=""]',
           )).slice(0, 60)) {
             if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
-            if (!fieldLooksLikeRecipient(el)) continue;
-            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''));
+            const role = fieldRecipientRole(el);
+            if (!role) continue;
+            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''), role);
           }
         } catch { /* structural read is best-effort */ }
         try {
@@ -8394,9 +8441,9 @@
         error: 'The observed target or form context changed. Read the page again before acting.' });
       return;
     }
-    // The agent's readings of messaging controls' names, for the recipient
-    // guard and its dispatch checks.
-    _rememberMessageControlReadings(msg.params?.__wbMessageReadings);
+    // The agent's readings of a messaging page's texts, for the recipient
+    // guard, its dispatch checks and the chat observer.
+    _rememberPageReadings(msg.params?.__wbPageReadings);
 
     if (location.hostname === 'web.whatsapp.com'
         && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
@@ -8427,14 +8474,14 @@
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
-      // Names consulted unread outside a guard check (the page monitor's
+      // Texts consulted unread outside a guard check (the page monitor's
       // capture, a chat observation), for the agent to read.
-      'take_unread_message_controls': () => ({ success: true, names: _takeUnreadMessageControls() }),
+      'take_unread_page_texts': () => ({ success: true, texts: _takeUnreadPageTexts() }),
       'probe_message_recipient_guard': () => {
         const result = _probeMessageRecipientGuard(msg.params || {});
-        // Names the guard consulted unread go back to the agent to be read.
-        const unread = _takeUnreadMessageControls();
-        return unread.length && result && typeof result === 'object' ? { ...result, messageCaptionsNeeded: unread } : result;
+        // Texts the guard consulted unread go back to the agent to be read.
+        const unread = _takeUnreadPageTexts();
+        return unread.length && result && typeof result === 'object' ? { ...result, pageTextsNeeded: unread } : result;
       },
       'observe_chat': () => {
         if (typeof window.__wb_observe_chat_dom !== 'function') {
@@ -8444,8 +8491,12 @@
         const probe = _probeMessageRecipientGuard({ ...params, tool: 'observe_active_conversation', args: {} });
         const observation = window.__wb_observe_chat_dom({ ...params, probe });
         const draft = _nativeChatDraftCurrent(params, null, true);
+        // Texts the observation consulted unread (a message's status or label,
+        // a header control's name) go back to the agent to be read.
+        const unread = _takeUnreadPageTexts();
         return { ...observation, ...(draft ? (draft.waitingForLatest
-          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}) };
+          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}),
+          ...(unread.length ? { pageTextsNeeded: unread } : {}) };
       },
       'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
       'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),

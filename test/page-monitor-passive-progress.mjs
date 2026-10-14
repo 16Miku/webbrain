@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 import { createNativeActionMarker } from '../firefox-companion/session.mjs';
-import { fixtureMessageControlReading } from './semantic-decision-stub.mjs';
+import { fixturePageTextReading } from './semantic-decision-stub.mjs';
 
 const html = `<!doctype html><style>
 body { margin:0; width:900px; height:600px; }
@@ -152,11 +152,14 @@ async function modelMessage(page, action, params = {}) {
 // the fixtures' model oracle reads them and the page is captured again.
 async function captureModelMessage(page, params = {}) {
   const result = await modelMessage(page, 'page_monitor_capture_model', params);
-  if (result?.messageNamesUnread !== true) return result;
-  const unread = await modelMessage(page, 'take_unread_message_controls');
-  const messageReadings = Object.fromEntries((unread?.names || [])
-    .map(name => [name, fixtureMessageControlReading(name)]).filter(([, choice]) => choice));
-  return modelMessage(page, 'page_monitor_capture_model', { ...params, messageReadings });
+  if (result?.pageTextsUnread !== true) return result;
+  const unread = await modelMessage(page, 'take_unread_page_texts');
+  const pageReadings = {};
+  for (const { kind, text } of unread?.texts || []) {
+    const choice = fixturePageTextReading(kind, text);
+    if (choice) (pageReadings[kind] ??= {})[text] = choice;
+  }
+  return modelMessage(page, 'page_monitor_capture_model', { ...params, pageReadings });
 }
 
 function assertOpaqueModelMetadata(result) {
