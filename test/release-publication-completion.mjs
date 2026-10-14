@@ -84,8 +84,11 @@ for (const build of ['chrome', 'firefox']) {
     const api = { storage: { local: area, session: area }, runtime: { getURL: p => `extension://fixture/${p}` },
       tabs: { get: async id => ({ id, url: page.url(), title: 'Owned release' }), executeScript: async (_id, { code, args = [] }) => {
         h.transports.push('tabs.executeScript');
-        if (!review && page.url() === formUrl && code.includes('const capture =')) throw new Error('Owned capture transport failure');
-        if (page.url() === formUrl && code.includes('const capture =')) await h.beforeCapture?.();
+        // Only the release form capture fails or waits; the submit probe and
+        // every other script go through.
+        const isCapture = code.includes(Agent._githubReleaseFormSnapshot.toString());
+        if (!review && page.url() === formUrl && isCapture) throw new Error('Owned capture transport failure');
+        if (page.url() === formUrl && isCapture) await h.beforeCapture?.();
         return [await evaluateContent(code, args)];
       } },
       ...(build === 'chrome' ? { scripting: { executeScript: async ({ target, world = 'ISOLATED', func, args = [] }) => {
@@ -102,7 +105,7 @@ for (const build of ['chrome', 'firefox']) {
     globalThis.chrome = globalThis.browser = api;
     if (cdp) { cdp.attach = async () => {}; cdp.sendCommand = async () => ({}); cdp.evaluate = async (_id, code) => {
       h.transports.push('cdpClient.evaluate');
-      if (!review && page.url() === formUrl && code.includes('const capture =')) throw new Error('Owned capture transport failure');
+      if (!review && page.url() === formUrl && code.includes(Agent._githubReleaseFormSnapshot.toString())) throw new Error('Owned capture transport failure');
       return { result: { value: await page.evaluate(code) } };
     }; }
     const provider = h.provider = { model: 'owned-offline', supportsVision: false, config: { category: 'local' }, chat() {} };

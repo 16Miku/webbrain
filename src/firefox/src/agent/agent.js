@@ -25786,14 +25786,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             // fallback.
             const selector = nativeKind === 'menu' ? '.dropdown-menu' : '.modal-root__modal.safety-action-modal';
             const deadline = Date.now() + 3000;
-            const capture = () => {
+            const pollNativePopup = () => {
               if (binding.popup || binding.until < Date.now()) return;
               const shown = popups().filter(nativeResourceRendered);
               if (shown.length === 1 && !before.has(shown[0]) && shown[0].matches(selector)
                   && (!sourcePopup || !nativeResourceRendered(sourcePopup))) { binding.popup = shown[0]; return; }
-              if (Date.now() < deadline) binding.captureTimer = setTimeout(capture, 50);
+              if (Date.now() < deadline) binding.captureTimer = setTimeout(pollNativePopup, 50);
             };
-            binding.captureTimer = setTimeout(capture, 0);
+            binding.captureTimer = setTimeout(pollNativePopup, 0);
           };
           doc.addEventListener('click', listener, true);
           binding.cleanup = () => { doc.removeEventListener('click', listener, true); clearTimeout(binding.listenerTimer);
