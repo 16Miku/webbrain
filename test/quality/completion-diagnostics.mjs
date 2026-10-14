@@ -9,7 +9,7 @@ export function installCompletionDiagnostics(Agent) {
   const outcomes = new Set(['succeeded', 'pending', 'failed', 'uncertain', 'success', 'partial']);
   const engines = new Set(['llm', 'legacy', 'freshness', 'local', 'typesafe', 'openrouter', 'compass']);
   const reasons = new Set(['unavailable', 'capture_unavailable', 'verifier_unavailable',
-    'verifiers_unavailable_or_uncertain', 'evidence_changed', 'insufficient_evidence']);
+    'verifiers_unavailable_or_uncertain', 'evidence_changed', 'insufficient_evidence', 'judged', 'time_budget']);
   const reasonClass = value => reasons.has(value) || /^http_[1-5]\d{2}$/.test(String(value || ''))
     ? value : value ? 'other' : null;
   const toolName = value => tools.has(value) ? value : 'other';

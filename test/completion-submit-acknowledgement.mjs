@@ -66,6 +66,31 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(asked.length, live.length);
   });
 
+  // At completion a slow active model cannot hold the finished task: its
+  // reading of status texts has a short bound, and what it did not read in
+  // time proves nothing either way.
+  test(`${browser}: status readings at completion give the active model a short time`, async () => {
+    const agent = new Agent({});
+    const tabId = 732;
+    inlineSubmit(agent, tabId, 'https://owned.example.test/form', 'Kaydedildi');
+    const seen = [];
+    agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}, options = {}) => {
+      seen.push([kind, options.mainTimeoutMs]);
+      return items.map(() => ({ choice: null, evidence: '', source: 'unavailable' }));
+    };
+    await agent._readCompletionStatusTexts(tabId, { liveRegionMessages: ['Kaydedildi'] });
+    assert.deepEqual(seen, [['status_message', 6000]]);
+    // The bound reaches the request: a model that never answers is given up
+    // on, and the text stays unread.
+    const slow = new Agent({});
+    slow._jevSettings = async () => null;
+    slow._activeProvider = () => ({ model: 'slow', chat: () => new Promise(() => {}) });
+    const started = Date.now();
+    const readings = await slow._semanticDecisions(733, 'status_message', { items: [{ text: 'Kaydedildi' }] }, { mainTimeoutMs: 50 });
+    assert.ok(Date.now() - started < 5000, 'The short bound applies');
+    assert.deepEqual(readings.map(item => item.choice), [null]);
+  });
+
   test(`${browser}: a run with nothing to prove does not read status messages`, async () => {
     const agent = new Agent({});
     const tabId = 731;

@@ -69,36 +69,63 @@ export function completionStopError(error, signal) {
   return signal?.aborted || error?.code === 'WB_COST_ALLOWANCE' || (error?.status ?? error?.httpStatus) === 402 || !!error?.quota || error?.code === 'STALE_COMPLETION';
 }
 
+// After the decision model has answered without being sure, the active model
+// gets this long, in all, for its second look, so a slow model cannot hold a
+// finished task for long. An attempt that could not finish in what is left is
+// not started.
+export const COMPLETION_SECOND_LOOK_MS = 8000;
+const COMPLETION_ATTEMPT_MIN_MS = 1500;
+
 // One request per evidence tier; a confident negative verdict ends the chain.
-export async function verifyCompletion({ decision, llm, capture, isCurrent, signal, onAttempt = () => {} }) {
+// The decision model decides when it is sure. When it answered but was not
+// sure, the active model's look is bounded by COMPLETION_SECOND_LOOK_MS; when
+// the decision model is off or unavailable, or a sure success from it needs
+// independent confirmation, the active model keeps its full checks.
+export async function verifyCompletion({ decision, llm, capture, isCurrent, signal, onAttempt = () => {},
+  secondLookMs = COMPLETION_SECOND_LOOK_MS, now = () => Date.now() }) {
+  let deadline = Infinity;
   for (const engine of [decision, llm].filter(Boolean)) {
+    let answeredUnsure = false, needsConfirmation = false;
     for (const modality of engine.supportsVision ? ['vision', 'ax'] : ['ax']) {
+      const started = now();
+      if (Number.isFinite(deadline) && deadline - started < COMPLETION_ATTEMPT_MIN_MS) {
+        onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: 'time_budget' });
+        break;
+      }
       try {
         if (signal?.aborted) throw signal.reason || new Error('Cancelled');
         let evidence;
         try { evidence = await capture(modality); }
         catch (error) {
           if (completionStopError(error, signal)) throw error;
-          onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: 'capture_unavailable' });
+          onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: 'capture_unavailable', captureMs: now() - started });
           continue;
         }
-        if (!evidence) { onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: 'capture_unavailable' }); continue; }
-        const verdict = await engine.evaluate(evidence, modality);
+        const captured = now();
+        if (!evidence) { onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: 'capture_unavailable', captureMs: captured - started }); continue; }
+        if (Number.isFinite(deadline) && deadline - captured < COMPLETION_ATTEMPT_MIN_MS) {
+          onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: 'time_budget', captureMs: captured - started });
+          break;
+        }
+        const verdict = await engine.evaluate(evidence, modality, Number.isFinite(deadline) ? { timeoutMs: deadline - captured } : {});
         if (signal?.aborted) throw signal.reason || new Error('Cancelled');
         if (!await isCurrent(evidence)) { const error = new Error('Completion evidence changed during verification.'); error.code = 'STALE_COMPLETION'; throw error; }
-        onAttempt({ engine: engine.name, modality, ...verdict });
+        onAttempt({ engine: engine.name, modality, ...verdict, captureMs: captured - started, evaluateMs: now() - captured });
         // Experimental local decisions are evidence, not sole completion authority.
-        if (verdict.outcome === 'succeeded' && engine.requiresIndependentSuccessConfirmation) break;
+        if (verdict.outcome === 'succeeded' && engine.requiresIndependentSuccessConfirmation) { needsConfirmation = true; break; }
         if (verdict.outcome !== 'uncertain') return { ...verdict, engine: engine.name, modality, identity: evidence.identity, evidenceKey: evidence.key };
+        answeredUnsure = true;
       } catch (error) {
         if (completionStopError(error, signal)) throw error;
         const status = error?.status ?? error?.httpStatus;
-        onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: error?.code || (status ? `http_${status}` : 'unavailable') });
+        onAttempt({ engine: engine.name, modality, outcome: 'uncertain', reason: error?.code || (status ? `http_${status}` : 'unavailable'),
+          elapsedMs: now() - started });
         // Moving pixels invalidate the image verdict, not the whole task.
         // Transport failures still skip this judge without a second request.
         if (!(modality === 'vision' && (error?.code === 'COMPLETION_VISUAL_CHANGED' || [400, 413, 415, 422].includes(status)))) break;
       }
     }
+    if (engine === decision && answeredUnsure && !needsConfirmation && Number.isFinite(secondLookMs)) deadline = now() + secondLookMs;
   }
   return { outcome: 'uncertain', engine: 'legacy', reason: 'verifiers_unavailable_or_uncertain' };
 }

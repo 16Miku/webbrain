@@ -341,7 +341,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // routing still uses the active LLM when that sidecar is off/unconfigured.
   const llm = typeof provider.chat === 'function' && (online || provider.config?.category === 'local') ? {
     name: 'llm', supportsVision: provider.supportsVision,
-    evaluate: async (evidence, modality) => {
+    evaluate: async (evidence, modality, { timeoutMs = 10000 } = {}) => {
       const [info, observation] = evidence.state;
       // Thinking providers count hidden reasoning inside their output limit.
       // Leave bounded room for it and the verdict without overriding the
@@ -349,7 +349,8 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       const result = await withCompletionTimeout(requestSignal => agent._chatWithCostAllowance(provider, [
         { role: 'system', content: `${COMPLETION_INSTRUCTIONS} Return only JSON {"outcome":"succeeded|pending|failed|uncertain","reason":"brief evidence-based reason","later":"asked|not_asked","summary":"result|meta_only|plan_only"}. ${LATER_OUTCOME_FIELD} ${SUMMARY_KIND_FIELD} Do not call tools or perform actions.` },
         { role: 'user', content: modality === 'vision' ? [{ type: 'text', text: JSON.stringify(info) }, observation] : JSON.stringify(evidence.state) },
-      ], { temperature: 0, maxTokens: 4096, signal: requestSignal }, context.costState || agent._newCostRunState(), { tabId, generationName: 'completion_verification' }), signal, 10000);
+      ], { temperature: 0, maxTokens: 4096, signal: requestSignal }, context.costState || agent._newCostRunState(), { tabId, generationName: 'completion_verification' }), signal,
+      Math.max(1, Math.min(10000, Number(timeoutMs) || 10000)));
       if (result.costAllowanceMessage) throw agent._costAllowanceError(result.costAllowanceMessage);
       return { ...llmCompletionVerdict(result.content), model: provider.model };
     },
@@ -357,7 +358,10 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   const verdict = await verifyCompletion({ decision, llm, capture, isCurrent: current, signal,
     onAttempt: ({ reason, ...metadata }) => agent.recordSystemOneVerdict(tabId, {
       phase: 'done_verification', ...metadata,
-      ...(reason ? { reason: /^(?:capture_unavailable|unavailable|http_\d{3}|JEV_[A-Z_]+)$/.test(reason) ? reason : 'insufficient_evidence' } : {}),
+      // A model's own words never reach the trace: a sure verdict is recorded
+      // as judged, an unsure one as insufficient evidence.
+      ...(reason ? { reason: /^(?:capture_unavailable|unavailable|time_budget|http_\d{3}|JEV_[A-Z_]+)$/.test(reason) ? reason
+        : metadata.outcome && metadata.outcome !== 'uncertain' ? 'judged' : 'insufficient_evidence' } : {}),
     }, context) });
   const accepted = { ...verdict, scope, ...(captures.get(verdict.modality)?.submittedFrameStamp
     ? { submittedFrameStamp: captures.get(verdict.modality).submittedFrameStamp } : {}) };

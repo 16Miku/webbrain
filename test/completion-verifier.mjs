@@ -105,6 +105,49 @@ for (const build of ['chrome', 'firefox']) {
     } });
     assert.equal(result.modality, 'ax', 'capture failures should retry with AX');
   });
+  // The decision model decides when it is sure. When it answered but was not
+  // sure, the active model's second look has a bounded time in all; when the
+  // decision model was unavailable, or its success needs confirmation, the
+  // active model keeps its full checks.
+  test(`${build}: an unsure decision model bounds the active model's second look`, async () => {
+    let clock = 0;
+    const now = () => clock;
+    const capture = async modality => { clock += 300; return { identity: 'fresh', state: modality }; };
+    const calls = [], attempts = [];
+    const llm = (spend, outcomes) => ({ name: 'llm', supportsVision: true, evaluate: async (_e, modality, options = {}) => {
+      calls.push([modality, options.timeoutMs ?? null]); clock += spend; return { outcome: outcomes.shift() || 'uncertain' }; } });
+    const unsure = { name: 'typesafe', supportsVision: false, evaluate: async () => { clock += 400; return { outcome: 'uncertain' }; } };
+    let result = await verifier.verifyCompletion({ capture, isCurrent: () => true, now, onAttempt: item => attempts.push(item),
+      decision: unsure, llm: llm(7000, ['uncertain', 'succeeded']) });
+    assert.equal(result.engine, 'legacy');
+    assert.deepEqual(calls, [['vision', verifier.COMPLETION_SECOND_LOOK_MS - 300]],
+      'One look fits; the second could not finish in what is left and is not started');
+    assert.deepEqual(attempts.map(item => [item.engine, item.modality, item.outcome, item.reason ?? null]),
+      [['typesafe', 'ax', 'uncertain', null], ['llm', 'vision', 'uncertain', null], ['llm', 'ax', 'uncertain', 'time_budget']]);
+    assert.deepEqual([attempts[0].captureMs, attempts[0].evaluateMs, attempts[1].captureMs, attempts[1].evaluateMs], [300, 400, 300, 7000]);
+    // A fast second look still uses both of its checks.
+    calls.length = 0; clock = 0;
+    result = await verifier.verifyCompletion({ capture, isCurrent: () => true, now, decision: unsure, llm: llm(1000, ['uncertain', 'failed']) });
+    assert.equal(result.outcome, 'failed'); assert.equal(result.modality, 'ax');
+    assert.deepEqual(calls.map(([modality]) => modality), ['vision', 'ax']);
+    assert.ok(calls.every(([, timeoutMs]) => timeoutMs > 0 && timeoutMs <= verifier.COMPLETION_SECOND_LOOK_MS));
+    // An unavailable decision model, or a sure success that needs
+    // independent confirmation, leaves the active model unbounded.
+    for (const decision of [
+      { name: 'typesafe', evaluate: async () => { clock += 400; throw Object.assign(new Error('HTTP'), { status: 503 }); } },
+      { name: 'webgpu_d1', requiresIndependentSuccessConfirmation: true, evaluate: async () => { clock += 400; return { outcome: 'succeeded' }; } },
+    ]) {
+      calls.length = 0; clock = 0;
+      result = await verifier.verifyCompletion({ capture, isCurrent: () => true, now, decision, llm: llm(7000, ['uncertain', 'succeeded']) });
+      assert.equal(result.outcome, 'succeeded', decision.name); assert.equal(result.modality, 'ax');
+      assert.deepEqual(calls, [['vision', null], ['ax', null]], decision.name);
+    }
+    // A sure decision ends at once, with no second look.
+    calls.length = 0; clock = 0;
+    result = await verifier.verifyCompletion({ capture, isCurrent: () => true, now,
+      decision: { name: 'typesafe', evaluate: async () => ({ outcome: 'succeeded' }) }, llm: llm(7000, ['failed']) });
+    assert.equal(result.outcome, 'succeeded'); assert.equal(result.engine, 'typesafe'); assert.deepEqual(calls, []);
+  });
   test(`${build}: auth/transport skip engine; unsupported image retries AX`, async () => {
     for (const field of ['status', 'httpStatus']) for (const status of [401, 500, 400, 413, 415, 422]) for (const name of ['decision', 'llm']) {
       const calls = [];

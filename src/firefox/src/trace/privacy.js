@@ -97,6 +97,22 @@ const CLICK_AX_TIMING_MS_FIELDS = [
   'trustedObservationMs', 'clickPathMs',
 ];
 
+// Where a completion check spent its time: numbers and the verdict's own
+// enums only, never what the page or the model said.
+const DONE_TIMING_MS_FIELDS = ['preparationMs', 'readingMs', 'verificationMs'];
+function projectDoneTiming(data) {
+  const extra = {};
+  for (const key of DONE_TIMING_MS_FIELDS) {
+    const value = data?.extra?.[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) extra[key] = Math.min(value, 600_000);
+  }
+  const outcome = data?.extra?.outcome;
+  if (['succeeded', 'pending', 'failed', 'uncertain'].includes(outcome)) extra.outcome = outcome;
+  const engine = data?.extra?.engine;
+  if (typeof engine === 'string' && /^[a-zA-Z0-9_.-]{1,120}$/.test(engine)) extra.engine = engine;
+  return { step: Number.isFinite(data?.step) ? data.step : 0, note: 'done_timing', extra };
+}
+
 function projectClickAxTiming(data) {
   const extra = {};
   for (const key of CLICK_AX_TIMING_MS_FIELDS) {
@@ -206,11 +222,11 @@ export function projectTraceEventData(kind, data, { includeContent = false } = {
   // Auxiliary decisions never retain evidence, even in the opt-in content tier.
   if (kind === 'note' && data?.note === 'system_one') {
     const extra = {};
-    for (const key of ['decision', 'reason', 'model']) {
+    for (const key of ['decision', 'reason', 'model', 'phase', 'engine', 'modality', 'outcome']) {
       const value = data.extra?.[key];
       if (typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,120}$/.test(value)) extra[key] = value;
     }
-    for (const key of ['latencyMs', 'estimatedCostUsd']) {
+    for (const key of ['latencyMs', 'estimatedCostUsd', 'captureMs', 'evaluateMs', 'elapsedMs']) {
       const value = data.extra?.[key];
       if (typeof value === 'number' && Number.isFinite(value) && value >= 0) extra[key] = value;
     }
@@ -223,6 +239,9 @@ export function projectTraceEventData(kind, data, { includeContent = false } = {
   }
   if (kind === 'note' && data?.note === 'click_ax_timing') {
     return projectClickAxTiming(data);
+  }
+  if (kind === 'note' && data?.note === 'done_timing') {
+    return projectDoneTiming(data);
   }
   if (includeContent || data == null) return data;
   const source = data && typeof data === 'object' && !Array.isArray(data) ? data : {};

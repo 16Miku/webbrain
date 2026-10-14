@@ -268,6 +268,10 @@ const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
 const RUN_STARTUP_TIMEOUT_MS = 15_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
+// At completion the active model reads what a page's status texts say only
+// for this long, so a slow model cannot hold a finished task; texts it did
+// not read prove nothing either way.
+const COMPLETION_READING_TIMEOUT_MS = 6_000;
 // The agent's own hover may start a transition on a certified native button.
 // Its geometry is sampled (read-only) at this interval until it settles, for
 // at most this long, before the single press.
@@ -1646,7 +1650,7 @@ export class Agent extends LoopDetector {
     const needsProof = !!submit || guard?.requiresSubmission === true
       || (guard?.requiresSubmission == null && guard?.requiresStateChange === true) || !!guard?.siteWorkflow?.job;
     if (needsProof && (live.length || observed.length)) {
-      await this._readPageTexts(tabId, 'status_message', [...live, ...observed]);
+      await this._readPageTexts(tabId, 'status_message', [...live, ...observed], {}, { mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
     }
     if (pageState && typeof pageState === 'object') {
       pageState.successMessages = live.filter(text => this._pageTextReading('status_message', text) === 'success').slice(0, 5);
@@ -2163,7 +2167,7 @@ export class Agent extends LoopDetector {
   async _completionIframeEvidence(tabId) {
     const frame = await this._completionIframeSnapshot(tabId);
     if (Array.isArray(frame?.messages) && frame.messages.length) {
-      await this._readPageTexts(tabId, 'status_message', frame.messages);
+      await this._readPageTexts(tabId, 'status_message', frame.messages, {}, { mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
     }
     return frame;
   }
@@ -3039,7 +3043,8 @@ export class Agent extends LoopDetector {
       ? this._workflowTerminalTextPlan(verificationKind, guard.siteWorkflow, pageState, submissionEvidence, messageProbe)
       : null;
     if (plan?.texts.length) {
-      await this._readPageTexts(tabId, 'workflow_state', plan.texts, { state: WORKFLOW_STATES[plan.state] });
+      await this._readPageTexts(tabId, 'workflow_state', plan.texts, { state: WORKFLOW_STATES[plan.state] },
+        { mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
     }
   }
 
@@ -7320,7 +7325,7 @@ export class Agent extends LoopDetector {
    * choice is null where no sure answer was available. Each item's answer is
    * remembered on its own, so a later batch asks only about new items.
    */
-  async _semanticDecisions(tabId, kind, { request = '', items = [] } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
+  async _semanticDecisions(tabId, kind, { request = '', items = [] } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, mainTimeoutMs = 15000 } = {}) {
     const spec = semanticQuestion(kind);
     const trusted = String(request ?? '').slice(0, 6000);
     const data = (Array.isArray(items) ? items : []).map(item => boundedSemanticData(item));
@@ -7377,7 +7382,7 @@ export class Agent extends LoopDetector {
             this._throwIfAborted(completionSignal);
             return this._chatWithCostAllowance(provider, messages, { temperature: 0, maxTokens: 120 + 60 * indexes.length, signal: completionSignal },
               this.currentCostState.get(tabId) || null, { tabId, generationName: `semantic_${kind}` });
-          }, runSignal, 15000);
+          }, runSignal, mainTimeoutMs);
           const accepted = acceptSemanticBatchAnswers(kind,
             this._socialPublicationResponseObject(response, { maxTokens: 120 + 60 * indexes.length }), trusted,
             indexes.map(index => data[index]));
@@ -7401,14 +7406,15 @@ export class Agent extends LoopDetector {
   // in any language, and remembered per text for the synchronous checks that
   // follow. Longer texts are not read; an unanswered text is asked again next
   // time.
-  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300 } = {}) {
+  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300, mainTimeoutMs } = {}) {
     this._pageTextReadings ??= new Map();
     const pending = [...new Set((Array.isArray(texts) ? texts : [])
       .map(text => String(text ?? '').replace(/\s+/g, ' ').trim())
       .filter(text => text && text.length <= maxChars))]
       .filter(text => !this._pageTextReadings.has(this._pageTextKey(kind, text, context)));
     if (!pending.length) return;
-    const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) });
+    const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) },
+      mainTimeoutMs ? { mainTimeoutMs } : {});
     pending.forEach((text, index) => {
       if (readings[index]?.choice) this._pageTextReadings.set(this._pageTextKey(kind, text, context), readings[index].choice);
     });
@@ -7587,6 +7593,13 @@ export class Agent extends LoopDetector {
         if (stopped) throw this._costAllowanceError(stopped);
       },
     });
+  }
+
+  // Where a completion check spent its time, for traces: preparing the
+  // verification evidence, reading the page's status texts, and the verdict.
+  _recordDoneTiming(tabId, timing) {
+    const runId = this.currentRunId.get(tabId);
+    if (runId) try { trace.recordNote(runId, 0, 'done_timing', timing); } catch {}
   }
 
   recordSystemOneVerdict(tabId, metadata, context = {}) {
@@ -39822,6 +39835,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
 
     if (name === 'done') {
+      const doneStartedAt = Date.now();
       const tableBlock = await this._resolveExactTableDone(tabId, args, onUpdate);
       if (tableBlock) return tableBlock;
       const outcome = normalizeDoneOutcome(args?.outcome);
@@ -40220,9 +40234,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // What the page's live messages and the statuses observed after the
           // submit say, read in any language for the checks below. Success
           // messages are only ever the agent's own readings, never page data.
+          const readingStartedAt = Date.now();
           if (outcome === 'success' && pageState) await this._readCompletionStatusTexts(tabId, pageState);
           else if (pageState && typeof pageState === 'object') pageState.successMessages = [];
+          const verificationStartedAt = Date.now();
           const completionDecision = outcome === 'success' ? await verifyBrowserCompletion(this, tabId, { pageState, pageUrl: probe?.url || '', summary: args.summary, calculationProof, calculationEvidence }) : null;
+          this._recordDoneTiming(tabId, { preparationMs: readingStartedAt - doneStartedAt,
+            readingMs: verificationStartedAt - readingStartedAt, verificationMs: Date.now() - verificationStartedAt,
+            ...(completionDecision ? { outcome: completionDecision.outcome, engine: completionDecision.engine } : {}) });
           if (completionDecision && ['pending', 'failed'].includes(completionDecision.outcome)) return { success: false, blockedDone: true, completionDecision: { outcome: completionDecision.outcome, engine: completionDecision.engine }, error: 'Completion verification reports ' + completionDecision.outcome + '. Inspect the result before any further submission; continue recovery or report partial/failed.' };
           if (pageState?.nativeChatDeliveryEvidence) {
             delete pageState.nativeChatDeliveryEvidence;
