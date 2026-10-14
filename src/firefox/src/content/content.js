@@ -44,15 +44,167 @@
   // text nobody has read yet is no wall; it is reported for the agent to
   // read, and the agent asks again with the reading.
   const PAGE_GATE_TYPES = new Set(['subscription', 'registration', 'login']);
+  // The longest text one wall reading covers; how many of a block's texts are
+  // read at most; and how many texts nobody has read one page read reports at
+  // most (the agent reads them and reads the page again, up to three times).
+  const PAGE_GATE_TEXT_LIMIT = 600;
+  const PAGE_GATE_BLOCK_CHUNKS = 30;
+  const PAGE_GATE_UNREAD_BUDGET = 40;
 
-  function pageGateText(el) {
-    return _pageReadingText(el?.innerText || '').slice(0, 400);
+  // At most PAGE_GATE_TEXT_LIMIT characters of a text, keyed as the readings
+  // key it: spaces collapsed, and no space or half of a surrogate pair at
+  // either end.
+  function pageGateSlice(value) {
+    return _pageReadingText(_pageReadingText(value).slice(0, PAGE_GATE_TEXT_LIMIT)
+      .replace(/^[\udc00-\udfff]/, '').replace(/[\ud800-\udbff]$/, ''));
   }
 
-  function pageGateReading(text) {
-    if (!text) return null;
-    const reading = _pageReading('page_blocker', text, null);
-    return PAGE_GATE_TYPES.has(reading) ? reading : null;
+  // What a text reads as: a wall's kind, 'other' when it was read as no wall
+  // (or is empty), or null when nobody has read it. Within one page read only
+  // the first PAGE_GATE_UNREAD_BUDGET texts nobody has read are reported to
+  // the agent, the likeliest walls first; the rest wait for the next read.
+  function pageGateReading(text, budget) {
+    if (!text) return 'other';
+    const known = _pageReading('page_blocker', text, null, { queue: false, maxLength: PAGE_GATE_TEXT_LIMIT });
+    if (known) return PAGE_GATE_TYPES.has(known) ? known : 'other';
+    if (!budget.seen.has(text)) {
+      if (budget.left <= 0) return null;
+      budget.left -= 1;
+      budget.seen.add(text);
+    }
+    _pageReading('page_blocker', text, null, { maxLength: PAGE_GATE_TEXT_LIMIT });
+    return null;
+  }
+
+  // Whether an element lays its children out as blocks, so its text splits
+  // into them; an element of inline text is one part however long it is.
+  function pageGateHasBlockChildren(el, depth = 0) {
+    for (const child of el.children) {
+      let display = '';
+      try { display = getComputedStyle(child).display; } catch { continue; }
+      if (display === 'contents') {
+        if (depth < 20 && pageGateHasBlockChildren(child, depth + 1)) return true;
+        continue;
+      }
+      if (display && display !== 'none' && !display.startsWith('inline')) return true;
+    }
+    return false;
+  }
+
+  // A block's rendered text in parts, in page order: an element whose text
+  // is at most PAGE_GATE_TEXT_LIMIT characters, or that holds only inline
+  // text, is one part; a longer one with block children is split into them,
+  // and text standing directly in it is a part held by it. Hidden elements
+  // are left out. Each part keeps its first line.
+  function pageGateParts(el) {
+    const parts = [];
+    const firstLine = value => _pageReadingText(String(value || '').split('\n').find(line => line.trim()) || '');
+    const visit = (node, depth) => {
+      for (const child of node.childNodes) {
+        if (parts.length >= 600) return;
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = _pageReadingText(child.data);
+          if (text) parts.push({ text, line: text, element: node, heading: false });
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE || /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(child.tagName)) continue;
+        let display = '';
+        try { display = getComputedStyle(child).display; } catch { /* treat as rendered */ }
+        if (display === 'none') continue;
+        if (display === 'contents') {
+          if (depth < 40) visit(child, depth + 1);
+          continue;
+        }
+        if (!child.getClientRects?.().length) continue;
+        const raw = String(child.innerText || '');
+        const text = _pageReadingText(raw);
+        if (!text) continue;
+        if (text.length <= PAGE_GATE_TEXT_LIMIT || depth >= 40 || !pageGateHasBlockChildren(child)) {
+          parts.push({ text, line: firstLine(raw), element: child,
+            heading: child.matches?.('h1, h2, h3, h4, h5, h6, [role="heading"]') === true });
+        } else {
+          visit(child, depth + 1);
+        }
+      }
+    };
+    visit(el, 0);
+    return parts;
+  }
+
+  // A block's parts gathered, in page order, into texts of at most
+  // PAGE_GATE_TEXT_LIMIT characters, a heading starting a new one; a longer
+  // part is read in pieces of that length. Each is read as a whole: a wall
+  // read in it starts no earlier than the element it begins in, and its label
+  // is that element's first line, none for a piece after a long part's first.
+  function pageGateChunks(parts) {
+    const chunks = [];
+    for (const part of parts) {
+      if (part.text.length > PAGE_GATE_TEXT_LIMIT) {
+        for (let offset = 0; offset < part.text.length && chunks.length < 1000; offset += PAGE_GATE_TEXT_LIMIT) {
+          chunks.push({ text: part.text.slice(offset, offset + PAGE_GATE_TEXT_LIMIT), element: part.element,
+            line: offset ? '' : part.line, closed: true });
+        }
+        continue;
+      }
+      const last = chunks[chunks.length - 1];
+      if (last && !last.closed && !part.heading && last.text.length + 1 + part.text.length <= PAGE_GATE_TEXT_LIMIT) {
+        last.text += ' ' + part.text;
+      } else {
+        chunks.push({ text: part.text, element: part.element, line: part.line, closed: false });
+      }
+    }
+    return chunks.map(chunk => ({ ...chunk, text: pageGateSlice(chunk.text) }));
+  }
+
+  // The wall an overlay or article block shows, or null when none of its
+  // texts reads as one (a text nobody has read included). Its texts are its
+  // own name and title and its chunks, read in page order up to the first
+  // chunk read as a wall, at most PAGE_GATE_BLOCK_CHUNKS of them. In an
+  // article the wall starts at that chunk, or at a chunk before it nobody has
+  // read, since the wall's text may be there: only text read as no wall comes
+  // before it. A block whose name or title reads as a wall starts at its top;
+  // an overlay is the wall as a whole. The label is the wall's name or title,
+  // or the first line its starting chunk begins with, and none when that
+  // chunk was not read as the wall: what follows a wall's first line may be
+  // the article it withholds.
+  function pageGateWall(el, inline, budget) {
+    const named = [...new Set([el.getAttribute('aria-label'), el.getAttribute('title')].map(pageGateSlice))].filter(Boolean);
+    const namedReadings = named.map(text => pageGateReading(text, budget));
+    const namedIndex = namedReadings.findIndex(reading => PAGE_GATE_TYPES.has(reading));
+    const chunks = pageGateChunks(pageGateParts(el)).slice(0, PAGE_GATE_BLOCK_CHUNKS);
+    let wallIndex = -1, unread = -1, wallType = null;
+    for (let index = 0; index < chunks.length; index += 1) {
+      const reading = pageGateReading(chunks[index].text, budget);
+      if (PAGE_GATE_TYPES.has(reading)) {
+        wallIndex = index;
+        wallType = reading;
+        break;
+      }
+      if (reading === null && unread < 0) unread = index;
+    }
+    if (wallIndex < 0 && namedIndex < 0) return null;
+    const type = namedIndex >= 0 ? namedReadings[namedIndex] : wallType;
+    const label = text => pageGateSlice(String(text || '').slice(0, 240));
+    if (namedIndex >= 0) return { type, label: label(named[namedIndex]), element: el };
+    if (!inline) return { type, label: label(chunks[wallIndex].line), element: el };
+    const start = unread >= 0 && unread < wallIndex ? unread : wallIndex;
+    return {
+      type,
+      label: start === wallIndex ? label(chunks[wallIndex].line) : '',
+      element: start === 0 ? el : chunks[start].element,
+    };
+  }
+
+  // Whether a block offers a control a wall would: a button, a field, a form,
+  // or a link standing on its own rather than inside a paragraph.
+  function pageGateOffersControl(el) {
+    try {
+      if (el.querySelector('button, input, select, textarea, form, [role="button"]')) return true;
+      return Array.from(el.querySelectorAll('a[href]')).slice(0, 50)
+        .some(link => !link.closest('p, li, blockquote, figcaption, td, dd'));
+    } catch {
+      return false;
+    }
   }
 
   function pageHasArticleContext() {
@@ -80,7 +232,7 @@
 
   function detectPageGate() {
     const seen = new Set();
-    const candidates = [];
+    const found = [];
     const articleContext = pageHasArticleContext();
     for (const selector of PAGE_GATE_SELECTORS) {
       let matches = [];
@@ -106,21 +258,38 @@
         // An overlay counts only on an article page, and a block only inside
         // the article; its text then has to read as a wall.
         if (surface === 'dialog' ? !articleContext : !inArticle) continue;
-        const label = pageGateText(el);
-        const type = pageGateReading(label);
-        if (!type) continue;
-        const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([
-          el.id,
-          typeof el.className === 'string' ? el.className : '',
-          el.getAttribute('data-testid') || '',
-        ].join(' '));
-        const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) +
-          (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
-        candidates.push({ element: el, type, surface, label: label.slice(0, 240), score });
+        found.push({ el, surface, inArticle, coveringOverlay, offersControl: pageGateOffersControl(el) });
       }
     }
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0] || null;
+    // Overlays are read first, then blocks that offer a control a wall would,
+    // then the rest, each in page order, so the texts one page read reports go
+    // to the likeliest walls.
+    found.sort((a, b) => (Number(b.surface === 'dialog') - Number(a.surface === 'dialog'))
+      || (Number(b.offersControl) - Number(a.offersControl))
+      || (a.el === b.el ? 0 : (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+    const budget = { left: PAGE_GATE_UNREAD_BUDGET, seen: new Set() };
+    const candidates = [];
+    for (const { el, surface, inArticle, coveringOverlay } of found) {
+      const wall = pageGateWall(el, surface === 'inline', budget);
+      if (!wall) continue;
+      const label = wall.label;
+      const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([
+        el.id,
+        typeof el.className === 'string' ? el.className : '',
+        el.getAttribute('data-testid') || '',
+      ].join(' '));
+      const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) +
+        (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
+      candidates.push({ element: wall.element, type: wall.type, surface, label, score });
+    }
+    // An overlay that is a wall withholds the whole article. Of the walls in
+    // an article, the one that starts first decides where reading stops.
+    const overlays = candidates.filter(candidate => candidate.surface === 'dialog').sort((a, b) => b.score - a.score);
+    if (overlays.length) return overlays[0];
+    const blocks = candidates.filter(candidate => candidate.surface === 'inline');
+    blocks.sort((a, b) => (a.element === b.element ? 0
+      : (a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+    return blocks[0] || null;
   }
 
   function renderedArticleTextBeforeGate(root, gateElement) {
@@ -5750,9 +5919,11 @@
     for (const [kind, texts] of Object.entries(readings).slice(0, 8)) {
       const choices = Object.hasOwn(_PAGE_READING_CHOICES, kind) ? _PAGE_READING_CHOICES[kind] : null;
       if (!choices || !texts || typeof texts !== 'object' || Array.isArray(texts)) continue;
+      // An overlay's or article block's text is read up to 600 characters.
+      const limit = kind === 'page_blocker' ? 600 : 400;
       for (const [value, choice] of Object.entries(texts).slice(0, 800)) {
         const text = _pageReadingText(value);
-        if (!text || text.length > 400 || !choices.has(choice)) continue;
+        if (!text || text.length > limit || !choices.has(choice)) continue;
         const key = `${kind}\u0000${text}`;
         _pageReadings.delete(key);
         _pageReadings.set(key, choice);
@@ -5763,15 +5934,17 @@
   }
 
   // The reading of one text: its choice, '' when there is no text, or null
-  // when nobody has read it yet (it is then kept for the agent to read). A
-  // text longer than 400 characters is not read; it reads as `longText`.
-  function _pageReading(kind, value, longText = null) {
+  // when nobody has read it yet (it is then kept for the agent to read,
+  // unless `queue` is false). A text longer than `maxLength` characters is
+  // not read; it reads as `longText`.
+  function _pageReading(kind, value, longText = null, { queue = true, maxLength = 400 } = {}) {
     const text = _pageReadingText(value);
     if (!text) return '';
-    if (text.length > 400) return longText;
+    if (text.length > maxLength) return longText;
     const key = `${kind}\u0000${text}`;
     const choice = _pageReadings.get(key);
     if (choice) return choice;
+    if (!queue) return null;
     _pageReadingsUnread.delete(key);
     _pageReadingsUnread.set(key, { kind, text });
     while (_pageReadingsUnread.size > 64) _pageReadingsUnread.delete(_pageReadingsUnread.keys().next().value);

@@ -22,9 +22,11 @@ function matchesChallengeLabel(value) {
 }
 
 // A dialog's title as the readings key it: spaces collapsed, at most 200
-// characters.
+// characters, and neither a space nor half of a surrogate pair at its end
+// once cut, so the page and the agent key a long title alike. The scans
+// that run in the page and captcha-frame-runtime.js keep the same rule.
 export function challengeTitleText(value) {
-  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200).replace(/[\ud800-\udbff]$/, '').trim();
 }
 
 function normalizeChallengeLabel(value) {
@@ -156,7 +158,9 @@ export function detectChallengeDialogInPage(options = null) {
     ? options.challengeReadings : {};
   const titleReading = title => (Object.prototype.hasOwnProperty.call(givenTitleReadings, title)
     ? String(givenTitleReadings[title] || '') : '');
-  const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  // Keyed as challengeTitleText keys a title.
+  const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+    .replace(/[\ud800-\udbff]$/, '').trim();
   const unreadTitles = [];
   const visible = (element) => {
     try {

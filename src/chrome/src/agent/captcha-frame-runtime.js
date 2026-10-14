@@ -709,7 +709,8 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
   // keyed by the title as captcha-gate.js takes it).
   const givenTitleReadings = matcherOptions?.challengeReadings && typeof matcherOptions.challengeReadings === 'object'
     ? matcherOptions.challengeReadings : {};
-  const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+    .replace(/[\ud800-\udbff]$/, '').trim();
   const challengeDialogs = Array.from(
     pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
   ).filter((element) => {

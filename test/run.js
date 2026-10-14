@@ -18416,6 +18416,19 @@ test('a human-verification dialog in any language arms the CAPTCHA gate once a m
       assert.equal((await none._detectChallengeDialogBeforeMutation(1, { includeStatus: true })).challenge, null,
         `${build}: an unread title stopped a mutation`);
     });
+    // A title longer than 200 characters whose 200th character is a space is
+    // keyed alike in the page and in the agent, so its reading reaches the scan.
+    const longTitle = `Güvenlik doğrulaması ${'b'.repeat(178)} devam etmek için robot olmadığınızı doğrulayın`;
+    assert.equal(longTitle[199], ' ');
+    const longNodes = [captchaEl('div', { role: 'dialog', 'aria-label': longTitle }, [
+      captchaEl('button', { textContent: 'Kapat', innerText: 'Kapat' }),
+    ])];
+    await withCaptchaFakePage(build, longNodes, async () => {
+      const preflight = new AgentClass({});
+      stubCaptchaTitleReadings(preflight);
+      const found = await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(found.challenge?.label, longTitle.slice(0, 199), `${build}: a long title read as a human check stopped nothing`);
+    });
   }
 });
 
@@ -18436,17 +18449,158 @@ test('a page read has its unread wall texts read in any language and reads the p
     assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', wall]],
       `${build}: only the wall text was to be read, and once`);
     assert.deepEqual(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker, { [wall]: 'subscription' });
-    // A text already read, or one nobody can read, reads nothing more and the
-    // first answer stands.
+    // A text the agent already read that a page still reports did not reach
+    // it: it is not asked again, but the page is read once more with it.
     const again = await agent._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
-      { pageContent: 'tree', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, async () => { dispatches += 1; return {}; });
-    assert.equal(dispatches, 1);
-    assert.deepEqual(again, { pageContent: 'tree' });
+      { pageContent: 'tree', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] },
+      async () => { dispatches += 1; return { pageContent: 'gate', pageGate: { type: 'subscription' } }; });
+    assert.equal(dispatches, 2, `${build}: a held reading the page lacked was not handed over`);
+    assert.deepEqual(again, { pageContent: 'gate', pageGate: { type: 'subscription' } });
+    assert.equal(asked.length, 1, `${build}: a held reading was asked again`);
+    // One nobody can read changes nothing, and the first answer stands.
     const unread = new AgentClass({});
     stubPageTextReadings(unread, () => null);
     const first = await unread._rereadWithPageBlockerReadings(1, 'read_page',
       { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, async () => { throw new Error('read again'); });
     assert.deepEqual(first, { text: 'SECRET_ARTICLE' }, `${build}: an unread wall changed the read`);
+    // When a text reads as a wall but the page cannot be read again, the
+    // answer made without that reading is not returned: it may hold what the
+    // wall withholds.
+    const failing = new AgentClass({});
+    stubCaptchaTitleReadings(failing);
+    for (const dispatch of [async () => { throw new Error('read again'); }, async () => ({ success: false, error: 'gone' })]) {
+      const refused = await failing._rereadWithPageBlockerReadings(1, 'read_page',
+        { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, dispatch);
+      assert.equal(refused.success, false, `${build}: a read made without its wall reading was returned`);
+      assert.doesNotMatch(JSON.stringify(refused), /SECRET_ARTICLE|\[|\]/);
+    }
+    // A text read as no wall keeps the first answer when the page cannot be
+    // read again.
+    const other = await failing._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bültenimize abone olun' }] },
+      async () => { throw new Error('read again'); });
+    assert.deepEqual(other, { text: 'ARTICLE' });
+  }
+});
+
+test('a reading older than the ones handed to the page still reaches it when the page asks for it', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (item.text === wall ? 'subscription' : 'other') : kind === 'message_control' ? 'other' : null));
+    await agent._readPageTexts(1, 'page_blocker', [wall], {}, { maxChars: 400 });
+    // Many texts read since push it out of the readings a page read carries.
+    await agent._readPageTexts(1, 'page_blocker', Array.from({ length: 450 }, (_, index) => `Bülten kutusu ${index}`), {}, { maxChars: 400 });
+    assert.equal(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker[wall], undefined,
+      `${build}: the fixture did not push the old reading out`);
+    asked.length = 0;
+    let handed = null;
+    const reread = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] },
+      async () => {
+        handed = agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker;
+        return { text: wall, textSource: 'page-gate', pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: wall } };
+      });
+    assert.equal(handed?.[wall], 'subscription', `${build}: the page was read again without the reading it lacked`);
+    assert.equal(reread.pageGate?.type, 'subscription');
+    assert.deepEqual(asked, [], `${build}: a held reading was asked of a model again`);
+    // The same holds for any question a check in the page reads, such as a
+    // messaging page's controls: a held reading becomes one of the most recent.
+    await agent._readPageTexts(1, 'message_control', ['Gönder'], {}, { maxChars: 400 });
+    await agent._readPageTexts(1, 'message_control', Array.from({ length: 450 }, (_, index) => `Düğme ${index}`), {}, { maxChars: 400 });
+    assert.equal(agent._messagingPageReadings().message_control['Gönder'], undefined);
+    assert.equal(await agent._readUnreadPageTexts(1, [{ kind: 'message_control', text: 'Gönder' }]), true);
+    assert.equal(agent._messagingPageReadings().message_control['Gönder'], 'other', `${build}: a held control reading did not reach the page`);
+    // Overlay and article-block texts stay out of the dialog-title readings
+    // the CAPTCHA scans carry, which are at most 200 characters.
+    const window = `${'Önizleme paragrafı. '.repeat(12)}Okumaya devam etmek için abone olun.`;
+    await agent._readPageTexts(1, 'page_blocker', [window], {}, { maxChars: 400 });
+    assert.equal(agent._pageBlockerReadings()[window], 'other');
+    assert.equal(agent._challengeTitleReadings()[window], undefined, `${build}: a long wall text was handed to the CAPTCHA scans`);
+  }
+});
+
+test('a page read reaching more unread wall texts after a reread is read again, at most three times', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    const batch = prefix => Array.from({ length: 40 }, (_, index) => ({ kind: 'page_blocker', text: `${prefix} ${index}` }));
+    // The page reports forty texts at a time; the wall's text comes with the
+    // second read.
+    const responses = [
+      { text: 'SECRET_SECOND', pageTextsNeeded: batch('Bülten B') },
+      { text: 'SECRET_THIRD', pageTextsNeeded: [{ kind: 'page_blocker', text: 'Okumaya devam etmek için abone olun.' }] },
+      { text: 'gate', pageGate: { type: 'subscription' } },
+      { text: 'never read' },
+    ];
+    let dispatches = 0;
+    const result = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_FIRST', pageTextsNeeded: batch('Bülten A') }, async () => responses[dispatches++]);
+    assert.equal(dispatches, 3, `${build}: the page was not read again for the texts each read reached`);
+    assert.deepEqual(result, { text: 'gate', pageGate: { type: 'subscription' } });
+    assert.equal(asked.length, 81);
+    // It stops after three reads even when every read reaches more.
+    const endless = new AgentClass({});
+    stubPageTextReadings(endless, () => 'other');
+    let reads = 0;
+    const last = await endless._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'tree', pageTextsNeeded: batch('Kutu 0') },
+      async () => { reads += 1; return { pageContent: `tree ${reads}`, pageTextsNeeded: batch(`Kutu ${reads}`) }; });
+    assert.equal(reads, 3);
+    assert.deepEqual(last, { pageContent: 'tree 3' });
+  }
+});
+
+test('a wall or dialog title no model answered is not asked again on every read for a while', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      const agent = new AgentClass({});
+      // An active model that answers nothing, as one that times out.
+      agent._activeProvider = () => ({ chat: async () => ({}) });
+      const asked = stubPageTextReadings(agent, () => null);
+      const wall = 'Okumaya devam etmek için abone olun.';
+      assert.equal(await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]), false);
+      assert.equal(await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']), false);
+      assert.equal(asked.length, 2);
+      // Within half a minute neither is asked again, so reads and actions do
+      // not each wait for a model that cannot answer.
+      now += 29_000;
+      assert.equal(await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]), false);
+      assert.equal(await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']), false);
+      assert.equal(asked.length, 2, `${build}: an unanswered text was asked again at once`);
+      now += 2_000;
+      await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']);
+      assert.equal(asked.length, 4, `${build}: an unanswered text was never asked again`);
+      // A read by the decision model alone leaves a title for the next full
+      // read, which may ask the active model at once; so does a read the
+      // active model could not take part in.
+      const decisionOnly = new AgentClass({});
+      decisionOnly._activeProvider = () => ({ chat: async () => ({}) });
+      const askedOnce = stubPageTextReadings(decisionOnly, () => null);
+      await decisionOnly._readChallengeTitles(1, ['Doğrulama gerekli'], { mainModel: false });
+      await decisionOnly._readChallengeTitles(1, ['Doğrulama gerekli']);
+      assert.equal(askedOnce.length, 2, `${build}: a decision-model-only miss held back the active model`);
+      const noModel = new AgentClass({});
+      noModel._activeProvider = () => null;
+      const askedNoModel = stubPageTextReadings(noModel, () => null);
+      await noModel._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      await noModel._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      assert.equal(askedNoModel.length, 2, `${build}: a read no active model took part in held the text back`);
+      // Other questions are asked again at once, as before.
+      const other = new AgentClass({});
+      const askedOther = stubPageTextReadings(other, () => null);
+      await other._readControlEffects(1, ['Sil']);
+      await other._readControlEffects(1, ['Sil']);
+      assert.equal(askedOther.length, 2, `${build}: a control caption was held back`);
+    } finally {
+      Date.now = realNow;
+    }
   }
 });
 

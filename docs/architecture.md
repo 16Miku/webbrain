@@ -579,12 +579,41 @@ page prose cannot spoof fallback routing.
 A `pageGate` is a wall in front of an article: an overlay on an article page, or
 a block inside the article, whose text a model read as keeping the article
 from the reader until they subscribe, register or sign in (the `page_blocker`
-question, in any language; an offer beside readable text is not a wall). The
-page read reports an overlay or block text nobody has read in
-`pageTextsNeeded`; the agent has it read (the decision model first, the active
-model within four seconds) and reads the page once more with the reading. An
-unread text is no wall, so the page reads as it is. A wall withholds the
-article, its links, forms and frames; its own text and controls stay readable.
+question, in any language; an offer beside readable text is not a wall). An
+overlay or block is read by its own name and title and by chunks of its
+rendered text: its elements in page order, an element longer than 600
+characters with block children split into them, gathered into texts of at
+most 600 characters, a heading starting a new one, and a longer stretch of
+inline text read in pieces of that length. The chunks are read in page order
+up to the first one read as a wall, at most 30 of them. In an article the
+wall starts at that chunk, or at a chunk before it nobody has read, since the
+wall's text may be there, so only text read as no wall comes before it: a
+preview in chunks before the wall stays readable, also inside the wall's own
+block, while the part of the wall's own chunk before its text is withheld
+with it. Of several walls in an article, the one that starts first decides;
+an overlay is the wall as a whole. A wall's label is its name or title, or
+the first line of the element its starting chunk begins in, and none when an
+unread chunk comes first, since what follows a wall's first line may be the
+article. A page read reports at most 40 texts nobody has read, overlays first
+and then blocks offering a control a wall would (a button, a field, a form or
+a link standing on its own), in `pageTextsNeeded`; the agent has them read
+(the decision model first, the active model within four seconds) and reads
+the page again with the readings, up to three times while each read reaches
+more. When a text reads as a wall and the page cannot be read again, the
+read fails rather than return the answer made without that reading. An
+unread text is no wall, so the page reads as it is, and a text no model
+answered after both had their turn is not asked again for 30 seconds. A wall
+withholds the article, its links, forms and frames; its own text and
+controls stay readable. The CDP mirror of the page read (`readPage` in
+cdp-client.js) applies the same rules.
+
+Checks that run in the page, such as this one, the CAPTCHA scans, the submit
+probe and the recipient guard, receive the agent's most recent readings of
+their questions (the latest 400, at most 80,000 characters). A text the agent
+read earlier that a check still reports unread is not asked again: its reading
+becomes one of the most recent and the check runs again with it. Texts are
+keyed alike on both sides: spaces collapsed, and a text cut at its limit loses
+a trailing space or half of a surrogate pair.
 
 Single public-media downloads have a second deterministic guard. If the model
 calls `download_social_media` while an eligible inactive skill owns

@@ -4037,20 +4037,130 @@ export class CDPClient {
             );
           } catch (e) { return false; }
         };
+        // The page-gate check of content.js, mirrored: texts keyed as the
+        // readings key them, a block read in chunks in page order up to its
+        // first wall, a block's wall starting at that chunk or at an unread
+        // chunk before it, and the likeliest walls read first.
+        const GATE_TEXT_LIMIT = 600;
+        const GATE_TYPES = ['subscription', 'registration', 'login'];
         const unreadGateTexts = [];
-        const gateText = (el) => String(el?.innerText || '').replace(/[\\u200b-\\u200d\\ufeff]/g, '').replace(/\\s+/g, ' ').trim().slice(0, 400);
+        const gateNormalize = (value) => String(value ?? '').replace(/[\\u200b-\\u200d\\ufeff]/g, '').replace(/\\s+/g, ' ').trim();
+        const gateSlice = (value) => gateNormalize(gateNormalize(value).slice(0, GATE_TEXT_LIMIT)
+          .replace(/^[\\udc00-\\udfff]/, '').replace(/[\\ud800-\\udbff]$/, ''));
         const gateReading = (text) => {
-          if (!text) return null;
+          if (!text) return 'other';
           const reading = Object.prototype.hasOwnProperty.call(pageBlockerReadings, text) ? String(pageBlockerReadings[text] || '') : '';
-          if (!reading) {
-            if (!unreadGateTexts.includes(text) && unreadGateTexts.length < 12) unreadGateTexts.push(text);
-            return null;
+          if (reading) return GATE_TYPES.includes(reading) ? reading : 'other';
+          if (!unreadGateTexts.includes(text)) {
+            if (unreadGateTexts.length >= 40) return null;
+            unreadGateTexts.push(text);
           }
-          return ['subscription', 'registration', 'login'].includes(reading) ? reading : null;
+          return null;
+        };
+        const gateHasBlockChildren = (el, depth = 0) => {
+          for (const child of el.children) {
+            let display = '';
+            try { display = getComputedStyle(child).display; } catch (e) { continue; }
+            if (display === 'contents') {
+              if (depth < 20 && gateHasBlockChildren(child, depth + 1)) return true;
+              continue;
+            }
+            if (display && display !== 'none' && !display.startsWith('inline')) return true;
+          }
+          return false;
+        };
+        const gateParts = (el) => {
+          const parts = [];
+          const firstLine = value => gateNormalize(String(value || '').split('\\n').find(line => line.trim()) || '');
+          const visit = (node, depth) => {
+            for (const child of node.childNodes) {
+              if (parts.length >= 600) return;
+              if (child.nodeType === Node.TEXT_NODE) {
+                const value = gateNormalize(child.data);
+                if (value) parts.push({ text: value, line: value, element: node, heading: false });
+                continue;
+              }
+              if (child.nodeType !== Node.ELEMENT_NODE || /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(child.tagName)) continue;
+              let display = '';
+              try { display = getComputedStyle(child).display; } catch (e) {}
+              if (display === 'none') continue;
+              if (display === 'contents') {
+                if (depth < 40) visit(child, depth + 1);
+                continue;
+              }
+              if (!child.getClientRects?.().length) continue;
+              const raw = String(child.innerText || '');
+              const value = gateNormalize(raw);
+              if (!value) continue;
+              if (value.length <= GATE_TEXT_LIMIT || depth >= 40 || !gateHasBlockChildren(child)) {
+                parts.push({ text: value, line: firstLine(raw), element: child,
+                  heading: child.matches?.('h1, h2, h3, h4, h5, h6, [role="heading"]') === true });
+              } else {
+                visit(child, depth + 1);
+              }
+            }
+          };
+          visit(el, 0);
+          return parts;
+        };
+        const gateChunks = (parts) => {
+          const chunks = [];
+          for (const part of parts) {
+            if (part.text.length > GATE_TEXT_LIMIT) {
+              for (let offset = 0; offset < part.text.length && chunks.length < 1000; offset += GATE_TEXT_LIMIT) {
+                chunks.push({ text: part.text.slice(offset, offset + GATE_TEXT_LIMIT), element: part.element,
+                  line: offset ? '' : part.line, closed: true });
+              }
+              continue;
+            }
+            const last = chunks[chunks.length - 1];
+            if (last && !last.closed && !part.heading && last.text.length + 1 + part.text.length <= GATE_TEXT_LIMIT) {
+              last.text += ' ' + part.text;
+            } else {
+              chunks.push({ text: part.text, element: part.element, line: part.line, closed: false });
+            }
+          }
+          return chunks.map(chunk => ({ ...chunk, text: gateSlice(chunk.text) }));
+        };
+        const gateWall = (el, inline) => {
+          const named = [...new Set([el.getAttribute('aria-label'), el.getAttribute('title')].map(gateSlice))].filter(Boolean);
+          const namedReadings = named.map(gateReading);
+          const namedIndex = namedReadings.findIndex(reading => GATE_TYPES.includes(reading));
+          const chunks = gateChunks(gateParts(el)).slice(0, 30);
+          let wallIndex = -1, unread = -1, wallType = null;
+          for (let index = 0; index < chunks.length; index += 1) {
+            const reading = gateReading(chunks[index].text);
+            if (GATE_TYPES.includes(reading)) {
+              wallIndex = index;
+              wallType = reading;
+              break;
+            }
+            if (reading === null && unread < 0) unread = index;
+          }
+          if (wallIndex < 0 && namedIndex < 0) return null;
+          const type = namedIndex >= 0 ? namedReadings[namedIndex] : wallType;
+          const label = value => gateSlice(String(value || '').slice(0, 240));
+          if (namedIndex >= 0) return { type, label: label(named[namedIndex]), element: el };
+          if (!inline) return { type, label: label(chunks[wallIndex].line), element: el };
+          const start = unread >= 0 && unread < wallIndex ? unread : wallIndex;
+          return {
+            type,
+            label: start === wallIndex ? label(chunks[wallIndex].line) : '',
+            element: start === 0 ? el : chunks[start].element,
+          };
+        };
+        const gateOffersControl = (el) => {
+          try {
+            if (el.querySelector('button, input, select, textarea, form, [role="button"]')) return true;
+            return Array.from(el.querySelectorAll('a[href]')).slice(0, 50)
+              .some(link => !link.closest('p, li, blockquote, figcaption, td, dd'));
+          } catch (e) {
+            return false;
+          }
         };
         const detectPageGate = () => {
           const seen = new Set();
-          const candidates = [];
+          const found = [];
           const articleContext = pageHasArticleContext();
           for (const selector of PAGE_GATE_SELECTORS) {
             let matches = [];
@@ -4072,16 +4182,26 @@ export class CDPClient {
               } catch (e) {}
               if (coveringOverlay) surface = 'dialog';
               if (surface === 'dialog' ? !articleContext : !inArticle) continue;
-              const label = gateText(el);
-              const type = gateReading(label);
-              if (!type) continue;
-              const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('data-testid') || ''].join(' '));
-              const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) + (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
-              candidates.push({ element: el, type, surface, label: label.slice(0, 240), score });
+              found.push({ el, surface, inArticle, coveringOverlay, offersControl: gateOffersControl(el) });
             }
           }
-          candidates.sort((a, b) => b.score - a.score);
-          return candidates[0] || null;
+          found.sort((a, b) => (Number(b.surface === 'dialog') - Number(a.surface === 'dialog'))
+            || (Number(b.offersControl) - Number(a.offersControl))
+            || (a.el === b.el ? 0 : (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+          const candidates = [];
+          for (const { el, surface, inArticle, coveringOverlay } of found) {
+            const wall = gateWall(el, surface === 'inline');
+            if (!wall) continue;
+            const label = wall.label;
+            const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('data-testid') || ''].join(' '));
+            const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) + (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
+            candidates.push({ element: wall.element, type: wall.type, surface, label, score });
+          }
+          const overlays = candidates.filter(candidate => candidate.surface === 'dialog').sort((a, b) => b.score - a.score);
+          if (overlays.length) return overlays[0];
+          const blocks = candidates.filter(candidate => candidate.surface === 'inline');
+          blocks.sort((a, b) => (a.element === b.element ? 0 : (a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+          return blocks[0] || null;
         };
         const textBeforeGate = (root, gateElement) => {
           if (!root || !gateElement || !root.contains(gateElement)) return '';

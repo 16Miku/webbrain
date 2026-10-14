@@ -299,37 +299,43 @@ async function call(page, action, params) {
   };
 }
 
-async function readThroughCdpMirror(page, opts = {}) {
-  const client = new CDPClient();
-  client.evaluate = async (_tabId, expression) => ({
-    result: { value: await page.evaluate(expression) },
-  });
-  // The agent reads the overlay and article-block texts the mirror consulted
-  // unread (a model; the fixture oracle stands in), then reads again.
-  const readings = { ...(opts.pageBlockerReadings || {}) };
-  let result = await client.readPage(1, { ...opts, pageBlockerReadings: readings });
-  const needed = (result?.pageTextsNeeded || []).filter(entry => entry?.kind === 'page_blocker');
-  if (needed.length) {
-    for (const { text } of needed) readings[text] = fixturePageBlockerReading(text);
-    result = await client.readPage(1, { ...opts, pageBlockerReadings: readings });
+// A text as the agent keys a reading of it (its _pageTextKey), so a reading
+// handed back reaches the page only when the page keyed the text alike.
+const agentReadingKey = text => String(text ?? '').replace(/\s+/g, ' ').trim();
+
+// The way the agent reads the overlay and article-block texts a page read
+// consulted unread (a model; the fixture oracle stands in): at most 48 of
+// them, then the page once more, up to three times while texts get read.
+// `stats.needed` records how many texts each read reported.
+async function readGateTextsLikeTheAgent(readOnce, readings, stats = null) {
+  let result = await readOnce();
+  for (let pass = 0; pass < 3; pass += 1) {
+    const needed = (result?.pageTextsNeeded || []).filter(entry => entry?.kind === 'page_blocker');
+    stats?.needed?.push(needed.length);
+    const texts = [...new Set(needed.map(entry => agentReadingKey(entry.text)))].filter(Boolean).slice(0, 48);
+    if (!texts.length) break;
+    for (const text of texts) readings[text] = fixturePageBlockerReading(text);
+    result = await readOnce();
   }
   if (result && typeof result === 'object') delete result.pageTextsNeeded;
   return result;
 }
 
+async function readThroughCdpMirror(page, opts = {}, stats = null) {
+  const client = new CDPClient();
+  client.evaluate = async (_tabId, expression) => ({
+    result: { value: await page.evaluate(expression) },
+  });
+  const readings = { ...(opts.pageBlockerReadings || {}) };
+  return readGateTextsLikeTheAgent(() => client.readPage(1, { ...opts, pageBlockerReadings: readings }), readings, stats);
+}
+
 // A page read the way the agent reads it: overlay and article-block texts the
 // page-gate check consulted unread are read by a model (the fixture oracle
 // stands in) and the page is read again with those readings.
-async function readWithGateReadings(page, action, params = {}) {
+async function readWithGateReadings(page, action, params = {}, stats = null) {
   const readings = {};
-  let result = await call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } });
-  const needed = (result?.pageTextsNeeded || []).filter(entry => entry?.kind === 'page_blocker');
-  if (needed.length) {
-    for (const { text } of needed) readings[text] = fixturePageBlockerReading(text);
-    result = await call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } });
-  }
-  if (result && typeof result === 'object') delete result.pageTextsNeeded;
-  return result;
+  return readGateTextsLikeTheAgent(() => call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } }), readings, stats);
 }
 
 async function clickedSentinel(page) {
@@ -1098,6 +1104,108 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     }
   });
 
+  test(`${label}: a wall inside the block its preview begins leaves that preview readable`, async (page) => {
+    await setupContentFixture(page, 'inline-wrapped-preview-paywall.html', browserKind);
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
+    if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'inline') {
+      throw new Error(`wrapped preview pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
+    }
+    if (!/WRAPPED_PREVIEW_PARAGRAPH/.test(result.text || '') || /SECRET_WRAPPED_REST_PARAGRAPH/.test(result.text || '')) {
+      throw new Error(`wrapped preview boundary mismatch: ${JSON.stringify(result.text)}`);
+    }
+    if (!/Subscribe to continue reading/.test(result.pageGate.label || '')) {
+      throw new Error(`wrapped preview label does not start at the wall: ${JSON.stringify(result.pageGate)}`);
+    }
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    if (!/WRAPPED_PREVIEW_PARAGRAPH/.test(tree.pageContent || '') || /SECRET_WRAPPED_REST_PARAGRAPH/.test(tree.pageContent || '')) {
+      throw new Error(`wrapped preview accessibility boundary mismatch: ${JSON.stringify(tree)}`);
+    }
+  });
+
+  test(`${label}: a wall after more than 400 characters of preview still withholds the rest`, async (page) => {
+    await setupContentFixture(page, 'inline-long-preview-paywall.html', browserKind);
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
+    if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'inline') {
+      throw new Error(`long preview pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
+    }
+    if (/SECRET_LONG_REST_PARAGRAPH/.test(JSON.stringify(result))) {
+      throw new Error(`long preview leaked the rest of the article: ${JSON.stringify(result.text)}`);
+    }
+    for (const marker of ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX']) {
+      if (!new RegExp(`LONG_PREVIEW_${marker}`).test(result.text || '')) {
+        throw new Error(`long preview lost LONG_PREVIEW_${marker}: ${JSON.stringify(result.text)}`);
+      }
+    }
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    if (tree.pageGate?.type !== 'subscription' || /SECRET_LONG_REST_PARAGRAPH/.test(tree.pageContent || '')
+      || !/LONG_PREVIEW_SIX/.test(tree.pageContent || '')) {
+      throw new Error(`long preview accessibility read mismatch: ${JSON.stringify(tree)}`);
+    }
+  });
+
+  for (const [fixture, secret, visible, what] of [
+    ['inline-bare-prompt-paywall.html', /SECRET_BARE_(?:BETWEEN|AFTER)/, null, 'a wall text standing directly in its block, repeated after the withheld article'],
+    ['inline-close-repeat-paywall.html', /SECRET_CLOSE_(?:SHORT|AFTER)/, /VISIBLE_CLOSE_PREVIEW/, 'a line reading like the wall a short sentence after it'],
+    ['inline-long-hidden-paywall.html', /HIDDEN_LINE_\d\d/, /PREVIEW_LINE_12/, 'a wall after twelve preview lines with twelve withheld lines rendered after it'],
+    ['inline-long-paragraph-paywall.html', /SECRET_PARAGRAPH_REST/, /LONG_PARAGRAPH_ONE/, 'a long wall paragraph after long preview paragraphs'],
+    ['inline-many-blocks-paywall.html', /SECRET_MANY_REST/, /STORY_LINE_20/, 'a wall among several blocks named like paywalls'],
+    ['inline-middle-wall-paywall.html', /SECRET_MIDDLE_REST/, /MIDDLE_PREVIEW_06/, 'a wall between a long preview and a long withheld article in one block'],
+    ['inline-span-words-paywall.html', /SECRET_SPAN_REST/, /SPAN_PREVIEW_5_word1\b/, 'a wall after long preview paragraphs of inline words'],
+    ['inline-locked-box-paywall.html', /SECRET_LOCKED/, null, 'a wall box holding the locked article right after its heading'],
+  ]) {
+    test(`${label}: ${what} withholds the article after it`, async (page) => {
+      await setupContentFixture(page, fixture, browserKind);
+      for (const [action, field] of [['get_page_info_cdp', 'text'], ['get_accessibility_tree', 'pageContent']]) {
+        const result = await readWithGateReadings(page, action, action === 'get_accessibility_tree' ? { filter: 'visible', maxDepth: 6 } : {});
+        if (!['subscription', 'registration', 'login'].includes(result.pageGate?.type) || result.pageGate?.surface !== 'inline') {
+          throw new Error(`${action}: wall missed: ${JSON.stringify(result.pageGate)}`);
+        }
+        if (secret.test(JSON.stringify(result))) {
+          throw new Error(`${action}: the withheld article was returned: ${JSON.stringify({ pageGate: result.pageGate, text: result[field] })}`);
+        }
+        if (visible && !visible.test(result[field] || '')) {
+          throw new Error(`${action}: the preview before the wall was withheld: ${JSON.stringify(result[field])}`);
+        }
+      }
+    });
+  }
+
+  test(`${label}: an overlay wall in the middle of a long text, or among two hundred other blocks, is still read`, async (page) => {
+    for (const [fixture, secret] of [['dialog-long-intro-wall.html', /SECRET_DIALOG_ARTICLE_BODY/],
+      ['overlay-among-many-blocks.html', /SECRET_NOTES_ARTICLE_BODY/]]) {
+      await setupContentFixture(page, fixture, browserKind);
+      for (const action of ['get_page_info_cdp', 'get_accessibility_tree']) {
+        const result = await readWithGateReadings(page, action, action === 'get_accessibility_tree' ? { filter: 'visible', maxDepth: 6 } : {});
+        if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'dialog' || secret.test(JSON.stringify(result))) {
+          throw new Error(`${fixture} ${action}: overlay wall mismatch: ${JSON.stringify({ pageGate: result.pageGate, textSource: result.textSource })}`);
+        }
+      }
+    }
+  });
+
+  test(`${label}: an article whose body is named for a paywall reads whole, at a bounded cost`, async (page) => {
+    await setupContentFixture(page, 'paywall-class-article-no-wall.html', browserKind);
+    const stats = { needed: [] };
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {}, stats);
+    if (result.pageGate || !/READABLE_BODY_01/.test(result.text || '') || !/READABLE_BODY_30/.test(result.text || '')) {
+      throw new Error(`readable paywall-named article mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: String(result.text || '').slice(-300) })}`);
+    }
+    if (!(stats.needed[0] > 0 && stats.needed[0] <= 12)) {
+      throw new Error(`a readable article asked for ${JSON.stringify(stats.needed)} wall readings; at most 12 expected`);
+    }
+  });
+
+  test(`${label}: a wall's text repeated after the withheld article does not open what lies between`, async (page) => {
+    await setupContentFixture(page, 'inline-repeated-prompt-paywall.html', browserKind);
+    for (const [action, field] of [['get_page_info_cdp', 'text'], ['get_accessibility_tree', 'pageContent']]) {
+      const result = await readWithGateReadings(page, action, action === 'get_accessibility_tree' ? { filter: 'visible', maxDepth: 5 } : {});
+      if (result.pageGate?.type !== 'subscription' || !/VISIBLE_REPEAT_PREVIEW/.test(result[field] || '')
+        || /SECRET_BETWEEN_PROMPTS|SECRET_AFTER_SECOND_PROMPT/.test(JSON.stringify(result))) {
+        throw new Error(`${action}: repeated prompt boundary mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: result[field] })}`);
+      }
+    }
+  });
+
   test(`${label}: readable article ignores header controls, inline upsells, and hidden gate markup`, async (page) => {
     await setupContentFixture(page, 'readable-article-no-gate.html', browserKind);
     const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
@@ -1276,6 +1384,72 @@ test('Chrome CDP mirror suppresses a blocking Athletic article body', async (pag
   }
   if (result.links?.length || result.forms?.length || result.shadowHosts?.length || result.iframes?.length) {
     throw new Error(`CDP blocking gate retained auxiliary page data: ${JSON.stringify(result)}`);
+  }
+});
+
+test('Chrome CDP mirror keeps a wrapped preview readable and withholds the rest after a long preview', async (page) => {
+  await page.goto(fixtureUrl('inline-wrapped-preview-paywall.html'));
+  const wrapped = await readThroughCdpMirror(page);
+  if (wrapped.pageGate?.type !== 'subscription' || wrapped.pageGate?.surface !== 'inline'
+    || !/WRAPPED_PREVIEW_PARAGRAPH/.test(wrapped.text || '') || /SECRET_WRAPPED_REST_PARAGRAPH/.test(JSON.stringify(wrapped))) {
+    throw new Error(`CDP wrapped preview mismatch: ${JSON.stringify({ pageGate: wrapped.pageGate, text: wrapped.text })}`);
+  }
+  await page.goto(fixtureUrl('inline-long-preview-paywall.html'));
+  const long = await readThroughCdpMirror(page);
+  if (long.pageGate?.type !== 'subscription' || !/LONG_PREVIEW_SIX/.test(long.text || '')
+    || /SECRET_LONG_REST_PARAGRAPH/.test(JSON.stringify(long))) {
+    throw new Error(`CDP long preview mismatch: ${JSON.stringify({ pageGate: long.pageGate, text: long.text })}`);
+  }
+});
+
+test('Chrome CDP mirror does not open the article between a wall text and its repeat', async (page) => {
+  await page.goto(fixtureUrl('inline-repeated-prompt-paywall.html'));
+  const result = await readThroughCdpMirror(page);
+  if (result.pageGate?.type !== 'subscription' || !/VISIBLE_REPEAT_PREVIEW/.test(result.text || '')
+    || /SECRET_BETWEEN_PROMPTS|SECRET_AFTER_SECOND_PROMPT/.test(JSON.stringify(result))) {
+    throw new Error(`CDP repeated prompt mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: result.text })}`);
+  }
+});
+
+test('Chrome CDP mirror withholds the article after walls the content script finds', async (page) => {
+  for (const [fixture, secret] of [
+    ['inline-bare-prompt-paywall.html', /SECRET_BARE_(?:BETWEEN|AFTER)/],
+    ['inline-close-repeat-paywall.html', /SECRET_CLOSE_(?:SHORT|AFTER)/],
+    ['inline-long-hidden-paywall.html', /HIDDEN_LINE_\d\d/],
+    ['inline-long-paragraph-paywall.html', /SECRET_PARAGRAPH_REST/],
+    ['inline-many-blocks-paywall.html', /SECRET_MANY_REST/],
+    ['inline-middle-wall-paywall.html', /SECRET_MIDDLE_REST/],
+    ['inline-span-words-paywall.html', /SECRET_SPAN_REST/],
+    ['inline-locked-box-paywall.html', /SECRET_LOCKED/],
+    ['dialog-long-intro-wall.html', /SECRET_DIALOG_ARTICLE_BODY/],
+    ['overlay-among-many-blocks.html', /SECRET_NOTES_ARTICLE_BODY/],
+  ]) {
+    await page.goto(fixtureUrl(fixture));
+    const result = await readThroughCdpMirror(page);
+    if (!['subscription', 'registration', 'login'].includes(result.pageGate?.type) || secret.test(JSON.stringify(result))) {
+      throw new Error(`CDP ${fixture} mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: result.text })}`);
+    }
+  }
+  await page.goto(fixtureUrl('paywall-class-article-no-wall.html'));
+  const stats = { needed: [] };
+  const readable = await readThroughCdpMirror(page, {}, stats);
+  if (readable.pageGate || !/READABLE_BODY_30/.test(readable.text || '') || !(stats.needed[0] > 0 && stats.needed[0] <= 12)) {
+    throw new Error(`CDP readable paywall-named article mismatch: ${JSON.stringify({ pageGate: readable.pageGate, needed: stats.needed })}`);
+  }
+});
+
+test('Chrome CDP mirror keys a wall text cut at its length limit as the agent does', async (page) => {
+  // The overlay's text has a space at its 400th and at its 600th character,
+  // where a page read cuts it; the agent keys its reading without that space.
+  const opening = 'Okumaya devam etmek için abone olun. ';
+  const text = opening + 'x'.repeat(399 - opening.length) + ' ' + 'z'.repeat(199) + ' ' + 'CUT_TAIL ' + 'y'.repeat(80);
+  if (text[399] !== ' ' || text[599] !== ' ') throw new Error('the fixture text must have spaces at its 400th and 600th characters');
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Kesik duvar</h1><p>SECRET_CUT_ARTICLE_BODY sunucuda çizilmiştir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff"><p>${text}</p></div>`);
+  const result = await readThroughCdpMirror(page);
+  if (result.pageGate?.type !== 'subscription' || result.textSource !== 'page-gate' || /SECRET_CUT_ARTICLE_BODY/.test(JSON.stringify(result))) {
+    throw new Error(`CDP cut wall text mismatch: ${JSON.stringify({ pageGate: result.pageGate, textSource: result.textSource })}`);
   }
 });
 

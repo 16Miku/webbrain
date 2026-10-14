@@ -275,6 +275,10 @@ const COMPLETION_READING_TIMEOUT_MS = 6_000;
 // language, after a click in a run that has to prove a submission; the active
 // model gets this long when the decision model is not sure.
 const CONTROL_READING_TIMEOUT_MS = 4_000;
+// A dialog title or a wall text no model answered reads as nothing to stop
+// for; it is asked again only after this long, so page reads and actions do
+// not each wait for it.
+const PAGE_BLOCKER_RETRY_MS = 30_000;
 // The agent's own hover may start a transition on a certified native button.
 // Its geometry is sampled (read-only) at this interval until it settles, for
 // at most this long, before the single press.
@@ -7461,20 +7465,53 @@ export class Agent extends LoopDetector {
   // workflow reached its end state) read with one fixed-choice question each,
   // in any language, and remembered per text for the synchronous checks that
   // follow. Longer texts are not read; an unanswered text is asked again next
-  // time.
-  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300, mainTimeoutMs, mainModel = true } = {}) {
+  // time, or, with `retryUnansweredAfterMs`, once that long has passed. A text
+  // read before is not read again: its reading becomes the most recent one,
+  // so the readings handed to a check in the page (the most recent of each
+  // question) include it however long ago it was read.
+  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300, mainTimeoutMs, mainModel = true,
+    retryUnansweredAfterMs = 0 } = {}) {
     this._pageTextReadings ??= new Map();
+    this._unansweredPageTexts ??= new Map();
+    const now = Date.now();
     const pending = [...new Set((Array.isArray(texts) ? texts : [])
       .map(text => String(text ?? '').replace(/\s+/g, ' ').trim())
       .filter(text => text && text.length <= maxChars))]
-      .filter(text => !this._pageTextReadings.has(this._pageTextKey(kind, text, context)));
+      .filter(text => {
+        const key = this._pageTextKey(kind, text, context);
+        if (this._pageTextReadings.has(key)) {
+          const choice = this._pageTextReadings.get(key);
+          this._pageTextReadings.delete(key);
+          this._pageTextReadings.set(key, choice);
+          return false;
+        }
+        const unansweredAt = this._unansweredPageTexts.get(key);
+        return !(retryUnansweredAfterMs > 0 && unansweredAt && now - unansweredAt < retryUnansweredAfterMs);
+      });
     if (!pending.length) return;
+    const askMain = mainModel && !this._workflowReplayTabs?.has(tabId);
     const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) },
-      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel: mainModel && !this._workflowReplayTabs?.has(tabId) });
+      { ...(mainTimeoutMs ? { mainTimeoutMs } : {}), mainModel: askMain });
+    // A text counts as unanswered only once the active model had its turn
+    // too: a read by the decision model alone, a stopped run or a provider
+    // that cannot answer leaves it for the next read.
+    let mainHadTurn = false;
+    try {
+      mainHadTurn = askMain && typeof this._activeProvider(tabId)?.chat === 'function' && !this._checkAbort(tabId);
+    } catch {}
+    const answeredAt = Date.now();
     pending.forEach((text, index) => {
-      if (readings[index]?.choice) this._pageTextReadings.set(this._pageTextKey(kind, text, context), readings[index].choice);
+      const key = this._pageTextKey(kind, text, context);
+      if (readings[index]?.choice) {
+        this._pageTextReadings.set(key, readings[index].choice);
+        this._unansweredPageTexts.delete(key);
+      } else if (mainHadTurn) {
+        this._unansweredPageTexts.delete(key);
+        this._unansweredPageTexts.set(key, answeredAt);
+      }
     });
     while (this._pageTextReadings.size > 2048) this._pageTextReadings.delete(this._pageTextReadings.keys().next().value);
+    while (this._unansweredPageTexts.size > 512) this._unansweredPageTexts.delete(this._unansweredPageTexts.keys().next().value);
   }
 
   _pageTextReading(kind, text, context = {}) {
@@ -12116,20 +12153,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   _withPageBlockerReadings(name, params) {
     if (name !== 'read_page' && name !== 'get_accessibility_tree') return params;
     return { ...(params && typeof params === 'object' ? params : {}),
-      __wbPageReadings: { page_blocker: this._challengeTitleReadings() } };
+      __wbPageReadings: { page_blocker: this._pageBlockerReadings() } };
+  }
+
+  // The page_blocker readings the agent holds, for a page read's page-gate
+  // check: overlay and article-block texts as well as dialog titles.
+  _pageBlockerReadings() {
+    return this._pageTextReadingsByCaption('page_blocker');
   }
 
   // Overlay and article-block texts a page read consulted unread, read in any
   // language (the decision model first, the active model within four
-  // seconds). True when any of them was read.
+  // seconds). A text the agent read before, but that did not reach the page
+  // among the most recent readings, becomes one of them again. A text no
+  // model answered reads as no wall, and is not asked again for half a
+  // minute, so page reads do not each wait for it. True when any of them has
+  // a reading.
   async _readPageBlockerTexts(tabId, entries) {
     const texts = [...new Set((Array.isArray(entries) ? entries : [])
       .filter(entry => entry?.kind === 'page_blocker')
       .map(entry => String(entry?.text ?? '').replace(/\s+/g, ' ').trim())
-      .filter(text => text && text.length <= 400 && !this._pageTextReading('page_blocker', text)))].slice(0, 12);
+      .filter(text => text && text.length <= 600))].slice(0, 48);
     if (!texts.length) return false;
     try {
-      await this._readPageTexts(tabId, 'page_blocker', texts, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+      await this._readPageTexts(tabId, 'page_blocker', texts, {},
+        { maxChars: 600, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS, retryUnansweredAfterMs: PAGE_BLOCKER_RETRY_MS });
     } catch (error) {
       if (this._checkAbort(tabId)) throw error;
     }
@@ -12137,29 +12185,43 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // A page read whose overlay or article-block texts were consulted unread
-  // has them read, and the page read once more with the readings; a read
-  // that cannot be repeated keeps the first answer.
+  // has them read, and the page read once more with the readings, up to three
+  // times while each read reaches texts nobody has read (a page reports at
+  // most forty at a time, the likeliest walls first). A read that cannot be
+  // repeated keeps the answer before it, unless one of the texts that answer
+  // was made without reads as a wall: that answer may hold what the wall
+  // withholds, so the read fails instead.
   async _rereadWithPageBlockerReadings(tabId, name, response, dispatch) {
     if ((name !== 'read_page' && name !== 'get_accessibility_tree') || !response || typeof response !== 'object') return response;
-    const needed = response.pageTextsNeeded;
-    delete response.pageTextsNeeded;
-    if (!await this._readPageBlockerTexts(tabId, needed)) return response;
-    let reread = null;
-    try {
-      reread = await dispatch();
-    } catch (error) {
-      if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
-      return response;
+    let current = response;
+    for (let pass = 0; pass < 3; pass += 1) {
+      const needed = current.pageTextsNeeded;
+      delete current.pageTextsNeeded;
+      if (!await this._readPageBlockerTexts(tabId, needed)) return current;
+      const wallRead = (Array.isArray(needed) ? needed : []).some(entry => entry?.kind === 'page_blocker'
+        && ['subscription', 'registration', 'login'].includes(this._pageTextReading('page_blocker', entry.text)));
+      const failed = () => (wallRead ? { success: false, error: 'This page shows a subscription, registration or '
+        + 'sign-in wall, and reading the page again with it failed, so nothing behind the wall was returned. '
+        + 'Read the page again.' } : current);
+      let reread = null;
+      try {
+        reread = await dispatch();
+      } catch (error) {
+        if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        return failed();
+      }
+      if (!reread || typeof reread !== 'object' || reread.success === false) return failed();
+      current = reread;
     }
-    if (!reread || typeof reread !== 'object' || reread.success === false) return response;
-    delete reread.pageTextsNeeded;
-    return reread;
+    delete current.pageTextsNeeded;
+    return current;
   }
 
   // The page_blocker readings of dialog titles the agent holds, by title, for
-  // the CAPTCHA scans that run in the page.
+  // the CAPTCHA scans that run in the page: titles are at most 200
+  // characters, so the longer overlay and article-block texts stay behind.
   _challengeTitleReadings() {
-    return this._pageTextReadingsByCaption('page_blocker');
+    return this._pageTextReadingsByCaption('page_blocker', { maxLength: 200 });
   }
 
   _challengeTitleReader() {
@@ -12168,15 +12230,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // Reads dialog titles, in any language, as asking to prove the person is
   // human or not: the decision model first, the active model within four
-  // seconds unless `mainModel` is false. True when any of them was read.
+  // seconds unless `mainModel` is false. A title read before becomes one of
+  // the most recent readings again, so a scan in the page receives it; one no
+  // model answered stops nothing and is not asked again for half a minute,
+  // so page actions do not each wait for it. True when any of them has a
+  // reading.
   async _readChallengeTitles(tabId, titles = [], { mainModel = true } = {}) {
     const pending = [...new Set((Array.isArray(titles) ? titles : [])
-      .map(title => challengeTitleText(title)).filter(Boolean))]
-      .filter(title => !this._pageTextReading('page_blocker', title)).slice(0, 12);
+      .map(title => challengeTitleText(title)).filter(Boolean))].slice(0, 12);
     if (!pending.length) return false;
     try {
       await this._readPageTexts(tabId, 'page_blocker', pending, {},
-        { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS, mainModel });
+        { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS, mainModel, retryUnansweredAfterMs: PAGE_BLOCKER_RETRY_MS });
     } catch (error) {
       if (this._checkAbort(tabId)) throw error;
     }
@@ -24989,14 +25054,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   // The readings of one page-text question the agent holds, by caption, for a
-  // check that runs in the page: the 400 most recent.
-  _pageTextReadingsByCaption(kind) {
+  // check that runs in the page: the 400 most recent, of captions up to
+  // `maxLength` characters, within `budget` characters in all. A check that
+  // consults a text missing here reports it; reading it again makes it one of
+  // the most recent (see _readPageTexts).
+  _pageTextReadingsByCaption(kind, { maxLength = Infinity, budget = 80_000 } = {}) {
     const prefix = this._pageTextKey(kind, '', {});
     const readings = {};
     const entries = [...(this._pageTextReadings || new Map()).entries()].filter(([key]) => key.startsWith(prefix));
-    for (const [key, choice] of entries.slice(-400)) {
-      const caption = key.slice(prefix.length);
-      if (caption) readings[caption] = choice;
+    let count = 0, used = 0;
+    for (let index = entries.length - 1; index >= 0 && count < 400; index -= 1) {
+      const caption = entries[index][0].slice(prefix.length);
+      if (!caption || caption.length > maxLength) continue;
+      if (used + caption.length > budget) break;
+      readings[caption] = entries[index][1];
+      count += 1;
+      used += caption.length;
     }
     return readings;
   }
@@ -42182,9 +42255,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         await cdpClient.attach(tabId);
         // Shadow hosts behind a wall in front of an article stay hidden; the
         // wall's text is read in any language first when nobody has.
-        let pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._challengeTitleReadings() });
-        if (await this._readPageBlockerTexts(tabId, pageInfo?.pageTextsNeeded)) {
-          pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._challengeTitleReadings() });
+        let pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._pageBlockerReadings() });
+        for (let pass = 0; pass < 3 && await this._readPageBlockerTexts(tabId, pageInfo?.pageTextsNeeded); pass += 1) {
+          pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._pageBlockerReadings() });
         }
         return {
           success: true,
