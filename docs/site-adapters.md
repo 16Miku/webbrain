@@ -96,6 +96,11 @@ unclear), the decision model first, before the reconciliation and again at
 `done`. A requested value has to read back from a field read as the named
 one, and an optional row may be skipped only once every named field reads as
 a different one; a pair nobody has read yet keeps the row required.
+An upload row is proved by the page showing its file beside its own control
+after the upload: a line whose name or value is the file name, or another line
+naming the file that a model read, in any language, as saying it was uploaded
+or attached (`workflow_state`, `file_attached`). A line read as a failed or
+unfinished upload proves nothing, and neither does a line nobody has read.
 Depth truncation is form-relevant (an omitted includable descendant). Empty
 or erroring third-party frames are omitted only when another frame already
 inventoried form controls; a lone failed cross-origin application frame stays

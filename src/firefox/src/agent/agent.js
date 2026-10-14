@@ -12855,6 +12855,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       }
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
+      // An upload's evidence reads the lines that name its file first.
+      await this._readWorkflowUploadLines(tabId, fnName, toolResult);
       const completionStateAfterTool = this._recordCompletionToolResult(
         tabId,
         fnName,
@@ -17432,16 +17434,78 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!expected) return 0;
     const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const exactFileName = new RegExp(`(^|[^\\p{L}\\p{N}_.-])${escaped}($|[^\\p{L}\\p{N}_.-])`, 'u');
-    const attachmentStatus = /\b(?:attached|uploaded|upload complete|upload successful|remove attachment|remove file|delete attachment|replace file)\b|(?:已上传|附件|上传完成|已上傳|上傳完成|添付|アップロード済み|첨부|업로드됨|yüklendi|eklendi)/iu;
     let count = 0;
     for (const rawLine of String(value || '').split(/\r?\n/)) {
       const line = normalize(rawLine);
       if (!exactFileName.test(line)) continue;
       const label = normalize(/^\s*[a-z]+\s+"([^"]+)"/i.exec(rawLine)?.[1]);
       const currentValue = normalize(/\bvalue="([^"]+)"/i.exec(rawLine)?.[1]);
-      if (label === expected || currentValue === expected || attachmentStatus.test(line)) count += 1;
+      // The file's own name or value shows it; any other line that names it
+      // shows it when a model read the line, in any language, as saying the
+      // file was uploaded or attached. A line read as a failure shows nothing.
+      if (label === expected || currentValue === expected
+          || this._workflowUploadLineReading(rawLine) === 'reached') count += 1;
     }
     return count;
+  }
+
+  // The visible text of an accessibility tree line: its quoted name, or the
+  // line itself.
+  _workflowAxLineText(rawLine) {
+    const quoted = /^\s*[a-z]+\s+"((?:[^"\\]|\\.)+)"/i.exec(String(rawLine || ''))?.[1];
+    return String(quoted ? quoted.replace(/\\(["\\])/g, '$1') : rawLine || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  }
+
+  // A model's reading of an upload line, in any language (workflow_state, the
+  // file_attached state): reached, failed, other, or null while unread.
+  _workflowUploadLineReading(rawLine) {
+    return this._pageTextReading('workflow_state', this._workflowAxLineText(rawLine), { state: WORKFLOW_STATES.file_attached });
+  }
+
+  // Whether an observation names a file on a line a model read as saying its
+  // upload failed or is still under way.
+  _workflowUploadFailureShown(value, fileName) {
+    let expected = String(fileName || '').replace(/\s+/g, ' ').trim();
+    try { expected = expected.normalize('NFKC'); } catch {}
+    if (!expected) return false;
+    const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const exactFileName = new RegExp(`(^|[^\\p{L}\\p{N}_.-])${escaped}($|[^\\p{L}\\p{N}_.-])`, 'iu');
+    return String(value || '').split(/\r?\n/).some(rawLine => exactFileName.test(rawLine)
+      && this._workflowUploadLineReading(rawLine) === 'failed');
+  }
+
+  // Reads, in any language, the lines of a page observation that name a file
+  // an upload is waiting to see (workflow_state, file_attached), before the
+  // synchronous evidence checks: for an upload itself, the lines of the last
+  // observation, its baseline; for an observation, its own lines. The
+  // decision model first, the active model within four seconds.
+  async _readWorkflowUploadLines(tabId, name, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || !result || typeof result !== 'object' || result.success === false) return;
+    let text = '', fileNames = [];
+    if (name === 'upload_file') {
+      text = String(guard.workflowInventoryObservationText || '');
+      fileNames = [this._workflowReleaseAssetFileName(result?.attached?.name)];
+    } else if (COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(name)) {
+      text = [result.pageContent, result.text, result.content, result.description]
+        .filter(value => typeof value === 'string' && value.trim()).join('\n');
+      fileNames = [guard.workflowPendingUploadEvidence, guard.workflowPendingReleaseAssetEvidence]
+        .flatMap(pending => Object.values(pending && typeof pending === 'object' ? pending : {}))
+        .map(candidate => candidate?.fileName);
+    }
+    const names = [...new Set(fileNames.map(value => String(value || '').trim()).filter(Boolean))];
+    if (!text || !names.length) return;
+    const lines = [...new Set(text.split(/\r?\n/)
+      .filter(rawLine => names.some(fileName => rawLine.includes(fileName)) && !/\btype="file"/i.test(rawLine))
+      .map(rawLine => this._workflowAxLineText(rawLine))
+      .filter(line => line && !names.includes(line)))].slice(0, 24);
+    if (!lines.length) return;
+    try {
+      await this._readPageTexts(tabId, 'workflow_state', lines, { state: WORKFLOW_STATES.file_attached },
+        { maxChars: 300, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
   }
 
   _rememberWorkflowReleaseAssetObservation(tabId, name, result) {
@@ -17466,7 +17530,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       for (const [itemId, candidate] of Object.entries(pending)) {
         if (observationSequence <= Number(candidate?.actionSequence || 0)
-            || this._workflowReleaseAssetSignalCount(observationText, candidate?.fileName) < 1) continue;
+            || this._workflowReleaseAssetSignalCount(observationText, candidate?.fileName) < 1
+            || this._workflowUploadFailureShown(observationText, candidate?.fileName)) continue;
         guard.workflowReleaseAssetEvidence[itemId] = {
           itemId,
           tool: 'upload_file',
@@ -17529,7 +17594,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const exactItemLabel = itemLabel
       ? new RegExp(`(^|[^\\p{L}\\p{N}_.-])${itemLabel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}_.-])`, 'u')
       : null;
-    const attachmentStatus = /\b(?:attached|uploaded|upload complete|upload successful|remove attachment|remove file|delete attachment|replace file)\b|(?:fichier joint|téléversé|supprimer|hochgeladen|entfernen|adjunto|subido|eliminar|caricato|rimuovi|eklendi|yüklendi|kaldır|添付|アップロード済み|削除|첨부|업로드됨|삭제|已上传|附件|移除|上傳完成|загруж|прикреп|удал)/iu;
     const lines = String(value || '').split(/\r?\n/);
     const fileControls = lines.flatMap((rawLine, index) => {
       if (!/\btype="file"/i.test(rawLine)) return [];
@@ -17552,7 +17616,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!exactFileName.test(line) || /\btype="file"/i.test(rawLine)) continue;
       const label = normalize(/^\s*[a-z]+\s+"([^"]+)"/i.exec(rawLine)?.[1]);
       const currentValue = normalize(/\bvalue="([^"]+)"/i.exec(rawLine)?.[1]);
-      if (label !== expected && currentValue !== expected && !attachmentStatus.test(line)) continue;
+      // The file's own name or value shows it; any other line that names it
+      // shows it when a model read the line, in any language, as saying the
+      // file was uploaded or attached.
+      if (label !== expected && currentValue !== expected
+          && this._workflowUploadLineReading(rawLine) !== 'reached') continue;
       const labelledWidgetSignal = exactItemLabel?.test(line) === true;
       if (fileControls.length) {
         const distances = fileControls.map(control => ({ control, distance: Math.abs(control.index - index) }));
@@ -17584,7 +17652,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         candidate?.fileName,
         candidate?.item,
       );
-      if (observedCount <= Number(candidate?.baselineUiSignalCount || 0)) continue;
+      if (observedCount <= Number(candidate?.baselineUiSignalCount || 0)
+          || this._workflowUploadFailureShown(observationText, candidate?.fileName)) continue;
       guard.workflowControlActionEvidence[itemId] = {
         itemId,
         tool: 'upload_file',

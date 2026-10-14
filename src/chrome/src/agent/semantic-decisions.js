@@ -351,6 +351,7 @@ export const WORKFLOW_STATES = Object.freeze({
   form_submitted: 'the form or application was submitted and received',
   changes_saved: 'the changes were saved',
   threads_resolved: 'the review conversation or thread was marked as resolved',
+  file_attached: 'the file named in the text was uploaded or attached',
 });
 
 export function semanticQuestion(kind) {

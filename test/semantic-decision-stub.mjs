@@ -191,6 +191,7 @@ const FIXTURE_WORKFLOW_STATES = [
   [/submitted and received/i, /\bresponse\s+(?:was\s+)?submitted\b|\bapplication\s+(?:was\s+)?(?:submitted|received)\b|\bthank you for (?:submitting|applying)\b|提交成功|başvurunuz alındı/i],
   [/changes were saved/i, /\bchanges?\s+saved\b|\bsaved successfully\b|保存成功|başarıyla kaydedildi/i],
   [/resolved/i, /\b(?:conversation|thread|review)\s+(?:was\s+)?(?:marked\s+as\s+)?resolved\b|已解决|çözüldü/i],
+  [/uploaded or attached/i, /\b(?:uploaded|attached|upload (?:complete|successful))\b|yüklendi|eklendi|hochgeladen|przesłano|已上传|上傳完成|アップロード済み|업로드됨/iu],
 ];
 export function fixtureWorkflowStateReading(state, text) {
   const value = String(text || '');

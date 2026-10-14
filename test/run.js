@@ -94509,10 +94509,17 @@ test('planner intent carries submit-required completion metadata into the execut
   });
 });
 
-test('adapter workflow jobs reach the executor and require submit plus complete reconciliation evidence', () => {
+test('adapter workflow jobs reach the executor and require submit plus complete reconciliation evidence', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     agent.useSiteAdapters = true;
+    // A model reads the lines naming an uploaded file (workflow_state,
+    // file_attached); the fixture oracle stands in.
+    stubPageTextReadings(agent);
+    const observeUpload = async (tab, result) => {
+      await agent._readWorkflowUploadLines(tab, 'get_accessibility_tree', result);
+      return agent._recordCompletionToolResult(tab, 'get_accessibility_tree', {}, result);
+    };
     const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x';
     const selected = agent._resolvePlannerSiteWorkflow(formUrl, {
       request_kind: 'execute',
@@ -94839,7 +94846,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       'button "Upload résumé" [ref_resume_multi] type="file" dom_id="resume-upload" field_name="resume"',
       'button "Upload cover letter" [ref_cover_multi] type="file" dom_id="cover-upload" field_name="cover"',
     ];
-    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+    await observeUpload(multiUploadTabId, {
       success: true,
       pageUrl: formUrl,
       pageContent: [
@@ -94851,14 +94858,14 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
       `${AgentClass.name}: an attachment name beside the wrong widget promoted a consumed upload`);
-    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+    await observeUpload(multiUploadTabId, {
       success: true,
       pageUrl: formUrl,
       pageContent: [...multiUploadControls, 'status "mycover.pdf uploaded" [ref_cover_collision]'].join('\n'),
     });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
       `${AgentClass.name}: a filename substring promoted a consumed upload`);
-    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+    await observeUpload(multiUploadTabId, {
       success: true,
       pageUrl: formUrl,
       pageContent: [
@@ -95077,6 +95084,44 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
   }
 });
 
+
+test('an upload is seen on the page when a model reads the line naming its file, in any language', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=upload-lines';
+    const selected = agent._resolvePlannerSiteWorkflow(formUrl, { request_kind: 'execute', site_job: 'submit-form' });
+    // A model reads each line naming the file; these answers stand in.
+    const readings = new Map([['cover.pdf · 96 KB · przesłano', 'reached'], ['cover.pdf · przesyłanie nie powiodło się', 'failed']]);
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'workflow_state' ? readings.get(item.text) || null : null));
+    const run = async (tabId, line) => {
+      agent.conversations.set(tabId, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Attach cover.pdf and submit.' }]);
+      const guard = agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+        requiresSubmission: true, siteWorkflow: selected });
+      agent._lastAxScopes.set(tabId, { documentToken: `upload-lines-${tabId}`, pageUrl: formUrl });
+      const control = 'button "Upload cover letter" [ref_cover] type="file" dom_id="cover-upload" field_name="cover"';
+      const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {},
+        { success: true, pageUrl: formUrl, pageContent: control });
+      agent._beginCompletionInvariant(tabId);
+      const upload = { success: true, dispatched: true, attachmentState: 'page_consumed', attached: { name: 'cover.pdf', size: 96 },
+        uploadTarget: { selector: '#cover-upload', domId: 'cover-upload', fieldName: 'cover', label: 'Upload cover letter' } };
+      await agent._readWorkflowUploadLines(tabId, 'upload_file', upload);
+      agent._recordCompletionToolResult(tabId, 'upload_file', { selector: '#cover-upload' }, upload);
+      const observation = { success: true, pageUrl: formUrl, pageContent: [control, `generic "${line}" [ref_cover_status]`].join('\n') };
+      await agent._readWorkflowUploadLines(tabId, 'get_accessibility_tree', observation);
+      agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, observation);
+      return guard.workflowControlActionEvidence?.[inventory.items[0].id];
+    };
+    const shown = await run(9470 + index * 3, 'cover.pdf · 96 KB · przesłano');
+    assert.equal(shown?.attachmentState, 'page_consumed_observed', `${AgentClass.name}: a Polish upload line was not read as shown`);
+    assert.ok(asked.some(item => item.kind === 'workflow_state' && item.text === 'cover.pdf · 96 KB · przesłano'
+      && /uploaded or attached/.test(item.state)));
+    assert.equal(await run(9471 + index * 3, 'cover.pdf · przesyłanie nie powiodło się'), undefined,
+      `${AgentClass.name}: a line read as a failed upload showed the file`);
+    assert.equal(await run(9472 + index * 3, 'cover.pdf · 96 KB · gotowe'), undefined,
+      `${AgentClass.name}: a line nobody read showed the file`);
+  }
+});
 test('iframe-backed application forms expose a complete trusted inventory and exact row evidence', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
