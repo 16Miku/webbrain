@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { fixtureFixedChoiceReply } from './semantic-decision-stub.mjs';
 
 // Offline actual-method protocol fixture. Only page capture/transport and the
 // independent provider are simulated; no browser, network, image, or upload opens.
@@ -44,6 +45,10 @@ for (const build of ['chrome', 'firefox']) {
     agent._hasPendingSteering = () => h.steering;
     agent.recordSystemOneVerdict = () => {};
     agent._chatWithCostAllowance = async (_provider, messages, options) => {
+      // The page's status message is read with its own fixed-choice question,
+      // the way a model would read this fixture's "All changes saved.".
+      const reading = fixtureFixedChoiceReply(messages);
+      if (reading) { h.readings = (h.readings || 0) + 1; return { content: reading }; }
       h.judges++;
       assert.equal(options.tools, undefined, 'The independent completion provider must never receive action tools.');
       assert.match(messages[0].content, /^Evaluate only the observable requirements/);

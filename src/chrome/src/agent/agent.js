@@ -3,7 +3,7 @@ import '../content/file-upload-policy.js';
 const { validateUploadFile, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__wbFileUploadPolicy;
 import { captureCalculationCompletion, captureCalculationEvidence, completionReportingContext, refreshCalculationEvidence, verifyBrowserCompletion } from './completion-runtime.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
-import { completionStopError, completionTextSignalsSuccess, withCompletionTimeout } from './completion-verifier.js';
+import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
 import { completionFrameSnapshot } from './completion-frame.js';
 import { captureSemanticNavigationDocument, semanticCommitNavigationRequest, recordSemanticCommitNavigation, semanticCommitIsCurrent, canRecordSemanticCommitDispatch } from './semantic-commit-navigation.js';
@@ -11,7 +11,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion } from './semantic-decisions.js';
+import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
 import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
@@ -1597,8 +1597,60 @@ export class Agent extends LoopDetector {
     );
   }
 
-  _completionTextSignalsSuccess(value, options = {}) {
-    return completionTextSignalsSuccess(value, options);
+  // The status texts an observation showed after a submit: the accessibility
+  // tree's status, alert and log lines, a page read short enough to be one
+  // message, a screenshot's short description, and, once the submit led to
+  // another document, that document's title. Nothing here matches wording; completion reads them in any
+  // language (status_message) before it relies on one.
+  _completionObservedStatusTexts(name, result, { includeTitle = false } = {}) {
+    if (!result || typeof result !== 'object') return [];
+    const texts = includeTitle ? [result.pageTitle, result.title, result.page?.title] : [];
+    if (name === 'get_accessibility_tree') {
+      for (const line of String(result.pageContent || '').split('\n').slice(0, 5000)) {
+        const match = /^\s*(?:status|alert|alertdialog|log)\s+"((?:[^"\\]|\\.)*)"/.exec(line);
+        if (match) texts.push(match[1].replace(/\\(["\\])/g, '$1'));
+      }
+    } else if (name === 'read_page' || name === 'iframe_read' || name === 'extract_data') {
+      for (const value of [result.pageContent, result.content, result.text]) {
+        if (typeof value === 'string' && value.replace(/\s+/g, ' ').trim().length <= 200) texts.push(value);
+      }
+    } else if (['screenshot', 'auto_screenshot', 'full_page_screenshot'].includes(name)) {
+      // A text-only planner sees a screenshot through its short description.
+      if (typeof result.description === 'string') texts.push(result.description);
+    }
+    return [...new Set(texts.filter(value => typeof value === 'string')
+      .map(value => value.replace(/\s+/g, ' ').trim())
+      .filter(value => value && value.length <= 300))].slice(0, 8);
+  }
+
+  // Whether a status text observed after the current submit was read as
+  // saying it succeeded.
+  _completionObservedSuccess(submit) {
+    return submit?.completionSignalObserved === true
+      || (Array.isArray(submit?.observedStatusMessages) ? submit.observedStatusMessages : [])
+        .some(text => this._pageTextReading('status_message', text) === 'success');
+  }
+
+  // Reads, in any language, the status texts that bear on a submission that
+  // still needs proof: those observed after the submit and the page's live
+  // messages now. The synchronous completion checks use the remembered
+  // readings; an unread text proves nothing. `pageState.successMessages` keeps
+  // the live messages read as success.
+  async _readCompletionStatusTexts(tabId, pageState = null) {
+    const submit = this._currentCompletionSubmitState(tabId);
+    const guard = this._planExecutionGuards.get(tabId);
+    const live = Array.isArray(pageState?.liveRegionMessages)
+      ? pageState.liveRegionMessages.filter(text => typeof text === 'string') : [];
+    const observed = Array.isArray(submit?.observedStatusMessages) ? submit.observedStatusMessages : [];
+    // The same runs _completionPageWarning holds to a submission proof.
+    const needsProof = !!submit || guard?.requiresSubmission === true
+      || (guard?.requiresSubmission == null && guard?.requiresStateChange === true) || !!guard?.siteWorkflow?.job;
+    if (needsProof && (live.length || observed.length)) {
+      await this._readPageTexts(tabId, 'status_message', [...live, ...observed]);
+    }
+    if (pageState && typeof pageState === 'object') {
+      pageState.successMessages = live.filter(text => this._pageTextReading('status_message', text) === 'success').slice(0, 5);
+    }
   }
 
   _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null, messageRecipientContext = null } = {}) {
@@ -1792,16 +1844,6 @@ export class Agent extends LoopDetector {
           ...submitState.mastodonPublication.verificationNavigation, documentToken: observedDocument,
         } } };
       }
-      const completionSignalObserved = [
-        result?.pageTitle,
-        result?.title,
-        result?.page?.title,
-      ].some(value => this._completionTextSignalsSuccess(value)) || [
-        result?.description,
-        result?.content,
-        result?.text,
-        result?.pageContent,
-      ].some(value => this._completionTextSignalsSuccess(value));
       const originatingUrl = this._normalizeUrl(submitState.originatingUrl || '');
       const previousObservedUrl = this._normalizeUrl(submitState.currentUrl || '');
       const normalizedObservedUrl = this._normalizeUrl(observedUrl || submitState.currentUrl || '');
@@ -1849,6 +1891,19 @@ export class Agent extends LoopDetector {
           };
         }
       }
+      // A new document starts its own status history; on the same document
+      // the latest few texts stay, for completion to read.
+      const observedStatusTexts = this._completionObservedStatusTexts(name, result, {
+        includeTitle: observationChangedDocument || submitState.documentChanged === true
+          || !!(originatingUrl && normalizedObservedUrl && originatingUrl !== normalizedObservedUrl),
+      });
+      const observedStatusMessages = [...new Set([
+        ...(observationChangedDocument || !Array.isArray(submitState.observedStatusMessages)
+          ? [] : submitState.observedStatusMessages),
+        ...observedStatusTexts,
+      ])].slice(-8);
+      const completionSignalObserved = observedStatusMessages
+        .some(text => this._pageTextReading('status_message', text) === 'success');
       this._completionSubmitStates.set(tabId, {
         ...submitState,
         ...(observedUrl ? { currentUrl: observedUrl } : {}),
@@ -1858,6 +1913,7 @@ export class Agent extends LoopDetector {
           || (originatingUrl && normalizedObservedUrl && originatingUrl !== normalizedObservedUrl)
           || (submitState.originatingDocument && observedDocument && submitState.originatingDocument !== observedDocument)
         ),
+        observedStatusMessages,
         completionSignalObserved: observationChangedDocument
           ? completionSignalObserved
           : !!(submitState.completionSignalObserved || completionSignalObserved),
@@ -2097,9 +2153,27 @@ export class Agent extends LoopDetector {
           || snapshot?.url !== binding.currentUrl) return null;
       return { ...snapshot, frameId: binding.frameId, taskKey: binding.taskKey, runToken: binding.runToken,
         actionSequence: this._completionSubmitStates.get(tabId).actionSequence,
-        observedAfterSubmit: true, newSuccessSignal: !snapshot.validationFailed && snapshot.messages.some(text =>
-          !binding.baselineMessages.includes(text) && this._completionTextSignalsSuccess(text)) };
+        observedAfterSubmit: true, newMessages: snapshot.messages.filter(text => !binding.baselineMessages.includes(text)) };
     } catch { return null; }
+  }
+
+  // The submitted iframe's snapshot with its status messages read in any
+  // language, for the synchronous submission check: one new message has to
+  // say the submission succeeded and none may report an error.
+  async _completionIframeEvidence(tabId) {
+    const frame = await this._completionIframeSnapshot(tabId);
+    if (Array.isArray(frame?.messages) && frame.messages.length) {
+      await this._readPageTexts(tabId, 'status_message', frame.messages);
+    }
+    return frame;
+  }
+
+  _completionIframeMessagesSucceeded(frame) {
+    const read = text => this._pageTextReading('status_message', text);
+    const messages = Array.isArray(frame?.messages) ? frame.messages : [];
+    const fresh = Array.isArray(frame?.newMessages) ? frame.newMessages : [];
+    return !!frame && frame.validationFailed !== true && !messages.some(text => read(text) === 'error')
+      && fresh.some(text => read(text) === 'success');
   }
 
   async _readCompletionFrame(tabId, frameId) {
@@ -2330,8 +2404,10 @@ export class Agent extends LoopDetector {
   _completionSubmissionEvidence(tabId, pageState, pageUrl = '') {
     if (!pageState) return { verifiedFinalSubmit: false, liveSignals: [], relevantForms: 0 };
     const relevantForms = Number(pageState.relevantFormCount || 0);
+    // The live messages a model read as saying the submission succeeded
+    // (see _readCompletionStatusTexts).
     const liveSignals = Array.isArray(pageState.successMessages)
-      ? pageState.successMessages.filter(text => this._completionTextSignalsSuccess(text, { allowBare: true }))
+      ? pageState.successMessages.filter(text => typeof text === 'string' && text.trim())
       : [];
     const submit = this._currentCompletionSubmitState(tabId);
     const nativeChat = pageState.nativeChatDeliveryEvidence;
@@ -2339,7 +2415,7 @@ export class Agent extends LoopDetector {
     const completion = this.completionInvariants.get(tabId);
     const iframe = pageState.iframeSubmissionEvidence;
     const iframeBinding = this._completionIframeBinding(tabId);
-    const iframeSubmissionVerified = !!(iframe && iframeBinding && iframe.newSuccessSignal === true
+    const iframeSubmissionVerified = !!(iframe && iframeBinding && this._completionIframeMessagesSucceeded(iframe)
       && iframe.observedAfterSubmit && iframe.frameId === iframeBinding.frameId
       && iframe.identity === iframeBinding.currentDocument && iframe.url === iframeBinding.currentUrl
       && iframe.taskKey === iframeBinding.taskKey && iframe.runToken === completion?.runToken
@@ -2384,7 +2460,7 @@ export class Agent extends LoopDetector {
       submit?.currentUrl
       && this._normalizeUrl(pageUrl || pageState.url || '') === this._normalizeUrl(submit.currentUrl)
     );
-    const observedSuccessSignal = !!submit?.completionSignalObserved || liveSignals.length > 0;
+    const observedSuccessSignal = this._completionObservedSuccess(submit) || liveSignals.length > 0;
     const verifiedSubmit = !!(
       submit?.dispatched
       && !submit.iframeSubmission
@@ -2899,12 +2975,72 @@ export class Agent extends LoopDetector {
     return matching.length > 0 && matching.every(entry => entry?.complete === true);
   }
 
-  _workflowFormConfirmationSignal(text) {
-    return /\b(?:successfully\s+(?:submitted|sent|received)|response\s+(?:was\s+)?submitted|application\s+(?:was\s+)?(?:submitted|received)|submission\s+(?:complete|confirmed)|thank\s+you\s+for\s+(?:submitting|applying))\b|(?:提交成功|已成功提交|申请已提交|申请成功|发送成功|ご応募ありがとうございます|送信しました|제출되었습니다|başvurunuz alındı|başarıyla gönderildi|demande envoyée|candidature reçue|solicitud enviada|candidatura enviada)/i.test(text);
+  // The page texts a site workflow's last step can show itself in, for the
+  // workflow_state readings: live messages, dialog titles, prominent headings
+  // and status regions, the statuses observed after the submit, and the lines
+  // of a page short enough to be a confirmation page.
+  _workflowPageStatusTexts(pageState, submit = null) {
+    const page = String(pageState?.workflowPageText || '');
+    return [...new Set([
+      ...(Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages : []),
+      ...(Array.isArray(pageState?.dialogTitles) ? pageState.dialogTitles : []),
+      ...(Array.isArray(pageState?.workflowStatusTexts) ? pageState.workflowStatusTexts : []),
+      ...(Array.isArray(submit?.observedStatusMessages) ? submit.observedStatusMessages : []),
+      ...(page.length <= 1500 ? page.split('\n') : []),
+    ].map(text => String(text ?? '').replace(/\s+/g, ' ').trim()).filter(text => text && text.length <= 300))].slice(0, 40);
   }
 
-  _workflowDraftSavedSignal(text) {
-    return /\b(?:draft\s+saved|saved\s+draft|draft\s+auto[- ]?saved)\b|(?:草稿已保存|已保存草稿|已儲存草稿|下書きを保存しました|下書きとして保存しました|임시보관함에 저장되었습니다|임시저장되었습니다|brouillon enregistré|borrador guardado|rascunho salvo|entwurf gespeichert|bozza salvata|taslak kaydedildi)/i.test(text);
+  // Which state a site workflow's last step should show and the page texts
+  // that can show it, or null when the workflow's evidence has no such text.
+  // Message sends are read only on the sites whose own sent notice is part of
+  // their job contract.
+  _workflowTerminalTextPlan(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe = null) {
+    const live = Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages : [];
+    switch (verificationKind) {
+      case 'message_draft':
+        return { state: 'draft_saved', texts: [
+          ...(Array.isArray(messageProbe?.composerStatusMessages) ? messageProbe.composerStatusMessages : []), ...live] };
+      case 'message_sent':
+        return ['gmail', 'linkedin', 'douyin'].includes(siteWorkflow?.adapterName) ? { state: 'message_sent', texts: live } : null;
+      case 'form_confirmation':
+        return { state: 'form_submitted', texts: this._workflowPageStatusTexts(pageState, submissionEvidence?.submit) };
+      case 'saved_state':
+        return { state: 'changes_saved', texts: this._workflowPageStatusTexts(pageState, submissionEvidence?.submit) };
+      case 'resolved_state':
+        return { state: 'threads_resolved', texts: this._workflowPageStatusTexts(pageState, submissionEvidence?.submit) };
+      default:
+        return null;
+    }
+  }
+
+  // Whether a model read one of those texts as showing the state, and none as
+  // saying it failed or is still pending. Unread texts show nothing.
+  _workflowTerminalStateShown(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe = null) {
+    const plan = this._workflowTerminalTextPlan(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe);
+    if (!plan) return false;
+    const context = { state: WORKFLOW_STATES[plan.state] };
+    const readings = plan.texts.map(text => this._pageTextReading('workflow_state', text, context));
+    return readings.includes('reached') && !readings.includes('failed');
+  }
+
+  // Reads those texts in any language before _workflowTerminalEvidenceFromDone
+  // checks them, once the rest of the workflow's evidence is in place.
+  async _readWorkflowTerminalTexts(tabId, pageState, submissionEvidence, messageProbe = null) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || !pageState) return;
+    const verificationKind = this._workflowVerificationKind(guard.siteWorkflow);
+    const submit = submissionEvidence?.submit;
+    const ready = verificationKind === 'message_draft'
+      ? messageProbe?.success === true && messageProbe?.composerAvailable === true
+      : verificationKind === 'message_sent'
+        ? submit?.dispatched === true && submit?.observedAfterSubmit === true && submit?.formValidationFailed !== true
+        : submissionEvidence?.verifiedFinalSubmit === true;
+    const plan = ready
+      ? this._workflowTerminalTextPlan(verificationKind, guard.siteWorkflow, pageState, submissionEvidence, messageProbe)
+      : null;
+    if (plan?.texts.length) {
+      await this._readPageTexts(tabId, 'workflow_state', plan.texts, { state: WORKFLOW_STATES[plan.state] });
+    }
   }
 
   // The reviewed subject and body are the message the user approved. When the
@@ -2945,10 +3081,6 @@ export class Agent extends LoopDetector {
     const text = [result?.pageContent, result?.text, result?.data?.text]
       .find(value => typeof value === 'string' && value.trim()) || '';
     if (this._workflowEmptyCollectionSignal(text)) guard.workflowEmptyCollectionObserved = true;
-  }
-
-  _workflowSavedStateSignal(text) {
-    return /\b(?:changes?\s+saved|saved\s+successfully|successfully\s+(?:saved|updated)|update\s+complete)\b|(?:保存成功|已保存|更新成功|başarıyla kaydedildi|modifications enregistrées|cambios guardados|変更を保存しました|저장되었습니다)/i.test(text);
   }
 
   // A requested field's name as the intent model gives it: one of the
@@ -4124,10 +4256,6 @@ export class Agent extends LoopDetector {
     }));
   }
 
-  _workflowResolvedStateSignal(text) {
-    return /\b(?:conversation|thread|review)\s+(?:was\s+)?resolved\b|\bresolved\s+successfully\b|(?:已解决|已處理|çözüldü|résolu|resuelto|解決済み|해결됨)/i.test(text);
-  }
-
   _workflowTransactionOrderRecords(value) {
     let text = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 50000);
     try { text = text.normalize('NFKC'); } catch {}
@@ -4182,17 +4310,6 @@ export class Agent extends LoopDetector {
       const want = this._workflowMetadataValue(requirement.value).toLowerCase();
       return !!want && observed.includes(want);
     });
-  }
-
-  _workflowMessageSentSignal(siteWorkflow, text) {
-    if (/\b(?:not|never|failed|failure|error|unable|cannot|can't|could not|did not|was not|unsuccessful)\b|(?:发送失败|未发送|发送未成功)/i.test(text)) {
-      return false;
-    }
-    if (siteWorkflow?.adapterName === 'douyin') {
-      return /(?:消息已发送|发送成功|消息发送成功)/.test(text);
-    }
-    if (siteWorkflow?.adapterName !== 'gmail' && siteWorkflow?.adapterName !== 'linkedin') return false;
-    return /\bmessage\s+sent\b|(?:邮件已发送|郵件已傳送|メッセージを送信しました|메시지를 보냈습니다|ileti gönderildi|message envoyé|mensaje enviado|mensagem enviada)/i.test(text);
   }
 
   _workflowSocialPublicationAccountIdentity(siteWorkflow, value) {
@@ -4360,10 +4477,6 @@ export class Agent extends LoopDetector {
       const metadataDetails = this._normalizeWorkflowMetadataRequirementsDetails(
         state.workflowMetadataRequirements,
       );
-      const statusText = this._workflowTerminalText([
-        ...(Array.isArray(messageProbe?.composerStatusMessages) ? messageProbe.composerStatusMessages : []),
-        ...(Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages : []),
-      ].join('\n'));
       const observedBody = this._workflowMessageBody(messageProbe?.messageBody);
       const observedSubject = this._workflowMetadataValue(messageProbe?.composerSubject);
       const observedRecipients = this._messageRecipientCandidates(messageProbe);
@@ -4409,7 +4522,7 @@ export class Agent extends LoopDetector {
         && recipientsVerified
         && !!observedBody
         && fieldsVerified
-        && this._workflowDraftSavedSignal(statusText);
+        && this._workflowTerminalStateShown(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe);
       source = 'draft_recipients_fields_and_saved_draft_state';
     } else if (verificationKind === 'message_sent') {
       const recipientObserved = messageProbe?.success === true
@@ -4419,10 +4532,7 @@ export class Agent extends LoopDetector {
           state.messaging,
           this._messageRecipientCandidates(messageProbe),
         );
-      const sentStatusText = this._workflowTerminalText(
-        Array.isArray(pageState?.liveRegionMessages) ? pageState.liveRegionMessages.join('\n') : '',
-      );
-      let sentStatusObserved = this._workflowMessageSentSignal(siteWorkflow, sentStatusText);
+      let sentStatusObserved = this._workflowTerminalStateShown(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe);
       const dispatchRecipientObserved = binding.recipientBound === true
         && messageTargetMatchesObservedIdentities(state.messaging, binding.recipientTargets);
       const requiresRecipientBinding = normalizeMessageTarget(state.messaging)?.target_kind === 'named';
@@ -4486,12 +4596,12 @@ export class Agent extends LoopDetector {
     } else if (verificationKind === 'form_confirmation') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
         && Number(submissionEvidence?.relevantForms || 0) === 0
-        && this._workflowFormConfirmationSignal(text)
+        && this._workflowTerminalStateShown(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe)
         && this._workflowFormSubmitMatchesInventoriedForm(binding, state);
       source = 'form_confirmation_state';
     } else if (verificationKind === 'saved_state') {
       verified = submissionEvidence?.verifiedFinalSubmit === true
-        && this._workflowSavedStateSignal(text)
+        && this._workflowTerminalStateShown(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe)
         && binding.metadataRequirementsIncomplete !== true
         && binding.authoredMetadataIncomplete !== true
         && (!binding.metadataTaskBinding
@@ -4505,7 +4615,8 @@ export class Agent extends LoopDetector {
         );
       source = 'saved_state_with_exact_metadata_readback';
     } else if (verificationKind === 'resolved_state') {
-      verified = submissionEvidence?.verifiedFinalSubmit === true && this._workflowResolvedStateSignal(text);
+      verified = submissionEvidence?.verifiedFinalSubmit === true
+        && this._workflowTerminalStateShown(verificationKind, siteWorkflow, pageState, submissionEvidence, messageProbe);
       source = 'resolved_state';
     } else if (verificationKind === 'published_resource') {
       const observedResourceIdentities = this._workflowPublishedResourceIdentities(siteWorkflow, [
@@ -4541,9 +4652,10 @@ export class Agent extends LoopDetector {
             || openedPermalinkAfterDispatch)) {
         const existing = new Set(preDispatchIdentities);
         const newlyObserved = observedResourceIdentities.filter(identity => !existing.has(identity));
+        // Live messages a model read as saying the post succeeded.
         const livePublishStatusObserved = (Array.isArray(pageState?.successMessages)
           ? pageState.successMessages
-          : []).some(value => this._completionTextSignalsSuccess(value));
+          : []).some(value => typeof value === 'string' && value.trim());
         // One dispatch can create several permalinks at once — an X thread
         // published with "Post all" is the ordinary case — so requiring a
         // single new identity would leave a published thread permanently
@@ -7278,6 +7390,33 @@ export class Agent extends LoopDetector {
       }
     }
     return results.map(result => result || { choice: null, evidence: '', source: 'unavailable' });
+  }
+
+  _pageTextKey(kind, text, context = {}) {
+    return `${kind}\u0000${JSON.stringify(context)}\u0000${String(text ?? '').replace(/\s+/g, ' ').trim()}`;
+  }
+
+  // Short page texts (a status message after a submit, a line that may say a
+  // workflow reached its end state) read with one fixed-choice question each,
+  // in any language, and remembered per text for the synchronous checks that
+  // follow. Longer texts are not read; an unanswered text is asked again next
+  // time.
+  async _readPageTexts(tabId, kind, texts, context = {}, { maxChars = 300 } = {}) {
+    this._pageTextReadings ??= new Map();
+    const pending = [...new Set((Array.isArray(texts) ? texts : [])
+      .map(text => String(text ?? '').replace(/\s+/g, ' ').trim())
+      .filter(text => text && text.length <= maxChars))]
+      .filter(text => !this._pageTextReadings.has(this._pageTextKey(kind, text, context)));
+    if (!pending.length) return;
+    const readings = await this._semanticDecisions(tabId, kind, { items: pending.map(text => ({ ...context, text })) });
+    pending.forEach((text, index) => {
+      if (readings[index]?.choice) this._pageTextReadings.set(this._pageTextKey(kind, text, context), readings[index].choice);
+    });
+    while (this._pageTextReadings.size > 1024) this._pageTextReadings.delete(this._pageTextReadings.keys().next().value);
+  }
+
+  _pageTextReading(kind, text, context = {}) {
+    return this._pageTextReadings?.get(this._pageTextKey(kind, text, context)) || null;
   }
 
   _jevValueContext(task, snapshot) {
@@ -24473,17 +24612,39 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return /(?:type\s*=\s*["']?(?:submit|image)|\bsubmit\b|\bcontinue\b|\bconfirm\b|\bcheckout\b|\bfinish\b)/.test(selector);
   }
 
-  _formValidationAlertTexts(state = {}) {
-    const errorPattern = /\b(?:error|invalid|required|failed|failure|missing|must|cannot|can't|could not|unable|unsuccessful|rejected|not (?:valid|allowed|accepted|selected|saved)|please (?:correct|fix|select|choose|enter|provide)|select at least|choose at least|enter a valid)\b/i;
-    const successPattern = /\b(?:success|successfully|saved|submitted|sent|created|updated|published|completed)\b|^done\b|^thank(?:s| you)\b/i;
-    return (Array.isArray(state?.alerts) ? state.alerts : [])
+  // Every alert text a validation snapshot shows, whatever it says.
+  _formValidationAlertCandidates(state = {}) {
+    const clean = list => (Array.isArray(list) ? list : [])
       .map(alert => String(alert?.text ?? alert ?? '').replace(/\s+/g, ' ').trim().slice(0, 500))
-      .filter((text) => {
-        if (!text) return false;
-        if (errorPattern.test(text)) return true;
-        if (successPattern.test(text)) return false;
-        return state?.alertsAreValidationOnly === true;
-      });
+      .filter(Boolean);
+    return [...clean(state?.alerts), ...clean(state?.otherAlerts)];
+  }
+
+  // The alert texts that report a validation problem. An alert the page ties
+  // to an invalid field or marks as an error counts unless a model read it as
+  // a success message; any other alert counts only when a model read it as an
+  // error. See _readFormValidationAlerts.
+  _formValidationAlertTexts(state = {}) {
+    const clean = list => (Array.isArray(list) ? list : [])
+      .map(alert => String(alert?.text ?? alert ?? '').replace(/\s+/g, ' ').trim().slice(0, 500))
+      .filter(Boolean);
+    const read = text => this._pageTextReading('status_message', text);
+    return [
+      ...clean(state?.alerts).filter(text => read(text) !== 'success'),
+      ...clean(state?.otherAlerts).filter(text => read(text) === 'error'),
+    ];
+  }
+
+  // Reads, in any language, the alerts a submit exposed (all of them after an
+  // earlier rejected submit, whose alerts can persist), before the synchronous
+  // validation check uses them.
+  async _readFormValidationAlerts(tabId, before = [], after = [], { includePersistent = false } = {}) {
+    const seen = new Set(includePersistent ? [] : (Array.isArray(before) ? before : [])
+      .flatMap(state => this._formValidationAlertCandidates(state)));
+    const fresh = (Array.isArray(after) ? after : [])
+      .flatMap(state => this._formValidationAlertCandidates(state))
+      .filter(text => !seen.has(text));
+    if (fresh.length) await this._readPageTexts(tabId, 'status_message', fresh, {}, { maxChars: 500 });
   }
 
   _normalizeFormValidationField(field = {}) {
@@ -24560,8 +24721,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     const validationStateScope = state =>
       `${state?.frameId ?? ''}|${this._normalizeUrlPath(String(state?.url || ''))}`;
+    // An alert already on the page before the action is not new, whatever a
+    // model later reads it as.
     const beforeAlerts = new Set(before.flatMap(state =>
-      this._formValidationAlertTexts(state)
+      this._formValidationAlertCandidates(state)
         .map(text => `${validationStateScope(state)}|${text}`)
     ));
     const beforeAriaInvalid = new Set(before.flatMap(state =>
@@ -24657,6 +24820,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (remaining > 0) await new Promise(resolve => setTimeout(resolve, remaining));
       this._throwIfAborted(abortSignal);
       const after = await this._captureFormValidationState(tabId, { allFrames });
+      this._throwIfAborted(abortSignal);
+      await this._readFormValidationAlerts(tabId, before, after, {
+        includePersistent: context?.priorValidationFailure === true || context?.correctedPriorValidationFailure === true,
+      });
       this._throwIfAborted(abortSignal);
       const failure = this._detectFormValidationFailure(before, after, {
         ...context,
@@ -24794,7 +24961,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         return (Array.isArray(rawResults) ? rawResults : [])
           .map(item => ({ frameId: item?.frameId ?? null, ...(item?.result || {}) }))
-          .filter(state => state && (state.url || state.invalidFields?.length || state.alerts?.length));
+          .filter(state => state && (state.url || state.invalidFields?.length || state.alerts?.length || state.otherAlerts?.length));
       }
       if (globalThis.browser?.tabs?.executeScript) {
         let probeSource = Agent._formValidationStateProbe.toString();
@@ -24803,7 +24970,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         rawResults = await browser.tabs.executeScript(tabId, { code, allFrames });
         return (Array.isArray(rawResults) ? rawResults : [])
           .map((result, frameId) => ({ frameId, ...(result || {}) }))
-          .filter(state => state && (state.url || state.invalidFields?.length || state.alerts?.length));
+          .filter(state => state && (state.url || state.invalidFields?.length || state.alerts?.length || state.otherAlerts?.length));
       }
     } catch {
       // Validation inspection is best-effort; the original tool result remains
@@ -24911,33 +25078,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
     }
-    const errorPattern = /\b(?:error|invalid|required|failed|failure|missing|must|cannot|can't|could not|unable|unsuccessful|rejected|not (?:valid|allowed|accepted|selected|saved)|please (?:correct|fix|select|choose|enter|provide)|select at least|choose at least|enter a valid)\b/i;
-    const successPattern = /\b(?:success|successfully|saved|submitted|sent|created|updated|published|completed)\b|^done\b|^thank(?:s| you)\b/i;
-    const alerts = queryAll('[role="alert"], [role="alertdialog"], [aria-live="assertive"], [aria-live="polite"]')
-      .filter(visible)
-      .map((el) => {
-        const text = compact(el.innerText || el.textContent || '', 500);
-        const tokens = compact([
-          el.id,
-          el.className,
-          el.getAttribute?.('data-state'),
-          el.getAttribute?.('data-status'),
-          el.getAttribute?.('aria-label'),
-        ].filter(Boolean).join(' '), 500);
-        const form = el.closest?.('form') || null;
-        const formHasInvalidControl = !!form && allInvalidControls.some(control =>
-          control.form === form || control.closest?.('form') === form
-        );
-        const explicitlyErrorLinked = !!el.id && errorMessageIds.has(el.id);
-        const validationLikely = explicitlyErrorLinked
-          || /\b(?:error|invalid|validation|danger|warning|failed|failure)\b/i.test(tokens)
-          || errorPattern.test(text)
-          || formHasInvalidControl;
-        const successLikely = successPattern.test(text) && !errorPattern.test(text);
-        return validationLikely && !successLikely ? text : '';
-      })
-      .filter(Boolean)
-      .slice(0, 12);
+    // Alerts are split by page structure, never by wording. One an invalid
+    // field points to, one inside a form with an invalid field, or one the
+    // site's own id, class or state attributes mark as an error is a
+    // validation alert unless the agent reads it as a success message; any
+    // other alert counts only when the agent reads it as an error. The agent
+    // reads both in any language.
+    const alerts = [];
+    const otherAlerts = [];
+    for (const el of queryAll('[role="alert"], [role="alertdialog"], [aria-live="assertive"], [aria-live="polite"]').filter(visible)) {
+      const text = compact(el.innerText || el.textContent || '', 500);
+      if (!text) continue;
+      const tokens = compact([
+        el.id,
+        typeof el.className === 'string' ? el.className : el.getAttribute?.('class'),
+        el.getAttribute?.('data-state'),
+        el.getAttribute?.('data-status'),
+      ].filter(Boolean).join(' '), 500);
+      const form = el.closest?.('form') || null;
+      const formHasInvalidControl = !!form && allInvalidControls.some(control =>
+        control.form === form || control.closest?.('form') === form
+      );
+      const explicitlyErrorLinked = !!el.id && errorMessageIds.has(el.id);
+      const markedAsValidation = explicitlyErrorLinked
+        || /\b(?:error|invalid|validation|danger|warning|failed|failure)\b/i.test(tokens)
+        || formHasInvalidControl;
+      (markedAsValidation ? alerts : otherAlerts).push(text);
+    }
 
     let hash = 2166136261;
     const addHash = (text) => {
@@ -24981,8 +25148,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       activeInvalid,
       invalidFields: invalidControls.map(el => detailFor(el)).slice(0, 20),
       ariaInvalidFields: ariaInvalidControls.map(el => detailFor(el, 'This field is marked invalid.')).slice(0, 20),
-      alerts: [...new Set(alerts)],
-      alertsAreValidationOnly: true,
+      alerts: [...new Set(alerts)].slice(0, 12),
+      otherAlerts: [...new Set(otherAlerts)].slice(0, 12),
       controlFingerprint: (hash >>> 0).toString(16),
     };
   };
@@ -34105,6 +34272,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           documentChanged: submit.documentChanged === true,
           formValidationFailed: submit.formValidationFailed === true,
           completionSignalObserved: submit.completionSignalObserved === true,
+          // Status texts seen after the submit, read again at completion.
+          ...(Array.isArray(submit.observedStatusMessages) && submit.observedStatusMessages.length ? {
+            observedStatusMessages: submit.observedStatusMessages.slice(-8).map(text => String(text).slice(0, 300)),
+          } : {}),
           observedAfterSubmit: submit.observedAfterSubmit === true,
           workflowBinding: submit.workflowBinding ? {
             ...submit.workflowBinding,
@@ -39671,13 +39842,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                     })),
                   });
                 });
+                // Live messages are returned as they are; the agent reads what
+                // they say in any language before relying on one.
                 const toasts = Array.from(document.querySelectorAll('[role=status],[role=alert],[aria-live]'))
                   .filter(visible)
                   .map(e => (e.innerText || '').trim().slice(0, 120))
                   .filter(Boolean);
-                const successMessages = toasts.filter(text =>
-                  (${completionTextSignalsSuccess.toString()})(text, { allowBare: true })
-                ).slice(0, 5);
                 const publicationResourceIdentity = value => {
                   try {
                     const parsed = new URL(value, location.href);
@@ -39906,7 +40076,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   relevantFormCount: formDescriptors.filter(form => form.relevant).length,
                   formDescriptors: formDescriptors.slice(0, 12),
                   liveRegionMessages: toasts.slice(0, 6),
-                  successMessages,
+                  // Short texts the page shows prominently, read when a site
+                  // workflow needs to know whether its last step shows as done.
+                  workflowStatusTexts: [...new Set([document.title, ...Array.from(document.querySelectorAll(
+                    'h1,h2,h3,[role=heading],[role=status],[role=alert],[role=log],output')).filter(visible)
+                    .map(e => e.innerText || '')]
+                    .map(text => String(text || '').replace(/\\s+/g, ' ').trim())
+                    .filter(text => text && text.length <= 200))].slice(0, 16),
                   workflowResourceUrls,
                   workflowResourceRecords,
                   // Published payload verification matches a requested title,
@@ -39947,6 +40123,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               pageState.mastodonPublicationEvidence = nativePublication;
             }
           }
+          // What the page's live messages and the statuses observed after the
+          // submit say, read in any language for the checks below. Success
+          // messages are only ever the agent's own readings, never page data.
+          if (outcome === 'success' && pageState) await this._readCompletionStatusTexts(tabId, pageState);
+          else if (pageState && typeof pageState === 'object') pageState.successMessages = [];
           const completionDecision = outcome === 'success' ? await verifyBrowserCompletion(this, tabId, { pageState, pageUrl: probe?.url || '', summary: args.summary, calculationProof, calculationEvidence }) : null;
           if (completionDecision && ['pending', 'failed'].includes(completionDecision.outcome)) return { success: false, blockedDone: true, completionDecision: { outcome: completionDecision.outcome, engine: completionDecision.engine }, error: 'Completion verification reports ' + completionDecision.outcome + '. Inspect the result before any further submission; continue recovery or report partial/failed.' };
           if (pageState?.nativeChatDeliveryEvidence) {
@@ -39958,7 +40139,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               pageState.nativeChatDeliveryEvidence = freshNativeChat;
             }
           }
-          if (outcome === 'success' && pageState) pageState.iframeSubmissionEvidence = await this._completionIframeSnapshot(tabId);
+          if (outcome === 'success' && pageState) pageState.iframeSubmissionEvidence = await this._completionIframeEvidence(tabId);
           if (outcome === 'success' && this._currentCompletionSubmitState(tabId)?.iframeSubmission
               && (!pageState?.iframeSubmissionEvidence || (completionDecision?.outcome === 'succeeded'
                 && completionDecision.submittedFrameStamp !== pageState.iframeSubmissionEvidence.stamp))) {
@@ -40020,6 +40201,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
           // Synthesize a warning when summary claims completion but page
           // state contradicts it.
+          if (outcome === 'success') {
+            await this._readWorkflowTerminalTexts(tabId, pageState, submissionEvidence, workflowMessageProbe);
+          }
           const candidateWorkflowEvidence = workflowMessageKind === 'message_sent'
             ? this._workflowTerminalEvidenceFromDone(
                 tabId, pageState, probe?.url || '', submissionEvidence, workflowMessageProbe,
@@ -40038,6 +40222,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             delete pageState.workflowPageText;
             delete pageState.workflowResourceUrls;
             delete pageState.workflowResourceRecords;
+            delete pageState.workflowStatusTexts;
             delete pageState.githubReleaseVerification;
           }
           if (executionGuard?.enabled && !completionWarning) {

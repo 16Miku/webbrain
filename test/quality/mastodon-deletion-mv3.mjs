@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { conformFixtureCompletionCall } from './completion-provider-contract.mjs';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // The confirmation markup is Mastodon's native v4.4.25 structure. The
 // extension, provider pipeline, browser dispatch and completion gates are real;
@@ -64,6 +65,9 @@ const server = http.createServer(async (request, response) => {
         : 'The owned independent judge deliberately withholds a positive completion verdict.' }) };
   } else if (system.startsWith('Identify only the exact plain public Mastodon post authorized by the genuine user task.')) {
     completion = { role: 'assistant', content: JSON.stringify({ kind: 'unsupported', body: null, account: null }) };
+  } else if (fixturePageTextReply(input.messages)) {
+    // A status the page showed, read the way a model would read it.
+    completion = { role: 'assistant', content: fixturePageTextReply(input.messages) };
   } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
     // The model's reading of the request: it names exactly this post by its link.
     const request = JSON.parse(textOf(input.messages[1].content)).request;

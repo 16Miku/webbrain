@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { build as bundle } from 'esbuild';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // Installed MV3 regression with a separately labelled scripted provider. The
 // real background, Agent, monitor, side-panel Retry, native input and completion
@@ -119,6 +120,11 @@ const server = http.createServer(async (request, response) => {
     } else if (system.startsWith('Extract stable user preferences for WebBrain memory.')) {
       auxiliaryRequests.push(input);
       completion = { role: 'assistant', content: '{"memories":[]}' };
+    } else if (fixturePageTextReply(input.messages)) {
+      // A status the page showed is read with a question that carries only
+      // that text, not the task; read it the way a model would.
+      auxiliaryRequests.push(input);
+      completion = { role: 'assistant', content: fixturePageTextReply(input.messages) };
     } else {
       if (!current || !JSON.stringify(input.messages).includes(current.marker)) {
         auxiliaryRequests.push(input);

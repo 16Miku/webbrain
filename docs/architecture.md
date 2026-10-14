@@ -836,6 +836,32 @@ the address each read reports. Where structure cannot answer, a model reads
 the specific label once (the `carousel_control` question finds a carousel's
 Next control among the visible labels; only one sure "next" is clicked).
 
+What a page says after a submit is read the same way, never matched against
+words. Short page texts (300 characters, 500 for a validation alert) are read
+with one fixed-choice question each and remembered per text, so the
+synchronous checks that follow (`_pageTextReading`) cost nothing more; a text
+nobody read proves nothing. `status_message` reads whether a message says a
+submission succeeded, reports an error, or neither. At a successful done, when
+a submission still needs proof, it reads the page's live messages and the
+statuses the agent observed after the submit (the accessibility tree's
+status, alert and log lines, a page read short enough to be one message, a
+screenshot's short description, and, after the submit led to another
+document, its title); `pageState.successMessages` holds only the live
+messages read as success and is never taken from the page. A submitted
+iframe needs one new message read as success and none read as an error. Form
+validation sorts alerts by page structure: an alert an invalid field points
+to, one inside a form with an invalid field, or one the site's own id, class
+or state marks as an error rejects a submit unless it is read as success; any
+other alert rejects it only when read as an error. Only alerts new to the
+page are read (all of them after an earlier rejected submit). A site
+workflow's last step (`workflow_state`: a draft saved, a message sent on the
+sites whose own notice is part of the job, a form submitted, changes saved,
+review threads resolved) is shown by a page text read as reached with none
+read as failed or pending, among its live messages, dialog titles, prominent
+headings and status regions, the statuses observed after the submit, and the
+lines of a page short enough to be a confirmation page. Those are read only
+once the rest of the workflow's evidence is in place.
+
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is
 returned as its exact first and last words, and the runtime copies the text

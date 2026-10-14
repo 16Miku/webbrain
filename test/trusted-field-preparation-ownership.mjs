@@ -5,6 +5,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { test } from 'node:test';
+import { fixturePageTextReading } from './semantic-decision-stub.mjs';
 import { cdpClient } from '../src/chrome/src/cdp/cdp-client.js';
 
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
@@ -202,6 +203,8 @@ test('Chrome certified native BUTTON initial trusted input and one-shot fences',
         method: request.method(), type: 'xmlhttprequest' });
     });
     agent = new Agent({ getActive: () => ({ model: 'neutral-model' }) });
+    // What a model read the page's status texts as saying.
+    agent._pageTextReading = fixturePageTextReading;
     agent._runningTabs.add(17);
     await page.exposeFunction('qaBackground', message => {
       const sender = { tab: { id: 17 }, frameId: 0, documentId: 'owned-neutral-document', url: page.url() };

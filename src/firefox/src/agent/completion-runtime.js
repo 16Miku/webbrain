@@ -285,7 +285,9 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       action: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({ submit: submit ? {
         dispatched: submit.dispatched, observedAfterSubmit: submit.observedAfterSubmit,
         formRef: submit.formRef,
-        formValidationFailed: submit.formValidationFailed, completionSignalObserved: submit.completionSignalObserved,
+        formValidationFailed: submit.formValidationFailed,
+        completionSignalObserved: typeof agent._completionObservedSuccess === 'function'
+          ? agent._completionObservedSuccess(submit) : submit.completionSignalObserved === true,
         documentChanged: submit.documentChanged, originatingUrl: submit.originatingUrl, resultingUrl: submit.currentUrl,
         workflowBinding,
       } : null, lastAction: run?.lastAction })), 1000)),

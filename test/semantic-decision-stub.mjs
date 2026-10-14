@@ -148,3 +148,88 @@ export function withCalculationReadings(chat, read) {
     return readings(messages, options);
   };
 }
+
+// How a model reads the fixtures' own page texts: the status a page showed
+// after a submit, and whether a text shows a site workflow's last step as
+// done. A small English oracle for the test fixtures, the way a model would
+// read them; the product never reads these words.
+export function fixtureStatusReading(text) {
+  const value = String(text || '');
+  if (/\b(?:not|never|failed|failure|error|unable|cannot|invalid|rejected|denied|unsuccessful|required)\b/i.test(value)) return 'error';
+  if (/\b(?:will be|is being|pending|loading|sending|saving)\b/i.test(value)) return 'other';
+  if (/\b(?:success(?:ful|fully)?|saved|submitted|created|sent|published|completed|updated|uploaded|added|approved|resolved|received|confirmed|recorded|accepted|thank you|done)\b/i.test(value)) return 'success';
+  return 'other';
+}
+
+const FIXTURE_WORKFLOW_STATES = [
+  [/draft/i, /\bdraft\s+(?:auto[- ]?)?saved\b|\bsaved\s+draft\b|草稿已保存|下書きを保存しました|taslak kaydedildi/i],
+  [/message was sent/i, /\bmessage\s+sent\b|消息发送成功|消息已发送|发送成功|ileti gönderildi/i],
+  [/submitted and received/i, /\bresponse\s+(?:was\s+)?submitted\b|\bapplication\s+(?:was\s+)?(?:submitted|received)\b|\bthank you for (?:submitting|applying)\b|提交成功|başvurunuz alındı/i],
+  [/changes were saved/i, /\bchanges?\s+saved\b|\bsaved successfully\b|保存成功|başarıyla kaydedildi/i],
+  [/resolved/i, /\b(?:conversation|thread|review)\s+(?:was\s+)?(?:marked\s+as\s+)?resolved\b|已解决|çözüldü/i],
+];
+export function fixtureWorkflowStateReading(state, text) {
+  const value = String(text || '');
+  if (/\b(?:not|never|failed|failure|error|unable|cannot)\b|发送失败|未发送/i.test(value)) return 'failed';
+  const shown = FIXTURE_WORKFLOW_STATES.find(([meaning]) => meaning.test(String(state || '')))?.[1];
+  return shown?.test(value) ? 'reached' : 'other';
+}
+
+// Stands in for the model that reads page texts in unit tests (status
+// messages, workflow states, validation alerts): `read(kind, item)` returns a
+// choice or null for no answer. Records every item asked.
+export function stubPageTextReadings(agent, read = (kind, item) => (kind === 'status_message'
+  ? fixtureStatusReading(item.text) : kind === 'workflow_state' ? fixtureWorkflowStateReading(item.state, item.text) : null)) {
+  const asked = [];
+  agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}) => items.map(item => {
+    asked.push({ kind, ...item });
+    const choice = read(kind, item);
+    return choice ? { choice, evidence: item.text, source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' };
+  });
+  return asked;
+}
+
+// The reply a model would give, in a fixture run, to one of WebBrain's
+// fixed-choice questions sent to a fake provider (`messages` as the provider
+// receives them), or null when the request is not such a question. Page-text
+// questions are read with the fixture oracles above; any other question gets
+// no answer unless `answers[kind]` gives one, as from a model that cannot tell.
+export function fixtureFixedChoiceReply(messages, answers = {}) {
+  const question = fixedChoiceQuestion(messages);
+  if (!question) return null;
+  const read = (item) => {
+    if (typeof answers[question.kind] === 'function') return answers[question.kind]({ request: question.request, item, page: question.page });
+    if (question.kind === 'status_message') return fixtureStatusReading(item?.text);
+    if (question.kind === 'workflow_state') return fixtureWorkflowStateReading(item?.state, item?.text);
+    return answers[question.kind] ?? null;
+  };
+  const evidenceOf = item => (typeof item?.text === 'string' ? item.text : typeof item?.label === 'string' ? item.label : question.request);
+  if (question.batch) {
+    const list = [];
+    question.items.forEach((item, index) => {
+      const answer = read(item);
+      if (!answer) return;
+      list.push(typeof answer === 'string' ? { item: index, choice: answer, evidence: evidenceOf(item) } : { item: index, ...answer });
+    });
+    return JSON.stringify({ answers: list });
+  }
+  const answer = read(null);
+  return JSON.stringify(!answer ? { choice: '', evidence: '' }
+    : typeof answer === 'string' ? { choice: answer, evidence: question.request } : answer);
+}
+
+// The readings a model would have given the fixtures' page texts, for unit
+// tests of the synchronous checks that use remembered readings (stand-in for
+// Agent#_pageTextReading after _readPageTexts).
+export function fixturePageTextReading(kind, text, context = {}) {
+  if (kind === 'status_message') return fixtureStatusReading(text);
+  if (kind === 'workflow_state') return fixtureWorkflowStateReading(context?.state, text);
+  return null;
+}
+
+// Only the page-text questions (status messages, workflow states), for fake
+// providers that answer WebBrain's other fixed-choice questions themselves.
+export function fixturePageTextReply(messages) {
+  const kind = fixedChoiceQuestion(messages)?.kind;
+  return kind === 'status_message' || kind === 'workflow_state' ? fixtureFixedChoiceReply(messages) : null;
+}

@@ -10,6 +10,7 @@ import { chromium } from 'playwright';
 import { build as bundle } from 'esbuild';
 import { sharedGuardXHtml } from '../fixtures/shared-action-guards-x.mjs';
 import { sharedGuardBskyHtml } from '../fixtures/shared-action-guards-bsky.mjs';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // Installed MV3 integration, with production Agent/content/monitor/CDP. The
 // disposable copy has one read-only background export, never a guard override.
@@ -307,6 +308,10 @@ const server = http.createServer(async (request, response) => {
     else if (system.startsWith("Compile the user's social-publication intent")) {
       current.compilers++;
       completion = { role: 'assistant', content: JSON.stringify(publicationContract(input)) };
+    } else if (fixturePageTextReply(input.messages)) {
+      // A status the page showed, read the way a model would read it.
+      current.pageTextReadings = (current.pageTextReadings || 0) + 1;
+      completion = { role: 'assistant', content: fixturePageTextReply(input.messages) };
     } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")
         && /^- "mode_claim":/m.test(system)) {
       // A failed or partial result is read once before it is shown; here it

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { conformFixtureCompletionCall } from './completion-provider-contract.mjs';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // A requested Remove on an ordinary cart row (no permalink) runs through the
 // installed MV3 extension: real probe, guards, dispatch and completion gates,
@@ -73,7 +74,10 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       judgeCalls++;
       completion = { role: 'assistant', content: JSON.stringify({ outcome: 'succeeded',
         reason: `The ${target} row is no longer in the fresh cart observation and the ${kept} row remains.` }) };
-    } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
+    } else if (fixturePageTextReply(input.messages)) {
+    // A status the page showed, read the way a model would read it.
+    completion = { role: 'assistant', content: fixturePageTextReply(input.messages) };
+  } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
       // The model's reading of the request, in whatever language it is in:
       // the row the request names, or unclear when it names none.
       const request = JSON.parse(textOf(input.messages[1].content)).request;

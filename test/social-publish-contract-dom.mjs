@@ -13,11 +13,10 @@ try {
   for(const build of ['chrome','firefox']){
     const {Agent}=await import(`../src/${build}/src/agent/agent.js`);
     const invariant=await import(`../src/${build}/src/agent/completion-invariant.js`);
-    const {completionTextSignalsSuccess}=await import(`../src/${build}/src/agent/completion-verifier.js`);
     const source=fs.readFileSync(`src/${build}/src/agent/agent.js`,'utf8');
     const marker=source.indexOf('const publicationRecordRoot = ${publicationResourceRecordRoot.toString()};');
     const raw=source.slice(source.lastIndexOf('`',marker)+1,source.indexOf('`',marker+1));
-    const completionProbe=vm.runInNewContext('`'+raw+'`',{...invariant,completionTextSignalsSuccess});
+    const completionProbe=vm.runInNewContext('`'+raw+'`',{...invariant});
     const readPublished=()=>page.evaluate(code=>Function('return ('+code+')')(),completionProbe);
 
     // Compare preflight with the real content-script click handler, plus the

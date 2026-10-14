@@ -1,5 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
-import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { fixturePageTextReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -77740,6 +77740,8 @@ test('form validation classifier surfaces native and custom submission errors', 
 
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    // What a model read each alert as saying.
+    agent._pageTextReading = fixturePageTextReading;
     const before = [{
       frameId: 0,
       url,
@@ -89815,10 +89817,8 @@ test('submit-aware completion accepts the observed AMO finish document and rejec
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Submit this extension version.' },
     ]);
-    assert.equal(agent._completionTextSignalsSuccess('Done'), false,
-      `${AgentClass.name}: bare completion word was trusted in arbitrary page content`);
-    assert.equal(agent._completionTextSignalsSuccess('Done', { allowBare: true }), true,
-      `${AgentClass.name}: bare completion word was rejected for a trusted live-region context`);
+    // What a model read the confirmation page's texts as saying.
+    agent._pageTextReading = fixturePageTextReading;
     let classifierCalls = 0;
     agent._classifyProgressIntentWithProvider = async () => {
       classifierCalls++;
@@ -90160,15 +90160,21 @@ test('submit-aware completion accepts the observed AMO finish document and rejec
       `${AgentClass.name}: short same-page success toast was rejected`,
     );
 
+    // A live message counts once a model read it as success; one read as an
+    // error leaves the still-visible form unverified.
+    stubPageTextReadings(agent);
+    const negatedState = {
+      ...finishState,
+      url: submitUrl,
+      visibleFormCount: 1,
+      relevantFormCount: 1,
+      liveRegionMessages: ['Changes were not saved'],
+      successMessages: ['Changes were not saved'],
+    };
+    await agent._readCompletionStatusTexts(tabId, negatedState);
+    assert.deepEqual(negatedState.successMessages, [], `${AgentClass.name}: a message read as an error stayed a success message`);
     assert.match(
-      agent._completionPageWarning(tabId, 'Saved.', 'success', {
-        ...finishState,
-        url: submitUrl,
-        visibleFormCount: 1,
-        relevantFormCount: 1,
-        liveRegionMessages: ['Changes were not saved'],
-        successMessages: ['Changes were not saved'],
-      }, submitUrl)?.warning || '',
+      agent._completionPageWarning(tabId, 'Saved.', 'success', negatedState, submitUrl)?.warning || '',
       /task-relevant form/i,
       `${AgentClass.name}: negated failure alert was accepted as same-page submit success`,
     );
@@ -96585,6 +96591,7 @@ test('social upload provenance reconciles only from complete composer snapshots'
 test('YouTube metadata success requires exact app-classified post-save readback', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     agent._persist = () => { };
     const tabId = 8939 + index;
@@ -97385,6 +97392,7 @@ test('paged iframe reads accumulate one complete application inventory', () => {
 test('form confirmations bind to the form this run inventoried', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const tabId = 9370 + index;
     const intendedUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=intended-form';
@@ -97438,6 +97446,72 @@ test('form confirmations bind to the form this run inventoried', () => {
     // Same host, same adapter, same generic confirmation, different form.
     assert.equal(terminal(otherUrl), null,
       `${AgentClass.name}: a different form on the same host satisfied the workflow`);
+  }
+});
+
+test('a form confirmation in any language counts only as a model reads it', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const tabId = 9380 + index;
+    const url = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=intended-form';
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Bu formu doldurup gönder.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+      siteWorkflow: resolveAdapterWorkflowJob(url, 'submit-form'),
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    agent._rememberAxScope(tabId, 'intended-form-document', url);
+    agent._lastAxScopes.set(tabId, { documentToken: 'intended-form-document', pageUrl: url });
+    agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+      success: true, pageContent: 'textbox "Ad Soyad" [ref_name] required=true value="Ada"',
+      treeRevision: 'intended-form-tree', pageUrl: url,
+    });
+    const evidence = (verifiedFinalSubmit = true) => ({
+      submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: url,
+        workflowBinding: agent._workflowSubmitBindingForAttempt(tabId, url) },
+      verifiedFinalSubmit, relevantForms: 0,
+    });
+    const confirmed = 'Yanıtınız gönderildi.', failed = 'Yanıtınız gönderilemedi.';
+    let readings = new Map([[confirmed, 'reached']]);
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'workflow_state' ? readings.get(item.text) || 'other' : null));
+    const check = async (pageState, submission = evidence()) => {
+      await agent._readWorkflowTerminalTexts(tabId, pageState, submission);
+      return agent._workflowTerminalEvidenceFromDone(tabId, pageState, url, submission, null);
+    };
+
+    assert.equal((await check({ workflowPageText: `Müşteri anketi\n${confirmed}` }))?.source, 'form_confirmation_state',
+      `${AgentClass.name}: a Turkish confirmation read as reached was not accepted`);
+    assert.deepEqual(asked.map(item => [item.kind, item.state, item.text]), [
+      ['workflow_state', 'the form or application was submitted and received', 'Müşteri anketi'],
+      ['workflow_state', 'the form or application was submitted and received', confirmed],
+    ]);
+
+    // Nothing is read until the rest of the evidence is in place.
+    asked.length = 0;
+    assert.equal(await check({ workflowPageText: 'Başka bir metin' }, evidence(false)), null);
+    assert.deepEqual(asked, [], `${AgentClass.name}: an unverified submit still asked for readings`);
+
+    // A text read as saying it failed outweighs one read as reached.
+    readings = new Map([[confirmed, 'reached'], [failed, 'failed']]);
+    assert.equal(await check({ workflowPageText: `${confirmed}\n${failed}` }), null,
+      `${AgentClass.name}: a failure text was ignored beside a confirmation`);
+
+    // A long page is not read line by line; its prominent texts are.
+    asked.length = 0;
+    readings = new Map([[confirmed, 'reached']]);
+    const longPage = `${'Uzun bir sayfa satırı.\n'.repeat(120)}${confirmed}`;
+    assert.equal(await check({ workflowPageText: longPage }), null,
+      `${AgentClass.name}: a long page was read line by line`);
+    assert.equal(asked.length, 0);
+    assert.equal((await check({ workflowPageText: longPage, workflowStatusTexts: [confirmed] }))?.source, 'form_confirmation_state');
+
+    // A text the model did not read as reached proves nothing.
+    readings = new Map();
+    assert.equal(await check({ workflowPageText: 'Teşekkürler!' }), null);
   }
 });
 
@@ -97757,6 +97831,7 @@ test('a wizard Next keeps earlier completed steps in the cumulative inventory', 
 test('an iframe-only application inventory can still verify its submit confirmation', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const tabId = 9396 + index;
     const applyUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
@@ -97879,12 +97954,8 @@ test('the injected completion probe survives its own template literal', async ()
     const close = source.indexOf('`', anchor + 1);
     assert.ok(open > 0 && close > anchor, `${label}: completion probe template is not delimited`);
     const raw = source.slice(open + 1, close);
-    const { completionTextSignalsSuccess } = await import(
-      pathToFileURL(path.join(ROOT, 'src', label, 'src/agent/completion-verifier.js')).href,
-    );
     const injected = vm.runInNewContext('`' + raw + '`', {
       classifyCompletionForm: invariant.classifyCompletionForm,
-      completionTextSignalsSuccess,
       publicationResourceRecordRoot: invariant.publicationResourceRecordRoot,
       publicationDetailResource: invariant.publicationDetailResource,
       publicationReplyParent: invariant.publicationReplyParent,
@@ -97895,13 +97966,12 @@ test('the injected completion probe survives its own template literal', async ()
     );
     assert.match(injected, /\/\\r\\n\?\/g/,
       `${label}: the probe lost the CRLF normalization its line matching needs`);
-    const signalsStart = injected.indexOf('const successMessages = toasts.filter');
-    const signalsEnd = injected.indexOf('const publicationResourceIdentity', signalsStart);
-    assert.ok(signalsStart > 0 && signalsEnd > signalsStart);
-    const signals = vm.runInNewContext(injected.slice(signalsStart, signalsEnd) + '; successMessages;', {
-      toasts: ['QA submission recorded', 'Voice note recorded', 'Your submission will be recorded', 'Your submission was not recorded', 'Done'],
-    });
-    assert.deepEqual(Array.from(signals), ['QA submission recorded', 'Done'], `${label}: injected live-region recognizer lost inline acknowledgements or admitted unsupported evidence`);
+    // Live messages leave the page as they are: the agent reads what they say
+    // in any language, so the probe carries no wording of its own.
+    assert.doesNotMatch(injected, /successMessages|completionTextSignalsSuccess/,
+      `${label}: the probe still filters live messages by wording`);
+    assert.match(injected, /liveRegionMessages: toasts\.slice\(0, 6\)/, `${label}: the probe must return the live messages`);
+    assert.match(injected, /workflowStatusTexts: \[\.\.\.new Set\(\[document\.title/, `${label}: the probe must return the page's prominent status texts`);
   }
 });
 
@@ -98315,6 +98385,7 @@ test('an iframe wizard step stays complete after the frame advances', () => {
 test('a deferred reply stays bound to the thread the user authorized', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const tabId = 9474 + index;
     const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfcgzAuthorized';
@@ -99792,6 +99863,7 @@ test('generic submission evidence failure does not claim that a site workflow jo
 test('selected workflow submission evidence is job-bound and terminal-state specific', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
 
     const formTabId = 8970 + index;
@@ -100547,6 +100619,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
 test('Gmail message workflows bind the reviewed subject and prove a saved draft', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
 
