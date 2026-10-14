@@ -67,7 +67,6 @@ import {
   isWorkflowInventoryContinuationPending,
   parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
-  workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
 import { messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
@@ -32509,19 +32508,81 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
       ? guard.workflowInventoryEvidence.items
       : [];
-    // A field the request gave a value for is a field the request named.
-    const requestedLabels = [
-      ...(Array.isArray(guard?.workflowRequestedControlLabels) ? guard.workflowRequestedControlLabels : []),
-      ...(Array.isArray(guard?.workflowRequestedControlValues) ? guard.workflowRequestedControlValues : [])
-        .map(requirement => requirement.label),
-    ];
+    const named = this._workflowRequestedFieldNames(guard);
     return workflowRequiredRowsAreProcessed(
       rows,
       inventory,
       items,
-      requestedLabels,
+      item => this._workflowItemIsRequested(item, named),
       guard?.workflowRequestedControlLabelsResolved === true,
     );
+  }
+
+  // The fields the request named, in the user's own words. A field the
+  // request gave a value for is a field the request named.
+  _workflowRequestedFieldNames(guard) {
+    return [...new Set([
+      ...(Array.isArray(guard?.workflowRequestedControlLabels) ? guard.workflowRequestedControlLabels : []),
+      ...(Array.isArray(guard?.workflowRequestedControlValues) ? guard.workflowRequestedControlValues : [])
+        .map(requirement => requirement.label),
+    ].map(value => String(value ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  }
+
+  // Whether a form's inventory item is a field the request named, read by a
+  // model in any language (form_field_match): true when a named field reads
+  // as this one, false when every named field reads as another, null while a
+  // pair is unread or unclear.
+  _workflowItemIsRequested(item, named = []) {
+    const label = String(item?.label ?? '').replace(/\s+/g, ' ').trim();
+    if (!label || !named.length) return false;
+    let unknown = false;
+    for (const name of named) {
+      const reading = this._pageTextReading('form_field_match', label, { named: name });
+      if (reading === 'same') return true;
+      if (reading !== 'different') unknown = true;
+    }
+    return unknown ? null : false;
+  }
+
+  // Reads, in any language, which form fields the request named
+  // (form_field_match): for each requested value, the fields that hold it;
+  // for each named field, the fields the page marks optional. The decision
+  // model first, the active model within four seconds. Readings are kept for
+  // the reconciliation and done checks that follow.
+  async _readWorkflowRequestedFieldMatches(tabId, guard = this._planExecutionGuards.get(tabId)) {
+    const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
+      ? guard.workflowInventoryEvidence.items
+      : [];
+    const named = this._workflowRequestedFieldNames(guard);
+    if (!items.length || !named.length) return;
+    const pairs = new Map();
+    const add = (name, item) => {
+      const label = String(item?.label ?? '').replace(/\s+/g, ' ').trim();
+      if (!label) return;
+      if (!pairs.has(name)) pairs.set(name, new Set());
+      pairs.get(name).add(label);
+    };
+    for (const requirement of Array.isArray(guard?.workflowRequestedControlValues) ? guard.workflowRequestedControlValues : []) {
+      for (const item of items) {
+        if (this._workflowItemHoldsRequestedValue(item, requirement)) add(requirement.label, item);
+      }
+    }
+    for (const item of items) {
+      if (item?.required === false) for (const name of named) add(name, item);
+    }
+    for (const [name, labels] of pairs) {
+      try {
+        await this._readPageTexts(tabId, 'form_field_match', [...labels].slice(0, 48), { named: name },
+          { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+      } catch (error) {
+        if (this._checkAbort(tabId)) throw error;
+      }
+    }
+  }
+
+  _workflowItemHoldsRequestedValue(item, requirement) {
+    return !!item && Object.prototype.hasOwnProperty.call(item, 'value')
+      && this._workflowAxValueMatchesExpected(item.value, requirement?.value, item);
   }
 
   // A form question is named in the user's own words, not by a canonical
@@ -32552,13 +32613,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const items = Array.isArray(guard?.workflowInventoryEvidence?.items)
       ? guard.workflowInventoryEvidence.items
       : [];
-    return requirements.every((requirement) => {
-      const matches = items.filter(item => workflowControlLabelIsRequested(item?.label, [requirement.label]));
-      if (matches.length !== 1) return false;
-      const item = matches[0];
-      return Object.prototype.hasOwnProperty.call(item, 'value')
-        && this._workflowAxValueMatchesExpected(item.value, requirement.value, item);
-    });
+    // The value has to sit in a field a model reads, in any language, as the
+    // one the request named.
+    return requirements.every(requirement => items.some(item => this._workflowItemHoldsRequestedValue(item, requirement)
+      && this._workflowItemIsRequested(item, [requirement.label]) === true));
   }
 
   _normalizeWorkflowRequestedControlLabels(values) {
@@ -40107,6 +40165,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && Object.prototype.hasOwnProperty.call(executionContext, 'completionBatchStartState')
         ? { completionBatchStartState: executionContext.completionBatchStartState }
         : {};
+      // A form's reconciliation checks which fields the request named.
+      await this._readWorkflowRequestedFieldMatches(tabId);
       return this._progressUpdate(tabId, args, progressOpts);
     }
 
@@ -40118,6 +40178,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const doneStartedAt = Date.now();
       const tableBlock = await this._resolveExactTableDone(tabId, args, onUpdate);
       if (tableBlock) return tableBlock;
+      // A form's ledger check at done uses which fields the request named.
+      await this._readWorkflowRequestedFieldMatches(tabId);
       const outcome = normalizeDoneOutcome(args?.outcome);
       const calculationEvidence = outcome === 'success' ? captureCalculationEvidence(this, tabId) : null;
       const calculationProof = calculationEvidence ? captureCalculationCompletion(this, tabId, args.summary, calculationEvidence) : null;

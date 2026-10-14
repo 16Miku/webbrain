@@ -319,7 +319,6 @@ const {
   invalidateWorkflowInventoryCompleteness,
   parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
-  workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
@@ -329,7 +328,6 @@ const {
   invalidateWorkflowInventoryCompleteness: invalidateWorkflowInventoryCompletenessFx,
   parseWorkflowAxQuotedValue: parseWorkflowAxQuotedValueFx,
   shouldInvalidateFormInventoryAfterAction: shouldInvalidateFormInventoryAfterActionFx,
-  workflowControlLabelIsRequested: workflowControlLabelIsRequestedFx,
   workflowRequiredRowsAreProcessed: workflowRequiredRowsAreProcessedFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
@@ -9745,16 +9743,21 @@ test('adapter workflow evidence kernel is bounded and mirrored', () => {
     { id: 'required-field' },
     { id: 'optional-field', required: false },
   ];
-  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, [], true), true);
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => false, true), true);
   // Skipping an optional row is only safe once it is known which controls the
   // request named; an unanswered classifier is not "the user named none".
-  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, [], false), false,
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => false, false), false,
     'an unresolved requested-label set allowed an optional row to be skipped');
   assert.equal(workflowRequiredRowsAreProcessed([
     { id: 'required-field', status: 'processed' },
     { id: 'optional-field', status: 'processed' },
-  ], inventory, optionalItems, [], false), true,
+  ], inventory, optionalItems, () => false, false), true,
     'a ledger that skipped nothing needed the requested-label set');
+  // An optional row that may be the one the request named cannot be skipped.
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => null, true), false,
+    'an optional row nobody has read against the request was skipped');
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => true, true), false,
+    'an optional row the request named was skipped');
   assert.equal(workflowRequiredRowsAreProcessedFx(rows, inventory), false);
   const quotedAx = 'textbox "Title" [ref_title] value="Launch \\"Video\\" from C:\\\\Temp"';
   assert.equal(parseWorkflowAxQuotedValue(quotedAx), 'Launch "Video" from C:\\Temp');
@@ -97594,10 +97597,13 @@ test('a form confirmation in any language counts only as a model reads it', asyn
   }
 });
 
-test('optional controls the user asked for cannot be skipped', () => {
+test('optional controls the user asked for cannot be skipped', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     agent.useSiteAdapters = true;
+    // A model reads which form field each of the request's named fields is,
+    // in any language (form_field_match); the fixture oracle stands in.
+    const asked = stubPageTextReadings(agent);
     const tabId = 9380 + index;
     const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=optional';
     const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
@@ -97666,6 +97672,10 @@ test('optional controls the user asked for cannot be skipped', () => {
       `${AgentClass.name}: genuinely optional rows could not be skipped before the request was classified (${baseline.error || ''})`);
     guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['attach my cover letter']);
     guard.workflowRequestedControlLabelsResolved = true;
+    await agent._readWorkflowRequestedFieldMatches(tabId);
+    assert.deepEqual(asked.filter(item => item.kind === 'form_field_match').map(item => [item.named, item.text]).sort(),
+      [['attach my cover letter', 'Cover letter (optional)'], ['attach my cover letter', 'Referral code']],
+      `${AgentClass.name}: only the optional fields were to be read against the named field`);
     const requested = reconcile();
     assert.equal(requested.ok, false,
       `${AgentClass.name}: an optional control the user explicitly asked for was skipped`);
@@ -97716,6 +97726,7 @@ test('optional controls the user asked for cannot be skipped', () => {
       { label: 'cover letter', value: 'Dear hiring manager' },
     ]);
     guard.workflowRequestedControlValuesResolved = true;
+    await agent._readWorkflowRequestedFieldMatches(tabId);
     assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true,
       `${AgentClass.name}: the exact requested value did not read back from the inventory`);
     guard.workflowRequestedControlValues = agent._normalizeWorkflowRequestedControlValues([
@@ -97735,6 +97746,37 @@ test('optional controls the user asked for cannot be skipped', () => {
     ], `requested-value-typo-${index}`);
     assert.equal(typo.ok, false,
       `${AgentClass.name}: a form whose field holds the wrong value reconciled as complete`);
+
+    // A request in another language than the form names its fields in its
+    // own words: Turkish "ön yazı" is the English form's cover letter.
+    guard.workflowRequestedControlValues = agent._normalizeWorkflowRequestedControlValues([
+      { label: 'ön yazı', value: 'Dear hiring manager' },
+    ]);
+    guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['ön yazımı ekle']);
+    await agent._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true,
+      `${AgentClass.name}: a value requested in Turkish did not read back from the English form`);
+    const turkishSkip = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Name answered; optional fields skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: coverItem.id, label: 'Cover letter (optional)', status: 'skipped' },
+      { id: referralItem.id, label: 'Referral code', status: 'skipped' },
+    ], `turkish-request-skip-${index}`);
+    assert.equal(turkishSkip.ok, false,
+      `${AgentClass.name}: the cover letter a Turkish request asked for was skipped`);
+    // Until a model reads a pair, a field may be the named one: it holds no
+    // requested value and cannot be skipped.
+    const unread = new AgentClass({});
+    unread._planExecutionGuards.set(tabId, guard);
+    stubPageTextReadings(unread, () => null);
+    await unread._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(unread._workflowRequestedControlValuesMatchInventory(guard), false,
+      `${AgentClass.name}: an unread field took the requested value`);
+    assert.equal(unread._workflowItemIsRequested(coverItem, unread._workflowRequestedFieldNames(guard)), null);
   }
 });
 
@@ -98564,34 +98606,69 @@ test('a deferred reply stays bound to the thread the user authorized', async () 
   }
 });
 
-test('requested field matching survives the words a request wraps around a label', () => {
-  for (const [label, isRequested] of [
-    ['chrome', workflowControlLabelIsRequested],
-    ['firefox', workflowControlLabelIsRequestedFx],
-  ]) {
-    // The page decorates with "(optional)"; the request wraps with "attach my".
-    // Neither string contains the other, so only the content words match up.
-    assert.equal(isRequested('Cover letter (optional)', ['attach my cover letter']), true,
-      `${label}: the documented request wording did not match its page label`);
-    assert.equal(isRequested('Cover letter', ['please upload the cover letter']), true,
-      `${label}: request filler words defeated the label match`);
-    assert.equal(isRequested('Resume/CV (optional)', ['attach my resume']), true,
-      `${label}: a request naming part of the label did not match`);
-    assert.equal(isRequested('Referral code', ['attach my cover letter']), false,
-      `${label}: an unrelated optional control was treated as requested`);
-    // One content word is a weak claim: "resume" also sits inside a consent
-    // checkbox nobody asked to tick.
-    assert.equal(isRequested('Consent to automated resume screening', ['attach my resume']), false,
-      `${label}: a lone request word claimed an unrelated consent control`);
-    assert.equal(isRequested('Upload your cover letter here please', ['cover letter']), true,
-      `${label}: a two-word request stopped matching a longer label`);
-    assert.equal(isRequested('Cover letter (optional)', []), false,
-      `${label}: an optional control was requested with no request at all`);
-    assert.equal(isRequested('', ['cover letter']), false,
-      `${label}: an unlabelled control matched a request`);
-    // Scripts without word separators still rely on whole-string containment.
-    assert.equal(isRequested('カバーレター', ['カバーレター']), true,
-      `${label}: an exact non-spaced label stopped matching`);
+test('which form field a request named is read by a model, never by word lists', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = 98606;
+    const items = [
+      { id: 'name', label: 'Full name', required: true, value: 'Ada' },
+      { id: 'cover', label: 'Cover letter (optional)', required: false, value: 'Dear hiring manager' },
+      { id: 'referral', label: 'Referral code', required: false, value: '' },
+      { id: 'consent', label: 'Consent to automated resume screening', required: false, value: '' },
+    ];
+    const guard = {
+      workflowInventoryEvidence: { items },
+      workflowRequestedControlLabels: ['attach my resume'],
+      workflowRequestedControlValues: [{ label: 'my cover letter', value: 'Dear hiring manager' }],
+      workflowRequestedControlLabelsResolved: true,
+    };
+    agent._planExecutionGuards.set(tabId, guard);
+    // The page's labels are judged as the model reads them; these answers
+    // stand in for the model.
+    const readings = new Map([
+      ['my cover letter|Cover letter (optional)', 'same'], ['my cover letter|Referral code', 'different'],
+      ['my cover letter|Consent to automated resume screening', 'different'],
+      ['attach my resume|Cover letter (optional)', 'different'], ['attach my resume|Referral code', 'different'],
+    ]);
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'form_field_match'
+      ? readings.get(`${item.named}|${item.text}`) || null : null));
+    await agent._readWorkflowRequestedFieldMatches(tabId);
+    // Each requested value is read against the fields holding it, and each
+    // named field against the fields the page marks optional.
+    assert.deepEqual(asked.map(item => `${item.named}|${item.text}`).sort(), [
+      'attach my resume|Consent to automated resume screening', 'attach my resume|Cover letter (optional)',
+      'attach my resume|Referral code', 'my cover letter|Consent to automated resume screening',
+      'my cover letter|Cover letter (optional)', 'my cover letter|Referral code',
+    ], `${label}: the wrong pairs were read`);
+    const named = agent._workflowRequestedFieldNames(guard);
+    assert.equal(agent._workflowItemIsRequested(items[1], named), true, `${label}: a field read as the named one`);
+    assert.equal(agent._workflowItemIsRequested(items[2], named), false, `${label}: a field read as another one`);
+    // The consent box was read as no named cover letter but never against
+    // the named resume: it may still be that field.
+    assert.equal(agent._workflowItemIsRequested(items[3], named), null, `${label}: an unread pair`);
+    assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true);
+    readings.set('my cover letter|Cover letter (optional)', 'unclear');
+    const unsure = new AgentClass({});
+    unsure._planExecutionGuards.set(tabId, guard);
+    stubPageTextReadings(unsure, (kind, item) => (kind === 'form_field_match'
+      ? readings.get(`${item.named}|${item.text}`) || null : null));
+    await unsure._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(unsure._workflowRequestedControlValuesMatchInventory(guard), false,
+      `${label}: a value sat in a field no model read as the named one`);
+    // Only an optional field known not to be named may be skipped.
+    const rows = [{ id: 'name', status: 'processed' }, { id: 'cover', status: 'processed' },
+      { id: 'referral', status: 'skipped' }, { id: 'consent', status: 'skipped' }];
+    const inventory = { itemIds: items.map(item => item.id) };
+    assert.equal(agent._workflowRequiredTargetRowsAreProcessed(rows, inventory, guard), false,
+      `${label}: an optional field that may be the named one was skipped`);
+    readings.set('attach my resume|Consent to automated resume screening', 'different');
+    const read = new AgentClass({});
+    read._planExecutionGuards.set(tabId, guard);
+    stubPageTextReadings(read, (kind, item) => (kind === 'form_field_match'
+      ? readings.get(`${item.named}|${item.text}`) || null : null));
+    await read._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(read._workflowRequiredTargetRowsAreProcessed(rows, inventory, guard), true,
+      `${label}: optional fields read as not named could not be skipped`);
   }
 });
 

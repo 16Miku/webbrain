@@ -89,6 +89,13 @@ exhaustive document-root snapshot (`filter: all`, not depth-truncated).
 Skipped required rows cannot prove success; optional (`required: false`)
 inventory rows may be skipped, and that flag is emitted only when optionality
 is explicit (`aria-required="false"`). Missing `required` stays unknown.
+The fields a form request names, and the values it gives them, are in the
+user's own words. Which inventory field each of them is gets read by a model
+in any language (`form_field_match`: the named field, a different one, or
+unclear), the decision model first, before the reconciliation and again at
+`done`. A requested value has to read back from a field read as the named
+one, and an optional row may be skipped only once every named field reads as
+a different one; a pair nobody has read yet keeps the row required.
 Depth truncation is form-relevant (an omitted includable descendant). Empty
 or erroring third-party frames are omitted only when another frame already
 inventoried form controls; a lone failed cross-origin application frame stays

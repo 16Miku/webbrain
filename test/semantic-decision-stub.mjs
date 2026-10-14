@@ -30,6 +30,7 @@ const PAGE_TEXT_ORACLES = {
   message_status: item => fixtureMessageStatusReading(item?.text),
   status_message: item => fixtureStatusReading(item?.text),
   workflow_state: item => fixtureWorkflowStateReading(item?.state, item?.text),
+  form_field_match: item => fixtureFormFieldMatchReading(item?.named, item?.text),
 };
 
 const words = value => String(value || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
@@ -310,6 +311,38 @@ export function fixtureMessageStatusReading(text) {
   return 'unclear';
 }
 
+// How a model reads whether a form field is the one a request named
+// (form_field_match), for the fixtures' own texts: the content words of one
+// side all appear on the other, once the page's "optional" marks and the
+// words a request wraps around a field are set aside, and a few Turkish names
+// stand for their English fields. The product never matches these words.
+const FORM_FIELD_FILLER = new Set([
+  'optional', 'required', 'opcional', 'obligatorio', 'facultatif', 'obligatoire', 'zorunlu', 'isteğe', 'bağlı',
+  'please', 'attach', 'upload', 'add', 'provide', 'include', 'enter', 'fill', 'set', 'put', 'write', 'answer',
+  'select', 'my', 'me', 'i', 'the', 'a', 'an', 'your', 'our', 'this', 'that', 'and', 'or', 'to', 'in', 'on', 'at',
+  'of', 'for', 'with', 'as', 'is', 'be', 'field', 'question', 'box', 'section', 'form', 'file', 'document',
+  'here', 'ekle', 'yükle', 'yaz', 'alanı', 'alanına',
+]);
+const FORM_FIELD_SYNONYMS = new Map([['ön', 'cover'], ['yazı', 'letter'], ['yazımı', 'letter'], ['özgeçmiş', 'resume'],
+  ['özgeçmişimi', 'resume'], ['işveren', 'employer'], ['adı', 'name'], ['yanıt', 'reply']]);
+const formFieldTokens = value => {
+  let text = String(value ?? '');
+  try { text = text.normalize('NFKC'); } catch {}
+  return text.toLocaleLowerCase('tr').replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(' ')
+    .map(token => FORM_FIELD_SYNONYMS.get(token) || token)
+    .filter(token => token.length > 1 && !FORM_FIELD_FILLER.has(token));
+};
+export function fixtureFormFieldMatchReading(named, label) {
+  const wanted = formFieldTokens(named), own = formFieldTokens(label);
+  if (!wanted.length || !own.length) return null;
+  const wholeWanted = wanted.join(' '), wholeOwn = own.join(' ');
+  if (wholeOwn.includes(wholeWanted) && wanted.length > 1) return 'same';
+  // One content word only names a field it heads.
+  const covers = (subset, superset) => subset.every(token => superset.includes(token))
+    && (subset.length > 1 || (superset.length <= 2 && superset[0] === subset[0]));
+  return covers(wanted, own) || covers(own, wanted) || wholeOwn === wholeWanted ? 'same' : 'different';
+}
+
 // Runs the recipient guard's page check (or a chat observation) the way the
 // agent does: texts it consulted unread are read by a model (the fixture
 // oracles by default), and the check runs again with those readings, up to
@@ -381,8 +414,8 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'workflow_state') return fixtureWorkflowStateReading(item?.state, item?.text);
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
-    if (['message_control', 'message_field', 'message_author', 'message_status'].includes(question.kind)) {
-      return fixturePageTextReading(question.kind, item?.text);
+    if (['message_control', 'message_field', 'message_author', 'message_status', 'form_field_match'].includes(question.kind)) {
+      return fixturePageTextReading(question.kind, item?.text, item);
     }
     return answers[question.kind] ?? null;
   };
@@ -413,6 +446,7 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'message_field') return fixtureMessageFieldReading(text);
   if (kind === 'message_author') return fixtureMessageAuthorReading(text);
   if (kind === 'message_status') return fixtureMessageStatusReading(text);
+  if (kind === 'form_field_match') return fixtureFormFieldMatchReading(context?.named, text);
   return null;
 }
 
@@ -422,5 +456,5 @@ export function fixturePageTextReading(kind, text, context = {}) {
 export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
   return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control', 'message_field',
-    'message_author', 'message_status'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
+    'message_author', 'message_status', 'form_field_match'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }
