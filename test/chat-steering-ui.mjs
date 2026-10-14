@@ -133,7 +133,6 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function drainQueuedPromptsAfterRunSettles() {}
         function getHeldContextMenuPromptsForTab() { return []; }
         function showComposerToast(text) { notices.push(text); }
-        function normalizeScreenshotCommandText(value) { return value; }
         function normalizeSelectionSourceGrounding() { return null; }
         function normalizeSelectionAction() { return ''; }
         function waitForVisibleSidePanelStateRefresh() { refreshCalls++; return heldRefresh || Promise.resolve(); }

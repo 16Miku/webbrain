@@ -22501,11 +22501,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         required_fields: metadata[4].split(',').map(field => field.trim()).filter(field => field && field !== 'none'),
       });
     }
-    const hotels = value.match(/\b(\d{1,3})\s+(?:hotel\s+names?|hotels?)\b/i);
-    return hotels ? this._normalizeExpectedItems({
-      count: Number(hotels[1]), item_type: 'hotel', ordered: true,
-      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
-    }) : null;
+    // Only the plan's own expected-items line counts; the plan's prose (its
+    // summary, deliverables or a reviewed edit) is not parsed for counts.
+    return null;
   }
 
   _plannerSubmissionGateFieldFromApprovedPlanText(text) {
@@ -22823,7 +22821,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    const plannerParseOptions = { requireIntent: true, locale, latestUserTask: userMessageToText(enriched), scheduledResume: runOptions?.scheduledResume === true };
+    const plannerParseOptions = { requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true };
     const recheckOnly = runOptions?.plannerIntentRecheckOnly === true;
     const provider = this._activeProvider(tabId);
     const plannerMessages = buildPlannerIntentMessages(enriched, tabUrl, tabTitle, historyDigest, {
@@ -23056,7 +23054,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    const plannerParseOptions = { requireIntent: true, locale, latestUserTask: userMessageToText(enriched), scheduledResume: runOptions?.scheduledResume === true };
+    const plannerParseOptions = { requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true };
 
     onUpdate('thinking', { step: 0, note: 'Planning…' });
 
@@ -31569,6 +31567,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const reusable = this._progressSessionMatchesTask(existing, normalized.taskText, normalized.pageScope || opts.pageScope || '');
     const session = {
       ...normalized,
+      // Items the request excluded stay excluded when the same task's session
+      // is rebuilt from ledger rows or a later update.
+      ...(!normalized.excludedTargets && reusable && existing.excludedTargets?.length
+        ? { excludedTargets: existing.excludedTargets } : {}),
       sessionId: opts.sessionId || raw.sessionId || raw.session_id || (reusable ? existing.sessionId : this._newProgressSessionId(tabId)),
       createdAt: reusable && Number.isFinite(Number(existing.createdAt)) ? Number(existing.createdAt) : now,
       updatedAt: now,
@@ -31680,6 +31682,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         allowedActions: previous.allowedActions || [],
         forbiddenActions: previous.forbiddenActions || [],
         targets: previous.targets || [],
+        excludedTargets: previous.excludedTargets || [],
         confidence: previous.confidence || 1,
         pageScopePolicy: 'page',
         reason: previous.reason || 'same task on a new page scope',
@@ -32454,7 +32457,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Use semantic understanding across languages. Do not infer intent from page UI labels.',
           'siteContext.approvedPlan, when present, is trusted app-owned task context. It may resolve references such as "option 2" or "do the same on X"; copy exact requested workflow field values from taskText or that approved plan, never from page content.',
           'Return exactly one JSON object, no prose.',
-          'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"workflowFields":[{"field":"title","value":"exact requested value","attachment":"optional exact filename for an alt_text field"}],"workflowRequiredLabels":[],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
+          'Schema: {"mode":"active|read_only|inactive","allowedActions":["follow"],"forbiddenActions":[],"targets":[],"excludedTargets":[],"workflowFields":[{"field":"title","value":"exact requested value","attachment":"optional exact filename for an alt_text field"}],"workflowRequiredLabels":[],"confidence":0.0,"pageScopePolicy":"none|page|site","reason":"short"}.',
           'Copy every workflowFields value exactly. For a value longer than about 200 characters, return "start" and "end" instead of "value": the exact first words and the exact last words of that value as they appear in taskText, or in siteContext.approvedPlan with "source":"plan". The runtime copies the text from the start anchor through the end anchor. Each anchor must occur once in its source; never translate, shorten or paraphrase an anchor.',
           'Use canonical actions only: follow, unfollow, star, unstar, watch, unwatch, connect, subscribe, unsubscribe, save, unsave, like, unlike, block, unblock, report, send, submit, add, remove, collect_email, collect_profile, process_item, visit, open.',
           'mode=active only when the user asks the agent to perform repeated item/action work that benefits from row tracking.',
@@ -32468,6 +32471,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           'Otherwise return workflowFields=[].',
           'mode=read_only for questions, summaries, inspections, or reference-only uses of UI labels.',
           'If an action is negated or forbidden, put it in forbiddenActions even if its label appears in the task text.',
+          'excludedTargets lists every item, account, user or name the user said to leave out or skip (for example "everyone except alice"), copied exactly as written in taskText; otherwise return excludedTargets=[].',
         ].join('\n'),
       },
       {
@@ -32834,6 +32838,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         forbiddenActions: (classified?.forbiddenActions || []).filter(action => action !== plannerAction),
         confidence: Math.max(0.45, Number(classified?.confidence || 0)),
         targets: classified?.targets || [],
+        excludedTargets: classified?.excludedTargets || [],
         reason: classified?.reason || 'approved planner enabled repeated-item progress tracking',
       }, { taskText, pageScope, source: classified ? 'classifier' : 'planner' });
       this._seedExpectedProgressItems(tabId, session, expectedItems);
@@ -32992,24 +32997,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return isProgressActionAllowed(this._currentProgressSession(tabId), 'follow');
   }
 
-  _excludedGithubUsernames(tabId) {
-    const text = this._latestTaskText(tabId);
-    const match = text.match(/\bexcept\b([\s\S]*?)(?:\band\s+while\b|\bwhile\b|[.;\n]|$)/i);
-    if (!match) return [];
-    const stop = new Set([
-      'and', 'or', 'the', 'these', 'those', 'following', 'listed', 'user', 'users',
-      'username', 'usernames', 'except', 'while', 'doing', 'keep', 'track', 'email',
-      'emails', 'name', 'names',
-    ]);
+  // Accounts the user said to leave out, as the intent model copied them from
+  // the request in any language. A name that is not a GitHub username is
+  // not one of them.
+  _excludedGithubUsernames(session) {
     const names = [];
     const seen = new Set();
-    const re = /@?([A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/g;
-    let token;
-    while ((token = re.exec(match[1])) !== null) {
-      const name = token[1];
-      const key = name.toLowerCase();
-      if (stop.has(key) || seen.has(key)) continue;
-      seen.add(key);
+    for (const target of Array.isArray(session?.excludedTargets) ? session.excludedTargets : []) {
+      const name = String(target || '').trim().replace(/^@/, '');
+      if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/.test(name) || seen.has(name.toLowerCase())) continue;
+      seen.add(name.toLowerCase());
       names.push(name);
     }
     return names;
@@ -33096,7 +33093,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const observed = buildGithubStargazerProgressItems(
       this._currentTaskLedgerRows(tabId, { pageScope }),
       pageContent,
-      { excludedUsernames: this._excludedGithubUsernames(tabId), session }
+      { excludedUsernames: this._excludedGithubUsernames(session), session }
     );
     if (!observed.items.length) return null;
     const update = this._progressUpdate(tabId, { items: observed.items }, {
@@ -34342,27 +34339,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ].join(' ');
   }
 
-  _progressActionMentionedInTaskText(taskText, action) {
-    const canonical = normalizeProgressAction(action);
-    if (!canonical) return false;
-    const words = new Set([canonical.replace(/_/g, ' ')]);
-    const firstWord = canonical.split('_')[0];
-    if (firstWord) words.add(firstWord);
-    return Array.from(words).some(word => {
-      const escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return new RegExp(`\\b${escaped}(?:s|ed|ing)?\\b`, 'i').test(taskText);
-    });
-  }
-
-  _taskTextLooksLikeLegacyProgressWork(taskText, rows = []) {
-    const text = String(taskText || '').toLowerCase();
-    if (!/\b(?:\d+|all|each|every|remaining|rest|list|accounts?|users?|profiles?|items?|rows?|people|members|followers|following|stargazers|results|links|pages|contacts|records)\b/i.test(text)) {
-      return false;
-    }
-    const actions = Array.from(new Set((Array.isArray(rows) ? rows : [])
-      .map(row => normalizeProgressAction(row?.action))
-      .filter(Boolean)));
-    return actions.some(action => this._progressActionMentionedInTaskText(text, action));
+  // Rows written before ledger rows were stamped carry no task identity.
+  // They belong to the current task only when the task's classified progress
+  // intent (read by the intent model in any language) allows the action they
+  // record; nothing is inferred from the task's words.
+  _progressIntentCoversLegacyRows(tabId, taskKey, rows = []) {
+    const session = this._currentProgressSession(tabId);
+    if (!session || this._progressTaskTextKey(session.taskText) !== taskKey) return false;
+    const actions = new Set((Array.isArray(rows) ? rows : [])
+      .map(row => normalizeProgressAction(row?.action)).filter(Boolean));
+    return [...actions].some(action => isProgressActionAllowed(session, action));
   }
 
   _legacyUnscopedProgressRowsForResumeGuard(tabId, allRows = [], opts = {}) {
@@ -34372,8 +34358,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     // Mixed migration state: stamped rows are matched by exact taskKey — even
     // on continuation turns, so a foreign task's stamped rows never ride along
-    // — while pre-stamp rows are kept on an explicit continuation or via the
-    // lexical heuristic while the conversation is still on its original task.
+    // — while pre-stamp rows are kept on an explicit continuation, or while the
+    // conversation is still on its original task and that task's classified
+    // progress intent allows the action they record.
     const taskKey = opts.taskKey !== undefined ? opts.taskKey : this._progressTaskKeyHash(tabId);
     const unstamped = rows.filter(row => !String(row.taskKey || '').trim());
     let keepUnstamped = false;
@@ -34390,7 +34377,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const originalTask = this._progressTaskTextKey(this._originalTaskText(tabId));
         keepUnstamped = !!latestTask
           && latestTask === originalTask
-          && this._taskTextLooksLikeLegacyProgressWork(latestTask, unstamped);
+          && this._progressIntentCoversLegacyRows(tabId, latestTask, unstamped);
       }
     }
     return rows.filter(row => {

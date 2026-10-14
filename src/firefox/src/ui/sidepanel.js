@@ -1103,41 +1103,6 @@ function showSlashInvocationError(invocation) {
   showComposerToast(t('sp.slash.invalid_usage', { usage: invocation?.command?.usage || '/help' }), { duration: 5000 });
 }
 
-function normalizeScreenshotRequestText(text) {
-  return String(text || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\u0131/g, 'i')
-    .replace(/[.!?]+$/g, '')
-    .replace(/\s+/g, ' ');
-}
-
-function isPlainScreenshotRequest(text) {
-  const s = normalizeScreenshotRequestText(text);
-  if (!s || s.startsWith('/')) return false;
-  return /^(?:please |pls )?(?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
-    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this |current )?(?:screen ?shot|screenshot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
-    || /^(?:lutfen )?(?:screenshot|screen ?shot|ekran goruntusu)(?: (?:al|cek|goster|at))?$/.test(s)
-    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sekmenin|sayfanin|ekranin) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
-}
-
-function isPlainFullPageScreenshotRequest(text) {
-  const s = normalizeScreenshotRequestText(text);
-  if (!s || s.startsWith('/')) return false;
-  return /^(?:please |pls )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
-    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
-    || /^(?:lutfen )?(?:tam sayfa|butun sayfa|tum sayfa|uzun) ekran goruntusu(?: (?:al|cek|goster|at))?$/.test(s)
-    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sayfanin|sekmenin) (?:tam|butun|tum) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
-}
-
-function normalizeScreenshotCommandText(text) {
-  if (isPlainFullPageScreenshotRequest(text)) return '/screenshot --full-page';
-  if (isPlainScreenshotRequest(text)) return '/screenshot';
-  return text;
-}
-
 const SLASH_COMMAND_OPTION_ID_PREFIX = 'slash-command-option-';
 const BUSY_SLASH_NOTICE_COOLDOWN_MS = 3000;
 let placeholderRotationIndex = 0;
@@ -8453,7 +8418,7 @@ function isOutOfBandSlashDraft(value) {
 function syncSendButtonState() {
   if (!sendBtn) return;
   syncComposerDeliveryState();
-  const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
+  const draft = String(inputEl?.value || '').trim();
   if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
     sendBtn.disabled = true;
     return;
@@ -9378,7 +9343,6 @@ async function sendMessage(extraChatParams = {}) {
   if (steeringRequestsByTab.has(Number(tabId))) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
-  text = normalizeScreenshotCommandText(text);
   if (isAwaitingPlanReviewForTab(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'plan-review-pending', retryAfterMs: 1_000 });
     showComposerToast(t('sp.plan.awaiting_review'), { duration: 5000 });

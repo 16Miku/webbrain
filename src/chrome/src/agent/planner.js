@@ -1164,53 +1164,6 @@ export function normalizePlan(obj, opts = {}) {
     response_language: responseLanguage,
     mode: 'act',
   };
-  const latestUserTask = sanitizeText(opts.latestUserTask, 1200);
-  const hotelNameNarrowing = latestUserTask.match(/\b(?:just|only)\b[\s\S]{0,160}\b(\d{1,3})\s+hotel\s+names?\b/i)
-    || latestUserTask.match(/\b(?:sadece|yalnızca|yalnizca)[\s\S]{0,160}\b(\d{1,3})\s+otel\s+(?:ad(?:ı|ını|ları|larını)|isim(?:i|ini|leri|lerini))(?=\s|[.!?,]|$)/i);
-  const asksForRemovedHotelFields = /\b(?:price|prices|availability|available|booking|rate|cost|fiyat|fiyatlar|müsaitlik|rezervasyon)\b/i.test(latestUserTask);
-  const hotelCount = Number(hotelNameNarrowing?.[1]);
-  if (Number.isInteger(hotelCount) && hotelCount > 0 && hotelCount <= 1000 && !asksForRemovedHotelFields) {
-    const deliverable = `${hotelCount} hotel names`;
-    const narrowedStep = {
-      id: '1',
-      action: `Traverse the Instagram carousel deterministically and collect exactly ${hotelCount} verified hotel names in order.`,
-      tools: ['carousel_navigate', 'progress_update'],
-    };
-    normalizedPlan.scope_relation = 'narrow';
-    normalizedPlan.conditional_site_job = null;
-    normalizedPlan.deliverables = [deliverable];
-    normalizedPlan.expected_items = {
-      count: hotelCount,
-      item_type: 'hotel',
-      ordered: true,
-      required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
-    };
-    normalizedPlan.requires_state_change = false;
-    normalizedPlan.requires_submission = false;
-    normalizedPlan.messaging = null;
-    normalizedPlan.draft_recipients = null;
-    normalizedPlan.completion_requirements = { download: false };
-    normalizedPlan.completion_requirement_correction = null;
-    normalizedPlan.read_scope = 'visible_page';
-    normalizedPlan.summary = `List ${hotelCount} hotel names.`;
-    normalizedPlan.steps = [narrowedStep];
-    normalizedPlan.skill_ids = [];
-    normalizedPlan.memory = {
-      use_scratchpad: true,
-      scratchpad_notes: [`Collect exactly ${hotelCount} ordered hotel names and no additional fields.`],
-      use_progress_ledger: true,
-      progress_action: 'process_item',
-      progress_ledger_policy: 'enabled',
-    };
-    normalizedPlan.scheduling = null;
-    normalizedPlan.risks = [];
-    normalizedPlan.localized = {
-      ...normalizedPlan.localized,
-      summary: latestUserTask,
-      steps: [{ id: '1', action: latestUserTask }],
-      risks: [],
-    };
-  }
   // Canonical plan display fields are English by schema. For English UI
   // locales, do not reuse a second, potentially inconsistent model translation.
   // This runs before user review; approved user edits are pinned separately.

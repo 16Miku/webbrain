@@ -920,6 +920,7 @@ function allowProgress(agent, tabId, allowedActions = ['follow'], opts = {}) {
     allowedActions,
     forbiddenActions: opts.forbiddenActions || [],
     targets: opts.targets || [],
+    ...(opts.excludedTargets ? { excludedTargets: opts.excludedTargets } : {}),
     confidence: opts.confidence ?? 1,
     pageScopePolicy: opts.pageScope ? 'page' : (opts.pageScopePolicy || 'none'),
     reason: 'test session',
@@ -50180,18 +50181,19 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     assert.match(locale, /'sp\.screenshot\.save_as': 'Save as…'/, `${label}: screenshot Save As should have an English label`);
     assert.match(locale, /'sp\.screenshot\.save_failed': 'Could not save screenshot: \{msg\}'/, `${label}: screenshot save failures should have an English fallback`);
     const fullPageIdx = panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')");
-    assert.match(panel, /function normalizeScreenshotRequestText\(text\) \{[\s\S]*?\.normalize\('NFKD'\)[\s\S]*?\.replace\(\/\[\\u0300-\\u036f\]\/g, ''\)[\s\S]*?\.replace\(\/\\u0131\/g, 'i'\)/, `${label}: plain screenshot request normalization should handle accented Turkish text`);
-    assert.match(panel, /function isPlainScreenshotRequest\(text\) \{[\s\S]*?const s = normalizeScreenshotRequestText\(text\);[\s\S]*?s\.startsWith\('\/'\)[\s\S]*?ekran goruntusu[\s\S]*?ekran goruntusunu/, `${label}: plain screenshot request routing should cover English and Turkish screenshot-only requests`);
     assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
     const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
     assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
-    assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
-    assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
+    // A typed message is sent as typed: its words never turn it into
+    // /screenshot. The agent's model reads a screenshot request in any
+    // language; /screenshot is the explicit local command.
+    assert.doesNotMatch(panel, /normalizeScreenshotCommandText|isPlainScreenshotRequest|isPlainFullPageScreenshotRequest|ekran goruntusu/,
+      `${label}: a typed request is still rewritten into /screenshot by its words`);
     const sendIdx = panel.search(/async function sendMessage\(extraChatParams(?: = \{\})?\)/);
     assert.notEqual(sendIdx, -1, `${label}: sendMessage missing`);
     const sendBody = panel.slice(sendIdx, panel.indexOf('let assistantEl = null;', sendIdx));
-    assert.match(sendBody, /const tabId = currentTabId;[\s\S]*?text = normalizeScreenshotCommandText\(text\);[\s\S]*?if \(isProcessing\)/, `${label}: plain screenshot requests should route to slash commands before busy gating`);
+    assert.match(sendBody, /const tabId = currentTabId;[\s\S]*?if \(isProcessing\)/, `${label}: sendMessage lost its busy gating`);
 
     if (label === 'chrome') {
       const fullScreenRecordIdx = panel.indexOf("if (command.value === '/record' && action === 'full-screen')");
@@ -50489,7 +50491,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     }
     assert.match(
       panel,
-      /function syncSendButtonState\(\) \{[\s\S]*?const draft = normalizeScreenshotCommandText\(inputEl\?\.value \|\| ''\)\.trim\(\);[\s\S]*?if \(!isProcessing\) \{[\s\S]*?sendBtn\.disabled = isAttachmentReadPendingForTab\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(!draft\) \{[\s\S]*?sendBtn\.disabled = true;[\s\S]*?return;[\s\S]*?\}[\s\S]*?sendBtn\.disabled = draft\.startsWith\('\/'\) && !isOutOfBandSlashDraft\(draft\);[\s\S]*?\}/,
+      /function syncSendButtonState\(\) \{[\s\S]*?const draft = String\(inputEl\?\.value \|\| ''\)\.trim\(\);[\s\S]*?if \(!isProcessing\) \{[\s\S]*?sendBtn\.disabled = isAttachmentReadPendingForTab\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(!draft\) \{[\s\S]*?sendBtn\.disabled = true;[\s\S]*?return;[\s\S]*?\}[\s\S]*?sendBtn\.disabled = draft\.startsWith\('\/'\) && !isOutOfBandSlashDraft\(draft\);[\s\S]*?\}/,
       `${label}: send button state should gate attachment reads while idle, permit normal queued drafts while busy, and only block unsafe slash drafts`,
     );
     assert.match(
@@ -50499,7 +50501,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       panel,
-      /text = normalizeScreenshotCommandText\(text\);[\s\S]*?if \(isProcessing\) \{[\s\S]*?if \(isOutOfBandSlashDraft\(text\)\) \{[\s\S]*?await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?if \(text\.startsWith\('\/'\)\) \{[\s\S]*?showBusySlashCommandNotice\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);[\s\S]*?\}/,
+      /if \(isProcessing\) \{[\s\S]*?if \(isOutOfBandSlashDraft\(text\)\) \{[\s\S]*?await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?if \(text\.startsWith\('\/'\)\) \{[\s\S]*?showBusySlashCommandNotice\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);[\s\S]*?\}/,
       `${label}: busy send preflight should run safe slash commands and queue normal drafts`,
     );
     assert.match(
@@ -85466,6 +85468,29 @@ test('progress intent classifier accepts multilingual structured intent and fail
     });
     assert.equal(TurkishFollow.mode, 'active', `${AgentClass.name}: Turkish follow intent was not active`);
     assert.deepEqual(TurkishFollow.allowedActions, ['follow'], `${AgentClass.name}: Turkish takip et did not normalize to follow`);
+    assert.equal(TurkishFollow.excludedTargets, undefined, `${AgentClass.name}: an exclusion was invented`);
+
+    // Accounts the request leaves out are the intent model's to read, in any
+    // language; they reach the session and survive its rebuilds for the task.
+    let prompt = '';
+    agent._chatWithCostAllowance = async (_provider, messages) => {
+      prompt = messages[0].content;
+      return { content: JSON.stringify({ mode: 'active', allowedActions: ['follow'], forbiddenActions: [], targets: [],
+        excludedTargets: ['ChJus', 'ChJus', '@rafi'], confidence: 0.9, pageScopePolicy: 'page' }) };
+    };
+    const excluding = await agent._classifyProgressIntentWithProvider(tabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      pageScope: 'https://github.com/foo/bar/stargazers',
+    });
+    assert.match(prompt, /"excludedTargets":\[\]/);
+    assert.match(prompt, /excludedTargets lists every item, account, user or name the user said to leave out/);
+    assert.deepEqual(excluding.excludedTargets, ['ChJus', '@rafi']);
+    const session = agent._setProgressSession(tabId, excluding, { pageScope: 'https://github.com/foo/bar/stargazers' });
+    assert.deepEqual(agent._excludedGithubUsernames(session), ['ChJus', 'rafi']);
+    const rebuilt = agent._setProgressSession(tabId, { mode: 'active', allowedActions: ['follow'], forbiddenActions: [], confidence: 1 },
+      { pageScope: 'https://github.com/foo/bar/stargazers', sessionId: session.sessionId, source: 'ledger' });
+    assert.deepEqual(rebuilt.excludedTargets, ['ChJus', '@rafi'], `${AgentClass.name}: a same-task rebuild dropped the exclusions`);
+    agent.progressSessions.delete(tabId);
 
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
@@ -86756,53 +86781,46 @@ test('narrow hotel-name plans carry only the current deliverable and a strict or
   }
 });
 
-test('latest hotel-name narrowing deterministically strips stale planner deliverables', () => {
+test('the words of a narrowing request never rewrite the planner\'s plan', () => {
+  // The planner reads narrowing in any language and says so in its own plan,
+  // which the user reviews; nothing afterwards rewrites it from words.
   for (const [label, normalize] of [['chrome', normalizePlan], ['firefox', normalizePlanFx]]) {
-    const plan = normalize({
+    const stale = {
       request_kind: 'execute',
       scope_relation: 'continue',
       deliverables: ['hotel names', 'prices', 'availability', 'booking conditions'],
-      requires_state_change: true,
-      requires_submission: true,
-      completion_requirements: { download: true },
+      requires_state_change: false,
+      requires_submission: false,
       read_scope: 'visible_page',
       summary: 'Collect hotel names, prices, availability, and booking conditions.',
       confidence: 0.8,
-      steps: [
-        { id: '1', action: 'Collect names and prices.', tools: ['press_keys'] },
-        { id: '2', action: 'Check availability and booking terms.', tools: ['click'] },
-      ],
+      steps: [{ id: '1', action: 'Collect names and prices.', tools: ['read_page'] }],
       memory: { use_scratchpad: true, use_progress_ledger: false, progress_action: null },
-      scheduling: { tool: 'schedule_resume', hint: 'Wait for availability.' },
-      risks: ['Rates may change.'],
-      localized: { locale: 'en', summary: 'Collect names and prices.', steps: [], risks: ['Rates may change.'] },
-    }, {
-      requireIntent: true,
-      locale: 'en',
-      latestUserTask: 'Just give me the 15 hotel names.',
-    });
-    assert.equal(plan.scope_relation, 'narrow', `${label}: latest narrowing did not override stale relation`);
-    assert.deepEqual(plan.deliverables, ['15 hotel names']);
-    assert.equal(plan.requires_state_change, false);
-    assert.equal(plan.requires_submission, false);
-    assert.equal(plan.completion_requirements.download, false);
-    assert.equal(plan.scheduling, null);
-    assert.deepEqual(plan.steps[0].tools, ['carousel_navigate', 'progress_update']);
-    assert.deepEqual(plan.expected_items?.required_fields, ['hotel_name', 'carousel_position', 'evidence_source']);
-    assert.doesNotMatch(JSON.stringify(plan), /prices|availability|booking conditions|press_keys/i, `${label}: stale planner scope survived deterministic normalization`);
+      localized: { locale: 'en', summary: 'Collect names and prices.', steps: [], risks: [] },
+    };
+    for (const latestUserTask of ['Just give me the 15 hotel names.', 'Sadece 15 otel adını ver.']) {
+      const plan = normalize(stale, { requireIntent: true, locale: 'en', latestUserTask });
+      assert.equal(plan.scope_relation, 'continue', `${label}: "${latestUserTask}" rewrote the plan's scope`);
+      assert.deepEqual(plan.deliverables, stale.deliverables, `${label}: "${latestUserTask}" rewrote the deliverables`);
+      assert.equal(plan.expected_items, null, `${label}: "${latestUserTask}" invented an item contract`);
+    }
   }
 });
 
-test('reviewed hotel-name edits regenerate expected-item metadata without stale planner fields', () => {
+test('reviewed plans regenerate expected items only from their own expected-items line', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
-    const expected = agent._plannerExpectedItemsFromApprovedPlanText('Just give me the 15 hotel names.');
-    assert.deepEqual(expected, {
+    const reviewed = '### Plan\nList the hotel names.\n- Expected items: 15 ordered=yes type=hotel; required fields=hotel_name, carousel_position, evidence_source';
+    assert.deepEqual(agent._plannerExpectedItemsFromApprovedPlanText(reviewed), {
       count: 15,
       item_type: 'hotel',
       ordered: true,
       required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
-    }, `${label}: edited hotel scope did not regenerate execution metadata`);
+    }, `${label}: the plan's own expected-items line was not read`);
+    // Prose is never parsed for a count, in any language.
+    for (const prose of ['Just give me the 15 hotel names.', '15 otel adını listele.']) {
+      assert.equal(agent._plannerExpectedItemsFromApprovedPlanText(prose), null, `${label}: "${prose}" produced an item contract`);
+    }
     assert.deepEqual(
       agent._plannerProgressLedgerGateFieldsFromApprovedPlanText('Just give me the 15 hotel names.'),
       { progressLedgerPolicy: 'disabled', progressAction: null },
@@ -87098,11 +87116,15 @@ test('agent records GitHub stargazer observations into the progress ledger', asy
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = 772;
+    // The intent model copies the excluded account from the request, in any
+    // language; the request's words are not parsed for it.
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
-      { role: 'user', content: 'Follow all not-followed stargazers except ChJus, and while doing that keep usernames/emails.' },
+      { role: 'user', content: 'ChJus hariç takip etmediğim tüm yıldızlayanları takip et; kullanıcı adlarını ve e-postaları kaydet.' },
     ]);
     agent._currentUrl = async () => 'https://github.com/foo/bar/stargazers?page=2';
+    allowProgress(agent, tabId, ['follow'], { excludedTargets: ['@ChJus', 'not a username!'] });
+    assert.deepEqual(agent._excludedGithubUsernames(agent.progressSessions.get(tabId)), ['ChJus']);
     agent._progressUpdate(tabId, {
       items: [{
         id: 'myxvisual',
@@ -101579,6 +101601,9 @@ test('schedule_resume guards progress-ledger continuations against stale next-it
 });
 
 test('schedule_resume falls back to all-sessions progress read for legacy unscoped rows', async () => {
+  // Rows written before ledger rows were stamped belong to the current task
+  // when its classified progress intent (read by the intent model in any
+  // language) allows their action; the task's words alone attribute nothing.
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = AgentClass === AgentCh ? 803 : 804;
@@ -101586,11 +101611,17 @@ test('schedule_resume falls back to all-sessions progress read for legacy unscop
     agent.conversationIds.set(tabId, 'conv_legacy_progress_resume_guard');
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
-      { role: 'user', content: "follow 100 accounts i don't follow yet here" },
+      { role: 'user', content: 'buradaki takip etmediğim 100 hesabı takip et' },
     ]);
     agent.progressLedgers.set(tabId, [
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending' },
     ]);
+    assert.deepEqual(agent._legacyUnscopedProgressRowsForResumeGuard(tabId, agent.progressLedgers.get(tabId)), [],
+      `${AgentClass.name}: legacy rows were attributed without a classified intent`);
+    allowProgress(agent, tabId, ['unfollow']);
+    assert.deepEqual(agent._legacyUnscopedProgressRowsForResumeGuard(tabId, agent.progressLedgers.get(tabId)), [],
+      `${AgentClass.name}: legacy rows were attributed to an intent that does not allow their action`);
+    allowProgress(agent, tabId, ['follow']);
 
     let scheduledPayload = null;
     agent.setScheduler({
@@ -101800,11 +101831,6 @@ test('schedule_resume guards unscoped rows via task key match for non-English ta
     agent.progressLedgers.set(tabId, [
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending', taskKey },
     ]);
-    assert.equal(
-      agent._taskTextLooksLikeLegacyProgressWork(agent._latestTaskText(tabId), agent.progressLedgers.get(tabId)),
-      false,
-      `${AgentClass.name}: setup precondition — the lexical heuristic must not match this task text`,
-    );
 
     let scheduledPayload = null;
     agent.setScheduler({
@@ -101891,9 +101917,10 @@ test('schedule_resume mixed migration state: foreign stamped row does not starve
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending' },
     ]);
     assert.notEqual(agent._progressTaskKeyHash(tabId), 'tk_00000000', `${AgentClass.name}: setup precondition — stamped row must belong to a different task`);
+    allowProgress(agent, tabId, ['follow']);
 
     const guarded = agent._legacyUnscopedProgressRowsForResumeGuard(tabId, agent.progressLedgers.get(tabId));
-    assert.deepEqual(guarded.map(r => r.id), ['legacy_pending'], `${AgentClass.name}: unstamped current-task rows must still pass the lexical heuristic despite a foreign stamped row`);
+    assert.deepEqual(guarded.map(r => r.id), ['legacy_pending'], `${AgentClass.name}: unstamped current-task rows must still follow the classified intent despite a foreign stamped row`);
 
     const scopedRead = agent._progressRead(tabId, { currentTaskOnly: true });
     assert.deepEqual(scopedRead.rows.map(r => r.id), ['legacy_pending'], `${AgentClass.name}: currentTaskOnly progress_read must exclude rows the resume guard excluded`);
@@ -101921,7 +101948,7 @@ test('schedule_resume mixed migration state: foreign stamped row does not starve
 
     assert.equal(result.success, true, `${AgentClass.name}: mixed-state schedule_resume should succeed`);
     const instruction = scheduledPayload?.args?.resume_instruction || '';
-    assert.match(instruction, /^Continue the active Act-mode progress-ledger task/, `${AgentClass.name}: mixed-state guard should still attach via the legacy heuristic`);
+    assert.match(instruction, /^Continue the active Act-mode progress-ledger task/, `${AgentClass.name}: mixed-state guard should still attach through the classified intent`);
     assert.match(instruction, /1 row\(s\), 1 unresolved/, `${AgentClass.name}: guard counts must exclude the foreign stamped row`);
   }
 });

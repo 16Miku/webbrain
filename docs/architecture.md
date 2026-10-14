@@ -776,6 +776,14 @@ and whether an unclear deletion proceeds are answered on WebBrain's own cards
 with fixed choices, and a question the model asks, and whatever the user
 answers to it, approves neither.
 
+Plans and progress intents are the models' own reading of the request. No
+rule rewrites a plan from the request's words, an edited plan's expected items
+come only from its own expected-items line, and the items a repeated-action
+task leaves out ("everyone except alice") come from the intent model's
+`excludedTargets`. Ledger rows written before rows were stamped belong to the
+current task only when its classified intent allows the action they record.
+Typed messages are sent as typed; `/screenshot` is the explicit local capture.
+
 Whether a request also expects something no run can verify, such as votes or
 moderators keeping a post up, is read by whoever verified the completion: the
 active model's completion judge answers it in the same request as its verdict,

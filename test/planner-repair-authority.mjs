@@ -739,12 +739,19 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${browser}: English display follows final semantic narrowing rather than obsolete model fields`, () => {
-    const plan = planner.normalizePlan(modelPlan(), { requireIntent: true, locale: 'en', latestUserTask: 'Only 3 hotel names.' });
+  test(`${browser}: English display follows the planner's own narrowing rather than its obsolete localized fields`, () => {
+    // Narrowing is the planner's reading of the request; the request's words
+    // never rewrite the plan afterwards.
+    const plan = planner.normalizePlan(modelPlan({ scope_relation: 'narrow', deliverables: ['3 hotel names'],
+      expected_items: { count: 3, item_type: 'hotel', ordered: true, required_fields: ['hotel_name'] },
+      summary: 'List 3 hotel names.' }), { requireIntent: true, locale: 'en', latestUserTask: 'Only 3 hotel names.' });
     assert.equal(plan.scope_relation, 'narrow');
     assert.equal(plan.expected_items.count, 3);
     assert.deepEqual(plan.localized, canonicalDisplay(plan));
     assert.equal(plan.localized.summary, 'List 3 hotel names.');
+    const unchanged = planner.normalizePlan(modelPlan(), { requireIntent: true, locale: 'en', latestUserTask: 'Only 3 hotel names.' });
+    assert.equal(unchanged.scope_relation, 'new');
+    assert.equal(unchanged.expected_items, null);
   });
 
   test(`${browser}: non-English localized display and ID-aligned fallback remain unchanged`, () => {

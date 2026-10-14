@@ -96,6 +96,12 @@ export function normalizeProgressIntent(raw, opts = {}) {
     firstArray(raw.targets)
       .map(value => sanitizeText(value, 160))
   ).slice(0, 20);
+  // Items the user said to leave out ("everyone except alice"), as the intent
+  // model copied them from the request, in any language.
+  const excludedTargets = unique(
+    firstArray(raw.excludedTargets, raw.excluded_targets)
+      .map(value => sanitizeText(value, 160))
+  ).slice(0, 50);
   const pageScope = sanitizeText(raw.pageScope || raw.page_scope || opts.pageScope || '', 240);
   const pageScopePolicy = sanitizeText(raw.pageScopePolicy || raw.page_scope_policy || '', 40).toLowerCase();
 
@@ -105,6 +111,7 @@ export function normalizeProgressIntent(raw, opts = {}) {
     allowedActions,
     forbiddenActions,
     targets,
+    ...(excludedTargets.length ? { excludedTargets } : {}),
     confidence,
     ...(pageScope ? { pageScope } : {}),
     pageScopePolicy: pageScopePolicy === 'page' || pageScopePolicy === 'site' ? pageScopePolicy : (pageScope ? 'page' : 'none'),
