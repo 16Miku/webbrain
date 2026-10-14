@@ -228,6 +228,49 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      // A menu mounted elsewhere without aria-controls belongs to the saved
+      // record whose launcher's own click opened it, and to nothing else.
+      await t.test('an unlinked generic menu borrows the resource of the launcher whose click opened it', async () => {
+        const f = await fixture();
+        try {
+          const neutral = 'https://neutral-resource.invalid/records/300';
+          await f.page.goto('https://neutral-resource.invalid/records');
+          await f.page.setContent(`<!doctype html><article><a rel="bookmark" href="${neutral}">Exact generic resource</a>
+            <p>Exact neutral record</p><button type="button" id="generic-more" aria-haspopup="menu">More</button></article>
+            <article><a rel="bookmark" href="https://neutral-resource.invalid/records/301">Other resource</a>
+            <p>Other neutral record</p><button type="button" id="other-more" aria-haspopup="menu">More</button></article><div id="portal"></div>`);
+          await f.page.evaluate(() => {
+            window.qaOpen = () => { document.querySelector('#portal').innerHTML = '<div role="menu"><button type="button" id="popup-delete">Delete</button></div>'; };
+            for (const id of ['generic-more', 'other-more']) document.getElementById(id).onclick = () => setTimeout(window.qaOpen, 30);
+          });
+          const generic = { __wbNativeResourceAdapter: '' };
+          const more = await f.probe('#generic-more', generic);
+          assert.equal(more.actionResource?.url, neutral); assert.ok(more.popupLauncherToken);
+          f.adopt(more); await f.click('#generic-more'); await f.page.waitForTimeout(300);
+          assert.equal((await f.probe('#popup-delete', generic)).actionResource?.url, neutral,
+            'The menu the launcher opened belongs to its record');
+          // The same menu opened by a script, or by another record's launcher,
+          // borrows nothing.
+          await f.page.evaluate(() => { document.querySelector('#portal').innerHTML = ''; });
+          const again = await f.probe('#generic-more', generic); f.adopt(again);
+          await f.page.evaluate(() => window.qaOpen()); await f.page.waitForTimeout(300);
+          assert.equal((await f.probe('#popup-delete', generic)).actionResource, null, 'scripted');
+          await f.page.evaluate(() => { document.querySelector('#portal').innerHTML = ''; });
+          const third = await f.probe('#generic-more', generic); f.adopt(third);
+          await f.click('#other-more'); await f.page.waitForTimeout(300);
+          assert.equal((await f.probe('#popup-delete', generic)).actionResource, null, 'other launcher');
+          // A new wrapper dialog holding the menu counts as the one popup the
+          // click opened, and the menu inside it belongs to the same record.
+          await f.page.evaluate(() => {
+            document.querySelector('#portal').innerHTML = '';
+            window.qaOpen = () => { document.querySelector('#portal').innerHTML = '<div role="dialog" aria-label="Actions"><div role="menu"><button type="button" id="popup-delete">Delete</button></div></div>'; };
+          });
+          const fourth = await f.probe('#generic-more', generic); f.adopt(fourth);
+          await f.click('#generic-more'); await f.page.waitForTimeout(300);
+          assert.equal((await f.probe('#popup-delete', generic)).actionResource?.url, neutral, 'nested menu');
+        } finally { await f.page.close(); }
+      });
+
       await t.test('final deletion retains exact accepted-task authorization', async () => {
         const f = await fixture();
         try {

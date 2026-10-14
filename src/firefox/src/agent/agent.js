@@ -25634,6 +25634,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const records = [...(bar?.closest?.('.detailed-status__wrapper')?.querySelectorAll('.detailed-status') || [])];
       return records.length === 1 ? records[0] : null;
     };
+    // The one popup a click on `control` opens, found by provenance where the
+    // page does not tie them together (aria-controls, popovertarget): the
+    // single new element matching `selector` shown within three seconds of
+    // that click, while no other new one appeared. A popup that mounts late
+    // or fades in from transparent counts; nothing is bound otherwise.
+    const capturePopupAfterClick = (control, selector, onPopup) => {
+      const rendered = () => [...doc.querySelectorAll(selector)].filter(nativeResourceRendered);
+      const before = new Set(rendered());
+      let timer = null;
+      const listener = event => {
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [event.target];
+        if (!path.includes(control)) return;
+        doc.removeEventListener('click', listener, true);
+        const deadline = Date.now() + 3000;
+        // The new popups, outermost first: a menu inside a dialog that was
+        // already open counts, and a new wrapper with its own menu inside
+        // counts once.
+        const pollFreshPopup = () => {
+          const fresh = rendered().filter(node => !before.has(node) && !node.contains(control));
+          const outer = fresh.filter(node => !fresh.some(other => other !== node && other.contains(node)));
+          if (outer.length === 1) { onPopup(outer[0]); return; }
+          if (!outer.length && Date.now() < deadline) timer = setTimeout(pollFreshPopup, 50);
+        };
+        timer = setTimeout(pollFreshPopup, 0);
+      };
+      doc.addEventListener('click', listener, true);
+      return () => { doc.removeEventListener('click', listener, true); clearTimeout(timer); };
+    };
     const nativeResourcePopups = () => {
       const native = '.dropdown-menu,.modal-root__modal.safety-action-modal';
       const nodes = [...doc.querySelectorAll(`${native},dialog,[role="dialog"],[role="alertdialog"],[role="menu"]`)];
@@ -25733,7 +25761,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const labelledBy = String(popup?.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
         const controls = String(control?.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
         const relation = popup && ((popup.id && launcher?.controlledIds.includes(popup.id) && controls.includes(popup.id))
-          || (launcher?.popoverTarget && launcher.popoverTarget === popup && control?.popoverTargetElement === popup));
+          || (launcher?.popoverTarget && launcher.popoverTarget === popup && control?.popoverTargetElement === popup)
+          || (!launcher?.controlledIds?.length && !launcher?.popoverTarget && !!launcher?.provenancePopup
+            && launcher.provenancePopup.contains(popup)));
         if (!launcher || launcher.until < Date.now() || launcher.runToken !== args.__wbResourceRunToken
             || launcher.resourceUrl !== scope.url || launcher.scopeToken !== scope.scopeToken
             || !control?.isConnected || control.getRootNode() !== launcher.root || !popup || !isVisible(popup)
@@ -25808,10 +25838,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const controlledIds = String(control.getAttribute('aria-controls') || '').split(/\s+/).filter(Boolean);
       const popoverTarget = control.popoverTargetElement || null;
-      if ((!controlledIds.length && !popoverTarget) || controlledIds.length > 4) return '';
+      if (controlledIds.length > 4) return '';
       const token = crypto.randomUUID();
-      scopeRegistry.launchers.set(token, { control, root: control.getRootNode(), controlledIds, popoverTarget,
-        resourceUrl: proof.url, scopeToken: proof.scopeToken, runToken: args.__wbResourceRunToken, until: Date.now() + 120000 });
+      const launcher = { control, root: control.getRootNode(), controlledIds, popoverTarget,
+        resourceUrl: proof.url, scopeToken: proof.scopeToken, runToken: args.__wbResourceRunToken, until: Date.now() + 120000,
+        provenancePopup: null };
+      // Without an ARIA or popover relation, the popup this launcher's own
+      // click opens is its popup.
+      if (!controlledIds.length && !popoverTarget) {
+        launcher.cleanup = capturePopupAfterClick(control,
+          '[role="menu"],[role="listbox"],[role="dialog"],[role="alertdialog"],[popover]', popup => { launcher.provenancePopup = popup; });
+      }
+      scopeRegistry.launchers.set(token, launcher);
       while (scopeRegistry.launchers.size > 256) {
         const oldest = scopeRegistry.launchers.keys().next().value;
         scopeRegistry.launchers.get(oldest)?.cleanup?.(); scopeRegistry.launchers.delete(oldest);
@@ -25990,10 +26028,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // deletion controls (including hover-hidden ones) and 2,000 characters.
       // Menus and dialogs are never crossed: a menu item borrows its
       // launcher's record only through an explicit aria-controls/popover
-      // relation, and a confirmation dialog borrows the record of the agent's
-      // own preceding authorized click only when it opened after that click
-      // was probed. Records with permalink evidence keep the permalinked
-      // rules; toolbar, bulk and unrelated popup deletions get no record.
+      // relation, or by provenance as the one new menu that launcher's own
+      // probed click opened (rememberMenuLaunch), and a confirmation dialog
+      // borrows the record of the agent's own preceding authorized click only
+      // when it opened after that click was probed. Records with permalink
+      // evidence keep the permalinked rules; toolbar, bulk and unrelated popup
+      // deletions get no record.
       const recordDocument = [url, performance.timeOrigin].join('|');
       const recordDialogSelector = 'dialog[open],[role="dialog"],[role="alertdialog"]';
       const recordMenuSelector = '[role="menu"],[role="listbox"],[popover]';
@@ -26193,6 +26233,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }, 120000);
         scopeRegistry.unboundLaunch = launch;
       };
+      // A menu the page opens without tying it to its launcher borrows the
+      // launcher's record by provenance: the one new menu shown within three
+      // seconds of a click on the launcher this probe saw. One launch is
+      // remembered, for two minutes on this document and run.
+      const rememberMenuLaunch = control => {
+        scopeRegistry.menuLaunch?.cleanup?.();
+        const launch = { control, document: recordDocument, runToken: args.__wbResourceRunToken, popup: null,
+          until: Date.now() + 120000 };
+        const stop = capturePopupAfterClick(control, recordMenuSelector, popup => { launch.popup = popup; });
+        launch.cleanup = () => { stop(); clearTimeout(launch.timer); };
+        launch.timer = setTimeout(() => {
+          launch.cleanup();
+          if (scopeRegistry.menuLaunch === launch) scopeRegistry.menuLaunch = null;
+        }, 120000);
+        scopeRegistry.menuLaunch = launch;
+      };
+      const recordMenuLaunchProvenance = popup => {
+        const launch = scopeRegistry.menuLaunch;
+        return launch && !!launch.popup?.contains(popup) && launch.document === recordDocument
+          && launch.runToken === args.__wbResourceRunToken && launch.until > Date.now()
+          && launch.control.isConnected && !popup.contains(launch.control) && hasVisibleBox(popup) ? launch.control : null;
+      };
       // The agent passes its latest authorized record deletion (same task,
       // within 30 s, not yet confirmed). Only a dialog that opened after that
       // exact click was probed, and holds this one deletion control, links.
@@ -26246,7 +26308,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const popup = activation.closest(recordPopupSelector);
           let resolved = null;
           if (popup && !popup.matches(recordDialogSelector) && popup.matches(recordMenuSelector)) {
-            const launcher = recordMenuLauncher(popup);
+            const launcher = recordMenuLauncher(popup) || recordMenuLaunchProvenance(popup);
             resolved = launcher ? recordOwnerFor(launcher, popup) : null;
           } else {
             if (activation.closest(recordDialogSelector)) {
@@ -26472,6 +26534,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const popupTarget = /^(?:true|menu|listbox|tree|grid|dialog)$/i.test(control.getAttribute('aria-haspopup') || '')
             || control.hasAttribute('popovertarget');
           const actionResource = resourceProofFor(target);
+          // A record's own menu launcher, for a menu that opens unlinked.
+          if (popupTarget && !actionResource && recordOwnerFor(control)) rememberMenuLaunch(control);
           return { isSubmit: false, host, url, resolvedOrdinaryActivationTarget: true,
             resolvedPreparatoryTarget: popupTarget,
             frameDocumentIdentity: [url, performance.timeOrigin].join('|'), actionResource,

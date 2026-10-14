@@ -112,7 +112,15 @@ stops at lists, landmarks, editors, headings, other records, other deletion
 controls (including hover-only ones) and 2,000 characters, and keeps its
 visible text without the control's own caption, together with the text of up
 to twelve records of the same kind beside it, nearest first. A menu item
-borrows the record of its expanded aria-controls or popover launcher. A
+borrows the record of its expanded aria-controls or popover launcher, or, for a
+menu the page mounts elsewhere without that link (a portal), of the launcher
+whose own click the probe saw open it: the one new menu shown within three
+seconds of that click, counted even while it fades in, never a menu opened by
+a script, by another launcher, or alongside a second new one. A menu that opens
+inside a dialog already on screen counts, and so does a menu inside a new
+wrapper that opened with it. A Mastodon post's
+menu and its confirmation are captured the same way for the native post, and
+the action bar Mastodon draws beside a detailed status belongs to that status. A
 confirmation dialog borrows the record of the agent's own authorized click
 only when it opened after that click was checked, within 30 seconds, and holds
 that one deletion control. The probe receives nothing from the request.
@@ -130,8 +138,9 @@ without a card. Everything else, including no answer, goes to the user on
 WebBrain's card below. The same record is never deleted twice at the same step
 in a task, even after a reload, and a changed record, step or set of
 neighbours changes the checked action, so a decision cannot carry over to it.
-Toolbar, bulk and selection deletions, menus without a linked launcher and
-confirmation dialogs that cannot be linked get no record and stay blocked.
+Toolbar, bulk and selection deletions, menus with neither a linked launcher nor
+that click provenance, and confirmation dialogs that cannot be linked get no
+record and stay blocked.
 Completion after such a deletion uses the ordinary post-submit checks.
 
 When the decision is not a clear "delete this item", WebBrain asks the user on

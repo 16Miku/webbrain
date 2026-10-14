@@ -534,6 +534,90 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(await record('#t'), null);
         });
 
+        // Many apps mount a row's menu elsewhere in the page (a portal), a
+        // moment after the click, fading it in, with no aria-controls. The
+        // menu the probed launcher's own click opens still belongs to its row.
+        await t.test('a menu that opens unlinked borrows the record of the launcher whose click opened it', async () => {
+          const files = '<ul class="files"><li>Quarterly report.pdf <button id="more1" type="button" aria-haspopup="menu">⋮</button></li>'
+            + '<li>Budget.xlsx <button id="more2" type="button" aria-haspopup="menu">⋮</button></li></ul><div id="portal"></div>';
+          const install = () => page.evaluate(() => {
+            const style = document.createElement('style');
+            style.textContent = '.fade{animation:qa-fade 250ms}@keyframes qa-fade{from{opacity:0}to{opacity:1}}';
+            document.head.append(style);
+            window.qaMenus = 1;
+            window.qaMenu = () => {
+              const portal = document.getElementById('portal');
+              portal.innerHTML = '';
+              for (let index = 0; index < window.qaMenus; index += 1) {
+                const menu = document.createElement('div');
+                menu.setAttribute('role', 'menu'); menu.className = 'fade';
+                menu.innerHTML = `<button id="t${index || ''}" role="menuitem" type="button">Delete</button><button role="menuitem" type="button">Rename</button>`;
+                portal.append(menu);
+              }
+            };
+            for (const id of ['more1', 'more2']) document.getElementById(id).onclick = () => setTimeout(window.qaMenu, 30);
+          });
+          const openMenu = async (probed, clicked = probed) => {
+            await probe(probed); await page.click(clicked); await page.waitForTimeout(350);
+          };
+          await open(files); await install();
+          await openMenu('#more1');
+          let result = await record('#t');
+          assert.equal(result?.owner, 'li');
+          assert.equal(result.text, 'Quarterly report.pdf');
+          assert.equal(result.stage, 'record');
+          await open(files); await install();
+          await openMenu('#more2');
+          assert.equal((await record('#t'))?.text, 'Budget.xlsx');
+          // A menu opened by anything but the probed launcher's click, two new
+          // menus at once, or a menu that was already shown stays unbound.
+          await open(files); await install();
+          await probe('#more1'); await page.evaluate(() => window.qaMenu()); await page.waitForTimeout(350);
+          assert.equal(await record('#t'), null, 'scripted');
+          await open(files); await install();
+          await openMenu('#more1', '#more2');
+          assert.equal(await record('#t'), null, 'other launcher');
+          await open(files); await install();
+          await page.evaluate(() => { window.qaMenus = 2; });
+          await openMenu('#more1');
+          assert.equal(await record('#t'), null, 'two menus');
+          await open(files); await install();
+          await page.evaluate(() => { window.qaMenu(); for (const id of ['more1', 'more2']) document.getElementById(id).onclick = null; });
+          await openMenu('#more1');
+          assert.equal(await record('#t'), null, 'already shown');
+        });
+
+        // The new menu can open inside a dialog that was already open (a list
+        // of members in a modal), or arrive in a new wrapper that holds the
+        // menu itself (a popover with a menu inside). Either way it is the one
+        // new popup the launcher's click opened.
+        await t.test('an unlinked menu inside an open dialog or its own new wrapper borrows its launcher\'s record', async () => {
+          const rows = '<li>Ayşe Yılmaz <button id="more1" type="button" aria-haspopup="menu">⋮</button></li>'
+            + '<li>Mert Demir <button id="more2" type="button" aria-haspopup="menu">⋮</button></li>';
+          const inDialog = `<div role="dialog" aria-label="Üyeler"><ul class="members">${rows}</ul><div id="portal"></div></div>`;
+          const wrapped = `<ul class="members">${rows}</ul><div id="portal"></div>`;
+          const install = wrapper => page.evaluate(wrapper => {
+            window.qaMenu = () => {
+              const portal = document.getElementById('portal');
+              const menu = '<div role="menu"><button id="t" role="menuitem" type="button">Sil</button><button role="menuitem" type="button">Düzenle</button></div>';
+              portal.innerHTML = wrapper ? `<div popover="manual" id="pop">${menu}</div>` : menu;
+              document.getElementById('pop')?.showPopover?.();
+            };
+            for (const id of ['more1', 'more2']) document.getElementById(id).onclick = () => setTimeout(window.qaMenu, 30);
+          }, wrapper);
+          for (const [html, wrapper, label] of [[inDialog, false, 'inside an open dialog'], [wrapped, true, 'in a new popover wrapper']]) {
+            await open(html); await install(wrapper);
+            await probe('#more2'); await page.click('#more2'); await page.waitForTimeout(350);
+            const result = await record('#t');
+            assert.equal(result?.owner, 'li', label);
+            assert.equal(result.text, 'Mert Demir', label);
+            // A script opening the same menu, without the launcher's click, still binds nothing.
+            await open(html); await install(wrapper);
+            await probe('#more2'); await page.evaluate(() => window.qaMenu()); await page.waitForTimeout(350);
+            assert.equal(await record('#t'), null, `${label}: scripted`);
+          }
+        });
+
         await t.test('a menu borrows the record of its expanded launcher only', async () => {
           const files = '<ul class="files"><li>Quarterly report.pdf <button id="more1" type="button" aria-haspopup="menu" aria-controls="file-menu" aria-expanded="false">⋮</button></li>'
             + '<li>Budget.xlsx <button id="more2" type="button" aria-haspopup="menu" aria-controls="file-menu" aria-expanded="false">⋮</button></li></ul>'
