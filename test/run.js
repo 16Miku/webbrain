@@ -26996,6 +26996,8 @@ test('completion form classification ignores passive localized utility shells wi
           { tag: 'select', type: '', role: '', name: 'filter', value: '' },
         ],
         submits: [{ label: 'Filter' }],
+        // What a model read the caption as.
+        submitReadings: { Filter: 'other' },
       }),
       {
         label: '',
@@ -27015,6 +27017,7 @@ test('completion form classification ignores passive localized utility shells wi
           { tag: 'select', type: '', role: '', name: 'filter', value: 'recent' },
         ],
         submits: [{ label: 'Search' }],
+        submitReadings: { Search: 'other' },
       }),
       {
         label: '',
@@ -27026,6 +27029,24 @@ test('completion form classification ignores passive localized utility shells wi
       },
       `${label}: retained search query and filter values were treated as task drafts`,
     );
+    // A submit caption is read in any language; an unread one keeps the form
+    // relevant and asks the agent to read it, and one read as anything but
+    // showing or searching is task evidence.
+    const searchForm = { outsidePrimaryContent: false,
+      editable: [{ tag: 'input', type: 'search', role: '', name: 'q', value: '' }] };
+    assert.equal(classify({ ...searchForm, submits: [{ label: 'Ara' }], submitReadings: { Ara: 'other' } }).utility, true,
+      `${label}: a search form with a Turkish search button stayed a task form`);
+    assert.deepEqual(classify({ ...searchForm, submits: [{ label: 'Ara' }] }), {
+      label: '', relevant: true, utility: false, utilityReason: null, editableCount: 1, submitCount: 1,
+      searchCandidate: true, searchUtilityReason: 'semantic_search', submitLabels: ['Ara'],
+    }, `${label}: an unread search caption was decided without a reading`);
+    for (const reading of ['commit', 'next_step', 'form_edit']) {
+      const result = classify({ ...searchForm, submits: [{ label: 'Ekle' }], submitReadings: { Ekle: reading } });
+      assert.equal(result.relevant, true, `${label}: a ${reading} caption hid a task form`);
+      assert.equal(result.searchCandidate, undefined, `${label}: a ${reading} caption asked for another reading`);
+    }
+    assert.equal(classify({ ...searchForm, method: 'post', submits: [{ label: 'Ara' }] }).searchCandidate, undefined,
+      `${label}: structure that is task evidence asked for a caption reading`);
 
     for (const [caseName, override] of [
       ['primary-content form', { outsidePrimaryContent: false }],

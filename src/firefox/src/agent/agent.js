@@ -1341,6 +1341,29 @@ export class Agent extends LoopDetector {
       || (guard?.requiresSubmission == null && guard?.requiresStateChange === true) || !!guard?.siteWorkflow?.job;
   }
 
+  // A visible form made only of search fields, sent with GET and holding no
+  // task evidence, is a search form unless its submit controls commit
+  // something. What their captions mean is read in any language: when every
+  // one is read as showing, filtering or searching, the form stops counting
+  // as a task form still on screen. A caption that is empty or not read keeps
+  // it counted.
+  async _readCompletionFormSubmits(tabId, pageState = null) {
+    const forms = Array.isArray(pageState?.formDescriptors) ? pageState.formDescriptors : [];
+    const candidates = forms.filter(form => form?.searchCandidate === true && form.relevant === true
+      && Array.isArray(form.submitLabels) && form.submitLabels.length === Number(form.submitCount)
+      && form.submitLabels.every(label => typeof label === 'string' && label.trim()));
+    if (!candidates.length) return;
+    await this._readPageTexts(tabId, 'control_effect', candidates.flatMap(form => form.submitLabels), {},
+      { maxChars: 200, mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
+    for (const form of candidates) {
+      if (!form.submitLabels.every(label => this._controlEffectReading(String(label).replace(/\s+/g, ' ').trim()) === 'other')) continue;
+      form.relevant = false;
+      form.utility = true;
+      form.utilityReason = form.searchUtilityReason;
+      pageState.relevantFormCount = Math.max(0, Number(pageState.relevantFormCount || 0) - 1);
+    }
+  }
+
   async _readCompletionStatusTexts(tabId, pageState = null) {
     const submit = this._currentCompletionSubmitState(tabId);
     const live = Array.isArray(pageState?.liveRegionMessages)
@@ -36389,6 +36412,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // submit say, read in any language for the checks below. Success
           // messages are only ever the agent's own readings, never page data.
           const readingStartedAt = Date.now();
+          if (outcome === 'success' && pageState) await this._readCompletionFormSubmits(tabId, pageState);
           if (outcome === 'success' && pageState) await this._readCompletionStatusTexts(tabId, pageState);
           else if (pageState && typeof pageState === 'object') pageState.successMessages = [];
           const verificationStartedAt = Date.now();

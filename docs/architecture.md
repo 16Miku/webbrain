@@ -882,6 +882,10 @@ for a rejection after a caption read as a commit or a next step; a workflow
 click submits its form by structure or a caption read as a commit; and a rapid
 second text click is a duplicate only for a caption read as a commit, asked
 then if the first click left it unread. Words in a CSS selector are not read.
+At a successful done, a visible form made only of search fields, sent with
+GET and holding no other task evidence, counts as a task form still on screen
+unless every one of its submit captions is read as `other` (showing, filtering
+or searching); an empty or unread caption keeps it counted.
 
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is

@@ -87,6 +87,24 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._isWorkflowFormSubmitAction('click', { text: 'Submit' }, { success: true }), false);
   });
 
+  test(`${build}: a search form whose buttons a model read as searching stops counting at completion`, async () => {
+    const form = (labels, extra = {}) => ({ label: '', relevant: true, utility: false, utilityReason: null, editableCount: 1,
+      submitCount: labels.length, searchCandidate: true, searchUtilityReason: 'semantic_search', submitLabels: labels, ...extra });
+    const agent = new Agent({});
+    const asked = stubPageTextReadings(agent);
+    const state = { relevantFormCount: 5, formDescriptors: [form(['Ara']), form(['Suchen', 'Kaydet']), form(['']),
+      form(['Ara'], { submitCount: 2 }), { label: 'Profil', relevant: true, utility: false, submitCount: 1 }] };
+    // The fixtures' oracle reads "Ara" and "Suchen" as other, "Kaydet" as a commit.
+    agent._pageTextReading = (kind, text) => (kind === 'control_effect' && ['Ara', 'Suchen'].includes(text) ? 'other'
+      : kind === 'control_effect' && text === 'Kaydet' ? 'commit' : null);
+    await agent._readCompletionFormSubmits(1, state);
+    assert.deepEqual(state.formDescriptors.map(item => item.relevant), [false, true, true, true, true]);
+    assert.equal(state.formDescriptors[0].utilityReason, 'semantic_search');
+    assert.equal(state.relevantFormCount, 4);
+    assert.deepEqual([...new Set(asked.map(item => item.text))].sort(), ['Ara', 'Kaydet', 'Suchen'],
+      'Only complete, non-empty captions of search candidates are read');
+  });
+
   test(`${build}: a caption is read once, never when structure decides, and a failed read is no answer`, async () => {
     const agent = new Agent({});
     const asked = stubPageTextReadings(agent);
