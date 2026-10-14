@@ -887,7 +887,12 @@ review threads resolved) is shown by a page text read as reached with none
 read as failed or pending, among its live messages, dialog titles, prominent
 headings and status regions, the statuses observed after the submit, and the
 lines of a page short enough to be a confirmation page. Those are read only
-once the rest of the workflow's evidence is in place.
+once the rest of the workflow's evidence is in place. Beside them, at the same
+time, an update-metadata or publication job reads which requested detail each
+field saved after the dispatch holds (`metadata_field`, `publication_field`),
+so the saved values can be compared with the requested ones in any language;
+a write in such a job reads its own field's labels and names before it is
+recorded.
 
 What a clicked control does is read from its captions the same way
 (`control_effect`: it publishes, commits, deletes one saved item, deletes

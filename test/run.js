@@ -95390,6 +95390,14 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
     const multiAgent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
     multiAgent.useSiteAdapters = true;
     multiAgent._persist = () => { };
+    // A model reads the lines naming an uploaded file (workflow_state,
+    // file_attached) before the observation is recorded, as the agent loop
+    // does; the fixture oracle stands in.
+    stubPageTextReadings(multiAgent);
+    const observeAssets = async (tab, result) => {
+      await multiAgent._readWorkflowUploadLines(tab, 'get_accessibility_tree', result);
+      return multiAgent._recordCompletionToolResult(tab, 'get_accessibility_tree', { filter: 'all' }, result);
+    };
     const multiTabId = 8944 + index;
     const multiTaskText = 'Upload dist/alpha.zip and dist/beta.zip to this release and save it.';
     multiAgent.conversations.set(multiTabId, [
@@ -95464,14 +95472,14 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
       },
     );
     recordAssetUpload('alpha.zip');
-    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+    await observeAssets(multiTabId, {
       success: true,
       pageUrl: releaseUrl,
       pageContent: 'link "prefix-alpha.zip" [ref_wrong_asset]',
     });
     assert.equal(Object.keys(multiGuard.workflowReleaseAssetEvidence || {}).length, 0,
       `${AgentClass.name}: a release filename substring proved an asset upload`);
-    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+    await observeAssets(multiTabId, {
       success: true,
       pageUrl: releaseUrl,
       pageContent: 'link "alpha.zip" [ref_alpha_asset]',
@@ -95485,7 +95493,7 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
       multiSession.sessionId,
     ).ok, false, `${AgentClass.name}: one uploaded release asset proved two requested rows`);
     recordAssetUpload('beta.zip');
-    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+    await observeAssets(multiTabId, {
       success: true,
       pageUrl: releaseUrl,
       pageContent: [
@@ -96608,8 +96616,9 @@ test('a Bluesky DID and handle name one account only on the card that proves it'
 test('publish-post alt text is a distinct metadata requirement per attachment', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
-    assert.equal(agent._workflowMetadataFieldKey('alt text'), 'alt_text',
-      AgentClass.name + ': alt text did not normalize to its canonical field');
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's field labels as holding
+    assert.equal(agent._workflowFieldKey('publication_field', 'alt text'), 'alt_text',
+      AgentClass.name + ': alt text did not read as its canonical field');
     assert.match(
       agent._progressIntentClassifierMessages('Post chart.png on X with alt text "Sales growth"', {
         workflow: { job: 'publish-post' },
@@ -96845,11 +96854,11 @@ test('YouTube metadata success requires exact app-classified post-save readback'
       { field: 'title', value: 'Launch Video' },
       { field: 'visibility', value: 'Public' },
     ], `${AgentClass.name}: trusted task metadata requirements were not retained`);
-    assert.equal(agent._workflowMetadataFieldKey('Visibilité'), 'visibility',
+    assert.equal(agent._workflowFieldKey('metadata_field', 'Visibilité'), 'visibility',
       `${AgentClass.name}: localized French visibility label was not canonicalized`);
-    assert.equal(agent._workflowMetadataFieldKey('タイトル（必須）'), 'title',
+    assert.equal(agent._workflowFieldKey('metadata_field', 'タイトル（必須）'), 'title',
       `${AgentClass.name}: localized Japanese title label was not canonicalized`);
-    assert.equal(agent._workflowMetadataFieldKey('説明'), 'description',
+    assert.equal(agent._workflowFieldKey('metadata_field', '説明'), 'description',
       `${AgentClass.name}: localized Japanese description label was not canonicalized`);
 
     agent._beginCompletionInvariant(tabId);
@@ -97076,16 +97085,24 @@ test('compact workflow execution policy is brief and compact progress_update sch
 test('workflow metadata matching accepts AX truncation and keeps valid fields', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
-    assert.equal(agent._workflowMetadataFieldKey('playlists'), 'playlist',
-      `${AgentClass.name}: playlist plural alias was not canonicalized`);
-    assert.equal(agent._workflowMetadataFieldKey('listes de lecture'), 'playlist');
-    assert.equal(agent._workflowMetadataFieldKey('tag'), 'tag',
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's field labels as holding
+    assert.equal(agent._workflowFieldKey('metadata_field', 'playlists'), 'playlist',
+      `${AgentClass.name}: a plural playlist label did not read as its field`);
+    assert.equal(agent._workflowFieldKey('metadata_field', 'listes de lecture'), 'playlist');
+    // A release's version tag and a video's tags are asked about by different
+    // questions, so one never stands for the other.
+    assert.equal(agent._workflowFieldKey('publication_field', 'tag'), 'tag',
       `${AgentClass.name}: a release tag was folded into YouTube tags`);
-    assert.equal(agent._workflowMetadataFieldKey('Choose a tag'), 'tag');
-    assert.equal(agent._workflowMetadataFieldKey('tags'), 'tags',
+    assert.equal(agent._workflowFieldKey('publication_field', 'Choose a tag'), 'tag');
+    assert.equal(agent._workflowFieldKey('metadata_field', 'tags'), 'tags',
       `${AgentClass.name}: plural tags lost its YouTube field`);
-    assert.equal(agent._workflowMetadataFieldKey('release notes'), 'notes');
-    assert.equal(agent._workflowMetadataFieldKey('post body'), 'body');
+    assert.equal(agent._workflowFieldKey('metadata_field', 'tag'), '',
+      `${AgentClass.name}: a release tag label held a video detail`);
+    assert.equal(agent._workflowFieldKey('publication_field', 'release notes'), 'notes');
+    assert.equal(agent._workflowFieldKey('publication_field', 'post body'), 'body');
+    // A label read as none of them, or not read at all, holds no field.
+    assert.equal(agent._workflowFieldKey('metadata_field', 'Search'), '');
+    assert.equal(agent._workflowFieldKey('', 'Title'), '');
     // The intent model names fields with the canonical names its prompt
     // lists; another name (a plural, a translation) names no field.
     assert.deepEqual(agent._normalizeWorkflowMetadataRequirements([
@@ -97129,6 +97146,7 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
         observationSequence: 2,
       }]),
       0,
+      'metadata_field',
     ), true, `${AgentClass.name}: AX-truncated description did not verify`);
     const sameLengthDifferentTail = `${longDescription.slice(0, 60)}X${longDescription.slice(61)}`;
     assert.equal(sameLengthDifferentTail.length, longDescription.length);
@@ -97142,11 +97160,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
         observationSequence: 2,
       }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: a same-length different tail verified from the 60-char prefix`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'description', value: longDescription }],
       evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: truncated prefix without value_len/value_fp verified`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'description', value: `B${longDescription.slice(1)}` }],
@@ -97158,6 +97178,7 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
         observationSequence: 2,
       }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: a different long string sharing a short prefix verified`);
     assert.equal(agent._workflowAxValueMatchesExpected(`${'A'.repeat(10)}...`, 'A'.repeat(80)), false,
       `${AgentClass.name}: a 10-char truncated prefix accepted a longer string`);
@@ -97181,11 +97202,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       [{ field: 'title', value: quotedTitle }],
       evidence([{ label: 'Title', value: quotedItems[0].value, observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), true, `${AgentClass.name}: a title with quotes and backslashes did not verify`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'title', value: 'Launch Video' }],
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), true, `${AgentClass.name}: value equal to the accessible name did not verify`);
     const incompleteReqs = [{ field: 'title', value: 'Launch Video' }];
     incompleteReqs.incomplete = true;
@@ -97193,6 +97216,7 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       incompleteReqs,
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: discarded classifier fields still allowed saved-state verification`);
   }
 });

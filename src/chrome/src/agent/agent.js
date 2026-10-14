@@ -3076,9 +3076,61 @@ export class Agent extends LoopDetector {
     const plan = ready
       ? this._workflowTerminalTextPlan(verificationKind, guard.siteWorkflow, pageState, submissionEvidence, messageProbe)
       : null;
-    if (plan?.texts.length) {
-      await this._readPageTexts(tabId, 'workflow_state', plan.texts, { state: WORKFLOW_STATES[plan.state] },
-        { mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
+    // The two readings are independent; they run side by side so the
+    // conclusion does not wait for one after the other.
+    await Promise.all([
+      plan?.texts.length
+        ? this._readPageTexts(tabId, 'workflow_state', plan.texts, { state: WORKFLOW_STATES[plan.state] },
+          { mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS })
+        : null,
+      this._readWorkflowFieldLabels(tabId, guard, pageState, submissionEvidence),
+    ]);
+  }
+
+  // Which detail each field of the saved item holds, read before the
+  // synchronous readback that compares the saved values with the requested
+  // ones (_workflowMetadataRequirementsMatchInventory), plus the page lines
+  // that may show a requested visibility (_workflowPublishedPayloadValueObserved).
+  // Only fields read after the dispatch count there, so only their labels are
+  // read; the ones holding a requested value go first.
+  async _readWorkflowFieldLabels(tabId, guard, pageState, submissionEvidence) {
+    const kind = this._workflowFieldQuestion(guard?.siteWorkflow);
+    const submit = submissionEvidence?.submit;
+    const binding = submit?.workflowBinding;
+    if (!kind || submit?.dispatched !== true || !binding) return;
+    const requirements = [...(Array.isArray(binding.metadataRequirements) ? binding.metadataRequirements : []),
+      ...(Array.isArray(binding.authoredMetadataRequirements) ? binding.authoredMetadataRequirements : [])]
+      .filter(requirement => requirement?.field && typeof requirement.value === 'string');
+    if (!requirements.length) return;
+    const submitSequence = Number(submit.actionSequence || 0);
+    const fields = (Array.isArray(guard.workflowInventoryEvidence?.items) ? guard.workflowInventoryEvidence.items : [])
+      .filter(item => typeof item?.label === 'string' && item.label.trim()
+        && Object.prototype.hasOwnProperty.call(item, 'value')
+        && Number(item.observationSequence || 0) > submitSequence);
+    const holdsRequestedValue = item => requirements.some(requirement => this._workflowAxValueMatchesExpected(
+      this._workflowMetadataValue(item.value), requirement.value, item));
+    const labels = [...fields.filter(holdsRequestedValue), ...fields.filter(item => !holdsRequestedValue(item))]
+      .map(item => item.label);
+    const lines = [];
+    if (kind === 'publication_field') {
+      for (const requirement of requirements.filter(entry => entry.field === 'visibility')) {
+        const want = this._workflowMetadataValue(requirement.value);
+        if (!want) continue;
+        const escaped = want.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const token = new RegExp(`(?:^|[^\\p{L}\\p{N}_.-])${escaped}(?:$|[^\\p{L}\\p{N}_.-])`, 'u');
+        for (const rawLine of String(pageState?.workflowPageText || '').split(/\r?\n/)) {
+          const line = this._workflowMetadataValue(rawLine);
+          if (line && line !== want && token.test(line)) lines.push(line);
+        }
+      }
+    }
+    const texts = [...new Set([...lines.slice(0, 16), ...labels])].slice(0, SEMANTIC_BATCH_LIMITS.main.maxItems);
+    if (!texts.length) return;
+    try {
+      await this._readPageTexts(tabId, kind, texts, {},
+        { maxChars: 300, mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
     }
   }
 
@@ -3130,57 +3182,21 @@ export class Agent extends LoopDetector {
     return WORKFLOW_FIELD_KEYS.has(key) ? key : '';
   }
 
-  _workflowMetadataFieldKey(value) {
-    let text = String(value || '');
-    try { text = text.normalize('NFKC'); } catch {}
-    text = text.toLowerCase().replace(/[_-]+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ')
-      .replace(/\s+/g, ' ').trim();
-    const normalizeAlias = (alias) => {
-      let normalized = String(alias || '');
-      try { normalized = normalized.normalize('NFKC'); } catch {}
-      return normalized.toLowerCase().replace(/[_-]+/g, ' ')
-        .replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
-    };
-    const fields = [
-      ['alt_text', ['alt text', 'alternative text', 'image alt text', 'attachment alt text', 'media alt text']],
-      ['paid_promotion', ['paid promotion', 'promotion payée', 'contenido promocional pagado', 'promoção paga', 'bezahlte werbung', 'promozione a pagamento', 'ücretli tanıtım', '有料プロモーション', '유료 프로모션', '付费宣传', '付費宣傳']],
-      ['recording_date', ['recording date', 'date recorded', "date d’enregistrement", 'fecha de grabación', 'data de gravação', 'aufnahmedatum', 'data di registrazione', 'kayıt tarihi', '録画日', '撮影日', '촬영 날짜', '录制日期', '錄製日期']],
-      ['recording_location', ['recording location', 'video location', "lieu d’enregistrement", 'ubicación de grabación', 'local de gravação', 'aufnahmeort', 'luogo di registrazione', 'kayıt konumu', '撮影場所', '촬영 위치', '录制地点', '錄製地點']],
-      ['comments', ['comment', 'comments', 'commentaire', 'commentaires', 'comentario', 'comentarios', 'kommentar', 'kommentare', 'commento', 'commenti', 'yorum', 'yorumlar', 'コメント', '댓글', '评论', '評論', 'комментарии']],
-      ['embedding', ['embedding', 'embed', 'intégration', 'incorporation', 'einbetten', 'incorporamento', 'yerleştirme', '埋め込み', '퍼가기', '嵌入', 'встраивание']],
-      ['description', ['description', 'descripción', 'descrição', 'beschreibung', 'descrizione', 'açıklama', '説明', '설명', '描述', 'описание']],
-      ['visibility', ['visibility', 'privacy', 'visibilité', 'confidentialité', 'visibilidad', 'privacidad', 'visibilidade', 'privacidade', 'sichtbarkeit', 'visibilità', 'görünürlük', '公開設定', '公開範囲', '可視性', '공개 상태', '공개 설정', '可见性', '可見度', 'видимость']],
-      ['audience', ['audience', 'made for kids', 'audiencia', 'destinado a niños', 'público', 'conteúdo para crianças', 'zielgruppe', 'für kinder', 'pubblico', 'destinato ai bambini', 'kitle', 'çocuklara özel', '視聴者', '子ども向け', '시청자', '아동용', '受众', '面向儿童', '觀眾', '兒童專用', 'аудитория']],
-      ['playlist', ['playlist', 'playlists', 'liste de lecture', 'listes de lecture', 'lista de reproducción', 'listas de reproducción', 'lista de reprodução', 'listas de reprodução', 'wiedergabeliste', 'wiedergabelisten', 'elenco di riproduzione', 'elenchi di riproduzione', 'oynatma listesi', 'oynatma listeleri', '再生リスト', '재생목록', '播放列表', 'плейлист', 'плейлисты']],
-      ['language', ['language', 'langue', 'idioma', 'sprache', 'lingua', 'dil', '言語', '언어', '语言', '語言', 'язык']],
-      ['category', ['category', 'catégorie', 'categoría', 'kategorie', 'categoria', 'kategori', 'カテゴリ', '카테고리', '类别', '類別', 'категория']],
-      ['license', ['license', 'licence', 'licencia', 'lizenz', 'licenza', 'lisans', 'ライセンス', '라이선스', '许可', '授權', 'лицензия']],
-      ['tag', ['tag', 'choose a tag', 'choose tag', 'git tag', 'release tag']],
-      ['tags', ['tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'タグ', '태그', '标签', '標籤', 'теги']],
-      ['notes', ['notes', 'release notes', 'release note', 'release body', 'describe this release', '发行说明', '發行說明', 'リリースノート', '릴리스 노트']],
-      ['train', ['train', 'train number', 'service', 'tren', 'tren numarası', '车次', '列車', '열차']],
-      ['travel_date', ['travel date', 'departure date', 'journey date', 'date of travel', 'seyahat tarihi', '出发日期', '乘车日期', '出発日', '출발일']],
-      ['departure', ['departure', 'from', 'origin', 'departure station', 'kalkış', '出发站', '出発駅', '출발역']],
-      ['arrival', ['arrival', 'to', 'destination', 'arrival station', 'varış', '到达站', '到着駅', '도착역']],
-      ['passenger', ['passenger', 'traveller', 'traveler', 'yolcu', '乘客', '乗客', '승객']],
-      ['seat_class', ['seat class', 'seat', 'class', 'berth', 'koltuk', '座位', '席', '좌석']],
-      ['account', ['account', 'profile', 'handle', 'username', 'publishing account', 'posting account']],
-      ['attachment', ['attachment', 'attachments', 'attach', 'attached', 'media', 'medias', 'image', 'images', 'photo', 'photos', 'picture', 'pictures', 'pic', 'pics', 'video', 'videos', 'clip', 'clips', 'file', 'files', 'pièce jointe', 'pièces jointes', 'médias', 'adjunto', 'adjuntos', 'medios', 'imagen', 'imágenes', 'foto', 'fotos', 'anexo', 'anexos', 'mídia', 'mídias', 'imagem', 'imagens', 'anhang', 'anhänge', 'medien', 'bild', 'bilder', 'allegato', 'allegati', 'immagine', 'immagini', 'ek', 'ekler', 'medya', 'görsel', 'resim', '添付', '添付ファイル', '画像', '写真', '動画', 'メディア', '첨부', '첨부파일', '이미지', '사진', '동영상', '미디어', '附件', '图片', '圖片', '照片', '相片', '视频', '視頻', '影片', '媒体', '媒體', 'вложение', 'вложения', 'медиа', 'изображение', 'изображения', 'фото', 'видео']],
-      ['subject', ['subject', 'subject line', 'email subject', 'sujet', 'objet', 'asunto', 'assunto', 'betreff', 'oggetto', 'konu', '件名', '主题', '主旨']],
-      ['body', ['body', 'post', 'post body', 'post text', 'composer']],
-      ['path', ['path', 'file path', 'repository path']],
-      ['branch', ['branch', 'git branch']],
-      ['commit_message', ['commit message', 'commit summary', 'commit title']],
-      ['title', ['title', 'titre', 'título', 'titulo', 'titel', 'titolo', 'başlık', 'タイトル', '제목', '标题', '標題', 'название']],
-    ];
-    const paddedText = ` ${text} `;
-    return fields.find(([, aliases]) => aliases.some((alias) => {
-      const normalizedAlias = normalizeAlias(alias);
-      if (!normalizedAlias) return false;
-      return text === normalizedAlias
-        || paddedText.includes(` ${normalizedAlias} `)
-        || (/[^\u0000-\u024f]/u.test(normalizedAlias) && text.includes(normalizedAlias));
-    }))?.[0] || '';
+  // Which requested detail a field or line of the page holds, as a model read
+  // its label or name in any language: a canonical field name, or '' when it
+  // holds none of them or nobody has read it. `kind` is the question the job
+  // asks (metadata_field or publication_field); see _workflowFieldQuestion.
+  _workflowFieldKey(kind, value) {
+    const choice = kind ? this._pageTextReading(kind, value) : null;
+    return choice && choice !== 'other' && WORKFLOW_FIELD_KEYS.has(choice) ? choice : '';
+  }
+
+  // The question that reads a job's field labels: the details of an item being
+  // edited, or the parts of a publication. Other jobs read none.
+  _workflowFieldQuestion(siteWorkflow) {
+    if (siteWorkflow?.job?.id === 'update-metadata') return 'metadata_field';
+    if (this._workflowJobBindsPublicationPayload(siteWorkflow?.job)) return 'publication_field';
+    return '';
   }
 
   _workflowMetadataValue(value, maxLength = 10000) {
@@ -3264,7 +3280,9 @@ export class Agent extends LoopDetector {
     return this._normalizeWorkflowMetadataRequirementsDetails(values).items;
   }
 
-  _workflowMetadataRequirementsMatchInventory(requirements, evidence, submitSequence = 0) {
+  // `fieldQuestion` reads which detail each field holds (see
+  // _workflowFieldQuestion); without one no field is read and nothing matches.
+  _workflowMetadataRequirementsMatchInventory(requirements, evidence, submitSequence = 0, fieldQuestion = '') {
     if (!Array.isArray(requirements) || requirements.length < 1
         || requirements.incomplete === true
         || evidence?.complete !== true
@@ -3276,7 +3294,9 @@ export class Agent extends LoopDetector {
         || !Array.isArray(evidence.items)) return false;
     const observed = new Map();
     for (const item of evidence.items) {
-      const field = this._workflowMetadataFieldKey(item?.label);
+      // A label nobody could read holds no detail: it cannot prove a saved
+      // value, and it is not counted as a second field for one.
+      const field = this._workflowFieldKey(fieldQuestion, item?.label);
       if (!field
           || Number(item?.observationSequence || 0) <= Number(submitSequence || 0)
           || !Object.prototype.hasOwnProperty.call(item || {}, 'value')) continue;
@@ -3322,7 +3342,7 @@ export class Agent extends LoopDetector {
       const rawLines = String(sources.pageText || '').split(/\r?\n/).map(l => this._workflowMetadataValue(l)).filter(Boolean);
       for (const line of rawLines) {
         if (line === want) return true;
-        const lineField = this._workflowMetadataFieldKey(line);
+        const lineField = this._workflowFieldKey('publication_field', line);
         if (lineField === 'visibility' && token.test(line)) return true;
       }
       return false;
@@ -4286,6 +4306,7 @@ export class Agent extends LoopDetector {
       requirements,
       state?.workflowInventoryEvidence,
       submit?.actionSequence,
+      this._workflowFieldQuestion(state?.siteWorkflow),
     )) return true;
     return requirements.every(requirement => this._workflowPublishedPayloadValueObserved(requirement, {
       pageText: pageState?.workflowPageText,
@@ -4651,6 +4672,7 @@ export class Agent extends LoopDetector {
           [...(binding.metadataRequirements || []), ...(binding.authoredMetadataRequirements || [])],
           state.workflowInventoryEvidence,
           submit?.actionSequence,
+          this._workflowFieldQuestion(siteWorkflow),
         );
       source = 'saved_state_with_exact_metadata_readback';
     } else if (verificationKind === 'resolved_state') {
@@ -14304,8 +14326,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
       }
       const completionStateBeforeTool = this.completionInvariants.get(tabId) || null;
-      // An upload's evidence reads the lines that name its file first.
+      // An upload's evidence reads the lines that name its file first, and an
+      // edit of an item's details reads the labels of the field it wrote.
       await this._readWorkflowUploadLines(tabId, fnName, toolResult);
+      await this._readWorkflowAuthoredFieldLabels(tabId, fnName, fnArgs, toolResult);
       const completionStateAfterTool = this._recordCompletionToolResult(
         tabId,
         fnName,
@@ -19383,7 +19407,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (!meta || typeof meta !== 'object') return null;
     const keys = new Set([meta.name, meta.id, meta.ariaLabel, meta.labelText, meta.placeholder]
-      .map(value => this._workflowMetadataFieldKey(value)).filter(Boolean));
+      .map(value => this._workflowFieldKey('metadata_field', value)).filter(Boolean));
     if (keys.size !== 1) return null;
     const field = [...keys][0];
     const prior = guard.workflowAuthoredMetadataEvidence;
@@ -19992,6 +20016,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // synchronous evidence checks: for an upload itself, the lines of the last
   // observation, its baseline; for an observation, its own lines. The
   // decision model first, the active model within four seconds.
+  // Which detail of the item a write in an update-metadata job changed, read
+  // from the field's labels and names before the write is recorded (see
+  // _rememberWorkflowAuthoredMetadataEvidence). A checkbox set by reference
+  // has no field metadata; its inventory row's names stand in for it.
+  async _readWorkflowAuthoredFieldLabels(tabId, name, args, result) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || guard.siteWorkflow?.job?.id !== 'update-metadata'
+        || !['set_field', 'type_ax', 'type_text', 'set_checked'].includes(name)
+        || !this._isSuccessfulExecutionEvidence(result)) return;
+    const meta = result?.fieldMeta && typeof result.fieldMeta === 'object' ? result.fieldMeta : {};
+    const rows = name === 'set_checked' && args?.ref_id
+      ? (guard.workflowInventoryEvidence?.items || []).filter(item => item?.ref_id === args.ref_id)
+      : [];
+    const texts = [meta.name, meta.id, meta.ariaLabel, meta.labelText, meta.placeholder,
+      ...rows.flatMap(item => [item.fieldName, item.domId, item.label])]
+      .filter(value => typeof value === 'string');
+    if (!texts.length) return;
+    try {
+      await this._readPageTexts(tabId, 'metadata_field', texts, {},
+        { maxChars: 300, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
+  }
+
   async _readWorkflowUploadLines(tabId, name, result) {
     const guard = this._planExecutionGuards.get(tabId);
     if (!guard?.enabled || !result || typeof result !== 'object' || result.success === false) return;

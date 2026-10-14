@@ -33,6 +33,8 @@ const PAGE_TEXT_ORACLES = {
   form_field_match: item => fixtureFormFieldMatchReading(item?.named, item?.text),
   follow_state: item => fixtureFollowStateReading(item?.text),
   progress_action: item => fixtureProgressActionReading(item?.text, item?.action),
+  metadata_field: item => fixtureWorkflowFieldReading('metadata_field', item?.text),
+  publication_field: item => fixtureWorkflowFieldReading('publication_field', item?.text),
 };
 
 const words = value => String(value || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
@@ -181,7 +183,7 @@ export function fixtureStatusReading(text) {
   const value = String(text || '');
   if (/\b(?:not|never|failed|failure|error|unable|cannot|invalid|rejected|denied|unsuccessful|required)\b/i.test(value)) return 'error';
   if (/\b(?:will be|is being|pending|loading|sending|saving)\b/i.test(value)) return 'other';
-  if (/\b(?:success(?:ful|fully)?|saved|submitted|created|sent|published|completed|updated|uploaded|added|approved|resolved|received|confirmed|recorded|accepted|thank you|done)\b/i.test(value)) return 'success';
+  if (/\b(?:success(?:ful|fully)?|saved|submitted|created|sent|published|completed|updated|uploaded|added|approved|resolved|received|confirmed|recorded|accepted|thank you|done|zapisano)\b/i.test(value)) return 'success';
   return 'other';
 }
 
@@ -189,7 +191,7 @@ const FIXTURE_WORKFLOW_STATES = [
   [/draft/i, /\bdraft\s+(?:auto[- ]?)?saved\b|\bsaved\s+draft\b|草稿已保存|下書きを保存しました|taslak kaydedildi/i],
   [/message was sent/i, /\bmessage\s+sent\b|消息发送成功|消息已发送|发送成功|ileti gönderildi/i],
   [/submitted and received/i, /\bresponse\s+(?:was\s+)?submitted\b|\bapplication\s+(?:was\s+)?(?:submitted|received)\b|\bthank you for (?:submitting|applying)\b|提交成功|başvurunuz alındı/i],
-  [/changes were saved/i, /\bchanges?\s+saved\b|\bsaved successfully\b|保存成功|başarıyla kaydedildi/i],
+  [/changes were saved/i, /\bchanges?\s+saved\b|\bsaved successfully\b|保存成功|başarıyla kaydedildi|zapisano (?:wszystkie )?zmiany/i],
   [/resolved/i, /\b(?:conversation|thread|review)\s+(?:was\s+)?(?:marked\s+as\s+)?resolved\b|已解决|çözüldü/i],
   [/uploaded or attached/i, /\b(?:uploaded|attached|upload (?:complete|successful))\b|yüklendi|eklendi|hochgeladen|przesłano|已上传|上傳完成|アップロード済み|업로드됨/iu],
 ];
@@ -230,7 +232,7 @@ export function fixtureControlEffectReading(text) {
   if (has('post|post all|publish|reply|tweet|yayınla|yanıtla|paylaş|publier|publicar|veröffentlichen')) return 'publish';
   if (/^add to (?:cart|bag|basket)\b/i.test(value)) return 'commit';
   if (new RegExp(`^(?:add|choose|select|attach|insert|format|bold|italic|ekle|seç)${END}`, 'iu').test(value) || /emoji|gif|sticker/i.test(value)) return 'form_edit';
-  if (has('save|submit|send|confirm|commit|resolve|pay|purchase|buy|checkout|place order|confirm order|complete order|create|update|apply|finish|done|sign up|register|gönder|kaydet|onayla|öde|enviar|guardar|envoyer|enregistrer|senden|speichern|verzenden|invia|отправить|إرسال|ارسال|保存|提交') || hasCjk) return 'commit';
+  if (has('save|submit|send|confirm|commit|resolve|pay|purchase|buy|checkout|place order|confirm order|complete order|create|update|apply|finish|done|sign up|register|gönder|kaydet|onayla|öde|enviar|guardar|envoyer|enregistrer|senden|speichern|verzenden|invia|zapisz|отправить|إرسال|ارسال|保存|提交') || hasCjk) return 'commit';
   if (/^(?:search|filter|go|ara|suchen|buscar|rechercher|cerca|zoeken|filtrele|検索|搜索)$/iu.test(value)) return 'view';
   return 'unclear';
 }
@@ -312,6 +314,52 @@ export function fixtureMessageStatusReading(text) {
   if (/^(?:sent|gönderildi)$/iu.test(value)) return 'sent';
   if (/^(?:pending|sending|failed|bekliyor)$/iu.test(value)) return 'pending';
   return 'unclear';
+}
+
+// How a model reads which detail of an edited item (metadata_field) or which
+// part of a publication (publication_field) a field label or page line holds,
+// for the fixtures' own labels: the label equals a known name, contains it as
+// whole words, or (for a name outside Latin scripts) contains it at all. The
+// first field in this order wins. The product never matches these words.
+const FIXTURE_WORKFLOW_FIELD_NAMES = [
+  ['alt_text', ['alt text', 'alternative text', 'image alt text', 'attachment alt text', 'media alt text']],
+  ['paid_promotion', ['paid promotion', 'promotion payée', 'contenido promocional pagado', 'promoção paga', 'bezahlte werbung', 'promozione a pagamento', 'ücretli tanıtım', '有料プロモーション', '유료 프로모션', '付费宣传', '付費宣傳']],
+  ['recording_date', ['recording date', 'date recorded', "date d’enregistrement", 'fecha de grabación', 'data de gravação', 'aufnahmedatum', 'data di registrazione', 'kayıt tarihi', '録画日', '撮影日', '촬영 날짜', '录制日期', '錄製日期']],
+  ['recording_location', ['recording location', 'video location', "lieu d’enregistrement", 'ubicación de grabación', 'local de gravação', 'aufnahmeort', 'luogo di registrazione', 'kayıt konumu', '撮影場所', '촬영 위치', '录制地点', '錄製地點']],
+  ['comments', ['comment', 'comments', 'commentaire', 'commentaires', 'comentario', 'comentarios', 'kommentar', 'kommentare', 'commento', 'commenti', 'yorum', 'yorumlar', 'komentarze', 'コメント', '댓글', '评论', '評論', 'комментарии']],
+  ['embedding', ['embedding', 'embed', 'intégration', 'incorporation', 'einbetten', 'incorporamento', 'yerleştirme', 'umieszczanie', '埋め込み', '퍼가기', '嵌入', 'встраивание']],
+  ['description', ['description', 'descripción', 'descrição', 'beschreibung', 'descrizione', 'açıklama', 'opis', '説明', '설명', '描述', 'описание']],
+  ['visibility', ['visibility', 'privacy', 'visibilité', 'confidentialité', 'visibilidad', 'privacidad', 'visibilidade', 'privacidade', 'sichtbarkeit', 'visibilità', 'görünürlük', 'widoczność', '公開設定', '公開範囲', '可視性', '공개 상태', '공개 설정', '可见性', '可見度', 'видимость']],
+  ['audience', ['audience', 'made for kids', 'audiencia', 'destinado a niños', 'público', 'conteúdo para crianças', 'zielgruppe', 'für kinder', 'pubblico', 'destinato ai bambini', 'kitle', 'çocuklara özel', 'odbiorcy', '視聴者', '子ども向け', '시청자', '아동용', '受众', '面向儿童', '觀眾', '兒童專用', 'аудитория']],
+  ['playlist', ['playlist', 'playlists', 'liste de lecture', 'listes de lecture', 'lista de reproducción', 'listas de reproducción', 'lista de reprodução', 'listas de reprodução', 'wiedergabeliste', 'wiedergabelisten', 'elenco di riproduzione', 'elenchi di riproduzione', 'oynatma listesi', 'oynatma listeleri', 'playlisty', '再生リスト', '재생목록', '播放列表', 'плейлист', 'плейлисты']],
+  ['language', ['language', 'langue', 'idioma', 'sprache', 'lingua', 'dil', 'język', '言語', '언어', '语言', '語言', 'язык']],
+  ['category', ['category', 'catégorie', 'categoría', 'kategorie', 'categoria', 'kategori', 'kategoria', 'カテゴリ', '카테고리', '类别', '類別', 'категория']],
+  ['license', ['license', 'licence', 'licencia', 'lizenz', 'licenza', 'lisans', 'licencja', 'ライセンス', '라이선스', '许可', '授權', 'лицензия']],
+  ['tag', ['tag', 'choose a tag', 'choose tag', 'git tag', 'release tag']],
+  ['tags', ['tags', 'étiquette', 'étiquettes', 'mot clé', 'mots clés', 'etiqueta', 'etiquetas', 'schlagwort', 'schlagwörter', 'etichette', 'etiket', 'etiketler', 'tagi', 'タグ', '태그', '标签', '標籤', 'теги']],
+  ['notes', ['notes', 'release notes', 'release note', 'release body', 'describe this release', '发行说明', '發行說明', 'リリースノート', '릴리스 노트']],
+  ['account', ['account', 'profile', 'handle', 'username', 'publishing account', 'posting account']],
+  ['attachment', ['attachment', 'attachments', 'attach', 'attached', 'media', 'medias', 'image', 'images', 'photo', 'photos', 'picture', 'pictures', 'pic', 'pics', 'video', 'videos', 'clip', 'clips', 'file', 'files', 'pièce jointe', 'pièces jointes', 'médias', 'adjunto', 'adjuntos', 'medios', 'imagen', 'imágenes', 'foto', 'fotos', 'anexo', 'anexos', 'mídia', 'mídias', 'imagem', 'imagens', 'anhang', 'anhänge', 'medien', 'bild', 'bilder', 'allegato', 'allegati', 'immagine', 'immagini', 'ek', 'ekler', 'medya', 'görsel', 'resim', '添付', '添付ファイル', '画像', '写真', '動画', 'メディア', '첨부', '첨부파일', '이미지', '사진', '동영상', '미디어', '附件', '图片', '圖片', '照片', '相片', '视频', '視頻', '影片', '媒体', '媒體', 'вложение', 'вложения', 'медиа', 'изображение', 'изображения', 'фото', 'видео']],
+  ['body', ['body', 'post', 'post body', 'post text', 'composer']],
+  ['path', ['path', 'file path', 'repository path']],
+  ['branch', ['branch', 'git branch']],
+  ['commit_message', ['commit message', 'commit summary', 'commit title']],
+  ['title', ['title', 'titre', 'título', 'titulo', 'titel', 'titolo', 'başlık', 'tytuł', 'タイトル', '제목', '标题', '標題', 'название']],
+];
+const fixtureFieldText = value => {
+  let text = String(value || '');
+  try { text = text.normalize('NFKC'); } catch {}
+  return text.toLowerCase().replace(/[_-]+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+};
+export function fixtureWorkflowFieldReading(kind, label) {
+  const choices = SEMANTIC_QUESTIONS[kind]?.choices;
+  const text = fixtureFieldText(label);
+  if (!choices || !text) return null;
+  const padded = ` ${text} `;
+  const field = FIXTURE_WORKFLOW_FIELD_NAMES.filter(([key]) => Object.hasOwn(choices, key)).find(([, names]) => names
+    .map(fixtureFieldText).some(name => name && (text === name || padded.includes(` ${name} `)
+      || (/[^\u0000-ɏ]/u.test(name) && text.includes(name)))))?.[0];
+  return field || 'other';
 }
 
 // How a model reads a fediverse page's follow controls and fields
@@ -455,7 +503,7 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
     if (['message_control', 'message_field', 'message_author', 'message_status', 'form_field_match', 'follow_state',
-      'progress_action'].includes(question.kind)) {
+      'progress_action', 'metadata_field', 'publication_field'].includes(question.kind)) {
       return fixturePageTextReading(question.kind, item?.text, item);
     }
     if (question.kind === 'home_instance') return fixtureHomeInstanceReading(question.request, item?.text);
@@ -492,6 +540,7 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'follow_state') return fixtureFollowStateReading(text);
   if (kind === 'home_instance') return fixtureHomeInstanceReading(context?.request, text);
   if (kind === 'progress_action') return fixtureProgressActionReading(text, context?.action);
+  if (kind === 'metadata_field' || kind === 'publication_field') return fixtureWorkflowFieldReading(kind, text);
   return null;
 }
 
@@ -501,6 +550,6 @@ export function fixturePageTextReading(kind, text, context = {}) {
 export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
   return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control', 'message_field',
-    'message_author', 'message_status', 'form_field_match', 'follow_state', 'home_instance', 'progress_action']
-    .includes(kind) ? fixtureFixedChoiceReply(messages) : null;
+    'message_author', 'message_status', 'form_field_match', 'follow_state', 'home_instance', 'progress_action',
+    'metadata_field', 'publication_field'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }

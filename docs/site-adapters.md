@@ -101,6 +101,15 @@ after the upload: a line whose name or value is the file name, or another line
 naming the file that a model read, in any language, as saying it was uploaded
 or attached (`workflow_state`, `file_attached`). A line read as a failed or
 unfinished upload proves nothing, and neither does a line nobody has read.
+An update-metadata job and a publication job check the values saved after the
+dispatch against the requested ones. Which requested detail each saved field
+holds is read from its label or name by a model, in any language
+(`metadata_field` for the details of a video or other item, `publication_field`
+for the parts of a post, release or file change), at `done` for the fields read
+after the dispatch and before a write is recorded for the field it wrote. A
+requested value has to read back from exactly one field read as that detail; a
+label nobody has read holds no detail, so it cannot prove a value and is not
+counted as a second field for one.
 Depth truncation is form-relevant (an omitted includable descendant). Empty
 or erroring third-party frames are omitted only when another frame already
 inventoried form controls; a lone failed cross-origin application frame stays
