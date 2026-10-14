@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { defaultDecide, installModelStub } from './semantic-decision-stub.mjs';
 
 // Offline actual-method fixture: browser transport, the page probe result and
 // the independent authorization reply are simulated; receipts, accepted
@@ -27,17 +28,16 @@ for (const build of ['chrome', 'firefox']) {
     agent._ensureProgressSessionForCurrentTask = async () => {};
     agent._currentUrl = async () => pageUrl;
     agent._plannerMode = () => 'off';
-    const h = { agent, tab, options, provider, audits: [], authorize: true, probe: null,
+    const h = { agent, tab, options, provider, authorize: true, decide: defaultDecide, probe: null,
       gate: { proceed: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, ...gateOverrides } };
     agent._runPlannerIntentGate = async () => h.gate;
     agent._detectLikelySubmitAction = async () => structuredClone(h.probe);
-    agent._chatWithCostAllowance = async (_p, messages, _o, _c, meta) => {
-      assert.equal(meta.generationName, 'resource_mutation_authorization');
-      const input = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
-      const authority = JSON.parse(messages[1].content);
-      h.audits.push({ input, authority });
-      return { content: JSON.stringify({ key: input.key, authorized: h.authorize, latestRequestEvidence: authority.latestAcceptedRequest }) };
-    };
+    // The model: fixed-choice decisions about the request, then the
+    // consequential-action authorization.
+    h.calls = installModelStub(agent, { decide: (kind, question) => h.decide(kind, question),
+      authorize: ({ input, authority }) => ({ key: input.key, authorized: h.authorize, latestRequestEvidence: authority.latestAcceptedRequest }) });
+    Object.defineProperty(h, 'audits', { get: () => h.calls.filter(call => call.kind === 'authorization') });
+    h.decisions = kind => h.calls.filter(call => call.kind === kind);
     await agent._claimRunEntry(tab, 'interactive', options);
     agent._beginSteeringRun(tab, () => {}, options);
     agent._beginCompletionInvariant(tab);
@@ -184,27 +184,44 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${build}: removing characters from a post is an edit, not a deletion prerequisite`, async () => {
-    const probe = new Agent({ getActive: () => null });
-    for (const text of ['remove the > characters from the post', 'Remove the hashtags and post it again.', '> işaretlerini kaldır',
-      'sil şu > işaretlerini', 'Delete the second line of the tweet and repost it.', "remove 'very' from the post", 'fix the typo',
-      "Don't delete the old post, just publish the corrected one.", '删除 帖子里的 > 符号']) {
-      assert.equal(probe._correctionRequestsResourceDeletion(text), false, text);
-    }
-    for (const text of ['Delete the old post and publish the corrected one.', `Delete ${xPost}, verify it is gone, then publish Corrected.`,
-      'eski gönderiyi sil ve yenisini paylaş', 'Remove it and post the fixed version.', 'delete', 'Delete the post with the > signs.', '删除 旧帖子 然后重新发布']) {
-      assert.equal(probe._correctionRequestsResourceDeletion(text), true, text);
-    }
-    for (const [correction, reason] of [['Remove the > characters from the post and publish the corrected version.', null],
-      ['> işaretlerini kaldır ve düzeltilmiş halini paylaş.', null],
-      ['Delete the old post and publish the corrected one.', 'deletion_prerequisite_unverified']]) {
-      const h = await fixture('Post "Hello world" on X.', { pageUrl: 'https://x.com/home' });
-      try {
-        h.agent._completionSubmitStates.set(h.tab, structuredClone(publicationReceipt()));
-        await h.steer(correction);
-        const blocked = await h.check(publish(snap('Hello world corrected'), [record()]));
-        assert.equal(blocked?.actionGuard?.reason || null, reason, correction);
-      } finally { h.close(); }
+  test(`${build}: whether a correction asks to delete the earlier post first is read by a model, in any language`, async t => {
+    assert.equal(typeof new Agent({ getActive: () => null })._correctionRequestsResourceDeletion, 'undefined', 'No word list reads corrections');
+    const cases = [
+      // An edit to the text, in two languages: the corrected post may go out.
+      ['Remove the > characters from the post and publish the corrected version.', { choice: 'keep_previous', evidence: '' }, null],
+      ['> işaretlerini kaldır ve düzeltilmiş halini paylaş.', { choice: 'keep_previous', evidence: '' }, null],
+      // Replacing the earlier post: delete it first.
+      ['Delete the old post and publish the corrected one.', { choice: 'delete_previous', evidence: 'Delete the old post' }, 'deletion_prerequisite_unverified'],
+      ['eski gönderiyi sil ve yenisini paylaş', { choice: 'delete_previous', evidence: 'eski gönderiyi sil' }, 'deletion_prerequisite_unverified'],
+      ['删除旧帖子然后重新发布', { choice: 'delete_previous', evidence: '删除旧帖子' }, 'deletion_prerequisite_unverified'],
+      // Unsure is never permission for a second copy.
+      ['Delete the post with the > signs.', { choice: 'unclear', evidence: '' }, 'correction_unclear'],
+      // No usable answer: nothing goes out, and a later retry asks again.
+      ['Post the corrected version.', null, 'authorization_unavailable'],
+      ['Post the corrected version.', { choice: 'maybe', evidence: '' }, 'authorization_unavailable'],
+    ];
+    for (const [correction, answer, reason] of cases) {
+      await t.test(`${correction} → ${answer?.choice ?? 'no answer'}`, async () => {
+        const h = await fixture('Post "Hello world" on X.', { pageUrl: 'https://x.com/home' });
+        try {
+          h.agent._completionSubmitStates.set(h.tab, structuredClone(publicationReceipt()));
+          await h.steer(correction);
+          h.decide = () => answer;
+          const blocked = await h.check(publish(snap('Hello world corrected'), [record()]));
+          assert.equal(blocked?.actionGuard?.reason || null, reason, correction);
+          const [question] = h.decisions('deletion_prerequisite');
+          assert.equal(question.request, correction, 'The correction reaches the model as written');
+          assert.equal(question.page.previous.link, xPost, 'with the earlier post it may replace');
+          assert.match(question.wrapped, /^<untrusted_page_content id="/);
+          assert.equal(h.audits.length, reason ? 0 : 1, 'Only a correction that keeps the earlier post reaches authorization');
+          if (reason === 'correction_unclear') assert.equal(blocked.retryable, false);
+          if (reason === 'authorization_unavailable') {
+            assert.notEqual(blocked.retryable, false);
+            h.decide = () => ({ choice: 'keep_previous', evidence: '' });
+            assert.equal(await h.check(publish(snap('Hello world corrected'), [record()])), null, 'A failed answer is not remembered');
+          }
+        } finally { h.close(); }
+      });
     }
   });
 

@@ -293,9 +293,8 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   Existing recipient approvals survive trusted Continue within the same task
   and execution scope; independent tasks and changed scope clear them. Missing live
   identity, draft, baseline or dispatch proof produces a technical blocker;
-  another approval question cannot repair missing evidence. Recipient
-  clarifications report `recipientBinding` separately from general user
-  authorization and suppress repeated questions for known technical blockers.
+  another approval question cannot repair missing evidence, and a question
+  declared to be about the recipient is refused while such a blocker stands.
 - When a send would reach recipients other than the ones the task named, and
   approval is the only thing missing (the plan authorizes sending, the body,
   baseline and dispatch binding are present), WebBrain asks the user on its
@@ -308,16 +307,23 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   that send for the rest of the task without asking again. Stop cancels the
   card. Unattended scheduled runs are not asked and send nothing. The model
   is never told to obtain consent itself.
-- A model clarification still counts when its question names every observed
-  recipient and asks about sending to them (or declares a recipient purpose)
-  and the user's answer picks those exact names; a recipient question asked
-  before any send binds to a fresh read-only observation. Refusals and
-  redirects ("No, not …", "Cancel all") never approve, only an affirmative
-  grant ("Send all remaining messages…") approves every remaining send, and a
-  reply that names no recipient approves nothing; the model is told that
-  WebBrain will confirm the recipient itself. Icon-only attachment and picker
-  launchers beside a chat composer, named by their icon's label or title, are
-  composer utilities; Like, Send, mixed and unnamed icons stay guarded.
+- A typed message that the task never named a recipient for, or never asked
+  to send, gets the same card once its recipients, draft and baseline are
+  verified. The card says why WebBrain is asking and shows the message text;
+  the send keeps the reason `authorized_recipient_missing` until the user
+  confirms. An attachment still needs a plan that authorizes sending one, and
+  a send whose draft cannot be verified keeps its previous block. A
+  correction sent while the card is open applies the correction; it is not
+  treated as Stop. When the latest request says not to send the message
+  ("draft it but don't send"), the send is refused without a card; a model
+  reads that from the request in any language, and no answer means the card.
+- A question the model asks itself never approves a recipient, whatever the
+  user picks or types on it, in any language; the model is told that WebBrain
+  confirms the recipient itself, and the send still gets WebBrain's card. No
+  question or answer wording is read for consent. Icon-only attachment and
+  picker launchers beside a chat composer, named by their icon's label or
+  title, are composer utilities; Like, Send, mixed and unnamed icons stay
+  guarded.
 - A cancelled `beforeinput` handled by a native chat editor can receive an
   exact read-only draft certificate while its original operation, document,
   identity nodes, editor, focus and selection remain current. The certificate

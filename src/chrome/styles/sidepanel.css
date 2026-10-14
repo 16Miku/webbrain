@@ -4141,6 +4141,20 @@ html[data-ui-scale="175"] .conversation-action-label {
   line-height: 1.4;
 }
 
+.clarify-subject {
+  max-height: 120px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .clarify-research-request {
   max-height: 180px;
   overflow: auto;

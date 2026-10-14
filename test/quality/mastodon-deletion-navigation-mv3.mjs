@@ -71,13 +71,16 @@ const server = http.createServer(async (request, response) => {
         : 'The owned independent judge deliberately withholds a positive completion verdict.' }) };
   } else if (system.startsWith('Identify only the exact plain public Mastodon post authorized by the genuine user task.')) {
     completion = { role: 'assistant', content: JSON.stringify({ kind: 'unsupported', body: null, account: null }) };
-  } else if (system.startsWith('Check one separately proposed consequential action')) {
+  } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
+    // The model's reading of the request: it names exactly this post by its link.
+    const request = JSON.parse(textOf(input.messages[1].content)).request;
     const untrusted = textOf(input.messages.at(-1).content);
-    const proposed = JSON.parse(untrusted.slice(untrusted.indexOf('{'), untrusted.lastIndexOf('}') + 1));
-    const authority = JSON.parse(textOf(input.messages[1].content));
-    completion = { role: 'assistant', content: JSON.stringify({ key: proposed.key,
-      authorized: proposed.action === 'delete' && proposed.resource?.url === resource && authority.latestAcceptedRequest === task,
-      latestRequestEvidence: task }) };
+    const { page } = JSON.parse(untrusted.slice(untrusted.indexOf('{'), untrusted.lastIndexOf('}') + 1));
+    const named = system.includes('"delete_this"') && request === task && page?.link === resource;
+    completion = { role: 'assistant', content: JSON.stringify(named
+      ? { choice: 'delete_this', evidence: `Delete only our owned QA post at "${resource}"` } : { choice: 'unclear', evidence: '' }) };
+  } else if (system.startsWith('Check one separately proposed consequential action')) {
+    throw new Error('A deletion is decided by the deletion question, not the publication check.');
   } else if (!input.tools?.length) completion = { role: 'assistant', content: JSON.stringify(intent) };
   else {
     const step = actionCalls++;

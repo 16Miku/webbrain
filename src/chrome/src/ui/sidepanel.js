@@ -6289,7 +6289,7 @@ function rebindClarifyCards() {
     // Restart countdown after HTML restore when timeout metadata survived on
     // the card. Skip permission/form-submit cards (they never auto-timeout).
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
-      || card.dataset.recipientConfirmation === '1') return;
+      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1') return;
     const deadlineTs = Number(card.dataset.deadlineTs);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
     const firstOption = card.dataset.firstOption
@@ -11152,6 +11152,7 @@ function renderClarifyCard(data) {
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
     : data.workflowHealing || data.pendingReconciliation === true || data.recipientConfirmation
+      || data.mutationConfirmation
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -11287,10 +11288,22 @@ function renderClarifyCard(data) {
     qEl.textContent = t('sp.recipient.question', { recipient });
     const reasonEl = document.createElement('div');
     reasonEl.className = 'clarify-reason';
-    reasonEl.textContent = requested
-      ? t('sp.recipient.reason_requested', { requested, recipient, host })
-      : t('sp.recipient.reason_open', { recipient, host });
+    reasonEl.textContent = confirmation.reason === 'unrequested'
+      ? t('sp.recipient.reason_unrequested', { recipient, host })
+      : confirmation.reason === 'unnamed'
+        ? t('sp.recipient.reason_unnamed', { recipient, host })
+        : requested
+          ? t('sp.recipient.reason_requested', { requested, recipient, host })
+          : t('sp.recipient.reason_open', { recipient, host });
     card.appendChild(reasonEl);
+    // The message itself, as plain text, so the user sees what will be sent.
+    const message = String(confirmation.message || '').slice(0, 300);
+    if (message) {
+      const messageEl = document.createElement('div');
+      messageEl.className = 'clarify-subject';
+      messageEl.textContent = message;
+      card.appendChild(messageEl);
+    }
     const optionsEl = document.createElement('div');
     optionsEl.className = 'clarify-options';
     const choices = [
@@ -11303,6 +11316,56 @@ function renderClarifyCard(data) {
       b.type = 'button';
       b.className = 'clarify-option';
       b.textContent = String(label).slice(0, 300);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Deletion confirmation: WebBrain asks whether an item may be deleted when
+  // the request's wording does not bind the deletion to it. The item is the
+  // page's own text, shown as text. Fixed choices return stable values
+  // ('once'/'deny') with no free-text input, so nothing is parsed.
+  if (data.mutationConfirmation) {
+    card.dataset.mutationConfirmation = '1';
+    const confirmation = data.mutationConfirmation || {};
+    const host = String(confirmation.host || '').slice(0, 300) || 'this site';
+    qEl.textContent = t('sp.delete.question', { host });
+    const reasonKey = { not_requested: 'sp.delete.reason_not_requested', not_named: 'sp.delete.reason_not_named' }[confirmation.reason]
+      || 'sp.delete.reason_unverified';
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = t(reasonKey);
+    card.appendChild(reasonEl);
+    const item = String(confirmation.item || '').slice(0, 280);
+    const url = String(confirmation.url || '').slice(0, 600);
+    if (item || url) {
+      const subjectEl = document.createElement('div');
+      subjectEl.className = 'clarify-subject';
+      subjectEl.textContent = [item, url].filter(Boolean).join('\n');
+      card.appendChild(subjectEl);
+    }
+    const dialog = String(confirmation.dialog || '').slice(0, 300);
+    if (dialog) {
+      const dialogEl = document.createElement('div');
+      dialogEl.className = 'clarify-reason';
+      dialogEl.textContent = t('sp.delete.site_asks', { dialog });
+      card.appendChild(dialogEl);
+    }
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const [value, label] of [['once', t('sp.delete.delete')], ['deny', t('sp.delete.dont_delete')]]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 200);
       b.dataset.value = value;
       b.addEventListener('click', () => {
         card.dataset.answerLabel = b.textContent;
@@ -11574,7 +11637,7 @@ function lockClarifyCardFromAuto(data) {
     if (String(card.dataset.clarifyId || '') !== clarifyId) continue;
     if (card.classList.contains('clarify-answered')) return;
     if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
-      || card.dataset.recipientConfirmation === '1') return;
+      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1') return;
     clearClarifyCountdown(card);
     card.classList.add('clarify-answered');
     for (const el of card.querySelectorAll('button, input')) {

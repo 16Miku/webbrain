@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
+import { defaultDecide, semanticQuestionOf } from './semantic-decision-stub.mjs';
 
 // Real-DOM fixtures: the production submit probe (injected the way each build
 // injects it) classifies controls in Chromium and Firefox pages, then the real
@@ -57,7 +58,13 @@ for (const build of ['chrome', 'firefox']) {
         agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
         const guard = agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: false, ...gate });
         const modelCalls = [];
-        agent._chatWithCostAllowance = async (_p, _m, _o, _c, meta) => { modelCalls.push(meta?.generationName); return { content: JSON.stringify(noneContract) }; };
+        agent._chatWithCostAllowance = async (_p, messages, _o, _c, meta) => {
+          modelCalls.push(meta?.generationName);
+          // Fixed-choice decisions about the request get a model's reading;
+          // the publication contract finds no publication.
+          const kind = String(meta?.generationName || '').match(/^semantic_(.+)$/)?.[1];
+          return { content: JSON.stringify(kind ? defaultDecide(kind, semanticQuestionOf(agent, messages)) : noneContract) };
+        };
         if (steering) guard.steeringPriorSubmission = priorReceipt();
         return { agent, guard, provider, modelCalls };
       };
@@ -118,6 +125,10 @@ for (const build of ['chrome', 'firefox']) {
             assert.equal(block?.noDispatch, true, url);
             assert.equal(block.actionGuard.reason, reason, url);
             assert.equal(f.modelCalls.includes('resource_mutation_authorization'), false, url);
+            // A row the request does not identify goes to the user on WebBrain's
+            // card; a control with no record is never put to the model.
+            assert.equal(f.modelCalls.includes('semantic_deletion_request'), reason === 'record_not_named_in_request', url);
+            assert.equal(block.mutationConfirmation?.reason, reason === 'record_not_named_in_request' ? 'not_named' : undefined, url);
           }
         });
 

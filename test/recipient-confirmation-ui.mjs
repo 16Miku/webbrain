@@ -1,8 +1,10 @@
-// WebBrain's own recipient confirmation card in the side panel of both
-// builds: the real renderClarifyCard and submitClarify run in Chromium and
-// Firefox with the real locale strings. The card names the person the open
-// conversation shows, offers fixed choices only (no free text to interpret),
-// sends a stable value back, never times out, and records no memory.
+// WebBrain's own confirmation cards in the side panel of both builds: the
+// real renderClarifyCard and submitClarify run in Chromium and Firefox with the
+// real locale strings. The recipient card names the person the open
+// conversation shows (and the message when the request did not ask for it);
+// the deletion card shows the item as the page shows it. Both offer fixed
+// choices only (no free text to interpret), send a stable value back, never
+// time out, and record no memory.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
@@ -112,11 +114,107 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.match(view.question, /<img src=x/);
     } finally { await browser.close(); }
   });
+
+  test(`${build}: a message the request did not ask for shows its text on the card`, async () => {
+    const { browser, page } = await panel(build, engine, 'en');
+    try {
+      for (const [reason, expected] of [
+        ['unrequested', 'WebBrain couldn’t tell from your request that a message should be sent. The open conversation on www.instagram.com is with Gamze Çömlekçi.'],
+        ['unnamed', 'WebBrain couldn’t tell from your request who should get this message. The open conversation on www.instagram.com is with Gamze Çömlekçi.']]) {
+        await page.evaluate(data => window.panel.render(data), card({ clarifyId: `recipient_${reason}`, recipientConfirmation: {
+          recipients: [{ identity: 'Gamze Çömlekçi', role: 'to' }], requested: [], host: 'www.instagram.com', offerAll: false,
+          reason, message: 'See you at 5 <b>sharp</b>' } }));
+        const view = await page.evaluate(id => {
+          const element = document.querySelector(`.clarify-card[data-clarify-id="${id}"]`);
+          return { reason: element.querySelector('.clarify-reason').textContent,
+            message: element.querySelector('.clarify-subject')?.textContent, bold: element.querySelectorAll('b').length };
+        }, `recipient_${reason}`);
+        assert.equal(view.reason, expected);
+        assert.equal(view.message, 'See you at 5 <b>sharp</b>', 'The message is shown as text');
+        assert.equal(view.bold, 0);
+      }
+    } finally { await browser.close(); }
+  });
+
+  const deletion = (extra = {}) => ({ clarifyId: 'deletion_card', tabId: 9, promptKind: 'mutationConfirmation',
+    question: 'Delete this item on shop.example?', options: ['once', 'deny'],
+    mutationConfirmation: { kind: 'delete', reason: 'not_named', host: 'shop.example', item: 'Wool socks Size L $12',
+      url: '', dialog: '' }, ...extra });
+
+  test(`${build}: the deletion card shows the item and sends a fixed value`, async () => {
+    const { browser, page } = await panel(build, engine, 'en');
+    try {
+      await page.evaluate(data => window.panel.render(data), deletion());
+      const view = await page.evaluate(() => {
+        const element = document.querySelector('.clarify-card');
+        return { question: element.querySelector('.clarify-question').textContent,
+          reasons: [...element.querySelectorAll('.clarify-reason')].map(node => node.textContent),
+          item: element.querySelector('.clarify-subject').textContent,
+          buttons: [...element.querySelectorAll('.clarify-option')].map(button => [button.dataset.value, button.textContent]),
+          input: !!element.querySelector('input, textarea'), memory: element.dataset.memorySource,
+          flag: element.dataset.mutationConfirmation };
+      });
+      assert.equal(view.question, 'Delete this item on shop.example?');
+      assert.deepEqual(view.reasons, ['WebBrain couldn’t tell from your request which item to delete.']);
+      assert.equal(view.item, 'Wool socks Size L $12');
+      assert.deepEqual(view.buttons, [['once', 'Delete'], ['deny', 'Don’t delete']]);
+      assert.equal(view.input, false, 'no free text to interpret');
+      assert.equal(view.memory, '', 'a deletion choice is not saved to memory');
+      assert.equal(view.flag, '1');
+      await page.click('button[data-value="once"]');
+      const after = await page.evaluate(() => ({ sent: window.panel.sent,
+        answered: document.querySelector('.clarify-your-answer')?.textContent,
+        disabled: [...document.querySelectorAll('.clarify-option')].every(button => button.disabled) }));
+      assert.deepEqual(after.sent, [['clarify_response', { tabId: 9, clarifyId: 'deletion_card', answer: 'once', source: 'option' }]]);
+      assert.equal(after.answered, 'Your answer: Delete');
+      assert.equal(after.disabled, true);
+    } finally { await browser.close(); }
+  });
+
+  test(`${build}: Turkish deletion card with a link and the site's own question`, async () => {
+    const { browser, page } = await panel(build, engine, 'tr');
+    try {
+      await page.evaluate(data => window.panel.render(data), deletion({ mutationConfirmation: { kind: 'delete', reason: 'unverified',
+        host: 'x.com', item: 'Kahve molası ☕', url: 'https://x.com/user/status/123', dialog: 'Gönderi silinsin mi?' } }));
+      const view = await page.evaluate(() => ({
+        question: document.querySelector('.clarify-question').textContent,
+        reasons: [...document.querySelectorAll('.clarify-reason')].map(node => node.textContent),
+        item: document.querySelector('.clarify-subject').textContent,
+        links: document.querySelectorAll('.clarify-card a').length,
+        buttons: [...document.querySelectorAll('.clarify-option')].map(button => [button.dataset.value, button.textContent]) }));
+      assert.equal(view.question, 'x.com üzerindeki bu öğe silinsin mi?');
+      assert.deepEqual(view.reasons, ['WebBrain bu öğeyi isteğinle eşleştiremedi.', 'Site soruyor: “Gönderi silinsin mi?”']);
+      assert.equal(view.item, 'Kahve molası ☕\nhttps://x.com/user/status/123');
+      assert.equal(view.links, 0, 'the page link is shown as text, not followed');
+      assert.deepEqual(view.buttons, [['once', 'Sil'], ['deny', 'Silme']]);
+      await page.click('button[data-value="deny"]');
+      assert.deepEqual(await page.evaluate(() => window.panel.sent.map(([action, payload]) => [action, payload.answer])),
+        [['clarify_response', 'deny']]);
+    } finally { await browser.close(); }
+  });
+
+  test(`${build}: page text on the deletion card is shown as text, never as markup`, async () => {
+    const { browser, page } = await panel(build, engine, 'en');
+    try {
+      await page.evaluate(data => window.panel.render(data), deletion({ mutationConfirmation: { kind: 'delete', reason: 'not_requested',
+        host: '<i>shop</i>', item: '<img src=x onerror="window.injected=1">Hat', url: '', dialog: '<b>Sure?</b>' } }));
+      const view = await page.evaluate(() => ({ images: document.querySelectorAll('.clarify-card img, .clarify-card b, .clarify-card i').length,
+        injected: window.injected === 1, item: document.querySelector('.clarify-subject').textContent,
+        reason: document.querySelector('.clarify-reason').textContent }));
+      assert.equal(view.images, 0);
+      assert.equal(view.injected, false);
+      assert.match(view.item, /<img src=x/);
+      assert.equal(view.reason, 'WebBrain couldn’t tell from your request that this should be deleted.');
+    } finally { await browser.close(); }
+  });
 }
 
-test('every locale of both builds translates the card', async () => {
+test('every locale of both builds translates the cards', async () => {
   const keys = ['sp.recipient.question', 'sp.recipient.reason_requested', 'sp.recipient.reason_open',
-    'sp.recipient.send', 'sp.recipient.send_all', 'sp.recipient.dont_send'];
+    'sp.recipient.send', 'sp.recipient.send_all', 'sp.recipient.dont_send',
+    'sp.recipient.reason_unrequested', 'sp.recipient.reason_unnamed'];
+  const deletionKeys = ['sp.delete.question', 'sp.delete.reason_not_requested', 'sp.delete.reason_not_named',
+    'sp.delete.reason_unverified', 'sp.delete.site_asks', 'sp.delete.delete', 'sp.delete.dont_delete'];
   for (const build of ['chrome', 'firefox']) {
     const directory = new URL(`../src/${build}/src/ui/locales/`, import.meta.url);
     const locales = fs.readdirSync(directory).filter(name => /^[a-z]{2}\.js$/.test(name));
@@ -131,6 +229,12 @@ test('every locale of both builds translates the card', async () => {
         }
       }
       assert.ok(strings['sp.recipient.reason_requested'].includes('{requested}'), `${build}/${file}: requested name`);
+      for (const key of deletionKeys) {
+        assert.equal(typeof strings[key], 'string', `${build}/${file}: ${key}`);
+        assert.ok(strings[key].trim(), `${build}/${file}: ${key}`);
+      }
+      assert.ok(strings['sp.delete.question'].includes('{host}'), `${build}/${file}: deletion host`);
+      assert.ok(strings['sp.delete.site_asks'].includes('{dialog}'), `${build}/${file}: site question`);
     }
   }
 });

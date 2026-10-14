@@ -9,10 +9,10 @@ import { conformFixtureCompletionCall } from './completion-provider-contract.mjs
 // The reported trace through the installed MV3 extension: the user asks to
 // send a photo to "gamze", and the open direct thread is "Gamze Çömlekçi".
 // WebBrain asks once on its own card and the photo is sent once when the user
-// picks Send; Don't send sends nothing. A model question that shows the exact
-// name and gets it picked also counts (one question in total), and a typed
-// refusal never does. The thread, photo and model are owned local fixtures;
-// nothing leaves the host.
+// picks Send; Don't send sends nothing. A question the model asks itself
+// approves nothing, whatever is picked or typed on it: the card still decides.
+// The thread, photo and model are owned local fixtures; nothing leaves the
+// host.
 const threadUrl = 'https://www.instagram.com/direct/t/17848282661759097/';
 const recipient = 'Gamze Çömlekçi';
 const question = `Send the photo to ${recipient} on Instagram?`;
@@ -23,7 +23,7 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const variants = [
   ['card-send', ['download', 'list', 'upload', 'tree', 'done'], null, null, 'once', 1],
   ['card-dont-send', ['download', 'list', 'upload', 'done'], null, null, 'deny', 0],
-  ['model-asks-first', ['download', 'list', 'clarify', 'upload', 'tree', 'done'], recipient, 'option', null, 1],
+  ['model-asks-first', ['download', 'list', 'clarify', 'upload', 'tree', 'done'], recipient, 'option', 'once', 1],
   ['typed-refusal', ['download', 'list', 'clarify', 'upload', 'done'], `No, not ${recipient}`, 'user', 'deny', 0],
 ];
 for (const variant of variants) await runVariant(...variant);
@@ -200,8 +200,8 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
     const uploads = toolResults.filter(item => item.name === 'upload_file');
     assert.equal(sends.length, expectedSends, `Sends: ${JSON.stringify(toolResults)}`);
     assert.equal(await page.locator('[data-message-direction="outgoing"]').count(), expectedSends);
-    assert.equal(clarifications.length + cards.length, steps.includes('clarify') && cardAnswer ? 2 : 1,
-      `One question, except after a refusal: ${JSON.stringify(prompts)}`);
+    assert.equal(cards.length, 1, `WebBrain's card is shown once: ${JSON.stringify(prompts)}`);
+    assert.equal(clarifications.length, steps.includes('clarify') ? 1 : 0, JSON.stringify(prompts));
     if (cards.length) {
       const card = prompts.find(item => item.kind === 'recipientConfirmation');
       assert.deepEqual(card.recipientConfirmation, { recipients: [{ identity: recipient, role: 'to' }],
@@ -214,13 +214,13 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
       assert.deepEqual(sends, [{ method: 'POST', path: '/api/v1/direct_v2/threads/17848282661759097/items/configure_photo/', containsPhoto: true }]);
       if (clarifications.length) {
         const clarify = toolResults.find(item => item.name === 'clarify');
-        assert.deepEqual(clarify?.recipientBinding, { required: true, bound: true }, JSON.stringify(clarify));
+        assert.equal(clarify?.recipientBinding, null, `The model's own question approved nothing: ${JSON.stringify(clarify)}`);
       }
     } else {
       assert.equal(uploads.at(-1)?.reasonCode, 'recipient_declined', JSON.stringify(uploads));
       if (clarifications.length) {
         const clarify = toolResults.find(item => item.name === 'clarify');
-        assert.equal(clarify?.recipientBinding?.bound, false, JSON.stringify(clarify));
+        assert.equal(clarify?.recipientBinding, null, JSON.stringify(clarify));
       }
     }
     console.log(JSON.stringify({ passed: true, installedMV3: true, variant, questions: clarifications.length,

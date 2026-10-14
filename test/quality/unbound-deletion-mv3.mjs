@@ -10,17 +10,27 @@ import { conformFixtureCompletionCall } from './completion-provider-contract.mjs
 // installed MV3 extension: real probe, guards, dispatch and completion gates,
 // once directly, once through a confirmation dialog, and once for a Turkish
 // request that names the row in its inflected form ("tişörtü" for "Tişört").
+// Whether the request names the row is a fixed-choice question the model
+// answers from the request as written and the row as the page shows it; no
+// word list is involved. A request that does not say which row ("the first
+// item") is put to the user on WebBrain's own card: Delete removes that row
+// once, including through the site's own confirmation dialog, and Don't
+// delete removes nothing.
 // The provider and the site are owned local fixtures; nothing leaves the host.
 const pageUrl = 'https://shop.example/cart';
 const english = { task: 'Remove the Wool socks from my cart. Keep everything else.', evidence: 'Remove the Wool socks from my cart.',
   target: 'Wool socks', kept: 'Hat', rows: ['Wool socks, size L, $12', 'Hat, size M, $20'] };
 const turkish = { task: 'Sepetten mavi tişörtü kaldır, diğerlerine dokunma.', evidence: 'mavi tişörtü kaldır',
   target: 'Mavi Tişört', kept: 'Mavi Kot Pantolon', rows: ['Mavi Tişört, beden L, 129 TL', 'Mavi Kot Pantolon, beden M, 349 TL'] };
-for (const [name, confirmation, language] of [['direct', false, english], ['confirmation', true, english], ['turkish', false, turkish]]) {
-  await runVariant(name, confirmation, language);
+const unnamed = { ...english, task: 'Remove the first item from my cart. Keep everything else.', evidence: 'Remove the first item' };
+for (const [name, confirmation, language, cardAnswer] of [['direct', false, english], ['confirmation', true, english],
+  ['turkish', false, turkish], ['card-delete', true, unnamed, 'once'], ['card-dont-delete', false, unnamed, 'deny']]) {
+  if (process.env.WEBBRAIN_QUALITY_CASE_FILTER && !new RegExp(process.env.WEBBRAIN_QUALITY_CASE_FILTER).test(name)) continue;
+  await runVariant(name, confirmation, language, cardAnswer);
 }
 
-async function runVariant(variant, confirmation, { task, evidence, target, kept, rows }) {
+async function runVariant(variant, confirmation, { task, evidence, target, kept, rows }, cardAnswer = null) {
+  const declined = cardAnswer === 'deny';
   const intent = { request_kind: 'execute', scope_relation: 'new', requires_state_change: true,
     requires_submission: true, messaging: null, deliverables: [`The ${target} row is removed from the cart.`],
     allows_planner_shaped_result: false, allows_app_state_tool_evidence: false,
@@ -28,11 +38,12 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
     summary: `Remove only the ${target} cart row.`, steps: [{ id: '1', action: `Remove the ${target} row and verify it is gone.` }],
     memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] };
   const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS
-    || `ci/artifacts/quality-audit-2026-10-07/unbound-deletion-mv3/${variant}`);
+    ? path.join(process.env.WEBBRAIN_QUALITY_ARTIFACTS, variant)
+    : `ci/artifacts/quality-audit-2026-10-07/unbound-deletion-mv3/${variant}`);
   await fs.mkdir(out, { recursive: true });
   let actionCalls = 0, judgeCalls = 0, blockedRemote = 0;
   const completionRecovery = { reads: 0 };
-  const deletes = [], providerRequests = [], authorizations = [];
+  const deletes = [], providerRequests = [], authorizations = [], decisions = [];
   const textOf = content => typeof content === 'string' ? content : Array.isArray(content)
     ? content.filter(part => part?.type === 'text').map(part => part.text || '').join('\n') : '';
   const refFor = (input, name) => {
@@ -48,7 +59,8 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
     }
     throw new Error(`Owned fixture did not observe ${name}`);
   };
-  const steps = confirmation
+  const steps = declined ? [['tree'], ['click', `Remove ${target}`], ['partial']]
+    : confirmation
     ? [['tree'], ['click', `Remove ${target}`], ['tree'], ['click', 'Confirm removal'], ['tree'], ['done']]
     : [['tree'], ['click', `Remove ${target}`], ['tree'], ['done']];
   const server = http.createServer(async (request, response) => {
@@ -61,6 +73,18 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       judgeCalls++;
       completion = { role: 'assistant', content: JSON.stringify({ outcome: 'succeeded',
         reason: `The ${target} row is no longer in the fresh cart observation and the ${kept} row remains.` }) };
+    } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
+      // The model's reading of the request, in whatever language it is in:
+      // the row the request names, or unclear when it names none.
+      const request = JSON.parse(textOf(input.messages[1].content)).request;
+      const untrusted = textOf(input.messages.at(-1).content);
+      const { page } = JSON.parse(untrusted.slice(untrusted.indexOf('{'), untrusted.lastIndexOf('}') + 1));
+      const choices = [...system.matchAll(/^- "([a-z_]+)":/gm)].map(match => match[1]);
+      decisions.push({ choices, request, page });
+      const answer = !choices.includes('delete_this') ? { choice: '', evidence: '' }
+        : cardAnswer ? { choice: 'unclear', evidence: '' }
+        : page.item === rows[0] ? { choice: 'delete_this', evidence } : { choice: 'other_item', evidence: '' };
+      completion = { role: 'assistant', content: JSON.stringify(answer) };
     } else if (system.startsWith('Check one separately proposed consequential action')) {
       const untrusted = textOf(input.messages.at(-1).content);
       const proposed = JSON.parse(untrusted.slice(untrusted.indexOf('{'), untrusted.lastIndexOf('}') + 1));
@@ -76,6 +100,7 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       const [kind, name] = steps[Math.min(step, steps.length - 1)];
       const call = kind === 'click' ? { name: 'click_ax', args: { ref_id: refFor(input, name) } }
         : kind === 'done' ? { name: 'done', args: { outcome: 'success', summary: `Removed the ${target} from the cart once; the ${kept} remains.` } }
+        : kind === 'partial' ? { name: 'done', args: { outcome: 'partial', summary: `The user chose not to remove the ${target}; nothing was removed.` } }
         : { name: 'get_accessibility_tree', args: { filter: 'all' } };
       const emitted = conformFixtureCompletionCall(input, call, completionRecovery);
       completion = { role: 'assistant', content: '', tool_calls: [{ id: `owned-unbound-${step}`, type: 'function',
@@ -145,30 +170,80 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
     assert.equal((await message('set_active_provider', { providerId: 'openrouter' })).ok, true);
     const page = await context.newPage(); await page.goto(pageUrl);
     const tabId = await harness.evaluate(async url => (await chrome.tabs.query({})).find(tab => tab.url === url)?.id, pageUrl);
+    // WebBrain's deletion card is answered with the variant's fixed choice;
+    // any other question would be unexpected here.
+    const cards = [], unexpected = [];
+    let answering = true;
+    const answerer = (async () => {
+      const answered = new Set();
+      while (answering) {
+        const pending = await worker.evaluate(tabId => [...(unboundFixtureAgent._pendingClarifications.get(tabId)?.keys() || [])], tabId);
+        for (const clarifyId of pending) {
+          if (answered.has(clarifyId)) continue;
+          answered.add(clarifyId);
+          if (!clarifyId.startsWith('deletion_') || !cardAnswer) { unexpected.push(clarifyId); continue; }
+          cards.push(clarifyId);
+          assert.equal((await message('clarify_response', { tabId, clarifyId, answer: cardAnswer, source: 'option' })).ok, true);
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    })();
     const result = await message('chat', { tabId, text: task, mode: 'act', requestId: 'owned-unbound-deletion', locale: 'en' });
+    answering = false; await answerer;
+    const prompts = result.updates.filter(event => event.type === 'clarify').map(event => ({ kind: event.data?.promptKind,
+      question: event.data?.question, mutationConfirmation: event.data?.mutationConfirmation || null }));
     const diagnostic = await worker.evaluate(tabId => ({ submit: unboundFixtureAgent._completionSubmitStates.get(tabId),
       dispatches: unboundFixtureAgent._planExecutionGuards.get(tabId)?.resourceMutationDispatches || [],
       receipts: unboundFixtureReceipts }), tabId);
     const toolResults = result.updates.filter(event => event.type === 'tool_result').map(event => ({ name: event.data?.name,
       blocked: event.data?.result?.blocked === true, reason: event.data?.result?.actionGuard?.reason || null, error: event.data?.result?.error || null }));
     await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify({ result, diagnostic, deletes, judgeCalls, authorizations,
-      toolResults, blockedRemote }, (_key, value) => typeof value === 'string' && value.startsWith('data:image/') ? '[owned fixture screenshot omitted]' : value, 2));
+      decisions, toolResults, prompts, cards, unexpected, blockedRemote }, (_key, value) => typeof value === 'string' && value.startsWith('data:image/') ? '[owned fixture screenshot omitted]' : value, 2));
+    assert.deepEqual(unexpected, [], 'No other question was asked');
+    assert.equal(authorizations.length, 0, 'A deletion is decided by the deletion question, not the publication check');
+    // The request reaches the model as written, with the row and the row beside it.
+    assert.ok(decisions.length > 0 && decisions.every(item => item.choices.includes('delete_this') && item.request === task),
+      JSON.stringify(decisions));
+    assert.equal(decisions[0].page.item, rows[0]);
+    assert.equal(decisions[0].page.stage, 'record');
+    assert.ok(String(decisions[0].page.siblings?.[0] || '').startsWith(rows[1]), JSON.stringify(decisions[0].page));
+    assert.equal(cards.length, cardAnswer ? 1 : 0, `WebBrain asks once, only when the request does not say which row: ${JSON.stringify(prompts)}`);
+    if (cardAnswer) {
+      assert.deepEqual(prompts.find(item => item.kind === 'mutationConfirmation')?.mutationConfirmation,
+        { kind: 'delete', reason: 'not_named', host: 'shop.example', item: rows[0], url: '', dialog: '' });
+      assert.equal(decisions.length, 1, 'The user decided on the card; the model was not asked again');
+    }
+    if (declined) {
+      assert.deepEqual(deletes, [], `Don't delete removes nothing: ${JSON.stringify(toolResults)}`);
+      assert.equal(toolResults.find(item => item.name === 'click_ax')?.reason, 'deletion_declined', JSON.stringify(toolResults));
+      assert.deepEqual(diagnostic.receipts, []);
+      assert.equal(await page.locator('#cart li').count(), 2);
+      const partial = result.updates.findLast(event => event.type === 'tool_result' && event.data?.name === 'done')?.data?.result;
+      assert.notEqual(partial?.outcome, 'success', JSON.stringify(partial));
+      console.log(JSON.stringify({ passed: true, installedMV3: true, variant, cards: cards.length, deletes: deletes.length, blockedRemote }));
+      return;
+    }
     assert.deepEqual(deletes, [{ method: 'DELETE', path: '/api/cart/items/1' }], `Only the named row is removed, once: ${JSON.stringify(toolResults)}`);
     assert.deepEqual(diagnostic.receipts.map(receipt => receipt.stage), confirmation ? ['record', 'confirmation'] : ['record']);
     // Receipts keep the record's identity, never its row text.
     assert.ok(diagnostic.receipts.every(receipt => receipt.mutationKind === 'delete' && receipt.resourceUrl === null
       && /^[0-9a-f]{64}$/.test(receipt.footprint) && receipt.text === null));
     assert.equal(new Set(diagnostic.receipts.map(receipt => receipt.footprint)).size, 1, 'The confirmation belongs to the same record');
-    assert.equal(authorizations.length, confirmation ? 2 : 1);
-    if (confirmation) assert.match(authorizations[1].resource.confirmationDialog, /Remove this item from your cart\?/);
+    if (!cardAnswer) {
+      assert.equal(decisions.length, confirmation ? 2 : 1);
+      if (confirmation) {
+        assert.equal(decisions[1].page.stage, 'confirmation');
+        assert.match(decisions[1].page.dialog, /Remove this item from your cart\?/, 'The model sees what the site\'s dialog asks');
+      }
+    }
     assert.equal(await page.locator('#cart li').count(), 1);
     assert.ok((await page.locator('#cart').innerText()).includes(kept));
     const done = result.updates.findLast(event => event.type === 'tool_result' && event.data?.name === 'done')?.data?.result;
     assert.equal(done?.done, true, JSON.stringify(done));
     assert.equal(done?.outcome, 'success', JSON.stringify(done));
     assert.ok(judgeCalls > 0);
-    console.log(JSON.stringify({ passed: true, installedMV3: true, variant, confirmation, deletes: deletes.length,
-      receipts: diagnostic.receipts.length, authorizations: authorizations.length, judgeCalls, blockedRemote }));
+    console.log(JSON.stringify({ passed: true, installedMV3: true, variant, confirmation, cards: cards.length, deletes: deletes.length,
+      receipts: diagnostic.receipts.length, decisions: decisions.length, judgeCalls, blockedRemote }));
   } finally {
     await context?.close(); await new Promise(resolve => server.close(resolve));
     const resolved = path.resolve(profile);

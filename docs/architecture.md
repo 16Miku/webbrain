@@ -97,50 +97,55 @@ correction, searches and in-form toggles need no reconciliation. A form without
 record identity is bound by its action and values: an identical resubmission is
 reported as already made, a corrected in-place save needs the observed earlier
 result and authorization under the latest request, and a different target
-(another form or platform) needs a known earlier outcome. Removing characters,
-words or hashtags from a post is an edit; only removing the post or record
-makes deleting the original a prerequisite.
+(another form or platform) needs a known earlier outcome. Whether a correction
+asks to delete the earlier post or record first is a fixed-choice question
+that a model answers from the correction as the user wrote it, in any language
+(see "Language decisions" below): removing characters, words or hashtags from a
+post is an edit; removing the post or record itself makes deleting the original
+a prerequisite. An unsure answer, or none, publishes or submits nothing.
 
-A deletion of a record that has a permalink must name that URL in the latest
-request. A requested deletion of a record without one (a cart item, a mail or
-table row) is bound to the record instead. The page probe takes the nearest
-row, list item or article holding no other visible deletion control, or else a
-bounded container that stops at lists, landmarks, editors, headings, other
-records, other deletion controls (including hover-only ones) and 2,000
-characters, and keeps its visible text without the control's own caption. A
-menu item borrows the record of its expanded aria-controls or popover launcher.
-A confirmation dialog borrows the record of the agent's own authorized click
+A deletion of a record that has a permalink is bound to that URL. A deletion
+of a record without one (a cart item, a mail or table row) is bound to the
+record instead. The page probe takes the nearest row, list item or article
+holding no other visible deletion control, or else a bounded container that
+stops at lists, landmarks, editors, headings, other records, other deletion
+controls (including hover-only ones) and 2,000 characters, and keeps its
+visible text without the control's own caption, together with the text of up
+to twelve records of the same kind beside it, nearest first. A menu item
+borrows the record of its expanded aria-controls or popover launcher. A
+confirmation dialog borrows the record of the agent's own authorized click
 only when it opened after that click was checked, within 30 seconds, and holds
-that one deletion control. The latest request must ask for a deletion (not a
-text edit; an unspaced Chinese, Japanese or Korean verb counts unless it is
-negated or descriptive) and name the record more specifically than any sibling
-record of the same kind. The agent gives the probe only the request's terms,
-never page text, and the probe ranks each term in the record and in its
-siblings: a whole word, or a whole Han, kana or Hangul token, ranks highest;
-then a shared stem of at least four letters left by one listed suffix of the
-request's own language (Turkish case, possessive and plural endings with their
-buffer letters and vowel harmony, English -s/-es/-ies, common German plural
-and case endings, and Spanish and French plural endings); then the longest
-shared CJK substring of two to eight characters. Text is compared in NFC with
-full-width forms folded,
-under both ordinary and Turkish case folding (I and ı, İ and i). A term names
-the record only when no sibling matches it as well, so "wool sock" names a
-"Wool Sock" row next to "Wool Socks", while a stem or CJK name that two rows
-share names neither, and a merely longer word never matches ("elma" is not
-"elmas", "cat" is not "catalog"). The agent recomputes the record's ranks from
-its text. The authorization check receives the record and the dialog text as
-untrusted data, and its quoted evidence must contain the request's naming word
-(for example "tişörtü") or the matched CJK characters. The same record is never
-deleted twice at the same step in a task, even after a reload, and a changed
-record or ranking changes the checked action. Toolbar, bulk and selection
-deletions, menus without a linked launcher, records with permalink evidence,
-and confirmation dialogs that cannot be linked get no record and stay blocked.
-Consonant softening ("kitabı" for "kitap"), irregular or umlaut plurals, and
-other languages' inflection (Russian, for example) are not matched, and German,
-Spanish, French and Russian deletion verbs are recognized in their listed forms
-only (such as "löschen", "eliminar", "supprimer"); such requests need the
-item's name as shown. Completion after such a deletion uses the ordinary
-post-submit checks.
+that one deletion control. The probe receives nothing from the request.
+
+Whether the latest request asks to delete this exact item is a fixed-choice
+question (`deletion_request`) that a model answers from the request as the user
+wrote it, in any language, and the item as the page shows it: its text, its
+link, the step (the item's own control or the site's confirmation dialog, whose
+question it also sees) and the items beside it, all as untrusted data. The
+answer is one of: delete this item; unclear (another item fits as well, or it
+is named only by position); another item; no deletion asked; told not to
+delete. Only "delete this item" deletes without asking, and only with a
+quotation from the request that supports it. "Told not to delete" refuses
+without a card. Everything else, including no answer, goes to the user on
+WebBrain's card below. The same record is never deleted twice at the same step
+in a task, even after a reload, and a changed record, step or set of
+neighbours changes the checked action, so a decision cannot carry over to it.
+Toolbar, bulk and selection deletions, menus without a linked launcher and
+confirmation dialogs that cannot be linked get no record and stay blocked.
+Completion after such a deletion uses the ordinary post-submit checks.
+
+When the decision is not a clear "delete this item", WebBrain asks the user on
+its own card instead of refusing: "Delete this item on <site>?" with the item's
+text as the page shows it (plain, bounded text), its link when it has one, the
+site's own confirmation question at that step, and fixed choices (Delete,
+Don't delete) without free text. Delete authorizes that item for the rest of
+the task, including the confirmation dialog its click opens, with no further
+model check; the checks run again on a fresh reading of the page before the
+click, so a changed item is not deleted. Don't delete keeps it, and the item is
+not offered again in the task. Stop or a correction cancels the card and
+records nothing. Unattended scheduled runs are not asked and delete nothing.
+Toolbar, bulk and selection deletions, unlinked confirmation dialogs and
+repeated deletions stay refused: the user could not judge them from the card.
 
 When a runtime check ends a run, the chat shows a plain-language answer: what
 happened and what to check next. The exact diagnostic stays in verbose tool
@@ -743,6 +748,26 @@ exporting version and every turn's recording version, and Traces-page JSON adds
 `exportedByWebBrainVersion` while retaining the backward-compatible
 `webbrain-trace/1` schema. Legacy runs are labeled with an unavailable recording
 version rather than being attributed to the currently installed build.
+
+### Language decisions (`semantic-decisions.js`)
+
+Where a rule depends on what the user's words mean, WebBrain asks a model one
+closed question instead of matching words (`semantic-decisions.js`, shared by
+both builds). Each question lists its choices and what each one means. The
+request is the user's own text; page text is passed as untrusted data and can
+never change the question or the choices. The decision model answers when it
+is enabled in settings and sure enough (0.85 for a choice that lets an action
+go ahead without asking, 0.7 otherwise); otherwise the active model answers
+and must quote the request for a choice that lets an action go ahead. Choices
+outside the list, a missing quotation and failed calls count as no answer, and
+every caller treats no answer as "ask the user" or "do nothing". Identical
+questions are answered once. Stop or a correction during a decision cancels
+it. The questions are: does the request ask to delete this item; does a
+correction ask to delete the earlier post first; does the request say not to
+send this message. Consent itself never comes from reading words: who receives
+a message and whether an unclear deletion proceeds are answered on WebBrain's
+own cards with fixed choices, and a question the model asks, and whatever the
+user answers to it, approves neither.
 
 ### User Memory (`user-memory.js`)
 

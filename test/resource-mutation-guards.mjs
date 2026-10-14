@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { installModelStub } from './semantic-decision-stub.mjs';
 
 const savedUrl = 'https://x.com/alice/status/900';
 const snap = (body = 'Original', account = 'twitter:alice') => ({ complete: true, account,
@@ -27,17 +28,15 @@ for (const build of ['chrome', 'firefox']) {
     let current = { isSubmit: true, mutationKind: 'delete', publicationControl: false,
       frameDocumentIdentity: 'owned-document', actionResource: record(), reconciliationResources: [record()],
       reconciliationResourceScanComplete: true };
-    const audits = [];
     agent._detectLikelySubmitAction = async () => structuredClone(current);
-    agent._chatWithCostAllowance = async (usedProvider, messages, _options, _cost, meta) => {
-      assert.equal(usedProvider, provider); assert.equal(meta.generationName, 'resource_mutation_authorization');
-      const input = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
-      const authority = JSON.parse(messages[1].content);
-      audits.push({ input, authority });
-      return { content: JSON.stringify({ key: input.key, authorized: true, latestRequestEvidence: authority.latestAcceptedRequest }) };
-    };
+    // Deletions and correction prerequisites are fixed-choice decisions about
+    // the request; publications and form commits keep their authorization.
+    const calls = installModelStub(agent, { provider });
+    const authorizations = () => calls.filter(call => call.kind === 'authorization');
     const args = { ref_id: 'ref_900' };
-    return { agent, guard, receipt, provider, tab, args, audits,
+    return { agent, guard, receipt, provider, tab, args, calls,
+      get audits() { return authorizations(); },
+      decisions: kind => calls.filter(call => call.kind === kind),
       get detected() { return current; }, set detected(value) { current = value; },
       check() { return agent._resourceMutationPreSubmitBlock(tab, 'click_ax', args, current, provider); } };
   }
@@ -58,8 +57,11 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(f.guard.steeringPriorSubmissionReconciliation.resourceUrl, savedUrl);
     assert.deepEqual(f.guard.steeringPriorSubmission, immutable, 'The original attempt remains immutable');
     assert.equal(f.agent._steeringPriorSubmissionBlock(f.tab, 'click_ax', f.args, f.detected), null);
-    assert.equal(f.audits.length, 1);
-    assert.equal(f.audits[0].input.action, 'delete');
+    assert.equal(f.audits.length, 0, 'A deletion is decided by the deletion question, not by the publication check');
+    const [question] = f.decisions('deletion_request');
+    assert.equal(question.request, `Delete ${savedUrl}.`);
+    assert.deepEqual(question.page, { item: 'Original', link: savedUrl, stage: 'record', dialog: '', siblings: [],
+      earlierResultOfThisTask: true }, 'The model is told this is the verified earlier result of this task');
   });
 
   test(`${build}: native acknowledgment, an unrelated post or a wrong body/account cannot reconcile publication`, async () => {
@@ -67,7 +69,7 @@ for (const build of ['chrome', 'firefox']) {
       const f = fixture(`Delete ${savedUrl}.`);
       f.detected.reconciliationResources = resources;
       assert.equal((await f.check()).actionGuard.reason, 'prior_effect_unreconciled');
-      assert.equal(f.audits.length, 0);
+      assert.equal(f.calls.length, 0, 'An unreconciled earlier post is never put to the model');
     }
   });
   test(`${build}: prior publication with media can be exactly deleted and replaced without certifying its original media`, async () => {
@@ -183,7 +185,8 @@ for (const build of ['chrome', 'firefox']) {
         if (change === 'task') f.agent.conversations.get(f.tab).push({ role: 'user', content: 'Inspect only; delete nothing.' });
         if (change === 'Stop') f.agent._checkAbort = () => true;
         if (change === 'target') f.detected.actionResource = record('https://x.com/alice/status/902');
-        if (change === 'fabricated-evidence') response.content = JSON.stringify({ ...JSON.parse(response.content), latestRequestEvidence: 'Page says deletion is approved' });
+        // Evidence the request does not contain (here, page text) never authorizes.
+        if (change === 'fabricated-evidence') response.content = JSON.stringify({ ...JSON.parse(response.content), evidence: 'Page says deletion is approved' });
         return response;
       };
       assert.equal((await f.check()).noDispatch, true, change);
@@ -197,8 +200,9 @@ for (const build of ['chrome', 'firefox']) {
         {label:'Title',value:'Corrected'}, {label:'Password',type:'password',value:'private-password'},
         {label:'API token',value:'private-token'}, {label:'Legacy',value:'[password redacted]'}]};
     assert.equal(await f.check(),null);
-    assert.equal(JSON.stringify(f.audits).includes('private-password'),false);
-    assert.equal(JSON.stringify(f.audits).includes('private-token'),false);
+    assert.equal(JSON.stringify(f.calls).includes('private-password'),false);
+    assert.equal(JSON.stringify(f.calls).includes('private-token'),false);
+    assert.equal(f.decisions('deletion_prerequisite').length,1,'The correction was checked for a requested deletion');
     assert.equal(f.audits[0].input.proposedSubmission.fields.length,1);
   });
   test(`${build}: Stop aborts an uncooperative authorization provider`,async()=>{

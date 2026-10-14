@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
+import { defaultDecide, installModelStub } from './semantic-decision-stub.mjs';
 
 const url = 'https://mastoturk.org/@ownedqa';
 const resource = `${url}/200`;
@@ -178,12 +179,14 @@ for (const build of ['chrome', 'firefox']) {
             agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
             agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
             agent._detectLikelySubmitAction = async () => structuredClone(detected);
-            agent._chatWithCostAllowance = async (_provider, messages) => {
-              const payload = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
-              return { content: JSON.stringify({ key: payload.key, authorized: true, latestRequestEvidence: request }) };
-            };
+            const calls = installModelStub(agent);
             const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider);
             assert.equal(result?.actionGuard?.reason || null, reason);
+            assert.equal(calls.length, 1);
+            assert.equal(calls[0].kind, 'deletion_request');
+            assert.equal(calls[0].request, request, 'The request reaches the model as written');
+            assert.equal(calls[0].page.link, resource, 'with the exact post the confirmation deletes');
+            if (reason) assert.equal(result.mutationConfirmation?.url, resource, 'and an unclear deletion goes to the user');
             agent._planExecutionGuards.delete(1);
             assert.equal((await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#confirm' }, detected, provider)).actionGuard.reason,
               'task_or_target_changed');
@@ -211,12 +214,11 @@ for (const build of ['chrome', 'firefox']) {
               if (++probes === 1 && variant === 'flip-before-authorization') await disableConfirmation();
               return f.probe('#delete');
             };
-            agent._chatWithCostAllowance = async (_provider, messages) => {
+            installModelStub(agent, { decide: async (kind, question) => {
               authorizations++;
               if (variant === 'flip-during-authorization') await disableConfirmation();
-              const proposed = JSON.parse(agent._unwrapUntrusted(messages.at(-1).content));
-              return { content: JSON.stringify({ key: proposed.key, authorized: true, latestRequestEvidence: request }) };
-            };
+              return defaultDecide(kind, question);
+            } });
             const result = await agent._resourceMutationPreSubmitBlock(1, 'click', { selector: '#delete' }, detected, provider);
             const reason = variant === 'flip-before-authorization' ? 'resource_changed'
               : variant === 'flip-during-authorization' ? 'resource_changed_after_authorization' : null;

@@ -307,6 +307,23 @@ const server = http.createServer(async (request, response) => {
     else if (system.startsWith("Compile the user's social-publication intent")) {
       current.compilers++;
       completion = { role: 'assistant', content: JSON.stringify(publicationContract(input)) };
+    } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
+      // The model's reading of the latest request, in any language: whether it
+      // asks to delete this exact item, or the earlier post first.
+      const request = JSON.parse(textOf(input.messages[1].content)).request, { page } = objectFrom(input.messages[2].content);
+      assert.equal(request, current.latestCorrection || current.task);
+      const choices = [...system.matchAll(/^- "([a-z_]+)":/gm)].map(match => match[1]);
+      const forbids = /\b(?:do not|don't)\b[^.]*\bdelete\b/i.test(request);
+      const answer = choices.includes('delete_this')
+        ? forbids ? { choice: 'forbidden', evidence: '' }
+          : page?.link && request.includes(page.link) ? { choice: 'delete_this', evidence: page.link }
+          : /https?:\/\//.test(request) ? { choice: 'other_item', evidence: '' } : { choice: 'unclear', evidence: '' }
+        : choices.includes('delete_previous')
+          ? /delete the exact original QA post/.test(request) ? { choice: 'delete_previous', evidence: 'delete the exact original QA post' } : { choice: 'keep_previous', evidence: '' }
+          : { choice: '', evidence: '' };
+      current.decisions.push({ kind: choices.includes('delete_this') ? 'deletion_request' : choices.includes('delete_previous') ? 'deletion_prerequisite' : 'other',
+        page, choice: answer.choice });
+      completion = { role: 'assistant', content: JSON.stringify(answer) };
     } else if (system.startsWith('Check one separately proposed consequential action')) {
       const trusted = JSON.parse(textOf(input.messages[1].content)), proposed = objectFrom(input.messages[2].content);
       assert.equal(trusted.latestAcceptedRequest, current.latestCorrection || current.task);
@@ -417,6 +434,14 @@ try {
     network.push({ method: request.method(), origin: url.origin }); return route.abort('blockedbyclient');
   });
   worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
+  // The worker can be reported before its extension APIs and module have
+  // finished loading; wait for both before wrapping them.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const ready = await worker.evaluate(() => !!(globalThis.chrome?.tabs && globalThis.chrome?.debugger && globalThis.sharedGuardFixtureAgent))
+      .catch(() => false);
+    if (ready) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     const originalFetch = fetch.bind(globalThis), send = chrome.tabs.sendMessage.bind(chrome.tabs), command = chrome.debugger.sendCommand.bind(chrome.debugger);
     globalThis.sharedGuardProbe = { commands: [], transports: [], blocked: [] };
@@ -447,7 +472,7 @@ try {
   assert.equal((await message('set_active_provider', { providerId: 'openrouter' })).ok, true);
   for (const specification of cases) {
     console.log(`Installed shared guard case ${specification.id}`);
-    current = { ...specification, url: specification.origin + (specification.origin === 'https://x.com' ? '/home' : '/'), requests: [], calls: [], steps: 0, compilers: 0, audits: 0, resourceAudits: [] };
+    current = { ...specification, url: specification.origin + (specification.origin === 'https://x.com' ? '/home' : '/'), requests: [], calls: [], steps: 0, compilers: 0, audits: 0, resourceAudits: [], decisions: [] };
     const page = current.page = await context.newPage(), pageErrors = []; page.on('pageerror', error => pageErrors.push(error.message));
     if (current.deleteOnly) await page.addInitScript(value => { window.qaAfterPublishSuggestion = value; }, replacementBody);
     if (current.duplicate) await page.addInitScript(value => { window.qaAfterPublishSuggestion = value; }, originalBody);
@@ -459,6 +484,9 @@ try {
     if (current.inlineControl) await page.addInitScript(() => { window.qaInlineControl = true; });
     await page.goto(current.url); current.tabId = await settings.evaluate(async url => (await chrome.tabs.query({})).findLast(tab => tab.url === url)?.id, current.url);
     current.requestId = `owned-shared-${specification.id}`;
+    // Identical questions are answered once per installed agent; each case
+    // starts without earlier cases' answers so its own decisions are visible.
+    await worker.evaluate(() => sharedGuardFixtureAgent._semanticDecisionCache?.clear());
     const providerErrorStart = providerErrors.length;
     const start = await worker.evaluate(() => ({ commands: sharedGuardProbe.commands.length, transports: sharedGuardProbe.transports.length }));
     const worlds = await worker.evaluate(async tabId => {
@@ -470,7 +498,28 @@ try {
       : current.editor ? `Replace only the exact Notes document with exactly ${JSON.stringify(newNote)}. Do not save it or touch Other notes. If the original field changes during inference, leave it intact. Owned shared guard case ${specification.id}.`
       : `Open only the options menu for my exact owned published QA record. Do not publish, delete, message, edit, or click any menu action. Owned shared guard case ${specification.id}.`;
     current.task = task;
+    // WebBrain's own deletion card is answered the way a user keeping their
+    // records would: Don't delete. No other question is expected.
+    current.deletionCards = []; current.otherQuestions = [];
+    let answering = true;
+    const answerer = (async () => {
+      const answered = new Set();
+      while (answering) {
+        const pending = await worker.evaluate(tabId => [...(sharedGuardFixtureAgent._pendingClarifications.get(tabId)?.keys() || [])], current.tabId);
+        for (const clarifyId of pending) {
+          if (answered.has(clarifyId)) continue;
+          answered.add(clarifyId);
+          if (!clarifyId.startsWith('deletion_')) { current.otherQuestions.push(clarifyId); continue; }
+          current.deletionCards.push(clarifyId);
+          await message('clarify_response', { tabId: current.tabId, clarifyId, answer: 'deny', source: 'option' });
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    })();
     const result = await message('chat', { tabId: current.tabId, requestId: current.requestId, text: task, mode: 'act', locale: 'en' });
+    answering = false; await answerer;
+    current.deletionPrompts = (result.updates || []).filter(event => event.type === 'clarify' && event.data?.promptKind === 'mutationConfirmation')
+      .map(event => event.data.mutationConfirmation);
     const state = current.resourceCorrection || current.editor ? await page.evaluate(() => qaSnapshot()) : await page.evaluate(() => ({ counts: qaCounts, menu: document.querySelector('#menu').textContent,
       status: document.querySelector('#status').textContent, otherNotes: document.querySelector('#human-field').value }));
     if (current.toolbarDanger) state.localDraft = await page.locator('#local-draft-editor').textContent();
@@ -486,6 +535,10 @@ try {
     let error;
     try {
       assert.deepEqual(worlds, { isolated: 'function', main: 'undefined' }, 'The manifest installs AX only in the isolated content world.');
+      assert.deepEqual(current.otherQuestions, [], 'No question other than WebBrain\'s deletion card is expected.');
+      if (!current.unrelatedRecord && !current.resourceDrift && !current.accountDrift) {
+        assert.deepEqual(current.deletionCards, [], 'A deletion the request binds needs no card.');
+      }
       assert.deepEqual(pageErrors, []); assert.deepEqual(providerErrors.slice(providerErrorStart), [], providerErrors.slice(providerErrorStart).join('\n'));
       if (current.editor) {
         assert.equal(current.beforeWrite.model, oldNote); assert.equal(current.beforeWrite.focused, false); assert.equal(current.beforeWrite.scrollY, 0);
@@ -563,9 +616,18 @@ try {
           if (current.unrelatedRecord) {
             assert.equal(state.unrelatedDeletes, 0, 'Opening A cannot lend its resource identity to canonical-less B.');
             assert.equal(state.current.body, originalBody);
-            assert.ok(clicks.some(click => click.result.actionGuard?.reason === 'record_not_named_in_request'),
-              'Canonical-less B is bound only to its own visible record, which the latest request does not name.');
+            // B is bound only to its own visible record, which the latest
+            // request does not name: the user is asked about B itself, on
+            // WebBrain's card, and declines.
+            assert.equal(current.deletionCards.length, 1, JSON.stringify(current.deletionPrompts));
+            assert.equal(current.deletionPrompts[0]?.reason, 'not_named');
+            assert.match(current.deletionPrompts[0]?.item || '', /Unrelated record B/);
+            assert.ok(clicks.some(click => click.result.actionGuard?.reason === 'deletion_declined'),
+              'Canonical-less B is deleted only if the user confirms that exact record.');
             assert.equal(current.resourceAudits.length, 0, 'Unproved B cannot reach authorization using A\'s canonical identity.');
+            const decision = current.decisions.find(item => item.kind === 'deletion_request');
+            assert.match(decision?.page?.item || '', /Unrelated record B/, 'The model is asked about B itself');
+            assert.equal(decision.page.link, '', 'B never borrows A\'s link');
           }
         } else {
           assert.deepEqual(deletes.map(receipt => receipt.url), [current.blue ? 'https://bsky.app/owned-fixture/post/3ownedqa' : 'https://x.com/owned-fixture/post/900']);
@@ -589,7 +651,10 @@ try {
               assert.equal(compose?.success, true); assert.equal(compose?.nativeInputAcknowledged, true); assert.equal(compose?.trusted, true);
             }
           }
-          assert.ok(current.resourceAudits.some(audit => audit.action === 'delete' && audit.authorized), 'Deletion uses the new distinct resource authorization path.');
+          assert.ok(current.decisions.some(item => item.kind === 'deletion_request' && item.choice === 'delete_this'
+            && item.page?.link === (current.blue ? bskyOriginalUrl : 'https://x.com/ownedqa/status/900')),
+          'The deletion is decided from the latest request and the exact post it names.');
+          assert.equal(current.resourceAudits.filter(audit => audit.action === 'delete').length, 0, 'Deletions do not use the publication check.');
         }
         }
         }

@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
 import { createCompletionInvariantState } from '../src/chrome/src/agent/completion-invariant.js';
+import { defaultDecide, semanticQuestionOf } from './semantic-decision-stub.mjs';
 
 // The page, native AX refs, submit probe, normalized intent contract, and
 // content dispatch are real. Every browser request is fulfilled locally.
@@ -49,7 +50,12 @@ for (const build of ['chrome','firefox']) {
         agent._persist=()=>{};
         agent.conversations.set(1,[{role:'system',content:'system'},{role:'user',content:options.request||'Inspect the current UI and dismiss its informational dialog. Send and publish nothing.'}]);
         const guard=agent._startPlanExecutionGuard(1,'act',{requestKind:'execute',requiresStateChange:false,requiresSubmission:false,...options.gate});
-        agent._chatWithCostAllowance=async()=>({content:JSON.stringify(options.contract||noneContract)});
+        // Fixed-choice decisions about the request get a model's reading; the
+        // publication contract comes from the fixture.
+        agent._chatWithCostAllowance=async(_p,messages,_o,_c,meta)=>{
+          const kind=String(meta?.generationName||'').match(/^semantic_(.+)$/)?.[1];
+          return {content:JSON.stringify(kind?defaultDecide(kind,semanticQuestionOf(agent,messages)):(options.contract||noneContract))};
+        };
         if(options.compile!==false)await agent._ensureSocialPublicationContract(1,provider);
         return {agent,guard,provider};
       };
