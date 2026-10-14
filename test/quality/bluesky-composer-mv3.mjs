@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 import { build as bundle } from 'esbuild';
 
 // Real installed MV3 background, Agent, monitor and CDP input. The editor is
@@ -66,6 +67,9 @@ const server = http.createServer(async (request, response) => {
     let completion;
     if (system.startsWith('Extract stable user preferences for WebBrain memory.'))
       completion = { role: 'assistant', content: '{"memories":[]}' };
+    // What a status on the page says, read the way a model would read it.
+    // These questions carry page text only, never the task.
+    else if (fixturePageTextReply(input.messages)) completion = { role: 'assistant', content: fixturePageTextReply(input.messages) };
     else {
       assert.ok(current && JSON.stringify(input.messages).includes(current.marker), 'Inference must retain the exact owned Bluesky task.');
       const body = current.body;

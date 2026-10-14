@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { telegramLab, telegramRaceLab } from './native-chat-fixture.mjs';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // Whole installed background -> intent planner -> Agent -> native content
 // dispatch -> completion. Only the provider is deterministic; no Agent gate,
@@ -77,6 +78,15 @@ const server = http.createServer(async (request, response) => {
     }
     let body = ''; for await (const chunk of request) body += chunk;
     const input = JSON.parse(body);
+    // What a status on the page says, read the way a model would read it.
+    // These questions carry page text only, never a tab's task.
+    const pageTextReply = fixturePageTextReply(input.messages);
+    if (pageTextReply) {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ id: 'owned-page-text', choices: [{ message: { role: 'assistant', content: pageTextReply }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 100, completion_tokens: 10 } }));
+      return;
+    }
     const authority = JSON.stringify(input.messages || []);
     const matches = [...cases.values()].filter(entry => authority.includes(entry.marker));
     assert.equal(matches.length, 1, 'Every provider request must retain exactly its own tab task authority.');
