@@ -73,8 +73,10 @@ const specifications = [
   { id: 'neutral-popup', origin: 'https://shared-guards.invalid', popup: true },
   { id: 'x-popup', origin: 'https://x.com', popup: true },
   { id: 'bsky-popup', origin: 'https://bsky.app', popup: true },
-  { id: 'x-ambiguous-post-control', origin: 'https://x.com', popup: false, blocked: true },
-  { id: 'bsky-ambiguous-post-control', origin: 'https://bsky.app', popup: false, blocked: true },
+  // A plain button whose name reads as posting, with no menu semantics, could
+  // be a publish control; a model reads "Post actions" as opening a menu.
+  { id: 'x-ambiguous-post-control', origin: 'https://x.com', popup: false, ambiguous: true, blocked: true },
+  { id: 'bsky-ambiguous-post-control', origin: 'https://bsky.app', popup: false, ambiguous: true, blocked: true },
   { id: 'x-dangerous-publish-popup-metadata', origin: 'https://x.com', popup: true, dangerous: 'publish', blocked: true },
   { id: 'bsky-dangerous-delete-popup-metadata', origin: 'https://bsky.app', popup: true, dangerous: 'delete', blocked: true },
   { id: 'neutral-native-ui-change', origin: 'https://shared-guards.invalid', popup: false, native: true },
@@ -133,7 +135,7 @@ function fixtureHtml(specification) {
 <h1>Owned QA record</h1><nav aria-label="Account navigation"><a id="account" href="/ownedqa">Owned QA @ownedqa</a></nav>
 <input id="human-field" aria-label="Other notes" value="Human-owned notes">
 <article id="owner" role="article" data-testid="tweet"><h2>Owned exact QA record</h2><a href="/ownedqa/status/910">Owned post permalink</a><p data-testid="tweetText">Owned previously published QA record.</p>
-<button id="more" type="button" aria-label="${specification.dangerous === 'publish' ? 'Publish post' : specification.dangerous === 'delete' ? 'Delete' : specification.native ? 'Compose new post' : 'Post actions'}" ${specification.popup ? 'aria-haspopup="menu" aria-expanded="false" aria-controls="menu"' : ''}>More</button></article>
+<button id="more" type="button" aria-label="${specification.dangerous === 'publish' ? 'Publish post' : specification.dangerous === 'delete' ? 'Delete' : specification.native ? 'Compose new post' : specification.ambiguous ? 'Post' : 'Post actions'}" ${specification.popup ? 'aria-haspopup="menu" aria-expanded="false" aria-controls="menu"' : ''}>More</button></article>
 <div id="menu"></div><div role="status" id="status"></div>
 <script>
 window.qaCounts={more:0,delete:0,publish:0,inputs:0,trusted:[]};
@@ -367,7 +369,7 @@ const server = http.createServer(async (request, response) => {
       }
       else if (step === 0) call = { name: 'get_accessibility_tree', args: { filter: 'all' } };
       else if (step === 1) {
-        current.moreRef = observed?.result.pageContent.split('\n').find(line => /button "(?:Post actions|Compose new post|Publish post|Delete)"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
+        current.moreRef = observed?.result.pageContent.split('\n').find(line => /button "(?:Post actions|Post|Compose new post|Publish post|Delete)"/.test(line))?.match(/\[(ref_\d+)\]/)?.[1];
         assert.ok(current.moreRef, 'Use a reference from the actual installed AX reader.');
         if (current.human) await current.page.locator('#human-field').click();
         if (current.owner) await current.page.evaluate(() => qaReplaceOwner());
