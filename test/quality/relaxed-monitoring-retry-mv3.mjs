@@ -206,6 +206,14 @@ try {
     return route.continue();
   });
   worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
+  // The worker can be reported before its extension APIs and module have
+  // finished loading; wait for both before wrapping them.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const ready = await worker.evaluate(() => !!(globalThis.chrome?.tabs && globalThis.chrome?.debugger && globalThis.relaxedFixtureAgent))
+      .catch(() => false);
+    if (ready) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     const send = chrome.tabs.sendMessage.bind(chrome.tabs), command = chrome.debugger.sendCommand.bind(chrome.debugger), fetchOriginal = fetch.bind(globalThis);
     globalThis.relaxedFixtureProbe = { transports: [], commands: [], monitorStateRequests: [], blocked: [] };
