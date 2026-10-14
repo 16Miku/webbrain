@@ -27318,6 +27318,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           method: String(detected.method || 'GET').slice(0, 20).toUpperCase(),
           action: String(detected.action || '').slice(0, 300),
           actionUrl: String(detected.actionUrl || detected.action || '').slice(0, 300),
+          searchLandmark: detected.searchLandmark === true,
+          searchSubmitCaption: detected.searchSubmitCaption === true,
           githubCommitDialogLauncher: detected.githubCommitDialogLauncher === true,
           // Ordinary in-form controls keep their submit confirmation; this only
           // tells post-correction guards they are not consequential commits.
@@ -27362,6 +27364,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           method: String(resolvedForm.method || 'GET').slice(0, 20).toUpperCase(),
           action: String(resolvedForm.action || '').slice(0, 300),
           actionUrl: String(resolvedForm.actionUrl || resolvedForm.action || '').slice(0, 300),
+          searchLandmark: resolvedForm.searchLandmark === true,
         };
       }
       const nonSubmit = rawResults.find(item => item?.resolvedNonSubmitTarget === true);
@@ -27723,10 +27726,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           ariaLabel: compact(el.getAttribute?.('aria-label') || '', 120),
           placeholder: compact(el.getAttribute?.('placeholder') || '', 120),
           type: compact(el.type || el.tagName || '', 40),
+          enterKeyHint: compact(el.getAttribute?.('enterkeyhint') || '', 20),
+          inputMode: compact(el.getAttribute?.('inputmode') || '', 20),
           value,
           changed,
         };
       });
+      // A search landmark around the form says it searches, in any language.
+      const searchLandmark = (() => {
+        try { return !!form.closest?.('[role="search"],search'); } catch { return false; }
+      })();
       const changedFields = fields.filter(field => field.changed || field.value).slice(0, 8);
       const changedText = changedFields.length
         ? `Changed/filled fields: ${changedFields.map(field => `${field.label}: ${field.value || '(blank)'}`).join('; ')}.`
@@ -27746,6 +27755,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         method,
         action,
         actionUrl,
+        searchLandmark,
       };
     };
     const transactionOrderScan = (root) => {
@@ -28134,6 +28144,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         githubCommitDialogLauncher: githubEditPage
           && !controlInModal
           && (/^commit changes(?:\.{3}|…)?$/i.test(controlLabel) || controlOpensDialog),
+        // The activated control's captions read as only searching,
+        // filtering or showing something, in any language.
+        searchSubmitCaption: captionsReading(controlCaptions(control)) === 'view',
         ...formSummary,
         summary: [
           formSummary.summary,

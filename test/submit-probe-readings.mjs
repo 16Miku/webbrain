@@ -118,6 +118,22 @@ for (const build of ['chrome', 'firefox']) {
             __wbResourceRunToken: 'owned-run', __wbResourceTaskKey: 'owned-task' });
           assert.equal(held.mutationKind, 'delete');
         });
+
+        await t.test('a search form reports its landmark, its keyboard and a submit read as searching, in any language', async () => {
+          await open('<div role="search"><form id="f" method="get" action="/suche"><input name="begriff" aria-label="Suchbegriff" '
+            + 'enterkeyhint="search" value="Fahrrad"><button id="t" type="submit">Suchen</button></form></div>');
+          const searched = await probe('#t', caption => (caption === 'Suchen' ? 'view' : read(caption)));
+          assert.equal(searched.isSubmit, true);
+          assert.equal(searched.searchLandmark, true);
+          assert.equal(searched.searchSubmitCaption, true);
+          assert.equal(searched.fields?.[0]?.enterKeyHint, 'search');
+          // Outside a landmark, with an unread caption, nothing says search.
+          await open('<form id="f" method="get" action="/urun"><input name="kw" value="bisiklet"><button id="t" type="submit">Ara</button></form>');
+          const plain = await probe('#t', () => null);
+          assert.equal(plain.isSubmit, true);
+          assert.equal(plain.searchLandmark, false);
+          assert.equal(plain.searchSubmitCaption, false);
+        });
       } finally {
         await browser.close();
       }

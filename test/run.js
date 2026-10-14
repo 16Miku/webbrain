@@ -107553,6 +107553,31 @@ test('submit risk classifier groups only conservative same-site GET searches', (
       assert.equal(result.risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: ${reason} must keep fresh confirmation`);
       assert.equal(result.lowRisk, false, `${label}: ${reason} must not be grouped`);
     }
+
+    // A search is known by the page's structure in any language, never by
+    // the words of its labels: a German site's search box under /suche.
+    const german = {
+      isSubmit: true,
+      url: 'https://www.beispiel.de/suche',
+      method: 'GET',
+      actionUrl: 'https://www.beispiel.de/suche',
+      fields: [{ type: 'text', name: 'begriff', label: 'Suchbegriff', placeholder: 'Suchbegriff eingeben', value: 'Fahrrad', changed: true }],
+    };
+    for (const [info, signal] of [[{ ...german, searchLandmark: true }, 'a search landmark'],
+      [{ ...german, fields: [{ ...german.fields[0], enterKeyHint: 'search' }] }, 'a search keyboard'],
+      [{ ...german, fields: [{ ...german.fields[0], inputMode: 'search' }] }, 'a search input mode'],
+      [{ ...german, searchSubmitCaption: true }, 'a submit control read as searching']]) {
+      assert.equal(classify(info, german.url).risk, SubmitRisk.LOW_RISK_SEARCH, `${label}: ${signal} did not mark a search`);
+      assert.equal(classify({ ...info, method: 'POST' }, german.url).risk, SubmitRisk.FRESH_CONFIRMATION,
+        `${label}: ${signal} grouped a POST form`);
+      assert.equal(classify({ ...info, fields: [...info.fields, { type: 'password', name: 'pin', label: 'PIN' }] }, german.url).risk,
+        SubmitRisk.FRESH_CONFIRMATION, `${label}: ${signal} grouped a form with a credential field`);
+    }
+    // Words in a label alone say nothing, in English as in German.
+    assert.equal(classify(german, german.url).risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: German label words`);
+    assert.equal(classify({ ...german, url: 'https://shop.example/products', actionUrl: 'https://shop.example/products',
+      fields: [{ type: 'text', name: 'kw', placeholder: 'Search products', value: 'bike', changed: true }] },
+    'https://shop.example/products').risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: English label words`);
   }
 });
 

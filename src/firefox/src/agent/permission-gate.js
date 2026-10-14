@@ -196,6 +196,13 @@ function submitFieldDescriptor(field = {}) {
   ].map(value => String(value || '').trim()).filter(Boolean).join(' ');
 }
 
+// A field's code-level names (its type, name, id and autocomplete token),
+// never its visible labels: those are in the page's language.
+function submitFieldCodeNames(field = {}) {
+  return [field.type, field.name, field.id, field.autocomplete]
+    .map(value => String(value || '').trim()).filter(Boolean).join(' ');
+}
+
 function shortHash(value) {
   let hash = 2166136261;
   const text = String(value || '');
@@ -302,8 +309,19 @@ export function classifySubmitRisk(submitInfo = {}, currentUrlOrHost = '') {
   if (SIDE_EFFECT_ACTION_RE.test(`${pathname} ${actionParameters}`)) {
     return freshSubmitRisk('form action may have side effects');
   }
-  const fieldMetadata = fields.map(submitFieldDescriptor).join(' ');
-  const searchLike = SEARCH_PATH_RE.test(pathname) || SEARCH_FIELD_RE.test(fieldMetadata) || SEARCH_FIELD_RE.test(actionParameters);
+  // A search is known by the page's structure, in any language: a search
+  // landmark around the form, a search-typed field or one whose keyboard says
+  // search, code names such as q or query, a search address, or a submit
+  // control a model read as only searching, filtering or showing results.
+  const fieldCodeNames = fields.map(submitFieldCodeNames).join(' ');
+  const searchKeyboard = fields.some(field => /^search$/i.test(String(field.enterKeyHint || '').trim())
+    || /^search$/i.test(String(field.inputMode || '').trim()));
+  const searchLike = submitInfo.searchLandmark === true
+    || searchKeyboard
+    || submitInfo.searchSubmitCaption === true
+    || SEARCH_PATH_RE.test(pathname)
+    || SEARCH_FIELD_RE.test(fieldCodeNames)
+    || SEARCH_FIELD_RE.test(actionParameters);
   if (!searchLike) return freshSubmitRisk('form is not a resolved search');
 
   return {
