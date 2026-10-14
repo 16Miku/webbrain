@@ -87586,7 +87586,7 @@ test('agent preserves active progress ledger for bare continuation turns', async
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Follow every stargazer on this page.' },
       { role: 'assistant', content: 'Paused with one row unresolved.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     agent._progressUpdate(tabId, {
       items: [{ id: 'octocat', label: 'octocat', action: 'follow', status: 'pending' }],
@@ -102169,7 +102169,7 @@ test('continuation session derive after restart ignores a foreign task\'s scoped
       { role: 'system', content: 'sys' },
       { role: 'user', content: "follow 100 accounts i don't follow yet here" },
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     // Only a foreign task's scoped unresolved rows survive; no session cached.
     agent.progressLedgers.set(tabId, [
@@ -102304,7 +102304,7 @@ test('continue after an unrelated task does not resurrect unstamped legacy rows'
       { role: 'assistant', content: 'Paused.' },
       { role: 'user', content: 'Check the deployment again in one minute.' },
       { role: 'assistant', content: 'Checked.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     agent.progressLedgers.set(tabId, [
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending' },

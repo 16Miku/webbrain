@@ -133,7 +133,9 @@ for (const build of ['chrome', 'firefox']) {
     const restored = new Agent({ getActive: () => ({ promptTier: 'full' }) });
     restored.useSiteAdapters = true;
     await restored._hydrate(1);
-    restored.conversations.get(1).push({ role: 'user', content: 'continue' });
+    // The runtime marks a turn that only continues the task when it arrives
+    // (a model reads it in any language); the recovery follows that mark.
+    restored.conversations.get(1).push({ role: 'user', content: 'continue', webbrainTurnKind: 'continue' });
     const recovery = await restored._observeHuggingFaceSignupRecovery(1, 'get_accessibility_tree', { filter: 'visible' }, { pageContent: credentials }, { status: 'cleared' });
     assert.match(recovery, /returned to the credentials step/);
     assert.match(recovery, /attachment_1/);
