@@ -175,11 +175,26 @@ export function fixtureWorkflowStateReading(state, text) {
   return shown?.test(value) ? 'reached' : 'other';
 }
 
+// How a model reads the fixtures' own control captions (the control_effect
+// question): what activating a control labelled so does. A small oracle for
+// the test fixtures, the way a model would read them; the product never reads
+// these words.
+const END = '(?=$|[\\s!.,:;?…])';
+export function fixtureControlEffectReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (new RegExp(`^(?:continue|next|sign in|log in|devam|ileri|weiter|suivant|siguiente|次へ)${END}`, 'iu').test(value)) return 'next_step';
+  if (/^add to (?:cart|bag|basket)\b/i.test(value)) return 'commit';
+  if (new RegExp(`^(?:add|choose|select|attach|insert|format|bold|italic|ekle|seç)${END}`, 'iu').test(value) || /emoji/i.test(value)) return 'form_edit';
+  if (new RegExp(`^(?:save|submit|post|publish|send|confirm|commit|resolve|pay|purchase|buy|checkout|place order|create|update|apply|finish|done|sign up|register|reply|gönder|kaydet|yayınla|onayla|öde|enviar|guardar|envoyer|enregistrer|senden|speichern|送信|保存|发送|提交)${END}`, 'iu').test(value)) return 'commit';
+  return 'other';
+}
+
 // Stands in for the model that reads page texts in unit tests (status
 // messages, workflow states, validation alerts): `read(kind, item)` returns a
 // choice or null for no answer. Records every item asked.
 export function stubPageTextReadings(agent, read = (kind, item) => (kind === 'status_message'
-  ? fixtureStatusReading(item.text) : kind === 'workflow_state' ? fixtureWorkflowStateReading(item.state, item.text) : null)) {
+  ? fixtureStatusReading(item.text) : kind === 'workflow_state' ? fixtureWorkflowStateReading(item.state, item.text)
+    : kind === 'control_effect' ? fixtureControlEffectReading(item.text) : null)) {
   const asked = [];
   agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}) => items.map(item => {
     asked.push({ kind, ...item });
@@ -201,6 +216,7 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (typeof answers[question.kind] === 'function') return answers[question.kind]({ request: question.request, item, page: question.page });
     if (question.kind === 'status_message') return fixtureStatusReading(item?.text);
     if (question.kind === 'workflow_state') return fixtureWorkflowStateReading(item?.state, item?.text);
+    if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     return answers[question.kind] ?? null;
   };
   const evidenceOf = item => (typeof item?.text === 'string' ? item.text : typeof item?.label === 'string' ? item.label : question.request);
@@ -224,12 +240,14 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
 export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'status_message') return fixtureStatusReading(text);
   if (kind === 'workflow_state') return fixtureWorkflowStateReading(context?.state, text);
+  if (kind === 'control_effect') return fixtureControlEffectReading(text);
   return null;
 }
 
-// Only the page-text questions (status messages, workflow states), for fake
-// providers that answer WebBrain's other fixed-choice questions themselves.
+// Only the page-text questions (status messages, workflow states, control
+// captions), for fake providers that answer WebBrain's other fixed-choice
+// questions themselves.
 export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
-  return kind === 'status_message' || kind === 'workflow_state' ? fixtureFixedChoiceReply(messages) : null;
+  return ['status_message', 'workflow_state', 'control_effect'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }

@@ -871,6 +871,18 @@ headings and status regions, the statuses observed after the submit, and the
 lines of a page short enough to be a confirmation page. Those are read only
 once the rest of the workflow's evidence is in place.
 
+What a clicked control does is read from its caption the same way
+(`control_effect`: it commits something, moves a form to its next step, only
+edits the form or draft, or something else), once per caption, after a click
+that page structure does not decide: a control the probe saw inside a form, or
+any click in a run that has to prove a submission. A field, a link, a draft
+tool, a popup launcher, an ordinary control the probe resolved, a plain
+`type=button` and a real submit control are never read. Form validation waits
+for a rejection after a caption read as a commit or a next step; a workflow
+click submits its form by structure or a caption read as a commit; and a rapid
+second text click is a duplicate only for a caption read as a commit, asked
+then if the first click left it unread. Words in a CSS selector are not read.
+
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is
 returned as its exact first and last words, and the runtime copies the text

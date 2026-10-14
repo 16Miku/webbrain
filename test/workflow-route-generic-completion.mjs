@@ -71,6 +71,10 @@ for (const build of ['chrome', 'firefox']) {
     scope();
     if (dispatch) {
       const result = dispatchResult || { success: true, tag: 'button', name: 'Publish', verified: true };
+      // After a dispatched click in a run that has to prove a submission, the
+      // pipeline reads what the clicked control's caption means, as a model
+      // would read this fixture's "Publish".
+      await agent._readControlEffect(51, agent._controlCaption('click_ax', { ref_id: 'ref_51' }, result));
       record('click_ax', { ref_id: 'ref_51' }, result, true);
       h.submit = agent._recordCompletionSubmitAttempt(51, semanticCommit ? { isSubmit: true, semanticCommit: true } : null,
         'click_ax', { ref_id: 'ref_51' }, url, url, result,

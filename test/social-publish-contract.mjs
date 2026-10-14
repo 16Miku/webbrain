@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import fs from 'node:fs';
+import { fixtureControlEffectReading } from './semantic-decision-stub.mjs';
 
 const ref = (text, source = 'request') => ({ source, start: text, end: text });
 const count = (type = 'any', min = 0, max = 0, format = null) => ({ kind: 'count', type, format, min, max });
@@ -499,7 +500,9 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: duplicate-submit protection respects observed thread controls, never model-supplied hints`, async () => {
-    const {guardRecentSubmitClick}=await import(`../src/${browser}/src/agent/submit-click-guard.js`);
+    const {guardRecentSubmitClick:guard}=await import(`../src/${browser}/src/agent/submit-click-guard.js`);
+    // What a model read each caption as.
+    const guardRecentSubmitClick=(...args)=>guard(...args,async caption=>fixtureControlEffectReading(caption));
     const url=async()=> 'https://x.com/compose/post';
     const history=new Map();
     const nonSubmit={isSubmit:false,resolvedNonSubmitTarget:true};

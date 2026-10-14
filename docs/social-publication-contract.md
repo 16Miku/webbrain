@@ -21,7 +21,7 @@ An exhausted publication check stops the run with a clear failure message and ap
 ## Deterministic enforcement
 
 - Preserve exact body and alt text, accepting only NFC equivalence and CRLF normalization. Compose requests bind completion to the audited draft.
-- App-observed non-submit controls such as X's “Add post” remain repeatable while composing a thread. Label-based duplicate-submit protection still applies to unresolved and actual publish controls.
+- App-observed non-submit controls such as X's “Add post” remain repeatable while composing a thread. Duplicate-submit protection, for a caption a model read as a commit, still applies to unresolved and actual publish controls.
 - Chrome text replacement sends the browser's explicit Select All editing command before Delete, including on macOS, and still requires a proven empty field before inserting the replacement.
 - Read ProseMirror paragraph boundaries and hard breaks as document text, excluding its trailing caret placeholder. Field verification, field digests, Chrome CDP verification, and publication snapshots preserve the same spaces and line breaks.
 - Require complete composer/account/media/context observations and a pre-dispatch permalink baseline. Unassigned or shared thread media makes the observation incomplete.

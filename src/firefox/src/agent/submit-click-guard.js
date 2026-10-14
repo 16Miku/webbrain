@@ -3,14 +3,17 @@
 
 export const SUBMIT_CLICK_WINDOW_MS = 45_000;
 
-const SUBMIT_LIKE_CLICK_RE = /^(create|save|submit|add|post|publish|send|confirm|sign up|sign in|log in|register|place order|pay|checkout|update|apply|finish|done)\b/i;
-
 /**
- * Record the first submit-like text click and reject a rapid duplicate on the
- * same tab and URL. Returns the tool result to emit when blocked, otherwise
- * null. The URL callback is lazy so ordinary clicks do not perform a tab
- * lookup. An `_allowResubmit` retry is allowed through but re-recorded, so a
- * further rapid duplicate needs its own acknowledgement.
+ * Record a text click and reject a rapid duplicate of a committing control on
+ * the same tab and URL. Returns the tool result to emit when blocked,
+ * otherwise null. What the caption means is read by a model in any language:
+ * `readCaption(text, { read })` resolves to 'commit', another reading, or null
+ * when it was not read; with `read: false` it only reports a reading already
+ * made, and with `read: true` it may ask for one. A caption read as anything
+ * but a commit never duplicates anything and needs no tab lookup; an unread
+ * caption is recorded, and a rapid second click blocks only once its caption
+ * is read as a commit. An `_allowResubmit` retry is allowed through but
+ * re-recorded, so a further rapid duplicate needs its own acknowledgement.
  */
 export async function guardRecentSubmitClick(
   recentSubmitClicks,
@@ -19,6 +22,7 @@ export async function guardRecentSubmitClick(
   getCurrentUrl,
   now = Date.now,
   detectedTarget = null,
+  readCaption = null,
 ) {
   if (!args?.text) return null;
   // Only app-observed preflight evidence can exempt a control. A label such
@@ -33,7 +37,12 @@ export async function guardRecentSubmitClick(
       || detectedTarget.resolvedEditableTarget === true)) return null;
 
   const rawText = String(args.text).trim();
-  if (!SUBMIT_LIKE_CLICK_RE.test(rawText)) return null;
+  const reading = async read => {
+    try { return typeof readCaption === 'function' ? await readCaption(rawText, { read }) : null; }
+    catch { return null; }
+  };
+  const known = await reading(false);
+  if (known && known !== 'commit') return null;
 
   let currentUrl = '';
   try {
@@ -47,6 +56,15 @@ export async function guardRecentSubmitClick(
   const match = fresh.find(entry => entry.key === key);
 
   if (match && args._allowResubmit) {
+    match.ts = timestamp;
+    match.url = currentUrl;
+    match.text = rawText;
+    recentSubmitClicks.set(tabId, fresh);
+    return null;
+  }
+
+  if (match && (known || await reading(true)) !== 'commit') {
+    // Not a commit, or not readable: a repeat is an ordinary click.
     match.ts = timestamp;
     match.url = currentUrl;
     match.text = rawText;

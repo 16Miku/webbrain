@@ -205,6 +205,10 @@ const RUN_STARTUP_TIMEOUT_MS = 15_000;
 // for this long, so a slow model cannot hold a finished task; texts it did
 // not read prove nothing either way.
 const COMPLETION_READING_TIMEOUT_MS = 6_000;
+// What a clicked control's caption means is read once per caption, in any
+// language, after a click in a run that has to prove a submission; the active
+// model gets this long when the decision model is not sure.
+const CONTROL_READING_TIMEOUT_MS = 4_000;
 const CONTENT_ACTION_RESPONSE_GRACE_MS = 5_000;
 const ASK_MODE_HANDOFF_TIMEOUT_MS = 5_000;
 const CONTENT_ACTION_SIGNAL_DEADLINES = new WeakMap();
@@ -1329,16 +1333,20 @@ export class Agent extends LoopDetector {
   // messages now. The synchronous completion checks use the remembered
   // readings; an unread text proves nothing. `pageState.successMessages` keeps
   // the live messages read as success.
+  // The runs _completionPageWarning holds to a submission proof: a submit was
+  // recorded, or the plan requires a submission, a state change or a site job.
+  _runNeedsSubmissionProof(tabId) {
+    const guard = this._planExecutionGuards.get(tabId);
+    return !!this._currentCompletionSubmitState(tabId) || guard?.requiresSubmission === true
+      || (guard?.requiresSubmission == null && guard?.requiresStateChange === true) || !!guard?.siteWorkflow?.job;
+  }
+
   async _readCompletionStatusTexts(tabId, pageState = null) {
     const submit = this._currentCompletionSubmitState(tabId);
-    const guard = this._planExecutionGuards.get(tabId);
     const live = Array.isArray(pageState?.liveRegionMessages)
       ? pageState.liveRegionMessages.filter(text => typeof text === 'string') : [];
     const observed = Array.isArray(submit?.observedStatusMessages) ? submit.observedStatusMessages : [];
-    // The same runs _completionPageWarning holds to a submission proof.
-    const needsProof = !!submit || guard?.requiresSubmission === true
-      || (guard?.requiresSubmission == null && guard?.requiresStateChange === true) || !!guard?.siteWorkflow?.job;
-    if (needsProof && (live.length || observed.length)) {
+    if (this._runNeedsSubmissionProof(tabId) && (live.length || observed.length)) {
       await this._readPageTexts(tabId, 'status_message', [...live, ...observed], {}, { mainTimeoutMs: COMPLETION_READING_TIMEOUT_MS });
     }
     if (pageState && typeof pageState === 'object') {
@@ -2472,6 +2480,10 @@ export class Agent extends LoopDetector {
     const guard = this._planExecutionGuards.get(tabId);
     if (guard?.siteWorkflow?.adapterName !== 'github'
         || guard.siteWorkflow?.job?.id !== 'edit-file-and-commit') return null;
+    // This gate decides before the click by what a text click's caption
+    // means, so an unread caption is read now, once, in any language.
+    const caption = this._controlCaption(name, args, null);
+    if (caption && this._controlEffectReading(caption) === null) await this._readControlEffect(tabId, caption);
     const looksLikeSubmit = detectedSubmit?.isSubmit === true
       || this._formValidationActionLooksSubmit(name, args, null, detectedSubmit);
     // Fail closed when submit detection is inconclusive: a click_ax carrying
@@ -11938,7 +11950,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._throwIfAborted(abortSignal);
             const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
             const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
-            const before = (currentValidationBlock || obviousSubmit)
+            // A control the probe saw inside a form, or a caption not read
+            // yet, may still turn out to submit: keep the page's state from
+            // before the click, so a rejection it shows is new.
+            const caption = this._controlCaption(fnName, fnArgs, null);
+            const before = (currentValidationBlock || obviousSubmit || detected?.isSubmit === true
+                || (caption && this._controlEffectReading(caption) === null))
               ? await this._captureFormValidationState(tabId, { allFrames })
               : [];
             this._throwIfAborted(abortSignal);
@@ -12688,6 +12705,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             pipelineRawToolResult,
             missingResponseOutcomeUnknown,
           );
+          // What the clicked control's caption means is read once, in any language,
+          // before the checks below rely on it: for a control the probe saw inside a
+          // form, and for any click in a run that has to prove a submission. A
+          // caption page structure already decides is not read.
+          if (formValidationCandidate && (detectedSubmitAction?.isSubmit === true || this._runNeedsSubmissionProof(tabId))
+              && pipelineToolResult && typeof pipelineToolResult === 'object' && !pipelineToolResult.done
+              && pipelineToolResult.dispatched !== false
+              && !this._controlCaptionDecidedByStructure(fnName, fnArgs, pipelineToolResult, detectedSubmitAction)) {
+            await this._readControlEffect(tabId, this._controlCaption(fnName, fnArgs, pipelineToolResult));
+            this._throwIfAborted(abortSignal);
+          }
           const inspectFormValidationAfter = formValidationCandidate
             && this._formValidationActionLooksSubmit(
               fnName,
@@ -17887,11 +17915,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (result?.isSubmitControl === true || String(result?.type || '').toLowerCase() === 'submit') return true;
     if (detectedSubmit?.isSubmit === true) return true;
     if (this._formValidationActionHasStrongSubmitEvidence(name, args, result, detectedSubmit)) return true;
-    const label = String(args?.text || result?.name || result?.matched || result?.text || '').trim();
-    const selector = String(args?.selector || '').toLowerCase();
-    if (/(?:type\s*=\s*["']?submit\b|\bsubmit\b)/i.test(selector)) return true;
-    if (/^(?:submit|apply|send|confirm|place order|pay|checkout|finish)\b/i.test(label)) return true;
-    return false;
+    if (/type\s*=\s*["']?submit\b/i.test(String(args?.selector || ''))) return true;
+    // What the caption means, as a model read it in any language.
+    return this._controlEffectReading(this._controlCaption(name, args, result)) === 'commit';
   }
 
   // An iframe write never happens in the outer document, and iframe inventory
@@ -22045,16 +22071,49 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (this._formValidationActionHasStrongSubmitEvidence(toolName, args, result, detectedSubmit)) return true;
     if (!['click', 'click_ax', 'iframe_click'].includes(name)) return false;
 
-    const label = String(args?.text || result?.name || result?.matched || result?.text || '').trim();
-    const selector = String(args?.selector || '').toLowerCase();
-    if (detectedSubmit?.isSubmit === true) {
-      return /^(?:continue|save|submit|post|publish|send|confirm|commit|resolve|sign up|sign in|log in|register|place order|pay|checkout|finish)\b/i.test(label)
-        || /(?:type\s*=\s*["']?(?:submit|image)|\bsubmit\b|\bcontinue\b|\bconfirm\b|\bcheckout\b|\bfinish\b)/.test(selector);
+    // What the caption means, as a model read it in any language: a control
+    // that commits something or moves a form to its next step can be
+    // rejected by the form. An unread caption is no evidence either way.
+    const effect = this._controlEffectReading(this._controlCaption(name, args, result));
+    return effect === 'commit' || effect === 'next_step'
+      || /type\s*=\s*["']?(?:submit|image)/.test(String(args?.selector || '').toLowerCase());
+  }
+
+  // The caption of the control a click activated: the text the model clicked
+  // by, else the name the page reported for the target.
+  _controlCaption(toolName, args = {}, result = null) {
+    if (!['click', 'click_ax', 'iframe_click'].includes(String(toolName || ''))) return '';
+    return String(args?.text || result?.name || result?.matched || result?.text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  }
+
+  // A remembered reading of what activating a control with this caption does
+  // (see the control_effect question), or null when it was not read.
+  _controlEffectReading(caption) {
+    return caption ? this._pageTextReading('control_effect', caption) : null;
+  }
+
+  async _readControlEffect(tabId, caption) {
+    if (!caption) return null;
+    try {
+      await this._readPageTexts(tabId, 'control_effect', [caption], {}, { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
     }
-    if (/^(?:continue|next|create|save|submit|add|post|publish|send|confirm|commit|resolve|sign up|sign in|log in|register|place order|pay|checkout|update|apply|finish|done)\b/i.test(label)) {
-      return true;
-    }
-    return /(?:type\s*=\s*["']?(?:submit|image)|\bsubmit\b|\bcontinue\b|\bconfirm\b|\bcheckout\b|\bfinish\b)/.test(selector);
+    return this._controlEffectReading(caption);
+  }
+
+  // Whether page structure already decides what a click did, so its caption
+  // cannot change any check: a field, a link, a draft tool, a menu or popup
+  // launcher, an ordinary control the probe resolved, a plain type=button the
+  // probe did not see submit, or a real submit control.
+  _controlCaptionDecidedByStructure(toolName, args = {}, result = null, detectedSubmit = null) {
+    if (detectedSubmit?.resolvedNavigationTarget === true || detectedSubmit?.resolvedEditableTarget === true
+        || detectedSubmit?.resolvedNonSubmitTarget === true || detectedSubmit?.resolvedDraftControl === true
+        || detectedSubmit?.resolvedOrdinaryActivationTarget === true || detectedSubmit?.resolvedPreparatoryTarget === true) return true;
+    const target = result?.frame && typeof result.frame === 'object' ? result.frame : result;
+    if (target?.isSubmitControl === false && String(target?.type || '').toLowerCase() === 'button'
+        && detectedSubmit?.isSubmit !== true) return true;
+    return this._formValidationActionHasStrongSubmitEvidence(toolName, args, result, detectedSubmit);
   }
 
   // Every alert text a validation snapshot shows, whatever it says.
@@ -38896,6 +38955,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         },
         Date.now,
         dispatchContext.detectedSubmitAction || null,
+        (text, { read }) => (read ? this._readControlEffect(tabId, text) : this._controlEffectReading(text)),
       );
       if (duplicateSubmit) return duplicateSubmit;
       if (coordinatePoint && !dispatchBinding?.token) {

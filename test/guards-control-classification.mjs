@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
-import { defaultDecide, semanticQuestionOf } from './semantic-decision-stub.mjs';
+import { defaultDecide, fixtureControlEffectReading, semanticQuestionOf } from './semantic-decision-stub.mjs';
 
 // Real-DOM fixtures: the production submit probe (injected the way each build
 // injects it) classifies controls in Chromium and Firefox pages, then the real
@@ -249,9 +249,11 @@ for (const build of ['chrome', 'firefox']) {
           const store = new Map();
           let now = 1_000_000;
           const repeat = async (text, detected) => {
-            const first = await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected);
+            // What a model read each caption as.
+            const read = async caption => fixtureControlEffectReading(caption);
+            const first = await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected, read);
             now += 5_000;
-            return [first, await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected)];
+            return [first, await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected, read)];
           };
           assert.deepEqual(await repeat('Add emoji', emoji), [null, null]);
           for (const detected of [{ isSubmit: false, resolvedOrdinaryActivationTarget: true, resolvedPreparatoryTarget: true },

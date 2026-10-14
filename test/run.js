@@ -1,5 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
-import { fixturePageTextReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { fixtureControlEffectReading, fixturePageTextReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -78888,6 +78888,8 @@ test('unattended custom submits preflight validation', async () => {
 
     let detections = 0;
     let captures = 0;
+    // What a model read the caption as: "Continue" moves the form on.
+    const asked = stubPageTextReadings(agent);
     agent._ensureGateSetting = async () => true;
     agent._skipPermissionGate = true;
     agent._currentUrl = async () => url;
@@ -78935,6 +78937,8 @@ test('unattended custom submits preflight validation', async () => {
     );
 
     assert.equal(detections, 1, `${AgentClass.name}: unattended custom submit skipped preflight detection`);
+    assert.deepEqual(asked.filter(item => item.kind === 'control_effect').map(item => item.text), ['Continue'],
+      `${AgentClass.name}: the caption of a control inside a form is read once`);
     assert.ok(captures >= 2, `${AgentClass.name}: unattended custom submit skipped validation capture`);
     const result = JSON.parse(agent._unwrapUntrusted(messages[0].content));
     assert.equal(result.formValidationFailed, true, `${AgentClass.name}: unattended custom submit missed validation feedback`);
@@ -79011,6 +79015,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
     'chrome and firefox duplicate-submit guards must remain byte-identical',
   );
 
+  // What a model read each caption as (the fixtures' own oracle).
+  const captionReading = async text => fixtureControlEffectReading(text);
   for (const guardModule of [SubmitClickGuardCh, SubmitClickGuardFx]) {
     const recentClicks = new Map();
     const tabId = 6201;
@@ -79029,6 +79035,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: '  Save changes  ' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'first submit-like click should be recorded and allowed',
@@ -79047,6 +79055,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
       { text: 'SAVE changes' },
       getCurrentUrl,
       () => now,
+      null,
+      captionReading,
     );
     assert.equal(duplicate.success, false);
     assert.equal(duplicate.dispatched, false);
@@ -79064,6 +79074,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Save changes' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'the same label after navigation should be allowed',
@@ -79077,6 +79089,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Save changes' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'an entry exactly at the expiry boundary should be allowed',
@@ -79091,6 +79105,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Save changes', _allowResubmit: true },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'explicit resubmit acknowledgement should bypass the guard',
@@ -79108,6 +79124,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
       { text: 'Save changes' },
       getCurrentUrl,
       () => now,
+      null,
+      captionReading,
     );
     assert.equal(
       thirdRapidClick.blockedDuplicateSubmit,
@@ -79124,6 +79142,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Continue' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'non-submit-like labels should bypass the guard',
@@ -79141,6 +79161,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Publish' },
         failingUrlLookup,
         () => now,
+        null,
+        captionReading,
       ),
       null,
     );
@@ -79152,6 +79174,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
           { text: 'Publish' },
           failingUrlLookup,
           () => now,
+          null,
+          captionReading,
         )
       ).blockedDuplicateSubmit,
       true,
@@ -79179,6 +79203,8 @@ test('Firefox blocks a duplicate submit click before content-script dispatch', a
 
     const agent = new AgentFx({ getVisionProvider: async () => null });
     agent._isPdfTab = async () => false;
+    // What a model read the caption as.
+    agent._pageTextReading = fixturePageTextReading;
     agent._recentSubmitClicks.set(tabId, [{
       key: `save|${url}`,
       ts: Date.now(),
@@ -82543,6 +82569,8 @@ test('GitHub edit-file workflow fails closed when submit detection is inconclusi
     ['firefox', AgentFx, 9452],
   ]) {
     const agent = new AgentClass({});
+    // What a model read each caption as.
+    agent._pageTextReading = fixturePageTextReading;
     agent._planExecutionGuards.set(tabId, {
       enabled: true,
       siteWorkflow: { adapterName: 'github', job: { id: 'edit-file-and-commit' } },
@@ -82565,6 +82593,17 @@ test('GitHub edit-file workflow fails closed when submit detection is inconclusi
     );
     assert.equal(commitText?.noDispatch, true, `${label}: text commit click bypassed the commit guard`);
     assert.equal(commitText?.inconclusiveSubmitDetection, undefined, `${label}: label-classified submit mislabeled as inconclusive`);
+    // A caption no model could read is no evidence: the click is inconclusive
+    // and stays blocked all the same.
+    const unread = new AgentClass({});
+    unread._planExecutionGuards.set(tabId, agent._planExecutionGuards.get(tabId));
+    unread._currentUrl = agent._currentUrl;
+    unread._workflowSubmitBindingForAttempt = agent._workflowSubmitBindingForAttempt;
+    const asked = stubPageTextReadings(unread, () => null);
+    const unreadText = await unread._workflowPreSubmitDispatchBlock(tabId, 'click', { text: 'Değişiklikleri kaydet' }, null);
+    assert.equal(unreadText?.noDispatch, true, `${label}: an unread caption bypassed the commit guard`);
+    assert.equal(unreadText?.inconclusiveSubmitDetection, true, `${label}: an unread caption was classified`);
+    assert.deepEqual(asked.map(item => item.text), ['Değişiklikleri kaydet'], `${label}: the caption was not read before the gate`);
     // Enter in a field is submit-capable and stays blocked; other keys and
     // non-submit field writes remain allowed.
     const inconclusiveEnter = await agent._workflowPreSubmitDispatchBlock(
@@ -82608,6 +82647,8 @@ test('GitHub edit-file workflow passes resolved navigation links', async () => {
     ['firefox', AgentFx, 9513],
   ]) {
     const agent = new AgentClass({});
+    // What a model read each caption as.
+    agent._pageTextReading = fixturePageTextReading;
     agent._planExecutionGuards.set(tabId, {
       enabled: true,
       siteWorkflow: { adapterName: 'github', job: { id: 'edit-file-and-commit' } },

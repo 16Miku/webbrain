@@ -4,6 +4,7 @@ import { strict as assert } from 'node:assert';
 import { chromium } from 'playwright';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { fixtureControlEffectReading } from './semantic-decision-stub.mjs';
 const browser = await chromium.launch({headless:true});
 let checked=0;
 try {
@@ -235,7 +236,9 @@ try {
           }
         }
         if (platform === 'twitter') {
-          const {guardRecentSubmitClick}=await import(`../src/${build}/src/agent/submit-click-guard.js`);
+          const {guardRecentSubmitClick:guard}=await import(`../src/${build}/src/agent/submit-click-guard.js`);
+          // What a model read each caption as.
+          const guardRecentSubmitClick=(...args)=>guard(...args,async caption=>fixtureControlEffectReading(caption));
           await page.setContent('<div role="dialog"><div contenteditable="true">First tweet</div><button id="add" type="button" data-testid="addButton" aria-label="Add post"><svg width="24" height="24"></svg></button><button id="publish" type="button" data-testid="tweetButton">Post all</button></div>');
           const recent=new Map();
           for(let i=0;i<3;i++) {
