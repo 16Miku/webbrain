@@ -600,7 +600,9 @@ a link standing on its own), in `pageTextsNeeded`; the agent has them read
 (the decision model first, the active model within four seconds) and reads
 the page again with the readings, up to three times while each read reaches
 more. When a text reads as a wall and the page cannot be read again, the
-read fails rather than return the answer made without that reading. An
+read fails rather than return the answer made without that reading; so does
+a last read that still reports texts after a wall was read but not applied,
+as with a wall whose text changes on every read, such as a countdown. An
 unread text is no wall, so the page reads as it is, and a text no model
 answered after both had their turn is not asked again for 30 seconds. A wall
 withholds the article, its links, forms and frames; its own text and

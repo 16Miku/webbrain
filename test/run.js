@@ -18562,6 +18562,45 @@ test('a page read reaching more unread wall texts after a reread is read again, 
   }
 });
 
+// From review: a wall whose text changes on every read, such as a countdown,
+// was read as a wall each time, yet the page never met that reading again,
+// so after three reads the article behind it was returned.
+test('a wall whose text changes on every read fails the read instead of returning what it hides', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    const wallAt = n => [{ kind: 'page_blocker', text: `Okumaya devam etmek için abone olun. Kalan süre: ${59 - n} sn` }];
+    let reads = 0;
+    const result = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { reads += 1; return { text: `SECRET_${reads}`, pageTextsNeeded: wallAt(reads) }; });
+    assert.equal(reads, 3, `${build}: the page was not read again with each new wall text`);
+    assert.equal(result.success, false, `${build}: the article behind a changing wall was returned`);
+    assert.doesNotMatch(JSON.stringify(result), /SECRET/, `${build}: text behind the wall leaked`);
+    assert.match(result.error, /wall whose text changes from one read to the next/);
+    // The same wall applied on the last read is returned as the page shows it.
+    const applied = new AgentClass({});
+    stubPageTextReadings(applied, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    let appliedReads = 0;
+    const gated = await applied._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { appliedReads += 1; return appliedReads < 3
+        ? { text: `SECRET_${appliedReads}`, pageTextsNeeded: wallAt(appliedReads) }
+        : { text: 'gate', pageGate: { type: 'subscription' }, pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bülten' }] }; });
+    assert.deepEqual(gated, { text: 'gate', pageGate: { type: 'subscription' } }, `${build}: an applied wall was refused`);
+    // Texts read as no wall leave the last read as it is.
+    const plain = new AgentClass({});
+    stubPageTextReadings(plain, () => 'other');
+    let plainReads = 0;
+    const last = await plain._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'article 0', pageTextsNeeded: wallAt(0) },
+      async () => { plainReads += 1; return { text: `article ${plainReads}`, pageTextsNeeded: wallAt(plainReads) }; });
+    assert.deepEqual(last, { text: 'article 3' }, `${build}: a page with no wall was refused`);
+  }
+});
+
 test('a wall or dialog title no model answered is not asked again on every read for a while', async () => {
   for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const realNow = Date.now;

@@ -10829,16 +10829,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // most forty at a time, the likeliest walls first). A read that cannot be
   // repeated keeps the answer before it, unless one of the texts that answer
   // was made without reads as a wall: that answer may hold what the wall
-  // withholds, so the read fails instead.
+  // withholds, so the read fails instead. So does a last answer that still
+  // waits on texts after a wall was read but not applied, as with a wall
+  // whose text changes on every read, such as a countdown.
   async _rereadWithPageBlockerReadings(tabId, name, response, dispatch) {
     if ((name !== 'read_page' && name !== 'get_accessibility_tree') || !response || typeof response !== 'object') return response;
     let current = response;
+    let wallReadLast = false;
     for (let pass = 0; pass < 3; pass += 1) {
       const needed = current.pageTextsNeeded;
       delete current.pageTextsNeeded;
       if (!await this._readPageBlockerTexts(tabId, needed)) return current;
       const wallRead = (Array.isArray(needed) ? needed : []).some(entry => entry?.kind === 'page_blocker'
         && ['subscription', 'registration', 'login'].includes(this._pageTextReading('page_blocker', entry.text)));
+      wallReadLast = wallRead;
       const failed = () => (wallRead ? { success: false, error: 'This page shows a subscription, registration or '
         + 'sign-in wall, and reading the page again with it failed, so nothing behind the wall was returned. '
         + 'Read the page again.' } : current);
@@ -10852,7 +10856,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!reread || typeof reread !== 'object' || reread.success === false) return failed();
       current = reread;
     }
+    const stillUnread = Array.isArray(current.pageTextsNeeded) && current.pageTextsNeeded.length > 0;
     delete current.pageTextsNeeded;
+    if (wallReadLast && stillUnread && !current.pageGate) {
+      return { success: false, error: 'This page shows a subscription, registration or sign-in wall whose text '
+        + 'changes from one read to the next, so WebBrain could not apply it, and nothing behind it was returned. '
+        + 'Report the wall instead of reading past it.' };
+    }
     return current;
   }
 
