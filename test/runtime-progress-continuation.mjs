@@ -20,7 +20,10 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(agent._progressUpdate(1, { items: Array.from({ length: 5 }, (_, index) => ({
         id: `expected:${index + 1}`, status: 'processed', fields: { receipt: `owned-${index + 1}` },
       })) }).success, true);
-      agent.conversations.get(1).push({ role: 'user', content: continuation, webbrainUserAuthoredText: continuation });
+      // The runtime marks the Continue command, and a model reads a typed
+      // "continue", as a continuation of the earlier task.
+      agent.conversations.get(1).push({ role: 'user', content: continuation, webbrainUserAuthoredText: continuation,
+        webbrainTurnKind: 'continue' });
       const continued = await agent._ensureProgressSessionForCurrentTask(1, options);
       assert.equal(continued.sessionId, first.sessionId, 'Continuation cannot reseed a new session for the same ordered task.');
       assert.equal(continued.taskText, task);

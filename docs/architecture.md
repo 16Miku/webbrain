@@ -764,10 +764,24 @@ every caller treats no answer as "ask the user" or "do nothing". Identical
 questions are answered once. Stop or a correction during a decision cancels
 it. The questions are: does the request ask to delete this item; does a
 correction ask to delete the earlier post first; does the request say not to
-send this message. Consent itself never comes from reading words: who receives
-a message and whether an unclear deletion proceeds are answered on WebBrain's
-own cards with fixed choices, and a question the model asks, and whatever the
-user answers to it, approves neither.
+send this message; and does a short Act turn sent after an earlier task only
+continue it or acknowledge it. That last answer is read once, when the turn
+arrives, and stored on the turn, so the task anchor, the progress ledger's
+scope and an approved plan read it without words. The Continue command is a
+continuation by construction; long turns, Ask turns, first turns and turns
+without a sure answer are new requests. A carousel scan asks whether the
+request wants the slides from last to first; no sure answer is the usual
+order. Consent itself never comes from reading words: who receives a message
+and whether an unclear deletion proceeds are answered on WebBrain's own cards
+with fixed choices, and a question the model asks, and whatever the user
+answers to it, approves neither.
+
+Whether a request also expects something no run can verify, such as votes or
+moderators keeping a post up, is read by whoever verified the completion: the
+active model's completion judge answers it in the same request as its verdict,
+and after a decision-model verdict the decision model is asked. Nothing else is
+called for it, and only a clear answer adds the note that publication was
+verified while later votes and moderation remain unverified.
 
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is

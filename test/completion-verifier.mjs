@@ -110,6 +110,14 @@ for (const build of ['chrome', 'firefox']) {
     assert.throws(() => verifier.llmCompletionVerdict('{"outcome":"succeeded"}'));
     assert.equal(verifier.llmCompletionVerdict('{"outcome":"uncertain","reason":"rules were not observed"}').outcome, 'uncertain');
     assert.match(verifier.COMPLETION_INSTRUCTIONS, /unrelated comment/); assert.match(verifier.COMPLETION_INSTRUCTIONS, /Future popularity/);
+    // The judge also says whether the task expects a later outcome; only an
+    // exact "asked" counts, and no other value invalidates the verdict.
+    assert.equal(verifier.llmCompletionVerdict('{"outcome":"succeeded","reason":"posted","later":"asked"}').laterOutcome, 'asked');
+    for (const later of ['not_asked', 'ASKED', 'yes', '', null, true]) {
+      const verdict = verifier.llmCompletionVerdict(JSON.stringify({ outcome: 'succeeded', reason: 'posted', later }));
+      assert.equal(verdict.outcome, 'succeeded'); assert.equal(verdict.laterOutcome, undefined, JSON.stringify(later));
+    }
+    assert.match(verifier.LATER_OUTCOME_FIELD, /any language/);
   });
   test(`${build}: discovery includes every decision publisher and per-model vision/rates`, async () => {
     const data = [ { id: 'other/decision', architecture: { output_modalities: ['decisions'], input_modalities: ['text', 'image'] }, pricing: { prompt: '.0000002' } }, { id: 'chat-only', architecture: { output_modalities: ['text'] } } ];
@@ -186,10 +194,12 @@ for (const build of ['chrome', 'firefox']) {
         llmCalls++;
         assert.equal(options.tools, undefined); assert.equal(options.maxTokens, 4096);
         assert.match(messages[0].content, /Do not call tools/);
-        return { content: JSON.stringify({ outcome: llmCalls === 1 ? 'uncertain' : 'succeeded', reason: 'Published resource is visible.' }) };
+        assert.ok(messages[0].content.includes(verifier.LATER_OUTCOME_FIELD), 'the judge is asked about later outcomes in the same request');
+        return { content: JSON.stringify({ outcome: llmCalls === 1 ? 'uncertain' : 'succeeded', reason: 'Published resource is visible.', later: 'asked' }) };
       };
       verdict = await runtime.verifyBrowserCompletion(agent, 1);
       assert.equal(verdict.engine, 'llm'); assert.equal(verdict.modality, 'ax'); assert.equal(llmCalls, 2, 'active LLM must use its own vision and AX tiers');
+      assert.equal(verdict.laterOutcome, 'asked');
       stored.systemOneDoneEnabled = true;
       agent.evaluateSystemOne = async () => { stamp = 'changed-during-verification'; const result = response(); result.model = 'kev-latest'; return result; };
       verdict = await runtime.verifyBrowserCompletion(agent, 1);

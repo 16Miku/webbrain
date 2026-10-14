@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 
 const PAGE_URL = 'https://example.com/search';
 function persistentArea() {
@@ -61,7 +62,7 @@ const journaled = tab => session.data.get(`agentSteer:${tab}`)?.entries || [];
 function makeAgent(Agent, next) {
   const provider = {
     name: 'steering restart test', model: 'test', promptTier: 'full', contextWindow: 128000,
-    supportsTools: true, supportsVision: false, chat: (messages, options) => next(messages, options),
+    supportsTools: true, supportsVision: false, chat: withoutFixedChoiceAnswers((messages, options) => next(messages, options)),
   };
   const agent = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
   // Conversation hydration and persistence stay real: they are what a restart keeps.

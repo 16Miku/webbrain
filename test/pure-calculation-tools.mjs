@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
+import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 
 const ORIGINAL_CALC_CORRECTION = readFileSync(new URL('./fixtures/literal-calculation-correction.txt', import.meta.url), 'utf8').trim();
 
@@ -21,7 +22,7 @@ let nextTab = 2600;
 function makeAgent(Agent, next) {
   const provider = {
     name: 'feedback progress test', model: 'test', promptTier: 'full', contextWindow: 128000,
-    supportsTools: true, supportsVision: false, chat: next,
+    supportsTools: true, supportsVision: false, chat: withoutFixedChoiceAnswers(next),
     async *chatStream(messages, options) {
       const response = await next(messages, options);
       if (response.content) yield { type: 'text', content: response.content };

@@ -45,6 +45,37 @@ export const SEMANTIC_QUESTIONS = Object.freeze({
     }),
     authorizing: Object.freeze([]),
   }),
+  user_turn_kind: Object.freeze({
+    instructions: 'A user sent the short message in `request` to a browser agent while an earlier task was in progress '
+      + 'or had just finished. Decide what the message does. Judge the meaning in any language.',
+    choices: Object.freeze({
+      continue: 'It only asks to continue, resume or keep going with the earlier task, or to do the rest of it, without adding, removing or changing anything.',
+      acknowledge: 'It only acknowledges, thanks or agrees, and asks for nothing.',
+      request: 'It asks for something: a new task, a question, or a change, correction, addition or narrowing of the earlier task.',
+    }),
+    // Keeping the earlier task in force needs a sure answer.
+    authorizing: Object.freeze(['continue', 'acknowledge']),
+  }),
+  carousel_order: Object.freeze({
+    instructions: 'A browser agent is going through the slides of one carousel (an image or post gallery), one slide at a '
+      + 'time. Decide whether the user\'s request in `request` asks to go through the slides in reverse order, from the '
+      + 'last slide to the first. Judge the meaning in any language.',
+    choices: Object.freeze({
+      reverse: 'The request asks to go through the slides in reverse order, from the last to the first.',
+      forward: 'The request asks for the usual order, or does not say.',
+    }),
+    authorizing: Object.freeze([]),
+  }),
+  future_outcome: Object.freeze({
+    instructions: 'A browser agent finished a task and verified what it did. Decide whether the user\'s request in '
+      + '`request` also asks for, or expects, an outcome that can only happen after the task ends, such as votes or '
+      + 'reactions from other people, or moderators not removing what was posted. Judge the meaning in any language.',
+    choices: Object.freeze({
+      asked: 'The request asks for or expects such a later outcome.',
+      not_asked: 'The request asks for nothing that only happens later.',
+    }),
+    authorizing: Object.freeze([]),
+  }),
   sending_forbidden: Object.freeze({
     instructions: 'A browser agent is about to send the message in `page.message` to `page.recipients` on `page.site`, '
       + 'although the task did not clearly ask for this send. Decide whether the user\'s latest request in `request` '

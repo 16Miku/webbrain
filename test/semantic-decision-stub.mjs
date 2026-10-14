@@ -73,3 +73,14 @@ export function installModelStub(agent, { decide = defaultDecide, authorize = au
   };
   return calls;
 }
+
+// For scripted providers that answer every request from a fixed script: the
+// fixed-choice questions WebBrain asks on its own (what a short turn does,
+// whether a request forbids an action) get no answer here, as from a model
+// that cannot tell, instead of consuming the script.
+export const FIXED_CHOICE_QUESTION = "Answer one fixed-choice question for a browser agent's safety check.";
+export function withoutFixedChoiceAnswers(chat) {
+  return (messages, options) => String(messages?.[0]?.content || '').startsWith(FIXED_CHOICE_QUESTION)
+    ? Promise.resolve({ content: JSON.stringify({ choice: '', evidence: '' }) })
+    : chat(messages, options);
+}

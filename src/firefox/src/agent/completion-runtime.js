@@ -2,7 +2,7 @@ import { semanticCommitDocumentMatches } from './semantic-commit-navigation.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
 import { createSystemOneJudge } from './systemone-judge.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText as boundedText } from './systemone-evidence.js';
-import { COMPLETION_INSTRUCTIONS, completionQuestions, decisionCompletionVerdict, llmCompletionVerdict, verifyCompletion, withCompletionTimeout, completionStopError } from './completion-verifier.js';
+import { COMPLETION_INSTRUCTIONS, LATER_OUTCOME_FIELD, completionQuestions, decisionCompletionVerdict, llmCompletionVerdict, verifyCompletion, withCompletionTimeout, completionStopError } from './completion-verifier.js';
 import { calculationResultInText } from './calculator.js';
 import { isPageIndependentCalculationCompletion, literalCalculationSummaryFormatMatches } from './page-feedback-policy.js';
 
@@ -328,7 +328,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       // Leave bounded room for it and the verdict without overriding the
       // provider's reasoning configuration or adding another model request.
       const result = await withCompletionTimeout(requestSignal => agent._chatWithCostAllowance(provider, [
-        { role: 'system', content: COMPLETION_INSTRUCTIONS + ' Return only JSON {"outcome":"succeeded|pending|failed|uncertain","reason":"brief evidence-based reason"}. Do not call tools or perform actions.' },
+        { role: 'system', content: `${COMPLETION_INSTRUCTIONS} Return only JSON {"outcome":"succeeded|pending|failed|uncertain","reason":"brief evidence-based reason","later":"asked|not_asked"}. ${LATER_OUTCOME_FIELD} Do not call tools or perform actions.` },
         { role: 'user', content: modality === 'vision' ? [{ type: 'text', text: JSON.stringify(info) }, observation] : JSON.stringify(evidence.state) },
       ], { temperature: 0, maxTokens: 4096, signal: requestSignal }, context.costState || agent._newCostRunState(), { tabId, generationName: 'completion_verification' }), signal, 10000);
       if (result.costAllowanceMessage) throw agent._costAllowanceError(result.costAllowanceMessage);

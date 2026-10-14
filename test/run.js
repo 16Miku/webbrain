@@ -9359,7 +9359,14 @@ test('Instagram carousel navigation enumerates 16 slides monotonically and recor
     assert.equal(outOfRange.outOfRange, true);
     assert.equal(outOfRange.terminal, true);
 
-    agent._latestTaskText = () => 'Traverse this carousel in reverse order.';
+    // A model reads the order from the request, in any language.
+    const reverseRequest = 'Recorre este carrusel del último al primero.';
+    const orders = [];
+    agent._semanticDecision = async (_tab, kind, { request }) => {
+      orders.push({ kind, request });
+      return { choice: kind === 'carousel_order' && request === reverseRequest ? 'reverse' : 'forward', evidence: '', source: 'main_model' };
+    };
+    agent._latestTaskText = () => reverseRequest;
     const reverseStart = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 16 });
     const reverseNext = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 15 });
     assert.equal(reverseStart.success, true, `${label}: fresh explicit reverse traversal did not reset monotonic state`);
@@ -9368,6 +9375,18 @@ test('Instagram carousel navigation enumerates 16 slides monotonically and recor
     const reverseRevisit = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 16 });
     assert.equal(reverseRevisit.success, false, `${label}: reverse traversal revisited a processed slide`);
     assert.equal(reverseRevisit.nonMonotonic, true);
+    assert.deepEqual(orders.at(-1), { kind: 'carousel_order', request: reverseRequest },
+      `${label}: the order was not read from the request as written`);
+    // No sure answer keeps the usual order: the reverse scan cannot continue.
+    agent._semanticDecision = async () => ({ choice: null, evidence: '', source: 'unavailable' });
+    const unsure = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 14 });
+    assert.equal(unsure.traversalDirection === 'reverse', false, `${label}: an unread request reversed the scan`);
+    // A request that only mentions the word is read as a whole: the usual order.
+    agent._semanticDecision = async (_tab, kind) => ({ choice: kind === 'carousel_order' ? 'forward' : null, evidence: '', source: 'main_model' });
+    agent._latestTaskText = () => 'Record the reverse-side caption of every slide.';
+    const mention = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 3 });
+    assert.equal(mention.success, true);
+    assert.equal(mention.traversalDirection, 'forward', `${label}: the word "reverse" reversed the scan`);
   }
 });
 
@@ -55279,7 +55298,7 @@ test('resume task identities survive persistence and keep identical requests sep
     const origin = h.jobs()[0].resumeTaskId;
     const saved = h.agent._conversationStorageEntry(77);
     h.agent.conversations.set(77, structuredClone(saved.messages));
-    h.agent.conversations.get(77).push({ role: 'user', content: 'continue' });
+    h.agent.conversations.get(77).push({ role: 'user', content: 'continue', webbrainTurnKind: 'continue' });
     assert.equal(h.agent._resumeTaskId(77), origin, `${label}: saved task identity was lost on continuation`);
     h.agent.conversations.get(77).push({ role: 'user', content: saved.messages[1].content });
     assert.equal(h.agent._resumeTaskId(77), '', `${label}: an identical new request inherited the old task identity`);
@@ -87611,7 +87630,7 @@ test('agent preserves active progress ledger for ongoing-action continuation wor
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Follow every stargazer on this page.' },
       { role: 'assistant', content: 'Paused with one row unresolved.' },
-      { role: 'user', content: 'Continue following the remaining stargazers.' },
+      { role: 'user', content: 'Continue following the remaining stargazers.', webbrainTurnKind: 'continue' },
     ]);
 
     assert.equal(agent._hasProgressLedgerContext(tabId), true, `${AgentClass.name}: ongoing-action continuation did not keep ledger context`);
@@ -87641,7 +87660,7 @@ test('agent preserves keyed rows for ledger continuation wording', () => {
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Follow every stargazer on this page.' },
       { role: 'assistant', content: 'Paused with one row unresolved.' },
-      { role: 'user', content: 'Continue the existing ledger.' },
+      { role: 'user', content: 'Continue the existing ledger.', webbrainTurnKind: 'continue' },
     ]);
 
     assert.equal(agent._currentTaskHasProgressIntent(tabId), true, `${AgentClass.name}: ledger continuation lost progress intent`);
@@ -90189,14 +90208,24 @@ test('decision completion recognizes published Reddit content while preserving v
       agent._completionDocumentStamp = async () => 'current-document';
       agent._captureViewportProbe = async () => page;
       let outcome = 'succeeded';
-      agent.evaluateSystemOne = async () => ({ model: 'kev-latest', answers: { task_outcome: {
-        type: 'choice', choice: outcome, confidence: .99,
-        probabilities: Object.fromEntries(['succeeded', 'pending', 'failed', 'uncertain'].map(key => [key, key === outcome ? .97 : .01])),
-      } } });
+      // The decision model answers each question: the task outcome, and
+      // whether the request expects a later outcome (votes, moderation).
+      let later = 'asked';
+      const laterQuestions = [];
+      agent.evaluateSystemOne = async (_tab, _client, args) => (args?.questions?.future_outcome
+        ? (laterQuestions.push(args.state), { model: 'kev-latest', answers: { future_outcome: { type: 'choice', choice: later,
+          confidence: .95, probabilities: { asked: later === 'asked' ? .95 : .05, not_asked: later === 'asked' ? .05 : .95 } } } })
+        : { model: 'kev-latest', answers: { task_outcome: {
+          type: 'choice', choice: outcome, confidence: .99,
+          probabilities: Object.fromEntries(['succeeded', 'pending', 'failed', 'uncertain'].map(key => [key, key === outcome ? .97 : .01])),
+        } } });
       const execute = agent.executeTool.bind(agent);
       agent.executeTool = (tab, name, args) => name === 'get_accessibility_tree'
         ? Promise.resolve({ success: true, pageContent: 'Published WebBrain post by expected author; unrelated comment form.' })
         : execute(tab, name, args);
+      const semanticDecision = agent._semanticDecision.bind(agent);
+      const asked = [];
+      agent._semanticDecision = (tab, kind, ...rest) => { asked.push(kind); return semanticDecision(tab, kind, ...rest); };
       const guard = { enabled: true, requiresSubmission: true, requiresStateChange: true };
       const submit = { dispatched: true, observedAfterSubmit: true, currentUrl: url, documentChanged: true };
       agent._planExecutionGuards.set(tabId, guard);
@@ -90206,10 +90235,14 @@ test('decision completion recognizes published Reddit content while preserving v
       assert.equal(result.verification.decision.outcome, 'succeeded');
       assert.equal(guard.semanticSubmissionVerified, true);
       assert.match(result.summary, /Future upvotes and moderation outcomes remain unverified/);
+      assert.match(JSON.stringify(laterQuestions[0]), /will get upvotes/, `${AgentClass.name}: the request was not read as written`);
+      assert.deepEqual(asked.filter(kind => kind === 'future_outcome'), ['future_outcome']);
 
       submit.formValidationFailed = true;
+      asked.length = 0;
       const invalid = await agent.executeTool(tabId, 'done', { summary: 'Published.', outcome: 'success' });
       assert.equal(invalid.blockedDone, true, `${AgentClass.name}: semantic acceptance bypassed form validation`);
+      assert.deepEqual(asked.filter(kind => kind === 'future_outcome'), [], `${AgentClass.name}: a rejected completion asked about later outcomes`);
       submit.formValidationFailed = false;
       guard.siteWorkflow = { job: { requiresSubmission: true, id: 'reddit.publish' } };
       guard.semanticSubmissionVerified = false; guard.verifiedSubmissionEvidence = false;
@@ -90228,6 +90261,84 @@ test('decision completion recognizes published Reddit content while preserving v
       const publishedJson = await agent.executeTool(tabId, 'done_json', { summary: 'Published.', result: 'post-id' });
       assert.equal(publishedJson.doneJson, true); assert.equal(publishedJson.cloudResult, 'post-id');
       assert.match(publishedJson.summary, /Future upvotes and moderation outcomes remain unverified/);
+      // A request that expects nothing later gets no caveat.
+      agent._latestTaskText = () => 'Read the rules and publish the WebBrain post.';
+      later = 'not_asked'; agent._completionVerdicts.clear();
+      const plain = await agent.executeTool(tabId, 'done_json', { summary: 'Published.', result: 'post-id' });
+      assert.doesNotMatch(plain.summary, /Future upvotes/, `${AgentClass.name}: a caveat was added to a request that expects nothing later`);
+    }
+  } finally {
+    globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
+    cdpClientCh.evaluate = previousEvaluate;
+    cdpClientCh.attach = previousAttach; cdpClientCh.sendCommand = previousCommand;
+  }
+});
+
+test('the active-model completion judge itself says whether a request expects later votes or moderation', async () => {
+  const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+  const previousEvaluate = cdpClientCh.evaluate;
+  const previousAttach = cdpClientCh.attach, previousCommand = cdpClientCh.sendCommand;
+  try {
+    cdpClientCh.attach = async () => {};
+    cdpClientCh.sendCommand = async () => ({});
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const tabId = 24960 + index;
+      const url = 'https://old.reddit.com/r/opencodeCLI/comments/new/webbrain';
+      const page = { url, title: 'Published WebBrain post', openDialogCount: 0, relevantFormCount: 1, visibleFormCount: 1, successMessages: [] };
+      // The decision model is off, so the active model judges the completion.
+      const storage = { get: async () => ({ systemOneEnabled: false }) };
+      globalThis.chrome = { ...previousChrome, storage: { ...previousChrome?.storage, local: storage } };
+      globalThis.browser = { ...previousBrowser, storage: { ...previousBrowser?.storage, local: storage }, tabs: { ...previousBrowser?.tabs, get: async () => ({ id: tabId, url }), executeScript: async () => [page] } };
+      cdpClientCh.evaluate = async () => ({ result: { value: page } });
+      const provider = { model: 'test-model', supportsVision: false, config: { category: 'local' }, chat() {} };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.conversationModes.set(tabId, 'act');
+      agent.autoScreenshot = 'off';
+      agent._persist = () => {};
+      agent.systemOneContext = () => ({ isCurrent: () => true });
+      agent._completionDocumentStamp = async () => 'current-document';
+      agent._captureViewportProbe = async () => page;
+      agent.evaluateSystemOne = async () => { throw new Error('The decision model is off.'); };
+      const execute = agent.executeTool.bind(agent);
+      agent.executeTool = (tab, name, args) => name === 'get_accessibility_tree'
+        ? Promise.resolve({ success: true, pageContent: 'Published WebBrain post by expected author; unrelated comment form.' })
+        : execute(tab, name, args);
+      let later = 'asked';
+      const judged = [];
+      agent._chatWithCostAllowance = async (_provider, messages) => {
+        judged.push(messages);
+        return { content: JSON.stringify({ outcome: 'succeeded', reason: 'The requested post is published.', ...(later === undefined ? {} : { later }) }) };
+      };
+      const guard = { enabled: true, requiresSubmission: true, requiresStateChange: true };
+      agent._planExecutionGuards.set(tabId, guard);
+      agent._completionSubmitStates.set(tabId, { dispatched: true, observedAfterSubmit: true, currentUrl: url, documentChanged: true });
+      const done = async request => {
+        agent._latestTaskText = () => request;
+        agent._completionVerdicts?.clear(); judged.length = 0;
+        return agent.executeTool(tabId, 'done', { summary: 'Published the WebBrain post.', outcome: 'success' });
+      };
+
+      // A request in any language that expects votes and no removal.
+      const expecting = 'Kuralları oku ve beğeni toplayacak, moderatörlerin silmeyeceği bir WebBrain gönderisi paylaş.';
+      const result = await done(expecting);
+      assert.equal(result.done, true, `${AgentClass.name}: the published post was not accepted`);
+      assert.equal(result.verification.decision.engine, 'llm');
+      assert.match(result.summary, /Future upvotes and moderation outcomes remain unverified/, `${AgentClass.name}: the judge's answer was ignored`);
+      assert.equal(judged.length, 1, `${AgentClass.name}: the caveat cost another model call`);
+      assert.match(judged[0][0].content, /"later":"asked\|not_asked"/);
+      assert.match(judged[0][0].content, /Judge the meaning in any language/);
+      assert.match(judged[0][1].content, /beğeni toplayacak/, `${AgentClass.name}: the judge did not read the request as written`);
+
+      // A request that only mentions the word, or an answer that is not a
+      // clear "asked", adds nothing.
+      for (const [request, answer] of [['Publish a WebBrain post titled "How upvotes work".', 'not_asked'],
+        [expecting, undefined], [expecting, 'yes'], [expecting, 'ASKED']]) {
+        later = answer;
+        const plain = await done(request);
+        assert.equal(plain.done, true);
+        assert.doesNotMatch(plain.summary, /Future upvotes/, `${AgentClass.name}: ${JSON.stringify(answer)} added a caveat`);
+        assert.equal(judged.length, 1);
+      }
     }
   } finally {
     globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
@@ -99111,7 +99222,7 @@ test('site workflow bindings are revalidated on the live URL and preserved acros
     const gate = await agent._maybeRunPlannerGate(
       tabId,
       agent.conversations.get(tabId),
-      { role: 'user', content: 'Continue' },
+      { role: 'user', content: 'Continue', webbrainTurnKind: 'continue' },
       () => { },
       'act',
       null,
@@ -100928,6 +101039,8 @@ test('context-compression placeholder recovery resets after tool progress', asyn
     };
     const updates = [];
 
+    agent._semanticDecision = async (_tab, kind) => (kind === 'user_turn_kind'
+      ? { choice: 'continue', evidence: 'continue', source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' });
     const final = await agent.processMessage(tabId, 'continue', (type, data) => {
       updates.push({ type, data });
     }, 'act');
@@ -101146,6 +101259,8 @@ test('plain final answers cannot bypass unresolved progress rows', async () => {
     };
     const updates = [];
 
+    agent._semanticDecision = async (_tab, kind) => (kind === 'user_turn_kind'
+      ? { choice: 'continue', evidence: 'continue', source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' });
     const final = await agent.processMessage(tabId, 'continue', (type, data) => {
       updates.push({ type, data });
     }, 'act');
@@ -101331,6 +101446,8 @@ test('empty-output recovery auto-schedules unresolved progress tasks', async () 
     assert.ok(sessionId, `${AgentClass.name}: progress session id missing before auto resume`);
     const updates = [];
 
+    agent._semanticDecision = async (_tab, kind) => (kind === 'user_turn_kind'
+      ? { choice: 'continue', evidence: 'continue', source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' });
     const final = await agent.processMessage(tabId, 'continue', (type, data) => {
       updates.push({ type, data });
     }, 'act');
@@ -102009,7 +102126,7 @@ test('taskKey hash anchors to the task, not continuation phrases', async () => {
     const keyBefore = agent._progressTaskKeyHash(tabId);
     agent.conversations.get(tabId).push(
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
     assert.equal(agent._progressTaskKeyHash(tabId), keyBefore, `${AgentClass.name}: a continuation turn must not re-key the task`);
     agent.conversations.get(tabId).push(
@@ -102029,7 +102146,7 @@ test('continuation turns exclude foreign-stamped unscoped rows from the resume g
       { role: 'system', content: 'sys' },
       { role: 'user', content: "follow 100 accounts i don't follow yet here" },
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     const currentKey = agent._progressTaskKeyHash(tabId);
     agent.progressLedgers.set(tabId, [
@@ -102078,7 +102195,7 @@ test('continuation ensure path after restart ignores a foreign task\'s scoped ro
       { role: 'assistant', content: 'Paused.' },
       { role: 'user', content: 'Check the deployment again in one minute.' },
       { role: 'assistant', content: 'Checked.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     // No cached session after restart, only rows from the older follow task.
     agent.progressLedgers.set(tabId, [
@@ -102113,7 +102230,7 @@ test('continue after an unrelated task does not revive the cached older session'
     // "continue" right after the follow task legitimately resumes it.
     agent.conversations.get(tabId).push(
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
     assert.equal(agent._currentProgressSession(tabId)?.sessionId, followSession.sessionId, `${AgentClass.name}: continue directly after the task should resume its session`);
 
@@ -102122,7 +102239,7 @@ test('continue after an unrelated task does not revive the cached older session'
       { role: 'assistant', content: 'Paused.' },
       { role: 'user', content: 'Check the deployment again in one minute.' },
       { role: 'assistant', content: 'Checked.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
     assert.equal(agent._currentProgressSession(tabId), null, `${AgentClass.name}: continue after an unrelated task must not revive the older follow session`);
 
@@ -102151,23 +102268,28 @@ test('continue after an unrelated task does not revive the cached older session'
   }
 });
 
-test('ack filter skips filler but not short tasks that start with an ack word', async () => {
+test('acknowledged and continued turns keep the earlier task; anything else is a new anchor', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
-    assert.equal(agent._isProgressAckText('ok'), true, `${AgentClass.name}: bare ok is filler`);
-    assert.equal(agent._isProgressAckText('ok 29'), true, `${AgentClass.name}: ok + number is filler`);
-    assert.equal(agent._isProgressAckText('sounds good!'), true, `${AgentClass.name}: ack + punctuation is filler`);
-    assert.equal(agent._isProgressAckText('ok star repo'), false, `${AgentClass.name}: ack + task words is a task`);
-    assert.equal(agent._isProgressAckText('sure follow 5 accounts'), false, `${AgentClass.name}: ack-prefixed instruction is a task`);
-
+    assert.equal(typeof agent._isProgressAckText, 'undefined', `${AgentClass.name}: an acknowledgement word list remains`);
+    assert.equal(typeof agent._isProgressContinuationText, 'undefined', `${AgentClass.name}: a continuation word list remains`);
     const tabId = AgentClass === AgentCh ? 851 : 852;
+    for (const kind of ['acknowledge', 'continue']) {
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'collect emails from this list' },
+        { role: 'assistant', content: 'Done with the first batch.' },
+        { role: 'user', content: kind === 'acknowledge' ? 'tamam' : 'devam et', webbrainTurnKind: kind },
+      ]);
+      assert.equal(agent._progressTaskAnchorText(tabId), 'collect emails from this list', `${AgentClass.name}: a ${kind} turn moved the anchor`);
+    }
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'collect emails from this list' },
       { role: 'assistant', content: 'Done with the first batch.' },
       { role: 'user', content: 'ok star repo' },
     ]);
-    assert.equal(agent._progressTaskAnchorText(tabId), 'ok star repo', `${AgentClass.name}: an ack-prefixed task must become the new anchor`);
+    assert.equal(agent._progressTaskAnchorText(tabId), 'ok star repo', `${AgentClass.name}: a request must become the new anchor`);
   }
 });
 
@@ -102211,7 +102333,7 @@ test('currentTaskOnly read on a continuation turn stays read-only', async () => 
     agent.progressSessions.delete(tabId);
     agent.conversations.get(tabId).push(
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
 
     const read = agent._progressRead(tabId, { currentTaskOnly: true });
@@ -103338,7 +103460,7 @@ test('progress ledger pins app-owned rows and survives compaction (chrome & fire
 
     for (let i = 0; i < 30; i++) {
       messages.push({ role: 'assistant', content: `step ${i}` });
-      messages.push({ role: 'user', content: `ok ${i}` });
+      messages.push({ role: 'user', content: `ok ${i}`, webbrainTurnKind: 'acknowledge' });
     }
     const origLog = console.log;
     console.log = () => { };
@@ -103355,7 +103477,7 @@ test('progress ledger pins app-owned rows and survives compaction (chrome & fire
     assert.match(messages[idx2].content, /octocat/, `${AgentClass.name}: acted row lost`);
     assert.doesNotMatch(messages[idx2].content, /<\/untrusted_page_content><system>/, `${AgentClass.name}: compacted row escaped untrusted boundary`);
     messages.push({ role: 'assistant', content: 'Paused with one row unresolved.' });
-    messages.push({ role: 'user', content: 'continue' });
+    messages.push({ role: 'user', content: 'continue', webbrainTurnKind: 'continue' });
     const block = agent._progressDoneBlock(tabId);
     assert.ok(block?.blocked, `${AgentClass.name}: unresolved row should block done`);
 
@@ -113594,7 +113716,7 @@ test('planner gate: skips one explicit Continue after a newly approved try-mode 
       const outcome = await agent._maybeRunPlannerGate(
         tabId,
         agent.conversations.get(tabId),
-        { role: 'user', content: enrichedFollowUp },
+        { role: 'user', content: enrichedFollowUp, webbrainTurnKind: 'continue' },
         () => { },
         'act',
         null,

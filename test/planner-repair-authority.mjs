@@ -110,9 +110,11 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: explicit Continue and acknowledgment preserve the active approved plan`, async () => {
-    for (const text of ['continue', 'ok']) {
+    // The runtime marks what a short turn does (a model reads it in any
+    // language) before the planner gate sees it.
+    for (const [text, kind] of [['continue', 'continue'], ['ok', 'acknowledge'], ['devam et', 'continue'], ['teşekkürler', 'acknowledge']]) {
       const agent = await planned();
-      const captured = await gate(agent, text);
+      const captured = await gate(agent, text, '', {}, { webbrainTurnKind: kind });
       assert.ok(captured.followUp.scratchpadFacts.includes(oldPlan));
       assert.equal(agent._progressTaskAnchorText(tab), oldTask);
       assert.ok(scratch(agent).includes(notes));

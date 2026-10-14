@@ -30,10 +30,16 @@ export function decisionCompletionVerdict(result, threshold = .9) {
     confidence: answer.confidence, model: result.model, provider: result.provider, usage: result.usage };
 }
 
+// The active model's judge also says whether the task expects an outcome
+// that only happens after it ends (votes, reactions, moderation). Only an
+// exact "asked" counts; a missing or other value is no answer and never
+// invalidates the verdict itself.
+export const LATER_OUTCOME_FIELD = 'Set "later" to "asked" when the task also asks for or expects an outcome that can only happen after it ends, such as votes or reactions from other people, or moderators not removing what was posted; otherwise set it to "not_asked". Judge the meaning in any language.';
+
 export function llmCompletionVerdict(content) {
   const parsed = JSON.parse(String(content || '').trim().replace(/^```(?:json)?\s*|\s*```$/g, ''));
   if (!parsed || !COMPLETION_OUTCOMES.includes(parsed.outcome) || typeof parsed.reason !== 'string' || parsed.reason.length > 1500) throw new Error('Invalid LLM completion verdict.');
-  return { outcome: parsed.outcome, reason: parsed.reason };
+  return { outcome: parsed.outcome, reason: parsed.reason, ...(parsed.later === 'asked' ? { laterOutcome: 'asked' } : {}) };
 }
 
 export function completionStopError(error, signal) {

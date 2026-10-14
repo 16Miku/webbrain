@@ -6948,9 +6948,10 @@ export class Agent extends LoopDetector {
    * and sure; otherwise the active model answers with a quoted reason. Returns
    * { choice, evidence, source } where choice is null when no sure answer was
    * available; callers then ask the user or do not proceed. Identical
-   * questions are answered once.
+   * questions are answered once. `mainModel: false` asks the decision model
+   * only, for a note that is not worth a call to the active model.
    */
-  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null } = {}) {
+  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
     const spec = semanticQuestion(kind);
     const trusted = String(request ?? '').slice(0, 6000);
     const data = boundedSemanticData(page);
@@ -6983,7 +6984,7 @@ export class Agent extends LoopDetector {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
       this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_${systemOneFailureReason(error)}` }, context);
     }
-    if (!provider?.chat || this._checkAbort(tabId)) return { choice: null, evidence: '', source: 'unavailable' };
+    if (!mainModel || !provider?.chat || this._checkAbort(tabId)) return { choice: null, evidence: '', source: 'unavailable' };
     try {
       const messages = semanticDecisionMessages(kind, trusted, data, text => this._wrapUntrusted('read_page', text));
       const response = await withCompletionTimeout(async completionSignal => {
@@ -19035,9 +19036,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (steered) return steered;
       const clarification = this._plannerClarificationTaskBinding(messages, i);
       if (clarification) return clarification;
-      const normalized = text.toLowerCase();
-      if (this._isProgressContinuationText(normalized)) continue;
-      if (this._isProgressAckText(normalized)) continue;
+      if (this._continuationTurn(message)) continue;
       return { index: i, taskIndex: i, clarificationIndex: -1, text, requestText: text, answers: [], pinnedIndices: [i] };
     }
     const index = this._findOriginalTaskIndex(messages);
@@ -28698,10 +28697,32 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return String(text || '').replace(/\s+/g, ' ').trim();
   }
 
-  // Bare acknowledgments carry no task identity; the anchor walk must not
-  // treat "ok" between steps as a task switch.
-  _isProgressAckText(text) {
-    return /^(?:ok(?:ay)?|yes|yep|yeah|sure|thanks|thank\s+you|great|good|nice|cool|perfect|got\s+it|sounds\s+good|alright|fine)[\s\d.,!?;:~*+-]*$/i.test(text);
+  // What a short user turn does while an earlier task exists: continue it,
+  // only acknowledge it, or ask for something. A model reads it in any
+  // language, once, when the turn arrives; the answer is stored on the turn so
+  // the task anchor, ledger scope and approved plan read it without words.
+  // The Continue command is a continuation by construction. Ask turns, long
+  // turns, source-bound shortcuts, scheduled resumes, first turns and turns
+  // the model cannot read with confidence are requests.
+  async _markUserTurnKind(tabId, messages, turn, text, mode, runOptions = {}, { sourceBound = false } = {}) {
+    this._applyUserTurnKind(turn, await this._userTurnKind(tabId, messages, text, mode, runOptions, sourceBound));
+  }
+
+  _applyUserTurnKind(turn, kind) {
+    if (turn && typeof turn === 'object' && (kind === 'continue' || kind === 'acknowledge')) turn.webbrainTurnKind = kind;
+  }
+
+  async _userTurnKind(tabId, messages, text, mode, runOptions = {}, sourceBound = false) {
+    if (runOptions?.trustedContinuation === true) return 'continue';
+    const value = typeof text === 'string' ? text.trim() : '';
+    if (sourceBound || !this._isActionMode(mode) || !value || value.length > 160
+        || this._isScheduledResumeTurn(value) || this._activeTaskBinding(messages || []).index < 0) return 'request';
+    const verdict = await this._semanticDecision(tabId, 'user_turn_kind', { request: value });
+    return verdict.choice === 'continue' || verdict.choice === 'acknowledge' ? verdict.choice : 'request';
+  }
+
+  _continuationTurn(message) {
+    return message?.webbrainTurnKind === 'continue' || message?.webbrainTurnKind === 'acknowledge';
   }
 
   // Latest user task message that is NOT a continuation phrase ("continue",
@@ -28811,7 +28832,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!sessionText) return true;
     // Degenerate stored text (session persisted during a continuation turn)
     // carries no task identity to compare against; keep the old behavior.
-    if (this._isProgressContinuationText(sessionText.toLowerCase())) return true;
+    if (this._isContinuationTurnText(tabId, sessionText)) return true;
     const anchor = this._progressTaskTextKey(this._progressTaskAnchorText(tabId) || this._originalTaskText(tabId));
     if (!anchor) return true;
     return sessionText === anchor;
@@ -29700,17 +29721,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _latestTaskText(tabId) {
+    const message = this._latestTaskMessage(tabId);
+    return message ? this._plannerUserAuthoredText(message) : '';
+  }
+
+  _latestTaskMessage(tabId) {
     const messages = this.conversations.get(tabId) || [];
     for (let i = messages.length - 1; i >= 1; i--) {
       const m = messages[i];
       if (m.role !== 'user') continue;
       if (this._isScheduledResumeTurn(m)) continue;
       if (this._isAgentInjectedUserMessage(m)) continue;
-      const text = this._plannerUserAuthoredText(m);
-      if (!text) continue;
-      return text;
+      if (!this._plannerUserAuthoredText(m)) continue;
+      return m;
     }
-    return '';
+    return null;
   }
 
   _progressIntentClassifierMessages(taskText, siteContext = {}) {
@@ -30240,20 +30265,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _currentTaskIsProgressContinuation(tabId) {
-    return this._isProgressContinuationText(this._latestTaskText(tabId).toLowerCase());
+    return this._latestTaskMessage(tabId)?.webbrainTurnKind === 'continue';
   }
 
-  _isProgressContinuationText(text) {
-    if (!text) return false;
-    // continueProcessing uses this exact command for the existing task.
-    if (text === 'please continue from where you left off.') return true;
-    if (/^(?:please\s+)?(?:continue|keep\s+going|go\s+on|proceed|resume|carry\s+on|next|do\s+the\s+rest|finish\s+(?:the\s+)?(?:rest|remaining)|keep\s+working)(?:\s+(?:please|with\s+(?:it|this|that|them|those|the\s+(?:task|list|queue|rest|remaining))))?[.!?]*$/.test(text)) {
-      return true;
-    }
-    if (/^(?:please\s+)?(?:continue|go\s+on|proceed|resume|carry\s+on|keep\s+(?:going|working))\s+(?:with\s+)?(?:the\s+)?(?:(?:existing|current|active|open|pending|progress)\s+)?(?:ledger|progress\s+ledger|task|work|list|queue|rows?|items?)[.!?]*$/.test(text)) {
-      return true;
-    }
-    return /^(?:please\s+)?(?:continue|go\s+on|proceed|resume|carry\s+on|keep\s+(?:going|working))\s+(?:with\s+)?(?:(?:the\s+)?(?:rest|remaining)\s+)?(?:following|unfollowing|starring|unstarring|watching|unwatching|connecting|subscribing|unsubscribing|saving|unsaving|liking|unliking|blocking|unblocking|reporting|sending|submitting|adding|removing|processing|collecting|scraping|visiting|opening)\b[\s\S]{0,120}\b(?:remaining|rest|rows|items|profiles|users|people|members|followers|following|stargazers|results|links|pages|contacts|accounts|repos|repositories|entries|records|comments|messages|emails|names|handles)\b[.!?]*$/.test(text);
+  // Whether this text is a user turn of this conversation that only continued
+  // or acknowledged the earlier task.
+  _isContinuationTurnText(tabId, text) {
+    const key = this._progressTaskTextKey(text);
+    if (!key) return false;
+    return (this.conversations.get(tabId) || []).some(message => message?.role === 'user'
+      && this._continuationTurn(message) && this._progressTaskTextKey(this._plannerUserAuthoredText(message)) === key);
   }
 
   _currentTaskHasProgressIntent(tabId) {
@@ -34820,8 +34841,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { success: false, dispatched: false, noDispatch: true, adapterFailure: true, error: 'carousel_navigate is unavailable: the current page is not a supported Instagram /p/<id>/ permalink.' };
       }
       const taskKey = this._progressTaskTextKey(this._latestTaskText(tabId));
-      const reverseRequested = /\b(?:reverse|backwards?|descending|last\s+to\s+first|right\s+to\s+left)\b|\b(?:tersten|geriye\s+doğru|sondan\s+başa)\b/i.test(this._latestTaskText(tabId));
-      const traversalDirection = reverseRequested ? 'reverse' : 'forward';
+      // The order comes from the user's request, read by a model in any
+      // language (never from the model driving the scan, which could
+      // otherwise flip direction to revisit slides); no sure answer is the
+      // usual order.
+      const order = await this._semanticDecision(tabId, 'carousel_order', { request: this._latestTaskText(tabId) });
+      const traversalDirection = order.choice === 'reverse' ? 'reverse' : 'forward';
       const storedState = this.carouselTraversalStates.get(tabId);
       const previousState = storedState?.canonicalPostUrl === target.canonicalPostUrl
         && storedState.taskKey === taskKey
@@ -36032,8 +36057,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               screenshotCaptured: !!dataUrl,
             });
             if (completionDecision) verification.decision = { outcome: completionDecision.outcome, engine: completionDecision.engine, modality: completionDecision.modality, model: completionDecision.model };
-          if (!args.data_ref && completionDecision?.outcome === 'succeeded' && /upvotes|won.t get deleted|won.t be deleted|will not be removed/i.test(this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || '')) args.summary += '\n\nPublication was verified. Future upvotes and moderation outcomes remain unverified.';
-
             // If completionWarning fires, DO NOT terminate. Return a failed
             // tool result so the agent loop continues and the model must
             // actually submit (and verify) before it can call done again.
@@ -36054,6 +36077,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 };
               }
               // After 2 blocks, let done through with a loud note in verification.
+            }
+            // A request that also expects votes or moderation to go a certain way
+            // asks for something no run can verify. Whoever verified the completion
+            // reads that from the request in any language: the active model's
+            // verdict says so itself, and after a decision-model verdict the
+            // decision model is asked; nothing else is called. Only a clear answer
+            // adds the caveat.
+            if (!args.data_ref && completionDecision?.outcome === 'succeeded' && completionDecision.engine !== 'calculation') {
+              const later = completionDecision.engine === 'llm' ? completionDecision.laterOutcome
+                : (await this._semanticDecision(tabId, 'future_outcome',
+                  { request: this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || '' }, { mainModel: false })).choice;
+              if (later === 'asked') args.summary += '\n\nPublication was verified. Future upvotes and moderation outcomes remain unverified.';
             }
             const runId = this.currentRunId.get(tabId);
             if (dataUrl && runId) {
@@ -39238,9 +39273,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._selectionGroundingPriorMessageSet(tabId, messages)
       : null;
 
+    // What a short turn does is read while the page context is gathered.
+    const userTurnKind = this._userTurnKind(tabId, messages, userMessage, mode, runOptions,
+      selectionOnly || standaloneChatRun);
+    userTurnKind.catch(() => {});
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
+    this._applyUserTurnKind(enriched, await userTurnKind);
     let sourceBoundTrimmedMessages = null;
     let sourceBoundMessagesAtTrim = null;
     const rawModelMessagesForRun = () => {
@@ -40654,9 +40694,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._selectionGroundingPriorMessageSet(tabId, messages)
       : null;
 
+    // What a short turn does is read while the page context is gathered.
+    const userTurnKind = this._userTurnKind(tabId, messages, userMessage, mode, runOptions,
+      selectionOnly || standaloneChatRun);
+    userTurnKind.catch(() => {});
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions,
     );
+    this._applyUserTurnKind(enriched, await userTurnKind);
     let sourceBoundTrimmedMessages = null;
     let sourceBoundMessagesAtTrim = null;
     const rawModelMessagesForRun = () => {
