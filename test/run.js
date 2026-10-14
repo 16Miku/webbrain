@@ -32699,6 +32699,13 @@ test('OTP mailbox candidate filtering returns only service-matching bounded exce
     assert.equal(helper.otpTextMatchesService('row "Bank of America security code" [ref_bofa]', 'Bank of America'), true, `${label}: complete multiword issuer identity should match`);
     assert.equal(helper.otpTextMatchesService('row "Call me about your account" [ref_call]', 'ID.me'), false, `${label}: short connector tokens must not match independently`);
     assert.equal(helper.otpTextMatchesService('row "ID.me verification code" [ref_idme]', 'ID.me'), true, `${label}: short service identities should require their complete normalized phrase`);
+    // Words beside a service's name count the same in every language: none is
+    // set aside as filler, so an English "verification" is required like a
+    // Turkish "doğrulama" is.
+    for (const [service, wanted] of [['Acme verification', 'verification'], ['Acme doğrulama', 'doğrulama']]) {
+      assert.equal(helper.otpTextMatchesService('row "Your Acme sign-in link" [ref_acme]', service), false, `${label}: ${service} matched without ${wanted}`);
+      assert.equal(helper.otpTextMatchesService(`row "Acme ${wanted} 482913" [ref_acme]`, service), true, `${label}: ${service} did not match its own message`);
+    }
     const issuerCandidates = helper.otpEmailCandidates([
       'row "Bank security code" [ref_bank]',
       '  text "Code 111111"',
