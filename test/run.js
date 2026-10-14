@@ -18578,7 +18578,7 @@ test('a wall whose text changes on every read fails the read instead of returnin
     assert.equal(reads, 3, `${build}: the page was not read again with each new wall text`);
     assert.equal(result.success, false, `${build}: the article behind a changing wall was returned`);
     assert.doesNotMatch(JSON.stringify(result), /SECRET/, `${build}: text behind the wall leaked`);
-    assert.match(result.error, /wall whose text changes from one read to the next/);
+    assert.match(result.error, /wall that WebBrain could not apply, as when its text changes on every read/);
     // The same wall applied on the last read is returned as the page shows it.
     const applied = new AgentClass({});
     stubPageTextReadings(applied, (kind, item) => (kind === 'page_blocker'
@@ -18598,6 +18598,40 @@ test('a wall whose text changes on every read fails the read instead of returnin
       { text: 'article 0', pageTextsNeeded: wallAt(0) },
       async () => { plainReads += 1; return { text: `article ${plainReads}`, pageTextsNeeded: wallAt(plainReads) }; });
     assert.deepEqual(last, { text: 'article 3' }, `${build}: a page with no wall was refused`);
+
+    // From review: the next wall text got no answer from any model, so the
+    // loop stopped with the read made without the wall applied.
+    const unanswered = new AgentClass({});
+    stubPageTextReadings(unanswered, (kind, item) => (kind === 'page_blocker'
+      ? (/59 sn/.test(item.text) ? 'subscription' : null) : null));
+    let unansweredReads = 0;
+    const stopped = await unanswered._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { unansweredReads += 1; return { text: `SECRET_${unansweredReads}`, pageTextsNeeded: wallAt(unansweredReads) }; });
+    assert.equal(unansweredReads, 1);
+    assert.equal(stopped.success, false, `${build}: an unanswered later wall text returned the article`);
+    assert.doesNotMatch(JSON.stringify(stopped), /SECRET/);
+    // From review: the wall's new text dropped out of the last batch while
+    // other texts filled it, so only the last pass's texts were looked at.
+    const ticker = new AgentClass({});
+    stubPageTextReadings(ticker, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    let tickerReads = 0;
+    const crowded = await ticker._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { tickerReads += 1; return { pageContent: `SECRET_${tickerReads}`,
+        pageTextsNeeded: [{ kind: 'page_blocker', text: `Borsa ${tickerReads}` }] }; });
+    assert.equal(tickerReads, 3);
+    assert.equal(crowded.success, false, `${build}: a wall crowded out of the last batch returned the article`);
+    assert.doesNotMatch(JSON.stringify(crowded), /SECRET/);
+    // A wall applied on a later read stands, whatever is still unread.
+    const appliedLater = new AgentClass({});
+    stubPageTextReadings(appliedLater, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : null) : null));
+    const standing = await appliedLater._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => ({ text: 'gate', pageGate: { type: 'subscription' }, pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bülten' }] }));
+    assert.deepEqual(standing, { text: 'gate', pageGate: { type: 'subscription' } }, `${build}: an applied wall was refused`);
   }
 });
 
@@ -108820,13 +108854,18 @@ test('planner reads a pointer at the open conversation as that conversation and 
   ]) {
     for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
       const where = `${label} ${kind}`;
-      assert.match(prompt, /You do not see the live page; the agent that carries out the plan reads it\. Never ask the user about something the page can show, such as who is in the open conversation/,
+      assert.match(prompt, /You do not see the live page; the agent that carries out the plan reads it\. Do not ask the user about something the page itself can show, such as what is on screen; plan to read it first\./,
         `${where}: the planner may ask the user about what is on screen`);
-      assert.match(prompt, /Use target_kind="active_conversation" when the current request points at the conversation open on screen, or at the person or group in it, instead of naming them, in any language/,
+      assert.match(prompt, /Use target_kind="active_conversation" when the current request points at the conversation open on screen, or at the person or group in it, instead of naming them or referring back to someone named earlier, in any language/,
         `${where}: a pointer at the open conversation is not read as that conversation`);
       assert.match(prompt, /"this one", or "this user"/, `${where}: no example of a pointer at the open conversation`);
-      assert.match(prompt, /WebBrain reads that conversation's identity from the page itself before any tool runs, binds every send to it, and stops if no single conversation is open, so never ask the user who or which conversation that is/,
+      assert.match(prompt, /WebBrain reads that conversation's identity from the page itself and binds every send to it, and stops if no single conversation is open, so do not ask the user who or which conversation that is/,
         `${where}: the planner is not told that WebBrain verifies the open conversation`);
+      // A pointer back at someone named earlier, or a bare pronoun, is not the
+      // open conversation; an unresolved one still asks (5a07d7577).
+      assert.match(prompt, /words that refer back to a person or item named earlier in the conversation mean that person or item, not the open conversation/,
+        `${where}: a reference back can now mean the open conversation`);
+      assert.doesNotMatch(prompt, /who is in the open conversation/, `${where}: the page rule contradicts the pronoun rule`);
       assert.match(prompt, /Its recipients lists only the people the same request names besides it/,
         `${where}: a request for the open conversation and someone else cannot be planned`);
       assert.match(prompt, /A message's wording is not missing information when the user describes it instead of quoting it, such as test messages[\s\S]*the agent writes it/,
@@ -108899,16 +108938,17 @@ test('the open conversation and someone else named in the same request each rece
       `${label}: the open chat alone no longer pins as before`,
     );
 
-    // Mail sends one message to a set of people at once: the open thread and
-    // the person named besides it form one exact set.
+    // Mail sends one message to a set of people at once: the pin stays the
+    // thread's own recipients, as before, and a set that differs from it is
+    // confirmed on the card. A name the planner copied from the request
+    // could never match the addresses a mail composer shows.
     probe = { success: true, conclusive: true, messageSend: false,
       strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }] };
     const mail = await agent._pinActiveConversationMessagingTarget(tabId,
-      { target_kind: 'active_conversation', recipients: [{ identity: 'bob@example.com', role: 'cc' }] },
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Bob', role: 'cc' }] },
       'https://mail.example.com/compose');
-    assert.deepEqual(mail.target, { target_kind: 'named', recipients: [
-      { identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' },
-    ] }, `${label}: a reply here with a Cc is not one exact set`);
+    assert.deepEqual(mail.target, { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }] },
+      `${label}: a reply here with a Cc is not pinned to the thread`);
     assert.equal(mail.requestedMessaging, undefined, `${label}: a mail set was split into separate sends`);
 
     // The run starts from that pin.
@@ -109019,6 +109059,148 @@ test('planner gates carry the open conversation and a person named besides it in
         assert.deepEqual(gate.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
           `${where}: the person named besides the open chat was dropped`);
         assert.deepEqual(gate.activeConversationRecipients, ['mehmet'], `${where}: the pinned chat was not handed on`);
+      }
+    }
+  });
+});
+
+// From review: the same person named besides "reply here" on Gmail, whose
+// pin waits for the reply composer, made a set no send could match, so every
+// send asked on the card where it sent before.
+test('a Gmail reply here that also names someone sends to the composer recipients as before', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27311 : 27312;
+    const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/thread-7';
+    agent._currentUrl = async () => threadUrl;
+    let probe = { success: false, conclusive: false, composerAvailable: false, composerSetup: true, messageSend: null,
+      strongIdentityCandidates: [], identityCandidates: [] };
+    agent._messageRecipientContentProbe = async () => probe;
+    const pin = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Bob', role: 'cc' }] }, threadUrl);
+    assert.equal(pin.ok, true, `${label}: the collapsed reply blocked planning`);
+    assert.equal(pin.deferredActiveConversation, true);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+      requiresSubmission: true, siteWorkflowUrl: threadUrl, messaging: pin.target });
+    probe = { success: true, conclusive: true, composerAvailable: true, messageSend: true,
+      messageBody: 'Thanks, Alice', messageBodyBaselineCount: 0, gmailComposeFlow: true,
+      strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' }],
+      messageRecipientDispatchBinding: { token: `gmail-mixed-${label}` } };
+    const context = {};
+    const result = await agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_send' }, threadUrl, context);
+    assert.equal(result, null, `${label}: the reply with its Cc needed a card: ${JSON.stringify(result?.recipientConfirmation || result)}`);
+    assert.equal(context.messageRecipientGuardRequired, true, `${label}: the send was not bound`);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.messaging, { target_kind: 'named', recipients: [
+      { identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' }] });
+    assert.equal(guard.requestedMessaging, undefined, `${label}: a mail set was split into separate sends`);
+    assert.deepEqual(guard.activeConversationRecipients, [], `${label}: a mail thread became a chat`);
+  }
+});
+
+// From review: when a WhatsApp contact's identity still needs its drawer
+// while planning, the open chat is pinned at its first send; the person
+// named besides it must still be kept for the card then.
+test('a WhatsApp chat pinned at its first send keeps the person named besides it for the card', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27321 : 27322;
+    const chatUrl = 'https://web.whatsapp.com/';
+    agent._currentUrl = async () => chatUrl;
+    let probe = { success: true, conclusive: false, messageSend: false, composerAvailable: true,
+      nativeWhatsappRepairAvailable: true, identityCandidates: [] };
+    agent._messageRecipientContentProbe = async () => probe;
+    const pin = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] }, chatUrl);
+    assert.equal(pin.ok, true);
+    assert.equal(pin.nativeWhatsappRepair, true, `${label}: the pin did not wait for the contact's drawer`);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+      requiresSubmission: true, siteWorkflowUrl: chatUrl, messaging: pin.target });
+    const phone = `whatsapp:phone:${'a'.repeat(32)}`;
+    const send = (identity, n) => ({ success: true, conclusive: true, messageSend: true, messageBody: `Test ${n}`,
+      messageBodyBaselineCount: 0, strongIdentityCandidates: [identity],
+      nativeChatMessageBaseline: { threadKey: `dom:${identity}` },
+      messageRecipientDispatchBinding: { token: `wa-${label}-${n}` } });
+    const dispatch = (n, context = {}) => agent._messageRecipientGuardBlock(tabId, 'set_field',
+      { ref_id: 'composer', text: `Test ${n}`, submit: true }, chatUrl, context);
+    probe = send(phone, 1);
+    assert.equal(await dispatch(1), null, `${label}: the open chat needed a card at its first send`);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.messaging, { target_kind: 'named', recipients: [{ identity: phone, role: 'to' }] });
+    assert.deepEqual(guard.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+      `${label}: the person named besides the open chat was dropped at its first send`);
+    assert.deepEqual(guard.activeConversationRecipients, [phone], `${label}: the chat pinned at its first send is not kept`);
+    // Another chat goes to the card, which shows who was asked for.
+    probe = send(`whatsapp:phone:${'b'.repeat(32)}`, 2);
+    const other = await dispatch(2);
+    assert.equal(other?.reasonCode, 'active_recipient_unverified', `${label}: another chat was sent to without a card`);
+    assert.deepEqual(other.recipientConfirmation.requested, ['Rustem Bey']);
+  }
+});
+
+// From review: the reviewed plan showed only the pinned chat, and the
+// reviewed path's hand-off was untested.
+test('a reviewed plan shows the person named besides the open conversation and an approved one hands them on', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [editIndex, edited] of [false, true].entries()) {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-open-chat-review-test',
+          name: 'planner-open-chat-review-test',
+          chat: async () => ({
+            content: plannerFixtureJson({
+              requires_state_change: true,
+              requires_submission: true,
+              confidence: 0.95,
+              messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+              summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+              steps: [
+                { id: '1', action: 'Observe the open chat.', tools: ['chat_observe'] },
+                { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.', tools: ['chat_send'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+                steps: [
+                  { id: '1', action: 'Observe the open chat.' },
+                  { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.' },
+                ],
+                risks: [],
+              },
+            }),
+            usage: {},
+          }),
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent._messageRecipientContentProbe = async () => ({ success: true, conclusive: true, strongIdentityCandidates: ['Mehmet'] });
+        let reviewed = null;
+        agent._waitForPlanReview = async (_tabId, _planId, _plan, compact, _onUpdate, verbose) => {
+          reviewed = { compact, verbose };
+          return edited
+            ? { action: 'approve', markdownMode: 'compact', editedText: compact.replace('Observe the open chat.', 'Observe the chat.') }
+            : { action: 'approve', markdownMode: 'compact', editedText: '' };
+        };
+        const tabId = 9580 + (agentIndex * 20) + (editIndex * 10);
+        const gate = await agent._runPlannerGate(tabId,
+          { role: 'user', content: 'send some test messages to this one, at least 3, then thank Rustem Bey' },
+          () => { }, null, null, '', { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' }, 'try', 'act', { locale: 'en' });
+        const where = `${AgentClass.name} ${edited ? 'edited' : 'unedited'}`;
+        assert.equal(gate.proceed, true, `${where}: the reviewed plan did not run: ${gate.message || gate.reason}`);
+        assert.match(reviewed?.verbose || '', /- Message targets: to:Mehmet\n- Also named, each confirmed on WebBrain's card before the first send to them: to:Rustem Bey/,
+          `${where}: the reviewed plan does not show the person named besides the open chat`);
+        if (edited) {
+          // An edited plan carries no send target at all, as before.
+          assert.equal(gate.messaging, null);
+          assert.equal(gate.requestedMessaging, null);
+          assert.deepEqual(gate.activeConversationRecipients, []);
+        } else {
+          assert.deepEqual(gate.messaging, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] });
+          assert.deepEqual(gate.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+            `${where}: the approved plan dropped the person named besides the open chat`);
+          assert.deepEqual(gate.activeConversationRecipients, ['mehmet'], `${where}: the approved plan dropped the pinned chat`);
+        }
       }
     }
   });

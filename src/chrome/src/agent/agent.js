@@ -69,7 +69,7 @@ import {
   shouldInvalidateFormInventoryAfterAction,
   workflowRequiredRowsAreProcessed,
 } from './adapter-workflow-evidence.js';
-import { messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientIdentity, pinnedActiveConversationTarget } from './message-recipient-guard.js';
+import { messageTargetMatchesObservedIdentities, messageRecipientUploadSourceKey, normalizeMessageTarget, normalizeRecipientIdentity } from './message-recipient-guard.js';
 import { advanceChatSession, chatRunEndedNotice, createOwnedNativeChatReadRepair, createChatSession, decideChatSend, markChatSendPending, normalizeChatSession, normalizeChatSnapshot, normalizeNativeOpaqueBaseline, serializeChatSession } from './chat-workflow.js';
 import {
   fetchUrl,
@@ -12193,26 +12193,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // A page read whose overlay or article-block texts were consulted unread
   // has them read, and the page read once more with the readings, up to three
   // times while each read reaches texts nobody has read (a page reports at
-  // most forty at a time, the likeliest walls first). A read that cannot be
-  // repeated keeps the answer before it, unless one of the texts that answer
-  // was made without reads as a wall: that answer may hold what the wall
-  // withholds, so the read fails instead. So does a last answer that still
-  // waits on texts after a wall was read but not applied, as with a wall
-  // whose text changes on every read, such as a countdown.
+  // most forty at a time, the likeliest walls first). Once a text was read as
+  // a wall, an answer without that wall applied may hold what the wall
+  // withholds, so the read fails instead of returning it: when the page
+  // cannot be read again after that text, and when the page still reports
+  // texts nobody has read, as a wall whose text changes on every read does
+  // (a countdown's number is carried over by the page; other changes are
+  // not). Otherwise a read that cannot be repeated keeps the answer before it.
   async _rereadWithPageBlockerReadings(tabId, name, response, dispatch) {
     if ((name !== 'read_page' && name !== 'get_accessibility_tree') || !response || typeof response !== 'object') return response;
+    const wallUnapplied = { success: false, error: 'This page shows a subscription, registration or sign-in wall '
+      + 'that WebBrain could not apply, as when its text changes on every read, so nothing behind it was returned. '
+      + 'Report the wall instead of reading past it.' };
+    const isWall = entry => entry?.kind === 'page_blocker'
+      && ['subscription', 'registration', 'login'].includes(this._pageTextReading('page_blocker', entry.text));
     let current = response;
-    let wallReadLast = false;
+    let wallSeen = false;
+    // The answer to return, or the failure when a wall read earlier is not
+    // applied in it while texts are still unread.
+    const settle = unread => (wallSeen && unread && !current.pageGate ? wallUnapplied : current);
     for (let pass = 0; pass < 3; pass += 1) {
-      const needed = current.pageTextsNeeded;
+      const needed = Array.isArray(current.pageTextsNeeded) ? current.pageTextsNeeded : [];
       delete current.pageTextsNeeded;
-      if (!await this._readPageBlockerTexts(tabId, needed)) return current;
-      const wallRead = (Array.isArray(needed) ? needed : []).some(entry => entry?.kind === 'page_blocker'
-        && ['subscription', 'registration', 'login'].includes(this._pageTextReading('page_blocker', entry.text)));
-      wallReadLast = wallRead;
-      const failed = () => (wallRead ? { success: false, error: 'This page shows a subscription, registration or '
-        + 'sign-in wall, and reading the page again with it failed, so nothing behind the wall was returned. '
-        + 'Read the page again.' } : current);
+      if (!await this._readPageBlockerTexts(tabId, needed)) return settle(needed.length > 0);
+      const wallRead = needed.some(isWall);
+      if (wallRead) wallSeen = true;
+      const failed = () => (wallRead || (wallSeen && !current.pageGate) ? { success: false, error: 'This page shows a '
+        + 'subscription, registration or sign-in wall, and reading the page again with it failed, so nothing behind '
+        + 'the wall was returned. Read the page again.' } : current);
       let reread = null;
       try {
         reread = await dispatch();
@@ -12223,14 +12231,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!reread || typeof reread !== 'object' || reread.success === false) return failed();
       current = reread;
     }
-    const stillUnread = Array.isArray(current.pageTextsNeeded) && current.pageTextsNeeded.length > 0;
+    const unread = Array.isArray(current.pageTextsNeeded) && current.pageTextsNeeded.length > 0;
     delete current.pageTextsNeeded;
-    if (wallReadLast && stillUnread && !current.pageGate) {
-      return { success: false, error: 'This page shows a subscription, registration or sign-in wall whose text '
-        + 'changes from one read to the next, so WebBrain could not apply it, and nothing behind it was returned. '
-        + 'Report the wall instead of reading past it.' };
-    }
-    return current;
+    return settle(unread);
   }
 
   // The page_blocker readings of dialog titles the agent holds, by title, for
@@ -26902,18 +26905,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // The open conversation pinned to the recipients its page verifiably shows.
   // A request may also name other people besides it ("send this one a test,
-  // then thank Ayşe"). Where one message reaches a set of people at once, as
-  // in mail, they all form one exact set. Where a conversation reaches one
-  // person, the open conversation is the target, and it stays authorized for
-  // the whole task; each named person is requested, and is confirmed on
-  // WebBrain's card before the first send to them, as with any change of
-  // recipient.
+  // then thank Ayşe"). Where a conversation reaches one person, the open
+  // conversation is the target, and it stays authorized for the whole task;
+  // each named person is requested, and is confirmed on WebBrain's card
+  // before the first send to them, as with any change of recipient. Where one
+  // message reaches a set of people at once, as in mail, the pin is the
+  // thread's own recipients as before: a person added there changes the set,
+  // and a set that differs from the pin is confirmed on the card. (The
+  // planner names people as the user wrote them, while a mail composer shows
+  // addresses, so adding the names would make a set no send could match.)
   _activeConversationPin(target, recipients, policy) {
     const requested = normalizeMessageTarget(target);
     const extra = requested?.target_kind === 'active_conversation' ? requested.recipients : [];
-    if (!extra.length) return { target: { target_kind: 'named', recipients } };
-    if (policy?.supportsRecipientSets === true) {
-      return { target: pinnedActiveConversationTarget(recipients, requested) };
+    if (!extra.length || policy?.supportsRecipientSets === true) {
+      return { target: { target_kind: 'named', recipients } };
     }
     return {
       target: { target_kind: 'named', recipients },
@@ -42345,14 +42350,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       try {
         await cdpClient.attach(tabId);
         // Shadow hosts behind a wall in front of an article stay hidden; the
-        // wall's text is read in any language first when nobody has.
-        let pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._pageBlockerReadings() });
-        for (let pass = 0; pass < 3 && await this._readPageBlockerTexts(tabId, pageInfo?.pageTextsNeeded); pass += 1) {
-          pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._pageBlockerReadings() });
-        }
+        // wall's text is read in any language first when nobody has, as for
+        // read_page, and a wall that cannot be applied fails the read.
+        const readOnce = () => cdpClient.readPage(tabId, { pageBlockerReadings: this._pageBlockerReadings() });
+        const pageInfo = await this._rereadWithPageBlockerReadings(tabId, 'read_page', await readOnce(), readOnce);
+        if (pageInfo?.success === false) return pageInfo;
         return {
           success: true,
-          shadowHosts: pageInfo.shadowHosts || [],
+          shadowHosts: pageInfo?.shadowHosts || [],
         };
       } catch (e) {
         return { success: false, error: `Failed to get shadow DOM info: ${e.message}` };

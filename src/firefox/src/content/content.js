@@ -67,6 +67,9 @@
     if (!text) return 'other';
     const known = _pageReading('page_blocker', text, null, { queue: false, maxLength: PAGE_GATE_TEXT_LIMIT });
     if (known) return PAGE_GATE_TYPES.has(known) ? known : 'other';
+    // A wall whose number changed since it was read, such as a countdown.
+    const shaped = _pageBlockerWallByShape(text);
+    if (shaped && PAGE_GATE_TYPES.has(shaped)) return shaped;
     if (!budget.seen.has(text)) {
       if (budget.left <= 0) return null;
       budget.left -= 1;
@@ -5908,9 +5911,26 @@
     'draft_tool', 'conversation_tool']);
   const _pageReadings = new Map();
   const _pageReadingsUnread = new Map();
+  // Wall readings of overlay and article-block texts that hold digits, by the
+  // text with each run of digits as one '#'. A wall whose number changes on
+  // every read, such as a countdown, keeps its reading. Only walls carry over
+  // this way: a text read as no wall is read again when its numbers change.
+  const _pageBlockerWallShapes = new Map();
+  const _PAGE_BLOCKER_WALL_TYPES = new Set(['subscription', 'registration', 'login']);
 
   function _pageReadingText(value) {
     return String(value ?? '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function _pageReadingDigitShape(text) {
+    return /\p{Nd}/u.test(text) ? text.replace(/\p{Nd}+/gu, '#') : '';
+  }
+
+  // The wall reading a text gets from a text read as a wall that differs from
+  // it only in its numbers, or null.
+  function _pageBlockerWallByShape(value) {
+    const shape = _pageReadingDigitShape(_pageReadingText(value));
+    return shape ? _pageBlockerWallShapes.get(shape) || null : null;
   }
 
   // `readings` is { question: { text: choice } }.
@@ -5928,9 +5948,15 @@
         _pageReadings.delete(key);
         _pageReadings.set(key, choice);
         _pageReadingsUnread.delete(key);
+        const shape = kind === 'page_blocker' && _PAGE_BLOCKER_WALL_TYPES.has(choice) ? _pageReadingDigitShape(text) : '';
+        if (shape) {
+          _pageBlockerWallShapes.delete(shape);
+          _pageBlockerWallShapes.set(shape, choice);
+        }
       }
     }
     while (_pageReadings.size > 3200) _pageReadings.delete(_pageReadings.keys().next().value);
+    while (_pageBlockerWallShapes.size > 800) _pageBlockerWallShapes.delete(_pageBlockerWallShapes.keys().next().value);
   }
 
   // The reading of one text: its choice, '' when there is no text, or null

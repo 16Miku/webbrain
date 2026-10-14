@@ -71,18 +71,6 @@ export function normalizeMessageTarget(value) {
     : null;
 }
 
-// The open conversation, pinned to its verified recipients, together with the
-// people the same request also named: one exact set, each identity and role
-// once, at most 16.
-export function pinnedActiveConversationTarget(activeRecipients, target) {
-  const named = normalizeMessageTarget(target);
-  const recipients = normalizedRecipientList([
-    ...(Array.isArray(activeRecipients) ? activeRecipients : []),
-    ...(named?.target_kind === 'active_conversation' ? named.recipients : []),
-  ]);
-  return recipients.length ? { target_kind: 'named', recipients } : null;
-}
-
 export function normalizeRecipientIdentity(value) {
   const text = compact(value, 240);
   if (!text) return '';

@@ -1183,6 +1183,60 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     }
   });
 
+  // From review: a wall whose number changes on every read, such as a
+  // countdown, was read as a wall each time but never met that reading
+  // again. Its reading now carries over a changed number; a text read as no
+  // wall is still read again when its number changes.
+  test(`${label}: a wall whose number changes on every read keeps its reading, and a counter read as no wall is read again`, async (page) => {
+    const countdown = n => `Okumaya devam etmek için abone olun. Kalan süre: ${n} sn`;
+    await setupContentHtml(page, `<!doctype html><meta property="og:type" content="article">
+      <article><h1>Geri sayım</h1><p>SECRET_COUNTDOWN_BODY sunucuda çizilmiştir.</p></article>
+      <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+        <p id="count">${countdown(59)}</p><button>Abone ol</button></div>`, browserKind);
+    const readings = {};
+    const readAll = (action, params = {}) => readGateTextsLikeTheAgent(
+      () => call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } }), readings);
+    const first = await readAll('get_page_info_cdp');
+    if (first.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(first))) {
+      throw new Error(`countdown wall was not applied: ${JSON.stringify({ pageGate: first.pageGate })}`);
+    }
+    for (const n of [58, 9]) {
+      await page.evaluate(text => { document.querySelector('#count').textContent = text; }, countdown(n));
+      for (const [action, params] of [['get_page_info_cdp', {}], ['get_accessibility_tree', { filter: 'visible', maxDepth: 6 }]]) {
+        const ticked = await call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } });
+        if (ticked.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(ticked))) {
+          throw new Error(`${action} at ${n} s: the countdown wall lost its reading: ${JSON.stringify({ pageGate: ticked.pageGate })}`);
+        }
+        if ((ticked.pageTextsNeeded || []).some(entry => /Kalan süre/.test(entry.text))) {
+          throw new Error(`${action} at ${n} s: the countdown wall was asked again`);
+        }
+        if (action === 'get_accessibility_tree' && !/Abone ol/.test(ticked.pageContent || '')) {
+          throw new Error(`${action} at ${n} s: the wall's own control is gone`);
+        }
+      }
+    }
+
+    const counter = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı.`;
+    await setupContentHtml(page, `<!doctype html><meta property="og:type" content="article">
+      <article><h1>Sayaç</h1><p>READABLE_COUNTER_BODY herkes okuyabilir.</p></article>
+      <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+        <p id="count">${counter(3)}</p><button>Kapat</button></div>`, browserKind);
+    const counterReadings = {};
+    const read = await readGateTextsLikeTheAgent(
+      () => call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: counterReadings } }), counterReadings);
+    if (read.pageGate || !/READABLE_COUNTER_BODY/.test(read.text || '')) {
+      throw new Error(`a counter read as no wall withheld the page: ${JSON.stringify({ pageGate: read.pageGate })}`);
+    }
+    await page.evaluate(text => { document.querySelector('#count').textContent = text; }, counter(2));
+    const changed = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: counterReadings } });
+    if (changed.pageGate || !/READABLE_COUNTER_BODY/.test(changed.text || '')) {
+      throw new Error(`a changed counter was taken for a wall: ${JSON.stringify({ pageGate: changed.pageGate })}`);
+    }
+    if (!(changed.pageTextsNeeded || []).some(entry => /2 ücretsiz makale/.test(entry.text))) {
+      throw new Error(`a counter read as no wall was not read again when its number changed: ${JSON.stringify(changed.pageTextsNeeded)}`);
+    }
+  });
+
   test(`${label}: an article whose body is named for a paywall reads whole, at a bounded cost`, async (page) => {
     await setupContentFixture(page, 'paywall-class-article-no-wall.html', browserKind);
     const stats = { needed: [] };
@@ -1450,6 +1504,40 @@ test('Chrome CDP mirror keys a wall text cut at its length limit as the agent do
   const result = await readThroughCdpMirror(page);
   if (result.pageGate?.type !== 'subscription' || result.textSource !== 'page-gate' || /SECRET_CUT_ARTICLE_BODY/.test(JSON.stringify(result))) {
     throw new Error(`CDP cut wall text mismatch: ${JSON.stringify({ pageGate: result.pageGate, textSource: result.textSource })}`);
+  }
+});
+
+test('Chrome CDP mirror keeps the reading of a wall whose number changes on every read', async (page) => {
+  const countdown = n => `Okumaya devam etmek için abone olun. Kalan süre: ${n} sn`;
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Geri sayım</h1><p>SECRET_COUNTDOWN_BODY sunucuda çizilmiştir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+      <p id="count">${countdown(59)}</p><button>Abone ol</button></div>`);
+  const client = new CDPClient();
+  client.evaluate = async (_tabId, expression) => ({ result: { value: await page.evaluate(expression) } });
+  const readings = {};
+  const first = await readGateTextsLikeTheAgent(() => client.readPage(1, { pageBlockerReadings: readings }), readings);
+  if (first.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(first))) {
+    throw new Error(`CDP countdown wall was not applied: ${JSON.stringify({ pageGate: first.pageGate })}`);
+  }
+  await page.evaluate(text => { document.querySelector('#count').textContent = text; }, countdown(58));
+  const ticked = await client.readPage(1, { pageBlockerReadings: readings });
+  if (ticked.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(ticked))
+      || (ticked.pageTextsNeeded || []).some(entry => /Kalan süre/.test(entry.text))) {
+    throw new Error(`CDP countdown wall lost its reading: ${JSON.stringify({ pageGate: ticked.pageGate, needed: ticked.pageTextsNeeded })}`);
+  }
+  // A counter read as no wall is read again when its number changes.
+  const counter = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı.`;
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Sayaç</h1><p>READABLE_COUNTER_BODY herkes okuyabilir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+      <p id="count">${counter(3)}</p><button>Kapat</button></div>`);
+  const counterReadings = {};
+  await readGateTextsLikeTheAgent(() => client.readPage(1, { pageBlockerReadings: counterReadings }), counterReadings);
+  await page.evaluate(text => { document.querySelector('#count').textContent = text; }, counter(2));
+  const changed = await client.readPage(1, { pageBlockerReadings: counterReadings });
+  if (changed.pageGate || !(changed.pageTextsNeeded || []).some(entry => /2 ücretsiz makale/.test(entry.text))) {
+    throw new Error(`CDP changed counter mismatch: ${JSON.stringify({ pageGate: changed.pageGate, needed: changed.pageTextsNeeded })}`);
   }
 });
 
