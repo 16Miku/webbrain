@@ -796,6 +796,19 @@ come only from its own expected-items line, and the items a repeated-action
 task leaves out ("everyone except alice") come from the intent model's
 `excludedTargets`. Ledger rows written before rows were stamped belong to the
 current task only when its classified intent allows the action they record.
+A click is recorded on the ledger when it lands on a row's own control, or
+when a model reads its label, in any language, as doing one of the run's
+allowed actions to an item (`progress_action`: it does the action, undoes it,
+or does something else); the item is then the ledger row for that action the
+label names, or the page its link opens. On a Mastodon instance's own pages
+(known instances, `mastodon.*` hosts, remote profiles and interaction routes;
+a `/@handle` page of another site is no fediverse account), a model reads
+the page's control and field labels while a ledger tracks the run
+(`follow_state`: follows, already followed or requested, asks for the user's
+own server, or something else) and which domain the request names as the
+user's own server (`home_instance`). A follow row is marked processed only
+after a followed state is read, and a server field arms the remote-follow
+handoff to that server; unread labels say nothing.
 Typed messages are sent as typed; `/screenshot` is the explicit local capture.
 
 The completion judge (the decision model or the active model) answers two

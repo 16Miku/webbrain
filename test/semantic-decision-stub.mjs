@@ -31,6 +31,8 @@ const PAGE_TEXT_ORACLES = {
   status_message: item => fixtureStatusReading(item?.text),
   workflow_state: item => fixtureWorkflowStateReading(item?.state, item?.text),
   form_field_match: item => fixtureFormFieldMatchReading(item?.named, item?.text),
+  follow_state: item => fixtureFollowStateReading(item?.text),
+  progress_action: item => fixtureProgressActionReading(item?.text, item?.action),
 };
 
 const words = value => String(value || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
@@ -311,6 +313,43 @@ export function fixtureMessageStatusReading(text) {
   return 'unclear';
 }
 
+// How a model reads a fediverse page's follow controls and fields
+// (follow_state), whether a request names a domain as the user's own server
+// (home_instance), and whether a clicked label does a ledger action
+// (progress_action), for the fixtures' own texts. The product never matches
+// these words.
+export function fixtureFollowStateReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  if (/^(?:following|unfollow|requested|takip ediliyor|takibi bırak|gefolgt|entfolgen|abonniert)\b/iu.test(value)) return 'following';
+  if (/^(?:follow|takip et|folgen|suivre|seguir)\b/iu.test(value)) return 'follow';
+  if (/(?:server|instance|domain|sunucu|alan adı)/iu.test(value)) return 'home_server';
+  return 'other';
+}
+export function fixtureHomeInstanceReading(request, domain) {
+  const text = String(request || ''), name = String(domain || '').toLowerCase();
+  if (!name) return null;
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const named = new RegExp(`(?:\\b(?:my|home|own|from|via|using)\\b[^.]{0,48}${escaped}|${escaped}\\s*(?:sunucumdan|sunucumda|örneğimden|hesabımdan)|(?:meine[mn]?|von meinem)[^.]{0,40}${escaped})`, 'iu');
+  return named.test(text) ? 'home' : 'other';
+}
+const LEDGER_ACTION_WORDS = {
+  follow: /^(?:follow|takip et|folgen)\b/iu, unfollow: /^(?:unfollow|takibi bırak|entfolgen)\b/iu, star: /^star\b/iu,
+  unstar: /^unstar\b/iu, connect: /^(?:connect|bağlantı kur|vernetzen)\b/iu, like: /^(?:like|beğen)\b/iu,
+  unlike: /^unlike\b/iu, subscribe: /^(?:subscribe|abone ol)\b/iu, unsubscribe: /^unsubscribe\b/iu, save: /^save\b/iu,
+  send: /^send\b/iu, submit: /^submit\b/iu, add: /^add\b/iu, remove: /^remove\b/iu, block: /^block\b/iu,
+  unblock: /^unblock\b/iu, report: /^report\b/iu, watch: /^watch\b/iu, unwatch: /^unwatch\b/iu, unsave: /^unsave\b/iu,
+};
+export function fixtureProgressActionReading(text, actionContext) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  const action = String(actionContext || '').split(':')[0].trim();
+  if (!value || !LEDGER_ACTION_WORDS[action]) return null;
+  if (LEDGER_ACTION_WORDS[action].test(value)) return 'did';
+  const opposite = action.startsWith('un') ? action.slice(2) : `un${action}`;
+  if (LEDGER_ACTION_WORDS[opposite]?.test(value)) return 'undid';
+  return 'other';
+}
+
 // How a model reads whether a form field is the one a request named
 // (form_field_match), for the fixtures' own texts: the content words of one
 // side all appear on the other, once the page's "optional" marks and the
@@ -386,15 +425,15 @@ export async function probeWithReadings(evaluate, toolName, args = {}, read = fi
 // Stands in for the model that reads page texts in unit tests (status
 // messages, workflow states, validation alerts): `read(kind, item)` returns a
 // choice or null for no answer. Records every item asked.
-export function stubPageTextReadings(agent, read = (kind, item) => (kind === 'status_message'
+export function stubPageTextReadings(agent, read = (kind, item, request) => (kind === 'status_message'
   ? fixtureStatusReading(item.text) : kind === 'workflow_state' ? fixtureWorkflowStateReading(item.state, item.text)
     : kind === 'control_effect' ? fixtureControlEffectReading(item.text)
       : kind === 'control_repeat' ? fixtureControlRepeatReading(item.text)
-        : fixturePageTextReading(kind, item.text, item))) {
+        : fixturePageTextReading(kind, item.text, { ...item, request }))) {
   const asked = [];
-  agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}) => items.map(item => {
+  agent._semanticDecisions = async (_tabId, kind, { items = [], request = '' } = {}) => items.map(item => {
     asked.push({ kind, ...item });
-    const choice = read(kind, item);
+    const choice = read(kind, item, request);
     return choice ? { choice, evidence: item.text, source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' };
   });
   return asked;
@@ -414,9 +453,11 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'workflow_state') return fixtureWorkflowStateReading(item?.state, item?.text);
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
-    if (['message_control', 'message_field', 'message_author', 'message_status', 'form_field_match'].includes(question.kind)) {
+    if (['message_control', 'message_field', 'message_author', 'message_status', 'form_field_match', 'follow_state',
+      'progress_action'].includes(question.kind)) {
       return fixturePageTextReading(question.kind, item?.text, item);
     }
+    if (question.kind === 'home_instance') return fixtureHomeInstanceReading(question.request, item?.text);
     return answers[question.kind] ?? null;
   };
   const evidenceOf = item => (typeof item?.text === 'string' ? item.text : typeof item?.label === 'string' ? item.label : question.request);
@@ -447,6 +488,9 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'message_author') return fixtureMessageAuthorReading(text);
   if (kind === 'message_status') return fixtureMessageStatusReading(text);
   if (kind === 'form_field_match') return fixtureFormFieldMatchReading(context?.named, text);
+  if (kind === 'follow_state') return fixtureFollowStateReading(text);
+  if (kind === 'home_instance') return fixtureHomeInstanceReading(context?.request, text);
+  if (kind === 'progress_action') return fixtureProgressActionReading(text, context?.action);
   return null;
 }
 
@@ -456,5 +500,6 @@ export function fixturePageTextReading(kind, text, context = {}) {
 export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
   return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control', 'message_field',
-    'message_author', 'message_status', 'form_field_match'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
+    'message_author', 'message_status', 'form_field_match', 'follow_state', 'home_instance', 'progress_action']
+    .includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }

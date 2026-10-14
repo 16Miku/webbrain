@@ -1,5 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
-import { fixtureControlEffectReading, fixturePageTextReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { fixtureControlEffectReading, fixtureFollowStateReading, fixtureHomeInstanceReading, fixturePageTextReading, fixtureProgressActionReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -8961,22 +8961,34 @@ test('social adapters expose URL-specific infinite-scroll capture policy in both
 });
 
 test('mastodon observer detects recoverable remote-follow handoff', () => {
+  // A model reads the request's domains (home_instance) and the page's labels
+  // (follow_state) in any language; the fixture oracles stand in.
+  const home = text => domain => fixtureHomeInstanceReading(text, domain);
   assert.equal(inferMastodonHomeDomainFromUrl('https://mastoturk.org/home'), 'mastoturk.org');
-  assert.equal(inferMastodonHomeDomainFromTask('Follow https://fosstodon.org/@alice and https://hachyderm.io/@bob'), '');
-  assert.equal(inferMastodonHomeDomainFromTask('Follow these from my Mastodon instance mastoturk.org'), 'mastoturk.org');
+  assert.equal(inferMastodonHomeDomainFromUrl('https://x.com/home'), '', 'another site\'s home route is no instance');
+  const twoProfiles = 'Follow https://fosstodon.org/@alice and https://hachyderm.io/@bob';
+  assert.equal(inferMastodonHomeDomainFromTask(twoProfiles, home(twoProfiles)), '');
+  const fromHome = 'Follow these from my Mastodon instance mastoturk.org';
+  assert.equal(inferMastodonHomeDomainFromTask(fromHome, home(fromHome)), 'mastoturk.org');
+  const turkish = 'alice@fosstodon.org hesabını mastoturk.org sunucumdan takip et';
+  assert.equal(inferMastodonHomeDomainFromTask(turkish, home(turkish)), 'mastoturk.org', 'a Turkish request names its home server');
+  assert.equal(inferMastodonHomeDomainFromTask(fromHome), '', 'an unread domain names no home server');
 
   for (const [analyze, guard] of [
     [analyzeMastodonPage, mastodonProgressGuard],
     [analyzeMastodonPageFx, mastodonProgressGuardFx],
   ]) {
+    const taskText = 'Follow this user from my Mastodon instance mastoturk.org';
+    const readings = { readFollow: fixtureFollowStateReading, readHome: home(taskText) };
     const state = analyze({
       url: 'https://fosstodon.org/@alice',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org',
+      taskText,
       pageContent: [
         'heading "Sign in to continue"',
         'textbox "Mastodon server domain"',
         'button "Continue"',
       ].join('\n'),
+      ...readings,
     });
     assert.equal(state.homeDomain, 'mastoturk.org');
     assert.equal(state.remoteAccount.acct, 'alice@fosstodon.org');
@@ -8989,17 +9001,28 @@ test('mastodon observer detects recoverable remote-follow handoff', () => {
 
     const followed = analyze({
       url: 'https://mastoturk.org/@alice@fosstodon.org',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org',
+      taskText,
       pageContent: 'button "Takip ediliyor"',
       previous: state,
+      ...readings,
     });
     assert.equal(followed.canMarkProcessed, true);
     assert.equal(guard([{ id: 'alice@fosstodon.org', action: 'follow', status: 'processed' }], followed), null);
+    // A followed state in a language no word list had, read by a model.
+    const german = analyze({ url: 'https://mastoturk.org/@alice@fosstodon.org', taskText,
+      pageContent: 'button "Gefolgt"\nbutton "Antworten"', previous: state, ...readings });
+    assert.equal(german.hasFollowedState, true);
+    assert.equal(guard([{ id: 'alice@fosstodon.org', action: 'follow', status: 'processed' }], german), null);
+    // Unread labels show no followed state.
+    const unread = analyze({ url: 'https://fosstodon.org/@alice', taskText, pageContent: 'button "Gefolgt"', previous: state });
+    assert.equal(unread.hasFollowedState, false);
+    assert.equal(guard([{ id: 'alice@fosstodon.org', action: 'follow', status: 'processed' }], unread)?.blocked, true);
 
     const genericFollow = analyze({
       url: 'https://twitter.com/openai',
       taskText: 'Follow this account.',
       pageContent: 'button "Follow"',
+      ...readings,
     });
     assert.equal(genericFollow.hasFollowButton, true);
     assert.equal(genericFollow.remoteAccount, null);
@@ -86337,36 +86360,49 @@ test('progress session changes remove stale pinned ledger prompts', async () => 
 });
 
 test('progress ledger auto-detects item action clicks (chrome & firefox)', () => {
+  // A model reads what a clicked label does, in any language
+  // (progress_action); the fixture oracle stands in.
+  const readAction = (label, action) => fixtureProgressActionReading(label, action);
+  const all = ['follow', 'submit', 'save', 'send', 'add'];
   const result = {
     success: true,
     method: 'click_ax',
     name: 'Follow myxvisual',
     href: '/myxvisual',
   };
-  const chromeItem = detectProgressAction('click_ax', { ref_id: 'ref_1' }, result);
-  const firefoxItem = detectProgressActionFx('click_ax', { ref_id: 'ref_1' }, result);
+  const chromeItem = detectProgressAction('click_ax', { ref_id: 'ref_1' }, result, { allowedActions: ['follow'], readAction });
+  const firefoxItem = detectProgressActionFx('click_ax', { ref_id: 'ref_1' }, result, { allowedActions: ['follow'], readAction });
   for (const item of [chromeItem, firefoxItem]) {
     assert.equal(item.id, 'myxvisual');
     assert.equal(item.action, 'follow');
     assert.equal(item.status, 'acted');
   }
-  assert.equal(detectProgressAction('click', { text: 'Submit' }, { success: true, text: 'Submit' }), null);
+  assert.equal(detectProgressAction('click', { text: 'Submit' }, { success: true, text: 'Submit' }, { allowedActions: all, readAction }), null);
   for (const detect of [detectProgressAction, detectProgressActionFx]) {
-    assert.equal(detect('click', { text: 'Save changes' }, { success: true, text: 'Save changes' }), null);
-    assert.equal(detect('click', { text: 'Send message' }, { success: true, text: 'Send message' }), null);
-    assert.equal(detect('click', { text: 'Add comment' }, { success: true, text: 'Add comment' }), null);
+    assert.equal(detect('click', { text: 'Save changes' }, { success: true, text: 'Save changes' }, { allowedActions: all, readAction }), null);
+    assert.equal(detect('click', { text: 'Send message' }, { success: true, text: 'Send message' }, { allowedActions: all, readAction }), null);
+    assert.equal(detect('click', { text: 'Add comment' }, { success: true, text: 'Add comment' }, { allowedActions: all, readAction }), null);
+    // A Turkish label names its ledger row; nothing is recorded unread.
+    const rows = [{ id: 'ayse', label: 'ayse', target: 'ayse', action: 'follow' }, { id: 'mehmet', label: 'mehmet', action: 'follow' }];
+    assert.equal(detect('click', { text: 'Takip et ayse' }, { success: true, text: 'Takip et ayse' }, { allowedActions: ['follow'], readAction, rows })?.id, 'ayse');
+    assert.equal(detect('click', { text: 'Takip et ayse' }, { success: true, text: 'Takip et ayse' }, { allowedActions: ['follow'], rows }), null);
+    assert.equal(detect('click', { text: 'Takibi bırak ayse' }, { success: true, text: 'Takibi bırak ayse' }, { allowedActions: ['follow'], readAction, rows }), null);
+    assert.equal(detect('click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat' }, { readAction }), null,
+      'no allowed action, no record');
   }
 });
 
-test('agent only auto-records progress clicks inside repeated-item work', () => {
+test('agent only auto-records progress clicks inside repeated-item work', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    // A model reads what a clicked label does (progress_action); the fixture oracle stands in.
+    stubPageTextReadings(agent);
 
     agent.conversations.set(773, [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Update the settings form and save it.' },
     ]);
-    const ordinary = agent._autoRecordProgressAction(773, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
+    const ordinary = await agent._autoRecordProgressAction(773, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
     assert.equal(ordinary, null, `${AgentClass.name}: auto-recorded without ledger context`);
     assert.equal(agent.progressLedgers.get(773), undefined);
 
@@ -86375,7 +86411,7 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
       { role: 'user', content: 'Follow every stargazer on this page.' },
     ]);
     allowProgress(agent, 774, ['follow']);
-    const repeated = agent._autoRecordProgressAction(774, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
+    const repeated = await agent._autoRecordProgressAction(774, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
     assert.equal(repeated?.item.id, 'octocat', `${AgentClass.name}: repeated-item click was not recorded`);
 
     agent.conversations.set(775, [
@@ -86383,7 +86419,7 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
       { role: 'user', content: 'Continue the existing ledger.' },
     ]);
     agent._progressUpdate(775, { items: [{ id: 'rafi', label: 'rafi', action: 'follow', status: 'pending' }] });
-    const existing = agent._autoRecordProgressAction(775, 'click', { text: 'Follow rafi' }, { success: true, text: 'Follow rafi', href: '/rafi' });
+    const existing = await agent._autoRecordProgressAction(775, 'click', { text: 'Follow rafi' }, { success: true, text: 'Follow rafi', href: '/rafi' });
     assert.equal(existing?.item.id, 'rafi', `${AgentClass.name}: existing ledger click was not recorded`);
 
     agent.conversations.set(779, [
@@ -86393,7 +86429,7 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
       { role: 'user', content: 'Follow every stargazer on this page.' },
     ]);
     allowProgress(agent, 779, ['follow']);
-    const laterTask = agent._autoRecordProgressAction(779, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
+    const laterTask = await agent._autoRecordProgressAction(779, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
     assert.equal(laterTask?.item.id, 'monalisa', `${AgentClass.name}: latest repeated-item task was ignored`);
 
     agent.conversations.set(782, [
@@ -86403,16 +86439,18 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
     agent._progressUpdate(782, {
       items: [{ id: 'octocat', label: 'octocat', action: 'follow', status: 'processed' }],
     });
-    const staleTerminal = agent._autoRecordProgressAction(782, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
+    const staleTerminal = await agent._autoRecordProgressAction(782, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
     assert.equal(staleTerminal, null, `${AgentClass.name}: stale terminal rows kept ledger context active`);
     assert.equal(agent.progressLedgers.get(782).length, 1, `${AgentClass.name}: stale terminal task recorded a new row`);
     assert.equal(agent._appendProgressLedgerToFinal(782, 'Done.'), 'Done.', `${AgentClass.name}: stale terminal rows were appended to an unrelated final answer`);
   }
 });
 
-test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
+test('agent reuses namespaced follow rows for auto-recorded clicks', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    // A model reads what a clicked label does (progress_action); the fixture oracle stands in.
+    stubPageTextReadings(agent);
     const tabId = 787;
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
@@ -86431,7 +86469,7 @@ test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
       ],
     });
 
-    const recorded = agent._autoRecordProgressAction(
+    const recorded = await agent._autoRecordProgressAction(
       tabId,
       'click',
       { text: 'Follow ChJus' },
@@ -86458,7 +86496,7 @@ test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
         fields: { followState: 'not_followed', refId: 'ref_99' },
       }],
     });
-    const refRecorded = agent._autoRecordProgressAction(
+    const refRecorded = await agent._autoRecordProgressAction(
       refTabId,
       'click_ax',
       { ref_id: 'ref_99' },
@@ -86483,7 +86521,7 @@ test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
         fields: { followState: 'not_followed', refId: 'ref_stale' },
       }],
     });
-    const failedRecorded = agent._autoRecordProgressAction(
+    const failedRecorded = await agent._autoRecordProgressAction(
       failedTabId,
       'click_ax',
       { ref_id: 'ref_stale' },
@@ -86833,10 +86871,13 @@ test('mastodon progress guard blocks false terminal updates until handoff comple
       { role: 'user', content: 'Follow this user from my Mastodon instance mastoturk.org.' },
     ]);
     allowProgress(agent, tabId, ['follow']);
+    const taskText = 'Follow this user from my Mastodon instance mastoturk.org.';
+    const readings = { readFollow: fixtureFollowStateReading, readHome: domain => fixtureHomeInstanceReading(taskText, domain) };
     agent.mastodonStates.set(tabId, analyzeMastodonPage({
       url: 'https://fosstodon.org/@alice',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org.',
+      taskText,
       pageContent: 'heading "Sign in to continue"\ntextbox "Mastodon server domain"',
+      ...readings,
     }));
 
     for (const status of ['processed', 'skipped', 'failed', '「processed」', '「skipped」', '「failed」']) {
@@ -86855,9 +86896,10 @@ test('mastodon progress guard blocks false terminal updates until handoff comple
 
     agent.mastodonStates.set(tabId, analyzeMastodonPage({
       url: 'https://mastoturk.org/@alice@fosstodon.org',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org.',
+      taskText,
       pageContent: 'button "Following"',
       previous: agent.mastodonStates.get(tabId),
+      ...readings,
     }));
     const processed = agent._progressUpdate(tabId, {
       items: [{ id: 'alice@fosstodon.org', label: 'alice@fosstodon.org', action: 'follow', status: 'processed' }],
@@ -86884,6 +86926,44 @@ test('agent ignores generic follow buttons for Mastodon observations', async () 
 
     assert.equal(observed, null);
     assert.equal(agent.mastodonStates.has(tabId), false);
+    // A /@handle page of another site is no fediverse account either, so its
+    // follow rows are not held back for a Mastodon followed state.
+    for (const url of ['https://www.tiktok.com/@ayse', 'https://www.threads.net/@ayse', 'https://medium.com/@ayse']) {
+      assert.equal(await agent._rememberMastodonObservation(tabId, 'get_accessibility_tree', {
+        success: true, url, pageContent: 'button "Takip ediliyor"\nbutton "Mesaj gönder"',
+      }), null, `${AgentClass.name}: ${url} armed the Mastodon follow guard`);
+      assert.equal(agent.mastodonStates.has(tabId), false);
+    }
+  }
+});
+
+test('a Mastodon page\'s follow state is read in any language while a ledger tracks the run', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 784;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'alice@fosstodon.org hesabını mastoturk.org sunucumdan takip et.' },
+    ]);
+    allowProgress(agent, tabId, ['follow']);
+    const asked = stubPageTextReadings(agent);
+    const prompt = await agent._rememberMastodonObservation(tabId, 'get_accessibility_tree', {
+      success: true, url: 'https://fosstodon.org/@alice',
+      pageContent: 'heading "Devam etmek için oturum açın"\ntextbox "Sunucu alan adınız"\nbutton "Devam"',
+    });
+    assert.equal(prompt?.homeDomain, 'mastoturk.org', `${AgentClass.name}: the Turkish request's home server`);
+    assert.equal(prompt.needsHandoff, true, `${AgentClass.name}: a Turkish server field arms the handoff`);
+    assert.match(prompt.instruction, /mastoturk\.org/);
+    assert.ok(asked.some(item => item.kind === 'home_instance' && item.text === 'mastoturk.org'));
+    assert.ok(asked.some(item => item.kind === 'follow_state' && item.text === 'Sunucu alan adınız'));
+    const blocked = agent._progressUpdate(tabId, { items: [{ id: 'alice@fosstodon.org', label: 'alice@fosstodon.org', action: 'follow', status: 'processed' }] });
+    assert.equal(blocked.success, false);
+    const followed = await agent._rememberMastodonObservation(tabId, 'get_accessibility_tree', {
+      success: true, url: 'https://mastoturk.org/@alice@fosstodon.org', pageContent: 'button "Takip ediliyor"',
+    });
+    assert.equal(followed?.canMarkProcessed, true, `${AgentClass.name}: a Turkish followed state was not read`);
+    const processed = agent._progressUpdate(tabId, { items: [{ id: 'alice@fosstodon.org', label: 'alice@fosstodon.org', action: 'follow', status: 'processed' }] });
+    assert.equal(processed.success, true, `${AgentClass.name}: ${processed.error || ''}`);
   }
 });
 
@@ -87546,7 +87626,7 @@ test('agent strips injected page context before inferring stargazer follow inten
   }
 });
 
-test('agent skips synthetic screenshot and document turns before inferring progress intent', () => {
+test('agent skips synthetic screenshot and document turns before inferring progress intent', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: true }) });
     const tabId = 785;
@@ -87584,7 +87664,8 @@ test('agent skips synthetic screenshot and document turns before inferring progr
 
     assert.equal(agent._latestTaskText(tabId), 'Follow every stargazer on this page.');
     allowProgress(agent, tabId, ['follow']);
-    const recorded = agent._autoRecordProgressAction(
+    stubPageTextReadings(agent);
+    const recorded = await agent._autoRecordProgressAction(
       tabId,
       'click',
       { text: 'Follow rafi' },
@@ -87836,7 +87917,8 @@ test('agent preserves active progress ledger for bare continuation turns', async
     assert.equal(agent._hasProgressLedgerContext(tabId), true, `${AgentClass.name}: bare continuation did not keep ledger context`);
     assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: bare continuation did not block unresolved done`);
 
-    const recorded = agent._autoRecordProgressAction(
+    stubPageTextReadings(agent);
+    const recorded = await agent._autoRecordProgressAction(
       tabId,
       'click',
       { text: 'Follow monalisa' },

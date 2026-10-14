@@ -7,7 +7,36 @@ const TERMINAL_STATUSES = new Set(['processed', 'skipped', 'failed']);
 const CLICK_ACTION_TOOLS = new Set(['click', 'click_ax', 'iframe_click']);
 const APP_OWNED_BOOLEAN_FIELD_KEYS = new Set(['completionRequirement', 'classifierTarget']);
 const APP_OWNED_INTEGER_FIELD_KEYS = new Set(['expectedOrdinal']);
-const ACTION_RE = /^\s*(follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove)\b(?:\s+(.+?))?\s*$/i;
+// The ledger actions a click can do to an item, and what each one does, for
+// the progress_action question a model answers about a clicked label.
+export const PROGRESS_CLICK_ACTION_MEANINGS = Object.freeze({
+  follow: 'follow an account, person or page',
+  unfollow: 'stop following an account, person or page',
+  star: 'star a repository or item',
+  unstar: 'remove a star from a repository or item',
+  watch: 'watch a repository or item for updates',
+  unwatch: 'stop watching a repository or item',
+  connect: 'send a connection or contact request to a person',
+  subscribe: 'subscribe to a channel, list or item',
+  unsubscribe: 'unsubscribe from a channel, list or item',
+  save: 'save or bookmark an item',
+  unsave: 'remove an item from saved items or bookmarks',
+  like: 'like or favourite an item',
+  unlike: 'remove a like or favourite from an item',
+  block: 'block an account',
+  unblock: 'unblock an account',
+  report: 'report an account or item',
+  send: 'send a message, invitation or item to someone',
+  submit: 'submit a form or entry',
+  add: 'add an item to a list, cart or collection',
+  remove: 'remove an item from a list, cart or collection',
+});
+
+// The progress_action question's context for one action.
+export function progressClickActionContext(action) {
+  const meaning = PROGRESS_CLICK_ACTION_MEANINGS[action];
+  return meaning ? { action: `${action}: ${meaning}` } : null;
+}
 const IDENTITY_ACTION_PREFIX_RE = /^\s*(?:follow|unfollow|star|unstar|watch|unwatch|connect|subscribe|unsubscribe|save|unsave|like|unlike|block|unblock|report|send|submit|add|remove|collect_email|collect_profile|process_item|visit|open)(?:\s*:\s*|\s+)(?!$)/i;
 const GENERIC_TARGET_RE = /^(button|link|item|result|profile|user|member|person|this|that|it|here|there|more|submit|save|send|add|remove|follow|unfollow|changes?|message|comment|reply|post|form|details|settings|preferences)$/i;
 
@@ -659,32 +688,63 @@ export function ledgerDoneBlock(rows = [], opts = {}) {
   };
 }
 
+// The labels a click names: its arguments and the clicked element's names.
+export function progressClickLabels(args = {}, result = {}) {
+  return [...new Set([
+    args?.text,
+    args?.name,
+    args?.label,
+    result?.requestedText,
+    result?.beforeText,
+    result?.beforeName,
+    result?.name,
+    result?.text,
+  ].map(v => sanitizeText(v, 220)).filter(Boolean))];
+}
+
+// The ledger row a clicked label names for an action: among the rows for that
+// action (or for none), the one whose target, label or id appears in the label
+// longest, or none when two rows tie.
+function ledgerRowNamedIn(label, rows = [], action = '') {
+  let text = sanitizeText(label, 220);
+  try { text = text.normalize('NFKC'); } catch {}
+  text = text.toLocaleLowerCase();
+  let best = null, bestLength = 0, tie = false;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const rowAction = sanitizeText(row?.action, 80).toLowerCase();
+    if (rowAction && rowAction !== action) continue;
+    for (const value of [row?.target, row?.label, row?.id]) {
+      let name = sanitizeText(value, 180).replace(/^@/, '');
+      try { name = name.normalize('NFKC'); } catch {}
+      name = name.toLocaleLowerCase();
+      if (name.length < 2 || !text.includes(name)) continue;
+      if (name.length > bestLength) { best = row; bestLength = name.length; tie = false; }
+      else if (name.length === bestLength && best && best.id !== row.id) tie = true;
+    }
+  }
+  return tie ? null : best;
+}
+
+// A click on the ledger: a model read the clicked label, in any language, as
+// doing one of the run's allowed actions to an item (`opts.readAction(label,
+// action)` gives "did"), and the item is the ledger row the label names
+// (`opts.rows`) or the page the clicked link opens.
 export function detectProgressAction(toolName, args = {}, result = {}, opts = {}) {
   if (!CLICK_ACTION_TOOLS.has(toolName)) return null;
   if (!result || result.success === false || result.error || result.noProgress) return null;
-  const allowedActions = new Set((Array.isArray(opts.allowedActions) ? opts.allowedActions : [])
+  const readAction = typeof opts.readAction === 'function' ? opts.readAction : () => null;
+  const allowedActions = [...new Set((Array.isArray(opts.allowedActions) ? opts.allowedActions : [])
     .map(value => sanitizeText(value, 80).toLowerCase())
-    .filter(Boolean));
-
-  const labels = [
-    args.text,
-    args.name,
-    args.label,
-    result.requestedText,
-    result.beforeText,
-    result.beforeName,
-    result.name,
-    result.text,
-  ].map(v => sanitizeText(v, 220)).filter(Boolean);
+    .filter(value => Object.hasOwn(PROGRESS_CLICK_ACTION_MEANINGS, value)))];
+  if (!allowedActions.length) return null;
   const href = sanitizeText(result.href || result.url || '', 500);
 
-  for (const label of labels) {
-    const match = label.match(ACTION_RE);
-    if (!match) continue;
-    const action = match[1].toLowerCase();
-    if (allowedActions.size && !allowedActions.has(action)) continue;
-    const target = cleanTarget(match[2] || '') || targetFromHref(href);
-    const id = stableIdFor(action, target, href);
+  for (const label of progressClickLabels(args, result)) {
+    const action = allowedActions.find(candidate => readAction(label, candidate) === 'did');
+    if (!action) continue;
+    const row = ledgerRowNamedIn(label, opts.rows, action);
+    const target = row ? sanitizeText(row.target || row.label || row.id, 180) : targetFromHref(href);
+    const id = row?.id ? sanitizeText(row.id, 180) : stableIdFor(action, target, href);
     if (!id) continue;
     return {
       id,

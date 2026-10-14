@@ -15712,6 +15712,13 @@ function hasMastodonInteractionSignal(url, path) {
     && isMastodonRemoteUri(url.searchParams.get('uri'));
 }
 
+// Whether a page is a Mastodon instance's own page, by its address: a known
+// or mastodon.* instance's app, profile or status routes, a remote account's
+// profile (/@user@host), or the remote interaction routes.
+export function isMastodonPageUrl(url) {
+  try { return isMastodonUrl(url); } catch { return false; }
+}
+
 function isMastodonUrl(url) {
   const u = new URL(url);
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
