@@ -769,6 +769,15 @@ a message and whether an unclear deletion proceeds are answered on WebBrain's
 own cards with fixed choices, and a question the model asks, and whatever the
 user answers to it, approves neither.
 
+Requested field values (a message or post body, release notes, a title) come
+from the intent model too. A short value is returned as is; a long one is
+returned as its exact first and last words, and the runtime copies the text
+between them from the request or the approved plan, the way the social
+publication contract copies post bodies. No word list finds where a body
+starts or ends. An anchor that is missing, repeated or out of order resolves to
+nothing, so the field stays unresolved and nothing is verified against a
+guessed value.
+
 ### User Memory (`user-memory.js`)
 
 User memory stores local, user-stated durable preferences and profile/workflow
