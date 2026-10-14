@@ -10,7 +10,7 @@ import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, boundedSemanticData, semanticDecisionMessages, semanticQuestion, semanticSystemOneQuestion } from './semantic-decisions.js';
+import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion } from './semantic-decisions.js';
 import { firefoxBidi } from '../bidi/client.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -56,7 +56,7 @@ const PRIVATE_FINAL_RESULT_NOTE = "PRIVATE FINAL DELIVERY: This Cloud run has an
 import { detectProgressAction, formatLedgerRow, formatLedgerSummary, isBlockedLedgerDowngrade, isTerminalLedgerStatus, isValidLedgerStatus, ledgerDoneBlock, ledgerRowKey, normalizeLedgerStatus, progressCounts, progressIdentitiesAreUnique, progressIdentityKeys, reconcileLedgerItems, reconcilePersistedLedgerRows, selectLedgerRows, unresolvedLedgerRows, upsertLedgerItems } from './progress-ledger.js';
 import { buildGithubStargazerProgressItems } from './observers/github-stargazers.js';
 import { analyzeMastodonPage, mastodonHandoffInstruction, mastodonProgressGuard } from './observers/mastodon.js';
-import { isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
+import { PROGRESS_ACTIONS, isProgressActionAllowed, isProgressIntentActive, normalizeProgressAction, normalizeProgressIntent } from './progress-intent.js';
 import { classifyCompletionForm, completionDoneBlock, completionPlainFinalBlock, completionPlainFinalPartial, consumeCompletionObservation, consumeCompletionObservationResult, createCompletionInvariantState, hasUnconsumedCompletionObservation, hasUnconsumedCompletionObservationResult, publicationDetailResource, publicationReplyParent, publicationResourceRecordRoot, recordCompletionToolResult } from './completion-invariant.js';
 import { findLastGmailResultPage, getActiveAdapter, getAdapterWorkflowRouting, getCarouselNavigationPolicy, getCarouselNavigationTarget, getGmailResultCountPolicy, getGmailResultPageUrl, getMessageRecipientGuardPolicy, isPublicComposerRoute, parseCarouselSlideCount, parseGmailPaginationRange, resolveAdapterWorkflowJob, UNIVERSAL_PREAMBLE } from './adapters.js';
 import { formatAdapterWorkflowExecutionPolicy } from './adapter-workflow.js';
@@ -191,6 +191,12 @@ import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from
 import { shouldAutoGroupTabs } from '../tab-group-preference.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
+// The canonical names the intent model gives requested workflow fields; its
+// prompt lists them per workflow.
+const WORKFLOW_FIELD_KEYS = new Set(['alt_text', 'paid_promotion', 'recording_date', 'recording_location', 'comments',
+  'embedding', 'description', 'visibility', 'audience', 'playlist', 'language', 'category', 'license', 'tag', 'tags',
+  'notes', 'train', 'travel_date', 'departure', 'arrival', 'passenger', 'seat_class', 'account', 'attachment',
+  'subject', 'body', 'path', 'branch', 'commit_message', 'title']);
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
@@ -2629,6 +2635,14 @@ export class Agent extends LoopDetector {
     return /\b(?:changes?\s+saved|saved\s+successfully|successfully\s+(?:saved|updated)|update\s+complete)\b|(?:保存成功|已保存|更新成功|başarıyla kaydedildi|modifications enregistrées|cambios guardados|変更を保存しました|저장되었습니다)/i.test(text);
   }
 
+  // A requested field's name as the intent model gives it: one of the
+  // canonical names its prompt lists. Another name, in any language, names no
+  // field, so the requirement stays incomplete instead of being guessed.
+  _workflowCanonicalFieldKey(value) {
+    const key = String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return WORKFLOW_FIELD_KEYS.has(key) ? key : '';
+  }
+
   _workflowMetadataFieldKey(value) {
     let text = String(value || '');
     try { text = text.normalize('NFKC'); } catch {}
@@ -2723,7 +2737,7 @@ export class Agent extends LoopDetector {
         discarded += 1;
         continue;
       }
-      const field = this._workflowMetadataFieldKey(value.field);
+      const field = this._workflowCanonicalFieldKey(value.field);
       const attachment = field === 'alt_text'
         ? this._workflowMetadataValue(value.attachment ?? value.target ?? value.filename)
         : '';
@@ -4357,7 +4371,6 @@ export class Agent extends LoopDetector {
     }
     if (
       pendingSubmitVerification
-      && /\b(created|added|saved|submitted|posted|published|sent|done|completed|finished)\b/i.test(String(summary || ''))
       && /[?&](create|edit|new)\b/i.test(pageUrl || pageState.url || '')
       && liveSignals.length === 0
       && !verifiedFinalSubmit
@@ -6949,7 +6962,7 @@ export class Agent extends LoopDetector {
    * { choice, evidence, source } where choice is null when no sure answer was
    * available; callers then ask the user or do not proceed. Identical
    * questions are answered once. `mainModel: false` asks the decision model
-   * only, for a note that is not worth a call to the active model.
+   * only, for a check that is not worth a call to the chat model.
    */
   async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
     const spec = semanticQuestion(kind);
@@ -6999,6 +7012,85 @@ export class Agent extends LoopDetector {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
     }
     return { choice: null, evidence: '', source: 'unavailable' };
+  }
+
+  /**
+   * The same fixed-choice question about several items (page labels, values
+   * a model wrote down), answered per item in as few requests as possible:
+   * the decision model first, then the active model for the items it was not
+   * sure about. Returns one { choice, evidence, source } per item, in order;
+   * choice is null where no sure answer was available. Each item's answer is
+   * remembered on its own, so a later batch asks only about new items.
+   */
+  async _semanticDecisions(tabId, kind, { request = '', items = [] } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
+    const spec = semanticQuestion(kind);
+    const trusted = String(request ?? '').slice(0, 6000);
+    const data = (Array.isArray(items) ? items : []).map(item => boundedSemanticData(item));
+    const keys = data.map(item => this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, item])));
+    this._semanticDecisionCache ??= new Map();
+    const results = keys.map(key => {
+      const cached = this._semanticDecisionCache.get(key);
+      return cached ? { ...cached, source: 'cache' } : null;
+    });
+    const remember = (index, result) => {
+      results[index] = result;
+      this._semanticDecisionCache.set(keys[index], { choice: result.choice, evidence: result.evidence, answeredBy: result.source });
+      while (this._semanticDecisionCache.size > 512) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
+    };
+    const pending = () => results.map((result, index) => (result ? -1 : index)).filter(index => index >= 0);
+    const runSignal = signal || this._runAbortSignal(tabId);
+    const context = this.systemOneContext(tabId);
+    let open = pending();
+    if (open.length) {
+      try {
+        const settings = await this._jevSettings();
+        for (const chunk of settings ? semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.decision) : []) {
+          if (this._checkAbort(tabId)) break;
+          const indexes = chunk.map(position => open[position]);
+          const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 4000, maxRetries: 0 }), {
+            config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
+            state: { context: wrapSystemOneData(boundedSystemOneText(redactSystemOneText(JSON.stringify({
+              request: trusted, items: indexes.map(index => data[index]) })), 12000)) },
+            questions: semanticSystemOneBatchQuestions(kind, indexes.length),
+          }, context);
+          let sure = 0;
+          indexes.forEach((index, position) => {
+            const answer = verdict.answers?.[`item_${position}`];
+            const choice = confidentChoice(answer, spec.authorizing.includes(answer?.choice) ? 0.85 : 0.7);
+            if (choice) { sure += 1; remember(index, { choice, evidence: '', source: 'decision_model' }); }
+          });
+          this.recordSystemOneVerdict(tabId, { decision: sure ? 'semantic' : 'fallback',
+            reason: sure === indexes.length ? kind : `${kind}_low_confidence`, model: verdict.model }, context);
+        }
+      } catch (error) {
+        if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_${systemOneFailureReason(error)}` }, context);
+      }
+    }
+    open = pending();
+    if (open.length && mainModel && provider?.chat && !this._checkAbort(tabId)) {
+      for (const chunk of semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.main)) {
+        const indexes = chunk.map(position => open[position]);
+        try {
+          const messages = semanticBatchDecisionMessages(kind, trusted, indexes.map(index => data[index]),
+            text => this._wrapUntrusted('read_page', text));
+          const response = await withCompletionTimeout(async completionSignal => {
+            await Promise.resolve();
+            this._throwIfAborted(completionSignal);
+            return this._chatWithCostAllowance(provider, messages, { temperature: 0, maxTokens: 120 + 60 * indexes.length, signal: completionSignal },
+              this.currentCostState.get(tabId) || null, { tabId, generationName: `semantic_${kind}` });
+          }, runSignal, 15000);
+          const accepted = acceptSemanticBatchAnswers(kind,
+            this._socialPublicationResponseObject(response, { maxTokens: 120 + 60 * indexes.length }), trusted, indexes.length);
+          indexes.forEach((index, position) => {
+            if (accepted[position]) remember(index, { ...accepted[position], source: 'main_model' });
+          });
+        } catch (error) {
+          if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
+        }
+      }
+    }
+    return results.map(result => result || { choice: null, evidence: '', source: 'unavailable' });
   }
 
   _jevValueContext(task, snapshot) {
@@ -12222,6 +12314,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const doneOutcome = fnName === 'done_json'
           ? 'success'
           : normalizeDoneOutcome(fnArgs?.outcome);
+        if (doneOutcome === 'success') await this._prepareMissingValueReadings(tabId);
         const progressBlock = this._shouldBlockDoneForProgress(tabId)
           ? this._progressDoneBlock(tabId, doneOutcome)
           : null;
@@ -12787,10 +12880,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             resumeTaskId: this._resumeTaskId(tabId),
           });
         };
+        // The completion judge read the summary along with its verdict. Without
+        // a judge, a model reads it in any language before it is shown: a short
+        // Ask answer with no structure of its own (does it give the answer?),
+        // and an Act run's failed or partial summary (does it blame the agent's
+        // own Ask or read-only mode?).
+        const completionReading = toolResult.verification?.decision || null;
+        let summaryKind = completionReading?.summaryKind || null;
+        const doneSummaryText = toolResult.summary || partialAssistantText || '';
+        const actionRun = this._isActionMode(this._effectiveRunMode(tabId));
+        const unjudgedFailure = actionRun && ['partial', 'failed'].includes(normalizeDoneOutcome(toolResult.outcome))
+          && this._planExecutionGuards.get(tabId)?.enabled === true;
+        if (!scheduledResume && !completionReading && String(doneSummaryText).trim()
+            && (unjudgedFailure || (!actionRun && this._doneSummaryMayOmitAnswer(doneSummaryText)))) {
+          // A short Ask answer is read by the decision model only: the check is
+          // not worth a call to the chat model on every answer. A failed or
+          // partial Act result is rare and is read by either.
+          const reading = await this._semanticDecision(tabId, 'done_summary',
+            { request: this._latestTaskText(tabId) || '', page: { summary: doneSummaryText } },
+            { mainModel: unjudgedFailure });
+          if (reading.choice === 'meta_only' || reading.choice === 'mode_claim') summaryKind = reading.choice;
+        }
         const planOnlyDecision = scheduledResume ? null : this._planOnlyTerminalDecision(
           tabId,
-          toolResult.summary || partialAssistantText || '',
-          { viaDone: true, outcome: toolResult.outcome },
+          doneSummaryText,
+          { viaDone: true, outcome: toolResult.outcome, summaryKind },
         );
         if (planOnlyDecision?.retry) {
           const blockedResult = {
@@ -12848,7 +12962,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             status: planOnlyDecision.status || 'plan_only_output' };
         }
         let rawDoneSummary = toolResult.summary || partialAssistantText || 'Task completed.';
-        if (!scheduledResume && this._looksLikeMetaOnlyDoneSummary(rawDoneSummary)) {
+        if (!scheduledResume && summaryKind === 'meta_only') {
           const blockedResult = {
             success: false,
             blockedDone: true,
@@ -21193,13 +21307,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const summary = repairAssistantDisplayText(String(parsed.args?.summary || '').trim());
     const outcome = normalizeDoneOutcome(parsed.args?.outcome);
     if (parsed.error || !summary || !['partial', 'failed'].includes(outcome)) return null;
-    if (this._looksLikeMetaOnlyDoneSummary(summary)) return null;
     const guard = this._planExecutionGuards.get(tabId) || {};
-    if (this._looksLikePlanOnlyTerminal(
-      summary,
-      { ...guard, allowsPlannerShapedResult: false },
-      { ignoreFuturePromise: false },
-    )) return null;
+    if (this._isStructuredPlanTerminal(summary, { ...guard, allowsPlannerShapedResult: false })) return null;
     return {
       summary,
       outcome,
@@ -29326,6 +29435,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         error: `progress_update: invalid status value(s): ${invalid.slice(0, 6).join(', ')}. Use exactly one of pending, acted, processed, skipped, or failed.`,
       };
     }
+    // An action has to be one of the canonical names, as the tool lists them;
+    // another word for it, in any language, is sent back like a bad status.
+    const unknownActions = items
+      .filter(item => item && typeof item === 'object' && !Array.isArray(item)
+        && String(item.action ?? '').trim() && !normalizeProgressAction(item.action))
+      .map(item => `${item.id || item.label || '(missing id)'}:${String(item.action).slice(0, 60)}`);
+    if (unknownActions.length) {
+      return {
+        success: false,
+        error: `progress_update: unknown action value(s): ${unknownActions.slice(0, 6).join(', ')}. Use exactly one of ${PROGRESS_ACTIONS.join(', ')}, or omit action.`,
+      };
+    }
     const canonicalItems = this._canonicalizeProgressItems(items);
     const activeSession = this._currentProgressSession(tabId);
     const currentRows = this.progressLedgers.get(tabId) || [];
@@ -30013,6 +30134,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     });
   }
 
+  _missingValueKey(field, value) {
+    return `${String(field)}\u0000${String(value).trim()}`;
+  }
+
+  // Whether a short recorded value of a required field only says that the
+  // information is missing ("unknown", "n/a", "bilinmiyor", "—") is read by a
+  // model in any language, once per value, before the expected-items check at
+  // done. No sure answer leaves the value counted as given.
+  async _prepareMissingValueReadings(tabId) {
+    const expected = this.progressExpectedItems.get(tabId);
+    if (!expected?.required_fields?.length) return;
+    this._missingValueReadings ??= new Map();
+    const pending = new Map();
+    for (const row of this._currentTaskLedgerRows(tabId)) {
+      for (const field of expected.required_fields) {
+        const value = row?.fields?.[field];
+        if (typeof value !== 'string' || !value.trim() || value.trim().length > 40) continue;
+        const key = this._missingValueKey(field, value);
+        if (!this._missingValueReadings.has(key)) pending.set(key, { field, value: value.trim() });
+      }
+    }
+    if (!pending.size) return;
+    const entries = [...pending.entries()];
+    const readings = await this._semanticDecisions(tabId, 'missing_value', { items: entries.map(([, item]) => item) });
+    entries.forEach(([key], index) => this._missingValueReadings.set(key, readings[index]?.choice || null));
+    while (this._missingValueReadings.size > 512) this._missingValueReadings.delete(this._missingValueReadings.keys().next().value);
+  }
+
   _expectedItemsDoneBlock(tabId, outcome = null) {
     if (outcome === 'partial' || outcome === 'failed') return null;
     const expected = this.progressExpectedItems.get(tabId);
@@ -30038,7 +30187,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const incomplete = orderedRows.filter(row => String(row.status || '').toLowerCase() !== 'processed'
       || expected.required_fields.some(field => {
         const value = row?.fields?.[field];
-        return value == null || String(value).trim() === '';
+        return value == null || String(value).trim() === ''
+          || this._missingValueReadings?.get(this._missingValueKey(field, value)) === 'missing';
       }));
     if (incomplete.length) {
       return {
@@ -30893,13 +31043,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const guard = this._planExecutionGuards.get(tabId), target = normalizeMessageTarget(guard?.messaging);
     const session = this._currentProgressSession(tabId), expected = this.progressExpectedItems.get(tabId);
     // Only app-seeded, field-free ordered reply placeholders in one approved
-    // native conversation can consume these receipts. Explicit inventory,
-    // required fields, another peer and unrelated bulk rows keep their gates.
+    // native conversation can consume these receipts; the planner names them
+    // with the canonical item type "reply", and its prose is not read.
+    // Explicit inventory, required fields, another peer and unrelated bulk
+    // rows keep their gates.
     if (guard?.siteWorkflow?.job || target?.target_kind !== 'named' || target.recipients.length !== 1
         || target.recipients[0].role !== 'to' || !isProgressIntentActive(session)
         || session.targets?.length || session.allowedActions?.length !== 1 || session.allowedActions[0] !== 'process_item'
         || !expected?.ordered || expected.required_fields?.length
-        || !/^(?:(?:chat|conversation|dialogue)\s+)?(?:reply|replies|response|responses|turn|turns)$/i.test(expected.item_type || '')
+        || String(expected.item_type || '').trim().toLowerCase() !== 'reply'
         || !binding.replyAnchor || binding.replyAnchor === 'chat_start') return null;
     const rows = this._currentTaskLedgerRows(tabId);
     const fields = new Set(['expectedOrdinal', 'chatThreadKey', 'chatMessageId', 'chatBodySha256', 'chatReplyAnchor', 'chatActionSequence', 'chatRunToken']);
@@ -31331,40 +31483,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return carried.token;
   }
 
-  _looksLikeMetaOnlyDoneSummary(content) {
-    const text = String(content || '').trim();
-    if (!text || text.length > 500) return false;
-    // A colon, line break, or list usually means the model followed its status
-    // phrase with the actual deliverable. The broken form is a short sentence
-    // such as "Explained how ..." or "Confirmed the exact ..." and nothing
-    // else; because done.summary is rendered verbatim, that leaves the user
-    // without the promised answer.
-    if (/[:\n\r]|(?:^|\s)(?:[-*]|\d+[.)])\s/.test(text)) return false;
-    const status = /^(?:i\s+)?(?:have\s+)?(explained|confirmed|provided|answered|described|outlined|summarized|detailed|clarified|reviewed|analyzed|checked)\s+(?:how|what|why|where|when|whether|the\s+(?:exact|requested|answer|details?|instructions?|steps?|explanation|summary)|your\s+question|this\s+question)\b/i.exec(text);
-    if (!status) return false;
-    const remainder = text.slice(status[0].length);
-    // "Confirmed/checked the exact ... are X" is itself a concise answer,
-    // not a claim that an unseen answer was delivered. Keep the recovery
-    // narrow enough that these direct predicates can finish normally.
-    if (/^(?:confirmed|checked)$/i.test(status[1])
-        && /\b(?:is|are|was|were|equals?|exists?|appears?|opens?|lives?|resides?|sits?|can\s+be\s+(?:found|accessed)|(?:is|are)\s+available)\b/i.test(remainder)) {
-      return false;
-    }
-    if (/\band\s+(?:found|identified|verified|determined|showed)\b/i.test(remainder)) return false;
-    return true;
-  }
-
-  _isSafetyRefusalTerminal(content) {
-    const object = extractFirstJsonObject(String(content || ''));
-    if (!object || typeof object !== 'object' || Array.isArray(object)) return false;
-    const text = [
-      object.summary,
-      ...(Array.isArray(object.steps) ? object.steps.map(step => step?.action) : []),
-    ].filter(Boolean).join(' ');
-    return Number(object.confidence) === 0
-      && /\b(?:refus|will not|do not proceed|unauthorized|illegal|fraud|theft|unsafe|cannot assist|can't assist)\b/i.test(text);
-  }
-
   _isPlannerShapedJson(content) {
     const object = extractFirstJsonObject(String(content || ''));
     if (!object || typeof object !== 'object' || Array.isArray(object)) return false;
@@ -31375,59 +31493,42 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && (Array.isArray(object.steps) || Array.isArray(object.localized?.steps));
   }
 
-  _looksLikePlanOnlyTerminal(content, state = {}, { ignoreFuturePromise = false } = {}) {
-    const text = String(content || '').trim();
-    if (!text) return false;
-    const object = extractFirstJsonObject(text);
-    if (object && typeof object === 'object' && !Array.isArray(object)) {
-      const planText = [
-        object.summary,
-        ...(Array.isArray(object.steps) ? object.steps.map(step => step?.action) : []),
-      ].filter(Boolean).join(' ');
-      const safetyRefusal = Number(object.confidence) === 0
-        && /\b(?:refus|will not|do not proceed|unauthorized|illegal|fraud|theft|unsafe|cannot assist|can't assist)\b/i.test(planText);
-      const plannerShape = typeof object.summary === 'string'
-        && Array.isArray(object.steps)
-        && ['confidence', 'memory', 'scheduling', 'risks', 'mode'].some(key => Object.prototype.hasOwnProperty.call(object, key))
-        && !safetyRefusal;
-      const policyKeys = ['mode', 'allowedActions', 'forbiddenActions', 'targets', 'pageScopePolicy', 'reason'];
-      const policyShape = policyKeys.filter(key => Object.prototype.hasOwnProperty.call(object, key)).length >= 5
-        && (Array.isArray(object.allowedActions) || Array.isArray(object.forbiddenActions))
-        && String(object.mode || '').toLowerCase() !== 'inactive';
-      if (plannerShape || policyShape) return state.allowsPlannerShapedResult !== true;
-    }
-    if (this._isRuntimeModeContradictionTerminal(text)) return true;
-    // "Next, I will …" / "I plan to …" is agent-continue language and is always
-    // invalid as a terminal. Bare "I will …" is evidence-gated so drafted reply
-    // text can finish after a real task tool without a planner exemption flag.
-    const continuePromise = /\b(?:next,?\s+i(?:'ll| will)|i plan to|i intend to)\b/i.test(text);
-    const firstPersonFuture = /\bi(?:'ll| will| am going to)\b/i.test(text);
-    const planHeading = /(?:^|\n)\s*(?:#{1,6}\s*)?(?:execution plan|action plan|proposed plan|plan|steps|workflow)\s*[:\n]/i.test(text);
-    const hasTaskEvidence = this._executionEvidenceSatisfied(state);
-    if (planHeading && state.allowsPlannerShapedResult !== true) return true;
-    if (!ignoreFuturePromise) {
-      if (continuePromise) return true;
-      if (firstPersonFuture && (!hasTaskEvidence || planHeading)) return true;
-    }
-    return false;
+  // A long summary, or one with a colon, line breaks or a list, carries its
+  // own content; only a short single statement can be a claim that an answer
+  // was given without the answer itself. This reads structure, not words.
+  _doneSummaryMayOmitAnswer(text) {
+    const value = String(text || '').trim();
+    return !!value && value.length <= 500 && !/[:\uFF1A\n\r]|(?:^|\s)(?:[-*\u2022]|\d+[.)])\s/u.test(value);
   }
 
-  _isRuntimeModeContradictionTerminal(content) {
-    const text = String(content || '');
-    const inability = /\b(?:i|we|webbrain|the\s+agent|this\s+run|the\s+runtime)\s+(?:cannot|can't|could\s+not|am\s+unable|are\s+unable|is\s+unable|am\s+not\s+able|are\s+not\s+able|is\s+not\s+able|do(?:es)?\s+not\s+have|don't\s+have|can\s+only|am\s+not\s+permitted|are\s+not\s+permitted|is\s+not\s+permitted)\b/i;
-    const runtimeBoundClaim = text.split(/(?:[.!?]\s+|\n+)/).some(clause => {
-      // Keep the mode claim and inability in one clause and require the mode
-      // subject to be the agent/runtime. An application's read-only session
-      // followed by "I cannot edit" is a task result, not runtime drift.
-      const selfModeClaim = /\b(?:i\s+am|i'm|we\s+are|we're)\s+(?:currently\s+)?(?:running\s+)?in\s+(?:ask|read[- ]only)\s+mode\b/i.test(clause);
-      const namedRuntimeModeClaim = /\b(?:webbrain|the\s+agent|this\s+(?:webbrain\s+)?run|the\s+runtime)\b[^.!?\n]{0,100}\b(?:ask\s+mode|read[- ]only\s+(?:mode|session))\b/i.test(clause);
-      return (selfModeClaim || namedRuntimeModeClaim) && inability.test(clause);
-    });
-    const explicitModeSwitchBlocker = /\b(?:switch|change|set)\s+(?:back\s+)?to\s+act\s+mode\b[^.!?\n]{0,100}\b(?:to|before|and)\s+(?:continue|proceed|complete|execute|retry|use\s+(?:the\s+)?tools?)\b/i.test(text);
-    return runtimeBoundClaim || explicitModeSwitchBlocker;
+  // A planner-shaped object the model rates at zero confidence (on the
+  // planner's own scale of how clear and safe a plan is) is its refusal to
+  // plan the task. It ends the run as written; its words are not read.
+  _isZeroConfidencePlanTerminal(content) {
+    const object = extractFirstJsonObject(String(content || '').trim());
+    return !!object && typeof object === 'object' && !Array.isArray(object)
+      && typeof object.summary === 'string' && Array.isArray(object.steps)
+      && Object.prototype.hasOwnProperty.call(object, 'confidence') && Number(object.confidence) === 0;
   }
 
-  _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null } = {}) {
+  // A final message or done summary that is a planner or progress-policy
+  // object instead of a result. Only the object's shape is read; what a
+  // summary says in words is the completion judge's to read, in any language.
+  _isStructuredPlanTerminal(content, state = {}) {
+    const object = extractFirstJsonObject(String(content || '').trim());
+    if (!object || typeof object !== 'object' || Array.isArray(object)) return false;
+    const plannerShape = typeof object.summary === 'string'
+      && Array.isArray(object.steps)
+      && ['confidence', 'memory', 'scheduling', 'risks', 'mode'].some(key => Object.prototype.hasOwnProperty.call(object, key))
+      && !this._isZeroConfidencePlanTerminal(content);
+    const policyKeys = ['mode', 'allowedActions', 'forbiddenActions', 'targets', 'pageScopePolicy', 'reason'];
+    const policyShape = policyKeys.filter(key => Object.prototype.hasOwnProperty.call(object, key)).length >= 5
+      && (Array.isArray(object.allowedActions) || Array.isArray(object.forbiddenActions))
+      && String(object.mode || '').toLowerCase() !== 'inactive';
+    return (plannerShape || policyShape) && state.allowsPlannerShapedResult !== true;
+  }
+
+  _planOnlyTerminalDecision(tabId, content, { viaDone = false, outcome = null, summaryKind = null } = {}) {
     const state = this._planExecutionGuards.get(tabId);
     if (!state?.enabled) return null;
     // The bracketed diagnostic stays in tool results and traces; the chat
@@ -31437,17 +31538,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         readOnly: state.successfulTaskToolCalls > 0, ...facts }) });
     if (state.taskKey && this._progressTaskKeyHash(tabId) !== state.taskKey) state.taskDrifted = true;
     const recoveryAnchor = this._executionTaskRecoveryAnchor(state);
-    if (!viaDone && this._isSafetyRefusalTerminal(content)) return null;
+    if (!viaDone && this._isZeroConfidencePlanTerminal(content)) return null;
     const terminalFailure = viaDone && (outcome === 'partial' || outcome === 'failed');
-    const runtimeModeContradiction = this._isRuntimeModeContradictionTerminal(content);
-    // A structured failure may naturally say "I will need credentials".
-    // Ignore only that prose-promise heuristic; explicit planner/policy shapes
-    // and plan headings remain invalid even for failed/partial done calls.
-    const looksPlanOnly = this._looksLikePlanOnlyTerminal(
-      content,
-      state,
-      { ignoreFuturePromise: terminalFailure },
-    );
+    // A planner or policy object is never a result. Whether a done summary
+    // only describes what will be done next, or blames the agent's own Ask or
+    // read-only mode, comes from a model that reads it in any language (the
+    // completion judge or the done_summary question); a failed or partial
+    // done may describe what the user still has to do.
+    const runtimeModeContradiction = summaryKind === 'mode_claim';
+    const looksPlanOnly = this._isStructuredPlanTerminal(content, state)
+      || (summaryKind === 'plan_only' && !terminalFailure) || runtimeModeContradiction;
     const staleCancellation = !viaDone && this._isLocalCancellationText(content);
     const missingRequiredSchedulingTool = !terminalFailure
       && !!state.requiredSchedulingTool
@@ -36043,7 +36143,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               completionWarning,
               screenshotCaptured: !!dataUrl,
             });
-            if (completionDecision) verification.decision = { outcome: completionDecision.outcome, engine: completionDecision.engine, modality: completionDecision.modality, model: completionDecision.model };
+            if (completionDecision) verification.decision = { outcome: completionDecision.outcome, engine: completionDecision.engine, modality: completionDecision.modality, model: completionDecision.model, ...(completionDecision.summaryKind ? { summaryKind: completionDecision.summaryKind } : {}) };
             // If completionWarning fires, DO NOT terminate. Return a failed
             // tool result so the agent loop continues and the model must
             // actually submit (and verify) before it can call done again.
@@ -36066,16 +36166,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               // After 2 blocks, let done through with a loud note in verification.
             }
             // A request that also expects votes or moderation to go a certain way
-            // asks for something no run can verify. Whoever verified the completion
-            // reads that from the request in any language: the active model's
-            // verdict says so itself, and after a decision-model verdict the
-            // decision model is asked; nothing else is called. Only a clear answer
-            // adds the caveat.
-            if (!args.data_ref && completionDecision?.outcome === 'succeeded' && completionDecision.engine !== 'calculation') {
-              const later = completionDecision.engine === 'llm' ? completionDecision.laterOutcome
-                : (await this._semanticDecision(tabId, 'future_outcome',
-                  { request: this._progressTaskAnchorText(tabId) || this._latestTaskText(tabId) || '' }, { mainModel: false })).choice;
-              if (later === 'asked') args.summary += '\n\nPublication was verified. Future upvotes and moderation outcomes remain unverified.';
+            // asks for something no run can verify. The completion judge reads that
+            // from the request in any language, in the same request as its verdict;
+            // only a sure answer adds the note.
+            if (!args.data_ref && completionDecision?.outcome === 'succeeded' && completionDecision.laterOutcome === 'asked') {
+              args.summary += '\n\nPublication was verified. Future upvotes and moderation outcomes remain unverified.';
             }
             const runId = this.currentRunId.get(tabId);
             if (dataUrl && runId) {
@@ -39809,6 +39904,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      await this._prepareCalculationReading(tabId);
       const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
       if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {
@@ -40977,6 +41073,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
       }
+      await this._prepareCalculationReading(tabId);
       const calculationToolPolicy = this._pureCalculationToolPolicy(tabId);
       if (calculationToolPolicy) tools = tools.filter(tool => calculationToolPolicy.names.includes(tool.function.name));
       const completionRecoveryPolicy = this._completionRecoveryPolicy(tabId, tools, {

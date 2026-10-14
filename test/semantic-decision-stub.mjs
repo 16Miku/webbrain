@@ -6,6 +6,7 @@
 // the way a model would read them. Tests about a specific verdict pass their
 // own `decide`; the product itself never reads requests with word lists.
 import assert from 'node:assert/strict';
+import { SEMANTIC_QUESTIONS } from '../src/chrome/src/agent/semantic-decisions.js';
 
 export function semanticQuestionOf(agent, messages) {
   return {
@@ -83,4 +84,67 @@ export function withoutFixedChoiceAnswers(chat) {
   return (messages, options) => String(messages?.[0]?.content || '').startsWith(FIXED_CHOICE_QUESTION)
     ? Promise.resolve({ content: JSON.stringify({ choice: '', evidence: '' }) })
     : chat(messages, options);
+}
+
+// Which fixed-choice question a request asks, read from the question's own
+// text, and whether it asks it about a list of items.
+export function fixedChoiceQuestion(messages) {
+  const system = String(messages?.[0]?.content || '');
+  if (!system.startsWith(FIXED_CHOICE_QUESTION)) return null;
+  const kind = Object.entries(SEMANTIC_QUESTIONS).find(([, spec]) => system.includes(spec.instructions))?.[0] || null;
+  let request = '', data = {};
+  try { request = JSON.parse(messages[1].content).request; } catch {}
+  try {
+    const wrapped = String(messages.at(-1).content);
+    const json = wrapped.slice(wrapped.indexOf('{'), wrapped.lastIndexOf('}') + 1);
+    data = JSON.parse(json);
+  } catch {}
+  return { kind, request, batch: Array.isArray(data.items), items: data.items || [], page: data.page || {} };
+}
+
+// Answers the named fixed-choice questions the way a model that read them
+// would. `answers[kind]` is a choice, { choice, evidence }, or a function of
+// ({ request, page, item }) returning either (or null for no answer). A
+// choice without evidence quotes the whole request. Questions not named get
+// no answer, as from a model that cannot tell.
+export function withFixedChoiceAnswers(chat, answers = {}) {
+  const answerFor = async (kind, question) => {
+    const entry = answers[kind];
+    const value = typeof entry === 'function' ? await entry(question) : entry;
+    if (value == null || value === '') return null;
+    return typeof value === 'string' ? { choice: value, evidence: question.request } : value;
+  };
+  return async (messages, options) => {
+    const question = fixedChoiceQuestion(messages);
+    if (!question) return chat(messages, options);
+    if (!question.kind) return { content: JSON.stringify({ choice: '', evidence: '' }) };
+    if (question.batch) {
+      const list = [];
+      for (const [item, entry] of question.items.entries()) {
+        const answer = await answerFor(question.kind, { request: question.request, item: entry });
+        if (answer) list.push({ item, ...answer });
+      }
+      return { content: JSON.stringify({ answers: list }) };
+    }
+    const answer = await answerFor(question.kind, { request: question.request, page: question.page });
+    return { content: JSON.stringify(answer || { choice: '', evidence: '' }) };
+  };
+}
+
+// The calculation fixtures' requests, read the way a model would: which
+// expression they ask for, whether they ask for anything else, and the form
+// they set for the answer (texts copied exactly from the request).
+export const CALCULATION_FORM_PROMPT = 'The user\'s request in `request` asks a browser agent only to calculate';
+export function withCalculationReadings(chat, read) {
+  const readings = withFixedChoiceAnswers(chat, {
+    calculation_request: question => read(question.request, question.page.expression)?.choice || null,
+  });
+  return async (messages, options) => {
+    if (String(messages?.[0]?.content || '').startsWith(CALCULATION_FORM_PROMPT)) {
+      const { request, expression } = JSON.parse(messages[1].content);
+      const form = read(request, expression)?.form;
+      return { content: JSON.stringify(form || {}) };
+    }
+    return readings(messages, options);
+  };
 }

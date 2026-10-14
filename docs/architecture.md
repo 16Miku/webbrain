@@ -784,12 +784,43 @@ task leaves out ("everyone except alice") come from the intent model's
 current task only when its classified intent allows the action they record.
 Typed messages are sent as typed; `/screenshot` is the explicit local capture.
 
-Whether a request also expects something no run can verify, such as votes or
-moderators keeping a post up, is read by whoever verified the completion: the
-active model's completion judge answers it in the same request as its verdict,
-and after a decision-model verdict the decision model is asked. Nothing else is
-called for it, and only a clear answer adds the note that publication was
-verified while later votes and moderation remain unverified.
+The completion judge (the decision model or the active model) answers two
+more fixed-choice questions in the same request as its verdict: whether the
+request also expects something no run can verify, such as votes or moderators
+keeping a post up, and whether the candidate summary gives the result, only
+says that an answer was given, or only describes what will be done next. A sure
+"expects later" answer adds the note that publication was verified while later
+votes and moderation remain unverified; a summary read as a claim or a plan is
+sent back once for the actual result. Where no judge runs, a model reads the
+summary with the `done_summary` question: a short Ask answer with no structure
+of its own (a colon, line breaks or a list mean it carries content), and an Act
+run's failed or partial summary, which may also blame the agent's own Ask or
+read-only mode and then gets the runtime-mode correction. A planner-shaped
+object is recognized by its shape, and one the model rates at zero confidence
+is its refusal; a plain final message in an Act run gets one recovery whatever
+it says. No word list reads a summary or a final message.
+
+A request that contains one arithmetic expression (found by structure: the
+one span the calculator accepts, not digits inside a word or code) is read with
+the `calculation_request` question when the planner gave it no page reads,
+state changes or submissions. Only a sure "only the result" reading limits the
+run to the calculator and lets the calculator's receipt complete it while the
+page keeps changing. When the request also sets a form for the answer, the
+active model writes it down (only the number, the number last, an ending and
+other required texts), each text copied exactly from the request and checked
+against it; a form it cannot write down that way is left to the completion
+judge, with the calculator's result as evidence. The reading and the form are
+kept on the execution guard and read again only when the request changes.
+
+Questions about several items (`missing_value`, and the page readings that
+follow) are batched: the decision model gets one question per item in chunks of
+16, and the active model answers up to 64 items in one reply. A required value
+of an expected item that only says it is missing ("unknown", "bilinmiyor", "—")
+is found this way once, at a successful done, among values of 40 characters or
+fewer; no sure answer leaves the value counted as given. Missing values are
+otherwise JSON null. Action names in progress rows and requested field names
+are the canonical names the models are given; another word for one is rejected
+(progress_update) or names no field (the requirement stays incomplete).
 
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is

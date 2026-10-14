@@ -1,4 +1,5 @@
 import { closeToolDefinitions, AX_REF_ID_PATTERN } from './tool-arguments.js';
+import { PROGRESS_ACTIONS } from './progress-intent.js';
 import { hasJsonSchemaMarker, isJsonSchemaSpec } from './cloud-output.js';
 import { EXPANDED_TREE_PAGE_CHARS, STANDARD_TREE_PAGE_CHARS } from './read-completeness.js';
 import { OTP_EMAIL_TOOL, OTP_EMAIL_TOOL_NAME } from './otp-email-tool.js';
@@ -1024,7 +1025,7 @@ export const AGENT_TOOLS = [
                 id: { type: 'string', description: 'Stable item id: username, URL, SKU, row key, or other unique handle.' },
                 label: { type: 'string', description: 'Human-readable item label.' },
                 url: { type: 'string', description: 'Canonical URL for the item, if available.' },
-                action: { type: 'string', description: 'Canonical action taken or planned, e.g. follow, star, collect_email, process_item.' },
+                action: { type: 'string', enum: [...PROGRESS_ACTIONS], description: 'Canonical action taken or planned, e.g. follow, star, collect_email, process_item. Use one of the listed names; any other word is rejected.' },
                 status: { type: 'string', enum: ['pending', 'acted', 'processed', 'skipped', 'failed'], description: 'Current row status.' },
                 fields: { type: 'object', description: 'Collected facts for this item, e.g. {email:"a@b.com"} or {email:null}.' },
                 reason: { type: 'string', description: 'Short reason for skipped/failed, or a useful note.' },

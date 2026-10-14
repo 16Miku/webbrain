@@ -81,7 +81,8 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(capturedPrefixes.map(prefix => prefix.length), [89, 126]);
     const previousFetch = globalThis.fetch;
     try {
-      for (const prefix of [...capturedPrefixes, 'I will inspect Example Domain and format the results as requested.\n\n']) {
+      for (const prefix of [...capturedPrefixes, 'I will inspect Example Domain and format the results as requested.\n\n',
+        'Sayfa hâlâ yükleniyor. Erişilebilirlik ağacını okuyacağım.\n\n', '页面仍在加载。我将读取无障碍树。\n\n']) {
         const content = prefix + canonicalTree;
         globalThis.fetch = async (_url, request) => JSON.parse(request.body).stream ? sseResponse(content) : Response.json({ choices: [{ finish_reason: 'stop', message: { content } }] });
         const provider = new OpenAICompatibleProvider(config);
@@ -112,6 +113,10 @@ for (const browser of ['chrome', 'firefox']) {
       'Example call: ' + canonicalTree,
       'For example, ' + canonicalTree,
       'Here is a sample response: ' + canonicalTree,
+      // An introduction that runs into the calls, in any language.
+      'Örnek çağrı: ' + canonicalTree,
+      '例如，' + canonicalTree,
+      'Beispielaufruf:\n' + canonicalTree,
       '```xml\n' + capturedPrefixes[0] + canonicalTree + '\n```',
       '~~~xml\n' + canonicalTree + '\n~~~',
       '<think>Reasoning</think>' + canonicalTree,

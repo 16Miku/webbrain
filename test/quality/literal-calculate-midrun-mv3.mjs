@@ -90,6 +90,24 @@ const server = http.createServer(async (request, response) => {
     const action = Array.isArray(input.tools) && input.tools.length > 0;
     const priorResults = input.messages.filter(message => message.role === 'tool').map(message => toolObject(message.content)).filter(Boolean);
     const system = contentText(input.messages[0]?.content);
+    // WebBrain reads what the corrected request asks for with a model: whether
+    // it asks only for the arithmetic (a fixed-choice question) and the form
+    // its answer must take (written down with texts copied from the request).
+    // Answer both as a model that read the correction would; nothing else.
+    const fixedChoice = system.startsWith("Answer one fixed-choice question for a browser agent's safety check.");
+    const answerForm = system.startsWith("The user's request in `request` asks a browser agent only to calculate");
+    if (fixedChoice || answerForm) {
+      const request = JSON.parse(contentText(input.messages[1]?.content)).request;
+      const readsCalculation = fixedChoice && system.includes('contains the arithmetic expression in `page.expression`');
+      calls.push({ at: Date.now(), stage: fixedChoice ? 'reading' : 'answer_form', revised,
+        kind: readsCalculation ? 'calculation_request' : fixedChoice ? 'other' : 'answer_form', correctionRead: request === correction });
+      const content = answerForm ? { only_result: false, result_last: false, ending: marker, include: [] }
+        : readsCalculation && request === correction ? { choice: 'only_result_with_form', evidence: request } : { choice: '', evidence: '' };
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ id: `owned-${calls.length}`, choices: [{ message: { role: 'assistant', content: JSON.stringify(content) },
+        finish_reason: 'stop' }], usage: { prompt_tokens: 60, completion_tokens: 20 } }));
+      return;
+    }
     const plannerCalculateCapability = /(?:^|\n)[ \t]*(?:compute|utility|calculation):[^\n]*\bcalculate\b/i.test(system);
     const plannerUtilityExecuteRule = system.split('\n').some(line => /\bcalculate\b/.test(line) && /\bexecute\b/.test(line)
       && /page-independent|no (?:fresh )?(?:page|browser)|without (?:a |any )?(?:browser|page)|pure (?:utility )?tool|utility/i.test(line));
@@ -248,6 +266,10 @@ try {
   assert.ok(revisedPlannerRequests.length > 0);
   assert.ok(revisedPlannerRequests.every(call => call.plannerCalculateCapability && call.plannerUtilityExecuteRule),
     'The genuine revised planner must receive truthful calculate capability and page-independent execution requirements.');
+  // The correction was read once for its arithmetic and once for its
+  // answer form; the original read-only task was never read as arithmetic.
+  assert.deepEqual(calls.filter(call => call.stage === 'reading' && call.kind === 'calculation_request').map(call => call.correctionRead), [true]);
+  assert.deepEqual(calls.filter(call => call.stage === 'answer_form').map(call => call.revised), [true]);
   assert.equal(done?.done, true); assert.equal(done?.outcome, 'success'); assert.notEqual(done?.blockedDone, true);
   assert.equal(run.chat.result.content, `${exact}\n${marker}`);
   assert.equal(publicEvents.filter(event => event.type === 'steering_applied').length, 1);

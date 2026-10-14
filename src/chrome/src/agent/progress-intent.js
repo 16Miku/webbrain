@@ -26,28 +26,6 @@ const CANONICAL_ACTIONS = new Set([
   'open',
 ]);
 
-const ACTION_ALIASES = new Map([
-  ['collect emails', 'collect_email'],
-  ['collect email', 'collect_email'],
-  ['email', 'collect_email'],
-  ['emails', 'collect_email'],
-  ['collect profiles', 'collect_profile'],
-  ['collect profile', 'collect_profile'],
-  ['profile', 'collect_profile'],
-  ['profiles', 'collect_profile'],
-  ['process', 'process_item'],
-  ['process items', 'process_item'],
-  ['process item', 'process_item'],
-  ['scrape', 'process_item'],
-  ['scrapes', 'process_item'],
-  ['scraping', 'process_item'],
-  ['scrape items', 'process_item'],
-  ['scrape item', 'process_item'],
-  ['scrape list', 'process_item'],
-  ['open_url', 'open'],
-  ['open page', 'open'],
-  ['visit page', 'visit'],
-]);
 
 import { sanitizeText as sanitizeSharedText } from './text-sanitize.js';
 
@@ -64,12 +42,13 @@ function firstArray(...values) {
   return [];
 }
 
+export const PROGRESS_ACTIONS = Object.freeze([...CANONICAL_ACTIONS]);
+
+// Models name actions with the canonical names they are given (the intent
+// classifier, the planner and the progress_update tool all list them). Any
+// other name, in any language, is no action; no synonym list maps it.
 export function normalizeProgressAction(value) {
   const raw = sanitizeText(value, 120).toLowerCase().replace(/[-\s]+/g, '_');
-  if (!raw) return '';
-  const spaced = raw.replace(/_/g, ' ');
-  const alias = ACTION_ALIASES.get(raw) || ACTION_ALIASES.get(spaced);
-  if (alias && CANONICAL_ACTIONS.has(alias)) return alias;
   return CANONICAL_ACTIONS.has(raw) ? raw : '';
 }
 

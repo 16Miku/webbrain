@@ -80,11 +80,14 @@ function parseQwenToolResponse(config, options, content) {
     if (firstCall <= 0 || firstCall > MAX_QWEN_TOOL_PREFIX) return null;
     prefix = text.slice(0, firstCall).trimEnd();
     // The primary Qwen template permits natural-language reasoning before
-    // canonical calls. Never treat examples, code, XML or legacy formats as
-    // this exception, and never release the prefix before the full batch parses.
+    // canonical calls. Never treat code, XML or legacy formats as this
+    // exception, and never release the prefix before the full batch parses.
+    // Reasoning is complete prose: it ends a sentence before the calls begin,
+    // in any script. Text that runs into the calls (an introduction ending in
+    // a colon or a comma, such as one that presents an example) does not.
     const code = /[<>{}\[\]`]|~~~|\btool_call\b|\b(?:function|parameter|tool_calls?)\s*[:=]/i.test(prefix);
-    const exemplar = /\b(?:for example|for illustration|as an example|(?:example|sample|template|syntax)\s*(?::|call\b|tool\b|function\b|response\b|envelope\b|code\b)|(?:this|here)\s+(?:is|are)\s+(?:an?\s+)?(?:example|sample|template|format)\b|(?:format|syntax)\s+(?:is|below)\b)/i.test(prefix);
-    if (!prefix || code || exemplar) return null;
+    const completeProse = /\p{Sentence_Terminal}[\p{Pe}\p{Pf}"'\u2019\u201d]*$/u.test(prefix);
+    if (!prefix || code || !completeProse) return null;
     text = text.slice(firstCall);
   }
   let position = 0;

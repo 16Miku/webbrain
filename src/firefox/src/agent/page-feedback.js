@@ -1,4 +1,4 @@
-import { canRetainPageFeedbackCalls, isAutomaticPageFeedback, isLiteralCalculationTask, isPageIndependentCalculationCompletion, isPassivePageFeedback, literalCalculationOutputRequirements, literalCalculationTaskExpression, pageFeedbackCallPolicy } from './page-feedback-policy.js';
+import { acceptCalculationAnswerForm, calculationAnswerFormMessages, canRetainPageFeedbackCalls, isAutomaticPageFeedback, isLiteralCalculationTask, isPageIndependentCalculationCompletion, isPassivePageFeedback, literalCalculationCandidate, literalCalculationOutputRequirements, literalCalculationTaskExpression, pageFeedbackCallPolicy } from './page-feedback-policy.js';
 import { accountFeedbackSupersession, resetFeedbackSupersession } from './page-feedback-recovery.js';
 import { captureMediaDownloadStateInPage } from './media-download-binding.js';
 import * as trace from '../trace/recorder.js';
@@ -740,6 +740,44 @@ export const pageFeedbackMethods = {
     // A genuine explicit replacement may retire an earlier read-only task.
     // The composite anchor still binds the receipt to the full authority turn.
     return update?.kind === 'steering' ? update.text : binding?.text || '';
+  },
+
+  // Whether a request that contains one arithmetic expression asks for its
+  // result and nothing else is read once by a model, in any language (the
+  // calculation_request question), and kept on the execution guard for the
+  // synchronous checks. Only requests the planner gave no page reads, state
+  // changes or submissions are read; no sure reading means the ordinary path.
+  async _prepareCalculationReading(tabId) {
+    const guard = this._planExecutionGuards?.get(tabId);
+    if (!guard?.enabled || (guard.readScope != null && guard.readScope !== 'none')
+        || guard.requiresStateChange !== false || guard.requiresSubmission !== false
+        || guard.siteWorkflow || guard.messaging || guard.draftRecipients) return;
+    const task = String(this._pageFeedbackLiteralCalculationTask(tabId) || '').trim();
+    const expression = task && literalCalculationCandidate(task);
+    if (!expression || (guard.calculationReading?.task === task && guard.calculationReading.expression === expression)) return;
+    const reading = await this._semanticDecision(tabId, 'calculation_request', { request: task, page: { expression } });
+    const form = reading.choice === 'only_result_with_form' ? await this._calculationAnswerForm(tabId, task, expression) : null;
+    if (this._planExecutionGuards?.get(tabId) === guard) {
+      guard.calculationReading = { task, expression, choice: reading.choice, ...(form ? { form } : {}) };
+    }
+  },
+
+  // The form a request sets for a calculation's answer, written down by the
+  // active model with each required text copied from the request. No usable
+  // answer leaves the form to the completion judge.
+  async _calculationAnswerForm(tabId, task, expression) {
+    const provider = this._activeProvider?.(tabId);
+    if (!provider?.chat) return null;
+    try {
+      const response = await withCompletionTimeout(signal => this._chatWithCostAllowance(provider,
+        calculationAnswerFormMessages(task, expression), { temperature: 0, maxTokens: 300, signal },
+        this.currentCostState?.get(tabId) || null, { tabId, generationName: 'calculation_answer_form' }),
+      this._runAbortSignal(tabId), 10000);
+      return acceptCalculationAnswerForm(this._socialPublicationResponseObject(response, { maxTokens: 300 }), task);
+    } catch (error) {
+      if (this._isCostAllowanceError?.(error) || this._checkAbort?.(tabId)) throw error;
+      return null;
+    }
   },
 
   _rememberPageFeedbackCalculation(tabId, name, args, result, completion) {

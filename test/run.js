@@ -1,4 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
+import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -71305,7 +71306,7 @@ test('agent repairs only terminal content after raw tool-call and plan gates', (
     );
 
     const rawDoneGate = source.indexOf(
-      "toolResult.summary || partialAssistantText || '',",
+      "const doneSummaryText = toolResult.summary || partialAssistantText || '';",
     );
     const doneTerminalRepair = source.indexOf(
       'const repairedDoneSummary = fnArgs.data_ref ? rawDoneSummary : repairAssistantDisplayText(rawDoneSummary);',
@@ -86614,17 +86615,23 @@ test('colon-namespaced action ids share identities with recorded clicks', () => 
   }
 });
 
-test('progress ledger rejects malformed statuses and normalizes null-like fields', () => {
+test('progress ledger rejects malformed statuses and keeps only JSON null as a missing value', () => {
   assert.equal(isValidLedgerStatus('pending'), true);
   assert.equal(isValidLedgerStatus('「pending」'), true);
   assert.equal(isValidLedgerStatusFx('processed'), true);
   assert.equal(isValidLedgerStatusFx('done'), false);
 
-  const state = upsertLedgerItems([], [
-    { id: 'rafi', label: 'rafi', status: 'processed', fields: { email: 'null', note: 'not found' } },
-  ], { source: 'model', now: 100 });
-  assert.equal(state.rows[0].fields.email, null);
-  assert.equal(state.rows[0].fields.note, null);
+  // The literal null a model wrote as a string is null; any other text is
+  // the model's own value. Whether it only says "missing" is read by a model
+  // where it matters (the expected-items check), in any language.
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    const state = upsert([], [
+      { id: 'rafi', label: 'rafi', status: 'processed', fields: { email: 'null', note: 'not found', other: 'bulunamadı' } },
+    ], { source: 'model', now: 100 });
+    assert.equal(state.rows[0].fields.email, null);
+    assert.equal(state.rows[0].fields.note, 'not found');
+    assert.equal(state.rows[0].fields.other, 'bulunamadı');
+  }
 
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
@@ -87015,7 +87022,7 @@ test('eligible complete-thread reads coordinate a 12k tree page with a parseable
   }
 });
 
-test('progress_update aliases legacy scrape actions to process_item', () => {
+test('progress_update takes only canonical action names and sends any other word back', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = 778;
@@ -87025,23 +87032,78 @@ test('progress_update aliases legacy scrape actions to process_item', () => {
       { role: 'user', content: 'Scrape every search result on this page.' },
     ]);
 
+    // Another word for an action, in any language, is rejected like a bad
+    // status, with the canonical names to use instead; nothing is recorded.
+    for (const action of ['scrape', 'kazı', 'collect emails', 'visit page']) {
+      const rejected = agent._progressUpdate(tabId, {
+        items: [{ id: 'result-1', label: 'Result 1', action, status: 'pending' }],
+      });
+      assert.equal(rejected.success, false, `${AgentClass.name}: ${action} was accepted`);
+      assert.match(rejected.error, /unknown action value/i);
+      assert.match(rejected.error, /process_item/);
+      assert.equal(agent.progressLedgers.get(tabId)?.length || 0, 0, `${AgentClass.name}: ${action} recorded a row`);
+    }
+
     const created = agent._progressUpdate(tabId, {
-      items: [{ id: 'result-1', label: 'Result 1', action: 'scrape', status: 'pending' }],
+      items: [{ id: 'result-1', label: 'Result 1', action: 'process_item', status: 'pending' }],
     });
-    assert.equal(created.success, true, `${AgentClass.name}: scrape action update was rejected`);
-    assert.equal(agent.progressSessions.get(tabId)?.allowedActions[0], 'process_item', `${AgentClass.name}: scrape did not activate process_item session`);
-    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item', `${AgentClass.name}: scrape row was not stored canonically`);
+    assert.equal(created.success, true, `${AgentClass.name}: canonical action update was rejected`);
+    assert.equal(agent.progressSessions.get(tabId)?.allowedActions[0], 'process_item');
     assert.deepEqual(agent._progressRead(tabId).rows.map(row => [row.id, row.action, row.status]), [
       ['result-1', 'process_item', 'pending'],
     ]);
-    assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: aliased scrape row did not block unfinished done`);
-
+    assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: unfinished row did not block done`);
+    // Case and separators are not words: "Process-Item" is the same name.
     const closed = agent._progressUpdate(tabId, {
-      items: [{ id: 'result-1', label: 'Result 1', action: 'scrape', status: 'processed' }],
+      items: [{ id: 'result-1', label: 'Result 1', action: 'Process-Item', status: 'processed' }],
     });
-    assert.equal(closed.success, true, `${AgentClass.name}: aliased scrape close was rejected`);
-    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item', `${AgentClass.name}: closed scrape row lost canonical action`);
-    assert.equal(agent._shouldBlockDoneForProgress(tabId), false, `${AgentClass.name}: closed aliased scrape row still blocked done`);
+    assert.equal(closed.success, true);
+    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item');
+    assert.equal(agent._shouldBlockDoneForProgress(tabId), false, `${AgentClass.name}: closed row still blocked done`);
+  }
+  // The tool tells the model the names.
+  for (const build of ['chrome', 'firefox']) {
+    const { AGENT_TOOLS } = await import(`../src/${build}/src/agent/tools.js`);
+    const tool = AGENT_TOOLS.find(entry => entry.function.name === 'progress_update');
+    assert.ok(tool.function.parameters.properties.items.items.properties.action.enum.includes('process_item'));
+  }
+});
+
+test('a required value that only says it is missing is read by a model at done, in any language', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 1778;
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'List the two hotel names.' }]);
+    agent.progressExpectedItems.set(tabId, { count: 2, item_type: 'hotel', ordered: true, required_fields: ['hotel_name'] });
+    agent._currentTaskLedgerRows = () => [
+      { id: 'expected:1', status: 'processed', fields: { expectedOrdinal: 1, hotel_name: 'Hotel Pera' } },
+      { id: 'expected:2', status: 'processed', fields: { expectedOrdinal: 2, hotel_name: 'bilinmiyor' } },
+    ];
+    const asked = [];
+    agent._semanticDecisions = async (_tab, kind, { items }) => {
+      asked.push(...items.map(item => [kind, item.field, item.value]));
+      return items.map(item => ({ choice: item.value === 'bilinmiyor' ? 'missing' : 'value', evidence: '', source: 'decision_model' }));
+    };
+    // Before any reading, the text counts as a value (as for any language
+    // nothing has read).
+    assert.equal(agent._expectedItemsDoneBlock(tabId), null);
+    await agent._prepareMissingValueReadings(tabId);
+    assert.deepEqual(asked, [['missing_value', 'hotel_name', 'Hotel Pera'], ['missing_value', 'hotel_name', 'bilinmiyor']]);
+    const blocked = agent._expectedItemsDoneBlock(tabId);
+    assert.equal(blocked?.blocked, true, `${AgentClass.name}: a value read as missing completed the list`);
+    assert.match(blocked.error, /missing required fields: hotel_name/);
+    // Each value is read once.
+    await agent._prepareMissingValueReadings(tabId);
+    assert.equal(asked.length, 2);
+    // A real value, or no sure reading, completes it.
+    agent._currentTaskLedgerRows = () => [
+      { id: 'expected:1', status: 'processed', fields: { expectedOrdinal: 1, hotel_name: 'Hotel Pera' } },
+      { id: 'expected:2', status: 'processed', fields: { expectedOrdinal: 2, hotel_name: 'Otel Bilge' } },
+    ];
+    agent._semanticDecisions = async (_tab, _kind, { items }) => items.map(() => ({ choice: null, evidence: '', source: 'unavailable' }));
+    await agent._prepareMissingValueReadings(tabId);
+    assert.equal(agent._expectedItemsDoneBlock(tabId), null);
   }
 });
 
@@ -87973,9 +88035,12 @@ test('accepted done emits successful result update after progress gate', async (
 });
 
 test('meta-only done summaries are rejected so questions receive the actual answer', async () => {
+  // Without a completion judge (Ask mode), a model reads a short summary, in
+  // any language, before it is shown as the answer; in Act mode the judge
+  // answers the same question with its verdict. No word list decides.
   const brokenSummaries = [
     'Explained how the saved-workflow replay feature is implemented in code, based on the actual files in PR #443.',
-    'Confirmed the exact UI entry points for saved workflows from the sidepanel.js diff in PR #443.',
+    'Kaydedilmiş iş akışlarına nasıl erişileceğini PR #443 kodundan açıkladım.',
   ];
   const deliveredAnswer = 'Open WebBrain\'s History menu, choose Saved workflows, select a workflow, and click Run.';
 
@@ -87990,63 +88055,53 @@ test('meta-only done summaries are rejected so questions receive the actual answ
     agent.conversationModes.set(tabId, 'ask');
     agent._persist = () => { };
     agent.providerManager = { ...(agent.providerManager || {}), getVisionProvider: async () => null };
-
-    assert.equal(agent._looksLikeMetaOnlyDoneSummary(brokenSummaries[index]), true, `${AgentClass.name}: exported broken summary was not recognized`);
-    assert.equal(agent._looksLikeMetaOnlyDoneSummary(deliveredAnswer), false, `${AgentClass.name}: direct answer was misclassified`);
-    assert.equal(
-      agent._looksLikeMetaOnlyDoneSummary(`Confirmed the exact UI entry points: ${deliveredAnswer}`),
-      false,
-      `${AgentClass.name}: status preface with an actual answer should be accepted`,
-    );
-    for (const directAnswer of [
-      'Confirmed the exact UI entry points are History > Saved workflows.',
-      'Confirmed the requested workflow is available from the History menu.',
-      'Reviewed the requested implementation and found the replay entry point in sidepanel.js.',
-    ]) {
-      assert.equal(
-        agent._looksLikeMetaOnlyDoneSummary(directAnswer),
-        false,
-        `${AgentClass.name}: valid declarative answer was misclassified: ${directAnswer}`,
+    const readings = [];
+    agent._semanticDecision = async (_tab, kind, { request, page }, options = {}) => {
+      readings.push({ kind, request, summary: page?.summary });
+      assert.equal(options.mainModel, false, 'an Ask answer is read by the decision model only');
+      return { choice: page?.summary === deliveredAnswer ? 'result' : 'meta_only', evidence: '', source: 'decision_model' };
+    };
+    const runDone = async (summary, extra = {}) => {
+      agent.executeTool = async () => ({ done: true, summary, outcome: 'success', ...extra });
+      const updates = [];
+      const result = await agent._executeToolBatch(
+        tabId,
+        [{ id: `meta_done_${index}_${readings.length}`, function: { name: 'done', arguments: JSON.stringify({ summary }) } }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        null,
+        new Set(['done']),
+        1,
       );
-    }
+      return { result, updates };
+    };
 
-    agent.executeTool = async () => ({ done: true, summary: brokenSummaries[index], outcome: 'success' });
-    const updates = [];
-    const blocked = await agent._executeToolBatch(
-      tabId,
-      [{ id: `meta_done_${index}`, function: { name: 'done', arguments: JSON.stringify({ summary: brokenSummaries[index] }) } }],
-      messages,
-      (type, data) => updates.push({ type, data }),
-      { supportsVision: false },
-      null,
-      new Set(['done']),
-      1,
-    );
-    assert.equal(blocked.action, 'continue', `${AgentClass.name}: meta-only summary ended the run`);
-    assert.equal(
-      updates.some(update => update.type === 'tool_result' && update.data?.result?.metaOnlySummary === true),
-      true,
-      `${AgentClass.name}: meta-only summary did not produce a recovery result`,
-    );
-    assert.equal(
-      updates.some(update => update.type === 'tool_result' && update.data?.result?.done === true),
-      false,
-      `${AgentClass.name}: meta-only summary was exposed as successful completion`,
-    );
+    const blocked = await runDone(brokenSummaries[index]);
+    assert.equal(blocked.result.action, 'continue', `${AgentClass.name}: meta-only summary ended the run`);
+    assert.ok(blocked.updates.some(update => update.type === 'tool_result' && update.data?.result?.metaOnlySummary === true),
+      `${AgentClass.name}: meta-only summary did not produce a recovery result`);
+    assert.ok(!blocked.updates.some(update => update.type === 'tool_result' && update.data?.result?.done === true),
+      `${AgentClass.name}: meta-only summary was exposed as successful completion`);
+    assert.deepEqual(readings.at(-1), { kind: 'done_summary', request: 'How do I access saved workflows from the WebBrain plugin?',
+      summary: brokenSummaries[index] }, `${AgentClass.name}: the summary was not read as written`);
 
-    agent.executeTool = async () => ({ done: true, summary: deliveredAnswer, outcome: 'success' });
-    const recovered = await agent._executeToolBatch(
-      tabId,
-      [{ id: `answer_done_${index}`, function: { name: 'done', arguments: JSON.stringify({ summary: deliveredAnswer }) } }],
-      messages,
-      () => { },
-      { supportsVision: false },
-      null,
-      new Set(['done']),
-      2,
-    );
-    assert.equal(recovered.action, 'return', `${AgentClass.name}: recovered answer did not finish`);
-    assert.equal(recovered.value, deliveredAnswer, `${AgentClass.name}: recovered answer was not shown verbatim`);
+    const recovered = await runDone(deliveredAnswer);
+    assert.equal(recovered.result.action, 'return', `${AgentClass.name}: recovered answer did not finish`);
+    assert.equal(recovered.result.value, deliveredAnswer, `${AgentClass.name}: recovered answer was not shown verbatim`);
+
+    // A summary with its own structure carries content and is not read.
+    const asked = readings.length;
+    const structured = `Confirmed the exact UI entry points: ${deliveredAnswer}`;
+    const listed = await runDone(structured);
+    assert.equal(listed.result.action, 'return');
+    assert.equal(readings.length, asked, `${AgentClass.name}: a structured answer was sent for reading`);
+
+    // In Act mode the completion judge's own answer decides; nothing else reads it.
+    agent.conversationModes.set(tabId, 'act');
+    const judged = await runDone(brokenSummaries[index], { verification: { decision: { outcome: 'succeeded', engine: 'llm', summaryKind: 'meta_only' } } });
+    assert.equal(judged.result.action, 'continue', `${AgentClass.name}: the judge's meta-only answer was ignored`);
+    assert.equal(readings.length, asked, `${AgentClass.name}: a judged summary was read again`);
   }
 });
 
@@ -88926,13 +88981,15 @@ test('non-stream and stream runs expose failure completion after a verifier make
           yield { type: 'done' };
         };
       } else {
-        provider.chat = async (_messages, options) => {
+        // A model reading a failed summary (fixed-choice question) is not a
+        // turn of the scripted run.
+        provider.chat = withoutFixedChoiceAnswers(async (_messages, options) => {
           provider.calls++;
           provider.requests.push(options);
           const next = responses.shift();
           assert.ok(next, `${AgentClass.name}: model was called too many times`);
           return next;
-        };
+        });
       }
 
       const agent = new AgentClass({
@@ -89654,6 +89711,25 @@ test('same-batch observation cannot clear debt that existed at batch start', () 
   }
 });
 
+test('a success claim on a create or edit route needs a submit transition, whatever language the summary is in', () => {
+  // The done outcome is the claim of success; the summary's words are not read.
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 24830;
+    agent._planExecutionGuards.set(tabId, { enabled: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+    const pageState = { url: 'https://example.test/items?create=1', openDialogCount: 0, visibleFormCount: 0,
+      relevantFormCount: 0, successMessages: [] };
+    for (const summary of ['Created.', 'Oluşturuldu.', '已创建。', 'The record exists now.']) {
+      assert.match(agent._completionPageWarning(tabId, summary, 'success', pageState, pageState.url)?.warning || '',
+        /create\/edit route/, `${AgentClass.name}: "${summary}" finished on a create route without a submit transition`);
+    }
+    assert.equal(agent._completionPageWarning(tabId, 'Oluşturulamadı.', 'failed', pageState, pageState.url), null,
+      `${AgentClass.name}: a failed outcome was held to the success check`);
+    assert.equal(agent._completionPageWarning(tabId, 'Oluşturuldu.', 'success', { ...pageState, url: 'https://example.test/items/7' },
+      'https://example.test/items/7'), null, `${AgentClass.name}: a resulting resource page was held as a create route`);
+  }
+});
+
 test('submit-aware completion accepts the observed AMO finish document and rejects real pending UI', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
@@ -90230,24 +90306,26 @@ test('decision completion recognizes published Reddit content while preserving v
       agent._completionDocumentStamp = async () => 'current-document';
       agent._captureViewportProbe = async () => page;
       let outcome = 'succeeded';
-      // The decision model answers each question: the task outcome, and
+      // The decision model answers the outcome and, in the same request,
       // whether the request expects a later outcome (votes, moderation).
       let later = 'asked';
       const laterQuestions = [];
-      agent.evaluateSystemOne = async (_tab, _client, args) => (args?.questions?.future_outcome
-        ? (laterQuestions.push(args.state), { model: 'kev-latest', answers: { future_outcome: { type: 'choice', choice: later,
-          confidence: .95, probabilities: { asked: later === 'asked' ? .95 : .05, not_asked: later === 'asked' ? .05 : .95 } } } })
-        : { model: 'kev-latest', answers: { task_outcome: {
-          type: 'choice', choice: outcome, confidence: .99,
-          probabilities: Object.fromEntries(['succeeded', 'pending', 'failed', 'uncertain'].map(key => [key, key === outcome ? .97 : .01])),
-        } } });
+      agent.evaluateSystemOne = async (_tab, _client, args) => {
+        assert.ok(args?.questions?.task_outcome && args.questions.later_outcome && args.questions.summary_kind,
+          'the side questions travel with the verdict question');
+        laterQuestions.push(args.state);
+        return { model: 'kev-latest', answers: {
+          task_outcome: { type: 'choice', choice: outcome, confidence: .99,
+            probabilities: Object.fromEntries(['succeeded', 'pending', 'failed', 'uncertain'].map(key => [key, key === outcome ? .97 : .01])) },
+          later_outcome: { type: 'choice', choice: later, confidence: .95,
+            probabilities: { asked: later === 'asked' ? .95 : .05, not_asked: later === 'asked' ? .05 : .95 } },
+          summary_kind: { type: 'choice', choice: 'result', confidence: .95, probabilities: { result: .9, meta_only: .05, plan_only: .05 } },
+        } };
+      };
       const execute = agent.executeTool.bind(agent);
       agent.executeTool = (tab, name, args) => name === 'get_accessibility_tree'
         ? Promise.resolve({ success: true, pageContent: 'Published WebBrain post by expected author; unrelated comment form.' })
         : execute(tab, name, args);
-      const semanticDecision = agent._semanticDecision.bind(agent);
-      const asked = [];
-      agent._semanticDecision = (tab, kind, ...rest) => { asked.push(kind); return semanticDecision(tab, kind, ...rest); };
       const guard = { enabled: true, requiresSubmission: true, requiresStateChange: true };
       const submit = { dispatched: true, observedAfterSubmit: true, currentUrl: url, documentChanged: true };
       agent._planExecutionGuards.set(tabId, guard);
@@ -90258,13 +90336,12 @@ test('decision completion recognizes published Reddit content while preserving v
       assert.equal(guard.semanticSubmissionVerified, true);
       assert.match(result.summary, /Future upvotes and moderation outcomes remain unverified/);
       assert.match(JSON.stringify(laterQuestions[0]), /will get upvotes/, `${AgentClass.name}: the request was not read as written`);
-      assert.deepEqual(asked.filter(kind => kind === 'future_outcome'), ['future_outcome']);
+      assert.equal(laterQuestions.length, 1, `${AgentClass.name}: the note cost another decision`);
 
       submit.formValidationFailed = true;
-      asked.length = 0;
       const invalid = await agent.executeTool(tabId, 'done', { summary: 'Published.', outcome: 'success' });
       assert.equal(invalid.blockedDone, true, `${AgentClass.name}: semantic acceptance bypassed form validation`);
-      assert.deepEqual(asked.filter(kind => kind === 'future_outcome'), [], `${AgentClass.name}: a rejected completion asked about later outcomes`);
+      assert.doesNotMatch(String(invalid.summary || invalid.error || ''), /Future upvotes/, `${AgentClass.name}: a rejected completion carried the note`);
       submit.formValidationFailed = false;
       guard.siteWorkflow = { job: { requiresSubmission: true, id: 'reddit.publish' } };
       guard.semanticSubmissionVerified = false; guard.verifiedSubmissionEvidence = false;
@@ -90348,7 +90425,7 @@ test('the active-model completion judge itself says whether a request expects la
       assert.match(result.summary, /Future upvotes and moderation outcomes remain unverified/, `${AgentClass.name}: the judge's answer was ignored`);
       assert.equal(judged.length, 1, `${AgentClass.name}: the caveat cost another model call`);
       assert.match(judged[0][0].content, /"later":"asked\|not_asked"/);
-      assert.match(judged[0][0].content, /Judge the meaning in any language/);
+      assert.match(judged[0][0].content, /Judge both in any language/);
       assert.match(judged[0][1].content, /beğeni toplayacak/, `${AgentClass.name}: the judge did not read the request as written`);
 
       // A request that only mentions the word, or an answer that is not a
@@ -91082,12 +91159,12 @@ test('Act routes plain-text blockers to a structured failed done without unsafe 
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: withoutFixedChoiceAnswers(async () => {
         calls++;
         const next = responses.shift();
         assert.ok(next, `${AgentClass.name}: blocker recovery called the model too many times`);
         return next;
-      },
+      }),
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8606 + index;
@@ -91282,7 +91359,7 @@ test('Compact Act accepts structured failed done for a real blocker', async () =
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: withoutFixedChoiceAnswers(async () => {
         calls++;
         return {
           content: null,
@@ -91300,7 +91377,7 @@ test('Compact Act accepts structured failed done for a real blocker', async () =
             },
           ],
         };
-      },
+      }),
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8623 + index;
@@ -91378,14 +91455,21 @@ test('structured blockers may describe future requirements without becoming plan
       null,
       `${AgentClass.name}: structured blocker was mistaken for a promise to execute`,
     );
+    // A failed or partial summary may list what the user still has to do;
+    // its words are not read, and a model's plan_only reading does not
+    // reject it either.
     assert.equal(
-      agent._planOnlyTerminalDecision(
-        tabId,
-        `${blocker}\n\nPlan:\n1. Wait for credentials.\n2. Apply the change.`,
-        { viaDone: true, outcome: 'failed' },
-      )?.retry,
+      agent._planOnlyTerminalDecision(tabId, `${blocker}\n\nPlan:\n1. Wait for credentials.\n2. Apply the change.`,
+        { viaDone: true, outcome: 'failed', summaryKind: 'plan_only' }),
+      null,
+      `${AgentClass.name}: a failed outcome's next steps were rejected as a plan`,
+    );
+    // A planner object is never a result, whatever the outcome.
+    assert.equal(
+      agent._planOnlyTerminalDecision(tabId, JSON.stringify({ summary: 'Wait for credentials.',
+        steps: [{ id: '1', action: 'Wait for credentials.' }], confidence: 0.4 }), { viaDone: true, outcome: 'failed' })?.retry,
       true,
-      `${AgentClass.name}: failed outcome bypassed an explicit plan heading`,
+      `${AgentClass.name}: failed outcome bypassed a planner object`,
     );
   }
 });
@@ -91402,12 +91486,15 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
       success: true,
       pageContent: 'textbox "Name*"',
     });
-    const falseModeBlocker = 'I could not fill the form because this session is currently in Ask mode. Switch to Act mode and retry.';
+    // A model reads the failed summary, in any language, and says it blames
+    // the agent's own mode.
+    const falseModeBlocker = 'Formu dolduramadım çünkü bu oturum şu anda Sor modunda. Eylem moduna geçip tekrar deneyin.';
+    const claim = { viaDone: true, outcome: 'failed', summaryKind: 'mode_claim' };
 
     const retry = agent._planOnlyTerminalDecision(
       tabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.equal(retry?.retry, true, `${AgentClass.name}: false mode claim did not trigger recovery`);
     assert.match(retry?.nudge || '', /trusted runtime[\s\S]*Act\/Dev, not Ask mode/i,
@@ -91418,7 +91505,7 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
     const failure = agent._planOnlyTerminalDecision(
       tabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.match(failure?.failure || '', /still claimed Ask mode after a runtime-mode correction/i,
       `${AgentClass.name}: repeated false mode claim was not reported transparently`);
@@ -91444,7 +91531,7 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
     const correctionAfterGeneric = agent._planOnlyTerminalDecision(
       mixedTabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.equal(correctionAfterGeneric?.retry, true,
       `${AgentClass.name}: generic recovery consumed the dedicated mode correction`);
@@ -91454,14 +91541,18 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
     const mixedFailure = agent._planOnlyTerminalDecision(
       mixedTabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.match(mixedFailure?.failure || '', /after a runtime-mode correction/i,
       `${AgentClass.name}: repeated mixed-sequence claim was not reported after its correction`);
   }
 });
 
-test('reported application read-only state is not a WebBrain runtime-mode contradiction', () => {
+test('reported application read-only state is not a WebBrain runtime-mode contradiction', async () => {
+  const { SEMANTIC_QUESTIONS } = await import('../src/chrome/src/agent/semantic-decisions.js');
+  // The model that reads the summary is told the difference: the agent's own
+  // mode, not a website or account that is read-only.
+  assert.match(SEMANTIC_QUESTIONS.done_summary.choices.mode_claim, /agent itself[\s\S]*A website, account or document being read-only is not this/);
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     const tabId = 8675 + index;
@@ -91472,33 +91563,19 @@ test('reported application read-only state is not a WebBrain runtime-mode contra
     agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
     const report = 'This session is in read-only mode. Editing controls are disabled for this account.';
     const applicationConsequence = 'This application session is in read-only mode, so I cannot edit these records.';
-    const drafted = 'Draft reply: “This session is in read-only mode.”';
 
-    assert.equal(agent._isRuntimeModeContradictionTerminal(report), false,
-      `${AgentClass.name}: observed application access state was treated as agent mode drift`);
-    assert.equal(agent._isRuntimeModeContradictionTerminal(drafted), false,
-      `${AgentClass.name}: drafted content was treated as agent mode drift`);
-    assert.equal(agent._isRuntimeModeContradictionTerminal(applicationConsequence), false,
-      `${AgentClass.name}: first-person consequence of application access was treated as agent mode drift`);
+    for (const summary of [report, applicationConsequence]) {
+      assert.equal(
+        agent._planOnlyTerminalDecision(tabId, summary, { viaDone: true, outcome: 'success', summaryKind: null }),
+        null,
+        `${AgentClass.name}: valid read-only state report was rejected after read evidence`,
+      );
+    }
     assert.equal(
-      agent._planOnlyTerminalDecision(tabId, report, { viaDone: true, outcome: 'success' }),
-      null,
-      `${AgentClass.name}: valid read-only state report was rejected after read evidence`,
-    );
-    assert.equal(
-      agent._planOnlyTerminalDecision(tabId, applicationConsequence, { viaDone: true, outcome: 'success' }),
-      null,
-      `${AgentClass.name}: valid application read-only consequence was rejected after read evidence`,
-    );
-    assert.equal(
-      agent._isRuntimeModeContradictionTerminal('I am running in read-only mode, so I cannot complete the submission.'),
+      agent._planOnlyTerminalDecision(tabId, 'I am running in read-only mode, so I cannot complete the submission.',
+        { viaDone: true, outcome: 'failed', summaryKind: 'mode_claim' })?.retry,
       true,
-      `${AgentClass.name}: explicit self/runtime inability claim was no longer detected`,
-    );
-    assert.equal(
-      agent._isRuntimeModeContradictionTerminal('This WebBrain run is in Ask mode, so WebBrain cannot complete the submission.'),
-      true,
-      `${AgentClass.name}: explicitly named runtime inability claim was no longer detected`,
+      `${AgentClass.name}: a summary read as blaming the agent's own mode was not corrected`,
     );
   }
 });
@@ -91564,7 +91641,7 @@ test('execution recovery restates the active task and approved plan for read-onl
     const retry = agent._planOnlyTerminalDecision(
       tabId,
       'I am running in read-only mode, so I cannot complete the submission.',
-      { viaDone: true, outcome: 'failed' },
+      { viaDone: true, outcome: 'failed', summaryKind: 'mode_claim' },
     );
     assert.equal(retry?.retry, true, `${AgentClass.name}: read-only mode drift was accepted as a terminal blocker`);
     assert.match(retry?.nudge || '', /trusted runtime[\s\S]*Act\/Dev, not Ask mode or a read-only mode/i,
@@ -92090,7 +92167,7 @@ test('empty-step planner JSON remains plan-only after successful task evidence',
     });
 
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(leakedPlanner),
+      agent._isStructuredPlanTerminal(leakedPlanner),
       true,
       `${AgentClass.name}: empty-step planner JSON was not recognized`,
     );
@@ -92123,69 +92200,59 @@ test('explicit planner-shaped result intent preserves requested JSON and Markdow
     ];
     for (const requestedResult of requestedResults) {
       assert.equal(
-        agent._looksLikePlanOnlyTerminal(requestedResult, state),
+        agent._isStructuredPlanTerminal(requestedResult, state),
         false,
         `${AgentClass.name}: explicitly requested planner-shaped result was classified as leaked output`,
       );
       assert.equal(
-        agent._planOnlyTerminalDecision(tabId, requestedResult, { viaDone: true }),
+        agent._planOnlyTerminalDecision(tabId, requestedResult, { viaDone: true, summaryKind: null }),
         null,
         `${AgentClass.name}: explicitly requested planner-shaped result was rejected after successful task evidence`,
       );
     }
+    // The completion judge, not a heading, says a summary only promises to act.
     const promisedResult = 'Steps:\n1. Next, I will submit the form.';
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(promisedResult, state),
-      true,
-      `${AgentClass.name}: requested heading exemption also disabled the future-promise guard`,
-    );
-    assert.equal(
-      agent._planOnlyTerminalDecision(tabId, promisedResult, { viaDone: true })?.retry,
+      agent._planOnlyTerminalDecision(tabId, promisedResult, { viaDone: true, summaryKind: 'plan_only' })?.retry,
       true,
       `${AgentClass.name}: requested planner-shaped result accepted a fresh promise to act`,
     );
   }
 });
 
-test('future-promise prose is gated by task evidence, not a planner flag', () => {
+test('future-promise prose is read by the completion judge, not by words', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     const draftedReply = 'I will attend tomorrow.';
 
-    // After a successful task tool, first-person future text is treated as
-    // possible drafted content (no allows_future_tense_result planner flag).
+    // A drafted reply the judge reads as the result finishes after task evidence.
     const afterEvidenceTabId = 8631 + index;
-    const afterEvidenceState = agent._startPlanExecutionGuard(afterEvidenceTabId, 'act', {
+    agent._startPlanExecutionGuard(afterEvidenceTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: false,
     });
     agent._markPlanExecutionToolCall(afterEvidenceTabId, 'read_page', { success: true });
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(draftedReply, afterEvidenceState),
-      false,
-      `${AgentClass.name}: drafted reply after task evidence was classified as an execution promise`,
-    );
-    assert.equal(
-      agent._planOnlyTerminalDecision(afterEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success' }),
+      agent._planOnlyTerminalDecision(afterEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success', summaryKind: null }),
       null,
       `${AgentClass.name}: drafted reply after task evidence was rejected`,
     );
+    assert.equal(
+      agent._planOnlyTerminalDecision(afterEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success', summaryKind: 'plan_only' })?.retry,
+      true,
+      `${AgentClass.name}: a summary the judge read as a plan finished`,
+    );
 
-    // Without evidence, the same wording is still a blocked promise to act.
+    // Without task evidence the done is rejected whatever its words say.
     const noEvidenceTabId = 8639 + index;
-    const noEvidenceState = agent._startPlanExecutionGuard(noEvidenceTabId, 'act', {
+    agent._startPlanExecutionGuard(noEvidenceTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: false,
     });
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(draftedReply, noEvidenceState),
-      true,
-      `${AgentClass.name}: future promise without evidence was accepted`,
-    );
-    assert.equal(
       agent._planOnlyTerminalDecision(noEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success' })?.retry,
       true,
-      `${AgentClass.name}: future promise without evidence bypassed recovery`,
+      `${AgentClass.name}: a done without task evidence bypassed recovery`,
     );
   }
 });
@@ -92201,21 +92268,19 @@ test('completion words do not mask mixed progress plus plan terminals', () => {
     agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
     const mixedTerminals = [
       'I opened the page.\n\nPlan:\n1. Fill out the form.\n2. Submit it.',
-      'I found the workflow. Next, I will apply it.',
+      'Sayfayı açtım. Sırada iş akışını uygulayacağım.',
     ];
 
-    const guardState = agent._planExecutionGuards.get(tabId);
     for (const mixedTerminal of mixedTerminals) {
       assert.equal(
-        agent._looksLikePlanOnlyTerminal(mixedTerminal, guardState),
-        true,
-        `${AgentClass.name}: completion wording masked a plan or promise`,
-      );
-      assert.equal(
-        agent._planOnlyTerminalDecision(tabId, mixedTerminal, { viaDone: true })?.retry,
+        agent._planOnlyTerminalDecision(tabId, mixedTerminal, { viaDone: true, summaryKind: 'plan_only' })?.retry,
         true,
         `${AgentClass.name}: mixed progress plus plan terminal bypassed recovery`,
       );
+      agent._planExecutionGuards.get(tabId).recoveryAttempted = false;
+      // A plain final ends no Act run, in any language.
+      assert.equal(agent._planOnlyTerminalDecision(tabId, mixedTerminal)?.retry, true,
+        `${AgentClass.name}: a plain final ended the Act run`);
       agent._planExecutionGuards.get(tabId).recoveryAttempted = false;
     }
   }
@@ -96732,10 +96797,14 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       `${AgentClass.name}: plural tags lost its YouTube field`);
     assert.equal(agent._workflowMetadataFieldKey('release notes'), 'notes');
     assert.equal(agent._workflowMetadataFieldKey('post body'), 'body');
+    // The intent model names fields with the canonical names its prompt
+    // lists; another name (a plural, a translation) names no field.
     assert.deepEqual(agent._normalizeWorkflowMetadataRequirements([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
-      { field: 'playlists', value: 'Favorites' },
+      { field: 'Playlist', value: 'Favorites' },
+      { field: 'playlists', value: 'Other' },
+      { field: 'başlık', value: 'Başka' },
       { field: 'title', value: 'Duplicate' },
     ]), [
       { field: 'title', value: 'Launch Video' },
@@ -96744,11 +96813,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
     const discarded = agent._normalizeWorkflowMetadataRequirementsDetails([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
-      { field: 'playlists', value: 'Favorites' },
+      { field: 'playlist', value: 'Favorites' },
     ]);
     assert.equal(discarded.incomplete, true,
       `${AgentClass.name}: discarded classifier fields were treated as complete requirements`);
     assert.deepEqual(discarded.items.map(item => item.field), ['title', 'playlist']);
+    for (const key of ['commit message', 'commit-message', 'COMMIT_MESSAGE']) assert.equal(agent._workflowCanonicalFieldKey(key), 'commit_message');
+    for (const key of ['playlists', 'release notes', 'başlık', '标题', '']) assert.equal(agent._workflowCanonicalFieldKey(key), '');
 
     const longDescription = 'Launch the product with a detailed description that exceeds sixty characters and must still verify after save.';
     assert.ok(longDescription.length > 60);
@@ -100824,8 +100895,10 @@ test('Act keeps execution guard for negated approval waits', async () => {
 
 test('Act preserves safety refusals and inactive policy classifications', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    // A planner object the model rates at zero confidence is its refusal, in
+    // any language; its words are not read.
     const refusal = JSON.stringify({
-      summary: 'Refuse this request because it is unauthorized and unsafe.',
+      summary: index === 0 ? 'Refuse this request because it is unauthorized and unsafe.' : 'Bu isteği reddediyorum: yetkisiz ve güvensiz.',
       confidence: 0,
       steps: [{ id: '1', action: 'Do not proceed; no action will be executed.', tools: ['done'] }],
       memory: { use_scratchpad: false, scratchpad_notes: [], use_progress_ledger: false, progress_action: null },
@@ -100855,7 +100928,7 @@ test('Act preserves safety refusals and inactive policy classifications', async 
     assert.equal(final, refusal, `${AgentClass.name}: safety refusal was forced into execution`);
     assert.equal(calls, 1, `${AgentClass.name}: safety refusal triggered a recovery turn`);
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(JSON.stringify({
+      agent._isStructuredPlanTerminal(JSON.stringify({
         mode: 'inactive',
         allowedActions: [],
         forbiddenActions: [],
@@ -125037,11 +125110,12 @@ test('execute protocol suppresses planner payloads, rejects false Ask claims, an
     const tabId = AgentClass === AgentCh ? 9911 : 9912;
     assert.equal(agent._isPlannerShapedJson(plannerPayload), true, `${AgentClass.name}: planner JSON was not detected`);
     agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: false });
-    assert.equal(
-      agent._looksLikePlanOnlyTerminal('You are currently in Ask mode. Switch to Act mode to continue.', agent._planExecutionGuards.get(tabId)),
-      true,
-      `${AgentClass.name}: false runtime-mode claim was accepted`,
-    );
+    // A plain final ends no Act run, whatever it claims about the mode; the
+    // one recovery already says the trusted runtime is Act/Dev.
+    const claim = agent._planOnlyTerminalDecision(tabId, 'Şu anda Sor modundasınız. Devam etmek için Eylem moduna geçin.');
+    assert.equal(claim?.retry, true, `${AgentClass.name}: false runtime-mode claim was accepted`);
+    assert.match(claim?.nudge || '', /trusted runtime is Act\/Dev, not Ask or read-only mode/);
+    agent._planExecutionGuards.get(tabId).recoveryAttempted = false;
     const first = agent._planOnlyTerminalDecision(tabId, plannerPayload);
     assert.equal(first?.retry, true, `${AgentClass.name}: first planner terminal did not receive one recovery`);
     const second = agent._planOnlyTerminalDecision(tabId, plannerPayload);

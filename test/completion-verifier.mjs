@@ -44,9 +44,14 @@ for (const build of ['chrome', 'firefox']) {
     const compass = config.resolveDecisionConfig({ decisionProvider: 'local', systemOneDoneEnabled: false }, { baseUrl: 'https://api.webbrain.one/v1' });
     assert.equal(compass.provider, 'compass'); assert.equal(compass.enabled, true); assert.equal(compass.doneEnabled, true);
   });
-  function response(outcome = 'succeeded') {
+  // The judge answers every question it is asked: the outcome, and the two
+  // side questions about later outcomes and the candidate summary.
+  const side = (choices, choice) => ({ type: 'choice', choice, confidence: .95,
+    probabilities: Object.fromEntries(choices.map(x => [x, x === choice ? 1 - .05 * (choices.length - 1) : .05])) });
+  function response(outcome = 'succeeded', { later = 'not_asked', summary = 'result' } = {}) {
     return { model: config.DEFAULT_DECISION_MODEL + '-20261001', provider: 'Perplexity', usage: { input_tokens: 40, output_tokens: 1, cost: .00002 },
-      answers: { task_outcome: { type: 'choice', choice: outcome, confidence: .99, probabilities: Object.fromEntries(verifier.COMPLETION_OUTCOMES.map(x => [x, x === outcome ? .97 : .01])) } } };
+      answers: { task_outcome: { type: 'choice', choice: outcome, confidence: .99, probabilities: Object.fromEntries(verifier.COMPLETION_OUTCOMES.map(x => [x, x === outcome ? .97 : .01])) },
+        later_outcome: side(['asked', 'not_asked'], later), summary_kind: side(['result', 'meta_only', 'plan_only'], summary) } };
   }
   test(`${build}: OpenRouter wire, resolved versions and actual costs`, async () => {
     let request, usage;
@@ -56,6 +61,22 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(JSON.parse(request.body).model, config.DEFAULT_DECISION_MODEL);
     assert.equal(usage.estimatedCostUsd, .00002); assert.equal(result.usage.cost, .00002);
     assert.equal(verifier.decisionCompletionVerdict(result).outcome, 'succeeded');
+    assert.deepEqual(Object.keys(JSON.parse(request.body).questions), ['task_outcome', 'later_outcome', 'summary_kind'],
+      'the side questions travel in the same request as the verdict');
+    assert.match(JSON.parse(request.body).questions.summary_kind.instructions, /any language/);
+  });
+  test(`${build}: the decision judge's sure side answers add a note or flag a summary; unsure ones do nothing`, () => {
+    const verdict = verifier.decisionCompletionVerdict(response('succeeded', { later: 'asked', summary: 'meta_only' }));
+    assert.equal(verdict.laterOutcome, 'asked'); assert.equal(verdict.summaryKind, 'meta_only');
+    assert.equal(verifier.decisionCompletionVerdict(response('succeeded', { summary: 'plan_only' })).summaryKind, 'plan_only');
+    const plain = verifier.decisionCompletionVerdict(response());
+    assert.equal(plain.laterOutcome, undefined); assert.equal(plain.summaryKind, undefined);
+    const unsure = response('succeeded', { later: 'asked', summary: 'meta_only' });
+    unsure.answers.later_outcome.confidence = .5; unsure.answers.summary_kind.probabilities = { result: .35, meta_only: .4, plan_only: .25 };
+    const verdict2 = verifier.decisionCompletionVerdict(unsure);
+    assert.equal(verdict2.laterOutcome, undefined); assert.equal(verdict2.summaryKind, undefined);
+    // A side answer never changes the outcome itself.
+    assert.equal(verifier.decisionCompletionVerdict(response('pending', { summary: 'result' })).outcome, 'pending');
   });
   test(`${build}: local key is optional and malformed distributions cannot succeed`, async () => {
     let headers;
@@ -117,7 +138,11 @@ for (const build of ['chrome', 'firefox']) {
       const verdict = verifier.llmCompletionVerdict(JSON.stringify({ outcome: 'succeeded', reason: 'posted', later }));
       assert.equal(verdict.outcome, 'succeeded'); assert.equal(verdict.laterOutcome, undefined, JSON.stringify(later));
     }
-    assert.match(verifier.LATER_OUTCOME_FIELD, /any language/);
+    assert.match(verifier.SUMMARY_KIND_FIELD, /any language/);
+    for (const [summary, kind] of [['meta_only', 'meta_only'], ['plan_only', 'plan_only'], ['result', undefined], ['META_ONLY', undefined], [7, undefined]]) {
+      const verdict = verifier.llmCompletionVerdict(JSON.stringify({ outcome: 'succeeded', reason: 'posted', summary }));
+      assert.equal(verdict.outcome, 'succeeded'); assert.equal(verdict.summaryKind, kind, JSON.stringify(summary));
+    }
   });
   test(`${build}: discovery includes every decision publisher and per-model vision/rates`, async () => {
     const data = [ { id: 'other/decision', architecture: { output_modalities: ['decisions'], input_modalities: ['text', 'image'] }, pricing: { prompt: '.0000002' } }, { id: 'chat-only', architecture: { output_modalities: ['text'] } } ];
@@ -195,6 +220,7 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(options.tools, undefined); assert.equal(options.maxTokens, 4096);
         assert.match(messages[0].content, /Do not call tools/);
         assert.ok(messages[0].content.includes(verifier.LATER_OUTCOME_FIELD), 'the judge is asked about later outcomes in the same request');
+        assert.ok(messages[0].content.includes(verifier.SUMMARY_KIND_FIELD), 'the judge reads the candidate summary in the same request');
         return { content: JSON.stringify({ outcome: llmCalls === 1 ? 'uncertain' : 'succeeded', reason: 'Published resource is visible.', later: 'asked' }) };
       };
       verdict = await runtime.verifyBrowserCompletion(agent, 1);

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { withFixtureCalculationReadings } from './calculation-fixture-readings.mjs';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
@@ -22,8 +23,8 @@ function makeAgent(Agent, next) {
   const provider = {
     name: 'feedback progress test', model: 'test', promptTier: 'full', contextWindow: 128000,
     supportsTools: true, supportsVision: false,
-    chat: messages => messages[0]?.content?.startsWith('You classify whether one proposed terminal WebBrain Ask answer')
-      ? Promise.resolve({ content: '{"pageIndependent":false}' }) : next(messages),
+    chat: withFixtureCalculationReadings(messages => messages[0]?.content?.startsWith('You classify whether one proposed terminal WebBrain Ask answer')
+      ? Promise.resolve({ content: '{"pageIndependent":false}' }) : next(messages)),
     async *chatStream(messages) {
       const response = await next(messages);
       if (response.content) yield { type: 'text', content: response.content };
@@ -100,6 +101,7 @@ for (const build of ['chrome', 'firefox']) {
     const fields = agent._plannerCompletionGateFields(plan);
     const guard = agent._startPlanExecutionGuard(tab, 'act', { ...fields, requestKind: 'execute',
       requiresStateChange: false, requiresSubmission: false });
+    await agent._prepareCalculationReading(tab);
     agent._beginCompletionInvariant(tab);
     const args = { expression };
     assert.equal(agent._pageFeedbackCalculationComplete(tab), false, 'A plan is not a calculation receipt.');
@@ -109,10 +111,12 @@ for (const build of ['chrome', 'firefox']) {
     agent._markPlanExecutionToolCall(tab, 'calculate', result);
     agent._recordCompletionToolResult(tab, 'calculate', args, result);
     assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
-    for (const [key, value] of [['readScope', 'visible'], ['deliverables', []],
-      ['deliverables', ['Exact arithmetic result and read the page']]]) {
+    // The planner's own page reads veto the scope; its deliverable words are
+    // not read at all.
+    for (const [key, value, complete] of [['readScope', 'visible', false], ['deliverables', [], true],
+      ['deliverables', ['Exact arithmetic result and read the page'], true]]) {
       const previous = guard[key]; guard[key] = value;
-      assert.equal(agent._pageFeedbackCalculationComplete(tab), false, key);
+      assert.equal(agent._pageFeedbackCalculationComplete(tab), complete, key);
       guard[key] = previous;
       assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
     }
@@ -130,13 +134,14 @@ for (const build of ['chrome', 'firefox']) {
       agent.conversationModes.set(mixedTab, 'act');
       agent._startPlanExecutionGuard(mixedTab, 'act', { ...fields, requestKind: 'execute',
         requiresStateChange: false, requiresSubmission: false });
+      await agent._prepareCalculationReading(mixedTab);
       agent._beginCompletionInvariant(mixedTab);
       agent._markPlanExecutionToolCall(mixedTab, 'calculate', result);
       agent._recordCompletionToolResult(mixedTab, 'calculate', args, result);
       assert.equal(agent._pageFeedbackCalculationComplete(mixedTab), false,
-        'Arithmetic-only planner metadata cannot override mixed genuine user instructions.');
+        'Arithmetic-only planner metadata cannot override a request read as mixed work.');
     }
-    assert.equal(providerCalls, 0, 'The classification and actual deterministic tool require no extra model request.');
+    assert.equal(providerCalls, 0, 'Only the request readings and the actual deterministic tool ran; no other model request.');
   });
 
   test(`${build}: calculate terminal retention binds the actual result to task/run/provider and excludes unfinished page work`, async () => {
@@ -146,6 +151,7 @@ for (const build of ['chrome', 'firefox']) {
     agent.conversations.set(tab, [{ role: 'system', content: 'Owned fixture system.' }, task]);
     agent.conversationModes.set(tab, 'act');
     const guard = agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false, requiresSubmission: false });
+    await agent._prepareCalculationReading(tab);
     agent._beginCompletionInvariant(tab);
     const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
     agent._markPlanExecutionToolCall(tab, 'calculate', result);
@@ -649,7 +655,7 @@ for (const build of ['chrome', 'firefox']) {
   function setup(Agent, next) {
     const provider = {
       name: 'missing media regression', model: 'test', promptTier: 'full', contextWindow: 128000,
-      supportsTools: true, supportsVision: false, chat: next,
+      supportsTools: true, supportsVision: false, chat: withFixtureCalculationReadings(next),
       async *chatStream(messages) {
         const response = await next(messages);
         if (response.content) yield { type: 'text', content: response.content };
