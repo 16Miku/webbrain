@@ -266,6 +266,13 @@ try {
     return route.abort('blockedbyclient');
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
+  // The worker can be reported before its extension APIs have finished
+  // loading; wait for them before wrapping them.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const ready = await worker.evaluate(() => !!(globalThis.chrome?.tabs && globalThis.chrome?.runtime?.id)).catch(() => false);
+    if (ready) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     globalThis.ownedMonitorCalls = [];
     const sendMessage = chrome.tabs.sendMessage.bind(chrome.tabs);

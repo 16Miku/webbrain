@@ -307,6 +307,12 @@ const server = http.createServer(async (request, response) => {
     else if (system.startsWith("Compile the user's social-publication intent")) {
       current.compilers++;
       completion = { role: 'assistant', content: JSON.stringify(publicationContract(input)) };
+    } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")
+        && /^- "mode_claim":/m.test(system)) {
+      // A failed or partial result is read once before it is shown; here it
+      // reports the outcome.
+      current.summaryReadings = (current.summaryReadings || 0) + 1;
+      completion = { role: 'assistant', content: JSON.stringify({ choice: 'result', evidence: '' }) };
     } else if (system.startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
       // The model's reading of the latest request, in any language: whether it
       // asks to delete this exact item, or the earlier post first.

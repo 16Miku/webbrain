@@ -2247,7 +2247,7 @@ export class ProviderManager {
     }
     const isLocalWebgpu = provider.name === 'webgpu-vision';
     const probePrompt = isLocalWebgpu
-      ? 'The image contains three solid vertical color panels. Name their colors from left to right. Reply with only the three color names.'
+      ? 'The image contains three solid vertical color panels. Name their colors from left to right. Reply with only the three color names, in English.'
       : 'Read the three-character black code centered in the attached image. Reply with only that code.';
     const messages = [{
       role: 'user',

@@ -784,12 +784,21 @@ task leaves out ("everyone except alice") come from the intent model's
 current task only when its classified intent allows the action they record.
 Typed messages are sent as typed; `/screenshot` is the explicit local capture.
 
-Whether a request also expects something no run can verify, such as votes or
-moderators keeping a post up, is read by whoever verified the completion: the
-active model's completion judge answers it in the same request as its verdict,
-and after a decision-model verdict the decision model is asked. Nothing else is
-called for it, and only a clear answer adds the note that publication was
-verified while later votes and moderation remain unverified.
+The completion judge (the decision model or the active model) answers two
+more fixed-choice questions in the same request as its verdict: whether the
+request also expects something no run can verify, such as votes or moderators
+keeping a post up, and whether the candidate summary gives the result, only
+says that an answer was given, or only describes what will be done next. A sure
+"expects later" answer adds the note that publication was verified while later
+votes and moderation remain unverified; a summary read as a claim or a plan is
+sent back once for the actual result. Where no judge runs, a model reads the
+summary with the `done_summary` question: a short Ask answer with no structure
+of its own (a colon, line breaks or a list mean it carries content), and an Act
+run's failed or partial summary, which may also blame the agent's own Ask or
+read-only mode and then gets the runtime-mode correction. A planner-shaped
+object is recognized by its shape, and one the model rates at zero confidence
+is its refusal; a plain final message in an Act run gets one recovery whatever
+it says. No word list reads a summary or a final message.
 
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is

@@ -43,7 +43,7 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
   await fs.mkdir(out, { recursive: true });
   let actionCalls = 0, judgeCalls = 0, blockedRemote = 0;
   const completionRecovery = { reads: 0 };
-  const deletes = [], providerRequests = [], authorizations = [], decisions = [];
+  const deletes = [], providerRequests = [], authorizations = [], decisions = [], summaryReadings = [];
   const textOf = content => typeof content === 'string' ? content : Array.isArray(content)
     ? content.filter(part => part?.type === 'text').map(part => part.text || '').join('\n') : '';
   const refFor = (input, name) => {
@@ -80,8 +80,12 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       const untrusted = textOf(input.messages.at(-1).content);
       const { page } = JSON.parse(untrusted.slice(untrusted.indexOf('{'), untrusted.lastIndexOf('}') + 1));
       const choices = [...system.matchAll(/^- "([a-z_]+)":/gm)].map(match => match[1]);
-      decisions.push({ choices, request, page });
-      const answer = !choices.includes('delete_this') ? { choice: '', evidence: '' }
+      // A failed or partial Act result is read once before it is shown; it
+      // gives the outcome here.
+      if (choices.includes('mode_claim')) summaryReadings.push({ request, summary: page.summary });
+      else decisions.push({ choices, request, page });
+      const answer = choices.includes('mode_claim') ? { choice: 'result', evidence: '' }
+        : !choices.includes('delete_this') ? { choice: '', evidence: '' }
         : cardAnswer ? { choice: 'unclear', evidence: '' }
         : page.item === rows[0] ? { choice: 'delete_this', evidence } : { choice: 'other_item', evidence: '' };
       completion = { role: 'assistant', content: JSON.stringify(answer) };
@@ -198,7 +202,7 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
     const toolResults = result.updates.filter(event => event.type === 'tool_result').map(event => ({ name: event.data?.name,
       blocked: event.data?.result?.blocked === true, reason: event.data?.result?.actionGuard?.reason || null, error: event.data?.result?.error || null }));
     await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify({ result, diagnostic, deletes, judgeCalls, authorizations,
-      decisions, toolResults, prompts, cards, unexpected, blockedRemote }, (_key, value) => typeof value === 'string' && value.startsWith('data:image/') ? '[owned fixture screenshot omitted]' : value, 2));
+      decisions, summaryReadings, toolResults, prompts, cards, unexpected, blockedRemote }, (_key, value) => typeof value === 'string' && value.startsWith('data:image/') ? '[owned fixture screenshot omitted]' : value, 2));
     assert.deepEqual(unexpected, [], 'No other question was asked');
     assert.equal(authorizations.length, 0, 'A deletion is decided by the deletion question, not the publication check');
     // The request reaches the model as written, with the row and the row beside it.
@@ -220,6 +224,8 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
       assert.equal(await page.locator('#cart li').count(), 2);
       const partial = result.updates.findLast(event => event.type === 'tool_result' && event.data?.name === 'done')?.data?.result;
       assert.notEqual(partial?.outcome, 'success', JSON.stringify(partial));
+      assert.deepEqual(summaryReadings, [{ request: task, summary: `The user chose not to remove the ${target}; nothing was removed.` }],
+        'The partial result was read once, as written');
       console.log(JSON.stringify({ passed: true, installedMV3: true, variant, cards: cards.length, deletes: deletes.length, blockedRemote }));
       return;
     }
@@ -229,6 +235,7 @@ async function runVariant(variant, confirmation, { task, evidence, target, kept,
     assert.ok(diagnostic.receipts.every(receipt => receipt.mutationKind === 'delete' && receipt.resourceUrl === null
       && /^[0-9a-f]{64}$/.test(receipt.footprint) && receipt.text === null));
     assert.equal(new Set(diagnostic.receipts.map(receipt => receipt.footprint)).size, 1, 'The confirmation belongs to the same record');
+    assert.deepEqual(summaryReadings, [], 'A judged completion is not read again');
     if (!cardAnswer) {
       assert.equal(decisions.length, confirmation ? 2 : 1);
       if (confirmation) {

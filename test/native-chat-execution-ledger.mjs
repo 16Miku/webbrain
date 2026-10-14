@@ -121,6 +121,9 @@ for (const build of ['chrome', 'firefox']) {
     for (const options of [
       { expected: { count: 20, item_type: 'row', required_fields: ['receipt'] } },
       { expected: { count: 20, item_type: 'row', required_fields: [] } },
+      // The planner's canonical item type is "reply"; prose is not read.
+      { expected: { item_type: 'chat replies' } },
+      { expected: { item_type: 'sohbet yanıtları' } },
       { expected: { ordered: false } },
       { targets: [{ identity: 'owned-row', label: 'Owned row' }] },
       { recipients: [{ identity: 'telegram:k:123456:0', role: 'to' }, { identity: 'telegram:k:654321:0', role: 'to' }] },
