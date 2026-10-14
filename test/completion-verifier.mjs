@@ -269,6 +269,41 @@ for (const build of ['chrome', 'firefox']) {
       assert.deepEqual(state[0].recorded_reads, []); assert.deepEqual(state[0].recorded_actions, []);
     } finally { globalThis.chrome = previousChrome; globalThis.browser = previousBrowser; }
   });
+  test(`${build}: completion evidence keeps an earlier page of the run beside repeated reads of the result page, in any language`, async () => {
+    const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+    globalThis.chrome = globalThis.browser = { storage: { local: { get: async () => ({ decisionProvider: 'local', systemOneEnabled: true }) } } };
+    const provider = { model: 'local', supportsVision: false, config: { category: 'local' } };
+    const read = (id, url, text) => [
+      { role: 'assistant', tool_calls: [{ id, function: { name: 'read_page' } }] },
+      { role: 'tool', tool_call_id: id, content: JSON.stringify({ success: true, url, pageContent: text }) },
+    ];
+    // The task's rules page, in Turkish, is read first; the published post is
+    // then read four times. No word on either page is read to choose them.
+    const messages = [
+      ...read('rules', 'https://forum.example/r/turkce/kurallar', 'TOPLULUK KURALLARI: bağlantı paylaşmayın'),
+      ...read('post-1', 'https://forum.example/r/turkce/post/1', 'POST READ ONE'),
+      ...read('post-2', 'https://forum.example/r/turkce/post/1#yorumlar', 'POST READ TWO'),
+      ...read('post-3', 'https://forum.example/r/turkce/post/1', 'POST READ THREE'),
+      ...read('post-4', 'https://forum.example/r/turkce/post/1', 'POST READ FOUR'),
+    ];
+    let state;
+    const run = { runToken: 'current', historyToolCallIdsBeforeRun: new Set() };
+    const agent = {
+      _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
+      _latestTaskText: () => 'Kurallara uyan bir gönderi yayımla', _originalTaskText: () => '', _progressTaskKeyHash: () => 'task',
+      _planExecutionGuards: new Map(), completionInvariants: new Map([[1, run]]), _currentCompletionSubmitState(tab) { return this._completionSubmitStates.get(tab) || null; }, _completionSubmitStates: new Map(),
+      conversationIds: new Map(), conversations: new Map([[1, messages]]), _completionDocumentStamp: async () => 'document',
+      executeTool: async () => ({ success: true, pageContent: 'Requested post published' }), recordSystemOneVerdict() {},
+      evaluateSystemOne: async (_tab, _client, args) => { state = args.state; const result = response('succeeded'); result.model = 'kev-latest'; return result; },
+    };
+    try {
+      assert.equal((await runtime.verifyBrowserCompletion(agent, 1)).outcome, 'succeeded');
+      const evidence = JSON.stringify(state);
+      assert.match(evidence, /TOPLULUK KURALLARI/, 'the rules page read earlier in the run was dropped');
+      assert.match(evidence, /POST READ FOUR/, 'the latest read of the result page is missing');
+      assert.doesNotMatch(evidence, /POST READ (?:ONE|TWO|THREE)/, 'older reads of the same page crowded the evidence');
+    } finally { globalThis.chrome = previousChrome; globalThis.browser = previousBrowser; }
+  });
   test(`${build}: stale image verdicts cannot succeed without fresh evidence`, async () => {
     const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
     const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');

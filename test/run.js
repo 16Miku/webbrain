@@ -2957,30 +2957,37 @@ test('research probe rejects a logged-out guest composer', () => {
       title: '',
       innerText: '',
     };
+    // ChatGPT's log-in control is found by its own test id, so its label can
+    // be in any language.
     const login = {
       getBoundingClientRect: () => ({ width: 80, height: 32 }),
-      getAttribute: () => '',
+      getAttribute: name => (name === 'data-testid' ? 'login-button' : ''),
       title: '',
-      innerText: 'Log in',
+      innerText: 'تسجيل الدخول',
     };
-    const result = vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
+    const run = controls => vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
       location: { href: 'https://chatgpt.com/' },
       document: {
         title: 'ChatGPT',
-        body: { innerText: 'Log in Sign up Ask anything' },
+        body: { innerText: 'تسجيل الدخول اشترك اسأل أي شيء' },
         querySelector(sel) {
           if (sel === '#prompt-textarea') return composer;
           return null;
         },
         querySelectorAll(sel) {
-          if (sel === 'button, a') return [login];
+          if (sel.includes('[data-testid="login-button"]')) return controls;
           return [];
         },
       },
       getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
     });
+    const result = run([login]);
     assert.equal(result.composerReady, false, `${label}: logged-out guest composer was treated as authorized`);
     assert.equal(result.loginRequired, true, `${label}: visible login controls were ignored`);
+    // Words on the page alone never make it logged out.
+    const signedIn = run([]);
+    assert.equal(signedIn.composerReady, true, `${label}: page words were read as a log-in wall`);
+    assert.equal(signedIn.loginRequired, false);
   }
 });
 
@@ -3016,9 +3023,9 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
       };
       const loginEl = {
         title: '',
-        innerText: 'Log in',
+        innerText: 'Giriş yap',
         getBoundingClientRect: () => ({ width: 80, height: 32 }),
-        getAttribute() { return ''; },
+        getAttribute(name) { return name === 'data-testid' ? 'login-button' : ''; },
       };
       const result = vm.runInNewContext(`(${source})(${JSON.stringify(prompt)}, ${submitOnly})`, {
         location: { href, protocol: parsed.protocol, hostname: parsed.hostname },
@@ -3028,7 +3035,7 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
             if (sel === '#prompt-textarea' || sel === '[data-testid="send-button"]') return visibleEl;
             return null;
           },
-          querySelectorAll(sel) { return loggedOut && sel === 'button, a' ? [loginEl] : []; },
+          querySelectorAll(sel) { return loggedOut && sel.includes('[data-testid="login-button"]') ? [loginEl] : []; },
         },
         getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
         HTMLTextAreaElement: function HTMLTextAreaElement() { },
@@ -9012,8 +9019,18 @@ test('Gmail result-count routes and toolbar ranges are parsed conservatively in 
     assert.equal(getPolicy(`${searchUrl}/FMfcgzExampleThread`), null, `${label}: Gmail thread route gained result counting`);
     assert.equal(getPolicy('https://example.test/#search/query'), null, `${label}: non-Gmail route gained result counting`);
     assert.deepEqual(parseRange('Showing most recent 1–50 of many Conversations'), {
-      text: '1–50 of many', start: 1, end: 50, total: null, approximate: true,
+      text: '1–50', start: 1, end: 50, total: null, approximate: true,
     }, `${label}: approximate Gmail toolbar range was not parsed`);
+    // The range is read by its numbers in any language: whatever separates
+    // the total, and words without a number for an unshown total.
+    for (const [text, total, approximate] of [['1–50 de 2.345', 2345, false], ['51–100 из 175', 175, false],
+      ['第 1-50 封，共 2,345 封', 2345, false], ['1–50 / 575', 575, false], ['1-50 sur 2 345', 2345, false],
+      ['1–50 von vielen', null, true], ['1–50 / çok sayıda', null, true], ['1–50', null, false]]) {
+      const parsed = parseRange(text);
+      assert.equal(parsed?.total, total, `${label}: ${text}`);
+      assert.equal(parsed?.approximate, approximate, `${label}: ${text}`);
+    }
+    assert.equal(parseRange('51-100 of 50'), null, `${label}: a total below the shown rows was accepted`);
     assert.deepEqual(parseRange('551-575 of 575'), {
       text: '551-575 of 575', start: 551, end: 575, total: 575, approximate: false,
     }, `${label}: exact Gmail toolbar range was not parsed`);
@@ -9301,6 +9318,18 @@ test('carousel slide count prefers an explicit total over the current index', ()
     assert.equal(parse(['Go to slide 1', 'Go to slide 2', 'Go to slide 16']), 16, `${label}: indexed dots did not yield the max`);
     assert.equal(parse([]), null);
     assert.equal(parse(null), null);
+    // The shape of the labels decides, in any language: a total after one
+    // word or a slash, or a series that differs only in its number.
+    assert.equal(parse(['Diapositiva 3 de 16']), 16, `${label}: Spanish total`);
+    assert.equal(parse(['Slayt 3 / 16', 'Beğen']), 16, `${label}: Turkish total`);
+    assert.equal(parse(['第3张，共16张']), 16, `${label}: Chinese total`);
+    assert.equal(parse(['Gehe zu Folie 1', 'Gehe zu Folie 2', 'Gehe zu Folie 16']), 16, `${label}: German series`);
+    // A time, a lone position, a position above its count and a series of
+    // one never set the total.
+    assert.equal(parse(['1:05', 'Oynat']), null, `${label}: a time was read as a position`);
+    assert.equal(parse(['Diapositiva 3']), null, `${label}: a lone position was read as the total`);
+    assert.equal(parse(['17 von 16']), null, `${label}: a position above its count was accepted`);
+    assert.equal(parse(['3 beğeni ve 25 yorum']), null, `${label}: two numbers joined by several words were read as a position`);
   }
 });
 
@@ -9483,7 +9512,14 @@ test('Instagram carousel navigation fails closed on duplicate media and a stripp
     let compatibleFingerprint = 'slide-1';
     compatible._currentUrl = async () => compatibleUrl;
     compatible._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: compatibleFingerprint });
-    compatible._getVisibleInteractiveElements = async () => [{ name: 'Next', role: 'button' }];
+    // The Next control is whichever label a model reads as "next", in any
+    // language; here a Turkish "Sonraki" beside other controls.
+    compatible._getVisibleInteractiveElements = async () => [{ name: 'Beğen', role: 'button' }, { name: 'Sonraki', role: 'button' }, { name: 'Önceki', role: 'button' }];
+    const readLabels = [];
+    compatible._semanticDecisions = async (_tab, kind, { items }) => {
+      readLabels.push(...items.map(item => [kind, item.label]));
+      return items.map(item => ({ choice: item.label === 'Sonraki' ? 'next' : item.label === 'Önceki' ? 'previous' : 'other', evidence: item.label, source: 'decision_model' }));
+    };
     compatible.executeTool = async (_tabId, name) => {
       if (name === 'wait_for_stable') return { success: true, stable: true };
       if (name === 'navigate') {
@@ -9495,6 +9531,7 @@ test('Instagram carousel navigation fails closed on duplicate media and a stripp
       return { success: true, dispatched: true, verified: true };
     };
     const compatibilityResult = await AgentClass.prototype.executeTool.call(compatible, tabId + 20, 'carousel_navigate', { index: 2 });
+    assert.deepEqual(readLabels, [['carousel_control', 'Beğen'], ['carousel_control', 'Sonraki'], ['carousel_control', 'Önceki']]);
     assert.equal(compatibilityResult.success, true, `${label}: one semantic Next compatibility fallback was rejected`);
     assert.equal(compatibilityResult.compatibilityFallback, true);
     assert.equal(compatibilityResult.queryContractHonored, false);
@@ -9502,6 +9539,26 @@ test('Instagram carousel navigation fails closed on duplicate media and a stripp
     const repeatedFallback = await AgentClass.prototype.executeTool.call(compatible, tabId + 20, 'carousel_navigate', { index: 3 });
     assert.equal(repeatedFallback.success, false, `${label}: compatibility fallback was reused`);
     assert.equal(repeatedFallback.adapterFailure, true);
+
+    // Two labels read as "next", or none, leave nothing to click.
+    for (const choices of [['next', 'next'], ['other', 'previous']]) {
+      const unclear = makeAgent();
+      let unclearUrl = 'https://www.instagram.com/p/UNCLEAR/';
+      unclear._currentUrl = async () => unclearUrl;
+      unclear._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: 'slide-1' });
+      unclear._getVisibleInteractiveElements = async () => [{ name: 'A', role: 'button' }, { name: 'B', role: 'button' }];
+      unclear._semanticDecisions = async (_tab, _kind, { items }) => items.map((_item, index) => ({ choice: choices[index], evidence: '', source: 'decision_model' }));
+      let clicked = false;
+      unclear.executeTool = async (_tabId, name) => {
+        if (name === 'wait_for_stable') return { success: true, stable: true };
+        if (name === 'click') clicked = true;
+        unclearUrl = 'https://www.instagram.com/p/UNCLEAR/';
+        return { success: true, dispatched: true, verified: true };
+      };
+      const result = await AgentClass.prototype.executeTool.call(unclear, tabId + 30, 'carousel_navigate', { index: 2 });
+      assert.equal(clicked, false, `${label}: ${choices.join('/')} clicked a control`);
+      assert.equal(result.success, false);
+    }
   }
 });
 
@@ -16613,6 +16670,22 @@ test('carousel oscillation is detected across mixed forward and backward tools',
       'stop',
       `${label}: second overlapping carousel cycle did not stop`,
     );
+
+    // Captions in any language: the slide each click reaches shows the
+    // back-and-forth, not the word on the button.
+    const t = new Detector();
+    assert.equal(t._checkLoop(tab + 2, 'carousel_navigate', { index: 7 }, resultAt(7)).kind, 'none');
+    assert.equal(t._checkLoop(tab + 2, 'click_ax', { expected_name: 'Sonraki', ref_id: 'ref_10' }, resultAt(8)).kind, 'none');
+    assert.equal(t._checkLoop(tab + 2, 'click', { text: '上一张' }, resultAt(7)).kind, 'none');
+    assert.equal(t._checkLoop(tab + 2, 'click', { text: '下一张' }, resultAt(8)).kind, 'nudge',
+      `${label}: a back-and-forth through captions in other languages was not detected`);
+    // A forward scan that also clicks other controls on each slide is no loop.
+    const scan = new Detector();
+    for (const step of [2, 3, 4, 5]) {
+      assert.equal(scan._checkLoop(tab + 4, 'carousel_navigate', { index: step }, resultAt(step)).kind, 'none');
+      assert.equal(scan._checkLoop(tab + 4, 'click_ax', { expected_name: 'Beğen', ref_id: `ref_like_${step}` }, resultAt(step)).kind, 'none',
+        `${label}: a forward scan with clicks on slide ${step} was taken for a loop`);
+    }
   }
 });
 

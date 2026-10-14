@@ -7267,7 +7267,8 @@ export class Agent extends LoopDetector {
               this.currentCostState.get(tabId) || null, { tabId, generationName: `semantic_${kind}` });
           }, runSignal, 15000);
           const accepted = acceptSemanticBatchAnswers(kind,
-            this._socialPublicationResponseObject(response, { maxTokens: 120 + 60 * indexes.length }), trusted, indexes.length);
+            this._socialPublicationResponseObject(response, { maxTokens: 120 + 60 * indexes.length }), trusted,
+            indexes.map(index => data[index]));
           indexes.forEach((index, position) => {
             if (accepted[position]) remember(index, { ...accepted[position], source: 'main_model' });
           });
@@ -10542,10 +10543,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await cdpClient.attach(tabId);
       const evaluated = await cdpClient.evaluate(tabId, `(() => {
         const visible = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 20 && r.height > 20 && s.display !== 'none' && s.visibility !== 'hidden'; };
-        const media = Array.from(document.querySelectorAll('article img, article video, [role="dialog"] img, [role="dialog"] video')).filter(visible).map(el => ({
-          src: el.currentSrc || el.src || el.poster || '', alt: el.alt || '', w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height)
-        })).sort((a,b) => b.w*b.h-a.w*a.h)[0] || null;
-        const labels = Array.from(document.querySelectorAll('[aria-label]')).map(el => el.getAttribute('aria-label') || '');
+        const largest = Array.from(document.querySelectorAll('article img, article video, [role="dialog"] img, [role="dialog"] video')).filter(visible)
+          .map(el => ({ el, w: Math.round(el.getBoundingClientRect().width), h: Math.round(el.getBoundingClientRect().height) }))
+          .sort((a,b) => b.w*b.h-a.w*a.h)[0] || null;
+        const media = largest ? { src: largest.el.currentSrc || largest.el.src || largest.el.poster || '', alt: largest.el.alt || '', w: largest.w, h: largest.h } : null;
+        // Position labels are read from the post that holds the media, not
+        // from the rest of the page.
+        const container = largest?.el.closest('article,[role="dialog"]') || document;
+        const labels = Array.from(container.querySelectorAll('[aria-label]')).map(el => el.getAttribute('aria-label') || '');
         return { media, labels };
       })()`);
       const state = evaluated?.result?.value || {};
@@ -38597,8 +38602,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && (!resolvedPolicy || resolvedPolicy.currentIndex !== target.requestedIndex)
         && previousState?.compatibilityFallbackUsed !== true
       ) {
+        // The carousel's Next control is found by a model reading the visible
+        // control labels in any language (arrows included); only one label
+        // read as "next" for sure is clicked.
         const visible = await this._getVisibleInteractiveElements(tabId);
-        const next = visible.find(item => /^(next|sonraki)$/i.test(String(item?.text || item?.name || item?.ariaLabel || '').trim()));
+        const labelOf = item => String(item?.text || item?.name || item?.ariaLabel || '').replace(/\s+/g, ' ').trim();
+        const labels = [...new Set(visible.map(labelOf).filter(label => label && label.length <= 60))];
+        const readings = labels.length
+          ? await this._semanticDecisions(tabId, 'carousel_control', { items: labels.map(label => ({ label })) }) : [];
+        const nextLabels = labels.filter((_label, index) => readings[index]?.choice === 'next');
+        const next = nextLabels.length === 1 ? visible.find(item => labelOf(item) === nextLabels[0]) : null;
         if (next) {
           compatibilityFallback = true;
           navigation = await this.executeTool(tabId, 'click', { text: String(next.text || next.name || next.ariaLabel), exact: true }, onUpdate, executionContext);

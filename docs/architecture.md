@@ -822,6 +822,20 @@ otherwise JSON null. Action names in progress rows and requested field names
 are the canonical names the models are given; another word for one is rejected
 (progress_update) or names no field (the requirement stays incomplete).
 
+Page text is read by structure first. A page's words decide nothing where
+the page's own structure answers: Gmail's result range is parsed by its
+numbers whatever separates them; a carousel's slide total comes from the shape
+of its labels (two numbers joined by one word or a slash, or a series of
+labels that differ only in their number) read inside the post that holds the
+media; carousel back-and-forth is detected from the slide indexes the steps
+reach; ChatGPT's log-in, stop and send controls are its own test ids and auth
+links; and a trimmed accessibility tree keeps first the buttons that share a
+form or composer with a visible text entry. The completion judge's evidence is
+the latest read of each of the four most recently read pages, told apart by
+the address each read reports. Where structure cannot answer, a model reads
+the specific label once (the `carousel_control` question finds a carousel's
+Next control among the visible labels; only one sure "next" is clicked).
+
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is
 returned as its exact first and last words, and the runtime copies the text

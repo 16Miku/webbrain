@@ -195,7 +195,24 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   const calls = currentExecutionToolCalls(agent, tabId);
   const toolNames = new Map(calls.map(call => [call.id, call.function?.name]));
   const reads = messages.filter(m => m.role === 'tool' && /^(read_page|get_accessibility_tree|verify_form|iframe_read)$/.test(toolNames.get(m.tool_call_id) || ''));
-  const selectedReads = [...new Set([...reads.filter(m => /rules|guidelines|moderation/i.test(String(m.content))).slice(-2), ...reads.slice(-2)])];
+  // The latest read of each of the four most recently read pages, so a page
+  // the task depended on earlier (its rules, a source) is not crowded out by
+  // repeated reads of the result page. Pages are told apart by the address
+  // their read reports, never by what their text says.
+  const readPage = message => {
+    try {
+      const result = JSON.parse(String(agent._unwrapUntrusted?.(message.content) ?? message.content));
+      const address = typeof result?.url === 'string' ? result.url : '';
+      return address ? address.replace(/#.*$/, '') : '';
+    } catch { return ''; }
+  };
+  const latestReadByPage = new Map();
+  for (const message of reads) {
+    const key = readPage(message) || `read:${message.tool_call_id || latestReadByPage.size}`;
+    latestReadByPage.delete(key);
+    latestReadByPage.set(key, message);
+  }
+  const selectedReads = [...latestReadByPage.values()].slice(-4);
   const history = selectedReads.map(m => ({ tool: toolNames.get(m.tool_call_id) || m.name, evidence: wrapSystemOneData(boundedText(redactSystemOneText(String(m.content)), 450)) }));
   // A failed HTTP read may prove absence after a deletion. Supply only the
   // actual response status and URL, never response prose or a success waiver.

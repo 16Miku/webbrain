@@ -1352,15 +1352,41 @@
     return false;
   }
 
+  // The nearest ancestor, up to six levels up, that holds a text entry: a
+  // composer whose buttons act on what is typed in it.
+  function composerScopeOf(el) {
+    let node = el.parentElement;
+    for (let depth = 0; node && depth < 6; depth++, node = node.parentElement) {
+      if (node === document.body || node === document.documentElement) return null;
+      try {
+        if (node.querySelector('textarea,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) return node;
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // A button that likely submits what is typed beside it, judged by structure
+  // so it holds in every language: a native submit, or a button that shares
+  // its form or its composer with a visible text entry. Its caption is not
+  // read.
   function isLikelySubmitSurface(el) {
     if (!el || !el.tagName) return false;
     const tag = el.tagName.toLowerCase();
     const role = (el.getAttribute('role') || '').toLowerCase();
     if (tag !== 'button' && tag !== 'input' && role !== 'button') return false;
-    const name = (getAccessibleName(el) || '').toLowerCase();
-    const aria = (el.getAttribute('aria-label') || '').toLowerCase();
     const type = (el.getAttribute('type') || '').toLowerCase();
-    return type === 'submit' || /\b(send|submit|post|reply)\b/.test(`${name} ${aria}`);
+    if (type === 'submit' || type === 'image') return true;
+    if (tag === 'input' && type !== 'button') return false;
+    const scope = el.form || el.closest('form') || composerScopeOf(el);
+    if (!scope) return false;
+    try {
+      for (const field of scope.querySelectorAll('textarea,input,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="searchbox"]')) {
+        if (field !== el && isTextEntrySurface(field) && isVisible(field)) return true;
+      }
+    } catch (e) {}
+    return false;
   }
 
   function isPriorityActionSurface(el) {
