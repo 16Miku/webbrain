@@ -936,12 +936,17 @@
     return redundantButtonDescription(el) || redundantOwnedButtonWrapperDescription(el);
   }
   function buttonTextWithoutDescription(el, description) {
-    if (!description || !el.contains(description)) return el.textContent;
+    // A <time datetime> element renders its value as text that changes on its
+    // own ("2 min", "3 dk"); its datetime value is what it means, and is bound
+    // instead, so a relative timestamp ticking over is not a change of context.
+    const times = !!el.querySelector?.('time[datetime]');
+    if (!times && (!description || !el.contains(description))) return el.textContent;
     const pending = [...el.childNodes].reverse(); let text = '';
     while (pending.length) {
       const node = pending.pop();
       if (node === description) continue;
       if (node.nodeType === 3) text += node.data;
+      else if (node.nodeType === 1 && node.matches?.('time[datetime]')) text += `\u0000${node.getAttribute('datetime')}\u0000`;
       else pending.push(...[...node.childNodes].reverse());
     }
     return text;
@@ -1549,7 +1554,13 @@
       const identities = [...owner.querySelectorAll(modelEntityIdentitySelector)].filter(node => belongs(node, navigationOwner));
       if (identities.length > 64) return null;
       for (const identity of identities) if (!addNode(identity, { text: true, control: true })) return null;
-      meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector);
+      // An item of an ARIA feed (an article with its position in the feed,
+      // as Mastodon and other social timelines mark each post) is an entity
+      // of its own: its controls are bound with the item, and changes in other
+      // items of the feed are not this item's context.
+      const feedItem = owner.matches('article[aria-posinset],[role="article"][aria-posinset]')
+        && !!owner.parentElement?.closest('[role="feed"]');
+      meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector) || feedItem;
       if (meaningfulOwner) {
         const images = [...owner.querySelectorAll('img')].filter(node => belongs(node, navigationOwner)
           && !node.closest('input,textarea,[contenteditable]:not([contenteditable="false"])')

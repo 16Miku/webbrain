@@ -232,6 +232,16 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   under an unchanged authored name; a generic account label cannot conceal a
   different rendered account name. This rule uses semantic structure on every
   site, without URL or control-name exceptions.
+- An item of an ARIA feed (an `article`, or `role="article"`, with its
+  `aria-posinset` inside a `role="feed"`, as Mastodon and other social
+  timelines mark each post) owns the controls inside it, like an entity with
+  a heading. Its controls, author link and attributes stay bound with it, so a
+  change to the clicked post invalidates the decision; changes in other items
+  of the feed do not. An article outside a feed, or without its position in
+  one, gains nothing from this rule. A `<time datetime>` element inside a bound
+  control is bound by its `datetime` value rather than its rendered text, so a
+  relative timestamp ticking over ("2 min" to "3 min") is not a change of
+  context, while a changed `datetime` still is.
 - Noninteractive `aria-hidden` icon labels inside an exact control remain
   privately bound without requiring model-visible dialog identity from an AX
   hidden node. The bounded predicate is rechecked for every hidden descendant;
