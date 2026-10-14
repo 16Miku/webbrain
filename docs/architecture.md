@@ -887,6 +887,16 @@ GET and holding no other task evidence, counts as a task form still on screen
 unless every one of its submit captions is read as `other` (showing, filtering
 or searching); an empty or unread caption keeps it counted.
 
+Chrome's one trusted retry click on a generic element whose synthetic click
+changed nothing visible (see `accessibility-tree-and-refs.md`) is decided the
+same way. Page structure rules out native, form, stateful, download, covered
+and handler-bound targets first; then the element's name is read once
+(`control_repeat`: a second click could send, buy, delete, like, follow,
+download or otherwise act twice or undo itself, it is harmless, or it is
+unclear) while the page settles. A name read as changing something is not
+clicked again; a harmless, unclear or unread name keeps the retry, as an
+unrecognized name always did. The content script keeps no word list.
+
 Requested field values (a message or post body, release notes, a title) come
 from the intent model too. A short value is returned as is; a long one is
 returned as its exact first and last words, and the runtime copies the text

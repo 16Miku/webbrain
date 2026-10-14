@@ -189,12 +189,24 @@ export function fixtureControlEffectReading(text) {
   return 'other';
 }
 
+// How a model reads the name of an element whose first click changed
+// nothing visible (the control_repeat question): whether a second click could
+// act twice or undo itself. A small oracle for the test fixtures, the way a
+// model would read them; the product never reads these words.
+export function fixtureControlRepeatReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!value) return null;
+  if (/(?:^|[^\p{L}])(?:send|submit|save|buy|pay|order now|book now|place order|delete|remove|publish|share|like|follow|subscribe|block|report|accept|invite|install|sign up|download|export|gönder|kaydet|sil|kaldır|öde|satın al|takip et|beğen|löschen|senden|supprimer|envoyer|eliminar|enviar|törlés|törlése|radera|διαγραφή)(?=$|[^\p{L}])|削除|送信|删除|发送|삭제/iu.test(value)) return 'changes';
+  return 'harmless';
+}
+
 // Stands in for the model that reads page texts in unit tests (status
 // messages, workflow states, validation alerts): `read(kind, item)` returns a
 // choice or null for no answer. Records every item asked.
 export function stubPageTextReadings(agent, read = (kind, item) => (kind === 'status_message'
   ? fixtureStatusReading(item.text) : kind === 'workflow_state' ? fixtureWorkflowStateReading(item.state, item.text)
-    : kind === 'control_effect' ? fixtureControlEffectReading(item.text) : null)) {
+    : kind === 'control_effect' ? fixtureControlEffectReading(item.text)
+      : kind === 'control_repeat' ? fixtureControlRepeatReading(item.text) : null)) {
   const asked = [];
   agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}) => items.map(item => {
     asked.push({ kind, ...item });
@@ -217,6 +229,7 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'status_message') return fixtureStatusReading(item?.text);
     if (question.kind === 'workflow_state') return fixtureWorkflowStateReading(item?.state, item?.text);
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
+    if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
     return answers[question.kind] ?? null;
   };
   const evidenceOf = item => (typeof item?.text === 'string' ? item.text : typeof item?.label === 'string' ? item.label : question.request);
@@ -241,13 +254,14 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'status_message') return fixtureStatusReading(text);
   if (kind === 'workflow_state') return fixtureWorkflowStateReading(context?.state, text);
   if (kind === 'control_effect') return fixtureControlEffectReading(text);
+  if (kind === 'control_repeat') return fixtureControlRepeatReading(text);
   return null;
 }
 
 // Only the page-text questions (status messages, workflow states, control
-// captions), for fake providers that answer WebBrain's other fixed-choice
-// questions themselves.
+// captions and names), for fake providers that answer WebBrain's other
+// fixed-choice questions themselves.
 export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
-  return ['status_message', 'workflow_state', 'control_effect'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
+  return ['status_message', 'workflow_state', 'control_effect', 'control_repeat'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }

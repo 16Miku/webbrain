@@ -4748,7 +4748,7 @@ test('set_checked: Agent.executeTool uses one trusted selector click and then be
   }
 });
 
-test('ax_resolve_rect: trusted fallback eligibility rejects interactive descendants, hidden, mutating, stateful, native, form, and download targets', async (page) => {
+test('ax_resolve_rect: trusted fallback eligibility rejects interactive descendants, hidden, stateful, native, form, and download targets by structure', async (page) => {
   await setup(page, 'trusted-click-fallback.html');
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 20000 });
   const content = String(tree?.pageContent || '');
@@ -4758,12 +4758,6 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     nestedInput: content.match(/listitem "Nested input row" \[(ref_\d+)\]/)?.[1],
     native: content.match(/button "Native button" \[(ref_\d+)\]/)?.[1],
     disclosure: content.match(/"Native disclosure" \[(ref_\d+)\]/)?.[1],
-    destructive: content.match(/listitem "Delete account" \[(ref_\d+)\]/)?.[1],
-    sendMessage: content.match(/listitem "Send message" \[(ref_\d+)\]/)?.[1],
-    orderLunch: content.match(/listitem "Order lunch" \[(ref_\d+)\]/)?.[1],
-    bookNow: content.match(/listitem "Book now" \[(ref_\d+)\]/)?.[1],
-    indirectDestructive: content.match(/listitem "Delete account indirectly" \[(ref_\d+)\]/)?.[1],
-    localizedDestructive: content.match(/listitem "Hesabı sil" \[(ref_\d+)\]/)?.[1],
     statefulRole: content.match(/treeitem "Expandable row" \[(ref_\d+)\]/)?.[1],
     statefulAttribute: content.match(/listitem "Stateful list row" \[(ref_\d+)\]/)?.[1],
     input: content.match(/textbox "Native input" \[(ref_\d+)\]/)?.[1],
@@ -4781,6 +4775,17 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     tabindexZero: content.match(/listitem "Generic row with tabindex zero wrapper" \[(ref_\d+)\]/)?.[1],
     dataAction: content.match(/listitem "Generic data action row" \[(ref_\d+)\]/)?.[1],
     properName: content.match(/listitem "Post Malone" \[(ref_\d+)\]/)?.[1],
+  };
+  // What a generic row's name means is not judged in the page: the agent
+  // reads it in any language before a second, trusted click. These rows stay
+  // eligible by structure and report their names for that reading.
+  const namedRefs = {
+    'Delete account': content.match(/listitem "Delete account" \[(ref_\d+)\]/)?.[1],
+    'Send message': content.match(/listitem "Send message" \[(ref_\d+)\]/)?.[1],
+    'Order lunch': content.match(/listitem "Order lunch" \[(ref_\d+)\]/)?.[1],
+    'Book now': content.match(/listitem "Book now" \[(ref_\d+)\]/)?.[1],
+    'Delete account indirectly': content.match(/listitem "Delete account indirectly" \[(ref_\d+)\]/)?.[1],
+    'Hesabı sil': content.match(/listitem "Hesabı sil" \[(ref_\d+)\]/)?.[1],
   };
   await page.evaluate(() => {
     document.getElementById('opacity-row').style.opacity = '0';
@@ -4800,6 +4805,13 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
       throw new Error(`${label} generic row should remain eligible for trusted fallback: ${JSON.stringify(result)}`);
     }
   }
+  for (const [label, ref] of Object.entries(namedRefs)) {
+    if (!ref) throw new Error(`missing ${label} ref in AX tree: ${content}`);
+    const result = await call(page, 'ax_resolve_rect', { ref_id: ref, forClickFallback: true });
+    if (!result?.success || result.fallbackEligible !== true || result.fallbackBlockedReason || result.name !== label) {
+      throw new Error(`${label} should be eligible by structure and report its name for the agent's reading: ${JSON.stringify(result)}`);
+    }
+  }
   for (const label of ['nestedButton', 'nestedLink', 'nestedInput']) {
     const result = await call(page, 'ax_resolve_rect', { ref_id: refs[label], forClickFallback: true });
     if (!/interactive descendant/.test(result.fallbackBlockedReason || '')) {
@@ -4810,7 +4822,7 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     }
   }
 
-  const ordinaryResolve = await call(page, 'ax_resolve_rect', { ref_id: refs.destructive });
+  const ordinaryResolve = await call(page, 'ax_resolve_rect', { ref_id: namedRefs['Delete account'] });
   if (
     ordinaryResolve.fallbackEligible !== undefined
     || ordinaryResolve.fallbackState !== undefined
@@ -4850,7 +4862,7 @@ test('ax_resolve_rect: an ancestor pseudo-element cannot authorize a trusted fal
   }
 });
 
-test('ax_resolve_rect: English action labels stay blocked under Turkish locale casing', async (page) => {
+test('ax_resolve_rect: action names reach the agent unchanged under Turkish locale casing', async (page) => {
   await page.addInitScript(() => {
     const original = String.prototype.toLocaleLowerCase;
     String.prototype.toLocaleLowerCase = function (...locales) {
@@ -4861,17 +4873,16 @@ test('ax_resolve_rect: English action labels stay blocked under Turkish locale c
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 20000 });
   const content = String(tree?.pageContent || '');
   const refs = {
-    install: content.match(/listitem "Install app" \[(ref_\d+)\]/)?.[1],
-    invite: content.match(/listitem "Invite teammate" \[(ref_\d+)\]/)?.[1],
+    'Install app': content.match(/listitem "Install app" \[(ref_\d+)\]/)?.[1],
+    'Invite teammate': content.match(/listitem "Invite teammate" \[(ref_\d+)\]/)?.[1],
   };
   for (const [label, ref] of Object.entries(refs)) {
     if (!ref) throw new Error(`missing ${label} ref in Turkish-locale AX tree: ${content}`);
     const result = await call(page, 'ax_resolve_rect', { ref_id: ref, forClickFallback: true });
-    if (
-      result?.fallbackEligible !== false
-      || !/potentially mutating/.test(result.fallbackBlockedReason || '')
-    ) {
-      throw new Error(`${label} must remain blocked regardless of default locale casing: ${JSON.stringify(result)}`);
+    // The page no longer lower-cases names against a word list; the agent
+    // reads the exact name in any language before a second click.
+    if (result?.fallbackEligible !== true || result.name !== label) {
+      throw new Error(`${label} must reach the agent with its exact name regardless of locale casing: ${JSON.stringify(result)}`);
     }
   }
 });

@@ -1161,140 +1161,6 @@
     }
   }
 
-  function _normalizeActionText(value) {
-    return String(value || '')
-      .normalize('NFKC')
-      // Safety terms must compare identically in every browser locale.
-      // Turkish casing would otherwise turn leading English "I" into dotless
-      // "ı" while already-lowercase blocklist terms retain plain "i".
-      .toLowerCase()
-      .normalize('NFKD')
-      .replace(/\p{M}/gu, '');
-  }
-
-  // Keyword blocklist is a last-line gate, not complete safety. Prefer
-  // structural gates (native/form/stateful/interactive descendant) first.
-  // Expanded commercial / social verbs reduce silent double-click on slow
-  // handlers; non-covered languages still rely on structural exclusions.
-  const _MUTATING_ACTION_TERMS_RAW = [
-    // English
-    'delete', 'remove', 'purchase', 'checkout', 'publish', 'follow',
-    'unfollow', 'submit', 'confirm', 'approve',
-    'reject', 'archive', 'order', 'book', 'accept', 'invite', 'sign',
-    'tweet', 'subscribe', 'unsubscribe', 'transfer', 'donate', 'tip',
-    'register', 'install', 'unlock', 'ban', 'block', 'report', 'like',
-    'unlike', 'share', 'retweet', 'purchase now', 'buy now', 'place order',
-    // Turkish
-    'gönder', 'sil', 'kaldır', 'öde', 'satın al', 'yayınla', 'paylaş',
-    'takip et', 'takibi bırak', 'onayla', 'reddet', 'arşivle', 'sipariş',
-    'kabul et', 'davet', 'kaydol', 'abone',
-    // French, Spanish, German, Italian, Portuguese, Dutch
-    'envoyer', 'supprimer', 'retirer', 'payer', 'acheter', 'publier',
-    'suivre', 'se désabonner', 'confirmer', 'approuver', 'rejeter', 'archiver',
-    'commander', 'réserver', 'accepter', 's\'inscrire',
-    'enviar', 'eliminar', 'quitar', 'pagar', 'comprar', 'publicar', 'seguir',
-    'dejar de seguir', 'confirmar', 'aprobar', 'rechazar', 'archivar',
-    'pedir', 'reservar', 'aceptar', 'registrarse',
-    'senden', 'löschen', 'entfernen', 'bezahlen', 'kaufen', 'veröffentlichen',
-    'folgen', 'entfolgen', 'bestätigen', 'genehmigen', 'ablehnen', 'archivieren',
-    'bestellen', 'buchen', 'akzeptieren', 'anmelden',
-    'invia', 'eliminare', 'rimuovere', 'pagare', 'acquistare', 'pubblicare',
-    'seguire', 'smettere di seguire', 'confermare', 'approvare', 'rifiutare',
-    'archiviare', 'ordinare', 'prenotare', 'accettare',
-    'excluir', 'remover', 'deixar de seguir', 'aprovar',
-    'rejeitar', 'arquivar', 'pedir', 'reservar', 'aceitar',
-    'verzenden', 'verwijderen', 'betalen', 'kopen',
-    'publiceren', 'volgen', 'ontvolgen', 'bevestigen', 'goedkeuren',
-    'afwijzen', 'archiveren', 'bestellen', 'boeken', 'accepteren',
-    // Polish, Russian, Arabic, Hindi, Indonesian, Vietnamese
-    'wyślij', 'usuń', 'zapłać', 'kup', 'opublikuj', 'obserwuj',
-    'przestań obserwować', 'potwierdź', 'zatwierdź', 'odrzuć', 'archiwizuj',
-    'zamów', 'zarezerwuj', 'zaakceptuj',
-    'отправить', 'удалить', 'оплатить', 'купить', 'опубликовать',
-    'подписаться', 'отписаться', 'подтвердить', 'одобрить', 'отклонить',
-    'архивировать', 'заказать', 'принять', 'зарегистрироваться',
-    'إرسال', 'حذف', 'إزالة', 'دفع', 'شراء', 'نشر', 'متابعة',
-    'إلغاء المتابعة', 'تأكيد', 'موافقة', 'رفض', 'أرشفة', 'طلب', 'قبول',
-    'भेजें', 'हटाएं',
-    'भुगतान', 'खरीदें', 'प्रकाशित करें', 'फ़ॉलो', 'अनफ़ॉलो', 'पुष्टि',
-    'स्वीकृत', 'अस्वीकार', 'संग्रह', 'ऑर्डर', 'स्वीकार',
-    'kirim', 'hapus', 'bayar', 'beli',
-    'terbitkan', 'ikuti', 'berhenti mengikuti', 'konfirmasi', 'setujui',
-    'tolak', 'arsipkan', 'pesan', 'terima', 'daftar',
-    'gửi', 'xóa', 'thanh toán', 'mua', 'đăng',
-    'theo dõi', 'bỏ theo dõi', 'xác nhận', 'phê duyệt', 'từ chối', 'lưu trữ',
-    'đặt hàng', 'chấp nhận',
-    // Chinese, Japanese, Korean (substring matching is intentional).
-    '发送', '删除', '移除', '支付', '购买', '发布', '关注', '取消关注', '确认',
-    '批准', '拒绝', '归档', '下单', '接受', '订阅', '登録',
-    '送信', '削除', '支払', '購入', '公開', 'フォロー',
-    'フォロー解除', '確認', '承認', '拒否', 'アーカイブ', '注文', '予約', '承諾',
-    '보내기', '삭제',
-    '제거', '결제', '구매', '게시', '팔로우', '언팔로우', '확인', '승인',
-    '거부', '보관', '주문', '수락', '구독',
-  ];
-
-  const _DOWNLOAD_ACTION_TERMS_RAW = [
-    'download', 'save as', 'export', 'indir', 'farklı kaydet', 'dışa aktar',
-    'télécharger', 'enregistrer sous', 'exporter', 'descargar', 'guardar como',
-    'exportar', 'herunterladen', 'speichern unter', 'exportieren', 'scarica',
-    'salva come', 'esporta', 'baixar', 'salvar como', 'exportar',
-    '下载', '导出', 'ダウンロード', '書き出す', '다운로드', '내보내기',
-    'скачать', 'экспорт', 'تنزيل', 'تصدير', 'डाउनलोड', 'निर्यात',
-  ];
-
-  const _AMBIGUOUS_ENGLISH_MUTATING_ACTION_PATTERNS = [
-    /^send(?:$|\s+(?:a\s+)?(?:message|email|file|photo|video|reply|invite|request|code|link|now)\b)/u,
-    /^post(?:$|\s+(?:a\s+)?(?:message|update|comment|reply|story|photo|video|status|listing|job|now)\b)/u,
-    /^pay(?:$|\s+(?:bill|invoice|balance|amount|with|via|now)\b)/u,
-    /^buy(?:$|\s+(?:item|product|plan|subscription|ticket|tickets|now)\b)/u,
-    /^order(?:$|\s+(?:now|lunch|food|items?|online)\b)/u,
-    /^book(?:$|\s+(?:now|a\s+)?(?:table|room|flight|ticket|tickets|appointment)?\b)/u,
-    /^accept(?:$|\s+(?:invite|invitation|request|offer|terms)\b)/u,
-    /^sign(?:$|\s+(?:up|in|out|the\b|here)\b)/u,
-    /^tweet(?:$|\s)/u,
-    /^share(?:$|\s+(?:now|post|link|with)\b)/u,
-  ];
-
-  // Pre-normalize term lists once — click_ax / ax_resolve_rect hit this path
-  // multiple times per click and re-normalizing ~200 terms is pure waste.
-  const _MUTATING_ACTION_TERMS = _MUTATING_ACTION_TERMS_RAW.map(term => ({
-    term: _normalizeActionText(term),
-    noWordBoundary: /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(term),
-  })).filter(entry => entry.term);
-  const _DOWNLOAD_ACTION_TERMS = _DOWNLOAD_ACTION_TERMS_RAW.map(term => ({
-    term: _normalizeActionText(term),
-    noWordBoundary: /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(term),
-  })).filter(entry => entry.term);
-
-  function _hasActionTerm(value, preparedTerms) {
-    const text = _normalizeActionText(value);
-    if (!text) return false;
-    const isWordChar = char => !!char && /[\p{L}\p{N}]/u.test(char);
-    for (const entry of preparedTerms) {
-      const term = entry.term;
-      let index = text.indexOf(term);
-      while (index >= 0) {
-        const before = index > 0 ? text[index - 1] : '';
-        const afterIndex = index + term.length;
-        const after = afterIndex < text.length ? text[afterIndex] : '';
-        if (entry.noWordBoundary || (!isWordChar(before) && !isWordChar(after))) return true;
-        index = text.indexOf(term, index + term.length);
-      }
-    }
-    return false;
-  }
-
-  function _hasMutatingActionName(value) {
-    if (_hasActionTerm(value, _MUTATING_ACTION_TERMS)) return true;
-    const text = _normalizeActionText(value).trim();
-    return _AMBIGUOUS_ENGLISH_MUTATING_ACTION_PATTERNS.some(pattern => pattern.test(text));
-  }
-
-  function _hasDownloadActionName(value) {
-    return _hasActionTerm(value, _DOWNLOAD_ACTION_TERMS);
-  }
-
   function _axFallbackVisibility(el) {
     if (!el?.isConnected) return { visible: false, reason: 'target is no longer connected to the document' };
     try {
@@ -1332,9 +1198,10 @@
     ].includes(tag);
     const isButtonLike = role === 'button' || !!el?.closest?.('[role="button"]');
     const isSubmitControl = _isSubmitControl(el);
-    const isDownloadControl = !!el?.closest?.('a[download],[download],[data-download]')
-      || _hasDownloadActionName(name);
-    const isDestructiveLike = _hasMutatingActionName(name);
+    // Only structure decides here. What the target's name means (a send,
+    // delete, like or download) is read by the agent in any language before
+    // it sends a second, trusted click.
+    const isDownloadControl = !!el?.closest?.('a[download],[download],[data-download]');
     const hasStatefulSemantics = ['treeitem', 'option'].includes(role)
       || ['aria-expanded', 'aria-selected', 'aria-checked', 'aria-pressed', 'aria-haspopup', 'data-state']
         .some(attr => el?.hasAttribute?.(attr));
@@ -1352,7 +1219,6 @@
     else if (isNativeControl || isButtonLike) blockedReason = 'native/button-like controls keep the existing synthetic path';
     else if (isSubmitControl || !!el?.closest?.('form')) blockedReason = 'form controls must not be auto-retried';
     else if (isDownloadControl) blockedReason = 'download controls must not be auto-retried';
-    else if (isDestructiveLike) blockedReason = 'potentially mutating controls must not be auto-retried';
     else if (hasStatefulSemantics) blockedReason = 'toggle/selection controls must not be auto-clicked twice';
     else if (unsafeAncestor) blockedReason = 'targets inside explicit interactive handlers must not be auto-retried';
     else if (!safeRole) blockedReason = `role "${role}" is not eligible for automatic trusted fallback`;
@@ -1365,7 +1231,6 @@
       isButtonLike,
       isSubmitControl,
       isDownloadControl,
-      isDestructiveLike,
       hasStatefulSemantics,
       blockedReason,
     };
@@ -8952,6 +8817,7 @@
               _fallbackWeakStateBefore: fallbackStateBefore.weak,
               _fallbackWeakStateAfterImmediate: fallbackStateAfterImmediate.weak,
               _fallbackStaticBlockedReason: fallbackStatic.blockedReason,
+              _fallbackName: String(fallbackStatic.name || '').replace(/\s+/g, ' ').trim().slice(0, 200),
               rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
               ...(targetContext ? { targetContext } : {}),
               ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}),
@@ -10062,7 +9928,6 @@
             isButtonLike,
             isSubmitControl,
             isDownloadControl,
-            isDestructiveLike,
             hasStatefulSemantics,
           } = fallbackStatic;
           let topmost = null;
@@ -10163,7 +10028,6 @@
               isButtonLike,
               isSubmitControl,
               isDownloadControl,
-              isDestructiveLike,
               hasStatefulSemantics,
             } : {}),
           };

@@ -24693,6 +24693,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return this._controlEffectReading(caption);
   }
 
+  // What a second click on an element whose first click changed nothing
+  // visible could do, read from its name in any language (control_repeat):
+  // "changes" when it could send, buy, delete, like, follow, download or
+  // otherwise act twice or undo itself. Null when it was not read; a failed
+  // or stopped read is no answer.
+  async _readControlRepeat(tabId, name) {
+    const label = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!label) return null;
+    try {
+      await this._readPageTexts(tabId, 'control_repeat', [label], {}, { maxChars: 200, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch {}
+    return this._pageTextReading('control_repeat', label);
+  }
+
   // Whether page structure already decides what a click did, so its caption
   // cannot change any check: a field, a link, a draft tool, a menu or popup
   // launcher, an ordinary control the probe resolved, a plain type=button the
@@ -46246,6 +46260,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const targetStrongStateBefore = response._fallbackStrongStateBefore || '';
     const targetWeakStateBefore = response._fallbackWeakStateBefore || '';
     const fallbackStaticBlockedReason = response._fallbackStaticBlockedReason || '';
+    const clickedName = String(response._fallbackName || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    // What a second click on this target could do is read from its name, in
+    // any language, once its first click showed no effect, while the page
+    // settles; a target page structure already rules out is never read.
+    const repeatReadings = new Map();
+    const readRepeat = name => {
+      if (!repeatReadings.has(name)) repeatReadings.set(name, this._readControlRepeat(tabId, name).catch(() => null));
+      return repeatReadings.get(name);
+    };
     const syntheticClickStartedAt = Number(response._syntheticClickStartedAt);
     const now = Date.now();
     if (
@@ -46271,6 +46294,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     delete response._fallbackWeakStateBefore;
     delete response._fallbackWeakStateAfterImmediate;
     delete response._fallbackStaticBlockedReason;
+    delete response._fallbackName;
 
     const immediateTargetStateChanged = !!(
       targetStateBefore
@@ -46305,6 +46329,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
       if (assessed.done) return withSnapshot(assessed.value, syntheticObservation);
     }
+    if (clickedName && !fallbackStaticBlockedReason) readRepeat(clickedName);
 
     let target = await this._measureClickAxStage(
       timing,
@@ -46393,6 +46418,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     target = settledTarget;
     targetStrongState = settledTargetStrongState;
     targetWeakState = settledTargetWeakState;
+
+    // A target whose name a model read as sending, buying, deleting, liking,
+    // following, downloading or otherwise changing something is not clicked
+    // a second time automatically: its first click may have worked without a
+    // visible change. A name read otherwise, or not read, keeps the retry.
+    const targetName = String(target.name || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (targetName) {
+      const repeat = await readRepeat(targetName);
+      this._throwIfAborted(abortSignal);
+      if (repeat === 'changes') {
+        response.trusted = false;
+        response.verified = false;
+        response.fallbackSkipped = 'potentially mutating controls must not be auto-retried';
+        return withSnapshot(response, settledObservation);
+      }
+    }
 
     const fallbackKey = `${target.documentToken || 'document'}|${args?.ref_id || ''}`;
     const attempted = this._clickAxCdpFallbacks.get(tabId) || new Set();
