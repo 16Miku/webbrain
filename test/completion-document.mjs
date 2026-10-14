@@ -35,7 +35,7 @@ for (const [build, browserType] of [['chrome', chromium], ['firefox', firefox]])
         _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
         _latestTaskText: () => 'Check this checkbox', _originalTaskText: () => '', _progressTaskKeyHash: () => 'check',
         _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
-        _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(), _completionDocumentStamp: stamp,
+        _currentCompletionSubmitState(tab) { return this._completionSubmitStates.get(tab) || null; }, _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(), _completionDocumentStamp: stamp,
         executeTool: async () => ({ success: true, ...await page.evaluate(() => window.__generateAccessibilityTree('all', 15, 5500)) }), recordSystemOneVerdict() {},
         evaluateSystemOne: async () => {
           await page.locator('#check').evaluate(element => { element.checked = false; });
@@ -75,7 +75,7 @@ for (const [build, browserType] of [['chrome', chromium], ['firefox', firefox]])
           _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
           _latestTaskText: () => 'Verify the requested emoji', _originalTaskText: () => '', _progressTaskKeyHash: () => 'emoji',
           _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
-          _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(), _completionDocumentStamp: stamp,
+          _currentCompletionSubmitState(tab) { return this._completionSubmitStates.get(tab) || null; }, _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(), _completionDocumentStamp: stamp,
           executeTool: async () => ({ success: true, ...await page.evaluate(() => window.__generateAccessibilityTree('all', 15, 5500)) }), recordSystemOneVerdict() {},
           evaluateSystemOne: async () => {
             await replace('😁');
@@ -107,7 +107,7 @@ for (const [build, browserType] of [['chrome', chromium], ['firefox', firefox]])
         _activeProvider: () => provider, _runAbortSignal: () => null, systemOneContext: () => ({ isCurrent: () => true }),
         _latestTaskText: () => 'Verify the requested post was published', _originalTaskText: () => '', _progressTaskKeyHash: () => 'post',
         _planExecutionGuards: new Map(), completionInvariants: new Map([[1, { runToken: 'run' }]]),
-        _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(),
+        _currentCompletionSubmitState(tab) { return this._completionSubmitStates.get(tab) || null; }, _completionSubmitStates: new Map(), conversationIds: new Map(), conversations: new Map(),
         _completionDocumentStamp: (_tab, documentOnly) => page.evaluate(documentOnly ? COMPLETION_DOCUMENT_IDENTITY_SCRIPT : COMPLETION_DOCUMENT_STAMP_SCRIPT),
         executeTool: async () => { reads++; return { success: true, ...await page.evaluate(() => window.__generateAccessibilityTree('all', 15, 5500)) }; }, recordSystemOneVerdict() {},
         evaluateSystemOne: async (_tab, _client, args) => {
