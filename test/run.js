@@ -29419,6 +29419,29 @@ test('inspect_viewport returns local-vision readiness immediately without captur
   assert.equal(automaticUpdates[2].data.result.code, 'vision_model_downloading');
 });
 
+test('automatic screenshot UI results include the description and distinguish raw-image and failed-description paths', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    // Locate the post-action capture result rather than other tool-result events.
+    const anchor = source.indexOf("bytes: shot.dataUrl.length,");
+    const resultStart = source.lastIndexOf('result: {', anchor) + 'result: '.length;
+    const resultEnd = source.indexOf('\n              },', anchor) + '\n              }'.length;
+    assert.ok(anchor > 0 && resultStart > 0 && resultEnd > resultStart);
+    const resultFor = Function('visionRoute', 'screenshotDescription', 'shot', 'visible',
+      `return (${source.slice(resultStart, resultEnd)});`);
+    const shot = { dataUrl: 'fixture', width: 800, height: 600 };
+    const described = resultFor({ rawImage: false, route: 'explicit_override' }, 'The receipt total is $42.', shot, []);
+    assert.equal(described.description, 'The receipt total is $42.', browser);
+    assert.equal(described.method, 'vision_describe', browser);
+    const raw = resultFor({ rawImage: true }, '', shot, []);
+    assert.equal(raw.method, 'image_attach', browser);
+    assert.match(raw.description, /no separate text description/, browser);
+    const failed = resultFor({ rawImage: false }, '', shot, [{}]);
+    assert.equal(failed.method, 'elements_only', browser);
+    assert.match(failed.description, /description unavailable/, browser);
+  }
+});
+
 test('staged screenshots use the shared vision route while ordinary uploads keep active-provider semantics', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const sidecar = { name: 'vision-sidecar', config: { model: 'sidecar-vl', baseUrl: 'https://vision.test/v1' } };
