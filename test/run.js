@@ -18419,6 +18419,37 @@ test('a human-verification dialog in any language arms the CAPTCHA gate once a m
   }
 });
 
+test('a page read has its unread wall texts read in any language and reads the page again', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
+    const agent = new AgentClass({});
+    const asked = stubCaptchaTitleReadings(agent);
+    // The read carries the readings the agent holds, and only page reads do.
+    assert.deepEqual(agent._withPageBlockerReadings('click_ax', { ref_id: 'ref_1' }), { ref_id: 'ref_1' });
+    let dispatches = 0;
+    const reread = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }, { kind: 'message_status', text: 'Okundu' }] },
+      async () => { dispatches += 1; return { text: wall, textSource: 'page-gate', pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: wall } }; });
+    assert.equal(dispatches, 1, `${build}: the page was not read again after its wall text was read`);
+    assert.equal(reread.pageGate?.type, 'subscription');
+    assert.equal(reread.pageTextsNeeded, undefined);
+    assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', wall]],
+      `${build}: only the wall text was to be read, and once`);
+    assert.deepEqual(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker, { [wall]: 'subscription' });
+    // A text already read, or one nobody can read, reads nothing more and the
+    // first answer stands.
+    const again = await agent._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'tree', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, async () => { dispatches += 1; return {}; });
+    assert.equal(dispatches, 1);
+    assert.deepEqual(again, { pageContent: 'tree' });
+    const unread = new AgentClass({});
+    stubPageTextReadings(unread, () => null);
+    const first = await unread._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, async () => { throw new Error('read again'); });
+    assert.deepEqual(first, { text: 'SECRET_ARTICLE' }, `${build}: an unread wall changed the read`);
+  }
+});
+
 test('Cloudflare managed-challenge signals arm only from top-level response evidence', () => {
   for (const [build, detector] of [
     ['chrome', CloudflareChallengeCh],

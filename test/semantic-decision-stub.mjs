@@ -384,9 +384,13 @@ export function fixturePageBlockerReading(text) {
   const value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
   if (!value) return null;
   if (/captcha|security verification|human verification|verif(?:y|ication)[^.]{0,24}(?:human|robot)|are you (?:a )?human|confirm you are human|robot check|challenge verification|güvenlik doğrulaması|robot olmadığınızı|insan olduğunuzu|weryfikacja bezpieczeństwa|nie jesteś robotem|安全验证|人机验证/.test(value)) return 'human_check';
-  if (/subscribe|subscription|subscriber[- ]only|unlimited access|start (?:your )?(?:free )?trial|abone ol|abonelik|abonnieren|abonnement|s'abonner|abonnez-vous|suscríbete|zasubskrybuj|prenumerat/.test(value)) return 'subscription';
-  if (/create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)|hesap oluştur|kayıt ol|konto erstellen|registrieren|créez un compte|załóż konto/.test(value)) return 'registration';
-  if (/(?:log|sign) in to (?:continue|read)|giriş yap(?:ın)? .*(?:okumak|devam)|anmelden,? um|connectez-vous pour|zaloguj się/.test(value)) return 'login';
+  // A wall says the article stops until the reader acts; an offer beside
+  // readable text does not.
+  const wall = /continue reading|to read (?:this|the) (?:full )?(?:article|story)|subscriber[- ]only|unlock (?:this|the) (?:article|story)|okumaya devam|devamını okumak|weiterlesen|weiterzulesen|lire la suite|la suite est réservée|continuar leyendo|czytać dalej/.test(value);
+  if (!wall) return 'other';
+  if (/subscri|abone|abonn|suscr|prenumer|trial/.test(value)) return 'subscription';
+  if (/create (?:a )?(?:free )?account|register|sign up|hesap oluştur|kayıt ol|konto erstellen|registrier|créez un compte|załóż konto/.test(value)) return 'registration';
+  if (/log ?in|sign in|giriş yap|anmelden|connectez|zaloguj/.test(value)) return 'login';
   return 'other';
 }
 

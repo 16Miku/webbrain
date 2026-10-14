@@ -12110,6 +12110,52 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return outcome;
   }
 
+  // The page_blocker readings the agent holds, sent with a page read so the
+  // content script's page-gate check reads overlay and article-block texts by
+  // meaning (see detectPageGate in content.js).
+  _withPageBlockerReadings(name, params) {
+    if (name !== 'read_page' && name !== 'get_accessibility_tree') return params;
+    return { ...(params && typeof params === 'object' ? params : {}),
+      __wbPageReadings: { page_blocker: this._challengeTitleReadings() } };
+  }
+
+  // Overlay and article-block texts a page read consulted unread, read in any
+  // language (the decision model first, the active model within four
+  // seconds). True when any of them was read.
+  async _readPageBlockerTexts(tabId, entries) {
+    const texts = [...new Set((Array.isArray(entries) ? entries : [])
+      .filter(entry => entry?.kind === 'page_blocker')
+      .map(entry => String(entry?.text ?? '').replace(/\s+/g, ' ').trim())
+      .filter(text => text && text.length <= 400 && !this._pageTextReading('page_blocker', text)))].slice(0, 12);
+    if (!texts.length) return false;
+    try {
+      await this._readPageTexts(tabId, 'page_blocker', texts, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
+    return texts.some(text => !!this._pageTextReading('page_blocker', text));
+  }
+
+  // A page read whose overlay or article-block texts were consulted unread
+  // has them read, and the page read once more with the readings; a read
+  // that cannot be repeated keeps the first answer.
+  async _rereadWithPageBlockerReadings(tabId, name, response, dispatch) {
+    if ((name !== 'read_page' && name !== 'get_accessibility_tree') || !response || typeof response !== 'object') return response;
+    const needed = response.pageTextsNeeded;
+    delete response.pageTextsNeeded;
+    if (!await this._readPageBlockerTexts(tabId, needed)) return response;
+    let reread = null;
+    try {
+      reread = await dispatch();
+    } catch (error) {
+      if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+      return response;
+    }
+    if (!reread || typeof reread !== 'object' || reread.success === false) return response;
+    delete reread.pageTextsNeeded;
+    return reread;
+  }
+
   // The page_blocker readings of dialog titles the agent holds, by title, for
   // the CAPTCHA scans that run in the page.
   _challengeTitleReadings() {
@@ -42134,7 +42180,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (name === 'get_shadow_dom') {
       try {
         await cdpClient.attach(tabId);
-        const pageInfo = await cdpClient.readPage(tabId);
+        // Shadow hosts behind a wall in front of an article stay hidden; the
+        // wall's text is read in any language first when nobody has.
+        let pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._challengeTitleReadings() });
+        if (await this._readPageBlockerTexts(tabId, pageInfo?.pageTextsNeeded)) {
+          pageInfo = await cdpClient.readPage(tabId, { pageBlockerReadings: this._challengeTitleReadings() });
+        }
         return {
           success: true,
           shadowHosts: pageInfo.shadowHosts || [],
@@ -45594,7 +45645,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return chrome.tabs.sendMessage(tabId, {
         target: 'content',
         action,
-        params: contentArgs,
+        params: this._withPageBlockerReadings(name, contentArgs),
         ...(actionDeadlineAt > 0 ? { actionDeadlineAt } : {}),
       }, messageOptions);
     };
@@ -45715,6 +45766,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           );
         }
       }
+      response = await this._rereadWithPageBlockerReadings(tabId, name, response, dispatchContentAction);
       if (name === 'click') {
         response = await this._settleContentFilePickerGuard(tabId, response);
       }

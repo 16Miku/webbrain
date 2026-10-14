@@ -576,6 +576,16 @@ preactivates enabled FreeSkillz for that run; only a structured blocking
 `pageGate` adds the trusted instruction to call `fetch_nytimes_article`, so raw
 page prose cannot spoof fallback routing.
 
+A `pageGate` is a wall in front of an article: an overlay on an article page, or
+a block inside the article, whose text a model read as keeping the article
+from the reader until they subscribe, register or sign in (the `page_blocker`
+question, in any language; an offer beside readable text is not a wall). The
+page read reports an overlay or block text nobody has read in
+`pageTextsNeeded`; the agent has it read (the decision model first, the active
+model within four seconds) and reads the page once more with the reading. An
+unread text is no wall, so the page reads as it is. A wall withholds the
+article, its links, forms and frames; its own text and controls stay readable.
+
 Single public-media downloads have a second deterministic guard. If the model
 calls `download_social_media` while an eligible inactive skill owns
 `download_public_media`, the runtime activates that skill and returns a retry

@@ -379,11 +379,13 @@ export const SEMANTIC_QUESTIONS = Object.freeze({
     choices: Object.freeze({
       human_check: 'It asks them to prove they are a person and not a robot: a CAPTCHA, a puzzle, a robot check, or a '
         + 'security or human verification.',
-      subscription: 'It asks them to subscribe, pay or start a trial to read the page\'s article or content.',
-      registration: 'It asks them to create an account or register to read the page\'s article or content.',
-      login: 'It asks them to sign in to read the page\'s article or content.',
-      other: 'Something else, such as a cookie or privacy notice, a newsletter offer, an advertisement, a form to fill '
-        + 'in, a confirmation, or a message they can read past.',
+      subscription: 'It is a wall that keeps the page\'s article or content from them until they subscribe, pay or '
+        + 'start a trial, such as "Subscribe to continue reading".',
+      registration: 'It is a wall that keeps the page\'s article or content from them until they create an account or '
+        + 'register.',
+      login: 'It is a wall that keeps the page\'s article or content from them until they sign in.',
+      other: 'Something else, such as a cookie or privacy notice, an offer to subscribe or a newsletter beside content '
+        + 'they can still read, an advertisement, a form to fill in, a confirmation, or a message they can read past.',
     }),
     // Each answer but `other` stops actions or limits reading, so it needs a
     // sure reading; a title nobody could read stops nothing.

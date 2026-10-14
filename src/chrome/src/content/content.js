@@ -3519,30 +3519,21 @@
     return rect.width >= 20 && rect.height >= 20;
   }
 
-  function pageGateType(text) {
-    const value = String(text || '').toLowerCase();
-    if (/\bsubscribe\b|\bsubscription\b|subscriber[- ]only|unlimited access|unlock (?:this|the) article|start (?:your )?(?:free )?trial/.test(value)) {
-      return 'subscription';
-    }
-    if (/create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)/.test(value)) {
-      return 'registration';
-    }
-    if (/(?:log|sign) in to (?:continue|read)|already have an account|create (?:a )?(?:free )?account or log in/.test(value)) {
-      return 'login';
-    }
-    return 'unknown';
+  // What an overlay or a block in an article asks of its reader, read by a
+  // model in any language from its text (the agent's page_blocker readings):
+  // a subscription, registration or sign-in wall in front of the article. A
+  // text nobody has read yet is no wall; it is reported for the agent to
+  // read, and the agent asks again with the reading.
+  const PAGE_GATE_TYPES = new Set(['subscription', 'registration', 'login']);
+
+  function pageGateText(el) {
+    return _pageReadingText(el?.innerText || '').slice(0, 400);
   }
 
-  function pageGateHasAccessLanguage(text) {
-    const value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!value) return false;
-    return /(?:(?:subscribe|subscription).{0,48}(?:continue|read|access|article|options|required|unlock)|subscriber[- ]only|unlimited access|unlock (?:this|the) article|start (?:your )?(?:free )?trial|create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)|(?:log|sign) in to (?:continue|read)|continue reading (?:with|by)|to continue reading|already have an account)/.test(value);
-  }
-
-  function pageGateHasInlineBlockingLanguage(text) {
-    const value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!value) return false;
-    return /(?:to continue reading|continue reading (?:with|by)|subscriber[- ]only|(?:subscribe|subscription required|register|sign up|log in|sign in|create (?:a )?(?:free )?account).{0,64}(?:continue reading|read (?:this |the )?(?:full )?(?:article|story)|unlock (?:this|the) (?:article|story)|access (?:this|the) (?:article|story)))/.test(value);
+  function pageGateReading(text) {
+    if (!text) return null;
+    const reading = _pageReading('page_blocker', text, null);
+    return PAGE_GATE_TYPES.has(reading) ? reading : null;
   }
 
   function pageHasArticleContext() {
@@ -3556,34 +3547,6 @@
     } catch {
       return false;
     }
-  }
-
-  function boundedPageGateLabel(el, rawLabel) {
-    const options = [];
-    let boundaryElement = null;
-    for (const value of [el.getAttribute('aria-label'), el.getAttribute('title')]) {
-      const normalized = String(value || '').replace(/\s+/g, ' ').trim();
-      if (pageGateHasAccessLanguage(normalized)) options.push(normalized);
-    }
-    let descendants = [];
-    try {
-      descendants = el.querySelectorAll('h1, h2, h3, p, button, a, label, [role="heading"]');
-    } catch { /* use the bounded surface text below */ }
-    for (const node of Array.from(descendants).slice(0, 80)) {
-      if (!gateElementIsRendered(node)) continue;
-      const normalized = String(node.innerText || '').replace(/\s+/g, ' ').trim();
-      if (normalized.length <= 600 && pageGateHasAccessLanguage(normalized)) {
-        boundaryElement ||= node;
-        options.push(normalized);
-      }
-    }
-    options.sort((a, b) => a.length - b.length);
-    if (options[0]) return { label: options[0].slice(0, 240), boundaryElement };
-    const accessStart = rawLabel.search(/\b(?:subscribe|subscription|subscriber|unlock|register|sign up|log in|sign in|create an? account|continue reading)\b/i);
-    return {
-      label: rawLabel.slice(Math.max(0, accessStart), Math.max(0, accessStart) + 240),
-      boundaryElement,
-    };
   }
 
   function pageGatePublic(gate) {
@@ -3606,13 +3569,9 @@
       for (const el of matches) {
         if (seen.has(el) || !gateElementIsRendered(el)) continue;
         seen.add(el);
-        const rawLabel = String(el.innerText || '').replace(/\s+/g, ' ').trim();
-
         const role = String(el.getAttribute('role') || '').toLowerCase();
-        let surface = (
-          role === 'dialog' || role === 'alertdialog' ||
-          el.tagName === 'DIALOG' || el.getAttribute('aria-modal') === 'true'
-        ) ? 'dialog' : 'inline';
+        let surface = (role === 'dialog' || role === 'alertdialog' || el.tagName === 'DIALOG'
+          || el.getAttribute('aria-modal') === 'true') ? 'dialog' : 'inline';
         const inArticle = !!el.closest('article, [role="article"], main, [role="main"]');
         let coveringOverlay = false;
         try {
@@ -3625,28 +3584,20 @@
             ((visibleWidth * visibleHeight) / viewportArea) >= 0.2;
         } catch { /* rendered check already supplied safe defaults */ }
         if (coveringOverlay) surface = 'dialog';
-        if (surface === 'dialog') {
-          if (!articleContext || !pageGateHasAccessLanguage(rawLabel)) continue;
-        } else {
-          if (!inArticle || !pageGateHasInlineBlockingLanguage(rawLabel)) continue;
-        }
-        const gateText = boundedPageGateLabel(el, rawLabel);
-        const label = gateText.label;
+        // An overlay counts only on an article page, and a block only inside
+        // the article; its text then has to read as a wall.
+        if (surface === 'dialog' ? !articleContext : !inArticle) continue;
+        const label = pageGateText(el);
+        const type = pageGateReading(label);
+        if (!type) continue;
         const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([
           el.id,
           typeof el.className === 'string' ? el.className : '',
           el.getAttribute('data-testid') || '',
         ].join(' '));
-
         const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) +
           (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
-        candidates.push({
-          element: surface === 'inline' ? (gateText.boundaryElement || el) : el,
-          type: pageGateType(rawLabel),
-          surface,
-          label: label.slice(0, 240),
-          score,
-        });
+        candidates.push({ element: el, type, surface, label: label.slice(0, 240), score });
       }
     }
     candidates.sort((a, b) => b.score - a.score);
@@ -6475,6 +6426,7 @@
     message_field: new Set(['to', 'cc', 'bcc', 'subject', 'body', 'other']),
     message_author: new Set(['self', 'other']),
     message_status: new Set(['delivered', 'sent', 'pending', 'unclear']),
+    page_blocker: new Set(['human_check', 'subscription', 'registration', 'login', 'other']),
   });
   // Readings that name an action of the control itself, never a contact's name.
   const _MESSAGE_CONTROL_ACTIONS = new Set(['send', 'publish', 'reply', 'new_message', 'new_post',
@@ -6532,9 +6484,15 @@
     return reading === 'send' || reading === null;
   }
 
-  function _takeUnreadPageTexts() {
-    const texts = [..._pageReadingsUnread.values()];
-    _pageReadingsUnread.clear();
+  // The texts consulted unread, all of them or those of one question, taken
+  // from the queue for the agent to read.
+  function _takeUnreadPageTexts(kind = '') {
+    const texts = [];
+    for (const [key, entry] of [..._pageReadingsUnread.entries()]) {
+      if (kind && entry.kind !== kind) continue;
+      texts.push(entry);
+      _pageReadingsUnread.delete(key);
+    }
     return texts;
   }
 
@@ -10371,6 +10329,15 @@
           if (!value.documentToken) value.documentToken = _axDocumentToken();
           if (!value.refScopeUrl) value.refScopeUrl = location.href;
         } catch { /* identity is best-effort; never break the response */ }
+      }
+      // Overlay and article-block texts the page-gate check consulted unread
+      // go back to the agent to be read; it asks again with the readings.
+      if (['get_page_info', 'get_page_info_cdp', 'get_accessibility_tree'].includes(msg.action)
+          && value && typeof value === 'object') {
+        const unread = _takeUnreadPageTexts('page_blocker');
+        if (unread.length) {
+          value.pageTextsNeeded = [...(Array.isArray(value.pageTextsNeeded) ? value.pageTextsNeeded : []), ...unread];
+        }
       }
       return value;
     };

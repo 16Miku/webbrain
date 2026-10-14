@@ -27,6 +27,7 @@ import {
   fitReadPageWindowResult as fitFirefoxReadPageWindowResult,
 } from '../../src/firefox/src/agent/read-page-window.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
+import { fixturePageBlockerReading } from '../semantic-decision-stub.mjs';
 import {
   SELECTION_SHORTCUT_LOCALES,
   getSelectionShortcutLocalization,
@@ -303,7 +304,32 @@ async function readThroughCdpMirror(page, opts = {}) {
   client.evaluate = async (_tabId, expression) => ({
     result: { value: await page.evaluate(expression) },
   });
-  return client.readPage(1, opts);
+  // The agent reads the overlay and article-block texts the mirror consulted
+  // unread (a model; the fixture oracle stands in), then reads again.
+  const readings = { ...(opts.pageBlockerReadings || {}) };
+  let result = await client.readPage(1, { ...opts, pageBlockerReadings: readings });
+  const needed = (result?.pageTextsNeeded || []).filter(entry => entry?.kind === 'page_blocker');
+  if (needed.length) {
+    for (const { text } of needed) readings[text] = fixturePageBlockerReading(text);
+    result = await client.readPage(1, { ...opts, pageBlockerReadings: readings });
+  }
+  if (result && typeof result === 'object') delete result.pageTextsNeeded;
+  return result;
+}
+
+// A page read the way the agent reads it: overlay and article-block texts the
+// page-gate check consulted unread are read by a model (the fixture oracle
+// stands in) and the page is read again with those readings.
+async function readWithGateReadings(page, action, params = {}) {
+  const readings = {};
+  let result = await call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } });
+  const needed = (result?.pageTextsNeeded || []).filter(entry => entry?.kind === 'page_blocker');
+  if (needed.length) {
+    for (const { text } of needed) readings[text] = fixturePageBlockerReading(text);
+    result = await call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } });
+  }
+  if (result && typeof result === 'object') delete result.pageTextsNeeded;
+  return result;
 }
 
 async function clickedSentinel(page) {
@@ -1006,7 +1032,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
   test(`${label}: blocking NYTimes registration dialog suppresses article DOM`, async (page) => {
     await setupContentFixture(page, 'nyt-registration-gate.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate?.blocking !== true || result.pageGate?.surface !== 'dialog' || result.pageGate?.type !== 'registration') {
       throw new Error(`registration pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
     }
@@ -1020,7 +1046,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     if (JSON.stringify(result).indexOf('"pageGate"') > JSON.stringify(result).indexOf('"text"')) {
       throw new Error('pageGate must serialize before long article text for trace visibility');
     }
-    const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
     if (tree.pageGate?.blocking !== true || !/Create a free account/i.test(tree.pageGate.label || '')) {
       throw new Error(`accessibility tree omitted structured pageGate: ${JSON.stringify(tree.pageGate)}`);
     }
@@ -1037,7 +1063,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     if (clickResult?.success !== true || !gateControlClicked) {
       throw new Error(`gate control ref was not actionable: ${JSON.stringify(clickResult)}`);
     }
-    const basicResult = await call(page, 'get_page_info', {});
+    const basicResult = await readWithGateReadings(page, 'get_page_info', {});
     if (/SECRET_NYT_(?:ARTICLE|LINK|IMAGE|FORM|SHADOW)/.test(JSON.stringify(basicResult))) {
       throw new Error(`basic page info leaked blocked article data: ${JSON.stringify(basicResult)}`);
     }
@@ -1045,7 +1071,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 
   test(`${label}: The Athletic covering subscription overlay suppresses server-rendered body`, async (page) => {
     await setupContentFixture(page, 'athletic-subscription-overlay.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'dialog') {
       throw new Error(`Athletic pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
     }
@@ -1056,7 +1082,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 
   test(`${label}: inline article gate returns only the visible preview`, async (page) => {
     await setupContentFixture(page, 'inline-article-paywall.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate?.blocking !== true || result.pageGate?.surface !== 'inline') {
       throw new Error(`inline pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
     }
@@ -1066,7 +1092,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     if (!/\(pre-gate\)$/.test(result.textSource || '')) {
       throw new Error(`inline textSource missing pre-gate marker: ${result.textSource}`);
     }
-    const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
     if (!/VISIBLE_PREVIEW_PARAGRAPH/.test(tree.pageContent || '') || /SECRET_POST_GATE_PARAGRAPH/.test(tree.pageContent || '')) {
       throw new Error(`inline accessibility boundary mismatch: ${JSON.stringify(tree)}`);
     }
@@ -1074,25 +1100,48 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 
   test(`${label}: readable article ignores header controls, inline upsells, and hidden gate markup`, async (page) => {
     await setupContentFixture(page, 'readable-article-no-gate.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate) throw new Error(`false-positive pageGate: ${JSON.stringify(result.pageGate)}`);
     if (!/READABLE_ARTICLE_BODY/.test(result.text || '') || !/READABLE_ARTICLE_AFTER_UPSELL/.test(result.text || '') || result.textSource === 'page-gate') {
       throw new Error(`readable article body missing: ${JSON.stringify({ textSource: result.textSource, text: result.text })}`);
     }
   });
 
+  test(`${label}: a Turkish subscription wall is read by meaning before the article is withheld`, async (page) => {
+    await setupContentFixture(page, 'turkish-subscription-overlay.html', browserKind);
+    // Unread, the wall decides nothing: the page reads as before and the
+    // wall's text goes back to the agent to be read.
+    const unread = await call(page, 'get_page_info_cdp', {});
+    if (unread.pageGate || !(unread.pageTextsNeeded || []).some(entry => entry.kind === 'page_blocker'
+      && /Okumaya devam etmek için abone olun/.test(entry.text))) {
+      throw new Error(`unread wall text was not reported: ${JSON.stringify({ pageGate: unread.pageGate, needed: unread.pageTextsNeeded })}`);
+    }
+    // Read as a subscription wall, it withholds the article and its links.
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
+    if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'dialog' || result.textSource !== 'page-gate') {
+      throw new Error(`Turkish pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
+    }
+    if (/SECRET_TURKISH_(?:ARTICLE|LINK)/.test(JSON.stringify(result))) {
+      throw new Error(`Turkish wall leaked the article: ${JSON.stringify(result)}`);
+    }
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    if (tree.pageGate?.type !== 'subscription' || /SECRET_TURKISH_ARTICLE_BODY/.test(tree.pageContent || '')) {
+      throw new Error(`Turkish wall accessibility read mismatch: ${JSON.stringify(tree)}`);
+    }
+  });
+
   test(`${label}: non-article signup dialog preserves form controls`, async (page) => {
     await setupContentFixture(page, 'non-article-signup-dialog.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate) throw new Error(`non-article dialog became a page gate: ${JSON.stringify(result.pageGate)}`);
     if (result.forms?.length !== 1 || result.forms[0]?.inputs?.[0]?.name !== 'email') {
       throw new Error(`signup form was stripped from page info: ${JSON.stringify(result.forms)}`);
     }
-    const basicResult = await call(page, 'get_page_info', {});
+    const basicResult = await readWithGateReadings(page, 'get_page_info', {});
     if (basicResult.pageGate || basicResult.forms?.length !== 1) {
       throw new Error(`basic page info stripped the signup form: ${JSON.stringify(basicResult)}`);
     }
-    const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 6 });
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 6 });
     if (tree.pageGate || !/Work email/.test(tree.pageContent || '')) {
       throw new Error(`signup accessibility tree was stripped: ${JSON.stringify(tree)}`);
     }
