@@ -7,6 +7,7 @@ This changelog was generated from the repository Git history and release tags. V
 ## [Unreleased]
 
 ### Fixed
+- Deleting your own Mastodon post through its "…" menu works again on current Mastodon (4.4): the menu fades in a moment after the click, so WebBrain lost track of which post it belonged to and refused "Delete" ("Sil" on a Turkish server) as not belonging to any post. The menu the agent's own click opens is now kept for up to three seconds while it appears, and the menu on a post's own page counts as that post's, since Mastodon draws it beside the post rather than inside it.
 - Preserve exact editor identity and private values through owned focus and scroll preparation, while permitting the resulting geometry changes.
 - Bind native input to the certified receiving control, allowing passive descendants while rejecting unrelated or nested activators.
 - Preserve acknowledged click delivery through page rendering and focus restoration, with separate pending effect verification and repeat protection.

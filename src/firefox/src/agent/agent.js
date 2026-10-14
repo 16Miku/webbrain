@@ -25613,6 +25613,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return true;
     };
+    // As nativeResourceVisible, but an element fading in from transparent
+    // counts: an app's opening animation starts at opacity 0.
+    const nativeResourceRendered = element => {
+      if (!element?.isConnected || !isVisible(element)) return false;
+      for (let node = element; node; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if (node.matches('[hidden],[inert],[aria-hidden="true"]') || style.display === 'none'
+            || ['hidden', 'collapse'].includes(style.visibility) || style.contentVisibility === 'hidden') return false;
+      }
+      return true;
+    };
+    // The native record an element belongs to: its own status, or for the
+    // action bar Mastodon renders beside a detailed status (not inside it),
+    // the one detailed status in the same wrapper.
+    const nativeRecordOf = element => {
+      const own = element?.closest?.('.status,.detailed-status');
+      if (own) return own;
+      const bar = element?.closest?.('.detailed-status__action-bar');
+      const records = [...(bar?.closest?.('.detailed-status__wrapper')?.querySelectorAll('.detailed-status') || [])];
+      return records.length === 1 ? records[0] : null;
+    };
     const nativeResourcePopups = () => {
       const native = '.dropdown-menu,.modal-root__modal.safety-action-modal';
       const nodes = [...doc.querySelectorAll(`${native},dialog,[role="dialog"],[role="alertdialog"],[role="menu"]`)];
@@ -25684,7 +25705,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const records = resourceProofs();
       const ownerSelector = 'article,[role="article"],[role="listitem"],[itemid]'
         + (args.__wbNativeResourceAdapter === 'mastodon' ? ',.status,.detailed-status' : '');
-      const owner = target?.closest?.(ownerSelector);
+      const owner = (args.__wbNativeResourceAdapter === 'mastodon' && nativeRecordOf(target)) || target?.closest?.(ownerSelector);
       let matches = owner ? records.filter(record => record._record === owner) : [];
       const scope = args.__wbOwnedResourceScope;
       // An existing owner is authoritative even when its identity is unknown.
@@ -25753,21 +25774,30 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             doc.removeEventListener('click', listener, true);
             clearTimeout(binding.listenerTimer);
             if (binding.until < Date.now() || !nativeResourceVisible(control)
-                || (nativeKind === 'menu' && control.closest('.status,.detailed-status') !== record)
+                || (nativeKind === 'menu' && nativeRecordOf(control) !== record)
                 || (sourcePopup && control.closest('.dropdown-menu') !== sourcePopup)) return;
             binding.clicked = true;
-            // React's native dropdown/menu commits synchronously in this
-            // click. Capture that exact new node after the handler returns,
-            // never a later unrelated popup or a last-resource fallback.
-            setTimeout(() => {
-              const visible = popups().filter(nativeResourceVisible);
-              const selector = nativeKind === 'menu' ? '.dropdown-menu' : '.modal-root__modal.safety-action-modal';
-              if (visible.length === 1 && !before.has(visible[0]) && visible[0].matches(selector)
-                  && (!sourcePopup || !nativeResourceVisible(sourcePopup))) binding.popup = visible[0];
-            }, 0);
+            // The app opens its menu or modal in reply to this click: a menu
+            // can mount a frame later and fades in from transparent, a modal
+            // can load a moment later. Capture the one new popup that appears
+            // within three seconds, judged by structure, while it is the only
+            // one shown and the menu it came from has closed; never an
+            // unrelated popup that was already there, or a last-resource
+            // fallback.
+            const selector = nativeKind === 'menu' ? '.dropdown-menu' : '.modal-root__modal.safety-action-modal';
+            const deadline = Date.now() + 3000;
+            const capture = () => {
+              if (binding.popup || binding.until < Date.now()) return;
+              const shown = popups().filter(nativeResourceRendered);
+              if (shown.length === 1 && !before.has(shown[0]) && shown[0].matches(selector)
+                  && (!sourcePopup || !nativeResourceRendered(sourcePopup))) { binding.popup = shown[0]; return; }
+              if (Date.now() < deadline) binding.captureTimer = setTimeout(capture, 50);
+            };
+            binding.captureTimer = setTimeout(capture, 0);
           };
           doc.addEventListener('click', listener, true);
-          binding.cleanup = () => { doc.removeEventListener('click', listener, true); clearTimeout(binding.listenerTimer); };
+          binding.cleanup = () => { doc.removeEventListener('click', listener, true); clearTimeout(binding.listenerTimer);
+            clearTimeout(binding.captureTimer); };
           binding.listenerTimer = setTimeout(() => { binding.cleanup(); scopeRegistry.launchers.delete(token); }, 120000);
           while (scopeRegistry.launchers.size > 256) {
             const oldest = scopeRegistry.launchers.keys().next().value;

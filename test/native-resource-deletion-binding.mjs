@@ -58,6 +58,68 @@ for (const build of ['chrome', 'firefox']) {
         } finally { await f.page.close(); }
       });
 
+      // Mastodon mounts its menu a moment after the click and fades it in from
+      // transparent (.dropdown-animation, 250 ms); its confirmation modal can
+      // load a moment later still. The menu the agent's own click opened is
+      // still that post's menu.
+      await t.test('a menu and confirmation that open late and fade in keep the exact resource', async () => {
+        const f = await fixture();
+        try {
+          await f.page.evaluate(() => {
+            const style = document.createElement('style');
+            style.textContent = '.dropdown-animation{animation:qa-dropdown 250ms cubic-bezier(.1,.7,.1,1)}'
+              + '@keyframes qa-dropdown{from{opacity:0}to{opacity:1}}';
+            document.head.append(style);
+            const open = window.qaOpenMenu;
+            window.qaOpenMenu = () => setTimeout(() => {
+              open();
+              for (const menu of document.querySelectorAll('#portal .dropdown-menu')) menu.classList.add('dropdown-animation');
+              const remove = document.querySelector('#delete');
+              const confirm = remove.onclick;
+              remove.onclick = () => setTimeout(confirm, 120);
+            }, 40);
+            document.querySelector('#more-200').onclick = qaOpenMenu; document.querySelector('#more-201').onclick = qaOpenMenu;
+          });
+          const more = await f.open();
+          assert.equal(more.actionResource.url, resource);
+          await f.page.waitForTimeout(400);
+          const next = await f.probe('#delete');
+          assert.equal(next.actionResource?.url, resource, 'The late, fading menu is the one the agent opened');
+          assert.equal(next.mutationKind, 'delete'); assert.ok(next.popupLauncherToken);
+          f.adopt(next); await f.click('#delete'); await f.page.waitForTimeout(400);
+          const final = await f.probe('#confirm');
+          assert.equal(final.mutationKind, 'delete'); assert.equal(final.semanticCommit, true);
+          assert.equal(final.actionResource?.url, resource, 'The late confirmation is the one the agent opened');
+        } finally { await f.page.close(); }
+      });
+
+      // On a post's own page Mastodon renders the action bar beside the
+      // detailed status, inside their shared wrapper, not inside the status.
+      await t.test('the detailed status page menu keeps the exact resource', async () => {
+        const f = await fixture();
+        try {
+          await f.page.evaluate(() => {
+            document.querySelector('main').innerHTML = '<div class="focusable detailed-status__wrapper" tabindex="0">'
+              + '<div class="detailed-status" id="detailed"><a class="detailed-status__display-name" href="/@ownedqa">@ownedqa</a>'
+              + '<div class="status__content__text--visible"><p>Exact owned post 200</p></div><div class="detailed-status__meta">'
+              + '<a class="detailed-status__datetime" href="/@ownedqa/200">Now</a></div></div><div class="detailed-status__action-bar">'
+              + '<div class="detailed-status__action-bar-dropdown"><button type="button" id="detailed-more" title="More">'
+              + '<svg class="icon icon-ellipsis-h" aria-hidden="true"></svg></button></div></div></div>';
+            document.querySelector('#detailed-more').onclick = qaOpenMenu;
+          });
+          const more = await f.probe('#detailed-more');
+          assert.equal(more.actionResource?.url, resource, 'The action bar beside the detailed status belongs to it');
+          assert.ok(more.popupLauncherToken);
+          f.adopt(more); await f.click('#detailed-more');
+          const next = await f.probe('#delete');
+          assert.equal(next.actionResource?.url, resource); assert.equal(next.mutationKind, 'delete');
+          // Two detailed statuses in one wrapper leave the bar's owner unknown.
+          await f.page.evaluate(() => document.querySelector('.detailed-status__wrapper')
+            .prepend(document.querySelector('#detailed').cloneNode(true)));
+          assert.equal((await f.probe('#detailed-more'))?.actionResource, null);
+        } finally { await f.page.close(); }
+      });
+
       for (const preference of ['disabled', 'missing']) await t.test(`${preference} confirmation preference retains direct deletion`, async () => {
         const f = await fixture();
         try {
