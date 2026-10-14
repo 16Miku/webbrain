@@ -7267,7 +7267,7 @@ export class Agent extends LoopDetector {
     pending.forEach((text, index) => {
       if (readings[index]?.choice) this._pageTextReadings.set(this._pageTextKey(kind, text, context), readings[index].choice);
     });
-    while (this._pageTextReadings.size > 1024) this._pageTextReadings.delete(this._pageTextReadings.keys().next().value);
+    while (this._pageTextReadings.size > 2048) this._pageTextReadings.delete(this._pageTextReadings.keys().next().value);
   }
 
   _pageTextReading(kind, text, context = {}) {
@@ -22144,25 +22144,34 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // the captions of the buttons, menu items and tabs that page shows (its
   // accessibility tree), so the submit probe usually finds a click's captions
   // already read. Nothing is read without a decision model, and nothing waits.
-  _preReadControlCaptions(tabId, pageContent) {
+  _preReadControlCaptions(tabId, pageContent, url = '') {
     if (typeof pageContent !== 'string' || !pageContent) return;
-    const captions = [];
+    const names = [];
     const role = /^\s*(?:button|menuitem|menuitemcheckbox|menuitemradio|tab|option|switch|checkbox|radio)\s+("(?:[^"\\]|\\.)*")/gm;
     for (const match of pageContent.slice(0, 60000).matchAll(role)) {
       let caption = '';
       try { caption = JSON.parse(match[1]); } catch { continue; }
       caption = String(caption).replace(/\s+/g, ' ').trim();
-      if (caption && caption.length <= 200 && this._controlEffectReading(caption) === null) captions.push(caption);
+      if (caption && caption.length <= 200) names.push(caption);
     }
-    const unread = [...new Set(captions)].slice(0, 48);
-    if (!unread.length) return;
-    this._readPageTexts(tabId, 'control_effect', unread, {}, { maxChars: 200, mainModel: false }).catch(() => {});
+    const captions = [...new Set(names)];
+    const unread = captions.filter(caption => this._controlEffectReading(caption) === null).slice(0, 48);
+    if (unread.length) this._readPageTexts(tabId, 'control_effect', unread, {}, { maxChars: 200, mainModel: false }).catch(() => {});
+    // On a page whose sends the recipient guard checks, the same names are
+    // read for that guard too.
+    let guarded = false;
+    try { guarded = getMessageRecipientGuardPolicy(url)?.verifyActiveRecipient === true; } catch {}
+    const unreadMessaging = guarded
+      ? captions.filter(caption => this._pageTextReading('message_control', caption) === null).slice(0, 48) : [];
+    if (unreadMessaging.length) {
+      this._readPageTexts(tabId, 'message_control', unreadMessaging, {}, { maxChars: 400, mainModel: false }).catch(() => {});
+    }
   }
 
-  // The control_effect readings the agent holds, by caption, for the submit
-  // probe: the 400 most recent.
-  _controlEffectReadingsForProbe() {
-    const prefix = this._pageTextKey('control_effect', '', {});
+  // The readings of one page-text question the agent holds, by caption, for a
+  // check that runs in the page: the 400 most recent.
+  _pageTextReadingsByCaption(kind) {
+    const prefix = this._pageTextKey(kind, '', {});
     const readings = {};
     const entries = [...(this._pageTextReadings || new Map()).entries()].filter(([key]) => key.startsWith(prefix));
     for (const [key, choice] of entries.slice(-400)) {
@@ -22170,6 +22179,42 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (caption) readings[caption] = choice;
     }
     return readings;
+  }
+
+  // The control_effect readings, for the submit probe.
+  _controlEffectReadingsForProbe() {
+    return this._pageTextReadingsByCaption('control_effect');
+  }
+
+  // Reads, in any language, what the controls the recipient guard consulted
+  // do on a messaging page (the message_control question): the decision model
+  // first, the active model within four seconds. A name no model could read
+  // stays unread, and the guard keeps treating it as one that could send.
+  async _readMessageControls(tabId, captions = []) {
+    const list = [...new Set((Array.isArray(captions) ? captions : [])
+      .map(caption => String(caption ?? '').replace(/\s+/g, ' ').trim())
+      .filter(caption => caption && caption.length <= 400))].slice(0, 48);
+    if (!list.length) return;
+    try {
+      await this._readPageTexts(tabId, 'message_control', list, {}, { maxChars: 400, mainTimeoutMs: CONTROL_READING_TIMEOUT_MS });
+    } catch (error) {
+      if (this._checkAbort(tabId)) throw error;
+    }
+  }
+
+  // The recipient guard's check in the page, with the agent's readings of the
+  // messaging controls' names. Names it consulted unread are read, and the
+  // check runs once more with them.
+  async _messageRecipientGuardProbe(tabId, params) {
+    const check = () => this._messageRecipientContentProbe(tabId,
+      { ...params, __wbMessageReadings: this._pageTextReadingsByCaption('message_control') });
+    const first = await check();
+    const unread = Array.isArray(first?.messageCaptionsNeeded) ? first.messageCaptionsNeeded : [];
+    if (!unread.length) return first;
+    await this._readMessageControls(tabId, unread);
+    const read = unread.some(caption => this._pageTextReading('message_control',
+      String(caption ?? '').replace(/\s+/g, ' ').trim()));
+    return read ? check() : first;
   }
 
   // Whether page structure already decides what a click did, so its caption
@@ -22839,6 +22884,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       _nativeChatPendingRestore: this._nativeChatPendingRestore(tabId),
       ...(policy?.adapterName ? { adapterName: policy.adapterName } : {}),
       supportsRecipientSets: policy?.supportsRecipientSets === true,
+      __wbMessageReadings: this._pageTextReadingsByCaption('message_control'),
     };
   }
 
@@ -23900,7 +23946,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!policy?.verifyActiveRecipient) return { ok: true, target };
     if (target.target_kind === 'named' && policy.adapterName !== 'twitter' && !nativeTelegramPage) return { ok: true, target };
 
-    const probe = await this._messageRecipientContentProbe(tabId, {
+    const probe = await this._messageRecipientGuardProbe(tabId, {
       tool: 'observe_active_conversation',
       args: {},
       adapterName: policy.adapterName,
@@ -24000,7 +24046,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
     const guard = this._planExecutionGuards.get(tabId);
     let target = normalizeMessageTarget(guard?.messaging);
-    const probe = await this._messageRecipientContentProbe(tabId, {
+    const probe = await this._messageRecipientGuardProbe(tabId, {
       tool: name,
       args,
       adapterName: policy.adapterName,
@@ -24274,6 +24320,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
 
+    // No model could read the control's name in time, so it is not known
+    // whether it sends something. Nothing was clicked; the same click can be
+    // tried again once the name has been read.
+    if (probe?.success === true && probe?.reasonCode === 'message_control_unread') {
+      return { success: false, blocked: true, noDispatch: true, dispatched: false, messageRecipientGuard: true,
+        retryable: true, reasonCode: 'message_control_unread',
+        error: 'Message action blocked: WebBrain could not read in time what this control does, so it was not clicked. '
+          + 'Retry the same click once. If it is blocked again, report that the control could not be checked.' };
+    }
     const missingLinkedInComposer = policy.adapterName === 'linkedin'
       && probe?.success === true && probe?.composerAvailable === false;
     const inconclusive = probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true;
@@ -36572,7 +36627,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               ? this._workflowVerificationKind(executionGuard.siteWorkflow)
               : 'none';
             if (workflowMessageKind === 'message_sent' || workflowMessageKind === 'message_draft') {
-              workflowMessageProbe = await this._messageRecipientContentProbe(tabId, {
+              workflowMessageProbe = await this._messageRecipientGuardProbe(tabId, {
                 tool: 'observe_active_conversation',
                 args: {},
                 adapterName: executionGuard.siteWorkflow.adapterName,

@@ -5419,8 +5419,10 @@
       const icons = Array.from(item.querySelectorAll(':scope > .tgico.btn-menu-item-icon')).filter(_nativeTelegramReadRendered);
       return icons.length === 1 && icons[0].textContent === '\uea22';
     });
+    // The settings glyph and the native menu identify it; a name read as
+    // sending something (in any language) still refuses it.
     if (settings.length !== 1 || settings[0] !== control
-        || _hasMessageCommitName(control.getAttribute('aria-label') || control.textContent || '')) return null;
+        || _messageControlReading(control.getAttribute('aria-label') || control.textContent || '') === 'send') return null;
     const icon = control.querySelector(':scope > .tgico.btn-menu-item-icon');
     return {context,target,control,phase:'open_settings',nodes:[...nativeNodes,trigger,menu,control,icon,target]};
   }
@@ -6433,13 +6435,6 @@
     }
   }
 
-  // A control whose label can commit a message in ONE activation, with no
-  // composer rendered ("Send", "Send without a note", "Send invitation").
-  // Everything else on a composer-less page is provably not a message send.
-  const _MESSAGE_COMMIT_LABEL_RE = new RegExp(
-    '(?:^|[^\\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\\p{L}]|$)',
-    'iu',
-  );
   // Containers the messaging apps themselves use for their messaging surface.
   // Anything inside them stays on the recipient-verification path even when no
   // composer is currently rendered.
@@ -6452,11 +6447,6 @@
     '[role="log"]',
   ].join(',');
 
-  function _hasMessageCommitName(value) {
-    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-    return !!text && _MESSAGE_COMMIT_LABEL_RE.test(text);
-  }
-
   function _inMessagingSurface(el) {
     try {
       return !!el?.closest?.(_MESSAGING_SURFACE_SELECTOR);
@@ -6465,34 +6455,81 @@
     }
   }
 
+  // What activating a control with a given caption does on a messaging
+  // page, read by a model in any language (the agent's message_control
+  // question): send, publish, reply, new_message, new_post, draft_tool,
+  // conversation_tool, other or unclear. The agent hands its readings to the
+  // page with each guard check, and the recipient guard and its dispatch
+  // checks consult them here. A caption nobody has read yet is kept for the
+  // agent to read; until then a check treats it as one that could send.
+  const _MESSAGE_CONTROL_CHOICES = new Set(['send', 'publish', 'reply', 'new_message', 'new_post',
+    'draft_tool', 'conversation_tool', 'other', 'unclear']);
+  // Readings that name an action of the control itself, never a contact's name.
+  const _MESSAGE_CONTROL_ACTIONS = new Set(['send', 'publish', 'reply', 'new_message', 'new_post',
+    'draft_tool', 'conversation_tool']);
+  const _messageControlReadings = new Map();
+  const _messageControlUnread = new Set();
+
+  function _messageControlCaption(value) {
+    return String(value ?? '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function _rememberMessageControlReadings(readings) {
+    if (!readings || typeof readings !== 'object' || Array.isArray(readings)) return;
+    for (const [caption, choice] of Object.entries(readings).slice(0, 800)) {
+      const key = _messageControlCaption(caption);
+      if (!key || key.length > 400 || !_MESSAGE_CONTROL_CHOICES.has(choice)) continue;
+      _messageControlReadings.delete(key);
+      _messageControlReadings.set(key, choice);
+      _messageControlUnread.delete(key);
+    }
+    while (_messageControlReadings.size > 1600) _messageControlReadings.delete(_messageControlReadings.keys().next().value);
+  }
+
+  // The reading of one caption: its choice, '' when there is no caption, or
+  // null when nobody has read it yet (it is then kept for the agent to read).
+  function _messageControlReading(value) {
+    const caption = _messageControlCaption(value);
+    if (!caption) return '';
+    // A text this long is not a control's name.
+    if (caption.length > 400) return 'other';
+    const choice = _messageControlReadings.get(caption);
+    if (choice) return choice;
+    _messageControlUnread.delete(caption);
+    _messageControlUnread.add(caption);
+    while (_messageControlUnread.size > 48) _messageControlUnread.delete(_messageControlUnread.values().next().value);
+    return null;
+  }
+
+  // A caption read as sending something to someone, or not read yet.
+  function _mayBeMessageSend(value) {
+    const reading = _messageControlReading(value);
+    return reading === 'send' || reading === null;
+  }
+
+  function _takeUnreadMessageControls() {
+    const captions = [..._messageControlUnread];
+    _messageControlUnread.clear();
+    return captions;
+  }
+
+  // The page monitor's capture of a conversation's footer actions consults the
+  // same readings (who the conversation is depends on which header controls
+  // are actions), so it can hand over the agent's readings and tell the agent
+  // that names were consulted unread.
+  window.__wb_remember_message_control_readings = readings => {
+    if (WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)) _rememberMessageControlReadings(readings);
+  };
+  window.__wb_message_controls_unread = () => WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)
+    && _messageControlUnread.size > 0;
+
   // Composer utilities sit at the composer's edge, so the geometry rule would
   // otherwise treat them as potential sends: Gmail's own toolbar exposes
   // "Save & close", "Minimize", "Exit full screen (Shift for Pop-out)", plus
   // attach/formatting/discard controls. None of them can commit a message.
-  // Without this list a click on "Save & close" was reported as a blocked
-  // message send and the task could never finish.
-  const _COMPOSER_UTILITY_LABEL_RE = new RegExp(
-    '^(?:save\\s*(?:&|and)?\\s*(?:close|draft|draft\\s*&\\s*close)|save\\s*&\\s*close'
-    + '|minimi[sz]e|exit\\s+full\\s+screen|full\\s+screen|pop-?out|expand|collapse'
-    + '|discard(?:\\s+draft)?|delete\\s+draft|print|check\\s+spelling|plain\\s+text(?:\\s+mode)?'
-    + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
-    + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
-    + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
-    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode'
-    // Attachment and picker launchers of chat composers (Instagram, Messenger
-    // and similar). They open a file chooser or a picker; they never send.
-    + '|add\\s+(?:an?\\s+)?(?:photos?|images?|pictures?|videos?|files?|attachments?|media|gifs?|stickers?)'
-    + '(?:\\s+(?:or|and|&)\\s+(?:an?\\s+)?(?:photos?|images?|pictures?|videos?|files?|gifs?|stickers?))?'
-    + '|choose\\s+(?:an?\\s+)?(?:emojis?|gifs?|stickers?)(?:\\s+(?:or|and|&)\\s+(?:an?\\s+)?(?:emojis?|gifs?|stickers?))?'
-    + '|(?:open\\s+)?(?:gif|sticker)s?(?:\\s+picker)?$'
-    + '|(?:fotoğraf|resim|görsel|video|dosya|medya)(?:\\s+(?:veya|ya\\s+da|ve)\\s+(?:fotoğraf|resim|video|dosya))?\\s+ekle'
-    + '|(?:emoji|gif|çıkartma)(?:\\s+(?:veya|ya\\s+da)\\s+(?:emoji|gif|çıkartma))?\\s+seç'
-    + '|(?:foto|bild|video|datei|anhang)(?:\\s+oder\\s+(?:foto|bild|video))?\\s+hinzufügen|emoji\\s+auswählen'
-    + '|(?:añadir|agregar|adicionar)\\s+(?:una?\\s+)?(?:foto|imagen|imagem|vídeo|video|archivo|arquivo)'
-    + '|ajouter\\s+(?:une?\\s+)?(?:photo|image|vidéo|fichier)|choisir\\s+un\\s+emoji)',
-    'i',
-  );
-
+  // Without this a click on "Save & close" was reported as a blocked message
+  // send and the task could never finish. A model reads the control's name in
+  // any language (a `draft_tool` reading); an unread name is no utility.
   function _isComposerUtilityControl(el) {
     if (!el) return false;
     try {
@@ -6505,7 +6542,7 @@
         || el.textContent
         || '',
       ).replace(/\s+/g, ' ').trim();
-      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label) && !_hasMessageCommitName(label)) return true;
+      if (label && _messageControlReading(label) === 'draft_tool') return true;
       // Icon-only controls carry their name on the icon itself (<svg
       // aria-label>, <img alt>). Every named icon must be a utility.
       if (!label) {
@@ -6513,11 +6550,11 @@
           .slice(0, 4)
           .map(icon => String(icon.getAttribute('aria-label') || icon.getAttribute('alt') || '').replace(/\s+/g, ' ').trim())
           .filter(Boolean);
-        if (iconNames.length && iconNames.every(name => _COMPOSER_UTILITY_LABEL_RE.test(name)
-          && !_hasMessageCommitName(name))) return true;
+        const iconReadings = iconNames.map(_messageControlReading);
+        if (iconReadings.length && iconReadings.every(reading => reading === 'draft_tool')) return true;
       }
       // Formatting toolbars and pressed toggles are structural non-sends.
-      const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
+      const formattingScope = el.closest?.('[role="toolbar"]');
       if (formattingScope && formattingScope !== el) return true;
       if (el.hasAttribute?.('aria-pressed')) return true;
       return false;
@@ -6959,7 +6996,7 @@
           ? clicked.closest?.('li') : null;
         const nativeConversationRow = nativeLinkedInRow
           && nativeLinkedInRow.parentElement?.matches(
-            'ul.msg-conversations-container__conversations-list,ul[aria-label="Conversation List"],ol[aria-label="Conversation List"]',
+            'ul.msg-conversations-container__conversations-list',
           ) ? nativeLinkedInRow : null;
         const row = clicked.closest?.(semanticRowSelector)
           || nativeConversationRow
@@ -7040,7 +7077,7 @@
         // to the composer cannot turn this verified viewer into a send; labels
         // alone cannot exempt a message commit or an unrelated image button.
         if ([button.getAttribute('aria-label'), button.getAttribute('title'), button.getAttribute('data-tooltip'), button.innerText || button.textContent]
-            .some(_hasMessageCommitName)) return false;
+            .map(_mayBeMessageSend).includes(true)) return false;
         const rect = button.getBoundingClientRect();
         const hit = _shadowAwareElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         // LinkedIn localizes the preview label. Verify the attachment itself
@@ -7154,10 +7191,9 @@
             || _composedClosestElement(control,
               'article,[role="log"],[data-message-id],[data-list-item-id^="chat-messages"]')) return false;
         const label = compact(control.getAttribute('aria-label') || control.innerText || control.textContent);
-        const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu;
         const actionLabels = [control.getAttribute('aria-label'), control.getAttribute('title'),
           ...(!editable(control) ? [control.innerText || control.textContent, control.value] : [])];
-        if (actionLabels.some(value => messageCommit.test(value || ''))) return false;
+        if (actionLabels.map(_mayBeMessageSend).includes(true)) return false;
         const modal = _findTopmostBlockingModal();
         if (modal && !_isComposedAncestor(modal, control)) return false;
         const rect = control.getBoundingClientRect();
@@ -7167,7 +7203,7 @@
         if (dialog) {
           // Discord keeps the channel composer mounted behind its settings.
           // Only the owning management dialog is a non-message surface.
-          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[role="textbox"][aria-label^="Message " i],[role="log"] article')) return false;
+          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[class*="channelTextArea"] [role="textbox"],[role="log"] article')) return false;
           const dialogId = dialog.getAttribute('id');
           const creationHeading = dialogId && Array.from(dialog.querySelectorAll('h1'))
             .some(el => visible(el) && el.id === `heading-${dialogId}`);
@@ -7257,9 +7293,10 @@
               'form,article,dialog,[role="dialog"],[role="alertdialog"],[role="log"],'
               + '[data-message-id],[data-thread-id],[data-conversation-id],'
               + '[contenteditable]:not([contenteditable="false"])')) return false;
-        const labels = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
-          .map(value => compact(value).toLowerCase()).filter(Boolean);
-        if (!labels.length || !labels.every(label => label === 'start a post')) return false;
+        // Its names, read in any language, only open a new public post.
+        const readings = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
+          .map(value => compact(value)).filter(Boolean).map(_messageControlReading);
+        if (!readings.length || !readings.every(reading => reading === 'new_post')) return false;
         // A shadow-root dialog may not appear in the document's modal query.
         // Require the actual painted control, descending through open roots.
         const rect = button.getBoundingClientRect();
@@ -7333,7 +7370,7 @@
         && layoutCandidate.matches?.('textarea,[contenteditable="true"],[role="textbox"]:not(input)')
         && Array.from(layoutDialog.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],[data-action]'))
           .some(control => visible(control) && control.closest(dialogSelector) === layoutDialog
-            && ((_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
+            && ((_messageControlReading(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent) === 'send'
                 && (_isEligibleTextClickTarget(control) || verifiedGmailBody))
               || verifiedLinkedInPublicPostControl(control)));
       const nativeLayoutContext = typeof window.__wb_get_native_chat_context === 'function'
@@ -7413,7 +7450,7 @@
           // path below stays fully guarded.
           try {
             const composeScopeOf = (el) => el?.closest?.(
-              'form, [role="dialog"], [role="form"], [aria-label*="compose" i], [class*="compose" i]',
+              'form, [role="dialog"], [role="form"], [class*="compose" i]',
             );
             const activeScope = composeScopeOf(active);
             if (activeScope && activeScope === composeScopeOf(layoutComposer)) {
@@ -7504,22 +7541,24 @@
             || control.textContent,
             120,
           );
-          const composerSetup = params.adapterName === 'gmail'
-            && /^(?:reply|reply all|forward)$/i.test(actionLabel);
+          // What the control does, read from its name in any language.
+          const actionReading = _messageControlReading(actionLabel);
+          const composerSetup = params.adapterName === 'gmail' && actionReading === 'reply';
           // The guard exists to keep a MESSAGE from reaching the wrong
           // recipient. When the page exposes no composer at all, an ordinary
           // control (Connect, Follow, Like, a feed row, Inbox nav, a search
           // box) cannot send a message in this activation, so it is proven
           // not to be a send and must not be blocked. Only controls that can
-          // still commit without a composer — a send/commit-labelled control,
-          // a messaging app's Reply/Reply all/Forward opener, or anything
-          // inside the app's messaging surface — stay fail-closed.
+          // still commit without a composer — one whose name reads as sending
+          // something or is not read yet, a mail app's Reply/Reply all/Forward
+          // opener, or anything inside the app's messaging surface — stay
+          // fail-closed.
           // Known compose surfaces and unverified composer openers stay protected.
           // Ordinary feed/profile controls do not become message actions merely
           // because LinkedIn's navigation classifier has no matching route.
           const composeDialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
           const linkedInComposeSurface = params.adapterName === 'linkedin' && (
-            /^start a post$/i.test(actionLabel)
+            actionReading === 'new_post'
             || /^\/(?:messaging(?:\/|$)|sharing\/compose(?:\/|$))/.test(location.pathname)
             || !!_composedClosestElement(control, `.share-box,${_MESSAGING_SURFACE_SELECTOR}`)
             || (composeDialog && Array.from(composeDialog.querySelectorAll('[contenteditable="true"],textarea')).some(visible))
@@ -7530,7 +7569,7 @@
           );
           const provenNonMessage = !composerSetup
             && !linkedInUnverified
-            && !_hasMessageCommitName(actionLabel)
+            && actionReading !== 'send' && actionReading !== null
             && !_inMessagingSurface(control);
           if (provenNonMessage) {
             return {
@@ -7561,9 +7600,8 @@
             messageSend: null,
             conclusive: false,
             composerAvailable: false,
-            reasonCode: _hasMessageCommitName(actionLabel)
-              ? 'message_commit_without_composer'
-              : 'no_composer_surface',
+            reasonCode: actionReading === 'send' ? 'message_commit_without_composer'
+              : actionReading === null ? 'message_control_unread' : 'no_composer_surface',
             ...(composerSetup ? { composerSetup: true } : {}),
             identityCandidates: [],
           };
@@ -8000,7 +8038,6 @@
             const footer = composer.closest?.('footer');
             const excluded = 'aside,nav,[role="navigation"],[role="complementary"],[role="log"],'
               + '[role="listbox"],[role="menu"],[role="toolbar"],[data-message-id],[data-message-direction],[data-outgoing],article';
-            const actionLabel = /^(?:call(?:\s|$)|(?:voice|video|audio)\s+call(?:\s|$)|search(?:\s|$)|menu(?:\s|$)|more(?:\s|$)|settings(?:\s|$)|back(?:\s|$)|close(?:\s|$)|arama(?:\s|$)|ara(?:\s|$)|suchen(?:\s|$)|rechercher(?:\s|$)|buscar(?:\s|$)|llamar(?:\s|$)|appel(?:\s|$))/iu;
             if (footer && !footer.closest(excluded)) {
               for (let pane = footer.parentElement, depth = 0; pane && depth < 8
                 && pane !== document.body && pane !== document.documentElement; pane = pane.parentElement, depth++) {
@@ -8034,9 +8071,11 @@
                       || control.form || control.hasAttribute('form') || !inConversationHeaderBand(control)
                       || independentScrollableRegion(control, composer)) return false;
                   const name = String(control.innerText || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
-                  const labels = [name, control.getAttribute('aria-label'), control.getAttribute('title')].filter(Boolean);
-                  return !!name && name.length <= 120 && !labels.some(label => actionLabel.test(String(label).trim())
-                    || _hasMessageCommitName(label) || _COMPOSER_UTILITY_LABEL_RE.test(String(label).trim()));
+                  // A control whose name reads as an action (call, search, more,
+                  // back, send...) in any language is not the contact.
+                  const readings = [name, control.getAttribute('aria-label'), control.getAttribute('title')]
+                    .filter(Boolean).map(_messageControlReading);
+                  return !!name && name.length <= 120 && !readings.some(reading => _MESSAGE_CONTROL_ACTIONS.has(reading));
                 });
                 if (contacts.length !== 1) break;
                 const carrier = contacts[0];
@@ -8355,6 +8394,9 @@
         error: 'The observed target or form context changed. Read the page again before acting.' });
       return;
     }
+    // The agent's readings of messaging controls' names, for the recipient
+    // guard and its dispatch checks.
+    _rememberMessageControlReadings(msg.params?.__wbMessageReadings);
 
     if (location.hostname === 'web.whatsapp.com'
         && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
@@ -8385,7 +8427,15 @@
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
-      'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
+      // Names consulted unread outside a guard check (the page monitor's
+      // capture, a chat observation), for the agent to read.
+      'take_unread_message_controls': () => ({ success: true, names: _takeUnreadMessageControls() }),
+      'probe_message_recipient_guard': () => {
+        const result = _probeMessageRecipientGuard(msg.params || {});
+        // Names the guard consulted unread go back to the agent to be read.
+        const unread = _takeUnreadMessageControls();
+        return unread.length && result && typeof result === 'object' ? { ...result, messageCaptionsNeeded: unread } : result;
+      },
       'observe_chat': () => {
         if (typeof window.__wb_observe_chat_dom !== 'function') {
           return { success: false, error: 'chat-observation.js not injected' };

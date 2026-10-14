@@ -16,7 +16,7 @@ import { chromium, firefox } from 'playwright';
 import { Agent as ChromeAgent } from '../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
 import { cdpClient } from '../src/chrome/src/cdp/cdp-client.js';
-import { defaultDecide, installModelStub } from './semantic-decision-stub.mjs';
+import { defaultDecide, guardProbeWithReadings, installModelStub } from './semantic-decision-stub.mjs';
 
 const tests = [];
 const bytes = Buffer.from('fixture photo bytes\n');
@@ -401,8 +401,12 @@ for (const kind of ['chrome', 'firefox']) {
       const provider = { model: 'owned-decision-fixture', chat: async () => ({ content: '{}' }) };
       f.agent._activeProvider = () => provider;
       f.agent.conversations.set(71, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
-      const calls = installModelStub(f.agent, { decide: (kind, question) => answer ?? defaultDecide(kind, question), provider });
+      // The send control's name is read too (message_control); the request
+      // question is the one this test is about.
+      const asked = installModelStub(f.agent, { decide: (kind, question) => (kind === 'sending_forbidden' ? answer : null)
+        ?? defaultDecide(kind, question), provider });
       const send = await textSend(f, page, { messaging: null, requiresSubmission: false, requiresStateChange: false });
+      const calls = asked.filter(call => call.kind !== 'message_control');
       assert.equal(calls.length, 1);
       assert.equal(calls[0].kind, 'sending_forbidden');
       assert.equal(calls[0].request, request, 'The request reaches the model as written');
@@ -437,8 +441,8 @@ for (const kind of ['chrome', 'firefox']) {
     ['mixed', false], ['bare', false]]) {
     test(`the ${control} icon control ${nonSend ? 'is a composer utility' : 'stays a guarded send'}`, async page => {
       await setup(page, kind);
-      const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args: { selector: `#${control}` },
-        adapterName: 'generic-messaging', supportsRecipientSets: false });
+      const probe = await guardProbeWithReadings(params => call(page, 'probe_message_recipient_guard', params),
+        { tool: 'click', args: { selector: `#${control}` }, adapterName: 'generic-messaging', supportsRecipientSets: false });
       assert.equal(probe.success, true, JSON.stringify(probe));
       if (nonSend) {
         assert.equal(probe.messageSend, false, JSON.stringify(probe));

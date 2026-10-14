@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { conformFixtureCompletionCall } from './completion-provider-contract.mjs';
+import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 // The reported trace through the installed MV3 extension: the user asks to
 // send a photo to "gamze", and the open direct thread is "Gamze Çömlekçi".
@@ -73,6 +74,9 @@ async function runVariant(variant, steps, answer, source, cardAnswer, expectedSe
       completion = { role: 'assistant', content: JSON.stringify(approved
         ? { outcome: 'succeeded', reason: 'The thread shows the new outgoing attachment.' }
         : { outcome: 'failed', reason: 'The user declined the recipient; nothing was sent.' }) };
+    } else if (fixedChoiceQuestion(input.messages)?.kind === 'message_control') {
+      // What the chat's controls do, read as a model would.
+      completion = { role: 'assistant', content: fixtureFixedChoiceReply(input.messages) };
     } else if (!input.tools?.length) completion = { role: 'assistant', content: JSON.stringify(intent) };
     else {
       const step = actionCalls++;

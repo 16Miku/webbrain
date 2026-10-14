@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
+import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 const workspace = path.resolve('.');
 const extension = path.resolve(process.env.WEBBRAIN_QUALITY_EXTENSION_SOURCE || path.join(workspace, 'src/chrome'));
@@ -101,10 +102,13 @@ const server = http.createServer(async (request, response) => {
       const readsCalculation = fixedChoice && system.includes('contains the arithmetic expression in `page.expression`');
       calls.push({ at: Date.now(), stage: fixedChoice ? 'reading' : 'answer_form', revised,
         kind: readsCalculation ? 'calculation_request' : fixedChoice ? 'other' : 'answer_form', correctionRead: request === correction });
+      // What the chat's controls do is read as a model would.
+      const controls = fixedChoice && fixedChoiceQuestion(input.messages)?.kind === 'message_control'
+        ? fixtureFixedChoiceReply(input.messages) : null;
       const content = answerForm ? { only_result: false, result_last: false, ending: marker, include: [] }
         : readsCalculation && request === correction ? { choice: 'only_result_with_form', evidence: request } : { choice: '', evidence: '' };
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ id: `owned-${calls.length}`, choices: [{ message: { role: 'assistant', content: JSON.stringify(content) },
+      response.end(JSON.stringify({ id: `owned-${calls.length}`, choices: [{ message: { role: 'assistant', content: controls || JSON.stringify(content) },
         finish_reason: 'stop' }], usage: { prompt_tokens: 60, completion_tokens: 20 } }));
       return;
     }

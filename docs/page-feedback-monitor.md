@@ -344,8 +344,9 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   confirms the recipient itself, and the send still gets WebBrain's card. No
   question or answer wording is read for consent. Icon-only attachment and
   picker launchers beside a chat composer, named by their icon's label or
-  title, are composer utilities; Like, Send, mixed and unnamed icons stay
-  guarded.
+  title, are composer utilities when a model reads that name, in any
+  language, as only working on the draft; Like, Send, mixed, unread and
+  unnamed icons stay guarded.
 - A cancelled `beforeinput` handled by a native chat editor can receive an
   exact read-only draft certificate while its original operation, document,
   identity nodes, editor, focus and selection remain current. The certificate

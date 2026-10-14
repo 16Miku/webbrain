@@ -1890,12 +1890,21 @@
   }
   function captureModel(params = {}) {
     if (!active || params.runToken !== runToken) return { ready: false, runToken, documentToken };
+    // Which header controls of a conversation are actions, read by the
+    // agent's model in any language, decides who owns its footer actions.
+    try { window.__wb_remember_message_control_readings?.(params.messageReadings); } catch { /* Unread names stay unread. */ }
     flushPendingMutations(); sampleFormControls();
     const authority = Object.freeze({ runToken, documentToken, owner: params.nativeChatOwner,
       userAt: lastUserAt, interventionRevision });
     identityPreparationCapture = authority;
-    try { return captureCurrentModel(params, authority); }
-    finally { if (identityPreparationCapture === authority) identityPreparationCapture = null; }
+    try {
+      const result = captureCurrentModel(params, authority);
+      let unread = false;
+      try { unread = window.__wb_message_controls_unread?.() === true; } catch { unread = false; }
+      // The agent reads names consulted unread (it asks content.js for them)
+      // and captures again.
+      return unread && result && typeof result === 'object' ? { ...result, messageNamesUnread: true } : result;
+    } finally { if (identityPreparationCapture === authority) identityPreparationCapture = null; }
   }
   function currentIdentityPreparationCapture(authority, owner) {
     return !!authority && authority === identityPreparationCapture && active && !disposed

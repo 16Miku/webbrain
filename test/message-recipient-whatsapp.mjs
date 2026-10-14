@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 import { Agent as ChromeAgent } from '../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
+import { guardProbeWithReadings, stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 // These local pages exercise the real content observer and one-use dispatch
 // validator. Every navigation is intercepted; no external message is sent.
@@ -47,10 +48,12 @@ async function fixture(kind, engine, Agent, options = {}) {
   }
   const agent = new Agent({ getActive: () => ({ supportsVision: false }) });
   agent._currentUrl = async () => page.url();
+  // Control names (Call, Search, Send) are read by the fixtures' model oracle.
+  stubPageTextReadings(agent);
   agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
   agent._planExecutionGuards.set(71, { messaging: { target_kind: 'named', recipients: ['anne'] },
     requiresStateChange: true, requiresSubmission: true });
-  const probe = (tool = 'click', args = sendArgs) => call(page, 'probe_message_recipient_guard', {
+  const probe = (tool = 'click', args = sendArgs) => guardProbeWithReadings(params => call(page, 'probe_message_recipient_guard', params), {
     adapterName: 'generic-messaging', tool, args, bindDispatch: true, expectedRecipients: ['anne'],
   });
   const bind = async (tool = 'click', args = sendArgs) => {

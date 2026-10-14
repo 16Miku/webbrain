@@ -8,6 +8,7 @@ import { getMessageRecipientGuardPolicy } from '../src/chrome/src/agent/adapters
 import { getMessageRecipientGuardPolicy as firefoxPolicy } from '../src/firefox/src/agent/adapters.js';
 import { advanceChatSession, createChatSession, markChatSendPending } from '../src/chrome/src/agent/chat-workflow.js';
 import { advanceChatSession as advanceChatSessionFirefox } from '../src/firefox/src/agent/chat-workflow.js';
+import { guardProbeWithReadings, stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 const url = 'https://discord.com/channels/123/456';
 const fixture = `<!doctype html><style>
@@ -59,6 +60,9 @@ for (const [kind, engine, AgentClass, policy] of [
       await page.goto(url);
       for (const source of sources) await page.addScriptTag({content:source});
       const agent=new AgentClass({getActive:()=>({supportsVision:false})});
+      // Control names are read by the fixtures' model oracle, as the agent's
+      // model reads them before the guard decides.
+      stubPageTextReadings(agent);
       agent._messageRecipientContentProbe=(_,params)=>call(page,'probe_message_recipient_guard',params);
       const guard=async(tool,args)=>{
         if(tool==='set_field' && args.selector){
@@ -67,7 +71,7 @@ for (const [kind, engine, AgentClass, policy] of [
         }
         return agent._messageRecipientGuardBlock(1,tool,args,page.url());
       };
-      const probe=(tool,args)=>call(page,'probe_message_recipient_guard',{tool,args,adapterName:'discord'});
+      const probe=(tool,args)=>guardProbeWithReadings(params=>call(page,'probe_message_recipient_guard',params),{tool,args,adapterName:'discord'});
       return {page,guard,probe};
     };
     try {
@@ -167,7 +171,11 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#topic').focus();
           assert.equal(await guard('press_keys',{key:'Enter'}),null);
           assert.notEqual((await probe('click',{selector:'#input-send'})).nonMessagingTarget,true);
-          await page.locator('#topic').evaluate(el=>el.setAttribute('aria-label','Message #general'));
+          // A channel composer (Discord's channelTextArea) inside the dialog,
+          // whatever its localized name, denies the management classification.
+          await page.locator('#topic').evaluate(el=>{
+            const area=document.createElement('div');area.className='channelTextArea_fixture';el.before(area);area.append(el);
+          });
           assert.notEqual((await probe('click',{selector:'#save'})).nonMessagingTarget,true);
         } finally {await page.close();}
       });

@@ -987,14 +987,28 @@ export const pageFeedbackMethods = {
     if (Array.isArray(messages) && /^https?:\/\//i.test(url) && state.frames.get(0)?.token) {
       try {
         const api = apiFor();
-        const capture = await settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_capture_model',
+        const requestCapture = () => settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_capture_model',
           params: { runToken: run.token, includeTree: true,
             ...(monitoringRetry ? { relaxedMonitorGrantToken: monitoringRetry.grantToken } : {}),
             ...(nativeChatOwner ? { nativeChatOwner } : {}),
             ...(run.uploadObservationScope?.documentToken === state.frames.get(0)?.token
               && run.uploadObservationScope.url === url ? { uploadTargets: run.uploadObservationScope.selectors } : {}),
             ...(run.actionObservationScope ? { observationRef: run.actionObservationScope.ref } : {}),
-            ...(run.actionCaptureTarget ? { actionTarget: run.actionCaptureTarget } : {}) } }, { frameId: 0 }));
+            ...(run.actionCaptureTarget ? { actionTarget: run.actionCaptureTarget } : {}),
+            messageReadings: this._pageTextReadingsByCaption?.('message_control') || {} } }, { frameId: 0 }));
+        let capture = await requestCapture();
+        // Who a conversation's footer actions belong to depends on what its
+        // header controls do, read from their names in any language. Names the
+        // monitor consulted unread are read once, and the page captured again.
+        if (capture?.messageNamesUnread === true && typeof this._readMessageControls === 'function') {
+          const unread = await settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'take_unread_message_controls' },
+            { frameId: 0 })).catch(() => null);
+          if (Array.isArray(unread?.names) && unread.names.length) {
+            await this._readMessageControls(tabId, unread.names.slice(0, 48));
+            stopIfAborted();
+            capture = await requestCapture();
+          }
+        }
         const [tab, frames] = await settle(Promise.all([api.tabs.get(tabId), api.webNavigation?.getAllFrames?.({ tabId })]));
         const currentDocument = frames?.find(frame => frame.frameId === 0)?.documentId;
         actionCaptureStatus = capture?.ready === true ? 'context_changed' : 'observation_unavailable';
@@ -1017,7 +1031,7 @@ export const pageFeedbackMethods = {
           if (capture.observationScopeCaptured === false) run.actionObservationScope = null;
           run.actionCaptureTarget = null;
           state.page = run.latestPage = capture.page;
-          this._preReadControlCaptions?.(tabId, capture.page.pageContent);
+          this._preReadControlCaptions?.(tabId, capture.page.pageContent, url);
           for (let index = messages.length - 1; index >= 0; index--) {
             if (messages[index]?.webbrainAppOwnedKind === 'page_action_observation') messages.splice(index, 1);
           }

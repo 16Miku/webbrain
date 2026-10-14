@@ -1,5 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
-import { fixtureControlEffectReading, fixturePageTextReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { fixtureControlEffectReading, fixtureMessageControlReading, fixturePageTextReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -6555,15 +6555,26 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const visibilityStart = source.indexOf('  function _hasVisibleBox(');
     const visibilityEnd = source.indexOf('\n\n  function ', visibilityStart + 1);
     const recipientHelpersStart = [
-      source.indexOf('  const _MESSAGE_COMMIT_LABEL_RE'),
-      source.indexOf('  const _COMPOSER_UTILITY_LABEL_RE'),
+      source.indexOf('  const _MESSAGING_SURFACE_SELECTOR'),
+      source.indexOf('  const _MESSAGE_CONTROL_CHOICES'),
     ].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? -1;
     const recipientHelpers = recipientHelpersStart >= 0
       ? source.slice(recipientHelpersStart, start)
       : '';
-    const probe = vm.runInNewContext(
-      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; ${recipientHelpers}; (${source.slice(start, end)})`, context,
+    const guard = vm.runInNewContext(
+      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; ${recipientHelpers}; ({ probe: (${source.slice(start, end)}), remember: _rememberMessageControlReadings, unread: _takeUnreadMessageControls })`, context,
     );
+    // The guard checks with the readings a model gave the names it consulted,
+    // as the agent runs it: names read unread are read, and it checks again.
+    const probe = params => {
+      const first = guard.probe(params);
+      const names = guard.unread();
+      if (!names.length) return first;
+      guard.remember(Object.fromEntries(names.map(name => [name, fixtureMessageControlReading(name)]).filter(([, choice]) => choice)));
+      const result = guard.probe(params);
+      guard.unread();
+      return result;
+    };
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
     const fieldSubmitResult = probe({

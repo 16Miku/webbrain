@@ -1,9 +1,12 @@
 import { strict as assert } from 'node:assert';
-import { probeWithReadings } from '../semantic-decision-stub.mjs';
+import { guardProbeWithReadings, probeWithReadings, stubPageTextReadings } from '../semantic-decision-stub.mjs';
 
 export function registerMessageRecipientNavigationFixtures({
   test, firefoxTest, setupContentHtml, call, Agent, FirefoxAgent,
 }) {
+  // The recipient guard's page check, run as the agent runs it: control names
+  // it consulted unread are read by the fixtures' model oracle first.
+  const guardCall = (page, params) => guardProbeWithReadings(next => call(page, 'probe_message_recipient_guard', next), params);
   for (const [kind, register, AgentClass] of [
     ['chrome', test, Agent],
     ['firefox', firefoxTest, FirefoxAgent],
@@ -48,8 +51,11 @@ export function registerMessageRecipientNavigationFixtures({
       });
       const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
+      // Control names are read by the fixtures' model oracle, as the agent's
+      // model reads them before the recipient guard decides.
+      stubPageTextReadings(agent);
       const guard = (tool, args) => agent._messageRecipientGuardBlock(1, tool, args, page.url());
-      const probe = (tool, args) => call(page, 'probe_message_recipient_guard', { tool, args, adapterName: 'linkedin' });
+      const probe = (tool, args) => guardCall(page, { tool, args, adapterName: 'linkedin' });
       return { agent, guard, probe };
     };
 
@@ -87,6 +93,9 @@ export function registerMessageRecipientNavigationFixtures({
       agent.conversations.set(1, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Read Ipek’s event invitation.' }]);
       agent._startPlanExecutionGuard(1, 'act', { requiresStateChange: false, requiresSubmission: false });
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
+      // Control names are read by the fixtures' model oracle, as the agent's
+      // model reads them before the recipient guard decides.
+      stubPageTextReadings(agent);
       return { agent, guard: (tool, args) => agent._messageRecipientGuardBlock(1, tool, args, page.url()) };
     };
 
@@ -328,7 +337,7 @@ export function registerMessageRecipientNavigationFixtures({
       <button id="send" type="button">Send</button>`, kind);
       const body = 'Hey Alex, check out webbrain.one.\nHappy to share a demo.';
       const params = {tool:'observe_active_conversation',adapterName:'twitter',expectedMessageBody:body};
-      const observe = () => call(page,'probe_message_recipient_guard',params);
+      const observe = () => guardCall(page, params);
       const addRow = async (id, status='sent', outgoing=true, text=body) => page.evaluate(({id,status,outgoing,text})=>{
         const row=document.createElement('div');row.dataset.testid='message-'+id;
         row.dataset.sendStatus=status;row.className=outgoing?'justify-end':'justify-start';
@@ -501,7 +510,7 @@ export function registerMessageRecipientNavigationFixtures({
           const submit = agent._completionSubmitStates.get(1);
           assert.deepEqual(submit.workflowBinding.recipientTargets, canonical.recipients);
           submit.observedAfterSubmit = true;
-          const probe = await call(page,'probe_message_recipient_guard', {
+          const probe = await guardCall(page, {
             tool:'observe_active_conversation', adapterName:'twitter', expectedMessageBody:'Hello Alex',
           });
           const terminal = agent._workflowTerminalEvidenceFromDone(1,{relevantFormCount:1},url,
@@ -602,7 +611,7 @@ export function registerMessageRecipientNavigationFixtures({
         url, url, clicked, 'doc', 'doc', execution);
       const submit = agent._completionSubmitStates.get(1);
       submit.observedAfterSubmit = true;
-      const terminalProbe = await call(page, 'probe_message_recipient_guard', {
+      const terminalProbe = await guardCall(page, {
         tool: 'observe_active_conversation', adapterName: 'twitter', expectedMessageBody: 'Hello Study Group',
       });
       const terminal = agent._workflowTerminalEvidenceFromDone(1, { relevantFormCount: 1 }, url,
@@ -651,7 +660,7 @@ export function registerMessageRecipientNavigationFixtures({
       }
       assert.deepEqual(await page.evaluate(() => window.fixtureClicks),
         ['profile','profile','profile','back','back','back','home','home','home']);
-      const messageLinkProbe = await call(page, 'probe_message_recipient_guard', {
+      const messageLinkProbe = await guardCall(page, {
         tool:'click', args:{selector:'#message-link'}, adapterName:'twitter',
       });
       assert.notEqual(messageLinkProbe.navigation, true, 'message content is not trusted header navigation');
@@ -659,7 +668,7 @@ export function registerMessageRecipientNavigationFixtures({
         assert.equal((await guard('click', {selector}))?.noDispatch, true, selector);
       }
       await page.locator('#profile').evaluate(el => el.setAttribute('href', 'javascript:void(0)'));
-      assert.notEqual((await call(page, 'probe_message_recipient_guard', {
+      assert.notEqual((await guardCall(page, {
         tool:'click', args:{selector:'#profile'}, adapterName:'twitter',
       })).navigation, true, 'unsafe destinations are not trusted header navigation');
       await page.locator('#back').evaluate(el => {

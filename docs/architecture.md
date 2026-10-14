@@ -915,6 +915,32 @@ task evidence, counts as a task form still on screen unless every one of its
 submit captions is read as `view` (showing, filtering or searching); an empty,
 unread or unclear caption keeps it counted.
 
+On a page whose sends the recipient guard checks (see the messaging
+adapters below), what a control does is read the same way, from its name in
+any language (`message_control`: it sends something to someone, publishes,
+opens a reply or forward, opens a new message, opens a new post, only works on
+the draft being written, is one of the conversation's own tools such as a
+call, search, settings or back button, is something else such as a contact's
+name, or is unclear). The agent hands the readings it holds to the page with
+each guard check and chat observation; names the guard consulted unread come
+back, are read (the decision model first, the active model within four
+seconds) and the check runs once more. The page monitor's capture reports only
+that names were consulted unread; page feedback then asks for them, reads them
+and captures again, so the conversation that owns a footer action is decided
+with the readings. While the active model decides on such a page, the decision
+model alone pre-reads its button, menu item and tab names for this question
+too. Readings decide: without a composer, a control read as sending, or not
+read yet, stays guarded (an unread one is blocked as retryable, so the click
+can be tried again once read), while any other is not a message send; a
+composer control read as only working on the draft is a composer utility; a
+Gmail control read as opening a reply or forward is composer setup; LinkedIn's
+feed entry read as opening a new post opens one; a conversation header's
+controls read as actions are not its contact; and a Discord settings control,
+a LinkedIn image preview or Telegram's settings entry read as sending is not
+exempt. The content script keeps no word list: Discord's channel composer is
+found by its channelTextArea container, LinkedIn's conversation list by its
+class, and a formatting toolbar by its role.
+
 Chrome's one trusted retry click on a generic element whose synthetic click
 changed nothing visible (see `accessibility-tree-and-refs.md`) is decided the
 same way. Page structure rules out native, form, stateful, download, covered

@@ -172,11 +172,15 @@ const server = http.createServer(async (request, response) => {
     }
     if (textOf(input.messages?.[0]?.content).startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
       // WebBrain reads some short texts with a fixed-choice question (what a
-      // final summary does, for example). This fixture's model has no reading
-      // to give, which leaves every check as it was.
+      // final summary does, for example). This fixture's model reads only what
+      // the chat's controls do (the recipient guard's question), as a model
+      // would; other questions get no reading, which leaves their checks as
+      // they were.
       metrics.fixedChoiceQuestions = (metrics.fixedChoiceQuestions || 0) + 1;
+      const content = fixedChoiceQuestion(input.messages)?.kind === 'message_control'
+        ? fixtureFixedChoiceReply(input.messages) : '{"choice":"","evidence":""}';
       response.writeHead(200, { 'Content-Type': 'application/json' });
-      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '{"choice":"","evidence":""}' }, finish_reason: 'stop' }] })); return;
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] })); return;
     }
     if (!JSON.stringify(input.messages).includes(marker)) {
       metrics.unmatchedRequest = { systemPrefix: textOf(input.messages?.[0]?.content).slice(0, 100),
@@ -535,6 +539,7 @@ for (const name of ['_nativeChatTerminalEvidence', '_completionSubmissionEvidenc
   };
 }
 import { cdpClient as ownedDiagnosticCdp } from './cdp/cdp-client.js';
+import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 for (const [object, name, doneOnly] of [[agent, '_executeToolImpl', true], [agent, '_captureViewportProbe', false],
   [ownedDiagnosticCdp, 'attach', false], [ownedDiagnosticCdp, 'sendCommand', false]]) {
   const original = object[name];
