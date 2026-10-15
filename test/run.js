@@ -31841,7 +31841,7 @@ test('executeHttpSkillTool does not require HEAD support for skill downloads', a
   }
 });
 
-test('executeHttpSkillTool cleans up provider jobs on pre-download failures', async () => {
+test('executeHttpSkillTool cleans up failures and preserves timed-out provider jobs', async () => {
   const originalFetch = globalThis.fetch;
   const originalChrome = globalThis.chrome;
   const originalBrowser = globalThis.browser;
@@ -31877,7 +31877,10 @@ test('executeHttpSkillTool cleans up provider jobs on pre-download failures', as
         },
         statusResponse: () => ({ status: 200, body: { status: 'running' } }),
         assertResult(result, label) {
-          assert.match(result.error, /timed out/i, `${label}: timeout error missing`);
+          assert.match(result.error, /wait limit/i, `${label}: timeout error missing`);
+          assert.equal(result.statusUrl, 'https://freeskillz.xyz/v1/media/jobs/job_timeout');
+          assert.equal(result.executionContext, 'remote_service', `${label}: timeout should identify the remote execution context`);
+          assert.equal(result.browserLoginAffectsRequest, false, `${label}: browser login must not be presented as affecting the provider request`);
         },
       },
     ];
@@ -31940,12 +31943,12 @@ test('executeHttpSkillTool cleans up provider jobs on pre-download failures', as
         const result = await executeTool(tool, { url: 'https://www.instagram.com/reel/abc/' });
         assert.equal(result.success, false, `${label} ${scenario.name}: pre-download failure should fail`);
         assert.equal(result.jobId, scenario.jobId, `${label} ${scenario.name}: job id missing`);
-        assert.equal(result.cleanup?.success, true, `${label} ${scenario.name}: provider cleanup should run`);
+        assert.equal(result.cleanup?.success, scenario.name === 'timeout' ? undefined : true, `${label} ${scenario.name}: cleanup should only run for failures`);
         assert.equal(downloadCalls.length, 0, `${label} ${scenario.name}: browser download should not start`);
         assert.equal(providerCalls[0].opts.method, 'POST', `${label} ${scenario.name}: create job should be first`);
         const lastProviderCall = providerCalls.at(-1);
         assert.equal(lastProviderCall.url, `https://freeskillz.xyz/v1/media/jobs/${scenario.jobId}`, `${label} ${scenario.name}: cleanup URL should be last`);
-        assert.equal(lastProviderCall.opts.method, 'DELETE', `${label} ${scenario.name}: cleanup method should be DELETE`);
+        assert.equal(lastProviderCall.opts.method, scenario.name === 'timeout' ? 'GET' : 'DELETE', `${label} ${scenario.name}: timed-out jobs must remain available`);
         assert.equal(
           providerCalls.some(call => call.url.endsWith('/file')),
           false,

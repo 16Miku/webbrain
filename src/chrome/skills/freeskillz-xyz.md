@@ -173,7 +173,7 @@ This skill exposes `read_youtube_transcript`, `fetch_nytimes_article`, `resolve_
       "cleanupEndpoint": "https://freeskillz.xyz/v1/media/jobs/{job_id}",
       "jobIdField": "job_id",
       "pollIntervalMs": 1000,
-      "timeoutMs": 180000,
+      "timeoutMs": 1200000,
       "defaultArgs": {
         "kind": "auto",
         "max_height": 720

@@ -613,7 +613,32 @@ function defaultSkillDownloadFilename(contentType) {
   return extension ? `public-media.${extension}` : undefined;
 }
 
-async function fetchSkillJson(url, init, endpoint, tool) {
+function throwIfSkillAborted(signal) {
+  if (signal?.aborted) throw responseAbortError(signal);
+}
+
+function sleepAbortable(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(responseAbortError(signal));
+    if (!signal?.addEventListener) {
+      setTimeout(resolve, ms);
+      return;
+    }
+    const timer = setTimeout(() => {
+      try { signal.removeEventListener('abort', onAbort); } catch {}
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(responseAbortError(signal));
+    };
+    try { signal.addEventListener('abort', onAbort, { once: true }); } catch {
+      // If the signal cannot be observed, fall back to an uninterruptible sleep.
+    }
+  });
+}
+
+async function fetchSkillJson(url, init, endpoint, tool, signal = null) {
   const urlCheck = validateFetchUrl(url, { allowLocalNetwork: getAllowLocalNetwork() });
   if (!urlCheck.ok) {
     return {
@@ -626,10 +651,12 @@ async function fetchSkillJson(url, init, endpoint, tool) {
     };
   }
   try {
+    throwIfSkillAborted(signal);
     const res = await fetch(url, {
       credentials: 'omit',
       redirect: 'manual',
       ...init,
+      ...(signal ? { signal } : {}),
     });
     if (res?.type === 'opaqueredirect' || isHttpRedirectStatus(res?.status)) {
       return {
@@ -670,6 +697,7 @@ async function fetchSkillJson(url, init, endpoint, tool) {
     }
     return { success: true, status: res.status, data: data && typeof data === 'object' ? data : { text: rawText } };
   } catch (e) {
+    if (signal?.aborted || e?.name === 'AbortError') throw responseAbortError(signal);
     return { success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', error: `Skill tool request failed: ${e.message}` };
   }
 }
@@ -819,17 +847,19 @@ async function readSkillDownloadBuffer(res) {
   return { success: true, buffer, bytesReceived: buffer.byteLength };
 }
 
-async function fetchSkillDownloadData(url, expectedUrl) {
+async function fetchSkillDownloadData(url, expectedUrl, signal = null) {
   const initialUrlCheck = validateSkillDownloadFinalUrl(url, expectedUrl);
   if (!initialUrlCheck.ok) {
     return { success: false, blocked: true, finalUrl: url, error: initialUrlCheck.error };
   }
   try {
+    throwIfSkillAborted(signal);
     const res = await fetch(url, {
       method: 'GET',
       credentials: 'omit',
       redirect: 'manual',
       cache: 'no-store',
+      ...(signal ? { signal } : {}),
     });
     if (res?.type === 'opaqueredirect' || isHttpRedirectStatus(res?.status)) {
       return {
@@ -889,6 +919,7 @@ async function fetchSkillDownloadData(url, expectedUrl) {
       bytesReceived: file.bytesReceived,
     };
   } catch (e) {
+    if (signal?.aborted || e?.name === 'AbortError') throw responseAbortError(signal);
     return { success: false, finalUrl: url, error: `Skill download file request failed: ${e.message}` };
   }
 }
@@ -904,17 +935,19 @@ async function callBrowserDownloadAction(name, ...args) {
   }
 }
 
-async function prepareStagedSkillDownload(url, expectedUrl) {
+async function prepareStagedSkillDownload(url, expectedUrl, signal = null) {
   const initialUrlCheck = validateSkillDownloadFinalUrl(url, expectedUrl);
   if (!initialUrlCheck.ok) {
     return { success: false, blocked: true, finalUrl: url, error: initialUrlCheck.error };
   }
   try {
+    throwIfSkillAborted(signal);
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'omit',
       redirect: 'manual',
       cache: 'no-store',
+      ...(signal ? { signal } : {}),
     });
     if (response?.type === 'opaqueredirect' || isHttpRedirectStatus(response?.status)) {
       return {
@@ -949,6 +982,7 @@ async function prepareStagedSkillDownload(url, expectedUrl) {
     const responseBlob = typeof response.blob === 'function'
       ? await response.blob()
       : new Blob([await response.arrayBuffer()], { type: responseContentType || 'application/octet-stream' });
+    throwIfSkillAborted(signal);
     const contentType = safeDataUrlMimeType(responseContentType || responseBlob.type);
     const blob = responseBlob.type === contentType
       ? responseBlob
@@ -974,6 +1008,7 @@ async function prepareStagedSkillDownload(url, expectedUrl) {
       ...(contentDisposition ? { contentDisposition } : {}),
     };
   } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') throw responseAbortError(signal);
     return { success: false, finalUrl: url, error: `Skill download staging failed: ${error.message}` };
   }
 }
@@ -1050,11 +1085,12 @@ function scheduleSkillDownloadCleanup(downloadId, cleanupUrl, endpoint, tool, op
   return true;
 }
 
-async function downloadSkillFile(url, filename, waitMs = 60000) {
-  const file = await fetchSkillDownloadData(url, url);
+async function downloadSkillFile(url, filename, waitMs = 60000, signal = null) {
+  throwIfSkillAborted(signal);
+  const file = await fetchSkillDownloadData(url, url, signal);
   let staged = null;
   if (file.tooLarge === true) {
-    staged = await prepareStagedSkillDownload(url, url);
+    staged = await prepareStagedSkillDownload(url, url, signal);
     if (!staged?.success) {
       return {
         success: false,
@@ -1089,16 +1125,20 @@ async function downloadSkillFile(url, filename, waitMs = 60000) {
     || filenameFromContentDisposition(file.contentDisposition);
   const opts = { url: staged ? staged.localUrl : file.dataUrl, conflictAction: 'uniquify' };
   const safeName = safeDownloadFilename(filename) || responseFilename || defaultSkillDownloadFilename(contentType);
-  const configuredName = await filenameInConfiguredDownloadDirectory(browser, safeName);
-  if (configuredName) opts.filename = configuredName;
   let downloadId;
+  let info;
   try {
+    const configuredName = await filenameInConfiguredDownloadDirectory(browser, safeName);
+    if (configuredName) opts.filename = configuredName;
+    throwIfSkillAborted(signal);
     downloadId = await browser.downloads.download(opts);
+    info = await resolveDownloadInfo(downloadId, waitMs, { signal });
+    throwIfSkillAborted(signal);
   } catch (error) {
+    if (downloadId != null) await callBrowserDownloadAction('cancel', downloadId);
     await releaseStagedSkillDownload(staged?.releaseToken);
     throw error;
   }
-  const info = await resolveDownloadInfo(downloadId, waitMs);
   const result = {
     downloadId,
     success: false,
@@ -1144,12 +1184,14 @@ async function downloadSkillFile(url, filename, waitMs = 60000) {
   return result;
 }
 
-async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
+async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}) {
+  const signal = ctx?.signal || null;
+  throwIfSkillAborted(signal);
   const create = await fetchSkillJson(endpoint.href, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  }, endpoint, tool);
+  }, endpoint, tool, signal);
   if (!create.success) return create;
 
   const idField = tool.job?.idField || 'job_id';
@@ -1168,11 +1210,33 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
     return await withSkillDownloadJobCleanup({ success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', jobId, error: fileEndpoint.error }, cleanupEndpoint, endpoint, tool);
   }
 
-  const deadline = Date.now() + (tool.job?.timeoutMs || 90000);
+  const startedAt = Date.now();
+  const deadline = startedAt + (tool.job?.timeoutMs || 90000);
+  let waitNoticeSent = false;
+  const notifyLongWait = data => {
+    if (waitNoticeSent) return;
+    // Elapsed-based: only notify after 30s of waiting, regardless of metadata.
+    // Metadata only customizes the message, so fast jobs never over-promise.
+    if (Date.now() - startedAt < 30000) return;
+    const metadata = data?.metadata || {};
+    const duration = Number(metadata.duration);
+    const bytes = Number(metadata.filesize || metadata.filesize_approx);
+    const longVideo = Number.isFinite(duration) && duration >= 120;
+    const largeFile = Number.isFinite(bytes) && bytes >= 50 * 1024 * 1024;
+    waitNoticeSent = true;
+    // Only numeric metadata enters chat; provider titles and text stay untrusted.
+    const size = largeFile ? `about ${Math.ceil(bytes / (1024 * 1024))} MB`
+      : longVideo ? `about ${Math.ceil(duration / 60)} minutes long` : '';
+    const message = size
+      ? `This media is ${size}, so downloading and preparing the final file may take several minutes. I’ll keep waiting.`
+      : 'The media is still downloading or being prepared. Larger files and longer videos can take several minutes. I’ll keep waiting.';
+    try { ctx.onProgress?.(message); } catch { /* Chat updates must not interrupt delivery. */ }
+  };
   const pollIntervalMs = tool.job?.pollIntervalMs || 1000;
   let lastStatus = create.data;
   while (Date.now() < deadline) {
-    const poll = await fetchSkillJson(statusEndpoint.url, { method: 'GET' }, endpoint, tool);
+    throwIfSkillAborted(signal);
+    const poll = await fetchSkillJson(statusEndpoint.url, { method: 'GET' }, endpoint, tool, signal);
     if (!poll.success) return await withSkillDownloadJobCleanup({ ...poll, jobId }, cleanupEndpoint, endpoint, tool);
     lastStatus = poll.data;
     const status = String(poll.data?.status || '').toLowerCase();
@@ -1189,29 +1253,39 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
         error: providerError(502, poll.data, '') || `Skill download job ${jobId} failed.`,
       }, cleanupEndpoint, endpoint, tool);
     }
-    await new Promise(r => setTimeout(r, pollIntervalMs));
+    notifyLongWait(lastStatus);
+    await sleepAbortable(pollIntervalMs, signal);
   }
+  throwIfSkillAborted(signal);
 
   const finalStatus = String(lastStatus?.status || '').toLowerCase();
   if (!(finalStatus === 'complete' || finalStatus === 'completed' || finalStatus === 'done' || finalStatus === 'success')) {
-    return await withSkillDownloadJobCleanup({
+    // A polling deadline does not cancel the remote job. FreeSkillz rejects
+    // DELETE while queued/running (409) and expires completed files via
+    // MEDIA_TTL_SECONDS, so keep the identity for recovery instead of deleting.
+    return {
       success: false,
       provider: endpoint.hostname,
       skillTool: tool.name || '',
       skillName: tool.skillName || '',
       jobId,
       jobStatus: finalStatus || 'unknown',
-      error: `Skill download job timed out before completion.`,
-    }, cleanupEndpoint, endpoint, tool);
+      statusUrl: statusEndpoint.url,
+      fileUrl: fileEndpoint.url,
+      ...REMOTE_MEDIA_FAILURE_CONTEXT,
+      error: 'The wait limit was reached, but the remote job may still finish. Check statusUrl before starting another download.',
+    };
   }
 
   let cleanup = null;
+  let cleanupScheduled = false;
   try {
-    const download = await downloadSkillFile(fileEndpoint.url, payload.filename, Math.min(tool.job?.timeoutMs || 90000, 120000));
+    throwIfSkillAborted(signal);
+    const download = await downloadSkillFile(fileEndpoint.url, payload.filename, Math.min(tool.job?.timeoutMs || 90000, 120000), signal);
     const releaseToken = download.releaseToken || '';
     if (Object.prototype.hasOwnProperty.call(download, 'releaseToken')) delete download.releaseToken;
     const cleanupDeferred = cleanupEndpoint.ok && download.pending === true;
-    const cleanupScheduled = cleanupDeferred
+    cleanupScheduled = cleanupDeferred
       ? scheduleSkillDownloadCleanup(
         download.downloadId,
         cleanupEndpoint.url,
@@ -1220,6 +1294,7 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
         { releaseToken },
       )
       : false;
+    throwIfSkillAborted(signal);
     if (cleanupEndpoint.ok && !cleanupDeferred) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     if (!download.success) {
       return {
@@ -1250,7 +1325,14 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
       ...download,
     };
   } catch (e) {
-    if (cleanupEndpoint.ok) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
+    if (signal?.aborted || e?.name === 'AbortError') {
+      // Stop must not wait for the provider to acknowledge deletion.
+      if (cleanupEndpoint.ok && !cleanupScheduled) {
+        void cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool).catch(() => {});
+      }
+      throw responseAbortError(signal);
+    }
+    if (cleanupEndpoint.ok && !cleanupScheduled) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     return { success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', jobId, fileUrl: fileEndpoint.url, cleanup, error: `Skill download failed: ${e.message}` };
   }
 }
@@ -1280,7 +1362,7 @@ export async function executeHttpSkillTool(tool, args = {}, ctx = {}) {
   }
 
   if (tool.kind === 'httpDownloadJob') {
-    return await executeHttpDownloadJobSkillTool(tool, payload, endpoint);
+    return await executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx);
   }
 
   const init = {
@@ -2485,6 +2567,7 @@ async function resolveDownloadInfo(downloadId, timeoutMs = 15000, opts = {}) {
   const deadline = Date.now() + timeoutMs;
   let last = null;
   while (Date.now() < deadline) {
+    if (opts.signal?.aborted) throw responseAbortError(opts.signal);
     let items;
     try {
       items = await browser.downloads.search({ id: downloadId });
@@ -2498,7 +2581,7 @@ async function resolveDownloadInfo(downloadId, timeoutMs = 15000, opts = {}) {
       if (last.finalUrlBlocked) return last;
       if (it.state === 'complete' || it.state === 'interrupted') return last;
     }
-    await new Promise(r => setTimeout(r, 200));
+    await sleepAbortable(200, opts.signal || null);
   }
   return last; // timed out — return best-known (may still be in_progress)
 }
