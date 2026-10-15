@@ -141,7 +141,13 @@ export async function saveChatHistoryRecord(input) {
   const existing = await promisifyReq(tx(db).objectStore(STORE_NAME).get(String(input.id))).catch(() => null);
   const record = normalizeRecord(input, existing);
   if (!record.id || record.userMessageCount < 1) return null;
-  await promisifyReq(tx(db, 'readwrite').objectStore(STORE_NAME).put(record));
+  const transaction = tx(db, 'readwrite');
+  await new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error || new Error('History save transaction failed'));
+    transaction.onabort = () => reject(transaction.error || new Error('History save transaction aborted'));
+    transaction.objectStore(STORE_NAME).put(record);
+  });
   return record;
 }
 

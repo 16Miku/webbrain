@@ -407,6 +407,26 @@ export function createTabChatHandoffCoordinator(storageArea, {
     });
   }
 
+  function replace(tabId, html, { ownerId, handoffGeneration, commit } = {}) {
+    return enqueue(tabId, async queuedTabId => {
+      const current = await readHandoffState(queuedTabId);
+      if (!current || current.ownerId !== ownerId || current.generation !== Number(handoffGeneration)) {
+        throw new Error('The conversation panel changed before recovery. Try again in the active panel.');
+      }
+      if (typeof html !== 'string' || typeof commit !== 'function') throw new Error('No recovered transcript.');
+      const generation = current.generation + 1;
+      const persistedHtml = compactTabChatForPersist(html);
+      // The model snapshot, transcript, and ownership generation are one storage
+      // transaction. A failed write leaves the previous conversation intact.
+      const state = await commit({
+        [TAB_CHAT_PREFIX + queuedTabId]: persistedHtml,
+        [TAB_CHAT_HANDOFF_PREFIX + queuedTabId]: { ownerId, generation },
+      });
+      latestHtml.set(queuedTabId, html);
+      return { ...state, html, handoffOwnerId: ownerId, handoffGeneration: generation };
+    });
+  }
+
   async function load(tabId, { waitForHandoff = false, claimantId = '' } = {}) {
     const numericTabId = normalizeTabId(tabId);
     if (numericTabId == null) return { ok: false, found: false, error: 'No tab ID' };
@@ -530,5 +550,5 @@ export function createTabChatHandoffCoordinator(storageArea, {
     });
   }
 
-  return { save, load, clear };
+  return { save, load, clear, replace };
 }

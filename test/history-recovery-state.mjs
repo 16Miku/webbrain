@@ -114,7 +114,7 @@ for (const build of ['chrome', 'firefox']) {
       source.indexOf("    case 'restore_selection_scope':"));
     const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
     const handle = new AsyncFunction('msg', 'sender', 'agent', 'scheduler', 'recoveringHistoryTabs',
-      'assertNoActiveTabRun', 'getChatHistoryRecord', 'chrome', 'browser', 'clearRunUiSnapshot', 'console', body);
+      'assertNoActiveTabRun', 'getChatHistoryRecord', 'chrome', 'browser', 'clearRunUiSnapshot', 'console', 'tabChatHandoff', body);
     let recoverFails = true, cancelFails = false;
     const events = [], locks = new Set();
     const agent = { getConversationId: async () => 'old', recoverChatHistory: async () => {
@@ -129,7 +129,8 @@ for (const build of ['chrome', 'firefox']) {
     const api = { tabs: { get: async () => ({ url: 'https://example.com/' }) } };
     const invoke = () => handle({ tabId: 1, recordId: 'archive' }, {}, agent, scheduler, locks,
       () => {}, async () => ({ ...archive, url: 'https://example.com/' }), api, api,
-      () => events.push('clear-ui'), { warn: () => events.push('warning') });
+      () => events.push('clear-ui'), { warn: () => events.push('warning') },
+      { replace: async (id, html, { commit }) => commit({}) });
     await assert.rejects(invoke(), /Unable to persist/);
     assert.deepEqual(events, ['recover']);
     assert.equal(locks.size, 0);

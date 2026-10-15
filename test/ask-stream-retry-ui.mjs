@@ -160,6 +160,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
             ${unexport(read(build, 'src/ui/markdown-render.js'))}
             ${unexport(read(build, 'src/ui/markdown-link.js'))}
             ${unexport(read(build, 'src/ui/history-text.js'))}
+            ${unexport(read(build, 'src/context-menu-storage.js'))}
+            ${unexport(read(build, 'src/chat-history-recovery.js').replace(/^import .*;\n/gm, ''))}
             ${source.slice(helperStart, observerEnd)}
             ${functions}
             ${observeCall}

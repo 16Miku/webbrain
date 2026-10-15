@@ -200,6 +200,11 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
     || cloudRunController.isRunning(tabId),
 });
 agent.setRunStartGuard(async (tabId, context) => {
+  if (recoveringHistoryTabs.has(tabId)) {
+    // The scheduler checks this guard after reserving the tab and again when
+    // the agent starts; report contention so its pending job is requeued.
+    throw new Error('An agent run is already in progress for this tab: conversation recovery is in progress.');
+  }
   await cloudRunController.guardRunStart(tabId, context);
   return teacherRunInterlock.guardRunStart(tabId);
 });
@@ -2339,7 +2344,7 @@ const recoveringHistoryTabs = new Set();
 
 function assertNoActiveTabRun(tabId) {
   if (recoveringHistoryTabs.has(tabId)) throw new Error('Conversation recovery is in progress.');
-  if (agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId)) {
+  if (agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId) || scheduler.isRunning(tabId)) {
     throw new Error('A run is already active for this tab.');
   }
 }
@@ -3311,8 +3316,13 @@ async function handleMessage(msg, sender) {
         const record = await getChatHistoryRecord(msg.recordId);
         const tab = await chrome.tabs.get(tabId);
         if (!record || !record.url || record.url !== tab.url) throw new Error('This history belongs to a different URL.');
+        if (record.updatedAt !== msg.recordUpdatedAt) throw new Error('This history changed before recovery. Try again.');
         const conversationId = await agent.getConversationId(tabId);
-        const state = await agent.recoverChatHistory(tabId, record);
+        const state = await tabChatHandoff.replace(tabId, msg.html, {
+          ownerId: msg.handoffOwnerId,
+          handoffGeneration: msg.handoffGeneration,
+          commit: storageEntries => agent.recoverChatHistory(tabId, record, { storageEntries }),
+        });
         // A failed recovery must retain the old conversation's scheduled work.
         // Recovery is already committed here, so scheduler cleanup cannot turn
         // it into a failure response with a mismatched transcript.

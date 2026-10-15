@@ -7850,7 +7850,7 @@ export class Agent extends LoopDetector {
     return (await this.getConversationState(tabId, mode)).conversationId;
   }
 
-  async recoverChatHistory(tabId, record) {
+  async recoverChatHistory(tabId, record, { storageEntries = {} } = {}) {
     await this._hydrate(tabId);
     if (this._runningTabs.has(tabId)) throw new Error('Wait for the current response to finish.');
     if (this._botMemorySessions.has(tabId)) throw new Error('Managed bot conversations cannot recover chat history.');
@@ -7873,7 +7873,7 @@ export class Agent extends LoopDetector {
       };
     };
     const hadPendingPersist = this.persistTimers.has(tabId);
-    const persisted = await this._persistNow(tabId, { snapshotForBudget, preserveStateOnFailure: true });
+    const persisted = await this._persistNow(tabId, { snapshotForBudget, preserveStateOnFailure: true, storageEntries });
     if (!persisted?.ok) {
       if (hadPendingPersist) this._persist(tabId);
       throw new Error('Unable to persist the recovered conversation.');
@@ -19632,7 +19632,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  async _persistNow(tabId, { snapshotForBudget = null, preserveStateOnFailure = false } = {}) {
+  async _persistNow(tabId, { snapshotForBudget = null, preserveStateOnFailure = false, storageEntries = {} } = {}) {
     if (tabId == null) return { ok: false, degraded: false, reason: 'invalid_tab' };
     const existing = this.persistTimers.get(tabId);
     if (existing) {
@@ -19646,13 +19646,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       : this._markPersistenceDegraded(tabId, isSessionQuotaError(error) ? 'quota' : 'unavailable', error);
     if (!entry) return { ok: false, degraded: false, reason: 'no_conversation' };
     try {
-      await chrome.storage.session.set({ [this._convKey(tabId)]: entry });
+      await chrome.storage.session.set({ ...storageEntries, [this._convKey(tabId)]: entry });
       return { ok: true, degraded: entry.sessionSnapshotCompacted === true, reason: entry.sessionSnapshotCompacted ? 'sanitized' : null };
     } catch (error) {
       if (isSessionQuotaError(error)) {
         const compactEntry = snapshot(SESSION_CONVERSATION_RETRY_BUDGET_BYTES);
         try {
-          await chrome.storage.session.set({ [this._convKey(tabId)]: compactEntry });
+          await chrome.storage.session.set({ ...storageEntries, [this._convKey(tabId)]: compactEntry });
           return { ok: true, degraded: true, reason: 'quota_compacted' };
         } catch (retryError) {
           return failed(retryError);

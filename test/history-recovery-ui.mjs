@@ -60,7 +60,11 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const hydrateChatHistoryIdentity = async () => {};
         const fallbackHistoryRecordId = () => 'previous';
         const extractChatHistoryMessages = () => [{ role: 'user', text: messagesEl.textContent }];
-        const saveChatHistoryRecord = async record => { window.archive = record; window.archivedHidden = hidden; };
+        const saveChatHistoryRecord = async record => {
+          if (window.archiveFails) throw new Error('IndexedDB quota exceeded');
+          window.archive = record; window.archivedHidden = hidden; return record;
+        };
+        const getChatHistoryRecord = async () => ({ messages: [{role:'user', text:'recovered dialog'}] });
         let persistTimer = null, persistTimerTabId = null, historyPersistTimer = null, currentAssistantEl = null;
         let lastVisibleTabChatSnapshot = { tabId: 42, html: 'old dialog' };
         const historyPopover = { hidePopover() {} };
@@ -77,12 +81,14 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const t = value => value;
         const showComposerToast = message => { window.failure = message; };
         const enqueueTabChatOperation = (tabId, fn) => fn(tabId);
-        const addMessage = (role,text) => { const el = document.createElement('div'); el.textContent = text; messagesEl.append(el); return el; };
+        const addMessage = (role,text,options={}) => { const el = document.createElement('div'); el.textContent = text; (options.root || messagesEl).append(el); return el; };
+        const rebindRestoredMessageControls = () => {};
+        const requestVisibleSidePanelStateRefresh = () => { window.refreshRequested = true; };
         ${extract(source, 'persistChatHistorySnapshot')}
         ${extract(source, 'flushChatHistorySnapshot')}
         let completeRecovery;
         const sendToBackground = async (action, payload) => {
-          if (action === 'recover_chat_history') return new Promise(resolve => completeRecovery = resolve);
+          if (action === 'recover_chat_history') { window.recoveryCalls = (window.recoveryCalls || 0) + 1; window.candidateHtml = payload.html; if (window.loseResponse) { window.persisted = payload.html; throw new Error('Response channel lost after commit'); } return new Promise(resolve => completeRecovery = resolve); }
           if (action === 'persist_tab_chat') { window.persisted = payload.html; return { ok: true }; }
           throw new Error(action);
         };
@@ -91,9 +97,10 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         ${extract(source, 'waitForHistoryRecovery')}
         ${extract(source, 'persistTabChat')}
         ${extract(source, 'flushRenderedTabChat')}
+        ${extract(source, 'createHistoryRecoveryTranscript')}
         ${extract(source, 'recoverHistoryRecord')}
         ${listener}
-        window.finish = () => completeRecovery({ ok: true, conversationId: 'new-id', record: { messages: [{role: 'user', text:'recovered dialog'}] } });
+        window.finish = () => { window.persisted = window.candidateHtml; completeRecovery({ ok: true, conversationId: 'new-id', handoffGeneration: 2, html: window.candidateHtml }); };
         window.hide = () => { hidden = true; };
         window.recovery = recoverHistoryRecord('archive', 42, 'https://example.com/');
       ` });
@@ -107,11 +114,34 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await page.evaluate(async () => { window.finish(); await window.recovery; });
       await page.waitForFunction(() => window.ack);
       assert.match(await page.evaluate(() => window.persisted), /recovered dialog/);
-      assert.equal(await page.evaluate(() => window.ack.html), await page.evaluate(() => window.persisted));
+      assert.equal(await page.evaluate(() => window.ack.ok), false, 'An acknowledgement from the old generation cannot overwrite the committed transcript');
+      await page.evaluate(() => window.handoff({target:'sidepanel', action:'tab_chat_handoff_request', ownerId:'owner', tabId:42, generation:2}, {}, value => {window.freshAck = value;}));
+      assert.equal(await page.evaluate(() => window.freshAck.html), await page.evaluate(() => window.persisted));
       assert.equal(await page.evaluate(() => window.archivedHidden), true);
       assert.equal(await page.evaluate(() => window.archive.id), 'new-id');
       assert.equal(await page.evaluate(() => window.archive.messages[0].text), 'recovered dialog');
       assert.equal(await page.evaluate(() => window.failure), undefined);
+      await page.evaluate(async () => {
+        document.querySelector('#messages').textContent = 'unsaved current changes';
+        window.archiveFails = true;
+        await recoverHistoryRecord('archive', 42, 'https://example.com/');
+      });
+      assert.equal(await page.evaluate(() => window.recoveryCalls), 1, 'Archive failure must not call background recovery');
+      assert.equal(await page.locator('#messages').textContent(), 'unsaved current changes');
+      assert.equal(await page.evaluate(() => window.failure), 'sp.history.failed');
+      await page.evaluate(async () => {
+        delete window.failure;
+        window.archiveFails = false;
+        window.loseResponse = true;
+        await recoverHistoryRecord('archive', 42, 'https://example.com/');
+        window.cacheAfterLostResponse = { snapshot:lastVisibleTabChatSnapshot,
+          id:chatHistoryConversationIdsByTab.get(42), html:tabChats.get(42), generation:tabChatHandoffGenerations.get(42) };
+        window.handoff({target:'sidepanel', action:'tab_chat_handoff_request', ownerId:'owner', tabId:42, generation:3}, {}, value => window.lostResponseAck = value);
+      });
+      assert.equal(await page.evaluate(() => window.refreshRequested), true, 'Lost response reconciles from authoritative background state');
+      assert.deepEqual(await page.evaluate(() => window.cacheAfterLostResponse), {snapshot:null, id:undefined, html:undefined, generation:undefined});
+      assert.equal(await page.evaluate(() => window.lostResponseAck.ok), false);
+      assert.equal(await page.evaluate(() => window.failure), undefined, 'An ambiguous response cannot report the committed recovery as failed');
     } finally { await browser.close(); }
   });
 }

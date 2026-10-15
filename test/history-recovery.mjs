@@ -63,6 +63,23 @@ for (const build of ['chrome', 'firefox']) {
       await page.addStyleTag({ content: '#btn-history { position: fixed; bottom: 100px; right: 30px; }' });
       await page.addScriptTag({ type: 'module', content: `import * as store from '/src/ui/chat-history-store.js'; window.store = store;` });
       await page.waitForFunction(() => window.store);
+      const abortResult = await page.evaluate(async () => {
+        const original = IDBObjectStore.prototype.put;
+        IDBObjectStore.prototype.put = function(value, ...args) {
+          const request = original.call(this, value, ...args);
+          if (value.id === 'abort-after-request') request.addEventListener('success', () => this.transaction.abort());
+          return request;
+        };
+        let rejected = false;
+        try {
+          await window.store.saveChatHistoryRecord({id:'abort-after-request', messages:[{role:'user',text:'must remain unsaved'}]});
+        } catch { rejected = true; }
+        finally { IDBObjectStore.prototype.put = original; }
+        return {rejected, record:await window.store.getChatHistoryRecord('abort-after-request')};
+      });
+      assert.equal(abortResult.rejected, true, 'Request success is insufficient if the transaction aborts');
+      assert.equal(abortResult.record, undefined);
+
       await page.addScriptTag({ type: 'module', content: `
         import { buildSelectionPrompt, formatSelectionPromptForDisplay } from '/src/context-menu-storage.js';
         import { historyRecoveryMetadata } from '/src/chat-history-recovery.js';
