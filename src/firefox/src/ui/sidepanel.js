@@ -11786,7 +11786,7 @@ function markLastStepDone(toolName, result) {
     if (details && details.classList.contains('step-details')) {
       const resultDiv = document.createElement('div');
       resultDiv.className = 'detail-result';
-      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 1200))}`;
+      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml((['auto_screenshot', 'staged_screenshot'].includes(toolName) && typeof result?.description === 'string' ? JSON.stringify(result, null, 2) : truncate(JSON.stringify(result), 1200)))}`;
       const expandAll = details.querySelector?.('.step-expand-all') || null;
       if (expandAll && typeof details.insertBefore === 'function') details.insertBefore(resultDiv, expandAll);
       else details.appendChild(resultDiv);
@@ -11882,7 +11882,7 @@ function appendVerboseToolResult(name, result) {
 
   const resultEl = document.createElement('div');
   resultEl.className = 'tool-result';
-  resultEl.textContent = truncate(JSON.stringify(result), 200);
+  resultEl.textContent = (['auto_screenshot', 'staged_screenshot'].includes(name) && typeof result?.description === 'string' ? JSON.stringify(result, null, 2) : truncate(JSON.stringify(result), 200));
   lastTool.appendChild(resultEl);
 
   if (name === 'done') {

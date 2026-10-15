@@ -78,6 +78,19 @@ function compactRunUiToolResult(result, name) {
       compacted.textTruncated = true;
     }
   }
+  if (['auto_screenshot', 'staged_screenshot'].includes(name)) {
+    // Preserve the vision output for live details and replay, without retaining
+    // image bytes or allowing a single capture to exhaust the journal budget.
+    if (typeof source.description === 'string') {
+      compacted.description = source.description.slice(0, 12000);
+      if (source.descriptionTruncated === true || source.description.length > 12000) {
+        compacted.descriptionTruncated = true;
+      }
+    }
+    for (const key of ['method', 'model', 'visionRoute']) {
+      if (typeof source[key] === 'string') compacted[key] = source[key].slice(0, 300);
+    }
+  }
   if (source.truncated === true) compacted.truncated = true;
   if (source.hasMore === true) compacted.hasMore = true;
   if (source.notice) compacted.notice = String(source.notice).slice(0, 300);
