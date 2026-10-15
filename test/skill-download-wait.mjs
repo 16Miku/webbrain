@@ -185,7 +185,7 @@ for (const build of ['chrome', 'firefox']) {
 
 // Exercise the real Chrome offscreen handler and Firefox Blob path, including
 // response bodies that stay open until Stop. Only browser APIs and OPFS are fake.
-async function stagedDownloadHarness(t, build, stopAt) {
+async function stagedDownloadHarness(t, build, stopAt, { stallCleanup = false } = {}) {
   const { executeHttpSkillTool } = await import(`../src/${build}/src/network/network-tools.js`);
   const { normalizeCustomSkills, buildSkillToolRegistry } = await import(`../src/${build}/src/agent/skills.js`);
   const tool = buildSkillToolRegistry(normalizeCustomSkills([{
@@ -194,7 +194,9 @@ async function stagedDownloadHarness(t, build, stopAt) {
   }])).get('download_public_media');
   const original = { fetch: globalThis.fetch, chrome: globalThis.chrome, browser: globalThis.browser,
     create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+  const cleanup = Promise.withResolvers();
   t.after(() => {
+    cleanup.resolve();
     globalThis.fetch = original.fetch;
     for (const key of ['chrome', 'browser']) {
       if (original[key] === undefined) delete globalThis[key];
@@ -209,7 +211,7 @@ async function stagedDownloadHarness(t, build, stopAt) {
   const released = Promise.withResolvers();
   const controller = new AbortController();
   const events = [], messages = [], files = new Map(), created = [], revoked = [], downloads = [];
-  let stageSignal, fileRequests = 0;
+  let stageSignal, cleanupSignal, fileRequests = 0;
   URL.createObjectURL = blob => {
     const url = original.create(blob);
     created.push(url);
@@ -219,7 +221,12 @@ async function stagedDownloadHarness(t, build, stopAt) {
   const headers = { 'content-type': 'video/mp4', 'content-length': String(26 * 1024 * 1024) };
   globalThis.fetch = async (url, opts) => {
     if (opts.method === 'POST') return new Response(JSON.stringify({ job_id: 'staged' }));
-    if (opts.method === 'DELETE') { events.push('delete'); return new Response(null, { status: 204 }); }
+    if (opts.method === 'DELETE') {
+      events.push('delete');
+      cleanupSignal = opts.signal;
+      if (stallCleanup) await cleanup.promise;
+      return new Response(null, { status: 204 });
+    }
     if (!url.endsWith('/file')) return new Response(JSON.stringify({ status: 'complete' }));
     if (++fileRequests === 1) return new Response(null, { headers });
     stageSignal = opts.signal;
@@ -309,10 +316,27 @@ async function stagedDownloadHarness(t, build, stopAt) {
   const pending = executeHttpSkillTool(tool, { url: 'https://x.com/user/status/123', kind: 'video' }, { signal: controller.signal });
   return { controller, pending, ready: ready.promise, proceed, stageSettled: stageSettled.promise,
     released: released.promise, events, messages, files, created, revoked, downloads,
-    get stageSignal() { return stageSignal; } };
+    get stageSignal() { return stageSignal; }, get cleanupSignal() { return cleanupSignal; } };
 }
 
 for (const build of ['chrome', 'firefox']) {
+  test(`${build}: Stop rejects while completed-job cleanup is still pending`, { timeout: 3000 }, async t => {
+    const h = await stagedDownloadHarness(t, build, 'save', { stallCleanup: true });
+    const rejected = assert.rejects(h.pending, error => error?.name === 'AbortError');
+    await h.ready;
+    h.controller.abort();
+    let timer;
+    try {
+      await Promise.race([rejected, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Stop waited for stalled provider cleanup.')), 1000);
+      })]);
+    } finally { clearTimeout(timer); }
+    assert.deepEqual(h.events, ['cancel', 'release', 'delete']);
+    assert.notEqual(h.cleanupSignal?.aborted, true, 'cleanup must survive cancellation of the tool');
+    assert.equal(h.files.size, 0);
+    assert.deepEqual(h.revoked, h.created);
+  });
+
   for (const phase of ['headers', 'body', 'directory', 'save', ...(build === 'chrome' ? ['reply'] : [])]) {
     test(`${build}: Stop during staged download ${phase} cancels transfer and releases ownership`, { timeout: 3000 }, async t => {
       const h = await stagedDownloadHarness(t, build, phase);

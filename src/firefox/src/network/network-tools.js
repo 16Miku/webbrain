@@ -1325,8 +1325,14 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
       ...download,
     };
   } catch (e) {
+    if (signal?.aborted || e?.name === 'AbortError') {
+      // Stop must not wait for the provider to acknowledge deletion.
+      if (cleanupEndpoint.ok && !cleanupScheduled) {
+        void cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool).catch(() => {});
+      }
+      throw responseAbortError(signal);
+    }
     if (cleanupEndpoint.ok && !cleanupScheduled) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
-    if (signal?.aborted || e?.name === 'AbortError') throw responseAbortError(signal);
     return { success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', jobId, fileUrl: fileEndpoint.url, cleanup, error: `Skill download failed: ${e.message}` };
   }
 }
