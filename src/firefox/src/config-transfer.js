@@ -109,7 +109,7 @@ export const DEFAULT_CONFIG_SETTINGS = Object.freeze({
   systemOneWatchThreshold: 0.7,
   systemOneCompletionThreshold: 0.7,
   decisionProvider: '', decisionModel: '', decisionApiKey: '', decisionLocalApiKey: '', decisionBaseUrl: '', decisionVisionMode: 'auto', decisionVisionSupported: false,
-  decisionInputRate: .04, decisionOutputRate: 0, systemOneDoneEnabled: true, systemOneDoneThreshold: .9,
+  decisionInputRate: .02, decisionOutputRate: 0, systemOneDoneEnabled: true, systemOneDoneThreshold: .9,
   typesafeApiKey: '',
   [SAFE_SOCIAL_SETTINGS_KEY]: normalizeSafeSocialSettings(),
 });
@@ -283,7 +283,7 @@ function normalizeSettings(source, { strict = false } = {}) {
   settings.providers = sanitizeProviders(settings.providers, { strict });
   if (!Object.hasOwn(source, 'decisionInputRate')) {
     settings.decisionInputRate = source.decisionProvider === 'typesafe' || (!source.decisionProvider && source.typesafeApiKey)
-      ? .042 : ['local', 'webgpu_d1'].includes(source.decisionProvider) ? 0 : .04;
+      ? .042 : ['local', 'webgpu_d1'].includes(source.decisionProvider) ? 0 : .02;
   }
   return settings;
 }

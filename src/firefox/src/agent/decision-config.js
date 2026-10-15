@@ -1,5 +1,5 @@
 import { D1_MODEL_ID, D1_CONSENT_KEY, D1_CONSENT_VERSION } from '../providers/d1-config.js';
-export const DEFAULT_DECISION_MODEL = 'perplexity/pplx-decider-v1-27b';
+export const DEFAULT_DECISION_MODEL = 'perplexity/pplx-decider-v1.1-27b';
 export const DECISION_SETTINGS_KEYS = [
   'systemOneEnabled', 'typesafeApiKey', 'decisionProvider', 'decisionModel',
   'decisionApiKey', 'decisionLocalApiKey', 'decisionBaseUrl', 'decisionVisionMode', 'decisionVisionSupported',
@@ -43,7 +43,7 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
     threshold: Number.isFinite(stored.systemOneDoneThreshold) && stored.systemOneDoneThreshold >= .5 && stored.systemOneDoneThreshold <= .99 ? stored.systemOneDoneThreshold : .9,
     supportsVision: visionMode === 'on' || (visionMode !== 'off' && (compass ? true : stored.decisionVisionSupported === true)),
     config: { category: provider === 'local' && loopback ? 'local' : 'cloud', providerName: provider === 'compass' ? 'webbrain-cloud' : provider,
-      inputCostPerMillionUsd: rate(stored.decisionInputRate, provider === 'typesafe' ? .042 : provider === 'local' ? 0 : .04),
+      inputCostPerMillionUsd: rate(stored.decisionInputRate, provider === 'typesafe' ? .042 : provider === 'local' ? 0 : .02),
       outputCostPerMillionUsd: rate(stored.decisionOutputRate, 0) },
   };
 }

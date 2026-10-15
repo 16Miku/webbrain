@@ -33,6 +33,8 @@ for (const build of ['chrome', 'firefox']) {
   });
   test(`${build}: new defaults and legacy/local configuration`, () => {
     assert.equal(config.resolveDecisionConfig().model, config.DEFAULT_DECISION_MODEL);
+    assert.equal(config.DEFAULT_DECISION_MODEL, 'perplexity/pplx-decider-v1.1-27b');
+    assert.equal(config.resolveDecisionConfig().config.inputCostPerMillionUsd, .02);
     const legacy = config.resolveDecisionConfig({ typesafeApiKey: 'legacy', systemOneEnabled: true, systemOneWatchEnabled: true });
     assert.equal(legacy.provider, 'typesafe'); assert.equal(legacy.url, 'https://api.typesafe.ai/v1/systemone');
     assert.equal(legacy.apiKey, 'legacy'); assert.equal(legacy.doneEnabled, true);
@@ -69,7 +71,7 @@ for (const build of ['chrome', 'firefox']) {
   const side = (choices, choice) => ({ type: 'choice', choice, confidence: .95,
     probabilities: Object.fromEntries(choices.map(x => [x, x === choice ? 1 - .05 * (choices.length - 1) : .05])) });
   function response(outcome = 'succeeded', { later = 'not_asked', summary = 'result' } = {}) {
-    return { model: config.DEFAULT_DECISION_MODEL + '-20261001', provider: 'Perplexity', usage: { input_tokens: 40, output_tokens: 1, cost: .00002 },
+    return { model: config.DEFAULT_DECISION_MODEL + '-20261006', provider: 'Perplexity', usage: { input_tokens: 40, output_tokens: 1, cost: .00002 },
       answers: { task_outcome: { type: 'choice', choice: outcome, confidence: .99, probabilities: Object.fromEntries(verifier.COMPLETION_OUTCOMES.map(x => [x, x === outcome ? .97 : .01])) },
         later_outcome: side(['asked', 'not_asked'], later), summary_kind: side(['result', 'meta_only', 'plan_only'], summary) } };
   }

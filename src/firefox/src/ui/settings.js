@@ -1583,7 +1583,7 @@ function decisionSettingsDraft() {
     decisionBaseUrl: decisionEndpointInput.value.trim(), decisionVisionMode: decisionVisionInput.value,
     decisionVisionSupported, ...(decisionProviderInput.value === 'webgpu_d1' ? {} : decisionProviderInput.value === 'typesafe' ? { typesafeApiKey: systemOneApiKeyInput.value.trim() } : { [decisionProviderInput.value === 'local' ? 'decisionLocalApiKey' : 'decisionApiKey']: systemOneApiKeyInput.value.trim() }),
     systemOneDoneEnabled: decisionDoneToggle.checked, systemOneDoneThreshold: Number(decisionThresholdInput.value) / 100,
-    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : ['local', 'webgpu_d1'].includes(decisionProviderInput.value) ? 0 : .04), decisionOutputRate: card?.outputRate ?? 0 };
+    decisionInputRate: card?.inputRate ?? (decisionProviderInput.value === 'typesafe' ? .042 : ['local', 'webgpu_d1'].includes(decisionProviderInput.value) ? 0 : .02), decisionOutputRate: card?.outputRate ?? 0 };
 }
 
 decisionProviderInput?.addEventListener('change', () => {
