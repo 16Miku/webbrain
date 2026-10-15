@@ -9,7 +9,8 @@ import { chromium } from 'playwright';
 // the answer was being written they typed a draft into the chat's composer,
 // clicked and scrolled. The answer appeared and vanished twice before a third
 // one stayed. Through the installed MV3 extension, with real page events from
-// real input: the answer that is being written stays, and is written once.
+// real input: the answer that is being written stays, is written once, and
+// the run ends without waiting for the person to stop typing.
 // The page and the model are owned local fixtures; nothing leaves the host.
 const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS || 'ci/artifacts/quality-audit-2026-10-15/ask-person-activity-mv3');
 await fs.mkdir(out, { recursive: true });
@@ -131,12 +132,19 @@ try {
   await page.mouse.wheel(0, -600);
   await page.click('#last');
   await delay(1500);
+  // They keep typing for five seconds after the answer is released.
+  await page.click('#composer');
+  const typingUntil = Date.now() + 5000;
+  const typing = (async () => { while (Date.now() < typingUntil) await page.keyboard.type(' ok', { delay: 60 }); })();
+  const released = Date.now();
   releaseMain.resolve();
   await panel.waitForFunction(() => window.ownedRun.finished, null, { timeout: 45000 });
+  const finishedAfter = Date.now() - released;
+  await typing;
   const run = await panel.evaluate(() => window.ownedRun);
   const events = await panel.evaluate(id => ownedEvents.filter(event => event.requestId === id), requestId);
   const current = await message(panel, 'agent_run_state', { tabId, requestId });
-  const draft = await page.evaluate(() => document.querySelector('#composer').textContent);
+  const draft = (await page.evaluate(() => document.querySelector('#composer').textContent)).replace(/( ok)+$/, '');
   const descriptor = await message(panel, 'export_traces', { tabId, full: true });
   const decisions = descriptor?.ok ? await panel.evaluate(async ({ sessionId, extensionId }) => {
     const recorder = await import(`chrome-extension://${extensionId}/src/trace/recorder.js`);
@@ -147,7 +155,7 @@ try {
   const retracted = events.filter(event => event.type === 'text' && event.data?.replace === true && event.data?.content === '');
   const main = calls.filter(call => call.stage === 'main');
   const evidence = { run, calls, current: { running: current?.running, finalContent: current?.runUi?.finalContent, status: current?.runUi?.status },
-    retracted: retracted.length, decisions, draft, network, runtimeErrors };
+    retracted: retracted.length, finishedAfter, decisions, draft, network, runtimeErrors };
   await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
   assert.deepEqual(runtimeErrors, []);
   assert.equal(draft, 'bi de bana sorumluluk', 'The person really typed into the page');
@@ -155,10 +163,11 @@ try {
     `The person's activity reached WebBrain as page feedback: ${JSON.stringify(decisions)}`);
   assert.equal(main.length, 1, `The answer was written once, not again after the person's activity: ${JSON.stringify(calls)}`);
   assert.equal(retracted.length, 0, 'The answer being shown was never taken back');
+  assert.ok(finishedAfter < 3500, `The run ended ${finishedAfter} ms after the answer was released, while the person kept typing for 5000 ms`);
   assert.equal(run.error, undefined);
   assert.equal(run.result?.content, answer);
   assert.equal(current?.running, false);
-  console.log(JSON.stringify({ passed: true, installedMV3: true, mainCalls: main.length, retracted: retracted.length,
+  console.log(JSON.stringify({ passed: true, installedMV3: true, mainCalls: main.length, retracted: retracted.length, finishedAfter,
     decisions: decisions.map(decision => `${decision.stage}:${decision.disposition}`), blockedNetwork: network.length }));
 } finally {
   releaseMain.resolve();

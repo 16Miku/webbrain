@@ -112,6 +112,36 @@ for (const build of ['chrome', 'firefox']) {
     });
   }
 
+  // The trace's person typed a long draft while the answer was written; the
+  // answer is delivered without waiting for them to stop typing.
+  for (const entry of ['chat', 'chat_stream']) test(`${build}: a streamed Ask answer is delivered while the person keeps typing (${entry})`, async () => {
+    const tab = nextTab++, updates = [];
+    let calls = 0, typing = null, answered = 0;
+    const agent = makeAgent(Agent, (owner, streamed) => {
+      assert.equal(streamed, true);
+      calls++;
+      // They type for three seconds, longer than the answer takes.
+      const type = () => owner.__send({ kind: 'input', source: 'user', target: 'div#composer' });
+      const until = Date.now() + 3000;
+      return { chunks: [{ text: 'The page lists A and B; ', after: () => {
+        type(); typing = setInterval(() => { if (Date.now() < until) type(); else clearInterval(typing); }, 150);
+      } },
+        { text: 'B is the cheapest at $5.', after: () => { answered = Date.now(); } }] };
+    });
+    agent._pageFeedbackIdleMs = 1000;
+    try {
+      const options = { detachedRequestId: 'ask-' + tab, interactiveChat: true, askStreamingEnabled: true };
+      const update = (type, data) => updates.push({ type, data });
+      const result = entry === 'chat' ? await agent.processMessage(tab, 'Which product is cheapest?', update, 'ask', [], options)
+        : await agent.processMessageStream(tab, 'Which product is cheapest?', update, 'ask', options);
+      const settled = Date.now() - answered;
+      assert.equal(result, ANSWER);
+      assert.equal(calls, 1);
+      assert.equal(retracted(updates), false);
+      assert.ok(settled < 900, `The run finished ${settled} ms after the answer, while the person was still typing`);
+    } finally { clearInterval(typing); }
+  });
+
   for (const streaming of [false, true]) for (const [name, event] of [['the person scrolling', VIEWING['the person scrolling']],
     ['the person clicking', VIEWING['the person clicking']], ...Object.entries(CHANGING)]) {
     const survives = name in VIEWING;

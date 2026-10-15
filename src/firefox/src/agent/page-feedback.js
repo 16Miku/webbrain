@@ -40,7 +40,7 @@ function automaticAnswerFeedback(events) {
   const relevant = askRelevantFeedback(events);
   return !!relevant.length && relevant.every(event => ['page', 'unknown'].includes(event.source)
     && (event.kind === 'dom' || (event.kind === 'navigation' && event.frameId > 0)
-      || (['activity', 'resize'].includes(event.kind) && event.source === 'page')));
+      || (event.kind === 'activity' && event.source === 'page')));
 }
 
 // Busy renderers can stall browser messaging indefinitely; Stop must not wait.
@@ -711,12 +711,19 @@ export const pageFeedbackMethods = {
     return !!this._pageFeedbackRuns?.get(tabId)?.events.size;
   },
 
-  async _waitForPageFeedbackIdle(tabId, { automaticAskReply = false } = {}) {
+  async _waitForPageFeedbackIdle(tabId, { automaticAskReply = false, askReply = false } = {}) {
     const run = this._pageFeedbackRuns?.get(tabId);
     const signal = this._runAbortSignal(tabId);
     while (run && this._pageFeedbackRuns.get(tabId) === run) {
       this._throwIfAborted(signal);
       if (this._hasPendingSteering?.(tabId)) return;
+      // Nothing the person does on the page can change a read-only Ask
+      // answer, so its decision does not wait for them to stop typing or
+      // scrolling; only a change that can still make it stale is waited for.
+      if (askReply) {
+        const events = [...run.events.values()];
+        if (!askRelevantFeedback(events).length || automaticAnswerFeedback(events)) return;
+      }
       // Automatic child commits can continue indefinitely. A read-only terminal
       // candidate still waits for actual user gestures, then uses its reply scope
       // or bounded recovery; browser actions keep the full activity wait.
@@ -1306,7 +1313,9 @@ export const pageFeedbackMethods = {
         || (responseToolCalls === null && pendingRun?.askAutomaticRetry))
       && this._pageFeedbackAskOwnerCurrent(tabId, pendingRun, pendingRun?.modelState)
       && automaticAnswerFeedback([...pendingRun.events.values()]);
-    await this._waitForPageFeedbackIdle(tabId, { automaticAskReply });
+    const askReply = !!askAnswerCandidate(responseToolCalls, responseWithoutTools, responseContent).trim()
+      && this._pageFeedbackAskOwnerCurrent(tabId, pendingRun, pendingRun?.modelState);
+    await this._waitForPageFeedbackIdle(tabId, { automaticAskReply, askReply });
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run || this._checkAbort(tabId)) return false;
     const events = [...run.events.values()], batchRevision = run.revision;
