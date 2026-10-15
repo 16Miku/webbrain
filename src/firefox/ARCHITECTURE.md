@@ -1,6 +1,6 @@
 # WebBrain Firefox Extension — Architecture
 
-> Version 40.5.1 · Manifest V2 · Background Page
+> Version 40.6.1 · Manifest V2 · Background Page
 
 ## How Firefox Differs from Chrome
 
