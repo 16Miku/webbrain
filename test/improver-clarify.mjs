@@ -5,8 +5,13 @@
 //   while the guard itself stays armed and is announced in the system prompt,
 //   in words that are also true when the scheduler armed it;
 // - every scheduled task run, recurring or one-shot, drops the planner's
-//   schedule_task requirement (a scheduled resume keeps it), and a one-shot
-//   run that sets up a different schedule can still call schedule_task;
+//   schedule_task requirement and the state change that its scheduling tag
+//   forced (a scheduled resume and interactive runs keep both), so a
+//   reminder run finishes with success without a mutating tool, while a
+//   plan's own submission still has to happen; a one-shot run that sets up
+//   a different schedule can still call schedule_task;
+// - a run the user starts again after a stop gets a fresh blocked-attempt
+//   count while the clarification guard stays armed;
 // - a real planner question reports that the run ended waiting for the user,
 //   and that report pauses a recurring scheduled task.
 import assert from 'node:assert/strict';
@@ -28,6 +33,7 @@ const builds = await Promise.all(['chrome', 'firefox'].map(async build => ({
   args: await import(`../src/${build}/src/agent/tool-arguments.js`),
   research: await import(`../src/${build}/src/agent/research-escalation.js`),
   Scheduler: await import(`../src/${build}/src/agent/scheduler.js`),
+  planner: await import(`../src/${build}/src/agent/planner.js`),
 })));
 
 const STILL_REQUIRED = /CLARIFICATION STILL REQUIRED/;
@@ -109,7 +115,7 @@ function doneSuccessBatch(agent, tabId) {
   );
 }
 
-for (const { build, Agent, tools, args, research, Scheduler } of builds) {
+for (const { build, Agent, tools, args, research, Scheduler, planner } of builds) {
   test(`${build}: ordinary clarify keeps the recipient purposes when research escalation is off`, () => {
     for (const [mode, tier] of [['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
       const clarify = tools.getToolsForMode(mode, { tier, researchEscalationEnabled: false })
@@ -299,64 +305,90 @@ for (const { build, Agent, tools, args, research, Scheduler } of builds) {
       'the line must not claim that an earlier question timed out');
   });
 
-  test(`${build}: every scheduled task run drops the schedule_task requirement; a scheduled resume keeps it`, () => {
+  test(`${build}: only a scheduled resume or an interactive run keeps the schedule_task requirement`, () => {
     const agent = new Agent({});
     const tabId = 6601;
     agent._persist = () => {};
     agent.conversationIds.set(tabId, `conv_${tabId}`);
+    agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: 'In 30 minutes, remind me to take the pizza out.' }]);
     const gate = { proceed: true, requestKind: 'execute', requiresStateChange: true, requiredSchedulingTool: 'schedule_task' };
-    for (const [task, runOptions, expected] of [
+    for (const [runOptions, expected] of [
       // The stored prompt keeps the user's timing; requiring a schedule made
       // the run schedule its own task again, recurring or one-shot.
-      ['Every 5 minutes, check the page for a new release.', { scheduledRun: true, independentRun: true, scheduledResume: false }, null],
-      ['In 30 minutes, remind me to take the pizza out.', { scheduledRun: true, independentRun: true, scheduledResume: false }, null],
-      ['In 30 minutes, remind me to take the pizza out.', { scheduledRun: true, independentRun: true }, null],
+      [{ scheduledRun: true, independentRun: true, scheduledResume: false }, null],
+      [{ scheduledRun: true, independentRun: true }, null],
       // A resume continues an interactive task that asked for a schedule.
-      ['Wait for the deploy, then schedule the hourly check.', { scheduledRun: true, independentRun: true, scheduledResume: true }, 'schedule_task'],
-      ['In 30 minutes, remind me to take the pizza out.', { interactiveChat: true }, 'schedule_task'],
+      [{ scheduledRun: true, independentRun: true, scheduledResume: true }, 'schedule_task'],
+      [{ interactiveChat: true }, 'schedule_task'],
     ]) {
-      agent.conversations.set(tabId, [
-        { role: 'system', content: 'system' },
-        { role: 'user', content: `[Scheduled task task_1: Task]\nTask: ${task}` },
-      ]);
-      const label = `${task} ${JSON.stringify(runOptions)}`;
       const guard = agent._startPlanExecutionGuard(tabId, 'act', gate, runOptions);
-      assert.equal(guard.requiredSchedulingTool, expected, label);
-      const decision = agent._planOnlyTerminalDecision(tabId, 'Time to take the pizza out.', { viaDone: true, outcome: 'success' });
-      if (expected) assert.match(decision.nudge, /requires a successful schedule_task call/, label);
-      else assert.doesNotMatch(String(decision?.nudge || decision?.failure || ''), /schedule_task/, label);
+      assert.equal(guard.requiredSchedulingTool, expected, JSON.stringify(runOptions));
     }
   });
 
-  // Drives one scheduled run through the real scheduler and the agent's real
-  // plan guard and tool dispatch; only the model's choices are scripted.
-  async function scheduledOneShotRun({ prompt, toolCalls }) {
+  test(`${build}: a scheduling tag forces a state change except in a scheduled task run`, () => {
+    const parse = (overrides, options) => planner.parsePlanFromContent(JSON.stringify(plannerResult('execute', 'Remind the user to take the pizza out.', {
+      requires_state_change: false,
+      steps: [{ id: '1', action: 'Tell the user it is time to take the pizza out' }],
+      scheduling: { tool: 'schedule_task', hint: 'In 30 minutes.' },
+      ...overrides,
+    })), { requireIntent: true, locale: 'en', ...options });
+    const scheduledTask = { scheduledTask: true };
+    // Interactive runs and scheduled resumes keep today's behaviour.
+    assert.equal(parse({}, {}).requires_state_change, true);
+    assert.equal(parse({}, { scheduledResume: true }).requires_state_change, true);
+    // A scheduled task run executes the task that is already scheduled.
+    const reminder = parse({}, scheduledTask);
+    assert.equal(reminder.requires_state_change, false);
+    assert.equal(reminder.scheduling?.tool, 'schedule_task', 'the tag itself is kept; the run just is not required to act on it');
+    // The plan's own requirements still count.
+    assert.equal(parse({ requires_state_change: true }, scheduledTask).requires_state_change, true);
+    assert.equal(parse({ requires_submission: true }, scheduledTask).requires_state_change, true);
+    assert.equal(parse({ completion_requirements: { download: true } }, scheduledTask).requires_state_change, true);
+    assert.equal(parse({ scheduling: { tool: 'schedule_resume', hint: 'Wait.' } }, scheduledTask).requires_state_change, false);
+  });
+
+  // One scheduled one-shot run through the real scheduler, planner gate (Try
+  // planning), plan guard, run loop and done/schedule_task tools. Only the
+  // model's replies, page reads and storage are scripted.
+  async function scheduledRunEndToEnd({ prompt, plan, script }) {
     const NOW = Date.UTC(2026, 9, 15, 9, 0, 0);
-    const agent = new Agent({ getVisionProvider: async () => null });
-    Object.assign(agent, { _persist: () => {}, _persistNow: async () => true, _skipPermissionGate: true, _ensureGateSetting: async () => true });
-    const seen = {};
-    const h = makeSchedulerHarness(Scheduler, {
-      now: NOW,
-      processMessage: async (tabId, message, onUpdate, mode, _attachments, runOptions) => {
-        seen.message = message;
-        agent.conversationIds.set(tabId, 'conv-1');
-        agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: message }]);
-        // What the planner sets when the prompt reads as a scheduling request.
-        seen.guard = agent._startPlanExecutionGuard(tabId, mode, {
-          proceed: true, requestKind: 'execute', requiresStateChange: true, requiredSchedulingTool: 'schedule_task',
-        }, runOptions);
-        seen.results = [];
-        for (const [index, [name, args]] of toolCalls.entries()) {
-          const messages = [];
-          await agent._executeToolBatch(tabId, [{ id: `call_${index}`, function: { name, arguments: JSON.stringify(args) } }],
-            messages, onUpdate, { supportsVision: false }, '', new Set([name, 'done']), index + 1, runOptions);
-          seen.results.push(JSON.parse(messages.find(entry => entry.role === 'tool')?.content || 'null'));
-        }
-        seen.decision = agent._planOnlyTerminalDecision(tabId, 'Finished.', { viaDone: true, outcome: 'success' });
-        onUpdate('tool_result', { name: 'done', result: { done: true, summary: 'Finished.', outcome: 'success' } });
-        return 'Finished.';
+    const provider = { name: 'owned', model: 'owned', promptTier: 'full', contextWindow: 128000, supportsTools: true, supportsVision: false };
+    const agent = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
+    const replies = [...script];
+    const toolResults = [];
+    Object.assign(agent, {
+      _hydrate: async () => {}, _persist: () => {}, _persistNow: async () => ({ ok: true }), _persistSubmittedTurn: async () => {},
+      _startTraceRun: async () => null, _endTraceRun: async () => {},
+      _enrichUserMessageWithCurrentPage: async (_tab, _messages, content) => ({ role: 'user', content }),
+      _beginReadCompleteness: async () => null, _manageContext: async () => {},
+      _checkCostAllowance: async () => null, _recordCostUsage: async () => null,
+      _currentUrl: async () => 'https://example.com/', _getTabUrlTitle: async () => ({ tabUrl: 'https://example.com/', tabTitle: 'Example' }),
+      _plannerMode: () => 'try', _ensureGateSetting: async () => true, _skipPermissionGate: true,
+      _semanticDecision: async () => ({ choice: 'answer' }),
+      _chatWithCostAllowance: async (_provider, _messages, _options, _cost, meta) => {
+        const name = meta?.generationName || 'chat';
+        if (/^planner/.test(name)) return { content: JSON.stringify(plan) };
+        assert.equal(name, 'main', `unexpected model call ${name}`);
+        const [tool, toolArgs] = replies.shift() || assert.fail('the run asked the model for another step');
+        return { content: '', toolCalls: [{ id: `call_${script.length - replies.length}`, type: 'function', function: { name: tool, arguments: JSON.stringify(toolArgs) } }] };
       },
     });
+    // The run removes its plan guard when it ends; keep the one it started.
+    const startGuard = agent._startPlanExecutionGuard.bind(agent);
+    let guard = null;
+    agent._startPlanExecutionGuard = (...guardArgs) => (guard = startGuard(...guardArgs));
+    const realExecute = agent.executeTool.bind(agent);
+    agent.executeTool = (tab, name, toolArgs, ...rest) => (name === 'read_page'
+      ? Promise.resolve({ success: true, content: 'Example page.' })
+      : realExecute(tab, name, toolArgs, ...rest));
+    const h = makeSchedulerHarness(Scheduler, {
+      now: NOW,
+      processMessage: (...runArgs) => agent.processMessage(...runArgs),
+      setScheduledRunPolicy: (tabId, policy) => agent.setScheduledRunPolicy(tabId, policy),
+      clearScheduledRunPolicy: tabId => agent.clearScheduledRunPolicy(tabId),
+    });
+    h.manager.sendUpdate = (_tabId, type, data) => { if (type === 'tool_result') toolResults.push({ name: data?.name, result: data?.result }); };
     agent.scheduler = h.manager;
     const once = await h.manager.createTaskJob({
       tabId: 77, conversationId: 'conv-1',
@@ -364,45 +396,147 @@ for (const { build, Agent, tools, args, research, Scheduler } of builds) {
     });
     h.setNow(NOW + 60 * 1000);
     await h.manager.handleAlarm(h.alarmName(once.jobId));
-    return { h, once, seen };
+    assert.equal(replies.length, 0, 'the scripted run used every reply');
+    return { h, once, agent, guard, toolResults, job: h.jobs().find(job => job.id === once.jobId) };
   }
 
+  const pizzaPlan = plannerResult('execute', 'Remind the user to take the pizza out.', {
+    requires_state_change: false,
+    steps: [{ id: '1', action: 'Tell the user it is time to take the pizza out' }],
+    scheduling: { tool: 'schedule_task', hint: 'The user asked for a reminder in 30 minutes.' },
+  });
   const NEUTRAL = /This run is the scheduled execution of an existing task; do not schedule this task again\. Create a different schedule only if the task explicitly asks to set one up\./;
 
-  test(`${build}: a one-shot reminder run is told not to schedule itself again and is not required to`, async () => {
-    const { h, once, seen } = await scheduledOneShotRun({ prompt: 'In 30 minutes, remind me to take the pizza out.', toolCalls: [] });
-    assert.match(seen.message, NEUTRAL);
-    assert.equal(seen.guard.requiredSchedulingTool, null);
-    assert.doesNotMatch(String(seen.decision?.nudge || ''), /schedule_task/, 'nothing pushes the run to schedule the reminder again');
-    assert.deepEqual(h.jobs().map(job => job.id), [once.jobId], 'no new schedule');
-    assert.equal(h.jobs()[0].status, 'completed');
+  test(`${build}: a scheduled reminder finishes with success without a mutating tool`, async () => {
+    const reminder = 'In 30 minutes, remind me to take the pizza out.';
+    const { h, once, agent, guard, toolResults, job } = await scheduledRunEndToEnd({
+      prompt: reminder, plan: pizzaPlan,
+      script: [['read_page', {}], ['done', { summary: 'Time to take the pizza out!', outcome: 'success' }]],
+    });
+    assert.equal(guard?.requiredSchedulingTool, null);
+    assert.equal(guard?.requiresStateChange, false, 'the scheduling tag no longer forces a state change');
+    const dones = toolResults.filter(entry => entry.name === 'done');
+    assert.equal(dones.length, 1, 'the first done(success) is accepted');
+    assert.equal(dones[0].result?.done, true, JSON.stringify(dones[0].result));
+    assert.equal(dones[0].result?.outcome, 'success');
+    assert.equal(guard.successfulConsequentialToolCalls, 0, 'no mutating tool ran');
+    assert.equal(job.status, 'completed');
+    assert.equal(job.lastOutcome, 'success');
+    assert.deepEqual(h.jobs().map(candidate => candidate.id), [once.jobId], 'no new schedule');
+    assert.match(agent.conversations.get(77).find(message => message.role === 'user')?.content || '', NEUTRAL);
+  });
+
+  test(`${build}: a scheduled reminder that skips its read is asked for a read, not a mutation`, async () => {
+    const { toolResults, job } = await scheduledRunEndToEnd({
+      prompt: 'In 30 minutes, remind me to take the pizza out.', plan: pizzaPlan,
+      script: [
+        ['done', { summary: 'Time to take the pizza out!', outcome: 'success' }],
+        ['read_page', {}],
+        ['done', { summary: 'Time to take the pizza out!', outcome: 'success' }],
+      ],
+    });
+    const dones = toolResults.filter(entry => entry.name === 'done');
+    assert.equal(dones[0].result?.blockedDone, true);
+    // The nudge's first line is the block; the task anchor after it quotes
+    // the approved plan, scheduling tag included.
+    const block = String(dones[0].result?.error || '').split('\n')[0];
+    assert.match(block, /no successful task tool was verified\. Use a permitted task tool first/);
+    assert.doesNotMatch(block, /state-changing|mutating tool|schedule_task/);
+    assert.equal(dones[1].result?.outcome, 'success');
+    assert.equal(job.lastOutcome, 'success');
+  });
+
+  test(`${build}: a scheduled task whose plan requires a submission still needs it`, async () => {
+    const { h, once, guard, toolResults, job } = await scheduledRunEndToEnd({
+      prompt: 'In 30 minutes, send the weekly report to the team channel.',
+      plan: plannerResult('execute', 'Send the weekly report to the team channel.', {
+        requires_state_change: false,
+        requires_submission: true,
+        read_scope: 'visible_page',
+        steps: [{ id: '1', action: 'Post the weekly report in the team channel and send it', tools: ['type_text', 'click'] }],
+        scheduling: { tool: 'schedule_task', hint: 'The user asked for this in 30 minutes.' },
+      }),
+      script: [
+        ['read_page', {}],
+        ['done', { summary: 'Sent the weekly report.', outcome: 'success' }],
+        ['done', { summary: 'The report was not sent yet.', outcome: 'partial' }],
+      ],
+    });
+    assert.equal(guard?.requiresStateChange, true, 'the plan\'s own submission still requires a state change');
+    assert.equal(guard?.requiresSubmission, true);
+    const dones = toolResults.filter(entry => entry.name === 'done');
+    assert.equal(dones[0].result?.blockedDone, true, 'success without the submission is refused');
+    assert.match(String(dones[0].result?.error || ''), /submit\/send\/publish\/commit/);
+    assert.equal(dones[1].result?.outcome, 'partial');
+    assert.equal(job.lastOutcome, 'partial');
+    assert.deepEqual(h.jobs().map(candidate => candidate.id), [once.jobId]);
   });
 
   test(`${build}: a one-shot run that sets up a different schedule can still call schedule_task`, async () => {
-    const { h, once, seen } = await scheduledOneShotRun({
+    const { h, once, guard, toolResults, job } = await scheduledRunEndToEnd({
       prompt: 'On Monday at 9, start an hourly check of the releases page.',
-      toolCalls: [['schedule_task', {
-        title: 'Hourly releases check', prompt: 'Check the releases page for a new release.',
-        schedule: { type: 'recurring', after_seconds: 60, interval_minutes: 60 },
-        target: { type: 'url', url: 'https://example.com/releases' },
-      }]],
+      plan: plannerResult('execute', 'Start an hourly check of the releases page.', {
+        requires_state_change: true,
+        steps: [{ id: '1', action: 'Create the hourly check', tools: ['schedule_task'] }],
+        scheduling: { tool: 'schedule_task', hint: 'Every 60 minutes.' },
+      }),
+      script: [
+        ['schedule_task', {
+          title: 'Hourly releases check', prompt: 'Check the releases page for a new release.',
+          schedule: { type: 'recurring', after_seconds: 60, interval_minutes: 60 },
+          target: { type: 'url', url: 'https://example.com/releases' },
+        }],
+        ['done', { summary: 'Started the hourly check.', outcome: 'success' }],
+      ],
     });
-    assert.match(seen.message, NEUTRAL);
-    assert.equal(seen.guard.requiredSchedulingTool, null);
-    assert.equal(seen.results[0]?.success, true, JSON.stringify(seen.results[0]));
-    assert.equal(seen.results[0]?.scheduled, true);
-    const hourly = h.jobs().find(job => job.id !== once.jobId);
+    assert.equal(guard?.requiredSchedulingTool, null);
+    const scheduled = toolResults.find(entry => entry.name === 'schedule_task')?.result;
+    assert.equal(scheduled?.success, true, JSON.stringify(scheduled));
+    assert.equal(scheduled?.scheduled, true);
+    const hourly = h.jobs().find(candidate => candidate.id !== once.jobId);
     assert.ok(hourly, 'the run created the hourly schedule');
     assert.equal(hourly.schedule.type, 'recurring');
     assert.equal(hourly.schedule.interval_minutes, 60);
     assert.equal(hourly.status, 'pending');
     assert.ok(h.alarms.has(h.alarmName(hourly.id)));
-    assert.equal(seen.decision, null, 'done(success) is not blocked once the schedule exists');
-    assert.equal(h.jobs().find(job => job.id === once.jobId).status, 'completed');
+    const dones = toolResults.filter(entry => entry.name === 'done');
+    assert.equal(dones.length, 1, 'done(success) is accepted once the schedule exists');
+    assert.equal(dones[0].result?.outcome, 'success');
+    assert.equal(job.lastOutcome, 'success');
+  });
+
+  test(`${build}: a run the user starts again after a stop gets a fresh blocked-attempt count`, async () => {
+    const tabId = 6801;
+    const agent = guardedAgent(Agent, tabId);
+    agent._hydrate = async () => {};
+    const scheduled = { scheduledRun: true, independentRun: true, scheduledResume: false };
+    // The stopped run: a timed-out question, a blocked action, another
+    // timeout, and a second blocked action that stops the run.
+    await agent._recordClarificationAuthorization(tabId, 'timeout');
+    assert.equal(agent._clarificationAuthorizationBlock(tabId, 'solve_captcha', {}, []).stop, false);
+    await agent._recordClarificationAuthorization(tabId, 'timeout');
+    assert.equal(agent._clarificationAuthorizationBlock(tabId, 'solve_captcha', {}, []).stop, true);
+
+    // Re-arming without the option keeps the count (a model must not loop by
+    // re-asking within one run).
+    await agent.requireExplicitClarificationAuthorization(tabId);
+    assert.equal(agent._clarificationAuthorizationGuards.get(tabId).blockedAttempts, 2);
+
+    // The user's Run now: the scheduler re-arms with a fresh count.
+    await agent.requireExplicitClarificationAuthorization(tabId, { freshAttempt: true });
+    agent._prepareClarificationAuthorizationForRun(tabId, scheduled);
+    const guard = agent._clarificationAuthorizationGuards.get(tabId);
+    assert.equal(guard.source, 'timeout');
+    assert.equal(guard.authorized, false, 'the guard stays armed');
+    assert.equal(guard.blockedAttempts, 0);
+    const first = agent._clarificationAuthorizationBlock(tabId, 'solve_captcha', {}, []);
+    assert.equal(first.stop, false, 'the first blocked action lets the model ask again');
+    assert.match(first.result.error, /Call clarify again/);
+    assert.equal(agent._clarificationAuthorizationBlock(tabId, 'solve_captcha', {}, []).stop, true);
   });
 
   const scheduledRunOptions = finishes => ({
-    scheduledRun: true, independentRun: true, scheduledResume: false, scheduledRecurring: true,
+    scheduledRun: true, independentRun: true, scheduledResume: false,
     onRunFinished: (...args) => finishes.push(args),
   });
   const scheduledMessage = '[Scheduled task task_1: Check account]\nTask: Every 5 minutes, check my account balance.';

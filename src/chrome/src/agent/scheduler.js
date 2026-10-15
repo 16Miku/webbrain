@@ -2362,7 +2362,10 @@ export class ScheduledJobManager {
       await this.loadProviders();
       if (execution.cancelled) return;
       if (running.clarificationAuthorizationRequired === true) {
-        await this.agent.requireExplicitClarificationAuthorization(tabId);
+        // Every stop that sets this flag leaves the job waiting, and only the
+        // user's Run now (or Resume) starts it again, so this run is the
+        // user's new attempt: a fresh blocked-attempt count, guard armed.
+        await this.agent.requireExplicitClarificationAuthorization(tabId, { freshAttempt: true });
         if (execution.cancelled) return;
       }
       const result = await this.agent.processMessage(

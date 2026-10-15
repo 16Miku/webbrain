@@ -19587,12 +19587,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return update;
   }
 
-  async requireExplicitClarificationAuthorization(tabId) {
+  // freshAttempt: the user started this run again after a stop (the
+  // scheduler's Run now or Resume). Like a new user turn it starts a fresh
+  // blocked-attempt count while the guard stays armed; the count carried
+  // from the stopped run made the new run's first blocked action stop it.
+  async requireExplicitClarificationAuthorization(tabId, { freshAttempt = false } = {}) {
     await this._hydrate(tabId);
-    return await this._recordClarificationAuthorization(tabId, 'timeout');
+    return await this._recordClarificationAuthorization(tabId, 'timeout', false, { freshAttempt });
   }
 
-  async _recordClarificationAuthorization(tabId, source, safeFirst = false) {
+  async _recordClarificationAuthorization(tabId, source, safeFirst = false, { freshAttempt = false } = {}) {
     const normalizedSource = source === 'timeout' ? 'timeout' : (source === 'auto' ? 'auto' : 'user');
     const conversationId = this.conversationIds.get(tabId) || null;
     const previous = this._clarificationAuthorizationGuards.get(tabId);
@@ -19602,7 +19606,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const timedOutAffirmative = normalizedSource === 'timeout' && safeFirst === true && !priorTimeoutGuard;
     const wasArmed = this._clarificationAuthorizationArmed(tabId);
     if (normalizedSource === 'timeout' && !timedOutAffirmative) {
-      const blockedAttempts = priorTimeoutGuard
+      const blockedAttempts = priorTimeoutGuard && !freshAttempt
         ? Math.max(0, Number(previous.blockedAttempts) || 0)
         : 0;
       this._clarificationAuthorizationGuards.set(tabId, {
@@ -24257,7 +24261,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    const plannerParseOptions = { requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true };
+    // A scheduled task run executes an already scheduled task: its scheduling
+    // tag must not turn into a state-change requirement (see the planner).
+    const plannerParseOptions = {
+      requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
+      scheduledTask: runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true,
+    };
     const recheckOnly = runOptions?.plannerIntentRecheckOnly === true;
     const provider = this._activeProvider(tabId);
     const plannerMessages = buildPlannerIntentMessages(enriched, tabUrl, tabTitle, historyDigest, {
@@ -24496,7 +24505,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    const plannerParseOptions = { requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true };
+    // A scheduled task run executes an already scheduled task: its scheduling
+    // tag must not turn into a state-change requirement (see the planner).
+    const plannerParseOptions = {
+      requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
+      scheduledTask: runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true,
+    };
 
     onUpdate('thinking', { step: 0, note: 'Planning…' });
 

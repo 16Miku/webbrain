@@ -11,7 +11,9 @@
 //   between them (runs without an outcome leave the count alone);
 // - resuming restarts the interval only after a scheduler pause; a user or
 //   Settings pause keeps the slot, or runs a minute after resuming;
-// - a paused job reports no next run.
+// - a paused job reports no next run;
+// - Run now after a clarification stop re-arms the agent's guard as a fresh
+//   attempt.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
@@ -441,5 +443,40 @@ for (const { build, Scheduler, cloud } of builds) {
     assert.equal(finished.status, 'completed', 'a one-shot task has nothing to pause');
     assert.equal('consecutiveFailures' in finished, false);
     assert.equal('pausedBy' in finished, false);
+  });
+
+  test(`${build}: Run now after a clarification stop re-arms the guard as a fresh attempt`, async () => {
+    const armed = [];
+    let runs = 0;
+    const h = makeSchedulerHarness(Scheduler, {
+      now: NOW,
+      requireExplicitClarificationAuthorization: async (tabId, options) => { armed.push([tabId, options]); },
+      processMessage: async (_tabId, _message, onUpdate) => {
+        runs += 1;
+        if (runs === 1) {
+          onUpdate('run_status', { status: 'clarification_required', message: 'Answer the question first.' });
+          return 'Answer the question first.';
+        }
+        onUpdate('tool_result', { name: 'done', result: { done: true, summary: 'Done.', outcome: 'success' } });
+        return 'Done.';
+      },
+    });
+    const created = await h.manager.createTaskJob({
+      tabId: 77,
+      conversationId: 'conv-1',
+      args: { title: 'Once', prompt: 'Fill in the form.', schedule: { type: 'once', after_seconds: 60 }, target: { type: 'current_tab' } },
+    });
+    h.setNow(NOW + MINUTE);
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+    const stopped = h.jobs()[0];
+    assert.equal(stopped.status, 'needs_user_input');
+    assert.equal(stopped.clarificationAuthorizationRequired, true);
+    assert.deepEqual(armed, [], 'a first run arms nothing');
+
+    assert.equal((await h.manager.runNow(created.jobId)).ok, true);
+    await h.manager.handleAlarm(h.alarmName(created.jobId));
+    assert.deepEqual(armed, [[77, { freshAttempt: true }]], 'the user\'s new attempt starts a fresh blocked-attempt count');
+    assert.equal(runs, 2);
+    assert.equal(h.jobs()[0].status, 'completed');
   });
 }

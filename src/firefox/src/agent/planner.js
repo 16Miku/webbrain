@@ -1148,7 +1148,12 @@ export function normalizePlan(obj, opts = {}) {
       || requiresSubmission === true
       // A resume is a possible pause while waiting, not a required mutation
       // when the external event has already completed by the time we read it.
-      || normalizedScheduling?.tool === 'schedule_task'
+      // A scheduled task run executes a task that is already scheduled, and
+      // its prompt keeps the user's timing ("in 30 minutes, remind me ..."):
+      // a scheduling tag there must not demand a mutation, or the run could
+      // only succeed by scheduling itself again. The plan's own state-change,
+      // submission and download requirements still apply.
+      || (normalizedScheduling?.tool === 'schedule_task' && opts.scheduledTask !== true)
       || requiresDownload
     )
     : false;
