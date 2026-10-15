@@ -11,6 +11,11 @@
 
   const DEFAULT_MAX_BYTES = 1024 * 1024 * 1024;
   const staged = new Map();
+  const preparing = new Map();
+
+  function throwIfAborted(signal) {
+    if (signal?.aborted) throw new DOMException('Skill download stopped.', 'AbortError');
+  }
 
   async function cleanupStaleStages() {
     try {
@@ -70,8 +75,9 @@
     return true;
   }
 
-  async function stageResponse(response, maxBytes) {
+  async function stageResponse(response, maxBytes, signal) {
     await startupCleanup;
+    throwIfAborted(signal);
     const token = crypto.randomUUID();
     const filename = `${token}.media`;
     const expectedSize = parseLength(response.headers.get('content-length'));
@@ -84,14 +90,22 @@
 
     const storageRoot = await navigator.storage.getDirectory();
     const dir = await storageRoot.getDirectoryHandle('skill-downloads', { create: true });
-    const handle = await dir.getFileHandle(filename, { create: true });
-    const writable = await handle.createWritable();
+    let writable;
+    let reader;
     let bytesReceived = 0;
+    const onAbort = () => { void reader?.cancel().catch(() => {}); };
+    signal.addEventListener('abort', onAbort, { once: true });
     try {
-      const reader = response.body?.getReader?.();
+      throwIfAborted(signal);
+      const handle = await dir.getFileHandle(filename, { create: true });
+      throwIfAborted(signal);
+      writable = await handle.createWritable();
+      throwIfAborted(signal);
+      reader = response.body?.getReader?.();
       if (reader) {
         while (true) {
           const { done, value } = await reader.read();
+          throwIfAborted(signal);
           if (done) break;
           const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
           bytesReceived += chunk.byteLength;
@@ -100,27 +114,35 @@
             throw new Error(`Skill download exceeds the staged-file limit (${bytesReceived} bytes > ${maxBytes} bytes).`);
           }
           await writable.write(chunk);
+          throwIfAborted(signal);
         }
       } else {
         const blob = await response.blob();
+        throwIfAborted(signal);
         bytesReceived = blob.size;
         if (bytesReceived > maxBytes) {
           throw new Error(`Skill download exceeds the staged-file limit (${bytesReceived} bytes > ${maxBytes} bytes).`);
         }
         await writable.write(blob);
       }
+      throwIfAborted(signal);
       await writable.close();
+      throwIfAborted(signal);
+      const file = await handle.getFile();
+      throwIfAborted(signal);
+      const typedBlob = file.type === contentType ? file : new Blob([file], { type: contentType });
+      const localUrl = URL.createObjectURL(typedBlob);
+      staged.set(token, { localUrl, dir, filename, typedBlob });
+      return { token, localUrl, bytesReceived, contentType, contentDisposition };
     } catch (error) {
-      try { await writable.abort(); } catch {}
+      try { await reader?.cancel(); } catch {}
+      try { await writable?.abort(); } catch {}
       try { await dir.removeEntry(filename); } catch {}
       throw error;
+    } finally {
+      signal.removeEventListener('abort', onAbort);
+      try { reader?.releaseLock(); } catch {}
     }
-
-    const file = await handle.getFile();
-    const typedBlob = file.type === contentType ? file : new Blob([file], { type: contentType });
-    const localUrl = URL.createObjectURL(typedBlob);
-    staged.set(token, { localUrl, dir, filename, typedBlob });
-    return { token, localUrl, bytesReceived, contentType, contentDisposition };
   }
 
   async function prepare(message) {
@@ -131,12 +153,17 @@
       return { success: false, blocked: true, finalUrl: url, error: 'Skill download URL is outside its expected HTTPS origin.' };
     }
 
+    const requestId = message.requestId || crypto.randomUUID();
+    const controller = new AbortController();
+    preparing.set(requestId, controller);
+    const signal = controller.signal;
     try {
       const response = await fetch(url, {
         method: 'GET',
         credentials: 'omit',
         redirect: 'manual',
         cache: 'no-store',
+        signal,
       });
       if (response.type === 'opaqueredirect' || isRedirectStatus(response.status)) {
         return {
@@ -154,7 +181,11 @@
       if (!response.ok) {
         return { success: false, status: response.status, finalUrl, error: `Skill download file request failed with HTTP ${response.status}.` };
       }
-      const prepared = await stageResponse(response, maxBytes);
+      const prepared = await stageResponse(response, maxBytes, signal);
+      if (signal.aborted) {
+        await release(prepared.token);
+        throwIfAborted(signal);
+      }
       return {
         success: true,
         status: response.status,
@@ -167,6 +198,8 @@
       };
     } catch (error) {
       return { success: false, finalUrl: url, error: `Skill download staging failed: ${error.message}` };
+    } finally {
+      preparing.delete(requestId);
     }
   }
 
@@ -198,6 +231,11 @@
     if (message?.type === 'skill-download-prepare') {
       prepare(message).then(sendResponse);
       return true;
+    }
+    if (message?.type === 'skill-download-cancel') {
+      preparing.get(message.requestId)?.abort();
+      sendResponse({ success: true });
+      return false;
     }
     if (message?.type === 'skill-download-release') {
       release(message.releaseToken).then((released) => sendResponse({ success: true, released }));

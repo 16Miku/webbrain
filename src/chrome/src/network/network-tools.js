@@ -974,25 +974,48 @@ async function callChromeDownloadAction(name, ...args) {
   }
 }
 
-async function sendOffscreenSkillDownloadMessage(message) {
+async function sendOffscreenSkillDownloadMessage(message, signal = null) {
   await ensureOffscreen();
+  throwIfSkillAborted(signal);
   return await new Promise((resolve, reject) => {
-    chrome.runtime.sendMessage(message, (response) => {
-      if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
-      else resolve(response || { success: false, error: 'Offscreen skill download returned no response.' });
-    });
+    const onAbort = () => {
+      try {
+        chrome.runtime.sendMessage({ type: 'skill-download-cancel', requestId: message.requestId }, () => {
+          void chrome.runtime.lastError;
+        });
+      } catch (_) {}
+      reject(responseAbortError(signal));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        signal?.removeEventListener('abort', onAbort);
+        const error = chrome.runtime.lastError;
+        if (signal?.aborted) {
+          // Cancellation can race a successful reply from the offscreen host.
+          if (response?.releaseToken) void releaseStagedSkillDownload(response.releaseToken);
+          reject(responseAbortError(signal));
+        } else if (error) reject(new Error(error.message));
+        else resolve(response || { success: false, error: 'Offscreen skill download returned no response.' });
+      });
+    } catch (error) {
+      signal?.removeEventListener('abort', onAbort);
+      reject(error);
+    }
   });
 }
 
-async function prepareStagedSkillDownload(url, expectedUrl) {
+async function prepareStagedSkillDownload(url, expectedUrl, signal = null) {
   try {
     return await sendOffscreenSkillDownloadMessage({
       type: 'skill-download-prepare',
+      requestId: crypto.randomUUID(),
       url,
       expectedUrl,
       maxBytes: SKILL_DOWNLOAD_STAGED_MAX_BYTES,
-    });
+    }, signal);
   } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') throw responseAbortError(signal);
     return { success: false, finalUrl: url, error: `Skill download staging failed: ${error.message}` };
   }
 }
@@ -1078,7 +1101,7 @@ async function downloadSkillFile(url, filename, waitMs = 60000, signal = null) {
   const file = await fetchSkillDownloadData(url, url, signal);
   let staged = null;
   if (file.tooLarge === true) {
-    staged = await prepareStagedSkillDownload(url, url);
+    staged = await prepareStagedSkillDownload(url, url, signal);
     if (!staged?.success) {
       return {
         success: false,
@@ -1109,21 +1132,24 @@ async function downloadSkillFile(url, filename, waitMs = 60000, signal = null) {
     || filenameFromContentDisposition(file.contentDisposition);
   const opts = { url: staged ? staged.localUrl : file.dataUrl, conflictAction: 'uniquify' };
   const safeName = safeDownloadFilename(filename) || responseFilename || defaultSkillDownloadFilename(contentType);
-  if (safeName) opts.filename = await filenameInConfiguredDownloadDirectory(chrome, safeName);
   let downloadId;
+  let info;
   try {
+    if (safeName) opts.filename = await filenameInConfiguredDownloadDirectory(chrome, safeName);
+    throwIfSkillAborted(signal);
     downloadId = await new Promise((resolve, reject) => {
       chrome.downloads.download(opts, (id) => {
         if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
         else resolve(id);
       });
     });
+    info = await resolveDownloadInfo(downloadId, waitMs, { signal });
+    throwIfSkillAborted(signal);
   } catch (error) {
+    if (downloadId != null) await callChromeDownloadAction('cancel', downloadId);
     await releaseStagedSkillDownload(staged?.releaseToken);
     throw error;
   }
-  const info = await resolveDownloadInfo(downloadId, waitMs, { signal });
-  throwIfSkillAborted(signal);
   const result = {
     downloadId,
     success: false,
@@ -1263,14 +1289,14 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
   }
 
   let cleanup = null;
+  let cleanupScheduled = false;
   try {
     throwIfSkillAborted(signal);
     const download = await downloadSkillFile(fileEndpoint.url, payload.filename, Math.min(tool.job?.timeoutMs || 90000, 120000), signal);
-    throwIfSkillAborted(signal);
     const releaseToken = download.releaseToken || '';
     if (Object.prototype.hasOwnProperty.call(download, 'releaseToken')) delete download.releaseToken;
     const cleanupDeferred = cleanupEndpoint.ok && download.pending === true;
-    const cleanupScheduled = cleanupDeferred
+    cleanupScheduled = cleanupDeferred
       ? scheduleSkillDownloadCleanup(
         download.downloadId,
         cleanupEndpoint.url,
@@ -1279,6 +1305,7 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
         { releaseToken },
       )
       : false;
+    throwIfSkillAborted(signal);
     if (cleanupEndpoint.ok && !cleanupDeferred) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     if (!download.success) {
       return {
@@ -1309,8 +1336,14 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
       ...download,
     };
   } catch (e) {
-    if (signal?.aborted || e?.name === 'AbortError') throw responseAbortError(signal);
-    if (cleanupEndpoint.ok) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
+    if (signal?.aborted || e?.name === 'AbortError') {
+      // Stop must not wait for the provider to acknowledge deletion.
+      if (cleanupEndpoint.ok && !cleanupScheduled) {
+        void cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool).catch(() => {});
+      }
+      throw responseAbortError(signal);
+    }
+    if (cleanupEndpoint.ok && !cleanupScheduled) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     return { success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', jobId, fileUrl: fileEndpoint.url, cleanup, error: `Skill download failed: ${e.message}` };
   }
 }

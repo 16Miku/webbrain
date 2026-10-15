@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import vm from 'node:vm';
 
 for (const build of ['chrome', 'firefox']) {
   test(`${build}: long media waits beyond three minutes, reports once, and retains timed-out job`, async () => {
@@ -137,6 +138,7 @@ for (const build of ['chrome', 'firefox']) {
     const originalFetch = globalThis.fetch;
     try {
       const methods = [];
+      const polling = Promise.withResolvers();
       globalThis.fetch = async (_url, opts = {}) => {
         methods.push(opts.method);
         if (opts.signal?.aborted) throw new DOMException('The operation was aborted', 'AbortError');
@@ -144,6 +146,7 @@ for (const build of ['chrome', 'firefox']) {
         // Never resolve until aborted: the abortable sleep/fetch must win.
         await new Promise((_resolve, reject) => {
           opts.signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted', 'AbortError')), { once: true });
+          polling.resolve();
         });
         throw new Error('unreachable');
       };
@@ -152,8 +155,10 @@ for (const build of ['chrome', 'firefox']) {
         signal: controller.signal,
         onProgress: () => {},
       });
+      await polling.promise;
       controller.abort();
       await assert.rejects(pending, err => err?.name === 'AbortError');
+      assert.deepEqual(methods, ['POST', 'GET'], 'test must stop a running provider job');
       assert.ok(!methods.includes('DELETE'), 'abort must not delete the running provider job');
     } finally {
       globalThis.fetch = originalFetch;
@@ -176,4 +181,190 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(result.success, true);
     assert.deepEqual(updates, [['tool_progress', { name: 'download_public_media', message: 'Preparing a large file' }]]);
   });
+}
+
+// Exercise the real Chrome offscreen handler and Firefox Blob path, including
+// response bodies that stay open until Stop. Only browser APIs and OPFS are fake.
+async function stagedDownloadHarness(t, build, stopAt, { stallCleanup = false } = {}) {
+  const { executeHttpSkillTool } = await import(`../src/${build}/src/network/network-tools.js`);
+  const { normalizeCustomSkills, buildSkillToolRegistry } = await import(`../src/${build}/src/agent/skills.js`);
+  const tool = buildSkillToolRegistry(normalizeCustomSkills([{
+    id: 'freeskillz-xyz', name: 'FreeSkillz.xyz', enabled: true,
+    content: fs.readFileSync(new URL(`../src/${build}/skills/freeskillz-xyz.md`, import.meta.url), 'utf8'),
+  }])).get('download_public_media');
+  const original = { fetch: globalThis.fetch, chrome: globalThis.chrome, browser: globalThis.browser,
+    create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+  const cleanup = Promise.withResolvers();
+  t.after(() => {
+    cleanup.resolve();
+    globalThis.fetch = original.fetch;
+    for (const key of ['chrome', 'browser']) {
+      if (original[key] === undefined) delete globalThis[key];
+      else globalThis[key] = original[key];
+    }
+    URL.createObjectURL = original.create;
+    URL.revokeObjectURL = original.revoke;
+  });
+  const ready = Promise.withResolvers();
+  const proceed = Promise.withResolvers();
+  const stageSettled = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  const controller = new AbortController();
+  const events = [], messages = [], files = new Map(), created = [], revoked = [], downloads = [];
+  let stageSignal, cleanupSignal, fileRequests = 0;
+  URL.createObjectURL = blob => {
+    const url = original.create(blob);
+    created.push(url);
+    return url;
+  };
+  URL.revokeObjectURL = url => { events.push('release'); revoked.push(url); original.revoke(url); };
+  const headers = { 'content-type': 'video/mp4', 'content-length': String(26 * 1024 * 1024) };
+  globalThis.fetch = async (url, opts) => {
+    if (opts.method === 'POST') return new Response(JSON.stringify({ job_id: 'staged' }));
+    if (opts.method === 'DELETE') {
+      events.push('delete');
+      cleanupSignal = opts.signal;
+      if (stallCleanup) await cleanup.promise;
+      return new Response(null, { status: 204 });
+    }
+    if (!url.endsWith('/file')) return new Response(JSON.stringify({ status: 'complete' }));
+    if (++fileRequests === 1) return new Response(null, { headers });
+    stageSignal = opts.signal;
+    assert.ok(stageSignal, 'staging fetch must receive an abort signal');
+    assert.equal(opts.credentials, 'omit');
+    assert.equal(opts.redirect, 'manual');
+    if (stopAt === 'headers') {
+      ready.resolve();
+      return await new Promise((_resolve, reject) => {
+        stageSignal.addEventListener('abort', () => reject(stageSignal.reason), { once: true });
+      });
+    }
+    if (stopAt === 'body') {
+      const body = new ReadableStream({
+        start(stream) {
+          stream.enqueue(new Uint8Array([1, 2, 3]));
+          stageSignal.addEventListener('abort', () => stream.error(stageSignal.reason), { once: true });
+        },
+      });
+      const response = new Response(body, { headers });
+      if (build === 'firefox') {
+        const blob = response.blob.bind(response);
+        response.blob = () => { ready.resolve(); return blob(); };
+      }
+      return response;
+    }
+    return new Response(new Uint8Array([1, 2, 3]), { headers });
+  };
+  const api = {
+    storage: { local: { async get() {
+      if (stopAt === 'directory') { ready.resolve(); await proceed.promise; }
+      return {};
+    } } },
+    downloads: build === 'chrome' ? {
+      download(opts, cb) { downloads.push(opts); cb(99); },
+      search(_query, cb) { cb([{ id: 99, state: 'in_progress' }]); ready.resolve(); },
+      cancel(id, cb) { assert.equal(id, 99); events.push('cancel'); cb(); },
+    } : {
+      async download(opts) { downloads.push(opts); return 99; },
+      async search() { ready.resolve(); return [{ id: 99, state: 'in_progress' }]; },
+      async cancel(id) { assert.equal(id, 99); events.push('cancel'); },
+    },
+  };
+  if (build === 'chrome') {
+    const listeners = [];
+    api.runtime = { lastError: null, onMessage: { addListener(fn) { listeners.push(fn); } },
+      sendMessage(message, cb) {
+        messages.push(message);
+        for (const listener of listeners) listener(message, {}, response => {
+          const respond = () => {
+            cb(response);
+            if (message.type === 'skill-download-prepare') stageSettled.resolve();
+            if (message.type === 'skill-download-release') released.resolve();
+          };
+          if (stopAt === 'reply' && message.type === 'skill-download-prepare') {
+            ready.resolve();
+            void proceed.promise.then(respond);
+          } else respond();
+        });
+      } };
+    api.offscreen = { async hasDocument() { return true; } };
+    const dir = {
+      async *keys() { yield* files.keys(); },
+      async removeEntry(name) { files.delete(name); },
+      async getFileHandle(name) {
+        const chunks = [];
+        files.set(name, chunks);
+        return {
+          async createWritable() { return {
+            async write(chunk) { chunks.push(chunk); if (stopAt === 'body') ready.resolve(); },
+            async close() {}, async abort() { events.push('abort-write'); },
+          }; },
+          async getFile() { return new Blob(chunks); },
+        };
+      },
+    };
+    vm.runInNewContext(fs.readFileSync(new URL('../src/chrome/src/offscreen/skill-download.js', import.meta.url), 'utf8'), {
+      chrome: api, navigator: { storage: { async getDirectory() { return { async getDirectoryHandle() { return dir; } }; } } },
+      fetch: (...args) => globalThis.fetch(...args), URL, Blob, Uint8Array, crypto, AbortController, DOMException,
+    });
+    globalThis.chrome = api;
+    delete globalThis.browser;
+  } else {
+    globalThis.browser = api;
+    delete globalThis.chrome;
+  }
+  const pending = executeHttpSkillTool(tool, { url: 'https://x.com/user/status/123', kind: 'video' }, { signal: controller.signal });
+  return { controller, pending, ready: ready.promise, proceed, stageSettled: stageSettled.promise,
+    released: released.promise, events, messages, files, created, revoked, downloads,
+    get stageSignal() { return stageSignal; }, get cleanupSignal() { return cleanupSignal; } };
+}
+
+for (const build of ['chrome', 'firefox']) {
+  test(`${build}: Stop rejects while completed-job cleanup is still pending`, { timeout: 3000 }, async t => {
+    const h = await stagedDownloadHarness(t, build, 'save', { stallCleanup: true });
+    const rejected = assert.rejects(h.pending, error => error?.name === 'AbortError');
+    await h.ready;
+    h.controller.abort();
+    let timer;
+    try {
+      await Promise.race([rejected, new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Stop waited for stalled provider cleanup.')), 1000);
+      })]);
+    } finally { clearTimeout(timer); }
+    assert.deepEqual(h.events, ['cancel', 'release', 'delete']);
+    assert.notEqual(h.cleanupSignal?.aborted, true, 'cleanup must survive cancellation of the tool');
+    assert.equal(h.files.size, 0);
+    assert.deepEqual(h.revoked, h.created);
+  });
+
+  for (const phase of ['headers', 'body', 'directory', 'save', ...(build === 'chrome' ? ['reply'] : [])]) {
+    test(`${build}: Stop during staged download ${phase} cancels transfer and releases ownership`, { timeout: 3000 }, async t => {
+      const h = await stagedDownloadHarness(t, build, phase);
+      const rejected = assert.rejects(h.pending, error => error?.name === 'AbortError');
+      await h.ready;
+      h.controller.abort();
+      h.proceed.resolve();
+      await rejected;
+      if (build === 'chrome') await h.stageSettled;
+      if (phase === 'reply') await h.released;
+      assert.equal(h.events.filter(event => event === 'delete').length, 1, 'completed provider job must be cleaned up');
+      assert.equal(h.files.size, 0, 'no partial OPFS file may remain after Stop');
+      assert.deepEqual(h.revoked, h.created, 'every completed stage must release its Blob URL');
+      if (phase === 'headers' || phase === 'body') {
+        assert.equal(h.stageSignal.aborted, true, 'Stop must reach the actual staging request');
+        assert.equal(h.downloads.length, 0);
+        if (build === 'chrome') {
+          const prepare = h.messages.find(message => message.type === 'skill-download-prepare');
+          assert.equal(h.messages.find(message => message.type === 'skill-download-cancel')?.requestId, prepare.requestId);
+          if (phase === 'body') assert.ok(h.events.includes('abort-write'), 'partial OPFS write must be aborted');
+        }
+      } else {
+        assert.equal(h.created.length, 1, 'test must reach a fully staged file');
+        assert.equal(h.downloads.length, phase === 'save' ? 1 : 0);
+        if (phase === 'save') {
+          assert.deepEqual(h.events, ['cancel', 'release', 'delete'], 'cancel local download before releasing the stage and remote job');
+        }
+      }
+    });
+  }
 }
