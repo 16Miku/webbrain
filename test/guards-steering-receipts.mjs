@@ -718,6 +718,9 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(h.steeringBlock(null)?.actionGuard.reason, 'target_unresolved');
         assert.equal(h.steeringBlock({ isSubmit: false, resolvedOrdinaryActivationTarget: true, captionUnread: true })?.actionGuard.reason,
           'target_unresolved');
+        // The same for one that opens a popup.
+        assert.equal(h.steeringBlock({ isSubmit: false, resolvedOrdinaryActivationTarget: true, resolvedPreparatoryTarget: true,
+          captionUnread: true })?.actionGuard.reason, 'target_unresolved');
         assert.equal(h.steeringBlock({ isSubmit: false, resolvedOrdinaryActivationTarget: true }), null);
         attempt(h, { ...formOn(pro), actionUrl: 'https://pro.x.com/i/api/compose' });
         if (resume === 'Continue' || resume === 'typed continue') {

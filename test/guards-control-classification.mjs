@@ -266,6 +266,15 @@ for (const build of ['chrome', 'firefox']) {
             // Under a correction it is not clicked either way.
             assert.equal(block?.actionGuard?.reason, 'target_unresolved', reading);
           }
+          // A Post button that also opens a popup is not clicked either.
+          const popup = await setup('https://pro.x.com/i/decks/1', html.replace('<button id="t" type="button">', '<button id="t" type="button" aria-haspopup="dialog">'), { steering: true });
+          const popupChat = popup.agent._chatWithCostAllowance;
+          popup.agent._chatWithCostAllowance = async (provider, messages, options, cost, meta) => meta?.generationName === 'semantic_control_effect'
+            ? { content: '' } : popupChat(provider, messages, options, cost, meta);
+          const launcher = await gate(popup, 'click_ax', { ref_id: await ref('t') });
+          assert.equal(launcher.detected?.resolvedPreparatoryTarget, true);
+          assert.equal(launcher.detected.captionUnread, true);
+          assert.equal(launcher.block?.actionGuard?.reason, 'target_unresolved');
           const f = await setup('https://pro.x.com/i/decks/1', html, { steering: true });
           await page.locator('#editor').focus();
           const result = await gate(f, 'press_keys', { key: 'Enter' });

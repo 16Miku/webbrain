@@ -5586,7 +5586,7 @@ export class Agent extends LoopDetector {
         || detectedSubmit?.resolvedEditableTarget === true
         || detectedSubmit?.resolvedNonSubmitTarget === true
         || (detectedSubmit?.resolvedOrdinaryActivationTarget === true && detectedSubmit.captionUnread !== true)
-        || detectedSubmit?.resolvedPreparatoryTarget === true);
+        || (detectedSubmit?.resolvedPreparatoryTarget === true && detectedSubmit.captionUnread !== true));
     if (!isNetworkMutation(name, args) && name !== 'chrome_web_store_publish'
         && !(detectedSubmit?.isSubmit || (!resolvedNonSubmit && this._isFormValidationCandidate(name, args)))) return null;
     // Searches, dialog Cancel buttons and ordinary in-form toggles commit
