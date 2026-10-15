@@ -576,6 +576,53 @@ preactivates enabled FreeSkillz for that run; only a structured blocking
 `pageGate` adds the trusted instruction to call `fetch_nytimes_article`, so raw
 page prose cannot spoof fallback routing.
 
+A `pageGate` is a wall in front of an article: an overlay on an article page, or
+a block inside the article, whose text a model read as keeping the article
+from the reader until they subscribe, register or sign in (the `page_blocker`
+question, in any language; an offer beside readable text is not a wall). An
+overlay or block is read by its own name and title and by chunks of its
+rendered text: its elements in page order, an element longer than 600
+characters with block children split into them, gathered into texts of at
+most 600 characters, a heading starting a new one, and a longer stretch of
+inline text read in pieces of that length. The chunks are read in page order
+up to the first one read as a wall, at most 30 of them. In an article the
+wall starts at that chunk, or at a chunk before it nobody has read, since the
+wall's text may be there, so only text read as no wall comes before it: a
+preview in chunks before the wall stays readable, also inside the wall's own
+block, while the part of the wall's own chunk before its text is withheld
+with it. Of several walls in an article, the one that starts first decides;
+an overlay is the wall as a whole. A wall's label is its name or title, or
+the first line of the element its starting chunk begins in, and none when an
+unread chunk comes first, since what follows a wall's first line may be the
+article. A page read reports at most 40 texts nobody has read, overlays first
+and then blocks offering a control a wall would (a button, a field, a form or
+a link standing on its own), in `pageTextsNeeded`; the agent has them read
+(the decision model first, the active model within four seconds) and reads
+the page again with the readings, up to three times while each read reaches
+more. A text that differs only in its numbers from texts read as one wall
+is that wall at once, and is still reported to be read until two texts of
+its shape were read as that wall, so a countdown wall stands between reads
+at the cost of one more reading, and a quota that stops being a wall when
+its number changes reads as what it is once read; a shape with any other
+reading carries nothing over. When a text reads as
+a wall and the page cannot be read again, the read fails rather than return
+the answer made without that reading; so does an answer without that wall
+applied while texts are still unread, at any pass, as with a wall whose
+other text changes on every read or whose next text no model answered. An
+unread text is no wall, so the page reads as it is, and a text no model
+answered after both had their turn is not asked again for 30 seconds. A wall
+withholds the article, its links, forms and frames; its own text and
+controls stay readable. The CDP mirror of the page read (`readPage` in
+cdp-client.js) applies the same rules.
+
+Checks that run in the page, such as this one, the CAPTCHA scans, the submit
+probe and the recipient guard, receive the agent's most recent readings of
+their questions (the latest 400, at most 80,000 characters). A text the agent
+read earlier that a check still reports unread is not asked again: its reading
+becomes one of the most recent and the check runs again with it. Texts are
+keyed alike on both sides: spaces collapsed, and a text cut at its limit loses
+a trailing space or half of a surrogate pair.
+
 Single public-media downloads have a second deterministic guard. If the model
 calls `download_social_media` while an eligible inactive skill owns
 `download_public_media`, the runtime activates that skill and returns a retry
@@ -1163,7 +1210,7 @@ Jobs are stored in `chrome.storage.local` under the key `wb_scheduled_jobs` as a
 
 110+ adapters inject site-specific guidance into the first user message (and re-inject on navigation to a different matched site). Only ONE adapter fires at a time (`getActiveAdapter(url)` returns the first match). See `docs/site-adapters.md` for how to write one. Each matched adapter emits a content-free `adapter_match` trace note with its identity, revision, and whether notes were injected. High-evidence repeated tasks may additionally expose validated V2 workflow jobs; the planner selects an app-owned ID semantically, the binding is revalidated on the live pre-execution URL, and the executor receives its trusted stages/evidence contract. Required submissions need dispatch plus post-submit observation, while jobs with a trusted complete inventory may require an explicit job-bound complete-coverage marker whose count matches terminal current-task ledger rows.
 
-Adapters may also expose narrowly scoped runtime policy. Douyin `/chat` is the first `messaging.verifyActiveRecipient` route. The structured planner resolves an anaphoric recipient to `named` only when authentic prior-user context identifies exactly one target; unresolved pronouns clarify, while `active_conversation` is reserved for an explicit reference to the currently open thread itself. An `active_conversation` planner target must first be pinned to exactly one strong visible header identity before any page tool runs; ambiguous or missing evidence stops for clarification. Immediately before a send-like click, submitted field, or Enter press, the content script resolves the exact target and a lower-page layout composer, then collects only unique header evidence from the narrow, non-scrollable region above it. Enter or submitted field input in a different editable is conclusively non-message only when structural semantics positively identify a search or navigation field; an alternate reply/forward/split-pane composer remains inconclusive and therefore cannot bypass recipient verification. A distant general control likewise remains inconclusive rather than being declared safe. A semantic conversation row in a separate left rail is conclusively navigation-only, allowing recovery to the requested thread whether or not the short rail currently overflows; nested row buttons, links, and their leaf descendants plus controls outside that structure remain inconclusive. The agent requires exact normalized identity equality and returns a no-dispatch blocker on missing, inconclusive, ambiguous, or mismatched evidence, and protected Enter dispatch permits exactly one keypress per verification. Every authorized `click`, `click_ax`, `set_field({submit:true})`, and composer Enter receives a one-use binding to the exact action target, composer, URL, and identity set. Direct content dispatches and Chrome's trusted CDP mouse/key paths consume and revalidate it immediately before `el.click()`, `mousePressed`, or Enter, after any field reconciliation and combobox delays; protected `click_ax` never issues a second no-progress fallback click. Search-result text, message content, input values, generic page text, failed probes, and edited plans with stale hidden metadata cannot authorize a send. Dispatch-capable tools whose effects cannot be bound to the probed recipient (`iframe_click`, `execute_js`, WebMCP execution, and `upload_file`, whose change event may auto-send) are unavailable on this protected route. Deterministic saved-workflow replay has no planner-owned recipient target, so a workflow with any potentially dispatching step scoped to a protected messaging route stops before page actions and directs the user to run a normal Act task with a named recipient; a per-step check also covers legacy workflows whose scope metadata is incomplete.
+Adapters may also expose narrowly scoped runtime policy. Douyin `/chat` is the first `messaging.verifyActiveRecipient` route. The structured planner resolves an anaphoric recipient to `named` only when authentic prior-user context identifies exactly one target; unresolved pronouns clarify, and words that refer back to someone named earlier never mean the open thread. `active_conversation` is reserved for a request that points at the conversation on screen itself instead of naming it ("reply here", "this one", "this user", in any language): the planner never sees the page, so it does not ask who that is. An `active_conversation` planner target must first be pinned to exactly one strong visible header identity, while planning or, where the identity needs the page's own preparation first (Gmail's collapsed reply composer, a native WhatsApp contact drawer), at the first send in the thread open when the run was authorized; ambiguous or missing evidence stops for clarification. Its `recipients` are only the people the same request also names. On a route where a conversation reaches one person, the pinned conversation is the target and stays authorized for the whole task, while each named person is kept as requested (`requestedMessaging`, shown in the reviewed plan) and confirmed on WebBrain's recipient card before the first send to them. Native WhatsApp checks a contact through its drawer once per run, for the first chat the run looks at; once that check is invalidated, as by a change of the chat selection, the observer and the recipient probe report `native_whatsapp_contact_check_spent`, and the agent is told that the chat needs a new request instead of being sent to retry. A chat only hidden for a moment, as behind a modal, is not a spent check. On a recipient-set route such as mail the named people are not added to the pin, since a planner copies names as the user wrote them while a mail composer shows addresses. The pin is the thread's recipients as before: one taken while planning sends a differing set to the card, while one taken at the first send from Gmail's collapsed reply composer is whatever that composer holds then, an existing limit. The first user message's screenshot note is dropped from the planner's copy of the task with the image the planner never receives. Immediately before a send-like click, submitted field, or Enter press, the content script resolves the exact target and a lower-page layout composer, then collects only unique header evidence from the narrow, non-scrollable region above it. Enter or submitted field input in a different editable is conclusively non-message only when structural semantics positively identify a search or navigation field; an alternate reply/forward/split-pane composer remains inconclusive and therefore cannot bypass recipient verification. A distant general control likewise remains inconclusive rather than being declared safe. A semantic conversation row in a separate left rail is conclusively navigation-only, allowing recovery to the requested thread whether or not the short rail currently overflows; nested row buttons, links, and their leaf descendants plus controls outside that structure remain inconclusive. The agent requires exact normalized identity equality and returns a no-dispatch blocker on missing, inconclusive, ambiguous, or mismatched evidence, and protected Enter dispatch permits exactly one keypress per verification. Every authorized `click`, `click_ax`, `set_field({submit:true})`, and composer Enter receives a one-use binding to the exact action target, composer, URL, and identity set. Direct content dispatches and Chrome's trusted CDP mouse/key paths consume and revalidate it immediately before `el.click()`, `mousePressed`, or Enter, after any field reconciliation and combobox delays; protected `click_ax` never issues a second no-progress fallback click. Search-result text, message content, input values, generic page text, failed probes, and edited plans with stale hidden metadata cannot authorize a send. Dispatch-capable tools whose effects cannot be bound to the probed recipient (`iframe_click`, `execute_js`, WebMCP execution, and `upload_file`, whose change event may auto-send) are unavailable on this protected route. Deterministic saved-workflow replay has no planner-owned recipient target, so a workflow with any potentially dispatching step scoped to a protected messaging route stops before page actions and directs the user to run a normal Act task with a named recipient; a per-step check also covers legacy workflows whose scope metadata is incomplete.
 
 ### Accessibility Tree (`accessibility-tree.js`)
 

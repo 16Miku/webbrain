@@ -1,5 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
-import { fixtureControlEffectReading, fixtureFollowStateReading, fixtureHomeInstanceReading, fixturePageTextReading, fixtureProgressActionReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
+import { fixtureControlEffectReading, fixtureFollowStateReading, fixtureHomeInstanceReading, fixturePageBlockerReading, fixturePageTextReading, fixtureProgressActionReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -783,9 +783,43 @@ const CloudflareChallengeCh = await import(
 const CloudflareChallengeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
 );
+// The page_blocker readings a model would give any dialog title, as the
+// readings the agent passes to the scans that run in the page.
+const captchaTitleReadings = new Proxy({}, {
+  get: (_target, title) => (typeof title === 'string' ? fixturePageBlockerReading(title) : undefined),
+  getOwnPropertyDescriptor: (_target, title) => {
+    const value = typeof title === 'string' ? fixturePageBlockerReading(title) : null;
+    return value ? { value, enumerable: true, configurable: true, writable: false } : undefined;
+  },
+});
+const readCaptchaTitle = title => fixturePageBlockerReading(title);
+// A model stand-in that reads only dialog titles (page_blocker), so a CAPTCHA
+// test's other readings stay as unread as before.
+const stubCaptchaTitleReadings = agent => stubPageTextReadings(agent,
+  (kind, item) => (kind === 'page_blocker' ? fixturePageBlockerReading(item.text) : null));
+// The page_blocker readings a model would give the titles of fake page nodes,
+// as the plain object the agent passes to the scans in the page.
+function captchaTitleReadingsFor(nodes) {
+  const readings = {};
+  const add = value => {
+    for (const line of String(value || '').split(/\r?\n/)) {
+      const title = line.replace(/\s+/g, ' ').trim().slice(0, 200);
+      const reading = title && fixturePageBlockerReading(title);
+      if (reading) readings[title] = reading;
+    }
+  };
+  (function walk(list) {
+    for (const node of list || []) {
+      add(node.innerText); add(node.textContent);
+      for (const name of ['aria-label', 'title']) add(node.getAttribute?.(name));
+      walk(node.children); walk(node.shadowRoot?.children);
+    }
+  })(nodes);
+  return readings;
+}
 function detectCaptchaChallengeInPage(gate, options = null) {
   return gate.detectChallengeDialogInPage({
-    ...gate.captchaChallengeMatcherOptions(),
+    ...gate.captchaChallengeMatcherOptions(captchaTitleReadings),
     ...(options || {}),
   });
 }
@@ -5034,7 +5068,12 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipients: [' 迷你世界皓宸 '] }), {
       target_kind: 'named', recipients: [{ identity: '迷你世界皓宸', role: 'to' }],
     });
-    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipients: ['ignored'] }), {
+    // Names listed with the open conversation are the people the same request
+    // also named; the open conversation itself is never named here.
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipients: [' Ayşe '] }), {
+      target_kind: 'active_conversation', recipients: [{ identity: 'Ayşe', role: 'to' }],
+    });
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipient: '' }), {
       target_kind: 'active_conversation', recipients: [],
     });
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice'), true);
@@ -5092,6 +5131,10 @@ test('direct-message recipient guard uses structured intent and exact active ide
       { target_kind: 'active_conversation', recipients: [] },
       ['清辉月下夜'],
     ), false, 'un-pinned active-conversation intent must never authorize dispatch');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'active_conversation', recipients: ['Ayşe'] },
+      ['Ayşe'],
+    ), false, 'a person named beside an un-pinned open conversation must not authorize dispatch by itself');
   }
   for (const getPolicy of [getMessageRecipientGuardPolicy, getMessageRecipientGuardPolicyFx]) {
     assert.deepEqual(getPolicy('https://mail.google.com/mail/u/0/#inbox'), {
@@ -18270,7 +18313,7 @@ button "Continue" [ref_3] type="submit"`;
   for (const [label, Detector, gate] of builds) {
     const detector = new Detector();
     const observe = (tree) => {
-      const challenge = gate.detectChallengeDialog(tree);
+      const challenge = gate.detectChallengeDialog(tree, readCaptchaTitle);
       return detector._checkVerificationChallengeLoop('verification-tab', {
         pageUrl,
         dialogLabel: challenge?.normalizedLabel || '',
@@ -18315,14 +18358,14 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   ];
   for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
     for (const example of cases) {
-      const challenge = gate.detectChallengeDialog(example.tree);
+      const challenge = gate.detectChallengeDialog(example.tree, readCaptchaTitle);
       assert.equal(challenge?.label, example.label, `${build}: failed to parse ${example.tree}`);
       assert.match(challenge?.normalizedLabel || '', example.normalized, `${build}: normalized challenge label missing`);
     }
     const genericFailure = 'dialog "Email verification failed" [ref_6]';
-    assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
+    assert.equal(gate.detectChallengeDialog(genericFailure, readCaptchaTitle), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
     assert.equal(
-      gate.detectChallengeDialog(genericFailure),
+      gate.detectChallengeDialog(genericFailure, readCaptchaTitle),
       null,
       `${build}: generic failure became positive CAPTCHA evidence after a prior gate`,
     );
@@ -18331,6 +18374,315 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
       'CAPTCHA verification failed',
       `${build}: contextual CAPTCHA failure was missed`,
     );
+  }
+});
+
+test('a human-verification dialog in any language arms the CAPTCHA gate once a model reads its title', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    // An accessibility-tree read: the dialog's title is read first, and a
+    // Turkish "Güvenlik doğrulaması" reads as a human check.
+    const turkishTree = 'dialog "Güvenlik doğrulaması" [ref_1]\n button "Kapat" [ref_2]';
+    const agent = new AgentClass({});
+    const asked = stubCaptchaTitleReadings(agent);
+    const observation = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: turkishTree, pageUrl: 'https://www.linkedin.com/signup/cold-join', captchaChallengeVisibilityConfirmed: true }, {});
+    assert.ok(observation.gate, `${build}: a Turkish security verification dialog armed no gate`);
+    assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', 'Güvenlik doğrulaması']]);
+    // A title the model cannot read, or reads as something else, arms nothing.
+    const unread = new AgentClass({});
+    stubPageTextReadings(unread, () => null);
+    assert.equal((await unread._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: turkishTree, pageUrl: 'https://www.linkedin.com/signup/cold-join', captchaChallengeVisibilityConfirmed: true }, {})).gate, null,
+      `${build}: an unread title armed the gate`);
+    const cookie = new AgentClass({});
+    stubCaptchaTitleReadings(cookie);
+    assert.equal((await cookie._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: 'dialog "Çerez tercihleri" [ref_1]\n button "Kabul et" [ref_2]', pageUrl: 'https://example.test/', captchaChallengeVisibilityConfirmed: true }, {})).gate,
+      null, `${build}: a cookie dialog armed the gate`);
+    // A dialog naming a CAPTCHA product needs no reading.
+    const branded = new AgentClass({});
+    const brandedAsked = stubCaptchaTitleReadings(branded);
+    assert.ok((await branded._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: 'dialog "reCAPTCHA doğrulaması" [ref_1]', pageUrl: 'https://example.test/', captchaChallengeVisibilityConfirmed: true }, {})).gate);
+    assert.deepEqual(brandedAsked, [], `${build}: a branded dialog title was sent to a model`);
+
+    // The scan before a mutation reports the visible dialog titles nobody has
+    // read; the agent reads them once and scans again with the readings.
+    const nodes = [captchaEl('div', { role: 'dialog', 'aria-label': 'Güvenlik doğrulaması' }, [
+      captchaEl('h2', { textContent: 'Güvenlik doğrulaması' }),
+      captchaEl('button', { textContent: 'Kapat', innerText: 'Kapat' }),
+    ])];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const preflight = new AgentClass({});
+      const preflightAsked = stubCaptchaTitleReadings(preflight);
+      const found = await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(found.challenge?.label, 'Güvenlik doğrulaması', `${build}: the preflight missed a Turkish verification dialog`);
+      assert.equal(preflightAsked.length, 1);
+      await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(preflightAsked.length, 1, `${build}: a read title was asked about again`);
+      const none = new AgentClass({});
+      stubPageTextReadings(none, () => null);
+      assert.equal((await none._detectChallengeDialogBeforeMutation(1, { includeStatus: true })).challenge, null,
+        `${build}: an unread title stopped a mutation`);
+    });
+    // A title longer than 200 characters whose 200th character is a space is
+    // keyed alike in the page and in the agent, so its reading reaches the scan.
+    const longTitle = `Güvenlik doğrulaması ${'b'.repeat(178)} devam etmek için robot olmadığınızı doğrulayın`;
+    assert.equal(longTitle[199], ' ');
+    const longNodes = [captchaEl('div', { role: 'dialog', 'aria-label': longTitle }, [
+      captchaEl('button', { textContent: 'Kapat', innerText: 'Kapat' }),
+    ])];
+    await withCaptchaFakePage(build, longNodes, async () => {
+      const preflight = new AgentClass({});
+      stubCaptchaTitleReadings(preflight);
+      const found = await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(found.challenge?.label, longTitle.slice(0, 199), `${build}: a long title read as a human check stopped nothing`);
+    });
+  }
+});
+
+test('a page read has its unread wall texts read in any language and reads the page again', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
+    const agent = new AgentClass({});
+    const asked = stubCaptchaTitleReadings(agent);
+    // The read carries the readings the agent holds, and only page reads do.
+    assert.deepEqual(agent._withPageBlockerReadings('click_ax', { ref_id: 'ref_1' }), { ref_id: 'ref_1' });
+    let dispatches = 0;
+    const reread = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }, { kind: 'message_status', text: 'Okundu' }] },
+      async () => { dispatches += 1; return { text: wall, textSource: 'page-gate', pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: wall } }; });
+    assert.equal(dispatches, 1, `${build}: the page was not read again after its wall text was read`);
+    assert.equal(reread.pageGate?.type, 'subscription');
+    assert.equal(reread.pageTextsNeeded, undefined);
+    assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', wall]],
+      `${build}: only the wall text was to be read, and once`);
+    assert.deepEqual(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker, { [wall]: 'subscription' });
+    // A text the agent already read that a page still reports did not reach
+    // it: it is not asked again, but the page is read once more with it.
+    const again = await agent._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'tree', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] },
+      async () => { dispatches += 1; return { pageContent: 'gate', pageGate: { type: 'subscription' } }; });
+    assert.equal(dispatches, 2, `${build}: a held reading the page lacked was not handed over`);
+    assert.deepEqual(again, { pageContent: 'gate', pageGate: { type: 'subscription' } });
+    assert.equal(asked.length, 1, `${build}: a held reading was asked again`);
+    // One nobody can read changes nothing, and the first answer stands.
+    const unread = new AgentClass({});
+    stubPageTextReadings(unread, () => null);
+    const first = await unread._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, async () => { throw new Error('read again'); });
+    assert.deepEqual(first, { text: 'SECRET_ARTICLE' }, `${build}: an unread wall changed the read`);
+    // When a text reads as a wall but the page cannot be read again, the
+    // answer made without that reading is not returned: it may hold what the
+    // wall withholds.
+    const failing = new AgentClass({});
+    stubCaptchaTitleReadings(failing);
+    for (const dispatch of [async () => { throw new Error('read again'); }, async () => ({ success: false, error: 'gone' })]) {
+      const refused = await failing._rereadWithPageBlockerReadings(1, 'read_page',
+        { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, dispatch);
+      assert.equal(refused.success, false, `${build}: a read made without its wall reading was returned`);
+      assert.doesNotMatch(JSON.stringify(refused), /SECRET_ARTICLE|\[|\]/);
+    }
+    // A text read as no wall keeps the first answer when the page cannot be
+    // read again.
+    const other = await failing._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bültenimize abone olun' }] },
+      async () => { throw new Error('read again'); });
+    assert.deepEqual(other, { text: 'ARTICLE' });
+  }
+});
+
+test('a reading older than the ones handed to the page still reaches it when the page asks for it', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (item.text === wall ? 'subscription' : 'other') : kind === 'message_control' ? 'other' : null));
+    await agent._readPageTexts(1, 'page_blocker', [wall], {}, { maxChars: 400 });
+    // Many texts read since push it out of the readings a page read carries.
+    await agent._readPageTexts(1, 'page_blocker', Array.from({ length: 450 }, (_, index) => `Bülten kutusu ${index}`), {}, { maxChars: 400 });
+    assert.equal(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker[wall], undefined,
+      `${build}: the fixture did not push the old reading out`);
+    asked.length = 0;
+    let handed = null;
+    const reread = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] },
+      async () => {
+        handed = agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker;
+        return { text: wall, textSource: 'page-gate', pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: wall } };
+      });
+    assert.equal(handed?.[wall], 'subscription', `${build}: the page was read again without the reading it lacked`);
+    assert.equal(reread.pageGate?.type, 'subscription');
+    assert.deepEqual(asked, [], `${build}: a held reading was asked of a model again`);
+    // The same holds for any question a check in the page reads, such as a
+    // messaging page's controls: a held reading becomes one of the most recent.
+    await agent._readPageTexts(1, 'message_control', ['Gönder'], {}, { maxChars: 400 });
+    await agent._readPageTexts(1, 'message_control', Array.from({ length: 450 }, (_, index) => `Düğme ${index}`), {}, { maxChars: 400 });
+    assert.equal(agent._messagingPageReadings().message_control['Gönder'], undefined);
+    assert.equal(await agent._readUnreadPageTexts(1, [{ kind: 'message_control', text: 'Gönder' }]), true);
+    assert.equal(agent._messagingPageReadings().message_control['Gönder'], 'other', `${build}: a held control reading did not reach the page`);
+    // Overlay and article-block texts stay out of the dialog-title readings
+    // the CAPTCHA scans carry, which are at most 200 characters.
+    const window = `${'Önizleme paragrafı. '.repeat(12)}Okumaya devam etmek için abone olun.`;
+    await agent._readPageTexts(1, 'page_blocker', [window], {}, { maxChars: 400 });
+    assert.equal(agent._pageBlockerReadings()[window], 'other');
+    assert.equal(agent._challengeTitleReadings()[window], undefined, `${build}: a long wall text was handed to the CAPTCHA scans`);
+  }
+});
+
+test('a page read reaching more unread wall texts after a reread is read again, at most three times', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    const batch = prefix => Array.from({ length: 40 }, (_, index) => ({ kind: 'page_blocker', text: `${prefix} ${index}` }));
+    // The page reports forty texts at a time; the wall's text comes with the
+    // second read.
+    const responses = [
+      { text: 'SECRET_SECOND', pageTextsNeeded: batch('Bülten B') },
+      { text: 'SECRET_THIRD', pageTextsNeeded: [{ kind: 'page_blocker', text: 'Okumaya devam etmek için abone olun.' }] },
+      { text: 'gate', pageGate: { type: 'subscription' } },
+      { text: 'never read' },
+    ];
+    let dispatches = 0;
+    const result = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_FIRST', pageTextsNeeded: batch('Bülten A') }, async () => responses[dispatches++]);
+    assert.equal(dispatches, 3, `${build}: the page was not read again for the texts each read reached`);
+    assert.deepEqual(result, { text: 'gate', pageGate: { type: 'subscription' } });
+    assert.equal(asked.length, 81);
+    // It stops after three reads even when every read reaches more.
+    const endless = new AgentClass({});
+    stubPageTextReadings(endless, () => 'other');
+    let reads = 0;
+    const last = await endless._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'tree', pageTextsNeeded: batch('Kutu 0') },
+      async () => { reads += 1; return { pageContent: `tree ${reads}`, pageTextsNeeded: batch(`Kutu ${reads}`) }; });
+    assert.equal(reads, 3);
+    assert.deepEqual(last, { pageContent: 'tree 3' });
+  }
+});
+
+// From review: a wall whose text changes on every read, such as a countdown,
+// was read as a wall each time, yet the page never met that reading again,
+// so after three reads the article behind it was returned.
+test('a wall whose text changes on every read fails the read instead of returning what it hides', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    const wallAt = n => [{ kind: 'page_blocker', text: `Okumaya devam etmek için abone olun. Kalan süre: ${59 - n} sn` }];
+    let reads = 0;
+    const result = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { reads += 1; return { text: `SECRET_${reads}`, pageTextsNeeded: wallAt(reads) }; });
+    assert.equal(reads, 3, `${build}: the page was not read again with each new wall text`);
+    assert.equal(result.success, false, `${build}: the article behind a changing wall was returned`);
+    assert.doesNotMatch(JSON.stringify(result), /SECRET/, `${build}: text behind the wall leaked`);
+    assert.match(result.error, /wall that WebBrain could not apply, as when its text changes on every read[\s\S]*Read the page again once; if the wall is still there, report it/);
+    // The same wall applied on the last read is returned as the page shows it.
+    const applied = new AgentClass({});
+    stubPageTextReadings(applied, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    let appliedReads = 0;
+    const gated = await applied._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { appliedReads += 1; return appliedReads < 3
+        ? { text: `SECRET_${appliedReads}`, pageTextsNeeded: wallAt(appliedReads) }
+        : { text: 'gate', pageGate: { type: 'subscription' }, pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bülten' }] }; });
+    assert.deepEqual(gated, { text: 'gate', pageGate: { type: 'subscription' } }, `${build}: an applied wall was refused`);
+    // Texts read as no wall leave the last read as it is.
+    const plain = new AgentClass({});
+    stubPageTextReadings(plain, () => 'other');
+    let plainReads = 0;
+    const last = await plain._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'article 0', pageTextsNeeded: wallAt(0) },
+      async () => { plainReads += 1; return { text: `article ${plainReads}`, pageTextsNeeded: wallAt(plainReads) }; });
+    assert.deepEqual(last, { text: 'article 3' }, `${build}: a page with no wall was refused`);
+
+    // From review: the next wall text got no answer from any model, so the
+    // loop stopped with the read made without the wall applied.
+    const unanswered = new AgentClass({});
+    stubPageTextReadings(unanswered, (kind, item) => (kind === 'page_blocker'
+      ? (/59 sn/.test(item.text) ? 'subscription' : null) : null));
+    let unansweredReads = 0;
+    const stopped = await unanswered._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { unansweredReads += 1; return { text: `SECRET_${unansweredReads}`, pageTextsNeeded: wallAt(unansweredReads) }; });
+    assert.equal(unansweredReads, 1);
+    assert.equal(stopped.success, false, `${build}: an unanswered later wall text returned the article`);
+    assert.doesNotMatch(JSON.stringify(stopped), /SECRET/);
+    // From review: the wall's new text dropped out of the last batch while
+    // other texts filled it, so only the last pass's texts were looked at.
+    const ticker = new AgentClass({});
+    stubPageTextReadings(ticker, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    let tickerReads = 0;
+    const crowded = await ticker._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { tickerReads += 1; return { pageContent: `SECRET_${tickerReads}`,
+        pageTextsNeeded: [{ kind: 'page_blocker', text: `Borsa ${tickerReads}` }] }; });
+    assert.equal(tickerReads, 3);
+    assert.equal(crowded.success, false, `${build}: a wall crowded out of the last batch returned the article`);
+    assert.doesNotMatch(JSON.stringify(crowded), /SECRET/);
+    // A wall applied on a later read stands, whatever is still unread.
+    const appliedLater = new AgentClass({});
+    stubPageTextReadings(appliedLater, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : null) : null));
+    const standing = await appliedLater._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => ({ text: 'gate', pageGate: { type: 'subscription' }, pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bülten' }] }));
+    assert.deepEqual(standing, { text: 'gate', pageGate: { type: 'subscription' } }, `${build}: an applied wall was refused`);
+  }
+});
+
+test('a wall or dialog title no model answered is not asked again on every read for a while', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      const agent = new AgentClass({});
+      // An active model that answers nothing, as one that times out.
+      agent._activeProvider = () => ({ chat: async () => ({}) });
+      const asked = stubPageTextReadings(agent, () => null);
+      const wall = 'Okumaya devam etmek için abone olun.';
+      assert.equal(await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]), false);
+      assert.equal(await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']), false);
+      assert.equal(asked.length, 2);
+      // Within half a minute neither is asked again, so reads and actions do
+      // not each wait for a model that cannot answer.
+      now += 29_000;
+      assert.equal(await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]), false);
+      assert.equal(await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']), false);
+      assert.equal(asked.length, 2, `${build}: an unanswered text was asked again at once`);
+      now += 2_000;
+      await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']);
+      assert.equal(asked.length, 4, `${build}: an unanswered text was never asked again`);
+      // A read by the decision model alone leaves a title for the next full
+      // read, which may ask the active model at once; so does a read the
+      // active model could not take part in.
+      const decisionOnly = new AgentClass({});
+      decisionOnly._activeProvider = () => ({ chat: async () => ({}) });
+      const askedOnce = stubPageTextReadings(decisionOnly, () => null);
+      await decisionOnly._readChallengeTitles(1, ['Doğrulama gerekli'], { mainModel: false });
+      await decisionOnly._readChallengeTitles(1, ['Doğrulama gerekli']);
+      assert.equal(askedOnce.length, 2, `${build}: a decision-model-only miss held back the active model`);
+      const noModel = new AgentClass({});
+      noModel._activeProvider = () => null;
+      const askedNoModel = stubPageTextReadings(noModel, () => null);
+      await noModel._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      await noModel._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      assert.equal(askedNoModel.length, 2, `${build}: a read no active model took part in held the text back`);
+      // Other questions are asked again at once, as before.
+      const other = new AgentClass({});
+      const askedOther = stubPageTextReadings(other, () => null);
+      await other._readControlEffects(1, ['Sil']);
+      await other._readControlEffects(1, ['Sil']);
+      assert.equal(askedOther.length, 2, `${build}: a control caption was held back`);
+    } finally {
+      Date.now = realNow;
+    }
   }
 });
 
@@ -18875,7 +19227,7 @@ test('backgrounds wire Cloudflare detection to narrow response and platform filt
   }
 });
 
-test('CAPTCHA English matcher has one canonical source with Chrome and Firefox parity', () => {
+test('CAPTCHA product-name matcher has one canonical source with Chrome and Firefox parity', () => {
   assert.equal(
     CaptchaGateCh.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
     CaptchaGateFx.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
@@ -18899,7 +19251,7 @@ test('CAPTCHA English matcher has one canonical source with Chrome and Firefox p
       );
       return count + source.split(gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE).length - 1;
     }, 0);
-    assert.equal(sourceCopies, 1, `${build}: CAPTCHA English matcher source is duplicated`);
+    assert.equal(sourceCopies, 1, `${build}: CAPTCHA product-name matcher source is duplicated`);
   }
 });
 
@@ -18929,6 +19281,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
       await withCaptchaFakePage(build, [dialog], async () => {
         assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: inactive dialog armed the mutation preflight`);
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         const observation = await agent._observeCaptchaChallenge(
           1,
           'get_accessibility_tree',
@@ -18987,7 +19340,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
           },
           document: globalThis.document,
         },
-        gate.captchaChallengeMatcherOptions(),
+        gate.captchaChallengeMatcherOptions(captchaTitleReadings),
       );
       const candidate = detected.candidates.find(
         entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
@@ -19079,6 +19432,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
         `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
       );
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const observation = await agent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19103,6 +19457,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       }),
     ], async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const recheck = await agent._detectChallengeDialogBeforeMutation(1, {
         includeStatus: true,
       });
@@ -19126,6 +19481,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
 
       const sameLabelAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(sameLabelAgent);
       const sameLabelObservation = await sameLabelAgent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19147,6 +19504,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
     });
 
     const crossFrameAgent = new AgentClass({});
+
+    stubCaptchaTitleReadings(crossFrameAgent);
     crossFrameAgent._detectChallengeDialogBeforeMutation = async () => ({
       challenge: null,
       challengeHidden: true,
@@ -19196,6 +19555,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       globalThis.chrome.scripting.executeScript = async () => { throw new Error('injection blocked'); };
       globalThis.browser.tabs.executeScript = async () => { throw new Error('injection blocked'); };
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const observation = await agent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19298,7 +19658,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('frame-backed CAPTCHA gate ignores English matcher misses after one solve', async () => {
+test('frame-backed CAPTCHA gate ignores dialog-title misses after one solve', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -32699,6 +33059,13 @@ test('OTP mailbox candidate filtering returns only service-matching bounded exce
     assert.equal(helper.otpTextMatchesService('row "Bank of America security code" [ref_bofa]', 'Bank of America'), true, `${label}: complete multiword issuer identity should match`);
     assert.equal(helper.otpTextMatchesService('row "Call me about your account" [ref_call]', 'ID.me'), false, `${label}: short connector tokens must not match independently`);
     assert.equal(helper.otpTextMatchesService('row "ID.me verification code" [ref_idme]', 'ID.me'), true, `${label}: short service identities should require their complete normalized phrase`);
+    // Words beside a service's name count the same in every language: none is
+    // set aside as filler, so an English "verification" is required like a
+    // Turkish "doğrulama" is.
+    for (const [service, wanted] of [['Acme verification', 'verification'], ['Acme doğrulama', 'doğrulama']]) {
+      assert.equal(helper.otpTextMatchesService('row "Your Acme sign-in link" [ref_acme]', service), false, `${label}: ${service} matched without ${wanted}`);
+      assert.equal(helper.otpTextMatchesService(`row "Acme ${wanted} 482913" [ref_acme]`, service), true, `${label}: ${service} did not match its own message`);
+    }
     const issuerCandidates = helper.otpEmailCandidates([
       'row "Bank security code" [ref_bank]',
       '  text "Code 111111"',
@@ -82528,6 +82895,20 @@ test('GitHub edit-file workflow verifies the exact committed raw blob', async ()
           fields: [{ label: 'Editing file contents' }],
         },
       ), null, `${label}: the reversible commit-dialog launcher was blocked before its message field existed`);
+      // A commit message field beside the control, known by GitHub's own id in
+      // any interface language, means the click commits rather than opening
+      // the dialog.
+      assert.equal((await agent._workflowPreSubmitDispatchBlock(
+        tabId,
+        'click_ax',
+        {},
+        {
+          isSubmit: true,
+          validationSubmitEvidence: 'heuristic',
+          githubCommitDialogLauncher: true,
+          fields: [{ label: 'Editing file contents' }, { label: 'Wiadomość zatwierdzenia', id: 'commit-message-input' }],
+        },
+      ))?.noDispatch, true, `${label}: a launcher beside a commit message field was taken for the reversible dialog launcher`);
       assert.equal((await agent._workflowPreSubmitDispatchBlock(
         tabId,
         'click_ax',
@@ -85039,7 +85420,7 @@ test('submit detector source covers submit controls, Enter, set_field, iframes, 
     assert.match(agent, /publicationAccountIdentityComplete: publicationAccount\.complete/, `${label}: account evidence completeness should survive the page probe`);
     assert.match(agent, /evidence\.strong \? 'strong' : 'heuristic'/, `${label}: custom submit probes should label strong and heuristic evidence`);
     assert.match(agent, /detected\.validationSubmitEvidence === 'strong' \? 'strong' : 'heuristic'/, `${label}: submit evidence strength should survive page-probe normalization`);
-    assert.match(agent, /githubCommitDialogLauncher: githubEditPage[\s\S]*!controlInModal[\s\S]*commit changes/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
+    assert.match(agent, /githubCommitDialogLauncher: githubEditPage\s*&& !controlInModal\s*&& \(\/\(\?:\\\.\{3\}\|…\)\$\/u\.test\(controlLabel\) \|\| controlOpensDialog\)/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
     assert.match(agent, /const findTopmostModal = \(\) => \{[\s\S]*dialog\[open\][\s\S]*\[role="dialog"\]\[aria-modal="true"\][\s\S]*\[class\*="DialogOverlay"\]/, `${label}: text submit probing should mirror modal scoping`);
     assert.match(agent, /Array\.from\(\(findTopmostModal\(\) \|\| doc\)\.querySelectorAll/, `${label}: text submit probing should search inside the topmost modal when present`);
   }
@@ -108461,6 +108842,385 @@ test('planner carries a language-neutral structured messaging target into execut
   }
 });
 
+// From a trace on web.whatsapp.com with one chat open: "send some test
+// messages to this one" and "send test messages to this user" were answered
+// six times with "which contact, and what text?", and no page was ever read.
+// The planner never sees the page, and its rules let only words like "reply
+// here" mean the open conversation.
+test('planner reads a pointer at the open conversation as that conversation and writes described messages itself', () => {
+  for (const [label, fullPrompt, intentPrompt] of [
+    ['chrome', PLANNER_SYSTEM_PROMPT, PLANNER_INTENT_SYSTEM_PROMPT],
+    ['firefox', PLANNER_SYSTEM_PROMPT_FX, PLANNER_INTENT_SYSTEM_PROMPT_FX],
+  ]) {
+    for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
+      const where = `${label} ${kind}`;
+      assert.match(prompt, /You do not see the live page; the agent that carries out the plan reads it\. Do not ask the user about something the page itself can show, such as what is on screen; plan to read it first\./,
+        `${where}: the planner may ask the user about what is on screen`);
+      assert.match(prompt, /Use target_kind="active_conversation" when the current request points at the conversation open on screen, or at the person or group in it, instead of naming them or referring back to someone named earlier, in any language/,
+        `${where}: a pointer at the open conversation is not read as that conversation`);
+      assert.match(prompt, /"this one", or "this user"/, `${where}: no example of a pointer at the open conversation`);
+      assert.match(prompt, /WebBrain reads that conversation's identity from the page itself and binds every send to it, and stops if no single conversation is open, so do not ask the user who or which conversation that is/,
+        `${where}: the planner is not told that WebBrain verifies the open conversation`);
+      // A pointer back at someone named earlier, or a bare pronoun, is not the
+      // open conversation; an unresolved one still asks (5a07d7577).
+      assert.match(prompt, /words that refer back to a person or item named earlier in the conversation mean that person or item, not the open conversation/,
+        `${where}: a reference back can now mean the open conversation`);
+      assert.doesNotMatch(prompt, /who is in the open conversation/, `${where}: the page rule contradicts the pronoun rule`);
+      assert.match(prompt, /Its recipients lists only the people the same request names besides it/,
+        `${where}: a request for the open conversation and someone else cannot be planned`);
+      assert.match(prompt, /A message's wording is not missing information when the user describes it instead of quoting it, such as test messages[\s\S]*the agent writes it/,
+        `${where}: described messages are asked for word by word`);
+      assert.doesNotMatch(prompt, /active_conversation" with recipients=\[\] only when the current request explicitly refers/,
+        `${where}: the rule that turned "this user" into a question is still there`);
+      // Unchanged: a bare pronoun and page text still name nobody.
+      assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${where}: a bare pronoun now means the open thread`);
+      assert.match(prompt, /Do not infer recipients or roles from page content/, `${where}: page text can name a recipient`);
+    }
+  }
+});
+
+test('planner input drops the note about a screenshot the planner never receives', async () => {
+  for (const [label, AgentClass, build] of [
+    ['chrome', AgentCh, buildPlannerMessages],
+    ['firefox', AgentFx, buildPlannerMessagesFx],
+  ]) {
+    const provider = { supportsVision: true, promptTier: 'full', name: 'vision-stub', model: 'vision-stub' };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    agent._runModeOverrides.set(811, 'act');
+    agent._resolveVisionRoute = async () => ({ provider, rawImage: true });
+    agent._recordVisionRouteTrace = () => {};
+    agent._captureBudgetedAutoScreenshot = async () => ({
+      dataUrl: 'data:image/jpeg;base64,QUJD', width: 1126, height: 797, captureId: 'capture_note_test',
+    });
+    const enriched = await agent._enrichUserMessageWithCurrentPage(811, [], 'send some test messages to this one, at least 3');
+    // The acting model still gets the screenshot and the note that frames it.
+    assert.ok(Array.isArray(enriched.content), `${label}: the first message lost its screenshot`);
+    assert.equal(enriched.content.some(block => block?.type === 'image_url'), true, `${label}: the screenshot was not attached`);
+    assert.match(enriched.content[0].text, /\[UNTRUSTED SCREENSHOT — [\s\S]*capture_note_test/, `${label}: the acting model lost the screenshot note`);
+    assert.equal(typeof enriched.webbrainScreenshotNote, 'string', `${label}: the note is not marked for the planner`);
+    const plannerUser = build(enriched, 'https://web.whatsapp.com/', 'WhatsApp').find(message => message.role === 'user');
+    assert.doesNotMatch(plannerUser.content, /UNTRUSTED SCREENSHOT|capture_note_test|data:image/,
+      `${label}: the planner is told about a screenshot it does not get`);
+    assert.match(plannerUser.content, /send some test messages to this one, at least 3$/, `${label}: the request itself was lost`);
+    assert.match(plannerUser.content, /runtime_mode=act/, `${label}: the trusted runtime context was lost`);
+    // Text a person typed is never cut, even when it looks like the note.
+    const typed = '[UNTRUSTED SCREENSHOT — a line from my notes] please send it';
+    const typedUser = build({ role: 'user', content: typed }, 'https://web.whatsapp.com/', 'WhatsApp')
+      .find(message => message.role === 'user');
+    assert.match(typedUser.content, /\[UNTRUSTED SCREENSHOT — a line from my notes\] please send it$/, `${label}: typed text was cut`);
+  }
+});
+
+test('the open conversation and someone else named in the same request each receive only their own sends', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27301 : 27302;
+    const chatUrl = 'https://web.whatsapp.com/';
+    agent._currentUrl = async () => chatUrl;
+    let probe = {
+      success: true, conclusive: true, messageSend: false,
+      strongIdentityCandidates: ['Mehmet'], identityCandidates: ['Mehmet'],
+    };
+    agent._messageRecipientContentProbe = async () => probe;
+
+    const mixed = { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] };
+    const pinned = await agent._pinActiveConversationMessagingTarget(tabId, mixed, chatUrl);
+    assert.equal(pinned.ok, true, `${label}: the open chat could not be pinned`);
+    assert.deepEqual(pinned.target, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] },
+      `${label}: the open chat is not the target`);
+    assert.deepEqual(pinned.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+      `${label}: the person named besides the open chat was dropped`);
+    assert.deepEqual(pinned.activeConversationRecipients, ['mehmet'], `${label}: the pinned chat is not kept`);
+    // The open chat alone pins exactly as before.
+    assert.deepEqual(
+      await agent._pinActiveConversationMessagingTarget(tabId, { target_kind: 'active_conversation', recipients: [] }, chatUrl),
+      { ok: true, target: { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] }, pinnedActiveConversation: true },
+      `${label}: the open chat alone no longer pins as before`,
+    );
+
+    // Mail sends one message to a set of people at once: the pin stays the
+    // thread's own recipients, as before, and a set that differs from it is
+    // confirmed on the card. A name the planner copied from the request
+    // could never match the addresses a mail composer shows.
+    probe = { success: true, conclusive: true, messageSend: false,
+      strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }] };
+    const mail = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Bob', role: 'cc' }] },
+      'https://mail.example.com/compose');
+    assert.deepEqual(mail.target, { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }] },
+      `${label}: a reply here with a Cc is not pinned to the thread`);
+    assert.equal(mail.requestedMessaging, undefined, `${label}: a mail set was split into separate sends`);
+
+    // The run starts from that pin.
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflowUrl: chatUrl,
+      messaging: pinned.target, requestedMessaging: pinned.requestedMessaging,
+      activeConversationRecipients: pinned.activeConversationRecipients,
+    });
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.requestedMessaging, pinned.requestedMessaging, `${label}: the run lost the named person`);
+    assert.deepEqual(guard.activeConversationRecipients, ['mehmet'], `${label}: the run lost the pinned chat`);
+    const send = (identity, n) => ({
+      success: true, conclusive: true, messageSend: true, messageBody: 'Test message', messageBodyBaselineCount: 0,
+      strongIdentityCandidates: [identity], identityCandidates: [identity],
+      messageRecipientDispatchBinding: { token: `binding-${label}-${n}` },
+    });
+    const dispatch = context => agent._messageRecipientGuardBlock(tabId, 'set_field',
+      { ref_id: 'composer', text: 'Test message', submit: true }, chatUrl, context);
+
+    probe = send('Mehmet', 1);
+    const first = {};
+    assert.equal(await dispatch(first), null, `${label}: the open chat the request pointed at needed a card`);
+    assert.equal(first.messageRecipientGuardRequired, true, `${label}: the send to the open chat was not bound`);
+
+    probe = send('Rüstem Bey', 2);
+    const toNamed = await dispatch({});
+    assert.equal(toNamed?.reasonCode, 'active_recipient_unverified', `${label}: a different chat was sent to without a card`);
+    assert.deepEqual(toNamed.recipientConfirmation.recipients, [{ identity: 'Rüstem Bey', role: 'to' }]);
+    assert.deepEqual(toNamed.recipientConfirmation.requested, ['Rustem Bey'], `${label}: the card does not show who was asked for`);
+    assert.equal(agent._approveConfirmedRecipients(tabId, toNamed.recipientConfirmation), true);
+    assert.equal(await dispatch({}), null, `${label}: the person confirmed on the card was asked again`);
+
+    probe = send('Mehmet', 3);
+    const back = {};
+    assert.equal(await dispatch(back), null, `${label}: the open chat needed a card after a named person was confirmed`);
+    assert.deepEqual(agent._planExecutionGuards.get(tabId).messaging,
+      { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] },
+      `${label}: the target did not return to the open chat`);
+
+    probe = send('Ayşe', 4);
+    assert.equal((await dispatch({}))?.reasonCode, 'active_recipient_unverified', `${label}: someone nobody asked for was sent to`);
+  }
+});
+
+test('planner gates carry the open conversation and a person named besides it into the run', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full', 'run'].entries()) {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-open-chat-test',
+          name: 'planner-open-chat-test',
+          chat: async () => ({
+            content: plannerFixtureJson({
+              requires_state_change: true,
+              requires_submission: true,
+              confidence: 0.95,
+              messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+              summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+              steps: [
+                { id: '1', action: 'Observe the open chat.', tools: ['chat_observe'] },
+                { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.', tools: ['chat_send'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+                steps: [
+                  { id: '1', action: 'Observe the open chat.' },
+                  { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.' },
+                ],
+                risks: [],
+              },
+            }),
+            usage: {},
+          }),
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        agent._messageRecipientContentProbe = async () => ({
+          success: true, conclusive: true, strongIdentityCandidates: ['Mehmet'],
+        });
+        const tabId = 9480 + (agentIndex * 20) + (routeIndex * 10);
+        const args = [
+          tabId,
+          { role: 'user', content: 'send some test messages to this one, at least 3, then thank Rustem Bey' },
+          () => { },
+          null,
+          null,
+          '',
+          { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' },
+        ];
+        // "run" is the path a real run takes, which hands the gate's outcome
+        // on field by field.
+        agent._persist = () => { };
+        agent._persistSubmittedTurn = async () => { };
+        agent._currentUrl = async () => 'https://web.whatsapp.com/';
+        agent._getTabUrlTitle = async () => ({ tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' });
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+          : route === 'full'
+            ? await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' })
+            : await agent._maybeRunPlannerGate(tabId, [{ role: 'system', content: 'system' }], args[1], () => { }, 'act',
+              null, null, { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' }, { locale: 'en' });
+        const where = `${AgentClass.name} ${route}`;
+        assert.equal(gate.proceed, true, `${where}: the plan did not run: ${gate.message || gate.reason}`);
+        assert.deepEqual(gate.messaging, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] },
+          `${where}: the open chat is not the target`);
+        assert.deepEqual(gate.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+          `${where}: the person named besides the open chat was dropped`);
+        assert.deepEqual(gate.activeConversationRecipients, ['mehmet'], `${where}: the pinned chat was not handed on`);
+      }
+    }
+  });
+});
+
+// From review: the same person named besides "reply here" on Gmail, whose
+// pin waits for the reply composer, made a set no send could match, so every
+// send asked on the card where it sent before.
+test('a Gmail reply here that also names someone sends to the composer recipients as before', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27311 : 27312;
+    const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/thread-7';
+    agent._currentUrl = async () => threadUrl;
+    let probe = { success: false, conclusive: false, composerAvailable: false, composerSetup: true, messageSend: null,
+      strongIdentityCandidates: [], identityCandidates: [] };
+    agent._messageRecipientContentProbe = async () => probe;
+    const pin = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Bob', role: 'cc' }] }, threadUrl);
+    assert.equal(pin.ok, true, `${label}: the collapsed reply blocked planning`);
+    assert.equal(pin.deferredActiveConversation, true);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+      requiresSubmission: true, siteWorkflowUrl: threadUrl, messaging: pin.target });
+    probe = { success: true, conclusive: true, composerAvailable: true, messageSend: true,
+      messageBody: 'Thanks, Alice', messageBodyBaselineCount: 0, gmailComposeFlow: true,
+      strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' }],
+      messageRecipientDispatchBinding: { token: `gmail-mixed-${label}` } };
+    const context = {};
+    const result = await agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_send' }, threadUrl, context);
+    assert.equal(result, null, `${label}: the reply with its Cc needed a card: ${JSON.stringify(result?.recipientConfirmation || result)}`);
+    assert.equal(context.messageRecipientGuardRequired, true, `${label}: the send was not bound`);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.messaging, { target_kind: 'named', recipients: [
+      { identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' }] });
+    assert.equal(guard.requestedMessaging, undefined, `${label}: a mail set was split into separate sends`);
+    assert.deepEqual(guard.activeConversationRecipients, [], `${label}: a mail thread became a chat`);
+  }
+});
+
+// From review: when a WhatsApp contact's identity still needs its drawer
+// while planning, the open chat is pinned at its first send; the person
+// named besides it must still be kept for the card then.
+test('a WhatsApp chat pinned at its first send keeps the person named besides it for the card', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27321 : 27322;
+    const chatUrl = 'https://web.whatsapp.com/';
+    agent._currentUrl = async () => chatUrl;
+    let probe = { success: true, conclusive: false, messageSend: false, composerAvailable: true,
+      nativeWhatsappRepairAvailable: true, identityCandidates: [] };
+    agent._messageRecipientContentProbe = async () => probe;
+    const pin = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] }, chatUrl);
+    assert.equal(pin.ok, true);
+    assert.equal(pin.nativeWhatsappRepair, true, `${label}: the pin did not wait for the contact's drawer`);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+      requiresSubmission: true, siteWorkflowUrl: chatUrl, messaging: pin.target });
+    const phone = `whatsapp:phone:${'a'.repeat(32)}`;
+    const send = (identity, n) => ({ success: true, conclusive: true, messageSend: true, messageBody: `Test ${n}`,
+      messageBodyBaselineCount: 0, strongIdentityCandidates: [identity],
+      nativeChatMessageBaseline: { threadKey: `dom:${identity}` },
+      messageRecipientDispatchBinding: { token: `wa-${label}-${n}` } });
+    const dispatch = (n, context = {}) => agent._messageRecipientGuardBlock(tabId, 'set_field',
+      { ref_id: 'composer', text: `Test ${n}`, submit: true }, chatUrl, context);
+    probe = send(phone, 1);
+    assert.equal(await dispatch(1), null, `${label}: the open chat needed a card at its first send`);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.messaging, { target_kind: 'named', recipients: [{ identity: phone, role: 'to' }] });
+    assert.deepEqual(guard.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+      `${label}: the person named besides the open chat was dropped at its first send`);
+    assert.deepEqual(guard.activeConversationRecipients, [phone], `${label}: the chat pinned at its first send is not kept`);
+    // Another chat goes to the card, which shows who was asked for.
+    probe = send(`whatsapp:phone:${'b'.repeat(32)}`, 2);
+    const other = await dispatch(2);
+    assert.equal(other?.reasonCode, 'active_recipient_unverified', `${label}: another chat was sent to without a card`);
+    assert.deepEqual(other.recipientConfirmation.requested, ['Rustem Bey']);
+    // A chat whose contact this run can no longer check is reported as such,
+    // not as something to re-read and retry.
+    const spentError = 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at.';
+    probe = { success: true, conclusive: false, messageSend: null, composerAvailable: true, nativeWhatsappRepairAvailable: false,
+      nativeWhatsappRepairSpent: true, reasonCode: 'native_whatsapp_contact_check_spent', identityCandidates: [], error: spentError };
+    const spent = await dispatch(3);
+    assert.equal(spent?.reasonCode, 'native_whatsapp_contact_check_spent', JSON.stringify(spent));
+    assert.equal(spent.retryable, false, `${label}: a spent contact check was offered as retryable`);
+    assert.equal(spent.error, spentError);
+    probe = { success: true, conclusive: false, messageSend: null, composerAvailable: true, nativeWhatsappRepairAvailable: true,
+      reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [], error: 'drawer needed' };
+    const needsDrawer = await dispatch(4);
+    assert.equal(needsDrawer?.reasonCode, 'native_whatsapp_contact_binding_required');
+    assert.notEqual(needsDrawer.retryable, false, `${label}: a contact check still available was made final`);
+    assert.match(needsDrawer.error, /could not conclusively resolve/);
+  }
+});
+
+// From review: the reviewed plan showed only the pinned chat, and the
+// reviewed path's hand-off was untested.
+test('a reviewed plan shows the person named besides the open conversation and an approved one hands them on', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [editIndex, edited] of [false, true].entries()) {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-open-chat-review-test',
+          name: 'planner-open-chat-review-test',
+          chat: async () => ({
+            content: plannerFixtureJson({
+              requires_state_change: true,
+              requires_submission: true,
+              confidence: 0.95,
+              messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+              summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+              steps: [
+                { id: '1', action: 'Observe the open chat.', tools: ['chat_observe'] },
+                { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.', tools: ['chat_send'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+                steps: [
+                  { id: '1', action: 'Observe the open chat.' },
+                  { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.' },
+                ],
+                risks: [],
+              },
+            }),
+            usage: {},
+          }),
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent._messageRecipientContentProbe = async () => ({ success: true, conclusive: true, strongIdentityCandidates: ['Mehmet'] });
+        let reviewed = null;
+        agent._waitForPlanReview = async (_tabId, _planId, _plan, compact, _onUpdate, verbose) => {
+          reviewed = { compact, verbose };
+          return edited
+            ? { action: 'approve', markdownMode: 'compact', editedText: compact.replace('Observe the open chat.', 'Observe the chat.') }
+            : { action: 'approve', markdownMode: 'compact', editedText: '' };
+        };
+        const tabId = 9580 + (agentIndex * 20) + (editIndex * 10);
+        const gate = await agent._runPlannerGate(tabId,
+          { role: 'user', content: 'send some test messages to this one, at least 3, then thank Rustem Bey' },
+          () => { }, null, null, '', { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' }, 'try', 'act', { locale: 'en' });
+        const where = `${AgentClass.name} ${edited ? 'edited' : 'unedited'}`;
+        assert.equal(gate.proceed, true, `${where}: the reviewed plan did not run: ${gate.message || gate.reason}`);
+        assert.match(reviewed?.verbose || '', /- Message targets: to:Mehmet\n- Also named, each verified before any send to them: to:Rustem Bey/,
+          `${where}: the reviewed plan does not show the person named besides the open chat`);
+        if (edited) {
+          // An edited plan carries no send target at all, as before.
+          assert.equal(gate.messaging, null);
+          assert.equal(gate.requestedMessaging, null);
+          assert.deepEqual(gate.activeConversationRecipients, []);
+        } else {
+          assert.deepEqual(gate.messaging, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] });
+          assert.deepEqual(gate.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+            `${where}: the approved plan dropped the person named besides the open chat`);
+          assert.deepEqual(gate.activeConversationRecipients, ['mehmet'], `${where}: the approved plan dropped the pinned chat`);
+        }
+      }
+    }
+  });
+});
+
 test('unverified active recipients keep the user answer bound to the original send task', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
@@ -121967,14 +122727,14 @@ async function withCaptchaFakePage(build, nodes, callback) {
 async function detectCaptchaOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return (await mod.detectCaptcha(1)).selected;
+    return (await mod.detectCaptcha(1, { challengeReadings: captchaTitleReadingsFor(nodes) })).selected;
   });
 }
 
 async function detectCaptchaDetailsOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return mod.detectCaptcha(1);
+    return mod.detectCaptcha(1, { challengeReadings: captchaTitleReadingsFor(nodes) });
   });
 }
 
@@ -121987,6 +122747,7 @@ test('CAPTCHA providers: hCaptcha stays manual when CapSolver is also enabled', 
     ])];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['2captcha'];
       agent._currentUrl = async () => 'https://example.test/form';
@@ -122418,6 +123179,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, supportedNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122438,6 +123200,8 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(agent._captchaGateBlockResult(1, 'click')?.solveCaptchaRequired, true, `${build}: Dismiss/Continue click was not blocked`);
 
       const disabledAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(disabledAgent);
       disabledAgent.captchaSolverEnabled = false;
       disabledAgent._currentUrl = async () => 'https://example.test/signup';
       const disabledObservation = await disabledAgent._observeCaptchaChallenge(
@@ -122454,6 +123218,8 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(enabledGate?.status, 'solve_required', `${build}: enabling the solver did not re-evaluate the manual gate before mutation`);
 
       const transientAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(transientAgent);
       transientAgent.captchaSolverEnabled = true;
       transientAgent.captchaProviderIds = ['capsolver'];
       transientAgent._currentUrl = async () => 'https://example.test/signup';
@@ -122517,6 +123283,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, invisibleV3Nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122540,6 +123307,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, unrelatedV3Nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122569,6 +123337,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, unrelatedVisibleNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122605,6 +123374,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, arkoseNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -122676,6 +123446,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
     for (const example of supportedCases) {
       await withCaptchaFakePage(build, example.nodes, async () => {
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
@@ -122712,6 +123483,8 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
 
         const disabledAgent = new AgentClass({});
+
+        stubCaptchaTitleReadings(disabledAgent);
         disabledAgent.captchaSolverEnabled = false;
         disabledAgent._currentUrl = async () => 'https://example.test/signup';
         const disabled = await disabledAgent._observeCaptchaChallenge(
@@ -122732,6 +123505,8 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
 
         const preflightAgent = new AgentClass({});
+
+        stubCaptchaTitleReadings(preflightAgent);
         preflightAgent.captchaSolverEnabled = true;
         preflightAgent.captchaProviderIds = ['capsolver'];
         preflightAgent._currentUrl = async () => 'https://example.test/signup';
@@ -122801,6 +123576,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         ]),
       ], async () => {
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
@@ -122832,6 +123608,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       }),
     ], async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -123130,6 +123907,7 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
     ];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -123140,6 +123918,8 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.solveCaptchaRequired, true, `${build}: detected Dismiss click was not blocked`);
 
       const disabledAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(disabledAgent);
       disabledAgent.captchaSolverEnabled = false;
       disabledAgent._currentUrl = async () => 'https://example.test/signup';
       const disabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
@@ -123149,6 +123929,8 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(disabledAgent._captchaGateBlockResult(2, 'click_ax')?.manualCompletionRequired, true, `${build}: disabled preflight allowed the challenge mutation`);
 
       const abandonmentAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(abandonmentAgent);
       abandonmentAgent.captchaSolverEnabled = false;
       const abandonmentGate = await abandonmentAgent._captchaMutationPreflight(
         3,
@@ -123339,6 +124121,7 @@ test('Chrome CAPTCHA detection preserves navigation-frame diagnostics when scrip
 test('challenge dialog with no enabled supported solver stops the batch for manual completion', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    stubCaptchaTitleReadings(agent);
     const tabId = label === 'chrome' ? 8811 : 8812;
     const messages = [];
     const updates = [];
@@ -123377,6 +124160,7 @@ test('CAPTCHA batch routing offers native tools only in Act/Dev mid/full and exi
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
       await withCaptchaFakePage(build, [], async () => {
         const agent = new AgentClass({ getActive: () => ({ promptTier: tier }), getVisionProvider: async () => null });
+        stubCaptchaTitleReadings(agent);
         agent.conversationModes.set(1, mode);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
@@ -124175,7 +124959,7 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
       },
     };
 
-    const detection = await firefoxMod.detectCaptcha(91);
+    const detection = await firefoxMod.detectCaptcha(91, { challengeReadings: captchaTitleReadingsFor([verificationDialog]) });
     assert.equal(sawBlankMatching, true, 'Firefox detector did not request about:blank matching');
     assert.equal(detection.error, null, 'srcdoc CAPTCHA detection failed');
     assert.equal(detection.selected.websiteKey, 'KEY_SRCDOC', 'srcdoc site key was lost');

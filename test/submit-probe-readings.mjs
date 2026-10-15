@@ -134,6 +134,27 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(plain.searchLandmark, false);
           assert.equal(plain.searchSubmitCaption, false);
         });
+
+        await t.test('a GitHub commit-dialog launcher is known by its ellipsis or dialog trigger, in any language', async () => {
+          await page.goto('https://github.com/owned/repo/edit/main/README.md');
+          // A caption ending in an ellipsis opens the commit dialog, whatever
+          // its language; so does a control that names the dialog it opens.
+          await open('<form><button id="t">Zatwierdź zmiany…</button></form>');
+          assert.equal((await probe('#t')).githubCommitDialogLauncher, true, 'a Polish launcher with an ellipsis');
+          await open('<form><button id="t">Commit changes...</button></form>');
+          assert.equal((await probe('#t')).githubCommitDialogLauncher, true, 'an English launcher with three dots');
+          await open('<form><button id="t" data-show-dialog-id="commit-dialog">Zatwierdź</button></form>');
+          assert.equal((await probe('#t')).githubCommitDialogLauncher, true, 'a launcher naming its dialog');
+          // A caption with no ellipsis and no dialog commits, as does the
+          // dialog's own button and any button off the edit page.
+          await open('<form><button id="t">Zatwierdź zmiany</button></form>');
+          assert.equal((await probe('#t')).githubCommitDialogLauncher, false, 'a commit button with no ellipsis');
+          await open('<div role="dialog" aria-modal="true"><form><button id="t">Zatwierdź zmiany…</button></form></div>');
+          assert.equal((await probe('#t')).githubCommitDialogLauncher, false, 'a button inside the commit dialog');
+          await page.goto(pageUrl);
+          await open('<form><button id="t">Zatwierdź zmiany…</button></form>');
+          assert.equal((await probe('#t')).githubCommitDialogLauncher, false, 'a button off the GitHub edit page');
+        });
       } finally {
         await browser.close();
       }

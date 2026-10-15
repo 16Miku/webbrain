@@ -3964,10 +3964,16 @@ export class CDPClient {
    * Pass `{ includeChrome: true }` to opt out of stripping (e.g. when the
    * user is asking about the nav, footer, cookie banner, etc.).
    */
+  // `opts.pageBlockerReadings` are the agent's page_blocker readings by text:
+  // an overlay or article block counts as a wall only once its text was read
+  // as one, in any language; texts nobody has read come back in
+  // `pageTextsNeeded` (see detectPageGate in content.js).
   async readPage(tabId, opts = {}) {
     const includeChrome = !!opts.includeChrome;
+    const pageBlockerReadings = opts.pageBlockerReadings && typeof opts.pageBlockerReadings === 'object'
+      ? opts.pageBlockerReadings : {};
     const pageInfo = await this.evaluate(tabId, `
-      ((includeChrome) => {
+      ((includeChrome, pageBlockerReadings) => {
         const ARTICLE_SELECTORS = [
           '[itemprop="articleBody"]',
           'article [class*="article-body" i]',
@@ -4021,8 +4027,6 @@ export class CDPClient {
             return rect.width >= 20 && rect.height >= 20;
           } catch (e) { return false; }
         };
-        const gateHasAccessLanguage = (text) => /(?:(?:subscribe|subscription).{0,48}(?:continue|read|access|article|options|required|unlock)|subscriber[- ]only|unlimited access|unlock (?:this|the) article|start (?:your )?(?:free )?trial|create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)|(?:log|sign) in to (?:continue|read)|continue reading (?:with|by)|to continue reading|already have an account)/.test(String(text || '').replace(/\\s+/g, ' ').trim().toLowerCase());
-        const gateHasInlineBlockingLanguage = (text) => /(?:to continue reading|continue reading (?:with|by)|subscriber[- ]only|(?:subscribe|subscription required|register|sign up|log in|sign in|create (?:a )?(?:free )?account).{0,64}(?:continue reading|read (?:this |the )?(?:full )?(?:article|story)|unlock (?:this|the) (?:article|story)|access (?:this|the) (?:article|story)))/.test(String(text || '').replace(/\\s+/g, ' ').trim().toLowerCase());
         const pageHasArticleContext = () => {
           try {
             return !!(
@@ -4033,41 +4037,150 @@ export class CDPClient {
             );
           } catch (e) { return false; }
         };
-        const boundedGateLabel = (el, rawLabel) => {
-          const options = [];
-          let boundaryElement = null;
-          for (const value of [el.getAttribute('aria-label'), el.getAttribute('title')]) {
-            const normalized = String(value || '').replace(/\\s+/g, ' ').trim();
-            if (gateHasAccessLanguage(normalized)) options.push(normalized);
+        // The page-gate check of content.js, mirrored: texts keyed as the
+        // readings key them, a block read in chunks in page order up to its
+        // first wall, a block's wall starting at that chunk or at an unread
+        // chunk before it, and the likeliest walls read first.
+        const GATE_TEXT_LIMIT = 600;
+        const GATE_TYPES = ['subscription', 'registration', 'login'];
+        const unreadGateTexts = [];
+        const gateNormalize = (value) => String(value ?? '').replace(/[\\u200b-\\u200d\\ufeff]/g, '').replace(/\\s+/g, ' ').trim();
+        const gateSlice = (value) => gateNormalize(gateNormalize(value).slice(0, GATE_TEXT_LIMIT)
+          .replace(/^[\\udc00-\\udfff]/, '').replace(/[\\ud800-\\udbff]$/, ''));
+        // A text that differs only in its numbers from texts read as one
+        // wall, such as a countdown's next second, is that wall, as in
+        // content.js: at once, and still reported to be read until two texts
+        // of its shape were read as that wall. Readings of texts with digits
+        // by the text with each run of digits as one '#'; a shape with any
+        // other reading carries nothing over.
+        const gateDigitShape = (text) => (/\\p{Nd}/u.test(text) ? text.replace(/\\p{Nd}+/gu, '#') : '');
+        const gateShapes = new Map();
+        for (const [text, choice] of Object.entries(pageBlockerReadings)) {
+          const shape = gateDigitShape(gateNormalize(text));
+          if (!shape) continue;
+          const entry = gateShapes.get(shape) || { choice: '', walls: 0, mixed: false };
+          if (!GATE_TYPES.includes(choice) || (entry.choice && entry.choice !== choice)) entry.mixed = true;
+          else { entry.choice = choice; entry.walls += 1; }
+          gateShapes.set(shape, entry);
+        }
+        const gateReading = (text) => {
+          if (!text) return 'other';
+          const reading = Object.prototype.hasOwnProperty.call(pageBlockerReadings, text) ? String(pageBlockerReadings[text] || '') : '';
+          if (reading) return GATE_TYPES.includes(reading) ? reading : 'other';
+          const shaped = gateShapes.get(gateDigitShape(text));
+          const wall = shaped && !shaped.mixed && shaped.walls > 0 ? shaped.choice : null;
+          if (wall && shaped.walls >= 2) return wall;
+          const provisional = wall;
+          if (!unreadGateTexts.includes(text)) {
+            if (unreadGateTexts.length >= 40) return provisional;
+            unreadGateTexts.push(text);
           }
-          let descendants = [];
-          try { descendants = el.querySelectorAll('h1, h2, h3, p, button, a, label, [role="heading"]'); } catch (e) {}
-          for (const node of Array.from(descendants).slice(0, 80)) {
-            if (!gateElementIsRendered(node)) continue;
-            const normalized = String(node.innerText || '').replace(/\\s+/g, ' ').trim();
-            if (normalized.length <= 600 && gateHasAccessLanguage(normalized)) {
-              boundaryElement ||= node;
-              options.push(normalized);
+          return provisional;
+        };
+        const gateHasBlockChildren = (el, depth = 0) => {
+          for (const child of el.children) {
+            let display = '';
+            try { display = getComputedStyle(child).display; } catch (e) { continue; }
+            if (display === 'contents') {
+              if (depth < 20 && gateHasBlockChildren(child, depth + 1)) return true;
+              continue;
+            }
+            if (display && display !== 'none' && !display.startsWith('inline')) return true;
+          }
+          return false;
+        };
+        const gateParts = (el) => {
+          const parts = [];
+          const firstLine = value => gateNormalize(String(value || '').split('\\n').find(line => line.trim()) || '');
+          const visit = (node, depth) => {
+            for (const child of node.childNodes) {
+              if (parts.length >= 600) return;
+              if (child.nodeType === Node.TEXT_NODE) {
+                const value = gateNormalize(child.data);
+                if (value) parts.push({ text: value, line: value, element: node, heading: false });
+                continue;
+              }
+              if (child.nodeType !== Node.ELEMENT_NODE || /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(child.tagName)) continue;
+              let display = '';
+              try { display = getComputedStyle(child).display; } catch (e) {}
+              if (display === 'none') continue;
+              if (display === 'contents') {
+                if (depth < 40) visit(child, depth + 1);
+                continue;
+              }
+              if (!child.getClientRects?.().length) continue;
+              const raw = String(child.innerText || '');
+              const value = gateNormalize(raw);
+              if (!value) continue;
+              if (value.length <= GATE_TEXT_LIMIT || depth >= 40 || !gateHasBlockChildren(child)) {
+                parts.push({ text: value, line: firstLine(raw), element: child,
+                  heading: child.matches?.('h1, h2, h3, h4, h5, h6, [role="heading"]') === true });
+              } else {
+                visit(child, depth + 1);
+              }
+            }
+          };
+          visit(el, 0);
+          return parts;
+        };
+        const gateChunks = (parts) => {
+          const chunks = [];
+          for (const part of parts) {
+            if (part.text.length > GATE_TEXT_LIMIT) {
+              for (let offset = 0; offset < part.text.length && chunks.length < 1000; offset += GATE_TEXT_LIMIT) {
+                chunks.push({ text: part.text.slice(offset, offset + GATE_TEXT_LIMIT), element: part.element,
+                  line: offset ? '' : part.line, closed: true });
+              }
+              continue;
+            }
+            const last = chunks[chunks.length - 1];
+            if (last && !last.closed && !part.heading && last.text.length + 1 + part.text.length <= GATE_TEXT_LIMIT) {
+              last.text += ' ' + part.text;
+            } else {
+              chunks.push({ text: part.text, element: part.element, line: part.line, closed: false });
             }
           }
-          options.sort((a, b) => a.length - b.length);
-          if (options[0]) return { label: options[0].slice(0, 240), boundaryElement };
-          const accessStart = rawLabel.search(/\\b(?:subscribe|subscription|subscriber|unlock|register|sign up|log in|sign in|create an? account|continue reading)\\b/i);
+          return chunks.map(chunk => ({ ...chunk, text: gateSlice(chunk.text) }));
+        };
+        const gateWall = (el, inline) => {
+          const named = [...new Set([el.getAttribute('aria-label'), el.getAttribute('title')].map(gateSlice))].filter(Boolean);
+          const namedReadings = named.map(gateReading);
+          const namedIndex = namedReadings.findIndex(reading => GATE_TYPES.includes(reading));
+          const chunks = gateChunks(gateParts(el)).slice(0, 30);
+          let wallIndex = -1, unread = -1, wallType = null;
+          for (let index = 0; index < chunks.length; index += 1) {
+            const reading = gateReading(chunks[index].text);
+            if (GATE_TYPES.includes(reading)) {
+              wallIndex = index;
+              wallType = reading;
+              break;
+            }
+            if (reading === null && unread < 0) unread = index;
+          }
+          if (wallIndex < 0 && namedIndex < 0) return null;
+          const type = namedIndex >= 0 ? namedReadings[namedIndex] : wallType;
+          const label = value => gateSlice(String(value || '').slice(0, 240));
+          if (namedIndex >= 0) return { type, label: label(named[namedIndex]), element: el };
+          if (!inline) return { type, label: label(chunks[wallIndex].line), element: el };
+          const start = unread >= 0 && unread < wallIndex ? unread : wallIndex;
           return {
-            label: rawLabel.slice(Math.max(0, accessStart), Math.max(0, accessStart) + 240),
-            boundaryElement,
+            type,
+            label: start === wallIndex ? label(chunks[wallIndex].line) : '',
+            element: start === 0 ? el : chunks[start].element,
           };
         };
-        const gateType = (text) => {
-          const value = String(text || '').toLowerCase();
-          if (/\\bsubscribe\\b|\\bsubscription\\b|subscriber[- ]only|unlimited access|unlock (?:this|the) article|start (?:your )?(?:free )?trial/.test(value)) return 'subscription';
-          if (/create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)/.test(value)) return 'registration';
-          if (/(?:log|sign) in to (?:continue|read)|already have an account|create (?:a )?(?:free )?account or log in/.test(value)) return 'login';
-          return 'unknown';
+        const gateOffersControl = (el) => {
+          try {
+            if (el.querySelector('button, input, select, textarea, form, [role="button"]')) return true;
+            return Array.from(el.querySelectorAll('a[href]')).slice(0, 50)
+              .some(link => !link.closest('p, li, blockquote, figcaption, td, dd'));
+          } catch (e) {
+            return false;
+          }
         };
         const detectPageGate = () => {
           const seen = new Set();
-          const candidates = [];
+          const found = [];
           const articleContext = pageHasArticleContext();
           for (const selector of PAGE_GATE_SELECTORS) {
             let matches = [];
@@ -4075,7 +4188,6 @@ export class CDPClient {
             for (const el of matches) {
               if (seen.has(el) || !gateElementIsRendered(el)) continue;
               seen.add(el);
-              const rawLabel = String(el.innerText || '').replace(/\\s+/g, ' ').trim();
               const role = String(el.getAttribute('role') || '').toLowerCase();
               let surface = (role === 'dialog' || role === 'alertdialog' || el.tagName === 'DIALOG' || el.getAttribute('aria-modal') === 'true') ? 'dialog' : 'inline';
               const inArticle = !!el.closest('article, [role="article"], main, [role="main"]');
@@ -4089,20 +4201,27 @@ export class CDPClient {
                 coveringOverlay = ['fixed', 'sticky', 'absolute'].includes(style.position) && ((visibleWidth * visibleHeight) / viewportArea) >= 0.2;
               } catch (e) {}
               if (coveringOverlay) surface = 'dialog';
-              if (surface === 'dialog') {
-                if (!articleContext || !gateHasAccessLanguage(rawLabel)) continue;
-              } else {
-                if (!inArticle || !gateHasInlineBlockingLanguage(rawLabel)) continue;
-              }
-              const gateText = boundedGateLabel(el, rawLabel);
-              const label = gateText.label;
-              const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('data-testid') || ''].join(' '));
-              const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) + (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
-              candidates.push({ element: surface === 'inline' ? (gateText.boundaryElement || el) : el, type: gateType(rawLabel), surface, label: label.slice(0, 240), score });
+              if (surface === 'dialog' ? !articleContext : !inArticle) continue;
+              found.push({ el, surface, inArticle, coveringOverlay, offersControl: gateOffersControl(el) });
             }
           }
-          candidates.sort((a, b) => b.score - a.score);
-          return candidates[0] || null;
+          found.sort((a, b) => (Number(b.surface === 'dialog') - Number(a.surface === 'dialog'))
+            || (Number(b.offersControl) - Number(a.offersControl))
+            || (a.el === b.el ? 0 : (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+          const candidates = [];
+          for (const { el, surface, inArticle, coveringOverlay } of found) {
+            const wall = gateWall(el, surface === 'inline');
+            if (!wall) continue;
+            const label = wall.label;
+            const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('data-testid') || ''].join(' '));
+            const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) + (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
+            candidates.push({ element: wall.element, type: wall.type, surface, label, score });
+          }
+          const overlays = candidates.filter(candidate => candidate.surface === 'dialog').sort((a, b) => b.score - a.score);
+          if (overlays.length) return overlays[0];
+          const blocks = candidates.filter(candidate => candidate.surface === 'inline');
+          blocks.sort((a, b) => (a.element === b.element ? 0 : (a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+          return blocks[0] || null;
         };
         const textBeforeGate = (root, gateElement) => {
           if (!root || !gateElement || !root.contains(gateElement)) return '';
@@ -4220,6 +4339,7 @@ export class CDPClient {
           title: document.title,
           description: document.querySelector('meta[name="description"]')?.content || '',
           ...(pageGate ? { pageGate } : {}),
+          ...(unreadGateTexts.length ? { pageTextsNeeded: unreadGateTexts.map(text => ({ kind: 'page_blocker', text })) } : {}),
           text,
           textSource,
           isArticlePage,
@@ -4252,7 +4372,7 @@ export class CDPClient {
             visible: iframe.offsetWidth > 0 && iframe.offsetHeight > 0,
           })),
         };
-      })(${JSON.stringify(includeChrome)})
+      })(${JSON.stringify(includeChrome)}, ${JSON.stringify(pageBlockerReadings)})
     `);
 
     return pageInfo?.result?.value || pageInfo;

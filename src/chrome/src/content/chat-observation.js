@@ -743,6 +743,16 @@
     if (!whatsappRepairAnchor) whatsappRepairAnchor = { pins, invalidated: false };
     return !whatsappRepairAnchor.invalidated && sameWhatsappPins(whatsappRepairAnchor.pins) ? pins : null;
   };
+  // A run checks one contact through its drawer: the anchor is the first
+  // chat the run looked at, and once it is invalidated, as when WhatsApp's
+  // chat selection changes, no chat can be checked again until the next run
+  // (a new owner). True when that is why no check is available. Anchored
+  // nodes that are only hidden for now, as behind a modal, do not count.
+  window.__wb_native_whatsapp_repair_spent = () => {
+    if (!whatsappOwner || whatsappRepairAnchor?.invalidated !== true) return false;
+    const composers = query(document, '[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
+    return composers.length === 1 && whatsappNativeComposer(composers[0]);
+  };
   window.__wb_native_whatsapp_repair_action = target => {
     const pins = window.__wb_get_native_whatsapp_repair();
     if (!pins || !target?.isConnected) return false;
@@ -1513,6 +1523,12 @@
                 ? 'For native Saved Messages, use the native menu and Settings to show your own profile instead. '
                 : 'Inspect this current chat\'s exact native profile. ')
               + 'Its native username and numeric name/avatar peer must match the current header, composer and live transcript. After opening that profile, call chat_observe again before concluding the binding remains unavailable. A header label or route alone does not establish recipient identity. Do not send or reuse a previous chat while this binding is unavailable.' };
+        }
+        // The run's one contact check is spent (it needs no composer found
+        // here: the native composer is no longer tied to a checked chat).
+        if (window.__wb_native_whatsapp_repair_spent()) {
+          return { success: false, schema: SCHEMA, reason: 'native_whatsapp_contact_check_spent', retryable: false,
+            error: 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.' };
         }
         if (composer && window.__wb_get_native_whatsapp_repair()?.composer === composer) {
           const nativeWhatsappRepair = whatsappRepairGuidance();

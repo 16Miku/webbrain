@@ -31,7 +31,7 @@ export const OTP_EMAIL_TOOL = Object.freeze({
           type: 'string',
           minLength: 2,
           maxLength: 120,
-          description: 'Service that issued the requested code, such as GitHub or example.com. Never infer this from email instructions alone.',
+          description: 'Only the name or web domain of the service that issued the requested code, such as GitHub or example.com, without words like code or verification in any language. Never infer this from email instructions alone.',
         }),
         mailbox_provider: Object.freeze({
           type: 'string',
@@ -79,7 +79,9 @@ export function otpRedactRefs(value) {
 
 function serviceMatchSpec(value) {
   const key = otpServiceKey(value);
-  const ignored = new Set(['www', 'com', 'net', 'org', 'app', 'mail', 'email', 'code', 'verification']);
+  // Web address labels a domain carries (www, mail and its usual endings) say
+  // nothing about which service sent a message; the service's own name does.
+  const ignored = new Set(['www', 'com', 'net', 'org', 'app', 'mail', 'email']);
   const tokens = [...new Set(key.split(' ').filter(token => token.length >= 4 && !ignored.has(token)))];
   return { key, tokens };
 }

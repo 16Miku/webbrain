@@ -37,18 +37,10 @@ function compact(value, max = 200) {
     .trim()
     .slice(0, max);
 }
-export function normalizeMessageTarget(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const targetKind = String(value.target_kind || '').trim();
-  if (!MESSAGE_TARGET_KINDS.has(targetKind)) return null;
-  if (targetKind === 'active_conversation') {
-    return { target_kind: targetKind, recipients: [] };
-  }
+// Each identity and role once, at most 16, in the order given.
+function normalizedRecipientList(rawRecipients) {
   const recipients = new Map();
-  const rawRecipients = Array.isArray(value.recipients)
-    ? value.recipients
-    : [value.recipient];
-  for (const value of rawRecipients.slice(0, 16)) {
+  for (const value of (Array.isArray(rawRecipients) ? rawRecipients : []).slice(0, 16)) {
     const legacy = typeof value === 'string' || typeof value === 'number';
     const identity = compact(legacy ? value : (value?.identity ?? value?.recipient), 240);
     const role = compact(legacy ? 'to' : value?.role, 12).toLowerCase();
@@ -58,8 +50,24 @@ export function normalizeMessageTarget(value) {
       recipients.set(key, { identity, role });
     }
   }
-  return recipients.size
-    ? { target_kind: targetKind, recipients: [...recipients.values()] }
+  return [...recipients.values()];
+}
+
+export function normalizeMessageTarget(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const targetKind = String(value.target_kind || '').trim();
+  if (!MESSAGE_TARGET_KINDS.has(targetKind)) return null;
+  const recipients = normalizedRecipientList(Array.isArray(value.recipients)
+    ? value.recipients
+    : [value.recipient]);
+  // The open conversation itself has no name here: it is pinned to the
+  // identity its page shows before anything is sent. Recipients listed with
+  // it are only the people the same request also named.
+  if (targetKind === 'active_conversation') {
+    return { target_kind: targetKind, recipients };
+  }
+  return recipients.length
+    ? { target_kind: targetKind, recipients }
     : null;
 }
 

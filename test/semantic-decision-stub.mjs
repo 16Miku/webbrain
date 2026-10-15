@@ -36,6 +36,7 @@ const PAGE_TEXT_ORACLES = {
   metadata_field: item => fixtureWorkflowFieldReading('metadata_field', item?.text),
   publication_field: item => fixtureWorkflowFieldReading('publication_field', item?.text),
   review_thread_control: item => fixtureReviewThreadControlReading(item?.text),
+  page_blocker: item => fixturePageBlockerReading(item?.text),
 };
 
 const words = value => String(value || '').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu) || [];
@@ -375,6 +376,24 @@ export function fixtureReviewThreadControlReading(text) {
     .test(value) ? 'resolve' : 'other';
 }
 
+// How a model reads what a dialog or overlay asks of the person using the
+// page (page_blocker), for the fixtures' own titles and texts: a check that
+// they are human, or a subscription, registration or sign-in wall in front of
+// an article. The product never matches these words.
+export function fixturePageBlockerReading(text) {
+  const value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!value) return null;
+  if (/captcha|security verification|human verification|verif(?:y|ication)[^.]{0,24}(?:human|robot)|are you (?:a )?human|confirm you are human|robot check|challenge verification|güvenlik doğrulaması|robot olmadığınızı|insan olduğunuzu|weryfikacja bezpieczeństwa|nie jesteś robotem|安全验证|人机验证/.test(value)) return 'human_check';
+  // A wall says the article stops until the reader acts; an offer beside
+  // readable text does not.
+  const wall = /continue reading|to read (?:this|the) (?:full )?(?:article|story)|subscriber[- ]only|unlock (?:this|the) (?:article|story)|okumaya devam|devamını okumak|weiterlesen|weiterzulesen|lire la suite|la suite est réservée|continuar leyendo|czytać dalej/.test(value);
+  if (!wall) return 'other';
+  if (/subscri|abone|abonn|suscr|prenumer|trial/.test(value)) return 'subscription';
+  if (/create (?:a )?(?:free )?account|register|sign up|hesap oluştur|kayıt ol|konto erstellen|registrier|créez un compte|załóż konto/.test(value)) return 'registration';
+  if (/log ?in|sign in|giriş yap|anmelden|connectez|zaloguj/.test(value)) return 'login';
+  return 'other';
+}
+
 // How a model reads a fediverse page's follow controls and fields
 // (follow_state), whether a request names a domain as the user's own server
 // (home_instance), and whether a clicked label does a ledger action
@@ -516,7 +535,7 @@ export function fixtureFixedChoiceReply(messages, answers = {}) {
     if (question.kind === 'control_effect') return fixtureControlEffectReading(item?.text);
     if (question.kind === 'control_repeat') return fixtureControlRepeatReading(item?.text);
     if (['message_control', 'message_field', 'message_author', 'message_status', 'form_field_match', 'follow_state',
-      'progress_action', 'metadata_field', 'publication_field', 'review_thread_control'].includes(question.kind)) {
+      'progress_action', 'metadata_field', 'publication_field', 'review_thread_control', 'page_blocker'].includes(question.kind)) {
       return fixturePageTextReading(question.kind, item?.text, item);
     }
     if (question.kind === 'home_instance') return fixtureHomeInstanceReading(question.request, item?.text);
@@ -555,6 +574,7 @@ export function fixturePageTextReading(kind, text, context = {}) {
   if (kind === 'progress_action') return fixtureProgressActionReading(text, context?.action);
   if (kind === 'metadata_field' || kind === 'publication_field') return fixtureWorkflowFieldReading(kind, text);
   if (kind === 'review_thread_control') return fixtureReviewThreadControlReading(text);
+  if (kind === 'page_blocker') return fixturePageBlockerReading(text);
   return null;
 }
 
@@ -565,5 +585,5 @@ export function fixturePageTextReply(messages) {
   const kind = fixedChoiceQuestion(messages)?.kind;
   return ['status_message', 'workflow_state', 'control_effect', 'control_repeat', 'message_control', 'message_field',
     'message_author', 'message_status', 'form_field_match', 'follow_state', 'home_instance', 'progress_action',
-    'metadata_field', 'publication_field', 'review_thread_control'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
+    'metadata_field', 'publication_field', 'review_thread_control', 'page_blocker'].includes(kind) ? fixtureFixedChoiceReply(messages) : null;
 }
