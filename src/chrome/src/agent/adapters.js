@@ -18271,17 +18271,16 @@ export function isPublicComposerRoute(url) {
 
 /**
  * True for Google Chat inside Gmail: the /chat/ app, or a #chat/... view
- * opened from mail (a direct message, space or the chat home). Gmail keeps a
- * compose window open across these views; a URL that names one (compose=,
- * in the query or the view's own #…?compose=) is a mail compose.
+ * opened from mail (a direct message, space or the chat home). Gmail keeps
+ * compose= in the URL while any compose window is open, so the URL cannot
+ * say which composer sends; a compose window open over these views is told
+ * apart by its own To/Cc/Bcc rows (content.js).
  */
 export function isGmailChatRoute(url) {
   try {
     const parsed = new URL(url);
-    if (parsed.hostname !== 'mail.google.com') return false;
-    const viewQuery = parsed.hash.includes('?') ? parsed.hash.slice(parsed.hash.indexOf('?') + 1) : '';
-    if (parsed.searchParams.has('compose') || new URLSearchParams(viewQuery).has('compose')) return false;
-    return /^\/chat(?:\/|$)/.test(parsed.pathname) || /^#chat(?:[/?]|$)/.test(parsed.hash);
+    return parsed.hostname === 'mail.google.com'
+      && (/^\/chat(?:\/|$)/.test(parsed.pathname) || /^#chat(?:[/?]|$)/.test(parsed.hash));
   } catch {
     return false;
   }
