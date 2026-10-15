@@ -479,3 +479,170 @@ test('go_back authorizes beforeunload for the current page and cleans up on comp
     else globalThis.browser = previousBrowser;
   }
 });
+
+// Your trace: a run that started on chrome://extensions, where the debugger
+// cannot attach, left every later "Leave site?" prompt for the person to
+// answer, the first one for 70 seconds. The run's dialog handling is armed
+// again once it can be: before and after its own navigations, and at any
+// later debugger attach.
+function navigationFixture(tabId, startUrl) {
+  const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
+  const event = () => {
+    const listeners = new Set();
+    return { addListener: fn => listeners.add(fn), removeListener: fn => listeners.delete(fn),
+      emit: (...args) => [...listeners].forEach(fn => fn(...args)) };
+  };
+  const events = { committed: event(), errors: event(), updated: event() };
+  const state = { url: startUrl, leavePrompt: false, calls: [] };
+  state.answers = () => state.calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').map(call => call[2]);
+  state.chrome = {
+    storage: { local: area, session: area }, runtime: { getURL: value => value },
+    tabs: {
+      get: async id => ({ id, url: state.url, status: 'complete' }),
+      onUpdated: events.updated,
+      // A page with an unsent draft asks before it is left. The browser
+      // leaves only once the prompt is answered with Leave.
+      update: async (_id, { url }) => {
+        if (state.leavePrompt) {
+          const before = state.answers().length;
+          state.client._onDebuggerEvent({ tabId }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: state.url });
+          await new Promise(resolve => setTimeout(resolve, 0));
+          const answer = state.answers()[before];
+          // An unanswered prompt waits for the person; here it is closed
+          // unanswered, so the page stays.
+          state.client._onDebuggerEvent({ tabId }, 'Page.javascriptDialogClosed', {});
+          if (!answer?.accept) return {};
+        }
+        state.url = url;
+        events.committed.emit({ tabId, frameId: 0, url });
+        return {};
+      },
+    },
+    webNavigation: { onCommitted: events.committed, onErrorOccurred: events.errors },
+    scripting: { executeScript: async () => [{ result: { attachedFiles: 0, dirtyFields: 0 } }] },
+  };
+  return state;
+}
+
+async function withNavigationFixture(tabId, startUrl, body) {
+  const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+  delete globalThis.browser;
+  const state = navigationFixture(tabId, startUrl);
+  globalThis.chrome = state.chrome;
+  const { Agent } = await import('../src/chrome/src/agent/agent.js');
+  const { cdpClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+  state.client = cdpClient;
+  const originalAttach = cdpClient.attach, originalSend = cdpClient.sendCommand;
+  try {
+    // The debugger cannot attach to chrome:// pages.
+    cdpClient.attach = async id => {
+      if (/^chrome:/.test(state.url)) throw new Error('Cannot access a chrome:// URL');
+      cdpClient.sessions.set(id, { tabId: id });
+      return cdpClient.sessions.get(id);
+    };
+    cdpClient.sendCommand = async (...args) => { state.calls.push(args); return {}; };
+    await body({ state, cdpClient, agent: new Agent({ getActive: () => ({ promptTier: 'full' }) }) });
+  } finally {
+    cdpClient.stopDialogHandling(tabId);
+    cdpClient.sessions.delete(tabId);
+    cdpClient.attach = originalAttach;
+    cdpClient.sendCommand = originalSend;
+    globalThis.chrome = previousChrome;
+    if (previousBrowser === undefined) delete globalThis.browser;
+    else globalThis.browser = previousBrowser;
+  }
+}
+
+test('a run that starts where the debugger cannot attach answers its leave prompts once it reaches a page', async () => {
+  const tabId = 4301;
+  await withNavigationFixture(tabId, 'chrome://extensions/', async ({ state, cdpClient, agent }) => {
+    await assert.rejects(cdpClient.startDialogHandling(tabId), /chrome:\/\//);
+    assert.equal(cdpClient.dialogRuns.has(tabId), false, 'Nothing is armed on chrome://extensions');
+    const arrived = await agent.executeTool(tabId, 'navigate', { url: 'https://mastoturk.org/publish' });
+    assert.equal(arrived.success, true, arrived.error);
+    assert.equal(cdpClient.dialogRuns.has(tabId), true, 'The first page the debugger can reach arms the run');
+    state.leavePrompt = true;
+    const left = await agent.executeTool(tabId, 'navigate', { url: 'https://x.com/home' });
+    assert.equal(left.success, true, left.error);
+    assert.deepEqual(state.answers(), [{ accept: true }], 'WebBrain answered Leave for its own navigation');
+    assert.equal(state.url, 'https://x.com/home');
+    // Once the run ends, a page's leave prompt is the person's again.
+    cdpClient.stopDialogHandling(tabId);
+    const after = await agent.executeTool(tabId, 'navigate', { url: 'https://mastoturk.org/home' });
+    assert.equal(after.success, false);
+    assert.equal(after.confirmationPossible, true);
+    assert.deepEqual(state.answers(), [{ accept: true }], 'No answer after the run ended');
+  });
+});
+
+for (const reason of ['target_closed', 'canceled_by_user']) {
+  test(`a debugger connection that drops (${reason}) ${reason === 'canceled_by_user' ? 'stays off once the person cancelled it' : 'is armed again for the next navigation'}`, async () => {
+    const tabId = reason === 'target_closed' ? 4302 : 4303;
+    await withNavigationFixture(tabId, 'https://x.com/home', async ({ state, cdpClient, agent }) => {
+      await cdpClient.startDialogHandling(tabId);
+      assert.equal(cdpClient.dialogRuns.has(tabId), true);
+      cdpClient._onDebuggerDetach({ tabId }, reason);
+      assert.equal(cdpClient.dialogRuns.has(tabId), false);
+      state.leavePrompt = true;
+      const left = await agent.executeTool(tabId, 'navigate', { url: 'https://mastoturk.org/home' });
+      if (reason === 'target_closed') {
+        assert.equal(left.success, true, left.error);
+        assert.deepEqual(state.answers(), [{ accept: true }]);
+      } else {
+        assert.equal(left.success, false);
+        assert.deepEqual(state.answers(), [], 'The person who cancelled the debugger answers the prompt');
+        assert.equal(cdpClient.dialogRuns.has(tabId), false);
+      }
+    });
+  });
+}
+
+test('any later debugger attach arms the dialog handling its run could not arm at its start', async () => {
+  const previousChrome = globalThis.chrome;
+  const sent = [];
+  let attaches = 0, eventListener = null;
+  globalThis.chrome = {
+    runtime: { getURL: value => value, lastError: undefined },
+    debugger: {
+      attach: (_target, _version, callback) => {
+        const attempt = ++attaches;
+        setTimeout(() => {
+          // The run starts on chrome://extensions; a later page allows it.
+          if (attempt === 1) globalThis.chrome.runtime.lastError = { message: 'Cannot access a chrome:// URL' };
+          callback();
+          globalThis.chrome.runtime.lastError = undefined;
+        }, 0);
+      },
+      detach: (_target, callback) => callback?.(),
+      sendCommand: (_target, method, params, callback) => { sent.push([method, params]); callback({}); },
+      onEvent: { addListener: fn => { eventListener = fn; }, removeListener: () => {} },
+      onDetach: { addListener: () => {}, removeListener: () => {} },
+    },
+  };
+  try {
+    const client = new CDPClient();
+    await assert.rejects(client.startDialogHandling(51), /chrome:\/\//);
+    assert.equal(client.dialogRuns.has(51), false);
+    // A page with no run is never armed by an attach.
+    await client.attach(52);
+    await tick();
+    assert.equal(client.dialogRuns.has(52), false);
+    // A CDP tool attaches on a page the debugger can reach.
+    await client.attach(51);
+    await tick();
+    assert.equal(client.dialogRuns.has(51), true);
+    assert.ok(sent.some(([method]) => method === 'Page.enable'));
+    // The page's own question no longer waits for the person; it is refused.
+    eventListener({ tabId: 51 }, 'Page.javascriptDialogOpening', { type: 'confirm', url: 'https://mastoturk.org/home' });
+    await tick();
+    assert.deepEqual(sent.filter(([method]) => method === 'Page.handleJavaScriptDialog').map(([, params]) => params), [{ accept: false }]);
+    // Stop ends it: a later attach arms nothing.
+    client.stopDialogHandling(51);
+    client.sessions.delete(51);
+    await client.attach(51);
+    await tick();
+    assert.equal(client.dialogRuns.has(51), false);
+  } finally {
+    globalThis.chrome = previousChrome;
+  }
+});

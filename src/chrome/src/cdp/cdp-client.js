@@ -494,6 +494,7 @@ export class CDPClient {
     this.runtimeContexts = new Map(); // tabId -> session/context key -> default context
     this.pendingDialogs = new Map(); // tabId -> sessionId -> current native dialog
     this.dialogRuns = new Map(); // tabId -> active action-run owner
+    this.dialogIntents = new Map(); // tabId -> the run's wish to answer dialogs, across debugger connections
     this.fileChooserGuards = new Map(); // tabId -> temporary protocol interception
     this._debuggerListenersRegistered = false;
     this._onDebuggerEvent = (source, method, params) => {
@@ -523,7 +524,11 @@ export class CDPClient {
         pendingAttach.detached = true;
         this.attachGenerations.set(tabId, (this.attachGenerations.get(tabId) || 0) + 1);
       }
-      this.stopDialogHandling(tabId);
+      // A dropped connection ends this connection's dialog handling but not
+      // the run's: the next attach or navigation arms it again. The person
+      // cancelling the debugger ends it for the run.
+      if (reason === 'canceled_by_user') this.stopDialogHandling(tabId);
+      else this._disarmDialogHandling(tabId);
       this.pendingDialogs.delete(tabId);
       this._dropWebMCPSession(tabId, `Debugger detached: ${reason || 'unknown reason'}`);
       this.sessions.delete(tabId);
@@ -654,7 +659,9 @@ export class CDPClient {
     });
     this.attachPromises.set(tabId, attachPromise);
     try {
-      return await attachPromise;
+      const session = await attachPromise;
+      this._resumeDialogHandling(tabId);
+      return session;
     } finally {
       if (this.attachPromises.get(tabId) === attachPromise) {
         this.attachPromises.delete(tabId);
@@ -724,16 +731,42 @@ export class CDPClient {
   /** Native dialogs pause renderer commands, so resolve them from the debugger
    * event callback rather than queuing behind the click/evaluate they blocked.
    * Firefox has no equivalent WebExtension API; never patch page JS to fake it.
+   *
+   * A run's wish to answer dialogs outlives one debugger connection. A run
+   * that starts where the debugger cannot attach, such as chrome://extensions,
+   * or whose connection drops, is armed again at its next debugger attach and
+   * whenever ensureDialogHandling is asked before a navigation, so a page's
+   * leave prompt never waits for the person while WebBrain works. Stop, abort,
+   * the run's end and the person cancelling the debugger end that wish.
    */
   async startDialogHandling(tabId, { signal, onHandled, timeoutMs = 5000 } = {}) {
     this.stopDialogHandling(tabId);
     if (signal?.aborted) return;
-    const owner = { signal, onHandled };
+    const intent = { signal, onHandled, timeoutMs };
+    intent.onAbort = () => {
+      if (this.dialogIntents.get(tabId) === intent) this.stopDialogHandling(tabId);
+    };
+    this.dialogIntents.set(tabId, intent);
+    signal?.addEventListener('abort', intent.onAbort, { once: true });
+    return this._armDialogHandling(tabId, intent);
+  }
+
+  // Arms the run's dialog handling on the tab's current debugger connection.
+  // A failure leaves the run's wish in place for a later connection.
+  _armDialogHandling(tabId, intent) {
+    this._disarmDialogHandling(tabId);
+    if (intent.signal?.aborted || this.dialogIntents.get(tabId) !== intent) return Promise.resolve();
+    const owner = { signal: intent.signal, onHandled: intent.onHandled };
     owner.onAbort = () => {
       if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
     };
     this.dialogRuns.set(tabId, owner);
-    signal?.addEventListener('abort', owner.onAbort, { once: true });
+    owner.signal?.addEventListener('abort', owner.onAbort, { once: true });
+    owner.arming = this._armDialogOwner(tabId, owner, intent.timeoutMs ?? 5000);
+    return owner.arming;
+  }
+
+  async _armDialogOwner(tabId, owner, timeoutMs) {
     let timer;
     const markPendingAttachCancelled = () => {
       const pendingAttach = this.attachPromises.get(tabId);
@@ -770,7 +803,7 @@ export class CDPClient {
     } catch (error) {
       if (error?.code === 'page_feedback_pending') throw error;
       markPendingAttachCancelled();
-      if (this.dialogRuns.get(tabId) === owner) this.stopDialogHandling(tabId);
+      if (this.dialogRuns.get(tabId) === owner) this._disarmDialogHandling(tabId);
       throw error;
     } finally {
       clearTimeout(timer);
@@ -778,7 +811,39 @@ export class CDPClient {
     }
   }
 
+  /**
+   * Makes sure the run's dialog handling is armed on this tab before an
+   * action that can raise a dialog, such as a navigation that may meet a
+   * leave prompt. Resolves whether it is armed; never throws, so a page the
+   * debugger cannot reach still navigates.
+   */
+  async ensureDialogHandling(tabId) {
+    const intent = this.dialogIntents.get(tabId);
+    if (!intent || intent.signal?.aborted) return false;
+    const owner = this.dialogRuns.get(tabId);
+    try {
+      if (owner) await owner.arming;
+      else await this._armDialogHandling(tabId, intent);
+    } catch {}
+    return this.dialogIntents.get(tabId) === intent && this.dialogRuns.has(tabId);
+  }
+
+  // A fresh debugger connection resumes the dialog handling its run could not
+  // arm at its start, or that a dropped connection ended.
+  _resumeDialogHandling(tabId) {
+    const intent = this.dialogIntents.get(tabId);
+    if (!intent || intent.signal?.aborted || this.dialogRuns.has(tabId)) return;
+    this._armDialogHandling(tabId, intent).catch(() => {});
+  }
+
   stopDialogHandling(tabId) {
+    const intent = this.dialogIntents.get(tabId);
+    intent?.signal?.removeEventListener('abort', intent.onAbort);
+    this.dialogIntents.delete(tabId);
+    this._disarmDialogHandling(tabId);
+  }
+
+  _disarmDialogHandling(tabId) {
     const owner = this.dialogRuns.get(tabId);
     owner?.navigation?.release();
     owner?.cancelStartup?.();

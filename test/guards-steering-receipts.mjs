@@ -160,6 +160,67 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  // Your trace: a Mastodon post whose Publish click was delivered while the
+  // page moved on, then "ok now on X". WebBrain reads account names only on
+  // X and Bluesky, so the site each post is made on decides whether the
+  // second post is on another platform.
+  const mastodonCompose = { isSubmit: true, validationSubmitEvidence: 'strong', url: 'https://mastoturk.org/publish',
+    host: 'mastoturk.org', formRef: 'ref_5', method: 'POST', actionUrl: '', frameDocumentIdentity: 'https://mastoturk.org/publish|1',
+    fields: [{ label: 'Aklında ne var?', type: 'textarea', value: 'WebBrain test gönderisi' }] };
+  const formOn = url => ({ ...mastodonCompose, url, host: new URL(url).hostname, frameDocumentIdentity: `${url}|1` });
+  const publishOn = (url, account) => ({ ...publish(snap('WebBrain test post', account)), url, host: new URL(url).hostname });
+  const deliveredUnobserved = { success: false, dispatched: true, outcomeUnknown: true, nativeInputAcknowledged: true };
+
+  test(`${build}: a post on another site after a correction goes ahead once the earlier result is known, without an account reader there`, async () => {
+    const cases = {
+      // The trace itself, with the next automatic screenshot read after it.
+      'mastodon-then-x': { earlier: mastodonCompose, at: 'https://mastoturk.org/publish', read: true,
+        now: publishOn('https://x.com/home', 'twitter:emresokullu'), allowed: true },
+      // Nothing was read after the Mastodon click: its result is unknown.
+      'mastodon-unread': { earlier: mastodonCompose, at: 'https://mastoturk.org/publish', read: false,
+        now: publishOn('https://x.com/home', 'twitter:emresokullu'), reason: 'prior_effect_unreconciled', guidance: /has not been observed yet/ },
+      // An X post, then Bluesky whose account could not be read.
+      'x-then-bluesky': { earlierReceipt: true, read: true, now: publishOn('https://bsky.app/', ''), allowed: true },
+      // The same platform stays the same, whatever the host is called.
+      'twitter-form-then-x': { earlier: formOn('https://mobile.twitter.com/settings/profile'), at: 'https://mobile.twitter.com/settings/profile',
+        read: true, now: publishOn('https://x.com/home', 'twitter:alice'), reason: 'prior_effect_unreconciled', guidance: /on this platform/ },
+      'same-site-www': { earlier: formOn('https://www.mastoturk.org/publish'), at: 'https://www.mastoturk.org/publish', read: true,
+        now: publishOn('https://mastoturk.org/publish', ''), reason: 'prior_effect_unreconciled', guidance: /on this platform/ },
+      'x-then-x-unread-account': { earlierReceipt: true, read: true, now: publishOn('https://x.com/home', ''), reason: 'replacement_account_changed' },
+    };
+    for (const [variant, spec] of Object.entries(cases)) {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: spec.now.url });
+      try {
+        // An X post's receipt, as the X tests above build it, carries its own
+        // page read; the others are recorded the way a real click records them.
+        if (spec.earlierReceipt) h.agent._completionSubmitStates.set(h.tab, structuredClone(publicationReceipt({ observed: spec.read })));
+        else h.agent._recordCompletionSubmitAttempt(h.tab, spec.earlier, 'click_ax', { ref_id: 'ref_50' }, spec.at,
+          spec.at.replace(/\/[^/]*$/, '/home'), deliveredUnobserved, 'earlier-doc', 'earlier-doc');
+        const guard = await h.steer('ok now on X');
+        assert.equal(guard.steeringPriorSubmission?.dispatched, true, variant);
+        // The next page read, here the automatic screenshot after the
+        // navigation, is what makes the earlier result known.
+        if (spec.read && !spec.earlierReceipt) h.agent._recordCompletionToolResult(h.tab, 'auto_screenshot', {},
+          { success: true, method: 'image_attach', _attachImage: true, pageUrl: spec.now.url });
+        const blocked = await h.check(spec.now);
+        if (spec.allowed) {
+          assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
+          assert.equal(guard.steeringPriorSubmissionReconciliation.verificationKind, 'cross_platform', variant);
+          assert.equal(guard.steeringPriorSubmissionReconciliation.resourceUrl, '', variant);
+          assert.equal(h.audits.length, 1, variant);
+          assert.equal(h.audits[0].input.action, 'publish', variant);
+          assert.equal(h.steeringBlock(spec.now), null, `${variant}: the steering gate accepts the authorized post`);
+        } else {
+          assert.equal(blocked?.noDispatch, true, variant);
+          assert.equal(blocked.actionGuard.reason, spec.reason, `${variant}: ${blocked.error}`);
+          if (spec.guidance) assert.match(blocked.error, spec.guidance, variant);
+          assert.equal(h.audits.length, 0, variant);
+          assert.equal(h.steeringBlock(spec.now)?.noDispatch, true, variant);
+        }
+      } finally { h.close(); }
+    }
+  });
+
   test(`${build}: an unchanged post under a revision reports the earlier publication instead of repeating it`, async () => {
     for (const variant of ['found-on-page', 'not-found', 'verified-outcome']) {
       const h = await fixture('Post "Hello world" on X.', { pageUrl: 'https://x.com/home' });

@@ -5403,6 +5403,20 @@ export class Agent extends LoopDetector {
         : !!subject.resourceUrl && entry.resourceUrl === subject.resourceUrl)) || null;
   }
 
+  // The platform a post or form belongs to, named by the site it was made on:
+  // X and Bluesky as their account identities name them, any other site by the
+  // last two labels of its host. Hosts that share them count as one site, so
+  // an unfamiliar subdomain never makes a post on the same site look like one
+  // on another platform. No usable address names no platform.
+  _publicationSiteOf(url) {
+    let host = '';
+    try { host = new URL(String(url || '')).hostname.toLowerCase().replace(/\.$/, ''); } catch { return ''; }
+    const labels = host.split('.').filter(Boolean);
+    if (labels.length < 2 || labels.every(label => /^\d+$/.test(label))) return host;
+    const site = labels.slice(-2).join('.');
+    return site === 'x.com' || site === 'twitter.com' ? 'twitter' : site === 'bsky.app' ? 'bluesky' : site;
+  }
+
   async _resourceMutationPreSubmitBlock(tabId, name, args, detected, provider = this._activeProvider(tabId)) {
     const guard = this._planExecutionGuards.get(tabId);
     const deletion = detected?.mutationKind === 'delete';
@@ -5441,10 +5455,14 @@ export class Agent extends LoopDetector {
     const priorSnapshot = prior?.publicationSnapshot || prior?.workflowBinding?.socialPublication?.snapshot;
     // An account belongs to its platform's namespace. A post on another
     // platform is a separate publication bound to its own contract action,
-    // not a replacement of the earlier post under a changed account.
+    // not a replacement of the earlier post under a changed account. Account
+    // names are read on X and Bluesky only; for a post or form anywhere else,
+    // such as Mastodon, the site it was made on names its platform, so a post
+    // on another site is never sent to look for the earlier one on its own page.
     const platformOf = account => String(account || '').split(':')[0];
-    const crossPlatform = publication && !!priorSnapshot?.account && !!detected.publicationSnapshot?.account
-      && platformOf(priorSnapshot.account) !== platformOf(detected.publicationSnapshot.account);
+    const priorPlatform = platformOf(priorSnapshot?.account) || this._publicationSiteOf(prior?.originatingUrl || prior?.currentUrl);
+    const currentPlatform = platformOf(detected.publicationSnapshot?.account) || this._publicationSiteOf(detected.url);
+    const crossPlatform = publication && !!priorPlatform && !!currentPlatform && priorPlatform !== currentPlatform;
     if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform) {
       const account = String(detected.publicationSnapshot?.account || '').split(':').slice(1).join(':');
       if (!account || !latest.toLowerCase().includes(account.toLowerCase())) return blocked('replacement_account_changed');
@@ -5533,9 +5551,10 @@ export class Agent extends LoopDetector {
             && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
       }
       if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind)) {
+        const priorHost = (() => { try { return new URL(prior.originatingUrl || prior.currentUrl || '').hostname; } catch { return ''; } })();
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
-          : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
+          : `The earlier submission from before the latest correction${crossPlatform && priorHost ? `, on ${priorHost},` : ''} has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.`);
       }
       if (matching.length === 1 || deletedVerifiedResource) {
         guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,

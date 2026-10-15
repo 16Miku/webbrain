@@ -97,7 +97,12 @@ correction, searches and in-form toggles need no reconciliation. A form without
 record identity is bound by its action and values: an identical resubmission is
 reported as already made, a corrected in-place save needs the observed earlier
 result and authorization under the latest request, and a different target
-(another form or platform) needs a known earlier outcome. Whether a correction
+(another form or platform) needs a known earlier outcome. Account names, read
+on X and Bluesky only, name a post's platform; a post or form anywhere else,
+such as Mastodon, is named by the site it was made on, so "ok now on X" after a
+Mastodon post is a post on another platform and is never sent to look for the
+Mastodon post on X. Hosts that share their last two labels count as one site,
+and x.com and twitter.com as one platform. Whether a correction
 asks to delete the earlier post or record first is a fixed-choice question
 that a model answers from the correction as the user wrote it, in any language
 (see "Language decisions" below): removing characters, words or hashtags from a
@@ -1242,6 +1247,11 @@ Other navigation warnings choose Stay. Dialog text is never treated as instructi
 
 The handler runs independently of blocked page commands and is removed on
 Stop, completion, or detach, even when Dev diagnostics retain the debugger.
+A run whose start page the debugger cannot attach to, such as
+chrome://extensions, or whose debugger connection drops, keeps its wish to
+answer dialogs: the next debugger attach arms it, and each navigation and
+history navigation arms it before dispatch and again on the page it reaches.
+The person cancelling the debugger ends it for the run.
 Ask mode and idle tabs do not auto-answer dialogs. Already-observed dialogs are
 resolved before startup commands. Dialogs opened before debugger attachment
 may need manual dismissal. Startup responds to Stop and times out after five
