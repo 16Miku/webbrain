@@ -75,7 +75,9 @@ try {
           assert(start >= 0);
           const templateStart = source.indexOf('`', start);
           const templateEnd = source.indexOf('`);', templateStart + 1);
-          const code = vm.runInNewContext(source.slice(templateStart, templateEnd + 1), {args});
+          // The scan tags the elements it reports with a per-call nonce so their
+          // model-facing names can be resolved in the content-script world.
+          const code = vm.runInNewContext(source.slice(templateStart, templateEnd + 1), {args, modelNameNonce: 'wbmn_contract'});
           const resolved = await clickPage.evaluate(code => Function('return ('+code+')')(), code);
           assert.equal(resolved.found, true);
           assert.equal(resolved.isSubmitControl, true);
