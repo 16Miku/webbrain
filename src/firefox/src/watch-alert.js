@@ -7,7 +7,7 @@ let audioContext = null;
 let playback = Promise.resolve();
 
 export function watchAlertPattern(style = 'default') {
-  if (style === 'plan_review') {
+  if (style === 'plan_review' || style === 'clarify') {
     return [
       { at: 0, duration: 0.14, frequency: 880 },
       { at: 0.2, duration: 0.2, frequency: 660 },
