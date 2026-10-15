@@ -1,3 +1,4 @@
+import { historyRecoveryMetadata } from '../chat-history-recovery.js';
 import { renderPageFeedbackNote } from './page-feedback-ui.js';
 import { appendGeneratedMedia, restoreGeneratedMedia } from './generated-media-view.js';
 import { saveScreenshot } from './screenshot-download.js';
@@ -33,6 +34,8 @@ import {
   SELECTION_ONLY_SOURCE_GROUNDING,
 } from '../context-menu-storage.js';
 import {
+  listChatHistoryRecords,
+  getChatHistoryRecord,
   deleteChatHistoryRecord,
   repairChatHistoryRecordMessages,
   saveChatHistoryRecord,
@@ -1145,6 +1148,7 @@ let placeholderRotationTimer = null;
 
 let currentTabId = null;
 let renderedTabId = null;
+const historyRecoveryTabs = new Set();
 const pendingAttachmentsByTab = new Map(); // tabId -> [{ kind: 'image'|'document'|'text', name, dataUrl?, textContent? }]
 const attachmentReadCountsByTab = new Map();
 const attachmentGenerationByTab = new Map();
@@ -2086,10 +2090,10 @@ async function flushRenderedTabChat({ allowHidden = false } = {}) {
   }
   flushPendingStreamedAssistantMarkdownRenders();
   const html = messagesEl.innerHTML;
-  if (document.visibilityState !== 'hidden') {
+  if (document.visibilityState !== 'hidden' || allowHidden) {
     lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
   }
-  await persistTabChat(tabId, html, { allowHidden });
+  return persistTabChat(tabId, html, { allowHidden });
 }
 
 function clearCachedTabChat(tabId) {
@@ -2335,6 +2339,11 @@ function extractChatHistoryMessages(root = messagesEl) {
       index,
       createdAt: messageCreatedAt(msgEl),
       ...(attachments.length ? { attachments } : {}),
+      ...(role === 'user' ? historyRecoveryMetadata({
+        userTextSource: typeof msgEl.dataset.composerHistoryText === 'string' ? 'protected'
+          : msgEl.dataset.composerHistoryVerbatim === 'true' ? 'verbatim' : null,
+        modelText: msgEl.dataset.composerHistoryText,
+      }) : {}),
     };
   }).filter((message) => message.text || message.attachments?.length);
 }
@@ -2415,23 +2424,23 @@ async function prepareChatHistoryForTurn(tabId, mode) {
   await hydrateChatHistoryIdentity(tabId, mode, { allowFallback: true, refreshTabInfo: true });
 }
 
-async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {
+async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false, allowHidden = false } = {}) {
   const numericTabId = Number(tabId);
-  if (document.visibilityState === 'hidden'
+  if ((document.visibilityState === 'hidden' && !allowHidden)
       || !Number.isFinite(numericTabId)
-      || renderedTabId !== numericTabId) return;
+      || renderedTabId !== numericTabId) return { ok: false, reason: 'not-rendered' };
   const messages = extractChatHistoryMessages(messagesEl);
-  if (!messages.some((message) => message.role === 'user')) return;
+  if (!messages.some((message) => message.role === 'user')) return { ok: true, empty: true };
   const saveSeq = nextChatHistorySaveSeqForTab(numericTabId);
   if (!chatHistoryCreatedAtByTab.has(numericTabId)) {
     chatHistoryCreatedAtByTab.set(numericTabId, Date.now());
   }
   await hydrateChatHistoryIdentity(numericTabId, agentMode, { refreshTabInfo });
-  if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return;
+  if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return { ok: false, reason: 'superseded' };
   const tabInfo = chatHistoryTabInfoByTab.get(numericTabId) || {};
   const recordId = chatHistoryRecordIdsByTab.get(numericTabId) || fallbackHistoryRecordId(numericTabId);
   const conversationId = chatHistoryConversationIdsByTab.get(numericTabId) || null;
-  await saveChatHistoryRecord({
+  const record = await saveChatHistoryRecord({
     id: recordId,
     conversationId,
     tabId: numericTabId,
@@ -2445,7 +2454,9 @@ async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}
     messages,
   }).catch((error) => {
     console.warn('[WebBrain] failed to save chat history:', error);
+    return null;
   });
+  return record ? { ok: true, record } : { ok: false, reason: 'archive-failed' };
 }
 
 async function repairRestoredChatHistorySnapshot(tabId) {
@@ -2479,7 +2490,7 @@ async function flushChatHistorySnapshot(tabId, options = {}) {
     historyPersistTimer = null;
     historyPersistTimerTabId = null;
   }
-  await persistChatHistorySnapshot(tabId, options);
+  return persistChatHistorySnapshot(tabId, options);
 }
 
 async function resetChatHistoryStateForTab(tabId) {
@@ -5043,6 +5054,12 @@ if (verboseBtn) {
 
 activityProgressToggle?.addEventListener('click', toggleCompactProgressVisibility);
 
+async function waitForHistoryRecovery(tabId) {
+  while (historyRecoveryTabs.has(Number(tabId))) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+}
+
 async function switchToTab(newTabId) {
   // Reserve the user's latest tab intent before any lookup can yield. Returning
   // to the already-rendered tab must also invalidate an older pending switch.
@@ -5052,6 +5069,9 @@ async function switchToTab(newTabId) {
   queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === newTabId);
   syncSendButtonState();
   try {
+    await waitForHistoryRecovery(renderedTabId);
+    if (switchGeneration !== tabSwitchGeneration) return;
+    historyPopover?.hidePopover();
     if (newTabId === currentTabId && renderedTabId === newTabId) {
       if (interruptedTransition) await restoreActiveRunState(newTabId);
       return;
@@ -5159,6 +5179,7 @@ async function switchToTab(newTabId) {
 }
 
 async function refreshVisibleSidePanelState() {
+  await waitForHistoryRecovery(currentTabId);
   if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
   const tabId = Number(currentTabId);
   if (!Number.isFinite(tabId)) return;
@@ -5219,6 +5240,7 @@ function requestVisibleSidePanelStateRefresh() {
     if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
     consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
   }).catch(() => {});
+  return refreshPromise;
 }
 
 async function refreshConversationScopeState(tabId = currentTabId, { apply = true } = {}) {
@@ -9840,15 +9862,26 @@ browser.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== 'sidepanel'
       || msg.action !== 'tab_chat_handoff_request'
       || String(msg.ownerId || '') !== tabChatHandoffOwnerId) return;
-  const snapshot = lastVisibleTabChatSnapshot;
-  if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)) return;
-  sendResponse({
-    ok: true,
-    tabId: Number(snapshot.tabId),
-    ownerId: tabChatHandoffOwnerId,
-    generation: Number(msg.generation),
-    html: snapshot.html,
-  });
+  const respond = () => {
+    const snapshot = lastVisibleTabChatSnapshot;
+    if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)
+        || tabChatHandoffGenerations.get(Number(msg.tabId)) !== Number(msg.generation)) {
+      sendResponse({ ok: false });
+      return;
+    }
+    sendResponse({
+      ok: true,
+      tabId: Number(snapshot.tabId),
+      ownerId: tabChatHandoffOwnerId,
+      generation: Number(msg.generation),
+      html: snapshot.html,
+    });
+  };
+  if (historyRecoveryTabs.has(Number(msg.tabId))) {
+    void waitForHistoryRecovery(msg.tabId).then(respond);
+    return true;
+  }
+  respond();
 });
 
 browser.runtime.onMessage.addListener((msg) => {
@@ -12726,6 +12759,7 @@ function askAboutSelectedAnswer() {
 }
 
 function addMessage(role, content, options = {}) {
+  const messageRoot = options.root || messagesEl;
   const msgEl = document.createElement('div');
   msgEl.className = `message ${role}`;
 
@@ -12770,10 +12804,10 @@ function addMessage(role, content, options = {}) {
   if (role === 'user' && Array.isArray(options.attachments) && options.attachments.length) {
     renderMessageAttachments(msgEl, options.attachments, options.attachmentState || 'included');
   }
-  if (options.beforeCurrentAssistant && currentAssistantEl?.parentNode === messagesEl) {
-    messagesEl.insertBefore(msgEl, currentAssistantEl);
+  if (options.beforeCurrentAssistant && currentAssistantEl?.parentNode === messageRoot) {
+    messageRoot.insertBefore(msgEl, currentAssistantEl);
   } else {
-    messagesEl.appendChild(msgEl);
+    messageRoot.appendChild(msgEl);
   }
   if (role === 'user' && options.sourceGrounding) {
     addSelectionScopeDivider(msgEl, options.sourceGrounding);
@@ -12794,7 +12828,7 @@ function addMessage(role, content, options = {}) {
     addMessageCopyButton(msgEl);
   }
 
-  scrollToBottom();
+  if (!options.detached) scrollToBottom();
 
   return msgEl;
 }
@@ -13823,6 +13857,13 @@ async function handleGlobalKeydown(e) {
     // clicking the trigger leaves focus on a sibling. This listener is on the
     // capture phase either way, so without closing the popover here Escape
     // would fall through to abortRun() and cancel a running agent.
+    if (historyPopover?.matches(':popover-open')) {
+      e.preventDefault();
+      e.stopPropagation();
+      historyPopover.hidePopover();
+      historyBtn?.focus();
+      return;
+    }
     if (closeUiScalePopover()) {
       e.preventDefault();
       uiScaleBtn?.focus();
@@ -15074,8 +15115,149 @@ async function openChatHistoryPage() {
   }
 }
 
-historyBtn?.addEventListener('click', () => {
-  void openChatHistoryPage();
+const historyPopover = document.getElementById('history-popover');
+let historyPopoverRequest = 0;
+
+function createHistoryRecoveryTranscript(record) {
+  const root = document.createElement('div');
+  for (const message of record.messages || []) {
+    if (!['user', 'assistant'].includes(message.role)) continue;
+    const restored = addMessage(message.role, message.text, { root, detached: true, createdAt: message.createdAt,
+      attachments: message.attachments, attachmentState: 'included' });
+    if (message.role === 'user') {
+      delete restored.dataset.composerHistoryVerbatim;
+      delete restored.dataset.composerHistoryText;
+      const provenance = historyRecoveryMetadata(message);
+      if (provenance.userTextSource === 'verbatim') restored.dataset.composerHistoryVerbatim = 'true';
+      if (provenance.modelText) restored.dataset.composerHistoryText = provenance.modelText;
+    }
+  }
+  return root.innerHTML;
+}
+
+async function recoverHistoryRecord(recordId, tabId, pageUrl) {
+  if (tabSwitchTransitionId != null || isTabProcessing(tabId) || isConversationClearInProgress(tabId)
+      || !sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+  historyRecoveryTabs.add(tabId);
+  setConversationClearInProgress(tabId, true);
+  let recoveryRequested = false;
+  try {
+    if ((await getTabInfoForHistory(tabId)).url !== pageUrl) throw new Error(t('sp.history.changed'));
+    const archived = await flushChatHistorySnapshot(tabId, { refreshTabInfo: true, allowHidden: true });
+    if (!archived?.ok) throw new Error(t('sp.history.failed'));
+    const source = await getChatHistoryRecord(recordId);
+    if (!source) throw new Error(t('sp.history.failed'));
+    const html = createHistoryRecoveryTranscript(source);
+    recoveryRequested = true;
+    const result = await sendToBackground('recover_chat_history', {
+      tabId, recordId, html, recordUpdatedAt: source.updatedAt, handoffOwnerId: tabChatHandoffOwnerId,
+      handoffGeneration: tabChatHandoffGenerations.get(Number(tabId)),
+    });
+    if (!result?.ok) throw new Error(result?.error || t('sp.history.failed'));
+    if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+    if (historyPersistTimer) clearTimeout(historyPersistTimer);
+    nextChatHistorySaveSeqForTab(tabId);
+    releaseRetryAttachmentsInTree(messagesEl);
+    clearRetryAttachmentsForTab(tabId);
+    setApiMutationsAllowedForTab(tabId, false);
+    clearPendingAttachmentsForTab(tabId);
+    clearQueuedComposerMessagesForTab(tabId);
+    resetComposerHistoryNavigation(tabId);
+    resetChatNavigation();
+    messagesEl.replaceChildren();
+    currentAssistantEl = null;
+    chatHistoryRecordIdsByTab.set(tabId, result.conversationId);
+    chatHistoryConversationIdsByTab.set(tabId, result.conversationId);
+    chatHistoryCreatedAtByTab.set(tabId, Date.now());
+    applyConversationScopeState(tabId, result);
+    setMode('ask');
+    // The background already durably committed this HTML with the model state.
+    tabChatHandoffGenerations.set(Number(tabId), result.handoffGeneration);
+    messagesEl.innerHTML = result.html;
+    tabChats.set(Number(tabId), result.html);
+    lastVisibleTabChatSnapshot = { tabId: Number(tabId), html: result.html };
+    rebindRestoredMessageControls();
+    await flushChatHistorySnapshot(tabId, { refreshTabInfo: true, allowHidden: true });
+    historyPopover.hidePopover();
+  } catch (error) {
+    if (recoveryRequested) {
+      // A lost response may follow a successful commit. Drop every cached old
+      // identity/snapshot before the handoff reload so it cannot overwrite the
+      // new transcript or enable sends against a different model conversation.
+      console.warn('[WebBrain] Reconciling history recovery:', error);
+      tabChats.delete(Number(tabId));
+      chatHistoryRecordIdsByTab.delete(tabId);
+      chatHistoryConversationIdsByTab.delete(tabId);
+      chatHistoryCreatedAtByTab.delete(tabId);
+      tabChatHandoffGenerations.delete(Number(tabId));
+      if (lastVisibleTabChatSnapshot && sameTabId(lastVisibleTabChatSnapshot.tabId, tabId)) lastVisibleTabChatSnapshot = null;
+      if (persistTimer && sameTabId(persistTimerTabId, tabId)) { clearTimeout(persistTimer); persistTimer = null; persistTimerTabId = null; }
+      // Visibility restoration performs this same refresh when the panel is hidden.
+      requestVisibleSidePanelStateRefresh();
+    } else {
+      showComposerToast(error?.message || t('sp.history.failed'), { duration: 7000 });
+    }
+  } finally {
+    historyRecoveryTabs.delete(tabId);
+    setConversationClearInProgress(tabId, false);
+  }
+}
+
+historyPopover?.addEventListener('toggle', () => {
+  historyBtn?.setAttribute('aria-expanded', String(historyPopover.matches(':popover-open')));
+  if (!historyPopover.matches(':popover-open')) historyPopoverRequest++;
+});
+
+historyBtn?.addEventListener('click', async () => {
+  if (historyPopover.matches(':popover-open')) { historyPopover.hidePopover(); return; }
+  const request = ++historyPopoverRequest;
+  const tabId = currentTabId;
+  const anchor = historyBtn.getBoundingClientRect();
+  historyPopover.style.left = `${Math.max(8, Math.min(anchor.right - 320, window.innerWidth - 328))}px`;
+  historyPopover.style.bottom = `${window.innerHeight - anchor.top + 8}px`;
+  historyPopover.style.maxHeight = `${Math.max(60, Math.min(420, anchor.top - 16))}px`;
+  historyPopover.replaceChildren();
+  const status = document.createElement('p');
+  status.textContent = t('sp.history.loading');
+  status.setAttribute('role', 'status');
+  historyPopover.append(status);
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'history-more';
+  more.textContent = t('sp.providers.more');
+  more.addEventListener('click', () => { historyPopover.hidePopover(); void openChatHistoryPage(); });
+  historyPopover.append(more);
+  historyPopover.showPopover();
+  try {
+    const tab = await getTabInfoForHistory(tabId);
+    const records = tab.url ? await listChatHistoryRecords({ limit: 5, url: tab.url }) : [];
+    if (request !== historyPopoverRequest || !sameTabId(currentTabId, tabId)) return;
+    status.textContent = records.length ? t('sp.history.recent') : t('hist.no_match');
+    for (const record of records) {
+      const row = document.createElement('div');
+      row.className = 'history-popover-record';
+      const summary = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = formatSelectionPromptForDisplay(record.title || record.firstUserMessage || record.url);
+      title.title = title.textContent;
+      const date = document.createElement('small');
+      date.textContent = new Date(record.updatedAt).toLocaleString(getLocale());
+      summary.append(title, date);
+      const recover = document.createElement('button');
+      recover.type = 'button';
+      recover.textContent = t('sp.history.recover');
+      recover.disabled = isTabProcessing(tabId) || isConversationClearInProgress(tabId);
+      recover.addEventListener('click', async () => {
+        recover.disabled = true;
+        try { await recoverHistoryRecord(record.id, tabId, tab.url); }
+        finally { recover.disabled = false; }
+      });
+      row.append(summary, recover);
+      historyPopover.insertBefore(row, more);
+    }
+  } catch {
+    if (request === historyPopoverRequest) status.textContent = t('sp.history.failed');
+  }
 });
 
 settingsBtn.addEventListener('click', () => {

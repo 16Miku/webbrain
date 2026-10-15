@@ -184,6 +184,7 @@ import {
 } from '../context-menu-storage.js';
 import { firefoxHostPermissionFailure, firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
+import { historyMessagesForRecovery } from '../chat-history-recovery.js';
 import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { shouldAutoGroupTabs } from '../tab-group-preference.js';
@@ -7824,29 +7825,34 @@ export class Agent extends LoopDetector {
     };
   }
 
-  async _persistNow(tabId) {
+  async _persistNow(tabId, { snapshotForBudget = null, preserveStateOnFailure = false, storageEntries = {} } = {}) {
     if (tabId == null) return { ok: false, degraded: false, reason: 'invalid_tab' };
     const existing = this.persistTimers.get(tabId);
     if (existing) {
       clearTimeout(existing);
       this.persistTimers.delete(tabId);
     }
-    const entry = this._conversationStorageEntry(tabId);
+    const snapshot = snapshotForBudget || (maxBytes => this._conversationStorageEntry(tabId, { maxBytes }));
+    const entry = snapshot(SESSION_CONVERSATION_BUDGET_BYTES);
+    const extraEntries = retry => typeof storageEntries === 'function' ? storageEntries({ retry }) : storageEntries;
+    const failed = error => preserveStateOnFailure
+      ? { ok: false, degraded: false, reason: isSessionQuotaError(error) ? 'quota' : 'unavailable' }
+      : this._markPersistenceDegraded(tabId, isSessionQuotaError(error) ? 'quota' : 'unavailable', error);
     if (!entry) return { ok: false, degraded: false, reason: 'no_conversation' };
     try {
-      await browser.storage.session.set({ [this._convKey(tabId)]: entry });
+      await browser.storage.session.set({ ...extraEntries(false), [this._convKey(tabId)]: entry });
       return { ok: true, degraded: entry.sessionSnapshotCompacted === true, reason: entry.sessionSnapshotCompacted ? 'sanitized' : null };
     } catch (error) {
       if (isSessionQuotaError(error)) {
-        const compactEntry = this._conversationStorageEntry(tabId, { maxBytes: SESSION_CONVERSATION_RETRY_BUDGET_BYTES });
+        const compactEntry = snapshot(SESSION_CONVERSATION_RETRY_BUDGET_BYTES);
         try {
-          await browser.storage.session.set({ [this._convKey(tabId)]: compactEntry });
+          await browser.storage.session.set({ ...extraEntries(true), [this._convKey(tabId)]: compactEntry });
           return { ok: true, degraded: true, reason: 'quota_compacted' };
         } catch (retryError) {
-          return this._markPersistenceDegraded(tabId, isSessionQuotaError(retryError) ? 'quota' : 'unavailable', retryError);
+          return failed(retryError);
         }
       }
-      return this._markPersistenceDegraded(tabId, 'unavailable', error);
+      return failed(error);
     }
   }
 
@@ -7935,6 +7941,44 @@ export class Agent extends LoopDetector {
 
   async ensureConversationId(tabId, mode = 'ask') {
     return (await this.getConversationState(tabId, mode)).conversationId;
+  }
+
+  async recoverChatHistory(tabId, record, { storageEntries = {} } = {}) {
+    await this._hydrate(tabId);
+    if (this._runningTabs.has(tabId)) throw new Error('Wait for the current response to finish.');
+    if (this._botMemorySessions.has(tabId)) throw new Error('Managed bot conversations cannot recover chat history.');
+    const messages = historyMessagesForRecovery(record, content => this._wrapUntrusted('read_page', content));
+    if (!messages.some(message => message.role === 'user')) throw new Error('No conversation to recover.');
+    // Persist the replacement independently so a failed write leaves every part
+    // of the current conversation (including workflow state and pending plans) usable.
+    const conversationId = `conv_${tabId}_${Date.now()}_${secureRandomBase36Token(12)}`;
+    const recoveredMessages = [{ role: 'system', content: this._buildSystemPrompt('ask') }, ...messages];
+    const currentEntry = this._conversationStorageEntry(tabId);
+    const snapshotForBudget = maxBytes => {
+      const serialized = serializeConversationForSession(recoveredMessages, { maxBytes });
+      return {
+        mode: 'ask', messages: serialized.messages, conversationId,
+        sessionSnapshotCompacted: serialized.compacted,
+        sessionSnapshotBytes: serialized.bytes,
+        // Paid CAPTCHA answers and dispatch receipts belong to the page document.
+        nativeCaptchaAnswer: currentEntry?.nativeCaptchaAnswer || null,
+        nativeCaptchaDispatch: currentEntry?.nativeCaptchaDispatch || null,
+      };
+    };
+    const hadPendingPersist = this.persistTimers.has(tabId);
+    const persisted = await this._persistNow(tabId, { snapshotForBudget, preserveStateOnFailure: true, storageEntries });
+    if (!persisted?.ok) {
+      if (hadPendingPersist) this._persist(tabId);
+      throw new Error('Unable to persist the recovered conversation.');
+    }
+    // Cleanup is irreversible, so run it only after the replacement is durable.
+    // Keep that snapshot in storage while installing its matching in-memory state.
+    this.clearConversation(tabId, { preserveStorage: true });
+    this.conversations.set(tabId, recoveredMessages);
+    this.conversationModes.set(tabId, 'ask');
+    this.conversationIds.set(tabId, conversationId);
+    this.hydratedTabs.add(tabId);
+    return this.getConversationState(tabId);
   }
 
   async forkConversation(sourceTabId, forkTabId) {
@@ -28571,7 +28615,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Clear conversation for a tab.
    */
-  clearConversation(tabId) {
+  clearConversation(tabId, { preserveStorage = false } = {}) {
     this._failureRecovery.clear(tabId);
     this._cancelClarifications(tabId, 'conversation cleared');
     this._cancelUploadPickers(tabId, 'conversation cleared');
@@ -28605,6 +28649,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._cleanupTab(tabId, { preserveRunGuard: true });
     const t = this.persistTimers.get(tabId);
     if (t) { clearTimeout(t); this.persistTimers.delete(tabId); }
+    if (preserveStorage) return;
     try {
       const removed = browser.storage.session.remove(this._convKey(tabId));
       if (this._nativeCaptchaSolutions?.has(tabId)) {
