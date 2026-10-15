@@ -13957,7 +13957,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (runId) trace.recordToolCall(runId, step, {
           name: fnName, args: fnArgs, result: messageRecipientBlock, latencyMs: 0,
         });
-        onUpdate('warning', { message: 'Message send blocked until the active recipient is verified.' });
+        onUpdate('warning', {
+          message: messageRecipientBlock.reasonCode === 'message_target_unresolved'
+            ? 'The requested control could not be resolved. No action was dispatched.'
+            : 'Message send blocked until the active recipient is verified.',
+        });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -21126,14 +21130,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeRunPlannerGate(tabId, messages, enriched, onUpdate, mode, costState, runId, tabInfo = null, runOptions = {}) {
-    // Keep managed cloud behavior aligned with Chrome: unattended runs cannot
-    // wait on a side-panel plan review that has no API response channel.
+    // Cloud runs never enter interactive plan review. A fresh Cloud ACT task
+    // still needs the existing lightweight intent contract, especially exact
+    // message recipients. Prior turns and model-produced resume instructions
+    // are not new user grants. ASK/recovery remains without write authority.
     const standaloneChatRun = this._isStandaloneChatRun(runOptions);
     const plannerMode = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun
       ? this._plannerMode()
       : 'off';
     const runPlanner = plannerMode !== 'off';
-    const runIntent = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun;
+    const cloudIntent = this._isActionMode(mode) && runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
+      && runOptions?.apiMutationsDenied !== true;
+    const runIntent = this._isActionMode(mode) && !standaloneChatRun
+      && (runOptions?.cloudRun !== true || cloudIntent);
+    const intentMessage = cloudIntent
+      ? { role: 'user', content: this._plannerUserAuthoredText(enriched) } : enriched;
 
     // Snapshot prior turns for the planner digest BEFORE appending, then always
     // record the user's turn first so a planner failure (or a throw while
@@ -21151,7 +21162,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._messagesForSourceGroundedRun(messages, runOptions, null, sourceBoundPriorMessages)
       : null;
     const priorMessages = runIntent || runReadScopeClassifier
-      ? (sourceBoundRun
+      ? (cloudIntent ? [] : sourceBoundRun
         ? sourceBoundPlannerMessages.slice(sourceBoundPlannerMessages[0]?.role === 'system' ? 1 : 0)
         : messages.slice())
       : null;
@@ -21180,7 +21191,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return { proceed: true, requestKind: 'execute', requiresStateChange: false };
     }
-    const fastPathPlan = runOptions.steeringRevision == null
+    const fastPathPlan = !cloudIntent && runOptions.steeringRevision == null
       ? this._recommendedActionFastPathPlan(runOptions) : null;
     if (fastPathPlan) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -21210,13 +21221,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
-    const followUpContext = { ...this._buildPlannerFollowUpContext(priorMessages),
-      authenticTaskText: this._activeTaskBinding(messages).text };
+    const followUpContext = cloudIntent ? { authenticTaskText: this._plannerUserAuthoredText(enriched) }
+      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._activeTaskBinding(messages).text };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
       gate = await this._runPlannerIntentGate(
-        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+        tabId, intentMessage, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
     } else {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -21225,7 +21236,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
         )
         : await this._runPlannerIntentGate(
-          tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+          tabId, intentMessage, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
         );
     }
     if (this._steeringGateSuperseded(tabId, runOptions)) return { proceed: false, steeringSuperseded: true };
@@ -22225,6 +22236,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
+        };
+      }
+      if (runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
+          && runOptions?.apiMutationsDenied !== true && plan.messaging?.target_kind === 'named') {
+        // Semantic intent is necessary but cannot invent a named destination.
+        // The fresh authenticated task must itself contain each exact identity;
+        // a page title, OCR, prior turn or address suffix cannot provide it.
+        const authored = normalizeRecipientAnswer(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
+        const tokenChar = /[\p{L}\p{N}@._%+-]/u;
+        const present = plan.messaging.recipients.every(recipient => {
+          const identity = normalizeRecipientIdentity(recipient.identity);
+          if (!identity) return false;
+          for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
+            const before = authored[at - 1] || '';
+            const end = at + identity.length;
+            const after = authored[end] || '';
+            const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
+            if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
+          }
+          return false;
+        });
+        if (!present) return {
+          proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
+          requiresStateChange: false, requiresSubmission: false, messaging: null,
+          message: 'The recipient could not be verified from the current task. Name the exact recipient and retry. No page tools ran.',
         };
       }
       const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
@@ -25591,10 +25627,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       messageRecipientGuard: true,
       ...(missingLinkedInComposer ? { retryable: false } : {}),
       reasonCode: probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
-        ? 'message_send_classification_inconclusive'
+        ? (probe?.reasonCode || 'message_send_classification_inconclusive')
         : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
       error: missingLinkedInComposer
         ? 'Message action blocked: no message composer is visible and this control is not a verified non-send action. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.'
+        : probe?.reasonCode === 'message_target_unresolved'
+        ? 'The requested control could not be resolved in the current page or frame, so no action was dispatched. This does not establish a recipient mismatch or an attempted Send. Read fresh page evidence and use an exact visible control or fresh ref_id; do not guess hidden menu labels or repeat the same unresolved target. If the control is unavailable, report that blocker.'
         : probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true
         ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
         : target
