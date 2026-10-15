@@ -114,7 +114,7 @@ for (const build of ['chrome', 'firefox']) {
       const physical = agent._completionSubmitStates.get(tab), guard = agent._planExecutionGuards.get(tab);
       assert.equal(physical.dispatched, true); assert.equal(physical.taskKey, original.taskKey);
       // The correction adds only the list of platforms the task attempted.
-      assert.deepEqual(guard.steeringPriorSubmission, { ...original, taskAttemptPlatforms: ['example.test'] });
+      assert.deepEqual(guard.steeringPriorSubmission, { ...original, taskAttemptPlatforms: ['example.test'], taskAttemptPublications: [] });
       assert.deepEqual(guard.steeringMutationReceipts, [original]);
       assert.equal(agent._currentCompletionSubmitState(tab), null);
       const evidence = agent._completionSubmissionEvidence(tab, { relevantFormCount: 1, successMessages: ['Saved successfully.'] }, url);
@@ -132,7 +132,7 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(fresh.taskKey, guard.taskKey); assert.notEqual(fresh.taskKey, original.taskKey);
       assert.equal(agent._currentCompletionSubmitState(tab), fresh);
       assert.equal((await h.done()).done, true); assert.equal(guard.verifiedSubmissionEvidence, true);
-      assert.equal(h.savedValue, 'Revised'); assert.deepEqual(guard.steeringPriorSubmission, { ...original, taskAttemptPlatforms: ['example.test'] });
+      assert.equal(h.savedValue, 'Revised'); assert.deepEqual(guard.steeringPriorSubmission, { ...original, taskAttemptPlatforms: ['example.test'], taskAttemptPublications: [] });
       assert.deepEqual(guard.steeringMutationReceipts, [original], 'A new save leaves the prior receipt available for reconciliation.');
     } finally { h.close(); }
   });

@@ -772,6 +772,7 @@ export class Agent extends LoopDetector {
     // tabId -> { key, platforms }: the platforms (sites) of every attempt the
     // current task dispatched, or platforms null when they are not all known.
     this._taskAttemptLedgers = new Map();
+    this._taskAttemptCheckpoints = new Set(); // tabIds whose saved record lists an action still in flight
     this._recentSubmitClicks = new Map();
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._steeringRuns = new Map(); // tabId -> inbox owned by one interactive run
@@ -5094,7 +5095,7 @@ export class Agent extends LoopDetector {
         // It lists every platform the task attempted up to it, null when not
         // all are known, so a later run, even after a restart, knows them.
         ...(priorSubmission ? { priorSubmission: { ...structuredClone(priorSubmission),
-          taskAttemptPlatforms: this._correctionAttemptPlatforms(tabId, messages, priorBinding, priorSubmission) } } : {}),
+          ...this._correctionAttempts(tabId, messages, priorBinding, priorSubmission) } } : {}),
       } });
       onUpdate('steering_applied', item);
       this._traceSteeringRevision(tabId, 'steering_applied', { revision: run.revision, messageId: item.id });
@@ -5180,7 +5181,7 @@ export class Agent extends LoopDetector {
       const guard = this._startPlanExecutionGuard(tabId, mode, gate, revisionOptions);
       this._resetCompletionForSteeringRevision(tabId);
       guard.steeringPriorSubmission = priorSubmission ? { ...structuredClone(priorSubmission),
-        taskAttemptPlatforms: this._correctionAttemptPlatforms(tabId, messages, this._activeTaskBinding(messages), priorSubmission) } : null;
+        ...this._correctionAttempts(tabId, messages, this._activeTaskBinding(messages), priorSubmission) } : null;
       guard.steeringPriorReadAfterCorrection = false;
       // This run applied the correction: what it sends under it stays in its
       // publication contract and dispatch records.
@@ -5513,8 +5514,8 @@ export class Agent extends LoopDetector {
   // WebBrain cannot know it. The record follows the task through its runs,
   // corrections and Continue, and is saved with the conversation. Without a
   // record, as for a conversation saved by an earlier version, only a task
-  // that has not run since its request is known, and of a correction with
-  // nothing run since it only the sites its receipt lists.
+  // that has not run since its request is known, or a correction with
+  // nothing run since it, by the sites its receipt lists.
   _taskAttemptLedger(tabId, messages = this.conversations?.get(tabId) || [], binding = this._activeTaskBinding(messages)) {
     const key = this._taskAttemptLedgerKey(tabId, messages, binding);
     const ledgers = this._taskAttemptLedgers ||= new Map();
@@ -5532,7 +5533,11 @@ export class Agent extends LoopDetector {
       }
       if (this._noTaskRunSince(messages, from)) {
         if (!prior) { platforms = []; publications = []; }
-        else if (Array.isArray(prior.taskAttemptPlatforms)) platforms = [...prior.taskAttemptPlatforms];
+        else if (Array.isArray(prior.taskAttemptPlatforms)) {
+          platforms = [...prior.taskAttemptPlatforms];
+          // Every publication is among the attempts, so their list covers it.
+          publications = [...(Array.isArray(prior.taskAttemptPublications) ? prior.taskAttemptPublications : prior.taskAttemptPlatforms)];
+        }
       }
     }
     const created = { key, platforms, publications };
@@ -5563,29 +5568,77 @@ export class Agent extends LoopDetector {
           publication = true;
         }
       }
-      if (keys.size) this._addTaskAttemptKeys(tabId, [...keys], publication);
+      if (keys.size) {
+        this._addTaskAttemptKeys(tabId, [...keys], publication);
+        this._taskAttemptCheckpoints?.delete(tabId);
+      } else {
+        this._resaveTaskAttemptCheckpoint(tabId);
+      }
     } catch {
       this._markTaskAttemptsUnknown(tabId);
     }
   }
 
+  // What an action may commit, judged before it is sent: the sites it may
+  // change and whether it may publish there, or null when it commits nothing.
+  // A control without its own address acts on the page it is on.
+  _potentialTaskAttempt(name, args, detected, pageUrl = '') {
+    const network = isNetworkMutation(name, args) || name === 'chrome_web_store_publish';
+    const commit = (detected?.isSubmit === true && !this._nonCommittingSubmission(detected))
+      || name === 'execute_js' || this._formValidationActionLooksSubmit(name, args, null, detected);
+    if (!commit && !network) return null;
+    const keys = new Set(commit ? this._attemptPlatformKeys(detected?.publicationSnapshot?.account,
+      [detected?.url || pageUrl, detected?.frameUrl]) : []);
+    if (network) keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
+      ? 'https://chromewebstore.google.com/' : args?.url) || '*');
+    return { keys: [...keys], publication: network || detected?.publicationControl === true || name === 'execute_js' };
+  }
+
   // An action that may have been sent but whose result was never recorded,
-  // because Stop or an error interrupted it: its site joins the record when
+  // because Stop or an error interrupted it: its sites join the record when
   // it may have committed something, and an unknown site makes it unknown.
-  _recordInterruptedTaskAttempt(tabId, name, args, detected) {
+  _recordInterruptedTaskAttempt(tabId, name, args, detected, potential = undefined) {
     try {
-      const network = isNetworkMutation(name, args) || name === 'chrome_web_store_publish';
-      const commit = (detected?.isSubmit === true && !this._nonCommittingSubmission(detected))
-        || name === 'execute_js' || this._formValidationActionLooksSubmit(name, args, null, detected);
-      if (!commit && !network) return;
-      const keys = new Set(commit ? this._attemptPlatformKeys(detected?.publicationSnapshot?.account, [detected?.url, detected?.frameUrl]) : []);
-      if (network) keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
-        ? 'https://chromewebstore.google.com/' : args?.url) || '*');
-      this._addTaskAttemptKeys(tabId, [...keys], network || detected?.publicationControl === true || name === 'execute_js');
+      const attempt = potential === undefined ? this._potentialTaskAttempt(name, args, detected) : potential;
+      if (attempt) this._addTaskAttemptKeys(tabId, attempt.keys, attempt.publication);
+      this._taskAttemptCheckpoints?.delete(tabId);
     } catch {
       this._markTaskAttemptsUnknown(tabId);
     }
   }
+
+  // Before an action that may commit something is sent, the record is saved
+  // with its sites as possibly attempted, so a restart right after it cannot
+  // forget it. The conversation itself is saved only every so often.
+  async _checkpointTaskAttempt(tabId, name, args, detected) {
+    let potential = null;
+    try {
+      const pageUrl = detected?.url ? '' : await this._currentUrl(tabId).catch(() => '');
+      potential = this._potentialTaskAttempt(name, args, detected, pageUrl);
+      if (!potential) return potential;
+      const record = this._persistedTaskAttemptLedger(tabId);
+      if (!record) return potential;
+      const add = (list, values) => Array.isArray(list) ? [...new Set([...list, ...values])].slice(0, 65) : null;
+      const platforms = add(record.platforms, potential.keys);
+      const publications = potential.publication ? add(record.publications, potential.keys) : record.publications;
+      await browser.storage.session.set({ [this._taskAttemptCheckpointKey(tabId)]: { ...record,
+        platforms: platforms?.length > 64 ? null : platforms, publications: publications?.length > 64 ? null : publications } });
+      this._taskAttemptCheckpoints.add(tabId);
+    } catch {}
+    return potential;
+  }
+
+  // The saved record again, from memory: after an action that was not sent,
+  // so a restart does not count it.
+  _resaveTaskAttemptCheckpoint(tabId) {
+    if (!this._taskAttemptCheckpoints?.delete(tabId)) return;
+    try {
+      const record = this._persistedTaskAttemptLedger(tabId);
+      if (record) void Promise.resolve(browser.storage.session.set({ [this._taskAttemptCheckpointKey(tabId)]: record })).catch(() => {});
+    } catch {}
+  }
+
+  _taskAttemptCheckpointKey(tabId) { return `agentAttempts:${tabId}`; }
 
   _addTaskAttemptKeys(tabId, keys, publication) {
     const ledger = this._taskAttemptLedger(tabId);
@@ -5613,27 +5666,45 @@ export class Agent extends LoopDetector {
     const entry = this._taskAttemptLedgers?.get(tabId);
     return entry?.key ? { key: entry.key,
       platforms: Array.isArray(entry.platforms) ? [...entry.platforms] : null,
-      publications: Array.isArray(entry.publications) ? [...entry.publications] : null } : null;
+      publications: Array.isArray(entry.publications) ? [...entry.publications] : null, savedAt: Date.now() } : null;
   }
 
-  _restoreTaskAttemptLedger(tabId, saved) {
+  // The record saved with the conversation, merged with the one saved before
+  // the latest action that may have committed something: for the same task
+  // every site either lists counts, and an unknown list stays unknown.
+  _restoreTaskAttemptLedger(tabId, saved, checkpoint = null) {
     const list = value => Array.isArray(value) && value.length <= 64 && value.every(item => typeof item === 'string' && item.length <= 300)
       ? [...value] : null;
-    if (!saved || typeof saved !== 'object' || typeof saved.key !== 'string' || !saved.key || saved.key.length > 300) return;
-    (this._taskAttemptLedgers ||= new Map()).set(tabId, { key: saved.key, platforms: list(saved.platforms), publications: list(saved.publications) });
+    const valid = record => record && typeof record === 'object' && typeof record.key === 'string' && !!record.key
+      && record.key.length <= 300 ? { key: record.key, platforms: list(record.platforms), publications: list(record.publications),
+        savedAt: Number(record.savedAt) || 0 } : null;
+    const a = valid(saved), b = valid(checkpoint);
+    if (!a && !b) return;
+    const union = (x, y) => Array.isArray(x) && Array.isArray(y) ? [...new Set([...x, ...y])] : null;
+    const merged = a && b && a.key === b.key
+      ? { key: a.key, platforms: union(a.platforms, b.platforms), publications: union(a.publications, b.publications) }
+      : (!a || (b && b.savedAt > a.savedAt) ? b : a);
+    (this._taskAttemptLedgers ||= new Map()).set(tabId, { key: merged.key, platforms: merged.platforms, publications: merged.publications });
   }
 
-  // The platforms of every attempt the task made up to a correction, its
-  // receipt included, or null when they are not all known.
-  _correctionAttemptPlatforms(tabId, messages, binding, receipt) {
+  // What the task attempted up to a correction, its receipt included: the
+  // sites of every attempt and of every publication, each null when not all
+  // are known. The receipt carries them.
+  _correctionAttempts(tabId, messages, binding, receipt) {
     try {
-      const ledger = this._taskAttemptLedger(tabId, messages, binding).platforms;
-      if (!Array.isArray(ledger)) return null;
+      const ledger = this._taskAttemptLedger(tabId, messages, binding);
       const committed = receipt && receipt.nonCommitting !== true && receipt.formValidationFailed !== true;
-      const platforms = [...new Set([...ledger, ...(committed ? this._receiptPlatformKeys(receipt) : [])])];
-      return platforms.length > 64 ? null : platforms;
+      const keys = committed ? this._receiptPlatformKeys(receipt) : [];
+      const published = committed && (receipt.mutationKind === 'publish' || !!receipt.publicationSnapshot
+        || !!receipt.workflowBinding?.socialPublication?.snapshot || keys.includes('*'));
+      const add = (list, values) => {
+        if (!Array.isArray(list)) return null;
+        const merged = [...new Set([...list, ...values])];
+        return merged.length > 64 ? null : merged;
+      };
+      return { taskAttemptPlatforms: add(ledger.platforms, keys), taskAttemptPublications: add(ledger.publications, published ? keys : []) };
     } catch {
-      return null;
+      return { taskAttemptPlatforms: null, taskAttemptPublications: null };
     }
   }
 
@@ -5689,10 +5760,12 @@ export class Agent extends LoopDetector {
     const currentPlatforms = this._attemptPlatformKeys(detected.publicationSnapshot?.account, [detected.url, detected.frameUrl]);
     const otherSite = publication && !priorPlatforms.includes('*') && !currentPlatforms.includes('*')
       && !currentPlatforms.some(platform => priorPlatforms.includes(platform));
-    // The receipt's list, checked against the X and Bluesky outcomes and the
-    // receipts archived at earlier corrections. A sent-nothing outcome is not
-    // an attempt; an attempt of unknown site may have been anywhere.
-    const attempted = Array.isArray(prior?.taskAttemptPlatforms) ? prior.taskAttemptPlatforms : null;
+    // On X and Bluesky only a composer publication posts, so the earlier
+    // publications are what such a post may repeat: the receipt's list,
+    // checked against the X and Bluesky outcomes and the receipts archived at
+    // earlier corrections. A sent-nothing outcome is not an attempt; an
+    // attempt of unknown site may have been anywhere.
+    const attempted = Array.isArray(prior?.taskAttemptPublications) ? prior.taskAttemptPublications : null;
     const outcomePlatforms = archive => (archive?.contract?.actions || [])
       .filter(action => action?.id && archive.outcomes?.[action.id] && archive.outcomes[action.id].status !== 'failed')
       .map(action => action.platform || '*');
@@ -5706,7 +5779,11 @@ export class Agent extends LoopDetector {
       ...[guard.steeringPriorPublication, guard.steeringPriorContext?.socialPublication].flatMap(outcomePlatforms),
       ...(guard.steeringMutationReceipts || []).filter(receipt => receipt?.dispatched === true
           && receipt.nonCommitting !== true && receipt.formValidationFailed !== true)
-        .flatMap(receipt => this._receiptPlatformKeys(receipt))];
+        .flatMap(receipt => {
+          const keys = this._receiptPlatformKeys(receipt);
+          return receipt.mutationKind === 'publish' || receipt.publicationSnapshot || receipt.workflowBinding?.socialPublication?.snapshot
+            || keys.includes('*') ? keys : [];
+        })];
     const earlierAttemptHere = earlierPlatforms.some(platform => currentPlatforms.includes(platform));
     const historyKnown = !!attempted && Array.isArray(sinceCorrection) && !earlierPlatforms.includes('*');
     const siteCrossPlatform = otherSite && historyKnown && !earlierAttemptHere;
@@ -6324,9 +6401,11 @@ export class Agent extends LoopDetector {
     try {
       const key = this._convKey(tabId);
       const cloudflareKey = cloudflareManagedChallengeStorageKey(tabId);
-      const [stored, cloudflareStored] = await Promise.all([
+      const attemptKey = this._taskAttemptCheckpointKey(tabId);
+      const [stored, cloudflareStored, attemptStored] = await Promise.all([
         browser.storage.session.get(key),
         browser.storage.session.get(cloudflareKey),
+        Promise.resolve(browser.storage.session.get(attemptKey)).catch(() => null),
       ]);
       const cloudflareSignal = normalizeCloudflareManagedChallengeState(
         cloudflareStored?.[cloudflareKey],
@@ -6439,7 +6518,7 @@ export class Agent extends LoopDetector {
           });
         }
         this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
-        this._restoreTaskAttemptLedger(tabId, entry.taskAttemptLedger);
+        this._restoreTaskAttemptLedger(tabId, entry.taskAttemptLedger, attemptStored?.[attemptKey]);
         const savedDispatch = entry.nativeCaptchaDispatch;
         const rootDocument = Array.isArray(savedDispatch?.documents)
           ? savedDispatch.documents.find(document => document?.frameId === 0) : null;
@@ -11870,11 +11949,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // An action that was sent, or may have been, before Stop or an error
       // cut its bookkeeping short still joins the task's record of attempts.
       const interrupted = cancellationState.active;
-      if (interrupted?.invoked && !interrupted.attemptRecorded) {
+      if (interrupted && !interrupted.attemptRecorded) {
         const raw = interrupted.result || interrupted.dispatchState?.rawToolResult;
-        const unsent = raw?.noDispatch === true || raw?.dispatched === false
+        const unsent = !interrupted.invoked || raw?.noDispatch === true || raw?.dispatched === false
           || (!raw && interrupted.dispatchState?.tracksTextMutationDispatch === true && interrupted.dispatchState.started !== true);
-        if (!unsent) this._recordInterruptedTaskAttempt(tabId, interrupted.name, interrupted.args, interrupted.detected);
+        if (!unsent) {
+          this._recordInterruptedTaskAttempt(tabId, interrupted.name, interrupted.args, interrupted.detected,
+            Object.hasOwn(interrupted, 'potentialAttempt') ? interrupted.potentialAttempt : undefined);
+        } else {
+          this._resaveTaskAttemptCheckpoint(tabId);
+        }
       }
       if (this._checkAbort(tabId) || error?.name === 'AbortError') {
         // Repair the whole assistant tool batch before any caller persists a
@@ -13219,8 +13303,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           const genericChatBlock = pipelineToolbarPreflight.block || socialDispatchBlock ? null
             : await this._prepareGenericChatDispatch(tabId, fnName, fnArgs, messageRecipientExecutionContext, abortSignal);
           this._throwIfAborted(abortSignal);
-          if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock
-              && (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate))) return { steered: true };
+          if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock) {
+            // Save the task's record with this action's sites before it can be
+            // sent, ahead of the last correction check.
+            callState.potentialAttempt = await this._checkpointTaskAttempt(tabId, fnName, fnArgs, detectedSubmitAction);
+            this._throwIfAborted(abortSignal);
+            if (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate)) {
+              this._resaveTaskAttemptCheckpoint(tabId);
+              return { steered: true };
+            }
+          }
             const calculationDispatchBlock = this._pureCalculationToolBlock(tabId, fnName, fnArgs, calculationRequestScope);
             if (!pipelineToolbarPreflight.block && !socialDispatchBlock && !genericChatBlock && !calculationDispatchBlock) {
               if (detectedSubmitAction?.isSubmit === true && detectedSubmitAction.publicationControl === true) {
@@ -28766,6 +28858,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const t = this.persistTimers.get(tabId);
     if (t) { clearTimeout(t); this.persistTimers.delete(tabId); }
     try {
+      this._taskAttemptCheckpoints?.delete(tabId);
+      // The record saved before an action belongs to the cleared conversation.
+      try { void Promise.resolve(browser.storage.session.remove(this._taskAttemptCheckpointKey(tabId))).catch(() => {}); } catch {}
       const removed = browser.storage.session.remove(this._convKey(tabId));
       if (this._nativeCaptchaSolutions?.has(tabId)) {
         return Promise.all([removed.then(() => this._persistNow(tabId)).catch(() => {}), steeringDiscarded]);
