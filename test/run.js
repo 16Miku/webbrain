@@ -11790,6 +11790,10 @@ test('Ask and managed cloud classify communication read scope across languages',
       agent._getTabUrlTitle = async () => ({ tabUrl: gmailUrl, tabTitle: 'Gmail - Thread' });
       agent._chatWithCostAllowance = async (_provider, messages, _options, _costState, metadata) => {
         classifierCalls += 1;
+        if (fixture.runOptions.cloudRun && fixture.mode === 'act') {
+          assert.equal(metadata?.generationName, 'planner_intent', `${browserLabel}/${fixture.label}: Cloud ACT uses the non-interactive intent contract`);
+          return { content: plannerIntentFixture({ readScope: fixture.scope }), usage: {} };
+        }
         assert.equal(metadata?.generationName, 'read_scope', `${browserLabel}/${fixture.label}: wrong classifier generation`);
         assert.match(messages[0]?.content || '', /semantic request across any language/i, `${browserLabel}/${fixture.label}: classifier is language-bound`);
         return { content: JSON.stringify({ read_scope: fixture.scope }), usage: {} };
@@ -46339,7 +46343,7 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /streamedAssistantTextByEl\.set\(textEl, nextText\);\s*textEl\.dataset\.streamedAssistantActive = 'true';\s*scheduleStreamedAssistantMarkdownRender\(textEl\);/, `${label}: text_delta should retain raw Markdown, persist only an active-stream marker, and schedule incremental rendering`);
     assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false, recoverNestedMarkdown: true \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render nested fences at most once per animation frame before following output`);
     assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?cancelAnimationFrame\(frame\);[\s\S]*?streamedAssistantRenderFrameByEl\.delete\(textEl\);/, `${label}: terminal and tool transitions should cancel pending stream renders`);
-    assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
+    assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?return persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
     assert.match(panel, /function formatMarkdown\(text, options = \{\}\)[\s\S]*?const enhance = options\.enhance !== false;[\s\S]*?const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);[\s\S]*?if \(enhance\) scheduleMathRender\(\);[\s\S]*?if \(enhance && codeBlocks\.length > 0\)/, `${label}: syntax highlighting and interactive Markdown enhancements should wait for the terminal render`);
     assert.match(panel, /case 'run_complete':[\s\S]*?const streamedText = getStreamedAssistantText\(textEl\);[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const visibleStreamedText = streamedText[\s\S]*?\|\| \(hasStreamedText \? textEl\?\.innerText \|\| textEl\?\.textContent \|\| '' : ''\);[\s\S]*?else if \(textEl && \(hasStreamedText\s*\|\| \(data\.status === 'completed' && textEl\.dataset\.responseIncomplete === 'true'\)\)\)[\s\S]*?const terminalContent = data\.status === 'stopped' \|\| data\.status === 'cancelled'[\s\S]*?\? visibleStreamedText[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, terminalContent, \{[\s\S]*?replace: terminalContent !== streamedText,[\s\S]*?else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored/background streams and incomplete completed replies should receive one enhanced authoritative terminal render while stopped runs preserve visible partial text`);
@@ -47523,7 +47527,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     assert.equal(initLoadIdx < initHydrateIdx && initHydrateIdx < initGuardIdx && initGuardIdx < initDomIdx, true, `${label}: startup restore must hydrate ids before restoring HTML`);
     assert.equal(initDomIdx < initObserveIdx && initObserveIdx < initRepairIdx, true, `${label}: startup should repair history after restoring and observing the chat DOM`);
 
-    const persistMatch = panel.match(/async function persistChatHistorySnapshot\(tabId, \{ refreshTabInfo = false \} = \{\}\) \{([\s\S]*?)\n\}/);
+    const persistMatch = panel.match(/async function persistChatHistorySnapshot\([^\n]*\) \{([\s\S]*?)\n\}/);
     assert.ok(persistMatch, `${label}: persistChatHistorySnapshot missing`);
     const persistBody = persistMatch[1];
     const hydrateIdx = persistBody.indexOf('await hydrateChatHistoryIdentity(numericTabId, agentMode, { refreshTabInfo });');
@@ -47587,13 +47591,13 @@ test('sidepanel ignores stale async history snapshot saves', () => {
     assert.match(panel, /const chatHistorySaveSeqByTab = new Map\(\);[\s\S]*?let chatHistorySaveSeq = 0;/, `${label}: history snapshots should track per-tab save sequence`);
     assert.match(panel, /function nextChatHistorySaveSeqForTab\(tabId\) \{[\s\S]*?chatHistorySaveSeq \+= 1;[\s\S]*?chatHistorySaveSeqByTab\.set\(numericTabId, chatHistorySaveSeq\);[\s\S]*?return chatHistorySaveSeq;[\s\S]*?\}/, `${label}: history snapshot sequence helper missing`);
 
-    const persistStart = panel.indexOf('async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {');
+    const persistStart = panel.indexOf('async function persistChatHistorySnapshot(');
     assert.notEqual(persistStart, -1, `${label}: persistChatHistorySnapshot missing`);
     const persistBody = panel.slice(persistStart, panel.indexOf('\n}\n\nfunction scheduleHistoryPersist', persistStart) + 2);
-    const userCheckIdx = persistBody.indexOf("if (!messages.some((message) => message.role === 'user')) return;");
+    const userCheckIdx = persistBody.indexOf("if (!messages.some((message) => message.role === 'user')) return");
     const stampIdx = persistBody.indexOf('const saveSeq = nextChatHistorySaveSeqForTab(numericTabId);');
     const hydrateIdx = persistBody.indexOf('await hydrateChatHistoryIdentity(numericTabId, agentMode, { refreshTabInfo });');
-    const staleGuardIdx = persistBody.indexOf('if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return;');
+    const staleGuardIdx = persistBody.indexOf('if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return');
     const saveIdx = persistBody.indexOf('await saveChatHistoryRecord({');
     assert.notEqual(userCheckIdx, -1, `${label}: snapshots should skip conversations without user messages`);
     assert.notEqual(stampIdx, -1, `${label}: snapshots should stamp async saves`);
@@ -47644,7 +47648,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     if (label === 'chrome' || label === 'firefox') {
       assert.match(
         panel,
-        /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);[\s\S]*?\}/,
+        /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?return persistTabChat\(tabId, html, \{ allowHidden \}\);[\s\S]*?\}/,
         `${label}: final flush should cancel stale debounced writes and persist the rendered tab immediately`,
       );
     }
@@ -115489,7 +115493,7 @@ test('planner gate: scheduled runs auto-approve plan review', async () => {
   });
 });
 
-test('planner gate: managed cloud runs bypass planning in Chrome and Firefox', async () => {
+test('planner gate: managed cloud uses intent without interactive planning in Chrome and Firefox', async () => {
   await withPlannerBrowserGlobals(async () => {
     for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
       const tabId = label === 'chrome' ? 9223 : 9224;
@@ -115498,9 +115502,10 @@ test('planner gate: managed cloud runs bypass planning in Chrome and Firefox', a
       agent.setPlanReviewSettings({ mode: 'always', confidenceThreshold: 0.99 });
       agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
       let plannerCalls = 0;
-      agent._chatWithCostAllowance = async () => {
+      agent._chatWithCostAllowance = async (_provider, _messages, _options, _costState, metadata) => {
         plannerCalls += 1;
-        return { content: plannerFixtureJson() };
+        assert.equal(metadata?.generationName, 'planner_intent', 'Cloud may use only the lightweight intent contract');
+        return { content: plannerIntentFixture() };
       };
       agent._waitForPlanReview = async () => {
         throw new Error('managed cloud run should never request interactive review');
@@ -115520,8 +115525,8 @@ test('planner gate: managed cloud runs bypass planning in Chrome and Firefox', a
         { cloudRun: true },
       );
 
-      assert.equal(outcome.proceed, true, `${label} cloud run should proceed without planning`);
-      assert.equal(plannerCalls, 0, `${label} cloud run should not call the planner model`);
+      assert.equal(outcome.proceed, true, `${label} cloud run should proceed without interactive planning`);
+      assert.equal(plannerCalls, 1, `${label} cloud run should classify current task intent once`);
       assert.equal(updates.includes('plan_review'), false, `${label} cloud run should not emit plan_review`);
       assert.equal(messages.at(-1)?.content, 'complex cloud task', `${label} should retain the user turn`);
     }

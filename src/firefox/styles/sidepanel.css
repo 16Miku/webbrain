@@ -4657,3 +4657,29 @@ html[data-ui-scale="175"] .conversation-action-label {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* Top-layer popover stays above the composer without clipping chat content. */
+.history-popover {
+  inset: auto;
+  margin: 0;
+  width: min(320px, calc(100vw - 16px));
+  max-height: min(420px, 65vh);
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: 0 8px 32px #0004;
+  font: inherit;
+  font-size: 12px;
+}
+.history-popover p { margin: 0 0 8px; color: var(--text-secondary); }
+.history-popover-record { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.history-popover-record > div { flex: 1; min-width: 0; }
+.history-popover-record strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-popover-record small { display: block; margin-top: 4px; color: var(--text-secondary); }
+.history-popover button { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: var(--bg-input); color: var(--text-primary); cursor: pointer; font: inherit; }
+.history-popover button:disabled { opacity: .5; cursor: default; }
+.history-popover .history-more { width: 100%; margin-top: 10px; }

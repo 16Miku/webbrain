@@ -1,3 +1,4 @@
+import { getChatHistoryRecord } from './ui/chat-history-store.js';
 import { resolveDecisionConfig, listDecisionModels } from './agent/decision-config.js';
 import { d1Request } from './providers/d1.js';
 import { evaluateD1LocalFixture } from './providers/d1-diagnostic.js';
@@ -258,6 +259,11 @@ const teacherRunInterlock = createTeacherRunInterlock(teacherSessionStore, {
     || cloudRunController.isRunning(tabId),
 });
 agent.setRunStartGuard(async (tabId, context) => {
+  if (recoveringHistoryTabs.has(tabId)) {
+    // The scheduler checks this guard after reserving the tab and again when
+    // the agent starts; report contention so its pending job is requeued.
+    throw new Error('An agent run is already in progress for this tab: conversation recovery is in progress.');
+  }
   await cloudRunController.guardRunStart(tabId, context);
   return teacherRunInterlock.guardRunStart(tabId);
 });
@@ -2151,8 +2157,12 @@ function sendScheduledAgentUpdate(tabId, type, data, owner) {
   if (finished) void sendAgentRunComplete(tabId, finished).catch(() => {});
 }
 
+const recoveringHistoryTabs = new Set();
+
 function assertNoActiveTabRun(tabId) {
-  if (agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId)) {
+  if (recoveringHistoryTabs.has(tabId)) throw new Error('Conversation recovery is in progress.');
+  if (agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId)
+      || scheduler.isRunning(tabId) || cloudRunController.isRunning(tabId)) {
     throw new Error('A run is already active for this tab.');
   }
 }
@@ -2191,6 +2201,7 @@ function rememberDetachedRunFailure(tabId, requestId, error) {
 }
 
 function assertRunCanStart(tabId, msg) {
+  if (recoveringHistoryTabs.has(tabId)) throw new Error('Conversation recovery is in progress.');
   assertDetachedRunStartNotCancelled(tabId, msg);
   const reserved = detachedRunStarts.get(tabId);
   const internalRequestId = String(msg?.__detachedRunRequestId || '');
@@ -3817,6 +3828,7 @@ async function handleMessage(msg, sender) {
 
     case 'clear_conversation': {
       const tabId = msg.tabId || sender.tab?.id;
+      if (recoveringHistoryTabs.has(tabId)) throw new Error('Conversation recovery is in progress.');
       let clearedContextMenuPromptId = null;
       if (tabId) {
         const conversationId = await agent.getConversationId(tabId);
@@ -3849,6 +3861,35 @@ async function handleMessage(msg, sender) {
         }).catch(() => {});
       }
       return { ok: true, clearedContextMenuPromptId };
+    }
+
+    case 'recover_chat_history': {
+      const tabId = Number(msg.tabId || sender.tab?.id);
+      if (!Number.isSafeInteger(tabId) || tabId <= 0) throw new Error('No tab ID');
+      assertNoActiveTabRun(tabId);
+      recoveringHistoryTabs.add(tabId);
+      try {
+        const record = await getChatHistoryRecord(msg.recordId);
+        const tab = await chrome.tabs.get(tabId);
+        if (!record || !record.url || record.url !== tab.url) throw new Error('This history belongs to a different URL.');
+        if (record.updatedAt !== msg.recordUpdatedAt) throw new Error('This history changed before recovery. Try again.');
+        const conversationId = await agent.getConversationId(tabId);
+        const state = await tabChatHandoff.replace(tabId, msg.html, {
+          ownerId: msg.handoffOwnerId,
+          handoffGeneration: msg.handoffGeneration,
+          commit: storageEntries => agent.recoverChatHistory(tabId, record, { storageEntries }),
+        });
+        // A failed recovery must retain the old conversation's scheduled work.
+        // Recovery is already committed here, so scheduler cleanup cannot turn
+        // it into a failure response with a mismatched transcript.
+        await scheduler.cancelForConversation(tabId, conversationId).catch(error => {
+          console.warn('[WebBrain] Could not cancel recovered conversation schedules:', error);
+        });
+        clearRunUiSnapshot(tabId);
+        return { ok: true, ...state, record };
+      } finally {
+        recoveringHistoryTabs.delete(tabId);
+      }
     }
 
     case 'restore_selection_scope': {
