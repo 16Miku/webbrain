@@ -47779,7 +47779,7 @@ test('sidepanel hydrates restored history ids before fallback records', () => {
     assert.equal(initLoadIdx < initHydrateIdx && initHydrateIdx < initGuardIdx && initGuardIdx < initDomIdx, true, `${label}: startup restore must hydrate ids before restoring HTML`);
     assert.equal(initDomIdx < initObserveIdx && initObserveIdx < initRepairIdx, true, `${label}: startup should repair history after restoring and observing the chat DOM`);
 
-    const persistMatch = panel.match(/async function persistChatHistorySnapshot\(tabId, \{ refreshTabInfo = false \} = \{\}\) \{([\s\S]*?)\n\}/);
+    const persistMatch = panel.match(/async function persistChatHistorySnapshot\([^\n]*\) \{([\s\S]*?)\n\}/);
     assert.ok(persistMatch, `${label}: persistChatHistorySnapshot missing`);
     const persistBody = persistMatch[1];
     const hydrateIdx = persistBody.indexOf('await hydrateChatHistoryIdentity(numericTabId, agentMode, { refreshTabInfo });');
@@ -47843,13 +47843,13 @@ test('sidepanel ignores stale async history snapshot saves', () => {
     assert.match(panel, /const chatHistorySaveSeqByTab = new Map\(\);[\s\S]*?let chatHistorySaveSeq = 0;/, `${label}: history snapshots should track per-tab save sequence`);
     assert.match(panel, /function nextChatHistorySaveSeqForTab\(tabId\) \{[\s\S]*?chatHistorySaveSeq \+= 1;[\s\S]*?chatHistorySaveSeqByTab\.set\(numericTabId, chatHistorySaveSeq\);[\s\S]*?return chatHistorySaveSeq;[\s\S]*?\}/, `${label}: history snapshot sequence helper missing`);
 
-    const persistStart = panel.indexOf('async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {');
+    const persistStart = panel.indexOf('async function persistChatHistorySnapshot(');
     assert.notEqual(persistStart, -1, `${label}: persistChatHistorySnapshot missing`);
     const persistBody = panel.slice(persistStart, panel.indexOf('\n}\n\nfunction scheduleHistoryPersist', persistStart) + 2);
-    const userCheckIdx = persistBody.indexOf("if (!messages.some((message) => message.role === 'user')) return;");
+    const userCheckIdx = persistBody.indexOf("if (!messages.some((message) => message.role === 'user')) return");
     const stampIdx = persistBody.indexOf('const saveSeq = nextChatHistorySaveSeqForTab(numericTabId);');
     const hydrateIdx = persistBody.indexOf('await hydrateChatHistoryIdentity(numericTabId, agentMode, { refreshTabInfo });');
-    const staleGuardIdx = persistBody.indexOf('if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return;');
+    const staleGuardIdx = persistBody.indexOf('if (chatHistorySaveSeqByTab.get(numericTabId) !== saveSeq) return');
     const saveIdx = persistBody.indexOf('await saveChatHistoryRecord({');
     assert.notEqual(userCheckIdx, -1, `${label}: snapshots should skip conversations without user messages`);
     assert.notEqual(stampIdx, -1, `${label}: snapshots should stamp async saves`);

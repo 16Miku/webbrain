@@ -377,13 +377,14 @@
           <button id="btn-mode-dev" class="mode-btn" data-i18n="sp.mode.dev" data-i18n-title="sp.mode.dev.title"></button>
         </div>
         <div class="conversation-action-group">
-          <button id="btn-history" class="conversation-action" type="button" data-i18n-title="sp.btn.history_short" data-i18n-aria-label="sp.btn.history_short">
+          <button id="btn-history" aria-haspopup="dialog" aria-controls="history-popover" aria-expanded="false" class="conversation-action" type="button" data-i18n-title="sp.btn.history_short" data-i18n-aria-label="sp.btn.history_short">
             <svg data-icon="history" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
               <path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>
             </svg>
             <span class="conversation-action-label" data-i18n="sp.btn.history_short">History</span>
           </button>
+          <div id="history-popover" class="history-popover" popover="auto" role="dialog" aria-label="History" data-i18n-aria-label="sp.btn.history_short"></div>
           <button id="btn-clear" class="conversation-action" type="button" data-i18n-title="sp.btn.clear_short" data-i18n-aria-label="sp.btn.clear_short">
             <svg data-icon="plus" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M5 12h14"/><path d="M12 5v14"/>
