@@ -19,14 +19,14 @@ const textContent = content => typeof content === 'string' ? content : Array.isA
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const question = 'Owned Ask person activity. What should I reply to the last message here?';
-const answer = 'You could reply: "Thanks, 70,000 works for me if the insulation is included." OWNED-ASK-PERSON-ANSWER';
+const answer = 'You could reply: "Thursday at ten works for me." OWNED-ASK-PERSON-ANSWER';
 const chatHtml = `<!doctype html><meta charset="utf-8"><title>Owned chat</title>
 <style>body{font:16px sans-serif;margin:0;display:flex;flex-direction:column;height:100vh}
 #messages{flex:1;overflow:auto;padding:16px}#messages p{margin:0 0 12px;padding:8px;background:#eef;border-radius:6px;width:60%}
 footer{display:flex;gap:8px;padding:12px;border-bottom:1px solid #ccc}#composer{flex:1;min-height:40px;border:1px solid #888;padding:8px}</style>
 <footer><div id="composer" role="textbox" contenteditable="true" aria-label="Type a message"></div><button id="attach" type="button" aria-label="Attach">+</button></footer>
-<main id="messages" aria-label="Messages"><p id="last">Last message: 70,000 for the whole job.</p>
-${Array.from({ length: 30 }, (_, index) => `<p>Earlier message ${index + 1}: the balcony and the roof.</p>`).join('')}</main>
+<main id="messages" aria-label="Messages"><p id="last">Last message: Could we meet on Thursday at ten?</p>
+${Array.from({ length: 30 }, (_, index) => `<p>Earlier message ${index + 1}: notes about the weekly plan.</p>`).join('')}</main>
 <script>
 // Like a chat app, the page reacts to typing: a typing hint appears.
 const hint=document.createElement('div');hint.id='hint';document.body.prepend(hint);
@@ -126,7 +126,7 @@ try {
   // draft, open a menu and scroll the messages, as real input.
   await page.bringToFront();
   await page.click('#composer');
-  await page.keyboard.type('bi de bana sorumluluk', { delay: 20 });
+  await page.keyboard.type('see you on thursday', { delay: 20 });
   await page.click('#attach');
   await page.mouse.move(300, 200);
   await page.mouse.wheel(0, -600);
@@ -158,7 +158,7 @@ try {
     retracted: retracted.length, finishedAfter, decisions, draft, network, runtimeErrors };
   await fs.writeFile(path.join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
   assert.deepEqual(runtimeErrors, []);
-  assert.equal(draft, 'bi de bana sorumluluk', 'The person really typed into the page');
+  assert.equal(draft, 'see you on thursday', 'The person really typed into the page');
   assert.ok(decisions.some(decision => (decision.context?.feedback?.observed?.events || []).some(event => event.source === 'user')),
     `The person's activity reached WebBrain as page feedback: ${JSON.stringify(decisions)}`);
   assert.equal(main.length, 1, `The answer was written once, not again after the person's activity: ${JSON.stringify(calls)}`);
