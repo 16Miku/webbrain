@@ -55,7 +55,9 @@ function validationFailure(toolName, invalidArguments, detail) {
   };
 }
 
-function validateValue(value, schema, path, failures) {
+// `missing` also receives each absent required path (already in `failures`),
+// so the message can name what to add apart from what to fix or remove.
+function validateValue(value, schema, path, failures, missing = []) {
   if (!schema || typeof schema !== 'object') return;
   const acceptedTypes = Array.isArray(schema.type) ? schema.type : (schema.type ? [schema.type] : []);
   if (acceptedTypes.length && !acceptedTypes.some(type => valueMatchesType(value, type))) {
@@ -76,12 +78,15 @@ function validateValue(value, schema, path, failures) {
     if (Number.isFinite(schema.maximum) && value > schema.maximum) failures.push(path);
   }
   if (Array.isArray(value) && schema.items) {
-    value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, failures));
+    value.forEach((item, index) => validateValue(item, schema.items, `${path}[${index}]`, failures, missing));
   }
   if (!isPlainObject(value)) return;
   const properties = isPlainObject(schema.properties) ? schema.properties : {};
   for (const required of Array.isArray(schema.required) ? schema.required : []) {
-    if (!Object.prototype.hasOwnProperty.call(value, required)) failures.push(`${path}.${required}`);
+    if (!Object.prototype.hasOwnProperty.call(value, required)) {
+      failures.push(`${path}.${required}`);
+      missing.push(`${path}.${required}`);
+    }
   }
   // A schema that declares no properties places no constraints on the object's
   // keys: `{}` and `{ type: 'object' }` mean "any object", not "empty object".
@@ -100,9 +105,9 @@ function validateValue(value, schema, path, failures) {
     : null;
   for (const [key, child] of Object.entries(value)) {
     if (Object.prototype.hasOwnProperty.call(properties, key)) {
-      validateValue(child, properties[key], `${path}.${key}`, failures);
+      validateValue(child, properties[key], `${path}.${key}`, failures, missing);
     } else if (additionalPropertiesSchema) {
-      validateValue(child, additionalPropertiesSchema, `${path}.${key}`, failures);
+      validateValue(child, additionalPropertiesSchema, `${path}.${key}`, failures, missing);
     }
   }
 }
@@ -184,12 +189,22 @@ export function validateToolArguments(toolName, args, parameters) {
     ? { ...parameters, additionalProperties: false }
     : { type: 'object', properties: {}, additionalProperties: false };
   const failures = [];
-  validateValue(normalizedArgs, closedParameters, '$', failures);
+  const missing = [];
+  validateValue(normalizedArgs, closedParameters, '$', failures, missing);
   if (failures.length) {
     const enumGuidance = Object.entries(closedParameters.properties || {})
       .filter(([key, schema]) => failures.includes(`$.${key}`) && Array.isArray(schema.enum))
       .map(([key, schema]) => `${key} must be one of ${JSON.stringify(schema.enum)}.`).join(' ');
-    return validationFailure(toolName, failures, `Invalid or undeclared argument(s): ${[...new Set(failures)].join(', ')}. ${enumGuidance}`.trim());
+    // An absent required argument is not an invalid one: a model told only
+    // "invalid" tends to drop arguments instead of adding the missing one.
+    const missingNames = [...new Set(missing)];
+    const invalidNames = [...new Set(failures)].filter(name => !missingNames.includes(name));
+    const detail = [
+      missingNames.length ? `Missing required argument(s): ${missingNames.join(', ')}.` : '',
+      invalidNames.length ? `Invalid or undeclared argument(s): ${invalidNames.join(', ')}.` : '',
+      enumGuidance,
+    ].filter(Boolean).join(' ');
+    return validationFailure(toolName, failures, detail);
   }
   if (toolName === 'get_accessibility_tree') {
     const refs = [['$.ref_id', normalizedArgs.ref_id],

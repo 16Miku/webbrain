@@ -2839,7 +2839,7 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
     assert.equal(getTools('ask').some(tool => tool.function.name === 'delegate_research'), false, `${label}: default Ask exposed research delegation`);
     assert.equal(getTools('act').some(tool => tool.function.name === 'delegate_research'), false, `${label}: default Act exposed research delegation`);
     assert.ok(getTools('act').some(tool => tool.function.name === 'clarify'), `${label}: opt-in default removed normal Act clarification`);
-    const researchOnlyClarifyFields = ['purpose', 'research_request', 'approve_option'];
+    const researchOnlyClarifyFields = ['research_request', 'approve_option'];
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full']]) {
       const enabled = getTools(mode, { tier, researchEscalationEnabled: true });
       assert.ok(enabled.some(tool => tool.function.name === 'delegate_research'), `${label}: ${mode}/${tier} did not expose research escalation`);
@@ -2871,12 +2871,18 @@ test('research escalation is opt-in, tier-complete when enabled, and absent othe
           disabledClarify.function.parameters.properties.require_explicit_answer,
           `${label}: disabled ${mode}/${tier} ordinary clarification lost explicit-answer support`,
         );
+        assert.deepEqual(
+          disabledClarify.function.parameters.properties.purpose?.enum,
+          ['message_recipient', 'recipient_change'],
+          `${label}: disabled ${mode}/${tier} ordinary clarification must keep only the recipient purposes`,
+        );
       }
     }
     for (const [mode, tier] of [['dev', 'mid'], ['dev', 'full']]) {
       const disabledClarify = getTools(mode, { tier, researchEscalationEnabled: false })
         .find(tool => tool.function.name === 'clarify');
       assert.ok(disabledClarify, `${label}: disabled research escalation removed normal ${mode}/${tier} clarification`);
+      assert.deepEqual(disabledClarify.function.parameters.properties.purpose?.enum, ['message_recipient', 'recipient_change']);
       for (const field of researchOnlyClarifyFields) {
         assert.equal(
           field in disabledClarify.function.parameters.properties,
@@ -14971,7 +14977,7 @@ test('trace recorder: DB v2 adds lineage indexes and startRun stores lineage fie
     assert.match(recorderSource, /createIndex\('sessionId', 'conversationId'\)/, `${browser}: session index missing`);
     assert.match(recorderSource, /createIndex\('parentRunId', 'parentRunId'\)/, `${browser}: parent index missing`);
     assert.match(recorderSource, /indexNames\.contains\('sessionId'\)/, `${browser}: index creation is not idempotent`);
-    assert.match(recorderSource, /import \{ normalizeRunHeader, effectiveDelegationDepth \} from '\.\/run-header\.js';/, `${browser}: recorder does not import the run header`);
+    assert.match(recorderSource, /import \{ normalizeRunHeader, effectiveDelegationDepth, generateTraceRunId \} from '\.\/run-header\.js';/, `${browser}: recorder does not import the run header`);
     assert.match(recorderSource, /parentRunId: \(lineage && lineage\.parentRunId\) \|\| null,/, `${browser}: parentRunId not stored`);
     assert.match(recorderSource, /parentSessionId: \(lineage && lineage\.parentSessionId\) \|\| null,/, `${browser}: parentSessionId not stored`);
     assert.match(recorderSource, /delegationDepth: effectiveDelegationDepth\(lineage\),/, `${browser}: delegationDepth not resolved`);
@@ -48110,7 +48116,7 @@ test('chrome sidepanel serializes tab-chat storage writes with clears and reads'
   const chromeAgent = fs.readFileSync(path.join(ROOT, 'src/chrome/src/agent/agent.js'), 'utf8');
   assert.match(chromeBackground, /case 'fork_standalone_conversation':[\s\S]*?agent\.forkConversation\(sourceTabId, forkTabId\);[\s\S]*?tabChatHandoff\.save\(forkTabId, sourceChat\.html\)/, 'chrome: /btw fork bootstrap must copy history and transcript into the popup scope');
   assert.match(chromeBackground, /if \(!fork\?\.resumed\)/, 'chrome: /btw reload should keep the side conversation instead of re-forking');
-  assert.match(chromeAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'chrome: /btw forks must mint a distinct Ask-only conversation identity');
+  assert.match(chromeAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\.toString\(36\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'chrome: /btw forks must mint a distinct Ask-only conversation identity');
   assert.match(chromeAgent, /_trimIncompleteToolTail\(messages\)/, 'chrome: /btw fork should drop a trailing incomplete tool batch');
   assert.match(chromeAgent, /resumed: true/, 'chrome: /btw fork should report a resumed side conversation on reload');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'chrome: visible tab-chat persistence should carry its owner generation through the shared background queue');
@@ -48152,7 +48158,7 @@ test('firefox sidepanel serializes tab-chat storage writes with clears and reads
   const firefoxAgent = fs.readFileSync(path.join(ROOT, 'src/firefox/src/agent/agent.js'), 'utf8');
   assert.match(firefoxBackground, /case 'fork_standalone_conversation':[\s\S]*?agent\.forkConversation\(sourceTabId, forkTabId\);[\s\S]*?tabChatHandoff\.save\(forkTabId, sourceChat\.html\)/, 'firefox: /btw fork bootstrap must copy history and transcript into the popup scope');
   assert.match(firefoxBackground, /if \(!fork\?\.resumed\)/, 'firefox: /btw reload should keep the side conversation instead of re-forking');
-  assert.match(firefoxAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'firefox: /btw forks must mint a distinct Ask-only conversation identity');
+  assert.match(firefoxAgent, /async forkConversation\(sourceTabId, forkTabId\) \{[\s\S]*?this\.conversationModes\.set\(forkId, 'ask'\);[\s\S]*?this\.conversationIds\.set\(forkId, `conv_\$\{forkId\}_\$\{Date\.now\(\)\.toString\(36\)\}_\$\{secureRandomBase36Token\(12\)\}`\);/, 'firefox: /btw forks must mint a distinct Ask-only conversation identity');
   assert.match(firefoxAgent, /_trimIncompleteToolTail\(messages\)/, 'firefox: /btw fork should drop a trailing incomplete tool batch');
   assert.match(firefoxAgent, /resumed: true/, 'firefox: /btw fork should report a resumed side conversation on reload');
   assert.match(panel, /const payload = \{[\s\S]*?handoffOwnerId: tabChatHandoffOwnerId,[\s\S]*?handoffGeneration[\s\S]*?return enqueueTabChatOperation\(tabId, async \(numericTabId\) => \{[\s\S]*?sendToBackground\('persist_tab_chat', payload\);/, 'firefox: visible tab-chat persistence should carry its owner generation through the shared background queue');
@@ -55553,6 +55559,7 @@ test('ScheduledJobManager confirms recurring tasks as fixed intervals', async ()
         first_run_at: new Date(now).toISOString(),
         recurrence: 'fixed_interval',
         interval_minutes: 5,
+        repeats: 'every 5 minutes',
       },
       `${label}: result should expose exact recurrence semantics`,
     );
@@ -75134,7 +75141,7 @@ test('WebBrain Compass groups every generation in a stable conversation session 
     const backgroundSource = fs.readFileSync(path.join(ROOT, prefix, 'src/background.js'), 'utf8');
     assert.match(
       agentSource,
-      /conversationIds\.set\(tabId, `conv_\$\{tabId\}_\$\{Date\.now\(\)\}_\$\{secureRandomBase36Token\(12\)\}`\)/,
+      /conversationIds\.set\(tabId, `conv_\$\{tabId\}_\$\{Date\.now\(\)\.toString\(36\)\}_\$\{secureRandomBase36Token\(12\)\}`\)/,
       `${label}: Cloud conversation IDs must use Web Crypto entropy`,
     );
     for (const generationName of ['main', 'planner', 'compaction', 'intent', 'vision']) {
@@ -87164,9 +87171,15 @@ test('expected ordinals are app-owned typed metadata', () => {
 
 test('auto-recorded items need identity agreement before consuming the last expected slot', () => {
   for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    // With a classifier target in the session, identities exist to check.
+    // Without one, an auto click fills the lowest bare slot instead
+    // (test/improver-guards-ledger.mjs).
     let state = upsert([], [{
       id: 'expected:1', label: 'profile 1', action: 'follow', status: 'pending',
       fields: { expectedOrdinal: 1, completionRequirement: true },
+    }, {
+      id: 'requirement:1:carol', label: 'carol', target: 'carol', action: 'follow', status: 'pending',
+      fields: { completionRequirement: true, classifierTarget: true },
     }], { source: 'classifier', sessionId: 'auto-guard', now: 100 });
 
     state = upsert(state.rows, [{
@@ -96262,6 +96275,7 @@ test('accessibility trees surface native and ARIA metadata choice values', () =>
       MAX_NAME_LEN: 180,
       getRole: element => element.role,
       getAccessibleName: element => element.name,
+      modelAccessibleName: element => element.name,
       getOrMintRef: () => `ref_choice_${++refSequence}`,
       isEditableRoot: () => false,
       isVisible,
@@ -104207,7 +104221,7 @@ test('text tool-call parser is production code with format and allowlist coverag
       );
       assert.equal(
         calls.every((call, index) =>
-          new RegExp(`^fallback_call_\\d+_${index}$`).test(call.id)
+          new RegExp(`^fallback_call_[0-9a-z]+_${index}$`).test(call.id)
         ),
         true,
         `${scenario.label}: fallback IDs were not stable OpenAI-style call IDs`,

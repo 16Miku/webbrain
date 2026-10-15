@@ -1,5 +1,9 @@
 import { URL_FAMILY_TOOLS, bucketArgsKey } from './loop-bucket.js';
 
+// Error codes of a call the runtime refused because the run does not offer
+// the named tool (retired, or outside the mode/provider tool set).
+const UNAVAILABLE_TOOL_ERROR_CODES = new Set(['tool_unavailable', 'retired_tool']);
+
 /**
  * Browser-free loop detection used by Agent and the unit tests.
  *
@@ -55,6 +59,10 @@ export class LoopDetector {
     // document, fresh refs and a fresh one-use nonce. This semantic state is
     // independent of document-scoped click/read/scroll history.
     this.semanticPageRetries = new Map();
+    // Calls naming a tool the run does not offer, counted per name apart from
+    // recentCalls: in that window a refusal would dilute or complete another
+    // call's loop, and as a clean call it would retire a real loop's nudges.
+    this.unavailableToolCalls = new Map(); // tabId -> { counts: Map(name -> refusals), cleanCalls }
   }
 
   /**
@@ -121,6 +129,43 @@ export class LoopDetector {
     if (healthy >= 2) {
       this.loopNudges.delete(tabId);
       this.healthyCallsSinceLoop.delete(tabId);
+    }
+    // Two clean calls with no refusal between them likewise retire repeated
+    // unavailable-tool calls; each refusal restarts this count.
+    const refusals = this.unavailableToolCalls.get(tabId);
+    if (refusals && ++refusals.cleanCalls >= 2) this.unavailableToolCalls.delete(tabId);
+    return { kind: 'none' };
+  }
+
+  /**
+   * A call naming a tool the run does not offer was refused before anything
+   * ran, so its arguments never reached a page target or URL and only the
+   * name identifies a repeat. It never enters recentCalls, the healthy streak
+   * or the per-target and read-only resource counters. The third refusal of
+   * one name is nudged and the tenth stops the run, the budget of an exact
+   * repeat of any other call.
+   */
+  _checkUnavailableToolLoop(tabId, toolName, toolResult) {
+    const name = String(toolName || '').slice(0, 80);
+    const state = this.unavailableToolCalls.get(tabId) || { counts: new Map(), cleanCalls: 0 };
+    const count = (state.counts.get(name) || 0) + 1;
+    state.counts.set(name, count);
+    if (state.counts.size > 16) state.counts.delete(state.counts.keys().next().value);
+    state.cleanCalls = 0;
+    this.unavailableToolCalls.set(tabId, state);
+    const reason = toolResult?.errorCode === 'retired_tool' ? 'it is retired' : 'this run does not offer it';
+    if (count >= 10) {
+      this._clearLoopState(tabId);
+      return {
+        kind: 'stop',
+        message: `Stopped: I called ${name} ${count} times, but ${reason}, so nothing was run. Please give a different instruction.`,
+      };
+    }
+    if (count >= 3) {
+      return {
+        kind: 'nudge',
+        warning: `[UNAVAILABLE TOOL LOOP: You have called ${name} ${count} times, but ${reason}, so nothing was run. Do not call ${name} again. Use only the advertised tools; if they cannot do what the task needs, finish with what you have and say what is missing.]`,
+      };
     }
     return { kind: 'none' };
   }
@@ -334,6 +379,7 @@ export class LoopDetector {
     this.recentCalls.delete(tabId);
     this.loopNudges.delete(tabId);
     this.healthyCallsSinceLoop.delete(tabId);
+    this.unavailableToolCalls.delete(tabId);
     this._clearPageLoopState(tabId);
   }
 
@@ -700,6 +746,9 @@ export class LoopDetector {
    *   { kind: 'stop',  message: string }   // hard stop, abort the run
    */
   _checkLoop(tabId, toolName, toolArgs, toolResult) {
+    if (UNAVAILABLE_TOOL_ERROR_CODES.has(toolResult?.errorCode)) {
+      return this._checkUnavailableToolLoop(tabId, toolName, toolResult);
+    }
     // A navigation result is authoritative page-state evidence. Clear before
     // recording this call so same-looking controls on the new page start at
     // attempt one instead of inheriting an old third-strike counter. Arriving

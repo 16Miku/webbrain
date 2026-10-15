@@ -112,7 +112,9 @@
     });
     const images = Array.from(document.querySelectorAll('img, picture source, meta[property="og:image"], meta[name="twitter:image"]')).filter((el) => {
       const src = el.currentSrc || el.src || el.srcset || el.content || '';
-      return !!src;
+      // The signed-in account's avatar (alt text = the person's name, src =
+      // their photo) is account chrome, not page media (_axModelName).
+      return !!src && !_axAccountChrome(el);
     });
     return {
       videoCount: videos.length,
@@ -198,8 +200,8 @@
       media: getPageMediaSummary(),
       activeElement: getActiveEditableSummary(),
       links: Array.from(document.querySelectorAll('a[href]')).slice(0, 100).map(a => ({
-        text: a.innerText.trim().slice(0, 100),
-        href: a.href,
+        text: _axModelName(a, a.innerText.trim().slice(0, 100)),
+        href: _axModelHref(a, a.href),
       })),
       forms: Array.from(document.querySelectorAll('form')).map((form, i) => ({
         id: form.id || `form-${i}`,
@@ -915,10 +917,10 @@
         tag: el.tagName.toLowerCase(),
         type: el.type || '',
         role: el.getAttribute('role') || '',
-        text: _siteInteractionText(el).slice(0, 100),
+        text: _axModelName(el, _siteInteractionText(el).slice(0, 100)),
         id: el.id || '',
         name: el.name || '',
-        href: el.href || '',
+        href: _axModelHref(el, el.href || ''),
         editable: el.isContentEditable || false,
         rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
       };
@@ -950,7 +952,7 @@
     // Compact snapshot — first ~40 elements, just the fields a model
     // needs to pick the right one: index, tag, role, text.
     const available = interactive.slice(0, 40).map((el, i) => {
-      const text = _siteInteractionText(el).slice(0, 80);
+      const text = _axModelName(el, _siteInteractionText(el).slice(0, 80));
       return {
         index: i,
         tag: el.tagName.toLowerCase(),
@@ -1021,6 +1023,33 @@
   function _axAccessibleName(el) {
     return _axCanonicalName(el)
       || String(el?.innerText || '').trim().slice(0, 160);
+  }
+
+  // A name or href a tool result shows the model takes the tree's
+  // model-facing form: Google's signed-in account chrome is named and
+  // addressed generically (accessibility-tree.js), so no tool hands the
+  // model the person's name, e-mail or continue= URL. Matching and state
+  // fingerprints keep the raw name.
+  function _axModelName(el, name) {
+    try {
+      if (name && typeof window.__wb_ax_model_name === 'function') return window.__wb_ax_model_name(el, name);
+    } catch {}
+    return name;
+  }
+
+  function _axModelHref(el, href) {
+    try {
+      if (href && typeof window.__wb_ax_model_href === 'function') return window.__wb_ax_model_href(el, href);
+    } catch {}
+    return href;
+  }
+
+  function _axAccountChrome(el) {
+    try {
+      return window.__wb_ax_account_chrome?.(el) === true;
+    } catch {
+      return false;
+    }
   }
 
   function _axVisibleConfirmationSurfaces() {
@@ -1893,7 +1922,7 @@
               index: idx,
               tag: e.tagName.toLowerCase(),
               role: e.getAttribute('role') || '',
-              text: m.txt.slice(0, 80),
+              text: _axModelName(e, m.txt.slice(0, 80)),
               cx, cy,
               rect,
               ancestor,
@@ -2143,7 +2172,7 @@
             let blockerInfo = topmost.tagName.toLowerCase();
             const role = topmost.getAttribute && topmost.getAttribute('role');
             if (role) blockerInfo += `[role=${role}]`;
-            const txt = (topmost.innerText || topmost.getAttribute?.('aria-label') || '').trim().slice(0, 60);
+            const txt = _axModelName(topmost, (topmost.innerText || topmost.getAttribute?.('aria-label') || '').trim().slice(0, 60));
             if (txt) blockerInfo += ` "${txt}"`;
             let blockerContainer = '';
             try {
@@ -2662,6 +2691,10 @@
       return { success: true, dispatched: false, noDispatch: true, noop: true, method: 'noop-empty-append' };
     }
 
+    // A cleared field must not be refilled with only a preview of itself.
+    const truncatedPreview = params.clear ? _truncatedPreviewReplacementFailure(el, typedText) : null;
+    if (truncatedPreview) return { ...truncatedPreview, fieldMeta: _fieldMeta(el) };
+
     if (actionDeadlineExpired()) return deadlineFailure();
     _withTypingPreparation('focus', el, () => el.focus());
     if (actionDeadlineExpired()) return deadlineFailure();
@@ -3178,7 +3211,9 @@
       return {
         tag: el.tagName ? el.tagName.toLowerCase() : '',
         role: el.getAttribute?.('role') || '',
-        text: (el.innerText || el.getAttribute?.('aria-label') || '').trim().slice(0, 80),
+        // The scroll origin is often the focused control, such as the
+        // account button just clicked (see _axModelName).
+        text: _axModelName(el, (el.innerText || el.getAttribute?.('aria-label') || '').trim().slice(0, 80)),
         rect,
       };
     }
@@ -3998,8 +4033,8 @@
         : getPageMediaSummary(),
       activeElement: blockedAuxiliaryContent ? null : getActiveEditableSummary(),
       links: blockedAuxiliaryContent ? [] : Array.from(document.querySelectorAll('a[href]')).slice(0, 100).map(a => ({
-        text: a.innerText.trim().slice(0, 100),
-        href: a.href,
+        text: _axModelName(a, a.innerText.trim().slice(0, 100)),
+        href: _axModelHref(a, a.href),
       })),
       forms: blockedAuxiliaryContent ? [] : Array.from(document.querySelectorAll('form')).map((form, i) => ({
         id: form.id || `form-${i}`,
@@ -4249,10 +4284,10 @@
         tag: el.tagName.toLowerCase(),
         type: el.type || '',
         role: el.getAttribute('role') || '',
-        text: _siteInteractionText(el).slice(0, 100),
+        text: _axModelName(el, _siteInteractionText(el).slice(0, 100)),
         id: el.id || '',
         name: el.name || '',
-        href: el.href || '',
+        href: _axModelHref(el, el.href || ''),
         rect: { x: Math.round(c.rect.x), y: Math.round(c.rect.y), w: Math.round(c.rect.width), h: Math.round(c.rect.height) },
         inShadowDOM: c.inShadow,
       };
@@ -4923,6 +4958,99 @@
   }
 
   const SET_FIELD_VERIFY_DELAY_MS = 80;
+
+  // The model sees a long field value only as a shortened preview: a tree
+  // line shows its first 60 characters plus "...", and the agent appends one
+  // of its own cut markers to a trimmed context message, tool result, page
+  // text or recovered session. Written back as the replacement, such a
+  // preview deletes everything after the cut. A replacement counts as that
+  // preview when it ends in an ellipsis or in one of those exact markers,
+  // the text before that ending opens a clearly longer current value of the
+  // same field, and the value does not itself hold that ending there (then
+  // the ending is the field's own text). A bracketed "truncated" note
+  // elsewhere, such as a pasted log line, is ordinary text.
+  const TRUNCATED_PREVIEW_MIN_PREFIX = 20;
+  const TRUNCATED_PREVIEW_MIN_HIDDEN = 10;
+  // Every cut marker the runtime appends to model-visible text, exactly as
+  // written there (agent.js, conversation-persistence.js, page-monitor.js,
+  // completion-invariant.js, otp-email-tool.js, the PDF readers, the
+  // network inspector, error-format.js and the chat and selection stores).
+  // test/improver-content-truncated-replacement.mjs keeps it complete.
+  const TRUNCATED_PREVIEW_MARKERS = Object.freeze([
+    '[...truncated to fit context]',
+    '[...truncated]',
+    '[...page text truncated]',
+    '[...tool data text truncated]',
+    '[...research answer truncated]',
+    '[...result truncated]',
+    '[...body truncated]',
+    '[observation truncated]',
+    '[excerpt truncated]',
+    '[Latest model output truncated]',
+    '[truncated for the on-device generation budget]',
+    '[large value truncated for session recovery]',
+    '[large content truncated for session recovery]',
+    '[content truncated for session recovery]',
+    '[tool arguments truncated for session recovery]',
+    '… [page truncated, use read_pdf with fromPage to read more]',
+    '… [truncated]',
+    '[truncated]',
+  ]);
+
+  function _truncatedPreviewReplacement(current, text) {
+    const normalize = value => {
+      let normalized = String(value ?? '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200d\ufeff]/g, '');
+      try { normalized = normalized.normalize('NFKC'); } catch {}
+      return normalized.replace(/\s+/g, ' ').trim();
+    };
+    const value = normalize(current);
+    // NFKC folds "…" into "...", so one spelling covers both. Markers are
+    // compared in the same form, the longest first ("… [truncated]" before
+    // "[truncated]").
+    const replacement = normalize(text);
+    const markers = TRUNCATED_PREVIEW_MARKERS.map(normalize).sort((a, b) => b.length - a.length);
+    // A tree line escapes backslashes and quotes inside value="…" (\\ and
+    // \"), so a preview copied from it may still carry those escapes.
+    const unescaped = replacement.replace(/\\(["\\])/g, '$1');
+    for (const candidate of new Set([replacement, unescaped])) {
+      const ending = markers.find(marker => candidate.endsWith(marker))
+        || candidate.match(/\.{3,}$/)?.[0] || '';
+      if (!ending || value.startsWith(candidate)) continue;
+      const prefix = candidate.slice(0, -ending.length).trim();
+      if (prefix.length < TRUNCATED_PREVIEW_MIN_PREFIX) continue;
+      if (!value.startsWith(prefix) || value.length - prefix.length < TRUNCATED_PREVIEW_MIN_HIDDEN) continue;
+      return { currentValueLength: String(current ?? '').length, previewLength: prefix.length };
+    }
+    return null;
+  }
+
+  // Checked before anything is typed into a text field that the write would
+  // clear. A preview of the field's own value is refused with no dispatch.
+  function _truncatedPreviewReplacementFailure(el, text) {
+    if (!el || !(el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return null;
+    let current = '';
+    try {
+      current = el.isContentEditable ? _editableTextValue(el) : String(el.value ?? '');
+    } catch { return null; }
+    return _truncatedPreviewValueFailure(current, text);
+  }
+
+  function _truncatedPreviewValueFailure(current, text) {
+    const preview = _truncatedPreviewReplacement(current, text);
+    if (!preview) return null;
+    return {
+      success: false,
+      dispatched: false,
+      noDispatch: true,
+      retryable: false,
+      errorCode: 'truncated_value_replacement',
+      currentValueLength: preview.currentValueLength,
+      recoveryRequired: 'read_full_value',
+      error: `Nothing was typed. This text ends with "..." or a truncation marker, and the text before it is the start of this field's current ${preview.currentValueLength}-character value, so it looks like a shortened preview of that value, not the complete new text. Replacing the field with it would delete everything after the preview. Read the field's full current value first (read_page lists form field values; a tree line shows only the start), then write the complete text, or add text with clear:false instead of replacing. Only if the user asked to shorten this field to exactly this text: clear it with an empty text first, then add the text with clear:false.`,
+    };
+  }
 
   function _contentEditableValueMatches(actual, expected) {
     const normalizeNewlines = value => String(value).replace(/\r\n?/g, '\n');
@@ -6236,6 +6364,31 @@
       index = after.indexOf(inserted, index + 1);
     }
     return false;
+  }
+
+  // Chrome types type_text({clear:true}) with trusted browser input from the
+  // agent, so the content handlers' truncated-preview check never runs for
+  // it. The agent asks here first, for the target its dispatch will use: the
+  // preflight's bound element, else the selector match, else the focused
+  // element. Any target this cannot read is left to the normal path.
+  // The legacy iframe_type path writes in a frame without this script; it
+  // reads its marked target's value there and asks with that value.
+  function _checkTruncatedReplacement(params = {}) {
+    if (typeof params.currentValue === 'string') {
+      return _truncatedPreviewValueFailure(params.currentValue, String(params.text ?? '')) || { success: true };
+    }
+    const token = String(params.dispatchBinding?.token || '');
+    const record = token ? _dispatchBindings.get(token) : null;
+    let el = null;
+    try {
+      el = record?.el
+        || (params.selector ? safeIndexedQuerySelector(params.selector, params.matchIndex).element : _deepActiveElement());
+    } catch { return { success: true }; }
+    if (!el?.isConnected) return { success: true };
+    const truncatedPreview = _truncatedPreviewReplacementFailure(el, String(params.text ?? ''));
+    if (!truncatedPreview) return { success: true };
+    if (record) _releaseDispatchBinding(params);
+    return { ...truncatedPreview, fieldMeta: _fieldMeta(el) };
   }
 
   function _prepareFocusedTypeDispatch(params = {}) {
@@ -8258,12 +8411,15 @@
         if (!strongIdentities.length && params.adapterName === 'generic-messaging'
             && params.supportsRecipientSets !== true) {
           // Some conversation headers expose the contact name as a button
-          // rather than a heading. A shared local header/footer pane proves
-          // ownership; a page-wide button or a sidebar name proves nothing.
+          // rather than a heading, or (help desks, CRMs) only the contact's
+          // address as a mailto link or address chip. A shared local
+          // header/footer pane proves ownership; a page-wide button, a
+          // sidebar name or an address in the message history proves nothing.
           try {
             const footer = composer.closest?.('footer');
-            const excluded = 'aside,nav,[role="navigation"],[role="complementary"],[role="log"],'
-              + '[role="listbox"],[role="menu"],[role="toolbar"],[data-message-id],[data-message-direction],[data-outgoing],article';
+            const excluded = 'aside,nav,[role="navigation"],[role="complementary"],[role="log"],[role="feed"],'
+              + '[role="listbox"],[role="menu"],[role="toolbar"],[data-message-id],[data-message-direction],[data-outgoing],'
+              + 'article,[role="article"]';
             if (footer && !footer.closest(excluded)) {
               for (let pane = footer.parentElement, depth = 0; pane && depth < 8
                 && pane !== document.body && pane !== document.documentElement; pane = pane.parentElement, depth++) {
@@ -8303,9 +8459,24 @@
                     .filter(Boolean).map(_messageControlReading);
                   return !!name && name.length <= 120 && !readings.some(reading => _MESSAGE_CONTROL_ACTIONS.has(reading));
                 });
-                if (contacts.length !== 1) break;
-                const carrier = contacts[0];
-                const name = compact(carrier.innerText, 120);
+                // Without a contact button, one address in this same owned
+                // header (never the history between it and the composer) is
+                // the conversation's recipient. An address in running text or
+                // a notice there (a pinned message, a topic) names no one.
+                const chips = contacts.length ? [] : Array.from(header.querySelectorAll(
+                  '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i]',
+                )).filter(chip => visible(chip) && !editable(chip) && chip.closest('header') === header
+                  && !chip.closest(excluded) && !chip.closest('p,blockquote,[role="note"],[role="status"],[role="alert"]')
+                  && inConversationHeaderBand(chip)
+                  && !independentScrollableRegion(chip, composer)).map(chip => ({ chip,
+                  address: [chip.getAttribute('email'), chip.getAttribute('data-email'), chip.getAttribute('data-hovercard-id'),
+                    String(chip.getAttribute('href') || '').replace(/^mailto:/i, '').split('?')[0]]
+                    .map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '' }))
+                  .filter(({ address }) => normalizedIdentity(address));
+                const chipAddresses = new Set(chips.map(({ address }) => normalizedIdentity(address)));
+                if (contacts.length > 1 || (!contacts.length && chipAddresses.size !== 1)) break;
+                const carrier = contacts.length ? contacts[0] : chips[0].chip;
+                const name = contacts.length ? compact(carrier.innerText, 120) : chips[0].address;
                 const labelledByNodes = [];
                 let labelledByValid = true;
                 for (const id of String(composer.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)) {
@@ -8344,6 +8515,17 @@
           observedRecipientCandidates.push(item);
         }
       }
+
+      // Gmail keeps a mail compose window open across its Chat views. A
+      // composer whose own compose window (its dialog, else its form; never
+      // a wider region that only contains one) has To/Cc/Bcc rows sends to
+      // that recipient set wherever it is open, decided from its structure,
+      // when the send comes from that window.
+      const gmailComposeWindow = gmailRecipientMode
+        ? composer.closest?.('[role="dialog"]') || composer.closest?.('form') : null;
+      const recipientSets = params.supportsRecipientSets === true
+        || (!!gmailComposeWindow?.querySelector?.('[name="to"],[name="cc"],[name="bcc"]')
+          && (!dispatchTarget || gmailComposeWindow.contains?.(dispatchTarget) === true));
 
       // The isolated monitor reads this exact local proof synchronously. Its
       // closure-only callback never participates in the public message API,
@@ -8427,28 +8609,36 @@
             extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''), role);
           }
         } catch { /* structural read is best-effort */ }
-        try {
-          const chipScope = composer.closest?.('[role="dialog"],form,[role="main"]') || document;
-          for (const el of Array.from(chipScope.querySelectorAll(
-            '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
-          )).slice(0, 40)) {
-            if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
-            if (!genericMailRecipientMode
-                && /^email$/i.test(String(el.getAttribute?.('type') || ''))) continue;
-            const mailto = String(el.getAttribute?.('href') || '')
-              .replace(/^mailto:/i, '').split('?')[0];
-            const address = [
-              el.getAttribute?.('email'),
-              el.getAttribute?.('data-email'),
-              el.getAttribute?.('data-hovercard-id'),
-              mailto,
-              'value' in el ? el.value : '',
-            ].map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '';
-            if (!address) continue;
-            const display = compact(el.innerText || el.textContent, 240);
-            pushRecipient(address, display && display !== address ? [display] : []);
-          }
-        } catch { /* chip read is best-effort */ }
+        // Address chips and mailto links name the destination only on a mail
+        // compose that has To/Cc/Bcc recipient sets. In a chat the same
+        // markup is usually message history (a mailto link someone sent),
+        // which says nothing about where this send goes; a chat still needs
+        // its one header identity (above, including an address in its own
+        // conversation header), so without one it stays unverified.
+        if (recipientSets) {
+          try {
+            const chipScope = composer.closest?.('[role="dialog"],form,[role="main"]') || document;
+            for (const el of Array.from(chipScope.querySelectorAll(
+              '[email],[data-email],[data-hovercard-id],a[href^="mailto:" i],input[type="email"]',
+            )).slice(0, 40)) {
+              if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
+              if (!genericMailRecipientMode
+                  && /^email$/i.test(String(el.getAttribute?.('type') || ''))) continue;
+              const mailto = String(el.getAttribute?.('href') || '')
+                .replace(/^mailto:/i, '').split('?')[0];
+              const address = [
+                el.getAttribute?.('email'),
+                el.getAttribute?.('data-email'),
+                el.getAttribute?.('data-hovercard-id'),
+                mailto,
+                'value' in el ? el.value : '',
+              ].map(value => compact(value, 240)).find(value => String(value || '').includes('@')) || '';
+              if (!address) continue;
+              const display = compact(el.innerText || el.textContent, 240);
+              pushRecipient(address, display && display !== address ? [display] : []);
+            }
+          } catch { /* chip read is best-effort */ }
+        }
       }
 
       const expectedConversation = params.expectedConversationRecipientEvidence;
@@ -8501,7 +8691,7 @@
         && messageSend === true
         && (tool === 'upload_file' || !!messageBody)
         && (!twitterConversation || twitterBaselineComplete)
-        && (params.supportsRecipientSets === true
+        && (recipientSets
           ? strongRecipients.length > 0
           : strongRecipients.length === 1)
         ? _rememberMessageRecipientDispatchBinding(composer, strongRecipients, {
@@ -8510,7 +8700,7 @@
             actionTarget: dispatchTarget,
             adapterName: params.adapterName,
             expectedRecipients: params.expectedRecipients,
-            supportsRecipientSets: params.supportsRecipientSets,
+            supportsRecipientSets: recipientSets,
             conversationRecipientEvidence,
             messageBody,
             messageBodyBaselineCount,
@@ -8536,6 +8726,8 @@
         messageSend: observationOnly ? false : messageSend === true,
         conclusive: true,
         composerAvailable: true,
+        // The recipient-set mode this composer actually sends with.
+        ...(recipientSets ? { recipientSets: true } : {}),
         ...(nativeChatMessageBaseline ? { nativeChatMessageBaseline } : {}),
         ...(tool === 'upload_file' ? { messageAttachment: true } : {}),
         ...(composerRef ? { composerRef } : {}),
@@ -8650,6 +8842,7 @@
       'consume_focused_dispatch_binding': () => _consumeFocusedDispatchBinding(msg.params || {}),
       'consume_message_recipient_dispatch_binding': () => _consumeMessageRecipientDispatchBinding(msg.params || {}),
       'attach_message_recipient_bound_upload': () => _attachMessageRecipientBoundUpload(msg.params || {}, actionDeadlineExpired),
+      'check_truncated_replacement': () => _checkTruncatedReplacement(msg.params || {}),
       'prepare_focused_type_dispatch': () => _prepareFocusedTypeDispatch(msg.params || {}),
       'verify_focused_type_dispatch': () => _verifyFocusedTypeDispatch(msg.params || {}),
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
@@ -8899,6 +9092,8 @@
           const targetRole = String(el.getAttribute?.('role') || '').toLowerCase();
           const canonicalTargetName = _axCanonicalName(el);
           const targetName = canonicalTargetName || _axAccessibleName(el);
+          // What the result echoes back to the model (see _axModelName).
+          const modelTargetName = _axModelName(el, targetName);
           const targetContext = (() => {
             try {
               const ownText = String(targetName || el.innerText || '')
@@ -8924,7 +9119,7 @@
                   text: text.slice(0, 240),
                   ...(text.length > 240 ? { truncated: true } : {}),
                   ...(headingEl ? { heading: String(headingEl.innerText || headingEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160) } : {}),
-                  ...(linkEl ? { href: String(linkEl.href || linkEl.getAttribute('href') || '').slice(0, 500) } : {}),
+                  ...(linkEl ? { href: String(_axModelHref(linkEl, linkEl.href || linkEl.getAttribute('href') || '')).slice(0, 500) } : {}),
                 };
                 if (!fallback) fallback = context;
                 if (productCard || headingEl || linkEl || role === 'listitem' || nodeTag === 'li' || nodeTag === 'article') {
@@ -9027,7 +9222,11 @@
               return failure('The native button is hidden, covered or has an ambiguous physical target. Re-observe before clicking.');
             }
             return { success: true, trustedButtonRequired: true, dispatched: false, noDispatch: true,
-              ref_id, tag, name: String(targetName || '').slice(0, 160), preparedActive, buttonStrongState: fallbackStateBefore.strong,
+              // The agent compares the raw name between preparation and
+              // its re-probe (an account switch changes it) and echoes only
+              // the model-facing one.
+              ref_id, tag, name: String(modelTargetName || '').slice(0, 160), _rawName: String(targetName || '').slice(0, 160),
+              preparedActive, buttonStrongState: fallbackStateBefore.strong,
               buttonDisabled: !!el.disabled || el.getAttribute('aria-disabled') === 'true',
               documentToken, refScopeUrl: location.href, x, y,
               rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) } };
@@ -9060,7 +9259,7 @@
             {reasonCode:'native_telegram_read_preparation_stale'});
           if (filePickerGuard.blocked) {
             return failure(
-              filePickerBlockedResponse(filePickerGuard.blocked, targetName || '').error,
+              filePickerBlockedResponse(filePickerGuard.blocked, modelTargetName || '').error,
               {
                 filePickerBlocked: true,
                 ...(filePickerGuard.blocked.selector ? { selector: filePickerGuard.blocked.selector } : {}),
@@ -9099,7 +9298,8 @@
               _fallbackWeakStateBefore: fallbackStateBefore.weak,
               _fallbackWeakStateAfterImmediate: fallbackStateAfterImmediate.weak,
               _fallbackStaticBlockedReason: fallbackStatic.blockedReason,
-              _fallbackName: String(fallbackStatic.name || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+              // A model reads this name (the agent's repeat reading).
+              _fallbackName: String(_axModelName(el, fallbackStatic.name) || '').replace(/\s+/g, ' ').trim().slice(0, 200),
               rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
               ...(targetContext ? { targetContext } : {}),
               ...(filePickerGuard.guardId ? { _filePickerGuardId: filePickerGuard.guardId } : {}),
@@ -9135,19 +9335,22 @@
             // the wrong thing — e.g. a sidebar nav link that navigates away
             // from an open modal, silently destroying in-progress form state.
             try {
-              if (targetName) resp.name = targetName;
+              if (modelTargetName) resp.name = modelTargetName;
             } catch {}
             if (tag === 'a') {
               try {
-                const href = anchorMeta?.href || el.getAttribute('href') || '';
+                // Model-facing forms (_axModelHref): account chrome shows
+                // only where it leads.
+                const href = _axModelHref(el, anchorMeta?.href || el.getAttribute('href') || '');
+                const targetUrl = _axModelHref(el, anchorMeta?.targetUrl || '');
                 resp.href = href;
-                if (anchorMeta?.resolvedHref) resp.resolvedHref = anchorMeta.resolvedHref;
+                if (anchorMeta?.resolvedHref) resp.resolvedHref = _axModelHref(el, anchorMeta.resolvedHref);
                 if (anchorMeta?.sameDocumentAnchor) {
                   const afterScrollY = Math.round(window.scrollY || 0);
                   const afterUrl = location.href;
                   resp.sameDocumentAnchor = true;
                   resp.anchorTarget = anchorMeta.anchorTarget;
-                  resp.targetUrl = anchorMeta.targetUrl;
+                  resp.targetUrl = targetUrl;
                   resp.beforeUrl = anchorMeta.beforeUrl;
                   resp.afterUrl = afterUrl;
                   resp.beforeScrollY = anchorMeta.beforeScrollY;
@@ -9167,8 +9370,8 @@
                     : `Same-page anchor click returned for ${anchorMeta.anchorTarget}, but URL and scroll position did not change. Re-observe the page before retrying this same anchor.`;
                 } else if (anchorMeta?.navigates) {
                   resp.navigates = true;
-                  resp.targetUrl = anchorMeta.targetUrl || href;
-                  resp.hint = `This <a> click is navigating to ${anchorMeta.targetUrl || href}. If that's not what you intended, the ref_id was stale — re-read the accessibility tree to get fresh ids. Any unsaved form input on the previous page has been lost.`;
+                  resp.targetUrl = targetUrl || href;
+                  resp.hint = `This <a> click is navigating to ${targetUrl || href}. If that's not what you intended, the ref_id was stale — re-read the accessibility tree to get fresh ids. Any unsaved form input on the previous page has been lost.`;
                 }
               } catch {}
             }
@@ -9177,7 +9380,7 @@
               resp.next_required = 'type_ax';
               resp.hint = `This element is now focused. Your very next tool call MUST be type_ax({ref_id: "${ref_id}", text: "..."}). Do not call any other tool in between.`;
             } else if (tag === 'select') {
-              resp.hint = `This is a <select>. Prefer press_keys on the focused element to choose an option (e.g. type the first letters of the desired option, or ArrowDown + Enter). type_ax on a select also works via value/text match.`;
+              resp.hint = `This is a <select>. Prefer press_keys on the focused element to choose an option: press_keys({key: "ArrowDown"}) or press_keys({key: "ArrowUp"}) moves one option per press, then press_keys({key: "Enter"}); letter keys are not supported. type_ax on a select also works via value/text match.`;
             } else if (!anchorMeta?.sameDocumentAnchor) {
               // Detect combobox / popup-opener. If this click was supposed to
               // open a listbox/menu/dialog, the popup is almost always rendered
@@ -9189,7 +9392,7 @@
               try {
                 if (isPopupOpener) {
                   resp.opened_popup_likely = true;
-                  resp.hint = `This element is a combobox / popup-opener (role="${popupRole}"${popupHasPopup ? `, aria-haspopup="${popupHasPopup}"` : ''}). The popup is almost always rendered in a React portal at the end of <body>, OUTSIDE this button's subtree. Next step: call get_accessibility_tree({filter: "visible"}) — do NOT pass a ref_id (subtree filter will miss the portal). Look for a newly-appeared listbox / searchbox / menu. Then either (a) set_field({ref_id: <new search textbox ref>, text: "<query>", submit: true}), or (b) press_keys(["<first letter>"]) then press_keys(["Enter"]). Do NOT click this same ref_id again — it will just toggle the popup closed.`;
+                  resp.hint = `This element is a combobox / popup-opener (role="${popupRole}"${popupHasPopup ? `, aria-haspopup="${popupHasPopup}"` : ''}). The popup is almost always rendered in a React portal at the end of <body>, OUTSIDE this button's subtree. Next step: call get_accessibility_tree({filter: "visible"}) — do NOT pass a ref_id (subtree filter will miss the portal). Look for a newly-appeared listbox / searchbox / menu. Then either (a) set_field({ref_id: <new search textbox ref>, text: "<query>", submit: true}), or (b) press_keys({key: "ArrowDown"}) to highlight the wanted option, then press_keys({key: "Enter"}) (press_keys sends one supported key per call; it cannot type letters). Do NOT click this same ref_id again — it will just toggle the popup closed.`;
                 }
               } catch {}
             }
@@ -9460,6 +9663,10 @@
             'The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
             { ref_id, verified: false, fieldMeta, recoveryRequired: 'fresh_tree', retryable: false },
           );
+          // Before the setter and the trusted contenteditable handoff, as in
+          // set_field: a cleared field must not get only a preview of itself.
+          const truncatedPreview = clear ? _truncatedPreviewReplacementFailure(el, text) : null;
+          if (truncatedPreview) return { ...truncatedPreview, ref_id, rect: typeRect, fieldMeta };
           let previous = '';
           let method = '';
           let selectExpected = null;
@@ -9701,6 +9908,12 @@
             'The DraftJS editor structure cannot establish its exact document text. Re-observe this editor before typing.',
             { ref_id, verified: false, fieldMeta, recoveryRequired: 'fresh_tree', retryable: false },
           );
+          // Before the setter and before the trusted contenteditable handoff:
+          // a replacement that only repeats a shortened preview of this
+          // field's value would erase the rest. Draft recovery writes nothing.
+          const truncatedPreview = clear && !recoveringDraft
+            ? _truncatedPreviewReplacementFailure(el, text) : null;
+          if (truncatedPreview) return { ...truncatedPreview, ref_id, rect, fieldMeta };
           let prevValue = '';
           let pageHandledBeforeInput = false;
           let pageHandledPaste = false;
@@ -10282,7 +10495,9 @@
             ref_id,
             tag,
             role,
-            name,
+            // hover echoes this name, and a model reads it before a repeat
+            // click (see _axModelName).
+            name: _axModelName(el, name),
             x: Math.round(effectiveCx),
             y: Math.round(effectiveCy),
             rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
@@ -10361,9 +10576,9 @@
             const inViewport = r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx <= vw && cy <= vh;
             let name = '';
             try {
-              name = (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title')))
+              name = _axModelName(el, (el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title')))
                 || (el.innerText && el.innerText.trim().slice(0, 80))
-                || '';
+                || '');
             } catch {}
             return {
               ref_id: refId,

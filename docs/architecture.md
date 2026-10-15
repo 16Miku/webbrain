@@ -779,7 +779,10 @@ its system-prompt policy and tool surface only when
 `delegate_research` plus a research-only `clarify` schema; they never receive
 the generic ambiguity/timeout schema used by Act and Dev. Disabling the feature
 removes both Ask entries, while Act and Dev retain their ordinary `clarify`
-tool.
+tool, including its recipient purposes (`message_recipient`, `recipient_change`);
+only `research_escalation` and its fields are opt-in. Because Ask's only
+`clarify` is the consent card, the Ask policy note asks for a missing research
+constraint in the final answer instead.
 
 The narrowed consent call must include the displayed question, exactly two
 choices, `purpose: "research_escalation"`, the exact `research_request`, and the
@@ -1020,10 +1023,15 @@ as a commit, a publication or a next step; a workflow click submits its form by
 structure or such a caption; and a rapid second text click is a duplicate only
 for a caption read as a commit or publication, asked then if the first click
 left it unread. Words in a CSS selector are not read. At a successful done, a
-visible form made only of search fields, sent with GET and holding no other
-task evidence, counts as a task form still on screen unless every one of its
-submit captions is read as `view` (showing, filtering or searching); an empty,
-unread or unclear caption keeps it counted.
+visible form made only of search fields, or of one empty, unnamed text field,
+sent with GET and holding no other task evidence, counts as a task form still
+on screen unless every one of its submit captions is read as `view` (showing,
+filtering or searching); an empty, unread or unclear caption keeps it counted.
+When no submit control has a caption (icon-only buttons), the field's own
+label or placeholder is read instead with its own question (`field_purpose`:
+it searches or filters the site, takes content to send, post or save, or is
+unclear), since `control_effect` calls a control that only opens an editor
+`view`; only `search` releases the form.
 
 On a page whose sends the recipient guard checks (see the messaging
 adapters below), the page's own texts are read the same way, by what they mean
@@ -1192,7 +1200,7 @@ pending → running → completed
 - `queued` — alarm fired but the tab was busy; retries every 30 s (up to 120 deferrals before failing).
 - `running` — agent is actively executing the job.
 - `needs_user_input` — agent issued a `clarify` mid-run; waiting for the user's reply.
-- `paused` — user or settings paused the job; no alarm is set.
+- `paused` — the user or settings paused the job, or the scheduler paused a recurring task that needs the user (see Schedule); no alarm is set.
 - `cancelled` / `failed` / `completed` — terminal states.
 
 **Targets**
@@ -1203,7 +1211,9 @@ pending → running → completed
 **Schedule**
 
 - `once` — fires at a single `run_at` or `after_seconds` time. `after_seconds: 0` starts the task immediately.
-- `recurring` — fires repeatedly at `interval_minutes` (1 min – 1 year); after each run completes, `nextRunAt` is advanced and the next alarm is set.
+- `recurring` — fires repeatedly at `interval_minutes` (1 min – 1 year); after each run completes, `nextRunAt` is advanced and the next alarm is set. A fixed interval is not a calendar schedule: 30 days drifts against calendar months, and the creation result says so. A run that ends with the planner asking the user a question, or a third failed run with no successful or partial run in between, pauses the task instead (runs without an outcome leave the count unchanged). Resuming a task the scheduler paused restarts the interval from that moment; a task the user or Settings paused keeps its next run, or runs a minute after resuming if that time has passed. Either way the failure count starts over.
+
+A scheduled task run, recurring or one-shot, is never required to call `schedule_task`: its stored prompt keeps the user's original timing ("in 30 minutes, remind me…"), and requiring a schedule made each run schedule the task again. A recurring run is told not to create another schedule for its task; a one-shot run is told not to schedule the task again and to create a different schedule only when the task explicitly asks to set one up (for example "on Monday at 9, start an hourly check"). A scheduled resume of an interactive task keeps the planner's scheduling requirement.
 
 **Conditional watches**
 

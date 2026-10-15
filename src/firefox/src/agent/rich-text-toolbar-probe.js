@@ -272,7 +272,12 @@ export class RichTextToolbarProbe {
             el.removeAttribute(markerAttribute);
             return deadlineFailure();
           }
-          return { ok: true, prepared: true, url: location.href, dispatched: false };
+          // The text a clearing write would replace, for the preview check.
+          const currentValue = !${!!clear} ? undefined
+            : el.isContentEditable ? String(typeof el.innerText === 'string' ? el.innerText : el.textContent || '')
+              : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? String(el.value ?? '') : undefined;
+          return { ok: true, prepared: true, url: location.href, dispatched: false,
+            ...(currentValue !== undefined ? { currentValue } : {}) };
         } catch (error) {
           return { ok: false, url: location.href, dispatched: false, error: error.message };
         }
@@ -297,6 +302,20 @@ export class RichTextToolbarProbe {
       }
       markerPrepared = true;
       throwIfAborted();
+      // A cleared field must not be refilled with only a truncated preview
+      // of its own value. The frame has no content script on this path, so
+      // the check every other clearing write runs is asked of the top
+      // frame's content script, which owns it, with the value just read. No
+      // answer leaves typing as it was.
+      if (clear && typeof prepared.currentValue === 'string' && prepared.currentValue) {
+        const previewCheck = await Promise.resolve().then(() => browser.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'check_truncated_replacement',
+          params: { text: String(text ?? ''), currentValue: prepared.currentValue },
+        }, { frameId: 0 })).catch(() => null);
+        throwIfAborted();
+        if (previewCheck?.errorCode === 'truncated_value_replacement') return { ...previewCheck, frameId: selected.frameId };
+      }
       if (typeof beforeDispatch === 'function') await beforeDispatch(selected.frameId);
       throwIfAborted();
       const mutationCode = `

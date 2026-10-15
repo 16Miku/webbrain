@@ -78,7 +78,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 500, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw new Error(`llama.cpp error ${res.status}: ${err}`);
+      throw this._httpStatusError(`llama.cpp error ${res.status}: ${err}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     let data;
@@ -118,7 +118,7 @@ export class LlamaCppProvider extends BaseLLMProvider {
 
     if (!res.ok) {
       const err = await this._readErrorResponse(res, 1200, options);
-      throw new Error(`llama.cpp stream error ${res.status}: ${err}`);
+      throw this._httpStatusError(`llama.cpp stream error ${res.status}: ${err}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     if (!res.body?.getReader) {
@@ -187,7 +187,10 @@ export class LlamaCppProvider extends BaseLLMProvider {
               || json.error?.code
               || json.message
               || 'The provider reported a streaming error.';
-            throw this._askStreamTerminalError(`llama.cpp stream error: ${detail}`);
+            // A server or proxy in front of llama.cpp can rate-limit after the
+            // 200; keep the error's code and 429 class so it is waited out.
+            throw this._withProviderError(this._askStreamTerminalError(`llama.cpp stream error: ${detail}`),
+              typeof json.error === 'object' ? json.error : { message: String(json.error) });
           }
           if (json.usage) finalUsage = json.usage;
           const choice = json.choices?.[0];
