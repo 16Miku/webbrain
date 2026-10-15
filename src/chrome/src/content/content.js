@@ -10679,20 +10679,20 @@
   // favicon, so the favicon itself alternates between the site's own icons
   // and an alert icon — swapping the site's <link> hrefs outright,
   // because an appended icon link loses to favicons the page injects later.
-  // Blinking stops when the tab becomes visible, after
-  // ATTENTION_FLASH_TIMEOUT_MS, or on an explicit stop message.
+  // Completion blinking stops when the tab becomes visible. Plans and
+  // clarifications remain marked until resolved. Every flash also stops
+  // after ATTENTION_FLASH_TIMEOUT_MS or on an explicit stop message.
   //
   // Declared at the end of this closure (function declarations hoist, so the
   // message handlers above can call them) — code above this point is sliced
   // and evaluated standalone by tests.
-  // Blink persists for minutes rather than seconds: the user is by
-  // definition looking elsewhere while it runs, and it stops the moment the
-  // tab becomes visible anyway. A short window is how completions get
-  // missed entirely.
+  // Blink persists for minutes rather than seconds so background alerts are
+  // not missed. Completion clears when shown; pending input clears when its
+  // owner resolves it, with this timeout as a final cleanup fallback.
   const ATTENTION_FLASH_INTERVAL_MS = 700;
   const ATTENTION_FLASH_TIMEOUT_MS = 300000;
   const ATTENTION_FLASH_MARKER = '\u{1F514} ';
-  const ATTENTION_FLASH_PLAN_MARKER = '\u26A0\uFE0F ';
+  const ATTENTION_FLASH_INPUT_MARKER = '\u26A0\uFE0F ';
   let attentionFlashMarker = ATTENTION_FLASH_MARKER;
   let attentionFlashId = null;
   let attentionFlashTimer = null;
@@ -10841,15 +10841,19 @@
     if (typeof document === 'undefined') return false;
     stopAttentionFlash();
     // Restore the previous flash with its own marker before changing reason.
-    attentionFlashMarker = params?.reason === 'plan_review'
-      ? ATTENTION_FLASH_PLAN_MARKER : ATTENTION_FLASH_MARKER;
-    // Already looking at the page — nothing to draw attention to.
-    if (document.visibilityState === 'visible') return false;
+    const pendingInput = params?.reason === 'plan_review' || params?.reason === 'clarify';
+    attentionFlashMarker = pendingInput ? ATTENTION_FLASH_INPUT_MARKER : ATTENTION_FLASH_MARKER;
+    // Input requests must identify their tab even while visible, including
+    // the selected tab in another window. Their owner clears the exact alert
+    // when answered; merely looking at the page does not resolve the request.
+    if (!pendingInput && document.visibilityState === 'visible') return false;
     attentionFlashId = params?.attentionId == null ? null : String(params.attentionId);
-    attentionFlashOnVisible = () => {
-      if (document.visibilityState === 'visible') stopAttentionFlash();
-    };
-    document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    if (!pendingInput) {
+      attentionFlashOnVisible = () => {
+        if (document.visibilityState === 'visible') stopAttentionFlash();
+      };
+      document.addEventListener('visibilitychange', attentionFlashOnVisible);
+    }
     attentionFlashAlertUrl = attentionFlashBuildAlertIcon();
     if (attentionFlashAlertUrl) attentionFlashCaptureIcons();
     // Chrome throttles hidden-tab timers hard (once per minute after ~5

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
 
-function fixture(build, { title = 'Project dashboard', icons = ['https://site.test/favicon.png'] } = {}) {
+function fixture(build, { title = 'Project dashboard', icons = ['https://site.test/favicon.png'], visibilityState = 'hidden' } = {}) {
   const source = readFileSync(new URL(`../src/${build}/src/content/content.js`, import.meta.url), 'utf8');
   const start = source.indexOf('  // ─── Tab attention flash');
   const end = source.lastIndexOf('\n})();');
@@ -28,7 +28,7 @@ function fixture(build, { title = 'Project dashboard', icons = ['https://site.te
   };
   links.push(...icons.map(link));
   const document = {
-    title, visibilityState: 'hidden',
+    title, visibilityState,
     head: { appendChild: element => links.push(element) },
     querySelectorAll: () => links.filter(element => element.isConnected),
     addEventListener: (name, listener) => listeners.set(name, listener),
@@ -100,7 +100,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(page.links[0].getAttribute('href'), `data:image/png,${encodeURIComponent('⚠️')}`);
     assert.equal(page.intervals.size, 1);
     assert.equal(page.timeouts.size, 1);
-    assert.equal(page.listeners.size, 1);
+    assert.equal(page.listeners.size, 0);
     page.stopAttentionFlash({ attentionId: 'plan-2' });
     assert.equal(page.document.title, 'Project dashboard');
     assert.equal(page.links[0].getAttribute('href'), 'https://site.test/favicon.png');
@@ -132,18 +132,55 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(page.links[0].getAttribute('href'), 'https://site.test/new-icon.png');
   });
 
-  test(`${build}: showing a plan tab clears its temporary favicon and stops the flash`, () => {
+  test(`${build}: showing a completed tab clears its temporary favicon and stops the flash`, () => {
     const page = fixture(build, { icons: [] });
-    page.startAttentionFlash({ reason: 'plan_review' });
+    page.startAttentionFlash({ reason: 'completion' });
     assert.equal(page.links.length, 1);
     page.show();
     assert.equal(page.document.title, 'Project dashboard');
     assert.equal(page.links.length, 0);
     assert.equal(page.intervals.size + page.timeouts.size + page.listeners.size, 0);
-    assert.equal(page.startAttentionFlash({ reason: 'plan_review' }), false);
+    assert.equal(page.startAttentionFlash({ reason: 'completion' }), false);
     assert.equal(page.document.title, 'Project dashboard');
     assert.equal(page.links.length, 0);
   });
+
+  for (const reason of ['plan_review', 'clarify']) {
+    test(`${build}: visible ${reason} requests identify their tab until their exact alert is resolved`, () => {
+      const page = fixture(build, { visibilityState: 'visible' });
+      const attentionId = `${reason}-1`;
+      assert.equal(page.startAttentionFlash({ reason, attentionId }), true);
+      assert.equal(page.document.title, '⚠️ Project dashboard');
+      assert.deepEqual(page.paintedMarkers, ['⚠️']);
+      assert.equal(page.links[0].getAttribute('href'), `data:image/png,${encodeURIComponent('⚠️')}`);
+      page.show();
+      page.stopAttentionFlash({ attentionId: 'old-alert' });
+      assert.equal(page.document.title, '⚠️ Project dashboard');
+      assert.equal(page.intervals.size, 1);
+      assert.equal(page.timeouts.size, 1);
+      assert.equal(page.listeners.size, 0);
+      page.tick();
+      page.tick();
+      assert.equal(page.document.title, '⚠️ Project dashboard');
+      page.stopAttentionFlash({ attentionId });
+      assert.equal(page.document.title, 'Project dashboard');
+      assert.equal(page.links[0].getAttribute('href'), 'https://site.test/favicon.png');
+      assert.equal(page.intervals.size + page.timeouts.size + page.listeners.size, 0);
+    });
+
+    test(`${build}: a hidden ${reason} request keeps blinking when its tab is shown and still expires`, () => {
+      const page = fixture(build, { icons: [] });
+      assert.equal(page.startAttentionFlash({ reason, attentionId: `${reason}-1` }), true);
+      page.show();
+      assert.equal(page.document.title, '⚠️ Project dashboard');
+      assert.equal(page.links.length, 1);
+      assert.equal(page.intervals.size, 1);
+      for (const expire of [...page.timeouts.values()]) expire();
+      assert.equal(page.document.title, 'Project dashboard');
+      assert.equal(page.links.length, 0);
+      assert.equal(page.intervals.size + page.timeouts.size + page.listeners.size, 0);
+    });
+  }
 
   test(`${build}: attention message forwards the plan reason to the flash`, () => {
     const { source } = fixture(build);
