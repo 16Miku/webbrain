@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { build as bundle } from 'esbuild';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // Installed MV3 regression with a separately labelled scripted provider. The
 // real background, Agent, monitor, side-panel Retry, native input and completion
@@ -119,6 +120,11 @@ const server = http.createServer(async (request, response) => {
     } else if (system.startsWith('Extract stable user preferences for WebBrain memory.')) {
       auxiliaryRequests.push(input);
       completion = { role: 'assistant', content: '{"memories":[]}' };
+    } else if (fixturePageTextReply(input.messages)) {
+      // A status the page showed is read with a question that carries only
+      // that text, not the task; read it the way a model would.
+      auxiliaryRequests.push(input);
+      completion = { role: 'assistant', content: fixturePageTextReply(input.messages) };
     } else {
       if (!current || !JSON.stringify(input.messages).includes(current.marker)) {
         auxiliaryRequests.push(input);
@@ -206,6 +212,14 @@ try {
     return route.continue();
   });
   worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
+  // The worker can be reported before its extension APIs and module have
+  // finished loading; wait for both before wrapping them.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const ready = await worker.evaluate(() => !!(globalThis.chrome?.tabs && globalThis.chrome?.debugger && globalThis.relaxedFixtureAgent))
+      .catch(() => false);
+    if (ready) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     const send = chrome.tabs.sendMessage.bind(chrome.tabs), command = chrome.debugger.sendCommand.bind(chrome.debugger), fetchOriginal = fetch.bind(globalThis);
     globalThis.relaxedFixtureProbe = { transports: [], commands: [], monitorStateRequests: [], blocked: [] };

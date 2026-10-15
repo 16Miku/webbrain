@@ -15,11 +15,16 @@ export function createContextMenuPromptHandler({
   sendMessage,
   sendToBackground,
   getIsDocumentVisible = () => true,
+  onHeldPromptsChange = () => {},
 }) {
   const acceptedContextMenuPromptIds = new Set();
   const trackedContextMenuPromptIds = new Set();
   const deferredContextMenuPrompts = [];
   const queuedContextMenuPrompts = [];
+  // Prompts paused by a user Stop. They stay tracked and listed until the user
+  // runs or deletes them; nothing starts them automatically.
+  const heldContextMenuPrompts = [];
+  const heldPromptActionIds = new Set();
   const claimRetryTimers = new Map();
   const claimantId = `sidepanel-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   let runningContextMenuPromptId = null;
@@ -38,6 +43,7 @@ export function createContextMenuPromptHandler({
     // else would be an unattributed id riding into the run options.
     const selectionAction = sourceGrounding ? normalizeSelectionAction(payload?.selectionAction) : '';
     const restoreSelectionScope = !sourceGrounding && payload?.restoreSelectionScope === true;
+    const createdAt = Number(payload?.createdAt);
     return {
       id,
       tabId,
@@ -45,12 +51,56 @@ export function createContextMenuPromptHandler({
       ...(sourceGrounding ? { sourceGrounding } : {}),
       ...(selectionAction ? { selectionAction } : {}),
       ...(restoreSelectionScope ? { restoreSelectionScope: true } : {}),
+      ...(Number.isFinite(createdAt) ? { createdAt } : {}),
+      ...(payload?.held === true ? { held: true } : {}),
     };
   }
 
   function contextMenuPromptMatchesCurrentTab(payload) {
     const currentTabId = getCurrentTabId();
     return payload?.tabId == null || currentTabId == null || Number(payload.tabId) === Number(currentTabId);
+  }
+
+  function promptBelongsToTab(prompt, numericTabId) {
+    return prompt?.tabId == null || Number(prompt.tabId) === numericTabId;
+  }
+
+  function notifyHeldPromptsChange(tabId) {
+    try { onHeldPromptsChange(tabId); } catch { /* the list is redrawn on the next change */ }
+  }
+
+  // List a prompt as paused by Stop. It stays tracked, so repeated deliveries
+  // of the same prompt cannot start it.
+  function addHeldPrompt(payload) {
+    clearClaimRetry(payload.id);
+    trackedContextMenuPromptIds.add(payload.id);
+    if (!heldContextMenuPrompts.some(prompt => prompt.id === payload.id)) {
+      heldContextMenuPrompts.push({ ...payload, held: true });
+    }
+    notifyHeldPromptsChange(payload.tabId);
+  }
+
+  // The prompt is gone for good (deleted, cleared, replaced or already run);
+  // late deliveries of its ID are ignored.
+  function forgetHeldPrompt(promptId) {
+    const index = heldContextMenuPrompts.findIndex(prompt => prompt.id === promptId);
+    const [prompt] = index === -1 ? [] : heldContextMenuPrompts.splice(index, 1);
+    trackedContextMenuPromptIds.delete(promptId);
+    acceptedContextMenuPromptIds.add(promptId);
+    clearClaimRetry(promptId);
+    if (prompt) notifyHeldPromptsChange(prompt.tabId);
+  }
+
+  // The background keeps one pending prompt per tab, so a newer prompt for
+  // the tab has replaced any older held one.
+  function forgetReplacedHeldPrompts(payload) {
+    const createdAt = Number(payload?.createdAt);
+    if (payload?.tabId == null || !Number.isFinite(createdAt)) return;
+    for (const prompt of heldContextMenuPrompts.slice()) {
+      if (prompt.id !== payload.id && prompt.tabId != null
+          && Number(prompt.tabId) === Number(payload.tabId)
+          && Number(prompt.createdAt) < createdAt) forgetHeldPrompt(prompt.id);
+    }
   }
 
   function clearClaimRetry(promptId) {
@@ -106,6 +156,12 @@ export function createContextMenuPromptHandler({
     if (!getIsDocumentVisible()) return;
     if (acceptedContextMenuPromptIds.has(payload.id) || trackedContextMenuPromptIds.has(payload.id)) return;
     trackedContextMenuPromptIds.add(payload.id);
+    forgetReplacedHeldPrompts(payload);
+    // Held by an earlier Stop (reopened panel, another panel instance).
+    if (payload.held) {
+      addHeldPrompt(payload);
+      return;
+    }
     routeTrackedContextMenuPrompt(payload);
   }
 
@@ -137,6 +193,87 @@ export function createContextMenuPromptHandler({
     );
     return queuedContextMenuPrompts.some(matchesTab)
       || deferredContextMenuPrompts.some(matchesTab);
+  }
+
+  // A user Stop holds every prompt this panel queued for the tab, here and in
+  // durable storage, so nothing starts on its own afterwards. Prompts that
+  // arrive later run as usual.
+  function holdQueuedForTab(tabId) {
+    const numericTabId = Number(tabId);
+    if (!Number.isFinite(numericTabId)) return;
+    const prompts = [];
+    for (const list of [queuedContextMenuPrompts, deferredContextMenuPrompts]) {
+      prompts.push(...list.filter(prompt => promptBelongsToTab(prompt, numericTabId)));
+      list.splice(0, list.length, ...list.filter(prompt => !promptBelongsToTab(prompt, numericTabId)));
+    }
+    for (const prompt of prompts) {
+      addHeldPrompt(prompt);
+      Promise.resolve()
+        .then(() => sendToBackground('hold_context_menu_prompt', {
+          tabId: prompt.tabId ?? numericTabId,
+          promptId: prompt.id,
+        }))
+        .then((result) => {
+          // Already run, cleared or replaced by a newer prompt.
+          if (result?.held === false && result.reason === 'missing') forgetHeldPrompt(prompt.id);
+        })
+        .catch(() => { /* the background hold taken at Stop still applies */ });
+    }
+  }
+
+  function getHeldForTab(tabId) {
+    const numericTabId = Number(tabId);
+    if (!Number.isFinite(numericTabId)) return [];
+    return heldContextMenuPrompts
+      .filter(prompt => promptBelongsToTab(prompt, numericTabId))
+      .map(prompt => ({ id: prompt.id, tabId: prompt.tabId, text: prompt.text }));
+  }
+
+  // Explicit Run: release the durable hold, then claim and run the prompt
+  // through the normal path, keeping its grounding and selection action. A
+  // failed request leaves it paused.
+  async function runHeldPrompt(promptId) {
+    const heldPrompt = heldContextMenuPrompts.find(prompt => prompt.id === String(promptId));
+    if (!heldPrompt || heldPromptActionIds.has(heldPrompt.id)) return false;
+    heldPromptActionIds.add(heldPrompt.id);
+    try {
+      const result = await sendToBackground('resume_context_menu_prompt', {
+        tabId: heldPrompt.tabId ?? getCurrentTabId(),
+        promptId: heldPrompt.id,
+      });
+      // Navigation or a conversation clear may have dropped it meanwhile.
+      const index = heldContextMenuPrompts.indexOf(heldPrompt);
+      if (index === -1) return false;
+      if (!result?.resumed) {
+        forgetHeldPrompt(heldPrompt.id);
+        return false;
+      }
+      heldContextMenuPrompts.splice(index, 1);
+      notifyHeldPromptsChange(heldPrompt.tabId);
+      const payload = { ...heldPrompt };
+      delete payload.held;
+      routeTrackedContextMenuPrompt(payload);
+      return true;
+    } finally {
+      heldPromptActionIds.delete(heldPrompt.id);
+    }
+  }
+
+  // Explicit Delete: clear the prompt durably before dropping it from the list.
+  async function deleteHeldPrompt(promptId) {
+    const heldPrompt = heldContextMenuPrompts.find(prompt => prompt.id === String(promptId));
+    if (!heldPrompt || heldPromptActionIds.has(heldPrompt.id)) return false;
+    heldPromptActionIds.add(heldPrompt.id);
+    try {
+      await sendToBackground('clear_context_menu_prompt', {
+        tabId: heldPrompt.tabId ?? getCurrentTabId(),
+        promptId: heldPrompt.id,
+      });
+      forgetHeldPrompt(heldPrompt.id);
+      return true;
+    } finally {
+      heldPromptActionIds.delete(heldPrompt.id);
+    }
   }
 
   async function runContextMenuPrompt(payload) {
@@ -181,10 +318,15 @@ export function createContextMenuPromptHandler({
     }
     if (!claimResult?.claimed || !getIsDocumentVisible()) {
       runningContextMenuPromptId = null;
-      trackedContextMenuPromptIds.delete(payload.id);
-      // A different panel instance owns an active lease. A repeated delivery
-      // may re-check the lease, but it cannot submit until the lease expires.
-      scheduleClaimRetry(payload, claimResult?.leaseExpiresAt, claimResult?.retryAfterMs);
+      if (claimResult?.reason === 'held' && getIsDocumentVisible()) {
+        // A Stop paused it: list it for an explicit run instead of retrying.
+        addHeldPrompt(payload);
+      } else {
+        trackedContextMenuPromptIds.delete(payload.id);
+        // A different panel instance owns an active lease. A repeated delivery
+        // may re-check the lease, but it cannot submit until the lease expires.
+        scheduleClaimRetry(payload, claimResult?.leaseExpiresAt, claimResult?.retryAfterMs);
+      }
       drainQueuedContextMenuPrompts();
       return;
     }
@@ -239,12 +381,17 @@ export function createContextMenuPromptHandler({
       }
     }
     runningContextMenuPromptId = null;
-    trackedContextMenuPromptIds.delete(payload.id);
-    if (accepted) {
-      acceptedContextMenuPromptIds.add(payload.id);
-      clearClaimRetry(payload.id);
-    } else if (rejectedClaim) {
-      scheduleClaimRetry(payload, rejectedClaim.leaseExpiresAt, rejectedClaim.retryAfterMs);
+    if (!accepted && rejectedClaim?.reason === 'held' && getIsDocumentVisible()) {
+      // A Stop landed between the claim and the run start.
+      addHeldPrompt(payload);
+    } else {
+      trackedContextMenuPromptIds.delete(payload.id);
+      if (accepted) {
+        acceptedContextMenuPromptIds.add(payload.id);
+        clearClaimRetry(payload.id);
+      } else if (rejectedClaim) {
+        scheduleClaimRetry(payload, rejectedClaim.leaseExpiresAt, rejectedClaim.retryAfterMs);
+      }
     }
     drainQueuedContextMenuPrompts();
   }
@@ -286,6 +433,13 @@ export function createContextMenuPromptHandler({
       ...queuedContextMenuPrompts.filter(keep));
     deferredContextMenuPrompts.splice(0, deferredContextMenuPrompts.length,
       ...deferredContextMenuPrompts.filter(keep));
+    const heldCount = heldContextMenuPrompts.length;
+    for (const p of heldContextMenuPrompts) {
+      if (!keep(p)) trackedContextMenuPromptIds.delete(p.id);
+    }
+    heldContextMenuPrompts.splice(0, heldContextMenuPrompts.length,
+      ...heldContextMenuPrompts.filter(keep));
+    if (heldContextMenuPrompts.length !== heldCount) notifyHeldPromptsChange(numericTabId);
     for (const [promptId, retry] of claimRetryTimers) {
       if (Number(retry?.tabId) === numericTabId
           && (!normalizedPromptId || promptId === normalizedPromptId)) clearClaimRetry(promptId);
@@ -298,5 +452,9 @@ export function createContextMenuPromptHandler({
     hasQueuedForTab,
     consumePendingContextMenuPrompt,
     clearQueuedForTab,
+    holdQueuedForTab,
+    getHeldForTab,
+    runHeldPrompt,
+    deleteHeldPrompt,
   };
 }

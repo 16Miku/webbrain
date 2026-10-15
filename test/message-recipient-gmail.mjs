@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium, firefox } from 'playwright';
+import { guardProbeWithReadings, stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 const address = 'owner@example.test';
 const html = `<!doctype html><style>
@@ -26,6 +27,11 @@ async function call(page, action, params = {}) {
   return page.evaluate(({ action, params }) => new Promise(resolve => {
     window.__wb_handler({ target: 'content', action, params }, {}, resolve);
   }), { action, params });
+}
+
+// Direct probes use the same model readings as the agent's recipient checks.
+function probeGuard(page, params) {
+  return guardProbeWithReadings(next => call(page, 'probe_message_recipient_guard', next), params);
 }
 
 function intentFixture({ submission = true, messaging = null, readScope = 'visible_page' } = {}) {
@@ -89,6 +95,7 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       const { Agent } = await import('../src/' + kind + '/src/agent/agent.js');
       const { BotMemorySession, observeBotMemoryPage } = await import('../src/' + kind + '/src/agent/bot-memory.js');
       const agent = new Agent({ getActive: () => ({ supportsVision: false }) });
+      stubPageTextReadings(agent);
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
       const api = { scripting: { executeScript: async ({ func, args }) => [{ frameId: 0, result: await page.evaluate(func, args[0]) }] } };
       const operations = [];
@@ -144,11 +151,11 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         { key: 'Ctrl+Enter' }, { key: 'SEND' }, { key: 'Enter', repeat: 2 }, { key: 'Enter', modifiers: ['Control'] }]) {
         await page.locator('#to').focus();
         if (keyArgs.key === 'Enter') assert.equal((await agent._messageRecipientGuardBlock(1, 'press_keys', keyArgs, page.url()))?.noDispatch, true, JSON.stringify(keyArgs));
-        const direct = await call(page, 'probe_message_recipient_guard', { tool: 'press_keys', args: keyArgs, adapterName: 'gmail', supportsRecipientSets: true });
+        const direct = await probeGuard(page, { tool: 'press_keys', args: keyArgs, adapterName: 'gmail', supportsRecipientSets: true });
         assert.notEqual(direct.messageSend, false, 'Content alone cannot call a Send shortcut non-messaging');
         assert.notEqual((await session.prepare(1, 'press_keys', keyArgs)).draftOnly, true);
         await page.locator('#search').focus();
-        assert.notEqual((await call(page, 'probe_message_recipient_guard', { tool: 'press_keys', args: keyArgs, adapterName: 'gmail' })).messageSend, false);
+        assert.notEqual((await probeGuard(page, { tool: 'press_keys', args: keyArgs, adapterName: 'gmail' })).messageSend, false);
       }
       operations.length = 0;
       // Recovery/ASK and model-produced continuation prose cannot authorize a
@@ -167,6 +174,7 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
           response: intentFixture({ messaging: { target_kind: 'named', recipients: [{ identity: address, role: 'to' }] } }) },
       ]) {
         const denied = new Agent({ getActive: () => ({ supportsVision: false }) });
+        stubPageTextReadings(denied);
         denied._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
         const task = scenario.task || 'Read this draft. Do not send anything.';
         const state = prepareCloudAgent(denied, task, scenario.response);
@@ -180,6 +188,7 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         assert.equal((await denied._messageRecipientGuardBlock(1, 'click', { selector: '#send' }, page.url(), {})).noDispatch, true);
       }
       const reply = new Agent({ getActive: () => ({ supportsVision: false }) });
+      stubPageTextReadings(reply);
       reply._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
       const replyTask = 'Send a reply in this currently open conversation.';
       const replyState = prepareCloudAgent(reply, replyTask, intentFixture({ messaging: { target_kind: 'active_conversation', recipients: [] } }));
@@ -198,7 +207,7 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       assert.deepEqual(cloud.calls, ['planner_intent']);
       agent._startPlanExecutionGuard(1, 'act', gate, { cloudRun: true });
       const expected = [{ identity: address, role: 'to' }];
-      const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args: { selector: '#send' }, adapterName: 'gmail', expectedRecipients: expected, supportsRecipientSets: true, bindDispatch: true });
+      const probe = await probeGuard(page, { tool: 'click', args: { selector: '#send' }, adapterName: 'gmail', expectedRecipients: expected, supportsRecipientSets: true, bindDispatch: true });
       assert.equal(probe.messageSend, true, JSON.stringify(probe));
       assert.equal(probe.messageBody, 'Hello, here is the PR summary.', 'The Gemini editor must never be selected as the email body');
       assert.deepEqual(probe.strongRecipientCandidates, expected, 'Unnamed To recipients input is authoritative before chips exist');
@@ -241,13 +250,14 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       });
       const { Agent } = await import('../src/' + kind + '/src/agent/agent.js');
       const agent = new Agent({ getActive: () => ({ supportsVision: false }) });
+      stubPageTextReadings(agent);
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
       agent._planExecutionGuards.set(1, { messaging: { target_kind: 'named', recipients: [{ identity: address, role: 'to' }] } });
       assert.equal(await agent._messageRecipientGuardBlock(1, 'click', { selector: '#account' }, page.url()), null);
       assert.equal((await call(page, 'click', { selector: '#account' })).success, true);
       assert.equal(await page.evaluate(() => window.fixtureAccountOpens), 1);
       for (const text of ['Manage your Google Account', 'Add another account', 'Send']) {
-        const probe = await call(page, 'probe_message_recipient_guard', {
+        const probe = await probeGuard(page, {
           tool: 'click', args: { text }, adapterName: 'gmail', supportsRecipientSets: true,
         });
         assert.equal(probe.reasonCode, 'message_target_unresolved');
@@ -357,12 +367,13 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       });
       const { Agent } = await import(`../src/${kind}/src/agent/agent.js`);
       const agent = new Agent({ getActive: () => ({ supportsVision: false }) });
+      stubPageTextReadings(agent);
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
       const expected = [{ identity: address, role: 'to' }];
       const authorize = recipients => agent._planExecutionGuards.set(1, {
         messaging: { target_kind: 'named', recipients },
       });
-      const observe = (recipients = expected) => call(page, 'probe_message_recipient_guard', {
+      const observe = (recipients = expected) => probeGuard(page, {
         tool: 'click', args: { selector: '#send' }, adapterName: 'gmail',
         supportsRecipientSets: true, expectedRecipients: recipients, bindDispatch: true,
       });

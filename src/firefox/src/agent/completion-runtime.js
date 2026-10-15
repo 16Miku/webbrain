@@ -2,7 +2,7 @@ import { semanticCommitDocumentMatches } from './semantic-commit-navigation.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
 import { createSystemOneJudge } from './systemone-judge.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText as boundedText } from './systemone-evidence.js';
-import { COMPLETION_INSTRUCTIONS, completionQuestions, decisionCompletionVerdict, llmCompletionVerdict, verifyCompletion, withCompletionTimeout, completionStopError } from './completion-verifier.js';
+import { COMPLETION_INSTRUCTIONS, LATER_OUTCOME_FIELD, SUMMARY_KIND_FIELD, completionQuestions, decisionCompletionVerdict, llmCompletionVerdict, verifyCompletion, withCompletionTimeout, completionStopError } from './completion-verifier.js';
 import { calculationResultInText } from './calculator.js';
 import { isPageIndependentCalculationCompletion, literalCalculationSummaryFormatMatches } from './page-feedback-policy.js';
 
@@ -176,7 +176,8 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       // Re-read the bounded AX evidence actually sent to the judge. Full-body
       // clocks/feeds outside that evidence do not establish staleness.
       const fresh = await capture('ax', true);
-      return fresh?.key === (evidence.key || evidence.evidenceKey) && await currentIdentity(evidence);
+      return (!evidence.resultScope || fresh?.resultScope === evidence.resultScope)
+        && fresh?.key === (evidence.key || evidence.evidenceKey) && await currentIdentity(evidence);
     }
     // Text and input stamps cannot detect canvas, image or CSS changes. Take a
     // new redacted, budgeted capture after the request; never reuse that cache.
@@ -195,7 +196,24 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   const calls = currentExecutionToolCalls(agent, tabId);
   const toolNames = new Map(calls.map(call => [call.id, call.function?.name]));
   const reads = messages.filter(m => m.role === 'tool' && /^(read_page|get_accessibility_tree|verify_form|iframe_read)$/.test(toolNames.get(m.tool_call_id) || ''));
-  const selectedReads = [...new Set([...reads.filter(m => /rules|guidelines|moderation/i.test(String(m.content))).slice(-2), ...reads.slice(-2)])];
+  // The latest read of each of the four most recently read pages, so a page
+  // the task depended on earlier (its rules, a source) is not crowded out by
+  // repeated reads of the result page. Pages are told apart by the address
+  // their read reports, never by what their text says.
+  const readPage = message => {
+    try {
+      const result = JSON.parse(String(agent._unwrapUntrusted?.(message.content) ?? message.content));
+      const address = typeof result?.url === 'string' ? result.url : '';
+      return address ? address.replace(/#.*$/, '') : '';
+    } catch { return ''; }
+  };
+  const latestReadByPage = new Map();
+  for (const message of reads) {
+    const key = readPage(message) || `read:${message.tool_call_id || latestReadByPage.size}`;
+    latestReadByPage.delete(key);
+    latestReadByPage.set(key, message);
+  }
+  const selectedReads = [...latestReadByPage.values()].slice(-4);
   const history = selectedReads.map(m => ({ tool: toolNames.get(m.tool_call_id) || m.name, evidence: wrapSystemOneData(boundedText(redactSystemOneText(String(m.content)), 450)) }));
   // A failed HTTP read may prove absence after a deletion. Supply only the
   // actual response status and URL, never response prose or a success waiver.
@@ -210,6 +228,11 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // Entered values can be secrets without recognizable labels. Action names
   // supply history without sending arbitrary tool arguments to another judge.
   const recordedActions = calls.filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name }));
+  const resultSnapshot = async () => {
+    try { return await agent._completionResultSnapshot?.(tabId); } catch { return null; }
+  };
+  const initialResult = await resultSnapshot();
+  const preferAx = !!initialResult?.scopeRef && !!initialResult?.text;
   const captures = new Map();
   const capture = async (modality, refresh = false) => {
     const before = await agent._completionDocumentStamp(tabId, true);
@@ -220,33 +243,50 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     // A new vision judgment needs both its evidence and its post-request
     // freshness capture. With only one slot left, use AX before paying a judge.
     if (modality === 'vision' && agent._canTakeAutoScreenshot?.(tabId, refresh || reusable ? 1 : 2) === false) return null;
-    let observation;
+    let observation, resultScope, resultView, resultFingerprint;
     if (modality === 'vision') {
-      let pixels = await agent._captureCompletionJudgeImage(tabId);
+      const result = await resultSnapshot();
+      if (result?.identity === before && result.scopeRef && result.rect && result.viewport) {
+        resultScope = result.scopeRef;
+        resultView = { rect: result.rect, viewport: result.viewport };
+        resultFingerprint = await evidenceKey([result.scopeRef, result.text, result.composerEmpty, result.truncated, result.controlFingerprint]);
+      }
+      if (refresh && cached?.resultScope && cached.resultScope !== resultScope) return null;
+      let pixels = await agent._captureCompletionJudgeImage(tabId, resultView || null);
       if (!pixels) return null;
       const budget = agent._budgetForCapture();
       pixels = (await agent._shrinkImageForBudget(pixels, 0, 0, { ...budget, maxTargetPx: Math.min(1408, budget.maxTargetPx), maxTargetTokens: Math.min(1400, budget.maxTargetTokens) })).dataUrl;
       observation = { type: 'image_url', image_url: { url: pixels } };
     } else {
-      const submit = agent._currentCompletionSubmitState(tabId);
-      // Certify a single same-document form against its entire subtree rather
-      // than unrelated page counters or feeds. Unknown/replaced scopes and
-      // navigation still require the complete page. Live statuses and dialogs
-      // outside the form are refreshed below and participate in freshness.
-      const sameForm = guard?.requiresSubmission === true && !guard?.siteWorkflow?.job
-        && Number(pageState.relevantFormCount) === 1 && submit?.dispatched === true
-        && submit.observedAfterSubmit === true && submit.documentChanged !== true
-        && /^ref_\d+$/.test(String(submit.formRef || ''))
-        && agent._normalizeUrl(submit.originatingUrl || '') === agent._normalizeUrl(pageUrl)
-        && agent._normalizeUrl(submit.currentUrl || '') === agent._normalizeUrl(pageUrl)
-        && (!submit.originatingDocument || !submit.currentDocument || submit.originatingDocument === submit.currentDocument);
-      let result = await agent.executeTool(tabId, 'get_accessibility_tree',
-        sameForm ? { ref_id: submit.formRef, filter: 'all', maxChars: 5500 } : { maxChars: 5500 });
-      if (sameForm && (result?.success === false || result?.error || !result?.pageContent)) {
-        result = await agent.executeTool(tabId, 'get_accessibility_tree', { maxChars: 5500 });
+      const result = await resultSnapshot();
+      if (result?.identity === before && result.scopeRef && typeof result.text === 'string' && result.text) {
+        resultScope = result.scopeRef;
+        resultFingerprint = await evidenceKey([result.scopeRef, result.text, result.composerEmpty, result.truncated, result.controlFingerprint]);
+        observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.text), 4500)),
+          truncated: result.truncated === true, composerEmpty: result.composerEmpty === true };
       }
-      if (result?.success === false || !result?.pageContent) return null;
-      observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.pageContent), 4500)) };
+      if (refresh && cached?.resultScope && cached.resultScope !== resultScope) return null;
+      if (!observation) {
+        const submit = agent._currentCompletionSubmitState(tabId);
+        // Certify a single same-document form against its entire subtree rather
+        // than unrelated page counters or feeds. Unknown/replaced scopes and
+        // navigation still require the complete page. Live statuses and dialogs
+        // outside the form are refreshed below and participate in freshness.
+        const sameForm = guard?.requiresSubmission === true && !guard?.siteWorkflow?.job
+          && Number(pageState.relevantFormCount) === 1 && submit?.dispatched === true
+          && submit.observedAfterSubmit === true && submit.documentChanged !== true
+          && /^ref_\d+$/.test(String(submit.formRef || ''))
+          && agent._normalizeUrl(submit.originatingUrl || '') === agent._normalizeUrl(pageUrl)
+          && agent._normalizeUrl(submit.currentUrl || '') === agent._normalizeUrl(pageUrl)
+          && (!submit.originatingDocument || !submit.currentDocument || submit.originatingDocument === submit.currentDocument);
+        let result = await agent.executeTool(tabId, 'get_accessibility_tree',
+          sameForm ? { ref_id: submit.formRef, filter: 'all', maxDepth: 15, maxChars: 5500 } : { filter: 'all', maxDepth: 15, maxChars: 5500 });
+        if (sameForm && (result?.success === false || result?.error || !result?.pageContent)) {
+          result = await agent.executeTool(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15, maxChars: 5500 });
+        }
+        if (result?.success === false || !result?.pageContent) return null;
+        observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.pageContent), 4500)) };
+      }
     }
     // A bounded or scoped AX tree can omit inline confirmation outside a form.
     // Include visible live-region and open-dialog text separately and refresh it with the
@@ -263,16 +303,21 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     const workflowBinding = binding ? { adapterName: binding.adapterName, revision: binding.revision,
       job: binding.job, verificationKind: binding.verificationKind, recipientBound: binding.recipientBound === true } : null;
     const info = {
-      task: boundedText(redactSystemOneText(String(task || '')), 2500),
+      task: boundedText(redactSystemOneText(String(task || '')), guard?.approvedPlanAnchor ? 1700 : 2500),
+      ...(guard?.approvedPlanAnchor ? { approved_plan: boundedText(redactSystemOneText(guard.approvedPlanAnchor), 800) } : {}),
       requirements: { requiresSubmission: guard?.requiresSubmission, requiresStateChange: guard?.requiresStateChange, workflow: boundedText(guard?.siteWorkflow?.job?.id, 120) },
       action: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({ submit: submit ? {
         dispatched: submit.dispatched, observedAfterSubmit: submit.observedAfterSubmit,
         formRef: submit.formRef,
-        formValidationFailed: submit.formValidationFailed, completionSignalObserved: submit.completionSignalObserved,
+        formValidationFailed: submit.formValidationFailed,
+        completionSignalObserved: typeof agent._completionObservedSuccess === 'function'
+          ? agent._completionObservedSuccess(submit) : submit.completionSignalObserved === true,
         documentChanged: submit.documentChanged, originatingUrl: submit.originatingUrl, resultingUrl: submit.currentUrl,
         workflowBinding,
       } : null, lastAction: run?.lastAction })), 1000)),
       recorded_reads: history, recorded_actions: recordedActions, document: boundedText(redactSystemOneText(pageUrl), 1000),
+      ...(resultScope ? { result_scope: resultScope } : {}),
+      ...(resultView ? { result_view: resultView } : {}),
       ...(calculationEvidence ? { recorded_calculations: [{ tool: 'calculate',
         expression: boundedText(calculationEvidence.actualExpression, 1000), result: boundedText(calculationEvidence.result, 1000),
         ...(calculationEvidence.fraction ? { fraction: boundedText(calculationEvidence.fraction, 1000) } : {}) }] } : {}),
@@ -287,7 +332,9 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       candidate_summary_not_proof: wrapSystemOneData(boundedText(redactSystemOneText(String(summary)), 600)),
     };
     const state = [info, observation];
-    const evidence = { identity, modality, state, ...(frame ? { submittedFrameStamp: frame.stamp } : {}), key: await evidenceKey(state) };
+    // Fingerprint the complete local read too: redaction/truncation must not
+    // let a changed result reuse an earlier judgment. Raw text stays local.
+    const evidence = { identity, modality, state, ...(resultScope ? { resultScope } : {}), ...(frame ? { submittedFrameStamp: frame.stamp } : {}), key: await evidenceKey([state, resultFingerprint || null]) };
     captures.set(modality, evidence);
     return evidence;
   };
@@ -322,23 +369,27 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // routing still uses the active LLM when that sidecar is off/unconfigured.
   const llm = typeof provider.chat === 'function' && (online || provider.config?.category === 'local') ? {
     name: 'llm', supportsVision: provider.supportsVision,
-    evaluate: async (evidence, modality) => {
+    evaluate: async (evidence, modality, { timeoutMs = 10000 } = {}) => {
       const [info, observation] = evidence.state;
       // Thinking providers count hidden reasoning inside their output limit.
       // Leave bounded room for it and the verdict without overriding the
       // provider's reasoning configuration or adding another model request.
       const result = await withCompletionTimeout(requestSignal => agent._chatWithCostAllowance(provider, [
-        { role: 'system', content: COMPLETION_INSTRUCTIONS + ' Return only JSON {"outcome":"succeeded|pending|failed|uncertain","reason":"brief evidence-based reason"}. Do not call tools or perform actions.' },
+        { role: 'system', content: `${COMPLETION_INSTRUCTIONS} Return only JSON {"outcome":"succeeded|pending|failed|uncertain","reason":"brief evidence-based reason","later":"asked|not_asked","summary":"result|meta_only|plan_only"}. ${LATER_OUTCOME_FIELD} ${SUMMARY_KIND_FIELD} Do not call tools or perform actions.` },
         { role: 'user', content: modality === 'vision' ? [{ type: 'text', text: JSON.stringify(info) }, observation] : JSON.stringify(evidence.state) },
-      ], { temperature: 0, maxTokens: 4096, signal: requestSignal }, context.costState || agent._newCostRunState(), { tabId, generationName: 'completion_verification' }), signal, 10000);
+      ], { temperature: 0, maxTokens: 4096, signal: requestSignal }, context.costState || agent._newCostRunState(), { tabId, generationName: 'completion_verification' }), signal,
+      Math.max(1, Math.min(10000, Number(timeoutMs) || 10000)));
       if (result.costAllowanceMessage) throw agent._costAllowanceError(result.costAllowanceMessage);
       return { ...llmCompletionVerdict(result.content), model: provider.model };
     },
   } : null;
-  const verdict = await verifyCompletion({ decision, llm, capture, isCurrent: current, signal,
+  const verdict = await verifyCompletion({ decision, llm, capture, isCurrent: current, signal, preferAx,
     onAttempt: ({ reason, ...metadata }) => agent.recordSystemOneVerdict(tabId, {
       phase: 'done_verification', ...metadata,
-      ...(reason ? { reason: /^(?:capture_unavailable|unavailable|http_\d{3}|JEV_[A-Z_]+)$/.test(reason) ? reason : 'insufficient_evidence' } : {}),
+      // A model's own words never reach the trace: a sure verdict is recorded
+      // as judged, an unsure one as insufficient evidence.
+      ...(reason ? { reason: /^(?:capture_unavailable|unavailable|time_budget|COMPLETION_VISUAL_CHANGED|http_\d{3}|JEV_[A-Z_]+)$/.test(reason) ? reason
+        : metadata.outcome && metadata.outcome !== 'uncertain' ? 'judged' : 'insufficient_evidence' } : {}),
     }, context) });
   const accepted = { ...verdict, scope, ...(captures.get(verdict.modality)?.submittedFrameStamp
     ? { submittedFrameStamp: captures.get(verdict.modality).submittedFrameStamp } : {}) };

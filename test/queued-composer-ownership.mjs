@@ -42,7 +42,7 @@ function fixture(build, { preferences = Promise.resolve(), refresh = Promise.res
     isConversationClearInProgress: () => false, isAwaitingPlanReviewForTab: () => false,
     isOutOfBandSlashDraft: () => false, isTabAbortRequested: () => false,
     permissionSkipCommandContextForDraft: () => null,
-    normalizeScreenshotCommandText: value => value, parseTrailingRunCaptureDirective: () => null,
+    parseTrailingRunCaptureDirective: () => null,
     modeForMessageText: () => 'act', rejectSelectionScopedMode: () => false,
     isApiMutationsAllowedForTab: () => false, isSelectionGroundedForTab: () => false,
     createRunRequestId: () => 'queue-test', t: (_key, args) => args?.msg || _key,

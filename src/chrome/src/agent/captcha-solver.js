@@ -314,7 +314,7 @@ export async function detectCaptcha(tabId, constraints = {}) {
     chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
       func: detectCaptchaCandidatesInPage,
-      args: [null, captchaChallengeMatcherOptions()],
+      args: [null, captchaChallengeMatcherOptions(constraints?.challengeReadings)],
     }),
     frameTreePromise,
   ]);

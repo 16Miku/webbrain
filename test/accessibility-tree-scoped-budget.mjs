@@ -100,3 +100,31 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     assert.equal(tree.hasMore, true);
   }));
 }
+
+// A trimmed tree keeps the controls beside a text entry first, found by
+// structure: a native submit, or a button sharing a form or composer with a
+// visible text entry, whatever language its caption is in.
+const composerHtml = `<!doctype html><meta charset="utf-8"><style>body{margin:0}section{margin:8px}</style>
+<section id="chat"><div class="composer"><div contenteditable="true" role="textbox" aria-label="Mesaj"></div>
+<div class="tools"><button aria-label="Gönder"><svg width="10" height="10"></svg></button></div></div></section>
+<section><form><input name="q"><button type="button">搜索</button></form></section>
+<section id="unrelated">${Array.from({ length: 30 }, (_, i) => `<button>Bağımsız işlem ${i}</button>`).join('')}</section>
+<script>window.qaActions=0;document.addEventListener('click',()=>qaActions++);</script>`;
+
+for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
+  test(`${build}: composer and form buttons are priority surfaces in any language, unrelated buttons are not`, async () => {
+    const browser = await engine.launch({ headless: true });
+    try {
+      const context = await browser.newContext({ viewport: { width: 1000, height: 600 } });
+      await context.addInitScript({ content: await fs.readFile(path.join(ROOT, 'src', build, 'src/content/accessibility-tree.js'), 'utf8') });
+      await context.route(`${url}*`, route => route.fulfill({ contentType: 'text/html', body: composerHtml }));
+      const page = await context.newPage(); await page.goto(url);
+      const tree = await page.evaluate(() => __generateAccessibilityTree('visible', 15, 4000));
+      const block = tree.pageContent.match(/\[priority action surfaces[^\n]*\]\n([\s\S]*?)\[\/priority action surfaces\]/)?.[1] || '';
+      assert.match(block, /Gönder/, 'the composer send button was not kept first');
+      assert.match(block, /搜索/, 'the form button was not kept first');
+      assert.doesNotMatch(block, /Bağımsız işlem/, 'a button with no text entry beside it was kept first');
+      assert.equal(await page.evaluate(() => qaActions), 0, 'AX observations must not perform actions');
+    } finally { await browser.close(); }
+  });
+}

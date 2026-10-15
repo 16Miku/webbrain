@@ -38,24 +38,182 @@
     return rect.width >= 20 && rect.height >= 20;
   }
 
-  function pageGateType(text) {
-    const value = String(text || '').toLowerCase();
-    if (/\bsubscribe\b|\bsubscription\b|subscriber[- ]only|unlimited access|unlock (?:this|the) article|start (?:your )?(?:free )?trial/.test(value)) return 'subscription';
-    if (/create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)/.test(value)) return 'registration';
-    if (/(?:log|sign) in to (?:continue|read)|already have an account|create (?:a )?(?:free )?account or log in/.test(value)) return 'login';
-    return 'unknown';
+  // What an overlay or a block in an article asks of its reader, read by a
+  // model in any language from its text (the agent's page_blocker readings):
+  // a subscription, registration or sign-in wall in front of the article. A
+  // text nobody has read yet is no wall; it is reported for the agent to
+  // read, and the agent asks again with the reading.
+  const PAGE_GATE_TYPES = new Set(['subscription', 'registration', 'login']);
+  // The longest text one wall reading covers; how many of a block's texts are
+  // read at most; and how many texts nobody has read one page read reports at
+  // most (the agent reads them and reads the page again, up to three times).
+  const PAGE_GATE_TEXT_LIMIT = 600;
+  const PAGE_GATE_BLOCK_CHUNKS = 30;
+  const PAGE_GATE_UNREAD_BUDGET = 40;
+
+  // At most PAGE_GATE_TEXT_LIMIT characters of a text, keyed as the readings
+  // key it: spaces collapsed, and no space or half of a surrogate pair at
+  // either end.
+  function pageGateSlice(value) {
+    return _pageReadingText(_pageReadingText(value).slice(0, PAGE_GATE_TEXT_LIMIT)
+      .replace(/^[\udc00-\udfff]/, '').replace(/[\ud800-\udbff]$/, ''));
   }
 
-  function pageGateHasAccessLanguage(text) {
-    const value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!value) return false;
-    return /(?:(?:subscribe|subscription).{0,48}(?:continue|read|access|article|options|required|unlock)|subscriber[- ]only|unlimited access|unlock (?:this|the) article|start (?:your )?(?:free )?trial|create (?:a )?(?:free )?account|register to (?:continue|read)|sign up to (?:continue|read)|(?:log|sign) in to (?:continue|read)|continue reading (?:with|by)|to continue reading|already have an account)/.test(value);
+  // What a text reads as: a wall's kind, 'other' when it was read as no wall
+  // (or is empty), or null when nobody has read it. Within one page read only
+  // the first PAGE_GATE_UNREAD_BUDGET texts nobody has read are reported to
+  // the agent, the likeliest walls first; the rest wait for the next read.
+  function pageGateReading(text, budget) {
+    if (!text) return 'other';
+    const known = _pageReading('page_blocker', text, null, { queue: false, maxLength: PAGE_GATE_TEXT_LIMIT });
+    if (known) return PAGE_GATE_TYPES.has(known) ? known : 'other';
+    // A text that differs only in its numbers from texts read as a wall,
+    // such as a countdown's next second, is that wall: at once, and still
+    // reported to be read until two texts of its shape were read as that
+    // wall, so a model's reading of the text itself replaces the guess and a
+    // quota that stops being a wall when its number changes reads as what it
+    // is.
+    const shaped = _pageBlockerWallByShape(text);
+    if (shaped?.confirmed && PAGE_GATE_TYPES.has(shaped.choice)) return shaped.choice;
+    const provisional = shaped && PAGE_GATE_TYPES.has(shaped.choice) ? shaped.choice : null;
+    if (!budget.seen.has(text)) {
+      if (budget.left <= 0) return provisional;
+      budget.left -= 1;
+      budget.seen.add(text);
+    }
+    _pageReading('page_blocker', text, null, { maxLength: PAGE_GATE_TEXT_LIMIT });
+    return provisional;
   }
 
-  function pageGateHasInlineBlockingLanguage(text) {
-    const value = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!value) return false;
-    return /(?:to continue reading|continue reading (?:with|by)|subscriber[- ]only|(?:subscribe|subscription required|register|sign up|log in|sign in|create (?:a )?(?:free )?account).{0,64}(?:continue reading|read (?:this |the )?(?:full )?(?:article|story)|unlock (?:this|the) (?:article|story)|access (?:this|the) (?:article|story)))/.test(value);
+  // Whether an element lays its children out as blocks, so its text splits
+  // into them; an element of inline text is one part however long it is.
+  function pageGateHasBlockChildren(el, depth = 0) {
+    for (const child of el.children) {
+      let display = '';
+      try { display = getComputedStyle(child).display; } catch { continue; }
+      if (display === 'contents') {
+        if (depth < 20 && pageGateHasBlockChildren(child, depth + 1)) return true;
+        continue;
+      }
+      if (display && display !== 'none' && !display.startsWith('inline')) return true;
+    }
+    return false;
+  }
+
+  // A block's rendered text in parts, in page order: an element whose text
+  // is at most PAGE_GATE_TEXT_LIMIT characters, or that holds only inline
+  // text, is one part; a longer one with block children is split into them,
+  // and text standing directly in it is a part held by it. Hidden elements
+  // are left out. Each part keeps its first line.
+  function pageGateParts(el) {
+    const parts = [];
+    const firstLine = value => _pageReadingText(String(value || '').split('\n').find(line => line.trim()) || '');
+    const visit = (node, depth) => {
+      for (const child of node.childNodes) {
+        if (parts.length >= 600) return;
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = _pageReadingText(child.data);
+          if (text) parts.push({ text, line: text, element: node, heading: false });
+          continue;
+        }
+        if (child.nodeType !== Node.ELEMENT_NODE || /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(child.tagName)) continue;
+        let display = '';
+        try { display = getComputedStyle(child).display; } catch { /* treat as rendered */ }
+        if (display === 'none') continue;
+        if (display === 'contents') {
+          if (depth < 40) visit(child, depth + 1);
+          continue;
+        }
+        if (!child.getClientRects?.().length) continue;
+        const raw = String(child.innerText || '');
+        const text = _pageReadingText(raw);
+        if (!text) continue;
+        if (text.length <= PAGE_GATE_TEXT_LIMIT || depth >= 40 || !pageGateHasBlockChildren(child)) {
+          parts.push({ text, line: firstLine(raw), element: child,
+            heading: child.matches?.('h1, h2, h3, h4, h5, h6, [role="heading"]') === true });
+        } else {
+          visit(child, depth + 1);
+        }
+      }
+    };
+    visit(el, 0);
+    return parts;
+  }
+
+  // A block's parts gathered, in page order, into texts of at most
+  // PAGE_GATE_TEXT_LIMIT characters, a heading starting a new one; a longer
+  // part is read in pieces of that length. Each is read as a whole: a wall
+  // read in it starts no earlier than the element it begins in, and its label
+  // is that element's first line, none for a piece after a long part's first.
+  function pageGateChunks(parts) {
+    const chunks = [];
+    for (const part of parts) {
+      if (part.text.length > PAGE_GATE_TEXT_LIMIT) {
+        for (let offset = 0; offset < part.text.length && chunks.length < 1000; offset += PAGE_GATE_TEXT_LIMIT) {
+          chunks.push({ text: part.text.slice(offset, offset + PAGE_GATE_TEXT_LIMIT), element: part.element,
+            line: offset ? '' : part.line, closed: true });
+        }
+        continue;
+      }
+      const last = chunks[chunks.length - 1];
+      if (last && !last.closed && !part.heading && last.text.length + 1 + part.text.length <= PAGE_GATE_TEXT_LIMIT) {
+        last.text += ' ' + part.text;
+      } else {
+        chunks.push({ text: part.text, element: part.element, line: part.line, closed: false });
+      }
+    }
+    return chunks.map(chunk => ({ ...chunk, text: pageGateSlice(chunk.text) }));
+  }
+
+  // The wall an overlay or article block shows, or null when none of its
+  // texts reads as one (a text nobody has read included). Its texts are its
+  // own name and title and its chunks, read in page order up to the first
+  // chunk read as a wall, at most PAGE_GATE_BLOCK_CHUNKS of them. In an
+  // article the wall starts at that chunk, or at a chunk before it nobody has
+  // read, since the wall's text may be there: only text read as no wall comes
+  // before it. A block whose name or title reads as a wall starts at its top;
+  // an overlay is the wall as a whole. The label is the wall's name or title,
+  // or the first line its starting chunk begins with, and none when that
+  // chunk was not read as the wall: what follows a wall's first line may be
+  // the article it withholds.
+  function pageGateWall(el, inline, budget) {
+    const named = [...new Set([el.getAttribute('aria-label'), el.getAttribute('title')].map(pageGateSlice))].filter(Boolean);
+    const namedReadings = named.map(text => pageGateReading(text, budget));
+    const namedIndex = namedReadings.findIndex(reading => PAGE_GATE_TYPES.has(reading));
+    const chunks = pageGateChunks(pageGateParts(el)).slice(0, PAGE_GATE_BLOCK_CHUNKS);
+    let wallIndex = -1, unread = -1, wallType = null;
+    for (let index = 0; index < chunks.length; index += 1) {
+      const reading = pageGateReading(chunks[index].text, budget);
+      if (PAGE_GATE_TYPES.has(reading)) {
+        wallIndex = index;
+        wallType = reading;
+        break;
+      }
+      if (reading === null && unread < 0) unread = index;
+    }
+    if (wallIndex < 0 && namedIndex < 0) return null;
+    const type = namedIndex >= 0 ? namedReadings[namedIndex] : wallType;
+    const label = text => pageGateSlice(String(text || '').slice(0, 240));
+    if (namedIndex >= 0) return { type, label: label(named[namedIndex]), element: el };
+    if (!inline) return { type, label: label(chunks[wallIndex].line), element: el };
+    const start = unread >= 0 && unread < wallIndex ? unread : wallIndex;
+    return {
+      type,
+      label: start === wallIndex ? label(chunks[wallIndex].line) : '',
+      element: start === 0 ? el : chunks[start].element,
+    };
+  }
+
+  // Whether a block offers a control a wall would: a button, a field, a form,
+  // or a link standing on its own rather than inside a paragraph.
+  function pageGateOffersControl(el) {
+    try {
+      if (el.querySelector('button, input, select, textarea, form, [role="button"]')) return true;
+      return Array.from(el.querySelectorAll('a[href]')).slice(0, 50)
+        .some(link => !link.closest('p, li, blockquote, figcaption, td, dd'));
+    } catch {
+      return false;
+    }
   }
 
   function pageHasArticleContext() {
@@ -71,40 +229,19 @@
     }
   }
 
-  function boundedPageGateLabel(el, rawLabel) {
-    const options = [];
-    let boundaryElement = null;
-    for (const value of [el.getAttribute('aria-label'), el.getAttribute('title')]) {
-      const normalized = String(value || '').replace(/\s+/g, ' ').trim();
-      if (pageGateHasAccessLanguage(normalized)) options.push(normalized);
-    }
-    let descendants = [];
-    try { descendants = el.querySelectorAll('h1, h2, h3, p, button, a, label, [role="heading"]'); } catch {}
-    for (const node of Array.from(descendants).slice(0, 80)) {
-      if (!gateElementIsRendered(node)) continue;
-      const normalized = String(node.innerText || '').replace(/\s+/g, ' ').trim();
-      if (normalized.length <= 600 && pageGateHasAccessLanguage(normalized)) {
-        boundaryElement ||= node;
-        options.push(normalized);
-      }
-    }
-    options.sort((a, b) => a.length - b.length);
-    if (options[0]) return { label: options[0].slice(0, 240), boundaryElement };
-    const accessStart = rawLabel.search(/\b(?:subscribe|subscription|subscriber|unlock|register|sign up|log in|sign in|create an? account|continue reading)\b/i);
-    return {
-      label: rawLabel.slice(Math.max(0, accessStart), Math.max(0, accessStart) + 240),
-      boundaryElement,
-    };
-  }
-
   function pageGatePublic(gate) {
     if (!gate) return null;
-    return { type: gate.type, blocking: true, surface: gate.surface, label: gate.label };
+    return {
+      type: gate.type,
+      blocking: true,
+      surface: gate.surface,
+      label: gate.label,
+    };
   }
 
   function detectPageGate() {
     const seen = new Set();
-    const candidates = [];
+    const found = [];
     const articleContext = pageHasArticleContext();
     for (const selector of PAGE_GATE_SELECTORS) {
       let matches = [];
@@ -112,9 +249,9 @@
       for (const el of matches) {
         if (seen.has(el) || !gateElementIsRendered(el)) continue;
         seen.add(el);
-        const rawLabel = String(el.innerText || '').replace(/\s+/g, ' ').trim();
         const role = String(el.getAttribute('role') || '').toLowerCase();
-        let surface = (role === 'dialog' || role === 'alertdialog' || el.tagName === 'DIALOG' || el.getAttribute('aria-modal') === 'true') ? 'dialog' : 'inline';
+        let surface = (role === 'dialog' || role === 'alertdialog' || el.tagName === 'DIALOG'
+          || el.getAttribute('aria-modal') === 'true') ? 'dialog' : 'inline';
         const inArticle = !!el.closest('article, [role="article"], main, [role="main"]');
         let coveringOverlay = false;
         try {
@@ -123,29 +260,45 @@
           const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
           const visibleWidth = Math.max(0, Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0));
           const visibleHeight = Math.max(0, Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0));
-          coveringOverlay = ['fixed', 'sticky', 'absolute'].includes(style.position) && ((visibleWidth * visibleHeight) / viewportArea) >= 0.2;
-        } catch {}
+          coveringOverlay = ['fixed', 'sticky', 'absolute'].includes(style.position) &&
+            ((visibleWidth * visibleHeight) / viewportArea) >= 0.2;
+        } catch { /* rendered check already supplied safe defaults */ }
         if (coveringOverlay) surface = 'dialog';
-        if (surface === 'dialog') {
-          if (!articleContext || !pageGateHasAccessLanguage(rawLabel)) continue;
-        } else {
-          if (!inArticle || !pageGateHasInlineBlockingLanguage(rawLabel)) continue;
-        }
-        const gateText = boundedPageGateLabel(el, rawLabel);
-        const label = gateText.label;
-        const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([el.id, typeof el.className === 'string' ? el.className : '', el.getAttribute('data-testid') || ''].join(' '));
-        const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) + (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
-        candidates.push({
-          element: surface === 'inline' ? (gateText.boundaryElement || el) : el,
-          type: pageGateType(rawLabel),
-          surface,
-          label: label.slice(0, 240),
-          score,
-        });
+        // An overlay counts only on an article page, and a block only inside
+        // the article; its text then has to read as a wall.
+        if (surface === 'dialog' ? !articleContext : !inArticle) continue;
+        found.push({ el, surface, inArticle, coveringOverlay, offersControl: pageGateOffersControl(el) });
       }
     }
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0] || null;
+    // Overlays are read first, then blocks that offer a control a wall would,
+    // then the rest, each in page order, so the texts one page read reports go
+    // to the likeliest walls.
+    found.sort((a, b) => (Number(b.surface === 'dialog') - Number(a.surface === 'dialog'))
+      || (Number(b.offersControl) - Number(a.offersControl))
+      || (a.el === b.el ? 0 : (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+    const budget = { left: PAGE_GATE_UNREAD_BUDGET, seen: new Set() };
+    const candidates = [];
+    for (const { el, surface, inArticle, coveringOverlay } of found) {
+      const wall = pageGateWall(el, surface === 'inline', budget);
+      if (!wall) continue;
+      const label = wall.label;
+      const namedGate = /paywall|gateway|regiwall|subscription|registration/i.test([
+        el.id,
+        typeof el.className === 'string' ? el.className : '',
+        el.getAttribute('data-testid') || '',
+      ].join(' '));
+      const score = (surface === 'dialog' ? 100 : 0) + (inArticle ? 40 : 0) +
+        (coveringOverlay ? 30 : 0) + (namedGate ? 15 : 0) - Math.min(label.length, 2000) / 2000;
+      candidates.push({ element: wall.element, type: wall.type, surface, label, score });
+    }
+    // An overlay that is a wall withholds the whole article. Of the walls in
+    // an article, the one that starts first decides where reading stops.
+    const overlays = candidates.filter(candidate => candidate.surface === 'dialog').sort((a, b) => b.score - a.score);
+    if (overlays.length) return overlays[0];
+    const blocks = candidates.filter(candidate => candidate.surface === 'inline');
+    blocks.sort((a, b) => (a.element === b.element ? 0
+      : (a.element.compareDocumentPosition(b.element) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)));
+    return blocks[0] || null;
   }
 
   function renderedArticleTextBeforeGate(root, gateElement) {
@@ -4933,8 +5086,10 @@
       const icons = Array.from(item.querySelectorAll(':scope > .tgico.btn-menu-item-icon')).filter(_nativeTelegramReadRendered);
       return icons.length === 1 && icons[0].textContent === '\uea22';
     });
+    // The settings glyph and the native menu identify it; a name read as
+    // sending something (in any language) still refuses it.
     if (settings.length !== 1 || settings[0] !== control
-        || _hasMessageCommitName(control.getAttribute('aria-label') || control.textContent || '')) return null;
+        || _messageControlReading(control.getAttribute('aria-label') || control.textContent || '') === 'send') return null;
     const icon = control.querySelector(':scope > .tgico.btn-menu-item-icon');
     return {context,target,control,phase:'open_settings',nodes:[...nativeNodes,trigger,menu,control,icon,target]};
   }
@@ -5735,16 +5890,147 @@
       fieldMeta: _fieldMeta(el), rect: { x: rect.x, y: rect.y, w: rect.width, h: rect.height } };
   }
 
-  const _COMPOSER_UTILITY_LABEL_RE = new RegExp(
-    '^(?:save\\s*(?:&|and)?\\s*(?:close|draft|draft\\s*&\\s*close)|save\\s*&\\s*close'
-    + '|minimi[sz]e|exit\\s+full\\s+screen|full\\s+screen|pop-?out|expand|collapse'
-    + '|discard(?:\\s+draft)?|delete\\s+draft|print|check\\s+spelling|plain\\s+text(?:\\s+mode)?'
-    + '|attach(?:\\s+(?:files?|photos?|images?|documents?))?|insert\\s+(?:link|photo|image|file|drive|emoji|signature|contact|table|drawing|note)'
-    + '|emoji|emoticon|bold|italic|underline|strikethrough|align|numbered\\s+list|bulleted\\s+list'
-    + '|indent|outdent|undo|redo|more\\s+options|formatting(?:\\s+options)?|text\\s+formatting'
-    + '|remove\\s+formatting|font|text\\s+color|highlight|edit\\s+subject|confidential\\s+mode)',
-    'i',
-  );
+  // Texts of a messaging page read by a model in any language, by the agent's
+  // page-text question: what activating a control does (message_control:
+  // send, publish, reply, new_message, new_post, draft_tool,
+  // conversation_tool, other or unclear), what a message editor's field holds
+  // (message_field: to, cc, bcc, subject, body or other), whether a message's
+  // label says the page's own user sent it (message_author: self or other),
+  // and what a sent message's status says (message_status: delivered, sent,
+  // pending or unclear). The agent hands its readings to the page with each
+  // guard check and chat observation, and the recipient guard, its dispatch
+  // checks and the chat observer consult them here. A text nobody has read
+  // yet is kept for the agent to read; until then each check takes it the
+  // cautious way: a control as one that could send, a field as holding no
+  // recipient, a message as nobody's in particular, a status as not
+  // delivered.
+  const _PAGE_READING_CHOICES = Object.freeze({
+    message_control: new Set(['send', 'publish', 'reply', 'new_message', 'new_post', 'draft_tool', 'conversation_tool',
+      'other', 'unclear']),
+    message_field: new Set(['to', 'cc', 'bcc', 'subject', 'body', 'other']),
+    message_author: new Set(['self', 'other']),
+    message_status: new Set(['delivered', 'sent', 'pending', 'unclear']),
+    page_blocker: new Set(['human_check', 'subscription', 'registration', 'login', 'other']),
+  });
+  // Readings that name an action of the control itself, never a contact's name.
+  const _MESSAGE_CONTROL_ACTIONS = new Set(['send', 'publish', 'reply', 'new_message', 'new_post',
+    'draft_tool', 'conversation_tool']);
+  const _pageReadings = new Map();
+  const _pageReadingsUnread = new Map();
+  // Readings of overlay and article-block texts that hold digits, by the
+  // text with each run of digits as one '#': which wall the texts of a shape
+  // were read as (up to four of them), and whether one was read as no wall
+  // or as another wall. A text of a shape read only as one wall is that wall
+  // for now and is still read (see pageGateReading); once two texts of the
+  // shape were read so, a countdown's next number is that wall without
+  // another read. A shape with any other reading carries nothing over, as a
+  // quota that stops being a wall at another number.
+  const _pageBlockerShapes = new Map();
+  const _PAGE_BLOCKER_WALL_TYPES = new Set(['subscription', 'registration', 'login']);
+
+  function _pageReadingText(value) {
+    return String(value ?? '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function _pageReadingDigitShape(text) {
+    return /\p{Nd}/u.test(text) ? text.replace(/\p{Nd}+/gu, '#') : '';
+  }
+
+  // The wall a text gets from texts read as that wall that differ from it
+  // only in their numbers, { choice, confirmed }, or null.
+  function _pageBlockerWallByShape(value) {
+    const shape = _pageReadingDigitShape(_pageReadingText(value));
+    const entry = shape ? _pageBlockerShapes.get(shape) : null;
+    if (!entry || entry.mixed || !entry.walls.size || !_PAGE_BLOCKER_WALL_TYPES.has(entry.choice)) return null;
+    return { choice: entry.choice, confirmed: entry.walls.size >= 2 };
+  }
+
+  // `readings` is { question: { text: choice } }.
+  function _rememberPageReadings(readings) {
+    if (!readings || typeof readings !== 'object' || Array.isArray(readings)) return;
+    for (const [kind, texts] of Object.entries(readings).slice(0, 8)) {
+      const choices = Object.hasOwn(_PAGE_READING_CHOICES, kind) ? _PAGE_READING_CHOICES[kind] : null;
+      if (!choices || !texts || typeof texts !== 'object' || Array.isArray(texts)) continue;
+      // An overlay's or article block's text is read up to 600 characters.
+      const limit = kind === 'page_blocker' ? 600 : 400;
+      for (const [value, choice] of Object.entries(texts).slice(0, 800)) {
+        const text = _pageReadingText(value);
+        if (!text || text.length > limit || !choices.has(choice)) continue;
+        const key = `${kind}\u0000${text}`;
+        _pageReadings.delete(key);
+        _pageReadings.set(key, choice);
+        _pageReadingsUnread.delete(key);
+        const shape = kind === 'page_blocker' ? _pageReadingDigitShape(text) : '';
+        if (shape) {
+          const entry = _pageBlockerShapes.get(shape) || { choice: '', walls: new Set(), mixed: false };
+          if (!_PAGE_BLOCKER_WALL_TYPES.has(choice) || (entry.choice && entry.choice !== choice)) entry.mixed = true;
+          else {
+            entry.choice = choice;
+            if (entry.walls.size < 4) entry.walls.add(text);
+          }
+          _pageBlockerShapes.delete(shape);
+          _pageBlockerShapes.set(shape, entry);
+        }
+      }
+    }
+    while (_pageReadings.size > 3200) _pageReadings.delete(_pageReadings.keys().next().value);
+    while (_pageBlockerShapes.size > 800) _pageBlockerShapes.delete(_pageBlockerShapes.keys().next().value);
+  }
+
+  // The reading of one text: its choice, '' when there is no text, or null
+  // when nobody has read it yet (it is then kept for the agent to read,
+  // unless `queue` is false). A text longer than `maxLength` characters is
+  // not read; it reads as `longText`.
+  function _pageReading(kind, value, longText = null, { queue = true, maxLength = 400 } = {}) {
+    const text = _pageReadingText(value);
+    if (!text) return '';
+    if (text.length > maxLength) return longText;
+    const key = `${kind}\u0000${text}`;
+    const choice = _pageReadings.get(key);
+    if (choice) return choice;
+    if (!queue) return null;
+    _pageReadingsUnread.delete(key);
+    _pageReadingsUnread.set(key, { kind, text });
+    while (_pageReadingsUnread.size > 64) _pageReadingsUnread.delete(_pageReadingsUnread.keys().next().value);
+    return null;
+  }
+
+  // What a control's caption reads as. A text this long is not a control's
+  // name.
+  function _messageControlReading(value) {
+    return _pageReading('message_control', value, 'other');
+  }
+
+  // A caption read as sending something to someone, or not read yet.
+  function _mayBeMessageSend(value) {
+    const reading = _messageControlReading(value);
+    return reading === 'send' || reading === null;
+  }
+
+  // The texts consulted unread, all of them or those of one question, taken
+  // from the queue for the agent to read.
+  function _takeUnreadPageTexts(kind = '') {
+    const texts = [];
+    for (const [key, entry] of [..._pageReadingsUnread.entries()]) {
+      if (kind && entry.kind !== kind) continue;
+      texts.push(entry);
+      _pageReadingsUnread.delete(key);
+    }
+    return texts;
+  }
+
+  // The page monitor's capture of a conversation's footer actions and the chat
+  // observer consult the same readings (who the conversation is depends on
+  // which header controls are actions; whose a message is, on its label), so
+  // they can hand over the agent's readings, look one up, and tell the agent
+  // that texts were consulted unread.
+  window.__wb_remember_page_readings = readings => {
+    if (WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)) _rememberPageReadings(readings);
+  };
+  window.__wb_page_reading = (kind, value) => (WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)
+    && Object.hasOwn(_PAGE_READING_CHOICES, kind) ? _pageReading(kind, value) : null);
+  window.__wb_page_texts_unread = () => WEBBRAIN_GENERATION === (Number(window.__webbrain_generation) || 0)
+    && _pageReadingsUnread.size > 0;
 
   function _isComposerUtilityControl(el) {
     if (!el) return false;
@@ -5758,8 +6044,18 @@
         || el.textContent
         || '',
       ).replace(/\s+/g, ' ').trim();
-      if (label && _COMPOSER_UTILITY_LABEL_RE.test(label)) return true;
-      const formattingScope = el.closest?.('[role="toolbar"],[aria-label*="formatting" i],[aria-label*="format" i]');
+      if (label && _messageControlReading(label) === 'draft_tool') return true;
+      // Icon-only controls carry their name on the icon itself (<svg
+      // aria-label>, <img alt>). Every named icon must be a utility.
+      if (!label) {
+        const iconNames = Array.from(el.querySelectorAll?.('svg[aria-label],[role="img"][aria-label],img[alt]') || [])
+          .slice(0, 4)
+          .map(icon => String(icon.getAttribute('aria-label') || icon.getAttribute('alt') || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        const iconReadings = iconNames.map(_messageControlReading);
+        if (iconReadings.length && iconReadings.every(reading => reading === 'draft_tool')) return true;
+      }
+      const formattingScope = el.closest?.('[role="toolbar"]');
       if (formattingScope && formattingScope !== el) return true;
       return !!el.hasAttribute?.('aria-pressed');
     } catch {
@@ -5767,15 +6063,6 @@
     }
   }
 
-  const _MESSAGE_COMMIT_LABEL_RE = new RegExp(
-    '(?:^|[^\\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\\p{L}]|$)',
-    'iu',
-  );
-
-  function _hasMessageCommitName(value) {
-    const text = String(value ?? '').replace(/\s+/g, ' ').trim();
-    return !!text && _MESSAGE_COMMIT_LABEL_RE.test(text);
-  }
 
   // Isolated-world, read-only bridge for private pre-inference footprints.
   // Only controls in the verified composer's own native footer are eligible;
@@ -5876,7 +6163,7 @@
         : [])
         .map(value => normalizedIdentity(value && typeof value === 'object' ? value.identity : value))
         .filter(Boolean);
-      const outgoingMessageContainer = (el) => {
+      const outgoingMessageContainer = (el, { byLabel = true } = {}) => {
         let current = el;
         for (let depth = 0; current && depth < 8; depth += 1, current = current.parentElement) {
           const direction = normalizedIdentity([
@@ -5893,11 +6180,13 @@
           const className = normalizedIdentity(
             typeof current.className === 'string' ? current.className : '',
           );
-          const ariaLabel = normalizedIdentity(current.getAttribute?.('aria-label'));
+          // The app's own direction attributes and classes decide first; a
+          // message label saying the page's own user sent it ("You sent ...")
+          // is read by a model in any language.
           if (/\b(?:outgoing|sent|self|own|user|from-me)\b/.test(direction)
               || booleanOutgoing === 'true'
               || /(?:^|[-_\s])(?:outgoing|message-out|sent-message|is-sent|from-me|own-message|self-message)(?:$|[-_\s])/.test(className)
-              || /^(?:you(?:\s+sent\b|[:,])|outgoing message\b|sent by you\b)/.test(ariaLabel)) {
+              || (byLabel && _pageReading('message_author', current.getAttribute?.('aria-label')) === 'self')) {
             return current;
           }
           if (params.adapterName === 'gmail'
@@ -5966,13 +6255,23 @@
         const matches = candidates.filter((el) => {
           if (!visible(el) || editable(el)) return false;
           if (activeComposer && (el === activeComposer || activeComposer.contains?.(el))) return false;
-          if (!outgoingMessageContainer(el)) return false;
+          // The app's own direction markup decides cheaply. Otherwise only a
+          // labelled node holding exactly the body asks whose message it is.
+          const ownByMarkup = !!outgoingMessageContainer(el, { byLabel: false });
+          if (!ownByMarkup) {
+            let labelled = false;
+            for (let node = el, depth = 0; node && depth < 8; node = node.parentElement, depth += 1) {
+              if (node.hasAttribute?.('aria-label')) { labelled = true; break; }
+            }
+            if (!labelled) return false;
+          }
           try {
             if (el.closest?.('button,[role="button"],[role="alert"],[role="status"],[aria-live],nav,[role="navigation"]')) {
               return false;
             }
           } catch {}
-          return normalizedMessageBody(el.innerText || el.textContent || '') === expected;
+          if (normalizedMessageBody(el.innerText || el.textContent || '') !== expected) return false;
+          return ownByMarkup || !!outgoingMessageContainer(el);
         });
         // Nested wrappers often repeat the same innerText. Count only the
         // innermost exact nodes so the before/after cardinality is stable.
@@ -6141,7 +6440,7 @@
           ? clicked.closest?.('li') : null;
         const nativeConversationRow = nativeLinkedInRow
           && nativeLinkedInRow.parentElement?.matches(
-            'ul.msg-conversations-container__conversations-list,ul[aria-label="Conversation List"],ol[aria-label="Conversation List"]',
+            'ul.msg-conversations-container__conversations-list',
           ) ? nativeLinkedInRow : null;
         const row = clicked.closest?.(semanticRowSelector)
           || nativeConversationRow
@@ -6222,7 +6521,7 @@
         // to the composer cannot turn this verified viewer into a send; labels
         // alone cannot exempt a message commit or an unrelated image button.
         if ([button.getAttribute('aria-label'), button.getAttribute('title'), button.getAttribute('data-tooltip'), button.innerText || button.textContent]
-            .some(_hasMessageCommitName)) return false;
+            .map(_mayBeMessageSend).includes(true)) return false;
         const rect = button.getBoundingClientRect();
         const hit = _shadowAwareElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
         // LinkedIn localizes the preview label. Verify the attachment itself
@@ -6336,10 +6635,9 @@
             || _composedClosestElement(control,
               'article,[role="log"],[data-message-id],[data-list-item-id^="chat-messages"]')) return false;
         const label = compact(control.getAttribute('aria-label') || control.innerText || control.textContent);
-        const messageCommit = /(?:^|[^\p{L}])(?:send|enviar|envoyer|invia|senden|verzenden|gönder|отправить|送信|发送|發送|보내|إرسال|ارسال)(?:[^\p{L}]|$)/iu;
         const actionLabels = [control.getAttribute('aria-label'), control.getAttribute('title'),
           ...(!editable(control) ? [control.innerText || control.textContent, control.value] : [])];
-        if (actionLabels.some(value => messageCommit.test(value || ''))) return false;
+        if (actionLabels.map(_mayBeMessageSend).includes(true)) return false;
         const modal = _findTopmostBlockingModal();
         if (modal && !_isComposedAncestor(modal, control)) return false;
         const rect = control.getBoundingClientRect();
@@ -6349,7 +6647,7 @@
         if (dialog) {
           // Discord keeps the channel composer mounted behind its settings.
           // Only the owning management dialog is a non-message surface.
-          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[role="textbox"][aria-label^="Message " i],[role="log"] article')) return false;
+          if (dialog.querySelector('[data-message-id],[data-list-id="chat-messages"],[class*="channelTextArea"] [role="textbox"],[role="log"] article')) return false;
           const dialogId = dialog.getAttribute('id');
           const creationHeading = dialogId && Array.from(dialog.querySelectorAll('h1'))
             .some(el => visible(el) && el.id === `heading-${dialogId}`);
@@ -6439,9 +6737,10 @@
               'form,article,dialog,[role="dialog"],[role="alertdialog"],[role="log"],'
               + '[data-message-id],[data-thread-id],[data-conversation-id],'
               + '[contenteditable]:not([contenteditable="false"])')) return false;
-        const labels = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
-          .map(value => compact(value).toLowerCase()).filter(Boolean);
-        if (!labels.length || !labels.every(label => label === 'start a post')) return false;
+        // Its names, read in any language, only open a new public post.
+        const readings = [button.innerText || button.textContent, button.getAttribute?.('aria-label')]
+          .map(value => compact(value)).filter(Boolean).map(_messageControlReading);
+        if (!readings.length || !readings.every(reading => reading === 'new_post')) return false;
         // A shadow-root dialog may not appear in the document's modal query.
         // Require the actual painted control, descending through open roots.
         const rect = button.getBoundingClientRect();
@@ -6515,7 +6814,7 @@
         && layoutCandidate.matches?.('textarea,[contenteditable="true"],[role="textbox"]:not(input)')
         && Array.from(layoutDialog.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"],[data-action]'))
           .some(control => visible(control) && control.closest(dialogSelector) === layoutDialog
-            && ((_hasMessageCommitName(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent)
+            && ((_messageControlReading(control.getAttribute('aria-label') || control.value || control.innerText || control.textContent) === 'send'
                 && (_isEligibleTextClickTarget(control) || verifiedGmailBody))
               || verifiedLinkedInPublicPostControl(control)));
       const nativeLayoutContext = typeof window.__wb_get_native_chat_context === 'function'
@@ -6536,10 +6835,16 @@
             nativeWhatsappRepair: true, identityCandidates: [] };
         }
         if (nativeLayoutContext?.service !== 'whatsapp') {
+          // No check left in this run: say so, rather than send the agent
+          // after a header click that cannot help.
+          const spent = !repair && window.__wb_native_whatsapp_repair_spent?.() === true;
           return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
             composerAvailable: true, nativeWhatsappRepairAvailable: !!repair,
-            reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [],
-            error: 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
+            ...(spent ? { nativeWhatsappRepairSpent: true } : {}),
+            reasonCode: spent ? 'native_whatsapp_contact_check_spent' : 'native_whatsapp_contact_binding_required', identityCandidates: [],
+            error: spent
+              ? 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.'
+              : 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
         }
       }
       const layoutComposer = layoutCandidate
@@ -6609,7 +6914,7 @@
           }
           try {
             const composeScopeOf = (el) => el?.closest?.(
-              'form, [role="dialog"], [role="form"], [aria-label*="compose" i], [class*="compose" i]',
+              'form, [role="dialog"], [role="form"], [class*="compose" i]',
             );
             const activeScope = composeScopeOf(active);
             if (activeScope && activeScope === composeScopeOf(layoutComposer)) {
@@ -6697,9 +7002,9 @@
             || control.textContent,
             120,
           );
-          const composerSetup = params.adapterName === 'gmail'
-            && /^(?:reply|reply all|forward)$/i.test(actionLabel);
-          const messageCommit = _hasMessageCommitName(actionLabel);
+          // What the control does, read from its name in any language.
+          const actionReading = _messageControlReading(actionLabel);
+          const composerSetup = params.adapterName === 'gmail' && actionReading === 'reply';
           const messagingSurface = (() => {
             try {
               return !!control.closest?.('[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]');
@@ -6710,7 +7015,7 @@
           // because LinkedIn's navigation classifier has no matching route.
           const composeDialog = _composedClosestElement(control, 'dialog,[role="dialog"],[role="alertdialog"]');
           const linkedInComposeSurface = params.adapterName === 'linkedin' && (
-            /^start a post$/i.test(actionLabel)
+            actionReading === 'new_post'
             || /^\/(?:messaging(?:\/|$)|sharing\/compose(?:\/|$))/.test(location.pathname)
             || !!_composedClosestElement(control, '.share-box,[class*="msg-"],[class*="messaging"],[id*="messaging"],[data-messaging],[data-test-messaging],[role="log"]')
             || (composeDialog && Array.from(composeDialog.querySelectorAll('[contenteditable="true"],textarea')).some(visible))
@@ -6719,7 +7024,8 @@
             control.matches?.('button,[role="button"],input[type="submit"],input[type="button"],[data-action]') === true
             || (control.matches?.('a[href]') === true && linkedInNavigation === 'none')
           );
-          if (!composerSetup && !linkedInUnverified && !messageCommit && !messagingSurface) {
+          if (!composerSetup && !linkedInUnverified && actionReading !== 'send' && actionReading !== null
+              && !messagingSurface) {
             return {
               success: true,
               messageSend: false,
@@ -6748,7 +7054,8 @@
             messageSend: null,
             conclusive: false,
             composerAvailable: false,
-            reasonCode: messageCommit ? 'message_commit_without_composer' : 'no_composer_surface',
+            reasonCode: actionReading === 'send' ? 'message_commit_without_composer'
+              : actionReading === null ? 'message_control_unread' : 'no_composer_surface',
             ...(composerSetup ? { composerSetup: true } : {}),
             identityCandidates: [],
           };
@@ -6862,8 +7169,11 @@
             contextNodes.map(node => ['data-testid','aria-selected','aria-label','hidden','inert','aria-hidden'].map(attribute => node.getAttribute(attribute)))]) };
         const nativeRows = Array.from(context.transcript.querySelectorAll('[role="row"] [data-id][data-testid^="conv-msg-"]'));
         const nativeIds = nativeRows.map(node => node.getAttribute('data-id'));
+        // An own message counts as settled once a model reads its status, in
+        // any language, as delivered or read; an unread status is not.
         const pendingNative = nativeRows.some(node => node.querySelector('[data-icon="tail-out"]')
-          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]')).some(status => /^(?:read|delivered)$/i.test(compact(status.getAttribute('aria-label')))));
+          && !Array.from(node.querySelectorAll('[data-testid="msg-meta"] [aria-label]'))
+            .some(status => _pageReading('message_status', status.getAttribute('aria-label')) === 'delivered'));
         nativeChatMessageBaseline = { schema: 'webbrain-native-opaque-baseline/1', threadKey: 'dom:' + context.id,
           documentEpoch: context.documentEpoch, timeOrigin: context.timeOrigin, url: context.url,
           tailId: context.id + ':' + nativeIds.at(-1),
@@ -6915,17 +7225,16 @@
         observedRecipientCandidates.push({ identity: context.id, role: 'to', aliases: [context.id, context.name,
           ...(context.alias ? [context.alias, '@' + context.alias] : [])] });
       } else if (gmailRecipientMode) {
-        // Chips and not-yet-committed address fields must use the same role
-        // parser. Keep it in their shared scope: a visible Subject/To input
-        // must not turn the entire recipient probe into a ReferenceError.
+        // Chips and not-yet-committed address fields share this row reader.
+        // Keep it in their shared scope so visible Subject/To inputs can be probed.
         const roleFromAttribute = (attribute, value) => {
           const text = compact(value, 120).toLowerCase();
           if (!text) return '';
+          // A row's or field's label names its role in the user's language,
+          // read by a model; the app's own names below do not.
           if (attribute === 'aria-label') {
-            if (/^(?:bcc|blind\s+carbon\s+copy)(?:$|\s*[:,-]\s*|\s+recipients$)/.test(text)) return 'bcc';
-            if (/^(?:cc|carbon\s+copy)(?:$|\s*[:,-]\s*|\s+recipients$)/.test(text)) return 'cc';
-            if (/^to(?:$|\s*[:,-]\s*|\s+recipients$)/.test(text)) return 'to';
-            return '';
+            const role = _pageReading('message_field', compact(value, 120));
+            return ['to', 'cc', 'bcc'].includes(role) ? role : '';
           }
           if (attribute === 'name') {
             return /^(?:to|cc|bcc)$/.test(text) ? text : '';
@@ -7181,7 +7490,6 @@
             const footer = composer.closest?.('footer');
             const excluded = 'aside,nav,[role="navigation"],[role="complementary"],[role="log"],'
               + '[role="listbox"],[role="menu"],[role="toolbar"],[data-message-id],[data-message-direction],[data-outgoing],article';
-            const actionLabel = /^(?:call(?:\s|$)|(?:voice|video|audio)\s+call(?:\s|$)|search(?:\s|$)|menu(?:\s|$)|more(?:\s|$)|settings(?:\s|$)|back(?:\s|$)|close(?:\s|$)|arama(?:\s|$)|ara(?:\s|$)|suchen(?:\s|$)|rechercher(?:\s|$)|buscar(?:\s|$)|llamar(?:\s|$)|appel(?:\s|$))/iu;
             if (footer && !footer.closest(excluded)) {
               for (let pane = footer.parentElement, depth = 0; pane && depth < 8
                 && pane !== document.body && pane !== document.documentElement; pane = pane.parentElement, depth++) {
@@ -7215,9 +7523,11 @@
                       || control.form || control.hasAttribute('form') || !inConversationHeaderBand(control)
                       || independentScrollableRegion(control, composer)) return false;
                   const name = String(control.innerText || '').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
-                  const labels = [name, control.getAttribute('aria-label'), control.getAttribute('title')].filter(Boolean);
-                  return !!name && name.length <= 120 && !labels.some(label => actionLabel.test(String(label).trim())
-                    || _hasMessageCommitName(label) || _COMPOSER_UTILITY_LABEL_RE.test(String(label).trim()));
+                  // A control whose name reads as an action (call, search, more,
+                  // back, send...) in any language is not the contact.
+                  const readings = [name, control.getAttribute('aria-label'), control.getAttribute('title')]
+                    .filter(Boolean).map(_messageControlReading);
+                  return !!name && name.length <= 120 && !readings.some(reading => _MESSAGE_CONTROL_ACTIONS.has(reading));
                 });
                 if (contacts.length !== 1) break;
                 const carrier = contacts[0];
@@ -7242,8 +7552,10 @@
                     ['aria-label','aria-labelledby','placeholder','title'].map(attribute => composer.getAttribute(attribute)),
                     labelledByNodes.map(node => node.textContent)]) };
                 strongIdentities.push(name);
-                const phone = String(composer.getAttribute('aria-label') || '').trim()
-                  .match(/^(?:type|write|send)\s+(?:a\s+)?message\s+to\s+(\+?[\d ()-]{7,32})$/i)?.[1]?.trim() || '';
+                // The composer's own label may name the destination's phone
+                // number, in any language; a single number there is an alias.
+                const numbers = String(composer.getAttribute('aria-label') || '').match(/\+?\d[\d ()-]{5,30}\d/g) || [];
+                const phone = numbers.length === 1 ? numbers[0].trim() : '';
                 const phoneDigits = phone.replace(/\D/g, '').length;
                 conversationRecipientEvidence.aliases = phone && phoneDigits >= 7 && phoneDigits <= 15
                   ? [name, phone] : [name];
@@ -7274,29 +7586,29 @@
       if (observedRecipientCandidates.length === 0) {
         const genericMailRecipientMode = params.adapterName === 'generic-messaging'
           && params.supportsRecipientSets === true;
-        const RECIPIENT_FIELD_RE = new RegExp(
-          '(?:^|[^\\p{L}])(?:to|to\\s+recipients?|recipients?|send\\s+to|email|e-?mail(?:\\s+address)?'
-          + '|destinatario|destinataria|destinataire|para|aan|kime|do|til|komu|\\u0644\\u0625\\u0649'
-          + '|\\u6536\\u4ef6\\u4eba|\\u5b9b\\u5148|\\ubc1b\\ub294\\s*\\uc0ac\\ub78c)(?:[^\\p{L}]|$)',
-          'iu',
-        );
-        const fieldLooksLikeRecipient = (el) => {
+        // A field holds recipients when its labels and names read, in any
+        // language, as the message's To, Cc or Bcc row; an email-typed field
+        // is a To field on a mail page.
+        const fieldRecipientRole = (el) => {
           try {
-            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))) return genericMailRecipientMode;
-            if (/^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode;
-            const haystack = [
-              el.getAttribute?.('name'),
+            if (/^email$/i.test(String(el.getAttribute?.('type') || ''))
+                || /^email$/i.test(String(el.getAttribute?.('autocomplete') || ''))) return genericMailRecipientMode ? 'to' : '';
+            const names = [
+              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
               el.getAttribute?.('aria-label'),
               el.getAttribute?.('placeholder'),
+              el.getAttribute?.('name'),
               el.getAttribute?.('id'),
               el.getAttribute?.('data-testid'),
               el.getAttribute?.('autocomplete'),
-              el.labels ? Array.from(el.labels).map(label => label.innerText).join(' ') : '',
-            ].filter(Boolean).join(' ');
-            return !!haystack && RECIPIENT_FIELD_RE.test(haystack);
-          } catch { return false; }
+            ].map(value => compact(value, 120)).filter(Boolean).join(' · ');
+            const role = _pageReading('message_field', names);
+            return ['to', 'cc', 'bcc'].includes(role) ? role : '';
+          } catch { return ''; }
         };
-        const pushRecipient = (identity, extraAliases = []) => {
+        // `role` is the row a field names; an address chip names none, so it
+        // keeps the row its field gave it, or To.
+        const pushRecipient = (identity, extraAliases = [], role = '') => {
           const raw = compact(identity, 240);
           const normalized = raw ? normalizedIdentity(raw) : '';
           if (!normalized) return;
@@ -7306,14 +7618,15 @@
           const aliases = Array.from(new Set([
             raw, ...extraAliases, ...(existing?.aliases || []),
           ].filter(Boolean)));
-          const entry = { identity: raw, role: 'to', aliases };
+          const entryRole = role || existing?.role || 'to';
+          const entry = { identity: raw, role: entryRole, aliases };
           if (existing) Object.assign(existing, entry);
           else observedRecipientCandidates.push(entry);
           if (!strongRecipients.some(item => normalizedIdentity(item.identity) === normalized)) {
-            strongRecipients.push({ identity: raw, role: 'to' });
+            strongRecipients.push({ identity: raw, role: entryRole });
           }
         };
-        const extractAddresses = (rawValue) => {
+        const extractAddresses = (rawValue, role = 'to') => {
           const raw = String(rawValue || '');
           if (!raw || raw.length > 2000) return;
           for (const piece of raw.split(/[,;\n]+/)) {
@@ -7321,7 +7634,7 @@
             const match = candidate.match(/[^\s<>@,;]+@[^\s<>@,;.]+\.[^\s<>@,;]+/);
             if (!match) continue;
             const display = compact(candidate.replace(/<[^>]*>/g, ''), 240);
-            pushRecipient(match[0], display && display !== match[0] ? [display] : []);
+            pushRecipient(match[0], display && display !== match[0] ? [display] : [], role);
           }
         };
         try {
@@ -7329,8 +7642,9 @@
             'input, textarea, [contenteditable="true"], [contenteditable=""]',
           )).slice(0, 60)) {
             if (!visible(el) || el === composer || composer?.contains?.(el)) continue;
-            if (!fieldLooksLikeRecipient(el)) continue;
-            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''));
+            const role = fieldRecipientRole(el);
+            if (!role) continue;
+            extractAddresses('value' in el ? el.value : (el.innerText || el.textContent || ''), role);
           }
         } catch { /* structural read is best-effort */ }
         try {
@@ -7521,6 +7835,9 @@
         error: 'The observed target or form context changed. Read the page again before acting.' });
       return;
     }
+    // The agent's readings of a messaging page's texts, for the recipient
+    // guard, its dispatch checks and the chat observer.
+    _rememberPageReadings(msg.params?.__wbPageReadings);
 
     if (location.hostname === 'web.whatsapp.com'
         && ['observe_chat','probe_message_recipient_guard','click_ax'].includes(msg.action)) {
@@ -7550,7 +7867,15 @@
       'wait_for_rich_text_toolbar_focused_child_frame': () => _waitForRichTextToolbarFocusedChildFrame(msg.params || {}),
       'announce_rich_text_toolbar_focused_child_frame': () => _announceRichTextToolbarFocusedChildFrame(msg.params || {}),
       'blur_rich_text_toolbar_target': () => _blurRichTextToolbarTarget(msg.params || {}),
-      'probe_message_recipient_guard': () => _probeMessageRecipientGuard(msg.params || {}),
+      // Texts consulted unread outside a guard check (the page monitor's
+      // capture, a chat observation), for the agent to read.
+      'take_unread_page_texts': () => ({ success: true, texts: _takeUnreadPageTexts() }),
+      'probe_message_recipient_guard': () => {
+        const result = _probeMessageRecipientGuard(msg.params || {});
+        // Texts the guard consulted unread go back to the agent to be read.
+        const unread = _takeUnreadPageTexts();
+        return unread.length && result && typeof result === 'object' ? { ...result, pageTextsNeeded: unread } : result;
+      },
       'observe_chat': () => {
         if (typeof window.__wb_observe_chat_dom !== 'function') {
           return { success: false, error: 'chat-observation.js not injected' };
@@ -7559,8 +7884,12 @@
         const probe = _probeMessageRecipientGuard({ ...params, tool: 'observe_active_conversation', args: {} });
         const observation = window.__wb_observe_chat_dom({ ...params, probe });
         const draft = _nativeChatDraftCurrent(params, null, true);
+        // Texts the observation consulted unread (a message's status or label,
+        // a header control's name) go back to the agent to be read.
+        const unread = _takeUnreadPageTexts();
         return { ...observation, ...(draft ? (draft.waitingForLatest
-          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}) };
+          ? { _nativeChatDraftRetained:true } : { _nativeChatDraftCurrent:true }) : {}),
+          ...(unread.length ? { pageTextsNeeded: unread } : {}) };
       },
       'press_keys': () => pressKeys(msg.params || {}, actionDeadlineExpired),
       'scroll': () => scrollPage(msg.params || {}, actionDeadlineExpired),
@@ -9225,6 +9554,15 @@
           if (!value.documentToken) value.documentToken = _axDocumentToken();
           if (!value.refScopeUrl) value.refScopeUrl = location.href;
         } catch { /* identity is best-effort; never break the response */ }
+      }
+      // Overlay and article-block texts the page-gate check consulted unread
+      // go back to the agent to be read; it asks again with the readings.
+      if (['get_page_info', 'get_page_info_cdp', 'get_accessibility_tree'].includes(msg.action)
+          && value && typeof value === 'object') {
+        const unread = _takeUnreadPageTexts('page_blocker');
+        if (unread.length) {
+          value.pageTextsNeeded = [...(Array.isArray(value.pageTextsNeeded) ? value.pageTextsNeeded : []), ...unread];
+        }
       }
       return value;
     };

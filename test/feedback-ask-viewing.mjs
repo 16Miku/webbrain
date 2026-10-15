@@ -1,6 +1,7 @@
 // Real Agent loop with mocked browser APIs (unit level, both builds): a
-// read-only Ask answer survives viewing gestures that cannot change page
-// content; content-changing user activity and Act decisions stay strict.
+// read-only Ask answer survives what the person does on the page while it is
+// written (viewing, clicking, typing) and scrolls or resizes from anywhere;
+// a navigation of the page to another address, and Act decisions, stay strict.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
@@ -68,14 +69,21 @@ function makeAgent(Agent, respond) {
 }
 
 const VIEWING = {
-  scroll: { kind: 'scroll', source: 'user', target: 'html', viewport: { x: 0, y: 400 } },
-  selection: { kind: 'selection', source: 'user', target: 'p' },
-  wheel_or_key: { kind: 'activity', source: 'user', target: 'div#list' },
+  'the person scrolling': { kind: 'scroll', source: 'user', target: 'html', viewport: { x: 0, y: 400 } },
+  'the person selecting text': { kind: 'selection', source: 'user', target: 'p' },
+  'the person using the wheel or keys': { kind: 'activity', source: 'user', target: 'div#list' },
+  // What the person does on the page while the answer is written, as in
+  // the WhatsApp trace: they typed a draft and clicked around.
+  'the person clicking': { kind: 'click', source: 'user', target: 'button#sort' },
+  'the person typing': { kind: 'input', source: 'user', target: 'input#filter' },
+  'the page changing from their typing': { kind: 'dom', source: 'user', target: 'div#composer' },
+  // A page that scrolls itself, such as a chat showing a new message, and a
+  // resized viewport show the same content.
+  'the page scrolling itself': { kind: 'scroll', source: 'unknown', target: 'div#messages', viewport: { x: 0, y: 900 } },
+  'the viewport resizing': { kind: 'resize', source: 'unknown', target: 'viewport', viewport: { width: 900, height: 700 } },
 };
 const CHANGING = {
-  click: { kind: 'click', source: 'user', target: 'button#sort' },
-  input: { kind: 'input', source: 'user', target: 'input#filter' },
-  navigation: { kind: 'navigation', source: 'user' },
+  'the person navigating to another address': { kind: 'navigation', source: 'user' },
 };
 const emit = (agent, tab, event) => event.kind === 'navigation'
   ? agent._queuePageFeedback(tab, { ...event, frameId: 0, before: PAGE_URL, after: PAGE_URL + '?sorted' })
@@ -87,7 +95,7 @@ for (const build of ['chrome', 'firefox']) {
 
   for (const [name, event] of [...Object.entries(VIEWING), ...Object.entries(CHANGING)]) {
     const survives = name in VIEWING;
-    test(`${build}: a streamed Ask answer ${survives ? 'survives' : 'is regenerated after'} user ${name}`, async () => {
+    test(`${build}: a streamed Ask answer ${survives ? 'survives' : 'is regenerated after'} ${name}`, async () => {
       const tab = nextTab++, updates = [];
       let calls = 0;
       const agent = makeAgent(Agent, (owner, streamed) => {
@@ -99,13 +107,45 @@ for (const build of ['chrome', 'firefox']) {
         { detachedRequestId: 'ask-' + tab, interactiveChat: true, askStreamingEnabled: true });
       assert.equal(calls, survives ? 1 : 2);
       assert.equal(result, survives ? ANSWER : 'Regenerated: ' + ANSWER);
-      assert.equal(retracted(updates), !survives, survives ? 'A viewing gesture must not retract a visible answer' : 'Changed content invalidates it');
+      assert.equal(retracted(updates), !survives, survives ? 'What the person does on the page must not retract a visible answer' : 'A navigation invalidates it');
       assert.equal(agent._pageFeedbackRuns.size, 0);
     });
   }
 
-  for (const streaming of [false, true]) for (const [name, event] of [['scroll', VIEWING.scroll], ['click', CHANGING.click]]) {
-    test(`${build}: ${streaming ? 'stream' : 'chat'} Ask done summary ${name === 'scroll' ? 'survives' : 'is reconsidered after'} user ${name}`, async () => {
+  // The trace's person typed a long draft while the answer was written; the
+  // answer is delivered without waiting for them to stop typing.
+  for (const entry of ['chat', 'chat_stream']) test(`${build}: a streamed Ask answer is delivered while the person keeps typing (${entry})`, async () => {
+    const tab = nextTab++, updates = [];
+    let calls = 0, typing = null, answered = 0;
+    const agent = makeAgent(Agent, (owner, streamed) => {
+      assert.equal(streamed, true);
+      calls++;
+      // They type for three seconds, longer than the answer takes.
+      const type = () => owner.__send({ kind: 'input', source: 'user', target: 'div#composer' });
+      const until = Date.now() + 3000;
+      return { chunks: [{ text: 'The page lists A and B; ', after: () => {
+        type(); typing = setInterval(() => { if (Date.now() < until) type(); else clearInterval(typing); }, 150);
+      } },
+        { text: 'B is the cheapest at $5.', after: () => { answered = Date.now(); } }] };
+    });
+    agent._pageFeedbackIdleMs = 1000;
+    try {
+      const options = { detachedRequestId: 'ask-' + tab, interactiveChat: true, askStreamingEnabled: true };
+      const update = (type, data) => updates.push({ type, data });
+      const result = entry === 'chat' ? await agent.processMessage(tab, 'Which product is cheapest?', update, 'ask', [], options)
+        : await agent.processMessageStream(tab, 'Which product is cheapest?', update, 'ask', options);
+      const settled = Date.now() - answered;
+      assert.equal(result, ANSWER);
+      assert.equal(calls, 1);
+      assert.equal(retracted(updates), false);
+      assert.ok(settled < 900, `The run finished ${settled} ms after the answer, while the person was still typing`);
+    } finally { clearInterval(typing); }
+  });
+
+  for (const streaming of [false, true]) for (const [name, event] of [['the person scrolling', VIEWING['the person scrolling']],
+    ['the person clicking', VIEWING['the person clicking']], ...Object.entries(CHANGING)]) {
+    const survives = name in VIEWING;
+    test(`${build}: ${streaming ? 'stream' : 'chat'} Ask done summary ${survives ? 'survives' : 'is reconsidered after'} ${name}`, async () => {
       const tab = nextTab++, delivered = [];
       let calls = 0;
       const agent = makeAgent(Agent, owner => {
@@ -118,8 +158,8 @@ for (const build of ['chrome', 'firefox']) {
       const options = { detachedRequestId: 'ask-done-' + tab, askStreamingEnabled: false };
       const result = streaming ? await agent.processMessageStream(tab, 'Which product is cheapest?', () => {}, 'ask', options)
         : await agent.processMessage(tab, 'Which product is cheapest?', () => {}, 'ask', [], options);
-      assert.equal(calls, name === 'scroll' ? 1 : 2);
-      assert.deepEqual(delivered, [name === 'scroll' ? ANSWER : 'Fresh: ' + ANSWER]);
+      assert.equal(calls, survives ? 1 : 2);
+      assert.deepEqual(delivered, [survives ? ANSWER : 'Fresh: ' + ANSWER]);
       assert.equal(result, delivered[0]);
     });
   }
@@ -129,7 +169,7 @@ for (const build of ['chrome', 'firefox']) {
     let calls = 0;
     const agent = makeAgent(Agent, owner => {
       calls++;
-      if (calls === 1) emit(owner, tab, VIEWING.scroll);
+      if (calls === 1) emit(owner, tab, VIEWING['the person scrolling']);
       return calls <= 2 ? { toolCalls: [{ id: 'read-' + calls, function: { name: 'extract_data', arguments: '{"type":"headings"}' } }] }
         : { toolCalls: [{ id: 'finished', function: { name: 'done', arguments: JSON.stringify({ summary: ANSWER, outcome: 'success' }) } }] };
     });

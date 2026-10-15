@@ -2,6 +2,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
+import { defaultDecide, fixtureControlEffectReading, semanticQuestionOf } from './semantic-decision-stub.mjs';
 
 // Real-DOM fixtures: the production submit probe (injected the way each build
 // injects it) classifies controls in Chromium and Firefox pages, then the real
@@ -57,7 +58,13 @@ for (const build of ['chrome', 'firefox']) {
         agent.conversations.set(1, [{ role: 'system', content: 'system' }, { role: 'user', content: request }]);
         const guard = agent._startPlanExecutionGuard(1, 'act', { requestKind: 'execute', requiresStateChange: true, requiresSubmission: false, ...gate });
         const modelCalls = [];
-        agent._chatWithCostAllowance = async (_p, _m, _o, _c, meta) => { modelCalls.push(meta?.generationName); return { content: JSON.stringify(noneContract) }; };
+        agent._chatWithCostAllowance = async (_p, messages, _o, _c, meta) => {
+          modelCalls.push(meta?.generationName);
+          // Fixed-choice decisions about the request get a model's reading;
+          // the publication contract finds no publication.
+          const kind = String(meta?.generationName || '').match(/^semantic_(.+)$/)?.[1];
+          return { content: JSON.stringify(kind ? defaultDecide(kind, semanticQuestionOf(agent, messages)) : noneContract) };
+        };
         if (steering) guard.steeringPriorSubmission = priorReceipt();
         return { agent, guard, provider, modelCalls };
       };
@@ -98,22 +105,30 @@ for (const build of ['chrome', 'firefox']) {
         });
 
         await t.test('requested resource deletions and scripted commands keep the deletion guard', async () => {
-          for (const [url, html] of [
-            ['https://shop.example/cart', '<ul class="cart"><li>Wool socks — $12 <button id="t" type="button">Remove</button></li><li>Hat <button type="button">Remove</button></li></ul>'],
-            ['https://admin.example/users', '<table><tr><td>bob@example.com</td><td><button id="t" type="button">Delete</button></td></tr></table>'],
-            ['https://mail.example/msg/42', '<div role="toolbar"><div id="t" role="button" tabindex="0" aria-label="Delete">🗑</div></div><h2>Subject</h2>'],
-            ['https://app.example/items', '<ul><li>Item <a id="t" role="button" href="#">Delete</a></li></ul>'],
+          // A row without a permalink is now bound by its text; a request that
+          // names no row cannot select it. Toolbar, unlinked menu and dialog
+          // deletions have no record at all.
+          for (const [url, html, reason] of [
+            ['https://shop.example/cart', '<ul class="cart"><li>Wool socks — $12 <button id="t" type="button">Remove</button></li><li>Hat <button type="button">Remove</button></li></ul>', 'record_not_named_in_request'],
+            ['https://admin.example/users', '<table><tr><td>bob@example.com</td><td><button id="t" type="button">Delete</button></td></tr></table>', 'record_not_named_in_request'],
+            ['https://mail.example/msg/42', '<div role="toolbar"><div id="t" role="button" tabindex="0" aria-label="Delete">🗑</div></div><h2>Subject</h2>', 'resource_unresolved'],
+            ['https://app.example/items', '<ul><li>Item <a id="t" role="button" href="#">Delete</a></li></ul>', 'record_not_named_in_request'],
             // A GET link whose query performs the deletion keeps its caption.
-            ['https://blog.example/wp-admin/edit.php', '<ul><li>Post 1 <span role="menu"><a id="t" role="menuitem" href="/wp-admin/post.php?post=1&amp;action=trash&amp;_wpnonce=abc">Trash</a></span></li></ul>'],
-            ['https://admin.example/list', '<ul><li>Row 5 <span role="menu"><a id="t" role="menuitem" href="/admin.php?do=delete_row&amp;id=5">Delete</a></span></li></ul>'],
-            ['https://notes.example/', '<section><textarea aria-label="New note"></textarea><div class="note"><p>Buy milk</p><button id="t" type="button">Remove</button></div></section>'],
-            ['https://app.example/settings', '<dialog open><form method="dialog"><p>Delete this item?</p><button value="cancel">Cancel</button><button id="t" value="confirm">Delete</button></form></dialog>'],
+            ['https://blog.example/wp-admin/edit.php', '<ul><li>Post 1 <span role="menu"><a id="t" role="menuitem" href="/wp-admin/post.php?post=1&amp;action=trash&amp;_wpnonce=abc">Trash</a></span></li></ul>', 'resource_unresolved'],
+            ['https://admin.example/list', '<ul><li>Row 5 <span role="menu"><a id="t" role="menuitem" href="/admin.php?do=delete_row&amp;id=5">Delete</a></span></li></ul>', 'resource_unresolved'],
+            ['https://notes.example/', '<section><textarea aria-label="New note"></textarea><div class="note"><p>Buy milk</p><button id="t" type="button">Remove</button></div></section>', 'record_not_named_in_request'],
+            ['https://app.example/settings', '<dialog open><form method="dialog"><p>Delete this item?</p><button value="cancel">Cancel</button><button id="t" value="confirm">Delete</button></form></dialog>', 'resource_unresolved'],
           ]) {
             const f = await setup(url, html, { request: 'Delete the selected item.' });
             const { detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') });
             assert.equal(detected?.mutationKind, 'delete', url);
             assert.equal(block?.noDispatch, true, url);
-            assert.equal(block.actionGuard.reason, 'resource_unresolved', url);
+            assert.equal(block.actionGuard.reason, reason, url);
+            assert.equal(f.modelCalls.includes('resource_mutation_authorization'), false, url);
+            // A row the request does not identify goes to the user on WebBrain's
+            // card; a control with no record is never put to the model.
+            assert.equal(f.modelCalls.includes('semantic_deletion_request'), reason === 'record_not_named_in_request', url);
+            assert.equal(block.mutationConfirmation?.reason, reason === 'record_not_named_in_request' ? 'not_named' : undefined, url);
           }
         });
 
@@ -227,6 +242,55 @@ for (const build of ['chrome', 'firefox']) {
           }
         });
 
+        // X Pro (pro.x.com) has none of the app markers the X adapter reads.
+        // A plain Post button whose caption no model read in time looks
+        // ordinary to the probe, which says so; Enter in the app-marked post
+        // editor edits the draft there as on x.com.
+        await t.test('on X Pro an unread caption proves nothing, and Enter in the post editor edits the draft', async () => {
+          const html = '<main><div><div data-testid="tweetTextarea_0" contenteditable="true" role="textbox" id="editor">Draft</div><button id="t" type="button">Post</button></div></main>';
+          for (const reading of ['unread', 'read']) {
+            const f = await setup('https://pro.x.com/i/decks/1', html, { steering: true });
+            if (reading === 'unread') {
+              const chat = f.agent._chatWithCostAllowance;
+              f.agent._chatWithCostAllowance = async (provider, messages, options, cost, meta) => meta?.generationName === 'semantic_control_effect'
+                ? { content: '' } : chat(provider, messages, options, cost, meta);
+            }
+            const { detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') });
+            if (reading === 'unread') {
+              assert.equal(detected?.resolvedOrdinaryActivationTarget, true, reading);
+              assert.equal(detected.captionUnread, true, reading);
+              assert.equal(f.agent._cannotPost(detected), false, reading);
+            } else {
+              assert.notEqual(detected?.resolvedOrdinaryActivationTarget, true, 'read as a post, it is no ordinary button');
+            }
+            // Under a correction it is not clicked either way.
+            assert.equal(block?.actionGuard?.reason, 'target_unresolved', reading);
+          }
+          // A Post button that also opens a popup is not clicked either.
+          const popup = await setup('https://pro.x.com/i/decks/1', html.replace('<button id="t" type="button">', '<button id="t" type="button" aria-haspopup="dialog">'), { steering: true });
+          const popupChat = popup.agent._chatWithCostAllowance;
+          popup.agent._chatWithCostAllowance = async (provider, messages, options, cost, meta) => meta?.generationName === 'semantic_control_effect'
+            ? { content: '' } : popupChat(provider, messages, options, cost, meta);
+          const launcher = await gate(popup, 'click_ax', { ref_id: await ref('t') });
+          assert.equal(launcher.detected?.resolvedPreparatoryTarget, true);
+          assert.equal(launcher.detected.captionUnread, true);
+          assert.equal(launcher.block?.actionGuard?.reason, 'target_unresolved');
+          const f = await setup('https://pro.x.com/i/decks/1', html, { steering: true });
+          await page.locator('#editor').focus();
+          const result = await gate(f, 'press_keys', { key: 'Enter' });
+          assert.equal(result.detected?.resolvedEditableTarget, true, 'Enter in the X Pro post editor');
+          assert.equal(f.agent._cannotPost(result.detected), true);
+          assert.equal(result.block, null);
+          // On a site that is not X or Bluesky nothing changes.
+          const other = await setup('https://deck.example/', html);
+          const chat = other.agent._chatWithCostAllowance;
+          other.agent._chatWithCostAllowance = async (provider, messages, options, cost, meta) => meta?.generationName === 'semantic_control_effect'
+            ? { content: '' } : chat(provider, messages, options, cost, meta);
+          const plain = await gate(other, 'click_ax', { ref_id: await ref('t') });
+          assert.equal(plain.detected?.resolvedOrdinaryActivationTarget, true);
+          assert.equal(plain.detected.captionUnread, undefined);
+        });
+
         await t.test('the duplicate-click window exempts draft tools and popups, not ordinary commits by caption', async () => {
           const f = await setup('https://x.com/home', '<nav><a data-testid="AppTabBar_Profile_Link" href="/alice">Profile</a></nav><div><div data-testid="tweetTextarea_0" contenteditable="true" role="textbox">Hello</div><nav aria-label="Composer tools"><button id="emoji" type="button" aria-label="Add emoji">Add emoji</button></nav><button type="button" data-testid="tweetButtonInline">Post</button></div>');
           const emoji = await f.agent._detectLikelySubmitAction(1, 'click', { text: 'Add emoji' });
@@ -234,9 +298,11 @@ for (const build of ['chrome', 'firefox']) {
           const store = new Map();
           let now = 1_000_000;
           const repeat = async (text, detected) => {
-            const first = await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected);
+            // What a model read each caption as.
+            const read = async caption => fixtureControlEffectReading(caption);
+            const first = await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected, read);
             now += 5_000;
-            return [first, await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected)];
+            return [first, await guardRecentSubmitClick(store, 1, { text }, async () => 'https://x.com/home', () => now, detected, read)];
           };
           assert.deepEqual(await repeat('Add emoji', emoji), [null, null]);
           for (const detected of [{ isSubmit: false, resolvedOrdinaryActivationTarget: true, resolvedPreparatoryTarget: true },

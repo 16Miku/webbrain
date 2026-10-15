@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
+import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
+// The questions a messaging page's own checks read its texts with.
+const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 
 const workspace = path.resolve('.');
 // Whole installed MV3 cold start with actual passive page feedback and the
@@ -77,6 +80,8 @@ try {
  await new Promise(r=>setTimeout(r,400));
  let completion;
  if(evaluator)completion={role:'assistant',content:JSON.stringify({outcome:'uncertain',reason:'This fixture claims no successful identity verification.'})};
+ // The chat's controls, fields, message labels and statuses, read as a model would.
+ else if(MESSAGING_TEXT_KINDS.includes(fixedChoiceQuestion(input.messages)?.kind))completion={role:'assistant',content:fixtureFixedChoiceReply(input.messages)};
  else if(!action)completion={role:'assistant',content:JSON.stringify(plan())};
  else{
  initialActionRequests++;assert.ok(initialActionRequests<=4,'Bounded cold probe');

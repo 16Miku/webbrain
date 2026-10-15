@@ -118,7 +118,11 @@ for (const browser of ['chrome', 'firefox']) {
     initial.approvedRecipients = ['fixture recipient'];
     assert.equal(initial.successfulTaskToolCalls, 0);
     agent._storeContinuationExecutionEvidence(720);
-    messages.push(await agent._enrichUserMessageWithCurrentPage(720, messages, 'continue'));
+    // The Continue command is marked as a continuation of the same task.
+    const continuation = await agent._enrichUserMessageWithCurrentPage(720, messages, 'continue');
+    await agent._markUserTurnKind(720, messages, continuation, 'continue', 'act', { trustedContinuation: true });
+    assert.equal(continuation.webbrainTurnKind, 'continue');
+    messages.push(continuation);
     const continued = agent._startPlanExecutionGuard(720, 'act', gate, { trustedContinuation: true });
     assert.deepEqual(continued.approvedRecipients, ['fixture recipient']);
     assert.equal(continued.successfulTaskToolCalls, 0, 'A carried grant must not invent task execution evidence');

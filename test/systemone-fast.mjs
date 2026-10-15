@@ -8,12 +8,95 @@ for (const build of ['chrome', 'firefox']) {
   const mod = await import(`../src/${build}/src/agent/systemone-fast.js`);
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const config = await import(`../src/${build}/src/config-transfer.js`);
+  test(`${build}: Compass semantic checks use decisions with device, consent and session context`, async () => {
+    const saved = { ...storage }, originalFetch = globalThis.fetch;
+    for (const key of Object.keys(storage)) delete storage[key];
+    Object.assign(storage, { systemOneEnabled: false, decisionProvider: 'openrouter',
+      decisionApiKey: 'saved-openrouter-key', typesafeApiKey: 'saved-typesafe-key', decisionLocalApiKey: 'saved-local-key' });
+    const provider = { model: 'webbrain-cloud 1.0', config: { providerName: 'webbrain-cloud',
+      baseUrl: 'https://api.webbrain.one/v1', deviceGuid: 'decision-test-device', helpImproveWebBrain: false },
+      chat: async () => { throw Error('Confident decisions must not call chat'); } };
+    const agent = new Agent({ getActive: () => provider });
+    agent.conversationIds.set(1, 'decision-test-session');
+    agent._checkCostAllowance = async () => null;
+    agent._recordCostUsage = async () => null;
+    const requests = [];
+    globalThis.fetch = async (url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push({ url, ...options, body });
+      const answers = Object.fromEntries(Object.entries(body.questions).map(([id, question]) => {
+        const keys = Object.keys(question.criteria), selected = 'not_requested';
+        return [id, { type: 'choice', choice: selected, confidence: .99,
+          probabilities: Object.fromEntries(keys.map(key => [key, key === selected ? .99 : .01 / (keys.length - 1)])) }];
+      }));
+      return { ok: true, json: async () => ({ model: body.model, answers,
+        usage: { input_tokens: 20, output_tokens: 0, cost: .000001 } }) };
+    };
+    try {
+      const result = await agent._semanticDecision(1, 'deletion_request', { request: 'Read this post', page: { item: 'QA post' } });
+      assert.equal(result.source, 'decision_model');
+      assert.equal(result.choice, 'not_requested');
+      const batch = await agent._semanticDecisions(1, 'deletion_request', { request: 'Read these posts', items: [{ item: 'Another QA post' }] });
+      assert.equal(batch[0].source, 'decision_model');
+      assert.equal(requests.length, 2);
+      for (const request of requests) {
+        assert.equal(request.url, 'https://api.webbrain.one/v1/decisions');
+        assert.equal(request.body.model, 'perplexity/pplx-decider-v1.1-27b');
+        assert.equal(request.headers['X-WebBrain-Device-Id'], 'decision-test-device');
+        assert.equal(request.headers['X-WebBrain-Help-Improve'], '0');
+        assert.equal(request.headers['X-WebBrain-Client'], 'extension');
+        assert.equal(request.headers.Authorization, undefined, 'Saved BYO credentials must stay out of Compass requests');
+        assert.equal(request.body.session_id, 'decision-test-session');
+      }
+      assert.equal((await agent._jevSettings(1, { config: {} })), null, 'Other providers keep their opt-in requirement');
+      agent.strictSecretMode = true;
+      assert.equal(await agent._jevSettings(1), null);
+    } finally {
+      globalThis.fetch = originalFetch;
+      for (const key of Object.keys(storage)) delete storage[key];
+      Object.assign(storage, saved);
+    }
+  });
   const snapshot = () => ({ documentToken: 'doc', pageUrl: 'http://jev.local/', structure: 'form', progress: 'initial', controls: [
     { ref: 'ref_1', name: 'Name', role: 'textbox', kinds: ['fill'], value: '', signature: 'name' },
     { ref: 'ref_2', name: 'Email', role: 'textbox', kinds: ['fill'], value: '', signature: 'email' },
     { ref: 'ref_3', name: 'Send', role: 'button', kinds: ['click'], signature: 'send' },
     { ref: 'ref_4', name: 'City', role: 'combobox', kinds: ['select'], signature: 'city', options: [{ value: '34', label: 'Istanbul' }] },
   ] });
+  test(`${build}: Compass master opt-out blocks optional fast calls and queued actions`, async () => {
+    const saved = { ...storage };
+    for (const key of Object.keys(storage)) delete storage[key];
+    Object.assign(storage, { systemOneFastBrowser: true, systemOneFastClassifications: true });
+    const provider = { model: 'webbrain-cloud 1.0', config: { providerName: 'webbrain-cloud', baseUrl: 'https://api.webbrain.one/v1' } };
+    const agent = new Agent({ getActive: () => provider });
+    const session = new mod.JevFastSession(); session.observe(snapshot()); agent._jevSessions = new Map([[1, session]]);
+    let calls = 0;
+    agent.evaluateSystemOne = async () => {
+      calls++;
+      return { answers: { classification: choice('yes'), operation: choice('click'), click_target: choice('ref_3') } };
+    };
+    const classify = () => agent._jevClassify(1, 'Classify this request', { yes: 'yes', no: 'no' }, { task: 'Read the page' });
+    const turn = () => agent._maybeJevFastTurn(1, 'Click Send', [], 'act', new Set(['get_accessibility_tree', 'click_ax']), provider, {});
+    try {
+      storage.systemOneEnabled = true;
+      assert.equal(await classify(), 'yes');
+      assert.equal((await turn()).toolCalls[0].function.name, 'click_ax');
+      assert.equal(calls, 2, 'Explicit opt-in still enables optional fast paths');
+      session.pending = null;
+      session.queue = [{ name: 'click_ax', args: { ref_id: 'ref_3' } }];
+      for (const master of [false, undefined]) {
+        if (master === undefined) delete storage.systemOneEnabled;
+        else storage.systemOneEnabled = master;
+        assert.equal(await classify(), null);
+        assert.equal(await turn(), null);
+      }
+      assert.equal(calls, 2, 'Disabled or unset master switch must prevent all optional judge calls');
+      assert.equal(session.queue.length, 1, 'The fast path must not consume a queued action after opt-out');
+    } finally {
+      for (const key of Object.keys(storage)) delete storage[key];
+      Object.assign(storage, saved);
+    }
+  });
   test(`${build}: browser requests omit unsupported operations and one-option target questions`, () => {
     const google = {
       documentToken: 'google-home', pageUrl: 'https://www.google.com/', structure: 'search', progress: 'initial', controls: [

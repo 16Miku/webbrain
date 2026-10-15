@@ -1,14 +1,32 @@
 import { applyCaptchaFrameVisibility } from './captcha-frame-runtime.js';
 
-export const CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE = String.raw`\b(?:(?:re|h|fun)?captcha|security verification|human verification|verify (?:that )?you(?:'|\u2019)re (?:a )?human|verify (?:that )?you are (?:a )?human|are you (?:a )?human|robot check|challenge verification)\b`;
+// The names of CAPTCHA products, which pages show untranslated in every
+// language. Whether any other dialog asks the person to prove they are human
+// is read from its title by a model, in any language (the page_blocker
+// question, answered `human_check`): `read(title)` gives a reading the agent
+// holds, and the scans that run in the page take those readings as
+// `challengeReadings` and report the titles nobody has read yet.
+export const CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE = String.raw`\b(?:re|h|fun)?captcha\b`;
 const CHALLENGE_DIALOG_RE = new RegExp(CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE, 'i');
+export const CHALLENGE_TITLE_READING = 'human_check';
 
-export function captchaChallengeMatcherOptions() {
-  return { challengeLabelPatternSource: CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE };
+export function captchaChallengeMatcherOptions(challengeReadings = null) {
+  return {
+    challengeLabelPatternSource: CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
+    ...(challengeReadings && typeof challengeReadings === 'object' ? { challengeReadings } : {}),
+  };
 }
 
 function matchesChallengeLabel(value) {
   return CHALLENGE_DIALOG_RE.test(String(value || ''));
+}
+
+// A dialog's title as the readings key it: spaces collapsed, at most 200
+// characters, and neither a space nor half of a surrogate pair at its end
+// once cut, so the page and the agent key a long title alike. The scans
+// that run in the page and captcha-frame-runtime.js keep the same rule.
+export function challengeTitleText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200).replace(/[\ud800-\udbff]$/, '').trim();
 }
 
 function normalizeChallengeLabel(value) {
@@ -45,34 +63,68 @@ function parseSerializedTreeLabel(line) {
   return '';
 }
 
-export function detectChallengeDialog(pageContent) {
+// The titles of an accessibility tree's dialogs: each dialog's own name and
+// the names of the headings inside it. Any label in a dialog that names a
+// CAPTCHA product counts on its own; a title counts once a model read it as
+// asking to prove the person is human.
+function challengeDialogEntries(pageContent) {
   const lines = String(pageContent || '').split(/\r?\n/);
+  const dialogs = [];
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const dialogMatch = line.match(/^(\s*)(?:dialog|alertdialog)(?=\s|$)/i);
     if (!dialogMatch) continue;
     const dialogIndent = dialogMatch[1].length;
+    const labels = [];
+    let editable = false;
     const ownLabel = parseSerializedTreeLabel(line);
-    if (ownLabel && matchesChallengeLabel(ownLabel)) {
-      return {
-        label: ownLabel,
-        normalizedLabel: normalizeChallengeLabel(ownLabel),
-      };
-    }
+    if (ownLabel) labels.push({ label: ownLabel, title: true });
     for (let childIndex = index + 1; childIndex < lines.length; childIndex += 1) {
       const childLine = lines[childIndex];
       if (!childLine.trim()) continue;
       const childIndent = childLine.match(/^\s*/)?.[0].length || 0;
       if (childIndent <= dialogIndent) break;
+      editable ||= /^\s*(?:textbox|searchbox|combobox)(?=\s|$)/i.test(childLine);
       const childLabel = parseSerializedTreeLabel(childLine);
-      if (!childLabel || !matchesChallengeLabel(childLabel)) continue;
+      if (childLabel) labels.push({ label: childLabel, title: /^\s*heading(?=\s|$)/i.test(childLine) });
+    }
+    // A dialog with neither a name nor a heading is titled by its first
+    // label, unless it holds an editable field whose text could change while
+    // it is being filled in.
+    if (!labels.some(entry => entry.title) && labels.length && !editable) labels[0].title = true;
+    dialogs.push(labels);
+  }
+  return dialogs;
+}
+
+export function detectChallengeDialog(pageContent, read = null) {
+  const readsAsChallenge = label => typeof read === 'function'
+    && read(challengeTitleText(label)) === CHALLENGE_TITLE_READING;
+  for (const labels of challengeDialogEntries(pageContent)) {
+    const match = labels.find(({ label, title }) => matchesChallengeLabel(label) || (title && readsAsChallenge(label)));
+    if (match) {
       return {
-        label: childLabel,
-        normalizedLabel: normalizeChallengeLabel(childLabel),
+        label: match.label,
+        normalizedLabel: normalizeChallengeLabel(match.label),
       };
     }
   }
   return null;
+}
+
+// The dialog titles of an accessibility tree that a model has to read before
+// detectChallengeDialog can tell whether they ask to prove the person is
+// human: titles naming a CAPTCHA product need no reading.
+export function challengeDialogTitles(pageContent, limit = 12) {
+  const titles = new Set();
+  for (const labels of challengeDialogEntries(pageContent)) {
+    if (labels.some(({ label }) => matchesChallengeLabel(label))) continue;
+    for (const { label, title } of labels) {
+      const text = challengeTitleText(label);
+      if (title && text) titles.add(text);
+    }
+  }
+  return [...titles].slice(0, limit);
 }
 
 // Serialized into the page for a lightweight, read-only preflight before
@@ -100,6 +152,16 @@ export function detectChallengeDialogInPage(options = null) {
   const matchesChallenge = value => {
     return challengeRe?.test(String(value || '')) === true;
   };
+  // Titles a model read as asking to prove the person is human (the agent's
+  // page_blocker readings), and the titles of visible dialogs nobody has read.
+  const givenTitleReadings = options?.challengeReadings && typeof options.challengeReadings === 'object'
+    ? options.challengeReadings : {};
+  const titleReading = title => (Object.prototype.hasOwnProperty.call(givenTitleReadings, title)
+    ? String(givenTitleReadings[title] || '') : '');
+  // Keyed as challengeTitleText keys a title.
+  const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+    .replace(/[\ud800-\udbff]$/, '').trim();
+  const unreadTitles = [];
   const visible = (element) => {
     try {
       const elementStyle = getComputedStyle(element);
@@ -177,6 +239,7 @@ export function detectChallengeDialogInPage(options = null) {
     ? {
         challenge,
         ...(hiddenChallenge ? { hiddenChallenge } : {}),
+        ...(!challenge && unreadTitles.length ? { unreadTitles: unreadTitles.slice(0, 12) } : {}),
         frameContext: {
           frameUrl,
           frameName,
@@ -205,6 +268,27 @@ export function detectChallengeDialogInPage(options = null) {
     }
   };
   collectDialogs(document, 0);
+  // A dialog's title: its accessible name, else its first heading, else its
+  // title attribute, else (when it holds no editable text that could change
+  // while it is filled in) the first line of its text.
+  const dialogTitle = (element, labelledBy = '', onlyVisibleHeadings = true) => {
+    let heading = '';
+    try {
+      heading = Array.from(element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || [])
+        .filter(node => !onlyVisibleHeadings || visible(node))
+        .map(node => titleText(node.textContent))
+        .find(Boolean) || '';
+    } catch {}
+    const named = titleText(element.getAttribute?.('aria-label')) || titleText(labelledBy) || heading
+      || titleText(element.getAttribute?.('title'));
+    if (named) return named;
+    try {
+      const editable = Array.from(element.querySelectorAll?.('[contenteditable]') || [])
+        .some(node => String(node.getAttribute?.('contenteditable') || '').toLowerCase() !== 'false');
+      if (editable) return '';
+    } catch { return ''; }
+    return titleText(String(element.innerText || '').split(/\r?\n/).find(line => line.trim()));
+  };
   const recordHiddenChallenge = (element) => {
     if (hiddenChallenge) return;
     try {
@@ -226,6 +310,8 @@ export function detectChallengeDialogInPage(options = null) {
           return;
         }
       }
+      const title = dialogTitle(element, '', false);
+      if (title && titleReading(title) === 'human_check') hiddenChallenge = { label: title };
     } catch {}
   };
   for (const element of dialogCandidates) {
@@ -269,6 +355,13 @@ export function detectChallengeDialogInPage(options = null) {
       const label = line.replace(/\s+/g, ' ').trim().slice(0, 200);
       if (label) return finish({ label });
     }
+    // A title read as asking to prove the person is human is the challenge's
+    // label, as the accessibility tree names the dialog.
+    const title = dialogTitle(element, labelledBy);
+    if (!title) continue;
+    const titleChoice = titleReading(title);
+    if (titleChoice === 'human_check') return finish({ label: title });
+    if (!titleChoice && !unreadTitles.includes(title)) unreadTitles.push(title);
   }
   const activeChallengeFrame = childFrames.find(frame =>
     frame.visible === true && frame.activeChallengeVendor

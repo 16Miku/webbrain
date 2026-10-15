@@ -1,4 +1,5 @@
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
+import { fixtureControlEffectReading, fixtureFollowStateReading, fixtureHomeInstanceReading, fixturePageBlockerReading, fixturePageTextReading, fixtureProgressActionReading, stubPageTextReadings, withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 /**
  * WebBrain test runner — pure Node, no framework, no chrome.* APIs.
  *
@@ -318,7 +319,6 @@ const {
   invalidateWorkflowInventoryCompleteness,
   parseWorkflowAxQuotedValue,
   shouldInvalidateFormInventoryAfterAction,
-  workflowControlLabelIsRequested,
   workflowRequiredRowsAreProcessed,
 } = await import(
   'file://' + path.join(ROOT, 'src/chrome/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
@@ -328,7 +328,6 @@ const {
   invalidateWorkflowInventoryCompleteness: invalidateWorkflowInventoryCompletenessFx,
   parseWorkflowAxQuotedValue: parseWorkflowAxQuotedValueFx,
   shouldInvalidateFormInventoryAfterAction: shouldInvalidateFormInventoryAfterActionFx,
-  workflowControlLabelIsRequested: workflowControlLabelIsRequestedFx,
   workflowRequiredRowsAreProcessed: workflowRequiredRowsAreProcessedFx,
 } = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/adapter-workflow-evidence.js').replace(/\\/g, '/')
@@ -784,9 +783,43 @@ const CloudflareChallengeCh = await import(
 const CloudflareChallengeFx = await import(
   'file://' + path.join(ROOT, 'src/firefox/src/agent/cloudflare-managed-challenge.js').replace(/\\/g, '/')
 );
+// The page_blocker readings a model would give any dialog title, as the
+// readings the agent passes to the scans that run in the page.
+const captchaTitleReadings = new Proxy({}, {
+  get: (_target, title) => (typeof title === 'string' ? fixturePageBlockerReading(title) : undefined),
+  getOwnPropertyDescriptor: (_target, title) => {
+    const value = typeof title === 'string' ? fixturePageBlockerReading(title) : null;
+    return value ? { value, enumerable: true, configurable: true, writable: false } : undefined;
+  },
+});
+const readCaptchaTitle = title => fixturePageBlockerReading(title);
+// A model stand-in that reads only dialog titles (page_blocker), so a CAPTCHA
+// test's other readings stay as unread as before.
+const stubCaptchaTitleReadings = agent => stubPageTextReadings(agent,
+  (kind, item) => (kind === 'page_blocker' ? fixturePageBlockerReading(item.text) : null));
+// The page_blocker readings a model would give the titles of fake page nodes,
+// as the plain object the agent passes to the scans in the page.
+function captchaTitleReadingsFor(nodes) {
+  const readings = {};
+  const add = value => {
+    for (const line of String(value || '').split(/\r?\n/)) {
+      const title = line.replace(/\s+/g, ' ').trim().slice(0, 200);
+      const reading = title && fixturePageBlockerReading(title);
+      if (reading) readings[title] = reading;
+    }
+  };
+  (function walk(list) {
+    for (const node of list || []) {
+      add(node.innerText); add(node.textContent);
+      for (const name of ['aria-label', 'title']) add(node.getAttribute?.(name));
+      walk(node.children); walk(node.shadowRoot?.children);
+    }
+  })(nodes);
+  return readings;
+}
 function detectCaptchaChallengeInPage(gate, options = null) {
   return gate.detectChallengeDialogInPage({
-    ...gate.captchaChallengeMatcherOptions(),
+    ...gate.captchaChallengeMatcherOptions(captchaTitleReadings),
     ...(options || {}),
   });
 }
@@ -920,6 +953,7 @@ function allowProgress(agent, tabId, allowedActions = ['follow'], opts = {}) {
     allowedActions,
     forbiddenActions: opts.forbiddenActions || [],
     targets: opts.targets || [],
+    ...(opts.excludedTargets ? { excludedTargets: opts.excludedTargets } : {}),
     confidence: opts.confidence ?? 1,
     pageScopePolicy: opts.pageScope ? 'page' : (opts.pageScopePolicy || 'none'),
     reason: 'test session',
@@ -2955,30 +2989,37 @@ test('research probe rejects a logged-out guest composer', () => {
       title: '',
       innerText: '',
     };
+    // ChatGPT's log-in control is found by its own test id, so its label can
+    // be in any language.
     const login = {
       getBoundingClientRect: () => ({ width: 80, height: 32 }),
-      getAttribute: () => '',
+      getAttribute: name => (name === 'data-testid' ? 'login-button' : ''),
       title: '',
-      innerText: 'Log in',
+      innerText: 'تسجيل الدخول',
     };
-    const result = vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
+    const run = controls => vm.runInNewContext(`(${runtime.probeChatGptPage.toString()})()`, {
       location: { href: 'https://chatgpt.com/' },
       document: {
         title: 'ChatGPT',
-        body: { innerText: 'Log in Sign up Ask anything' },
+        body: { innerText: 'تسجيل الدخول اشترك اسأل أي شيء' },
         querySelector(sel) {
           if (sel === '#prompt-textarea') return composer;
           return null;
         },
         querySelectorAll(sel) {
-          if (sel === 'button, a') return [login];
+          if (sel.includes('[data-testid="login-button"]')) return controls;
           return [];
         },
       },
       getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
     });
+    const result = run([login]);
     assert.equal(result.composerReady, false, `${label}: logged-out guest composer was treated as authorized`);
     assert.equal(result.loginRequired, true, `${label}: visible login controls were ignored`);
+    // Words on the page alone never make it logged out.
+    const signedIn = run([]);
+    assert.equal(signedIn.composerReady, true, `${label}: page words were read as a log-in wall`);
+    assert.equal(signedIn.loginRequired, false);
   }
 });
 
@@ -3014,9 +3055,9 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
       };
       const loginEl = {
         title: '',
-        innerText: 'Log in',
+        innerText: 'Giriş yap',
         getBoundingClientRect: () => ({ width: 80, height: 32 }),
-        getAttribute() { return ''; },
+        getAttribute(name) { return name === 'data-testid' ? 'login-button' : ''; },
       };
       const result = vm.runInNewContext(`(${source})(${JSON.stringify(prompt)}, ${submitOnly})`, {
         location: { href, protocol: parsed.protocol, hostname: parsed.hostname },
@@ -3026,7 +3067,7 @@ test('research submit injection rechecks ChatGPT origin before fill and click', 
             if (sel === '#prompt-textarea' || sel === '[data-testid="send-button"]') return visibleEl;
             return null;
           },
-          querySelectorAll(sel) { return loggedOut && sel === 'button, a' ? [loginEl] : []; },
+          querySelectorAll(sel) { return loggedOut && sel.includes('[data-testid="login-button"]') ? [loginEl] : []; },
         },
         getComputedStyle: () => ({ visibility: 'visible', display: 'block' }),
         HTMLTextAreaElement: function HTMLTextAreaElement() { },
@@ -3345,7 +3386,8 @@ test('Chrome set_checked completes one selector-backed trusted click and verifie
       assert.equal(options.trustedOnly, true);
       assert.equal(options.requireUnique, true);
       assert.ok(options.abortSignal instanceof AbortSignal);
-      assert.equal(typeof options.beforeDispatch, 'function');
+      // Dispatch is recorded at the press transport boundary, never before its fence.
+      assert.equal(typeof options.onDispatch, 'function');
       trustedClickCompletedAt = Date.now();
       return { success: true, method: 'cdp-mouse', rect: { x: 1, y: 2, w: 20, h: 20 } };
     };
@@ -3588,7 +3630,7 @@ test('Chrome set_checked fails closed when marker verification resolves another 
       assert.equal(options.trustedOnly, true);
       assert.equal(options.requireUnique, true);
       assert.ok(options.abortSignal instanceof AbortSignal);
-      assert.equal(typeof options.beforeDispatch, 'function');
+      assert.equal(typeof options.onDispatch, 'function');
       return { success: true, method: 'cdp-mouse' };
     };
 
@@ -5026,7 +5068,12 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'named', recipients: [' 迷你世界皓宸 '] }), {
       target_kind: 'named', recipients: [{ identity: '迷你世界皓宸', role: 'to' }],
     });
-    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipients: ['ignored'] }), {
+    // Names listed with the open conversation are the people the same request
+    // also named; the open conversation itself is never named here.
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipients: [' Ayşe '] }), {
+      target_kind: 'active_conversation', recipients: [{ identity: 'Ayşe', role: 'to' }],
+    });
+    assert.deepEqual(helper.normalizeMessageTarget({ target_kind: 'active_conversation', recipient: '' }), {
       target_kind: 'active_conversation', recipients: [],
     });
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Alice'), true);
@@ -5035,39 +5082,6 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.equal(helper.recipientMatchesObservedIdentity('Team', 'Team-Sales'), false);
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Search results for Alice'), false);
     assert.equal(helper.recipientMatchesObservedIdentity('Alice', 'Malice'), false);
-    assert.equal(helper.answerNamesIdentity('Li', 'Li'), true);
-    assert.equal(helper.answerNamesIdentity('Lisa', 'Li'), false);
-    assert.equal(helper.answerNamesIdentity('王', '王'), true);
-    assert.equal(helper.answerNamesIdentity('王小明', '王'), false);
-    assert.equal(helper.answerNamesIdentity('请发送给王小明', '王小明'), true, 'natural Chinese sentence must match CJK recipient');
-    assert.equal(helper.answerNamesIdentity('请发送给王小明', '王'), false, 'sub-fragment of CJK name must not match short identity');
-    assert.equal(helper.answerNamesAllObservedRecipients(
-      'Send to Ann Smith',
-      [{ identity: 'Ann' }, { identity: 'Ann Smith' }],
-    ), false, 'a single mention must not satisfy both a prefix candidate and full name');
-    assert.equal(helper.answerNamesAllObservedRecipients(
-      'Send to Ann and Ann Smith',
-      [{ identity: 'Ann' }, { identity: 'Ann Smith' }],
-    ), true, 'distinct mentions for both candidates must succeed');
-    assert.equal(helper.answerNamesAllObservedRecipients(
-      'user@example.co.uk',
-      [{ identity: 'user@example.co' }, { identity: 'user@example.co.uk' }],
-    ), false, 'a single mention must not satisfy both .co and .co.uk');
-    assert.equal(helper.answerNamesAllObservedRecipients(
-      'user@example.co and user@example.co.uk',
-      [{ identity: 'user@example.co' }, { identity: 'user@example.co.uk' }],
-    ), true, 'distinct mentions for both domain variants must succeed');
-    const twelveCandidates = Array.from({ length: 12 }, (_, i) => ({
-      identity: `colleague-user-${i + 1}@enterprise-company-domain.com`,
-      role: i === 0 ? 'to' : 'cc',
-    }));
-    const twelveAnswer = `Please reply all to: ${twelveCandidates.map(c => c.identity).join(', ')}`;
-    assert.ok(twelveAnswer.length > 240, 'reply all answer must exceed 240 chars to test truncation avoidance');
-    assert.equal(
-      helper.answerNamesAllObservedRecipients(twelveAnswer, twelveCandidates),
-      true,
-      'long multi-recipient reply all answer (>240 chars) must match all candidates without truncation',
-    );
     assert.equal(helper.messageTargetMatchesObservedIdentities(
       { target_kind: 'named', recipients: ['迷你世界皓宸'] },
       ['迷你世界皓宸'],
@@ -5101,401 +5115,6 @@ test('direct-message recipient guard uses structured intent and exact active ide
       ],
     ), false, 'moving a BCC recipient into To must fail closed');
 
-    // Role authorization and resolution tests:
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Send to Alice', 'Alice', 'to'),
-      false,
-      'prepositional "to" must not explicitly authorize the To delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Alice', 'Alice', 'to'),
-      true,
-      'explicit "To:" label must authorize the To delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Alice (To)', 'Alice', 'to'),
-      true,
-      'parenthesized "(To)" label must authorize the To delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Send to Alice as To', 'Alice', 'to'),
-      true,
-      '"as To" must authorize the To delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Put Alice in the To field', 'Alice', 'to'),
-      true,
-      '"To field" must authorize the To delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'CC: Alice', 'Alice', 'cc'),
-      true,
-      'explicit "CC:" must authorize the CC delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'BCC: Alice', 'Alice', 'bcc'),
-      true,
-      'explicit "BCC:" must authorize the BCC delivery role',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Bob, BCC: Alice', 'Alice', 'to'),
-      false,
-      'multi-recipient clause must not attribute another recipient\'s To role to Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Bob, BCC: Alice', 'Alice', 'bcc'),
-      true,
-      'multi-recipient clause must attribute BCC role to Alice',
-    );
-
-    const prevBccTarget = { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'bcc' }] };
-    const observedToCandidates = [{ identity: 'alice@example.com', role: 'to' }];
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, null, 'alice@example.com'),
-      [{ identity: 'alice@example.com', role: 'bcc' }],
-      'identity-only answer must retain previously authorized bcc role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, null, 'Send to alice@example.com'),
-      [{ identity: 'alice@example.com', role: 'bcc' }],
-      'prepositional "to" answer must retain previously authorized bcc role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, null, 'To: alice@example.com'),
-      [{ identity: 'alice@example.com', role: 'to' }],
-      'explicit "To:" answer must update to the authorized To role',
-    );
-
-    const modelAuthoredRoleContext = {
-      question: 'Should Alice move from BCC to To?',
-      reason: 'Recipient is in To in composer',
-      options: ['Move Alice from BCC to To', 'Keep Alice as BCC'],
-      purpose: 'recipient_change',
-    };
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(modelAuthoredRoleContext, 'No, keep Alice as BCC', 'Alice', 'to'),
-      false,
-      'model-authored question mentioning "from BCC to To" must not authorize role change when user rejects or does not authorize',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(modelAuthoredRoleContext, 'Alice', 'Alice', 'to'),
-      false,
-      'bare identity answer under model-authored role question must not authorize role change',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, modelAuthoredRoleContext, 'No, keep Alice as BCC'),
-      [{ identity: 'alice@example.com', role: 'bcc' }],
-      'user answer rejecting role change under model-authored context must retain previously authorized bcc role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, modelAuthoredRoleContext, 'alice@example.com'),
-      [{ identity: 'alice@example.com', role: 'bcc' }],
-      'bare identity answer under model-authored role question must retain previously authorized bcc role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, modelAuthoredRoleContext, 'Move Alice to To'),
-      [{ identity: 'alice@example.com', role: 'to' }],
-      'user answer explicitly authorizing To role must update to To role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(observedToCandidates, prevBccTarget, modelAuthoredRoleContext, 'Move Alice from BCC to To'),
-      [{ identity: 'alice@example.com', role: 'to' }],
-      'user answer selecting option to move from BCC to To must update to To role',
-    );
-
-    const obsBob = [{ identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] }];
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(obsBob, prevBccTarget, modelAuthoredRoleContext, 'Bob'),
-      [{ identity: 'bob@example.com', role: 'bcc' }],
-      'replacing BCC recipient with Bob via bare answer Bob must preserve BCC role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(obsBob, prevBccTarget, modelAuthoredRoleContext, 'To: Bob'),
-      [{ identity: 'bob@example.com', role: 'to' }],
-      'explicit To: Bob answer when replacing recipient must authorize To role',
-    );
-
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Keep Alice as BCC while putting Bob in To', 'Alice', 'to'),
-      false,
-      'Alice must not be authorized as To when user says Keep Alice as BCC while putting Bob in To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Keep Alice as BCC while putting Bob in To', 'Alice', 'bcc'),
-      true,
-      'Alice must be authorized as BCC when user says Keep Alice as BCC while putting Bob in To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Keep Alice as BCC while putting Bob in To', 'Bob', 'to'),
-      true,
-      'Bob must be authorized as To when user says Keep Alice as BCC while putting Bob in To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Keep Alice as BCC while putting Bob in To', 'Bob', 'bcc'),
-      false,
-      'Bob must not be authorized as BCC when user says Keep Alice as BCC while putting Bob in To',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(
-        [
-          { identity: 'alice@example.com', role: 'to', aliases: ['alice@example.com', 'Alice'] },
-          { identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] },
-        ],
-        {
-          target_kind: 'named',
-          recipients: [
-            { identity: 'alice@example.com', role: 'bcc' },
-            { identity: 'carol@example.com', role: 'to' },
-          ],
-        },
-        null,
-        'Keep Alice as BCC while putting Bob in To',
-      ),
-      [
-        { identity: 'alice@example.com', role: 'bcc' },
-        { identity: 'bob@example.com', role: 'to' },
-      ],
-      'multi-recipient answer associating roles to different recipients must resolve each recipient to their authorized role',
-    );
-
-    // Grouped role authorization tests:
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Put Alice and Bob in BCC', 'Alice', 'bcc'),
-      true,
-      'Alice in grouped answer Put Alice and Bob in BCC must be authorized as BCC',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Put Alice and Bob in BCC', 'Alice', 'to'),
-      false,
-      'Alice in grouped answer Put Alice and Bob in BCC must not be authorized as To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Put Alice and Bob in BCC', 'Bob', 'bcc'),
-      true,
-      'Bob in grouped answer Put Alice and Bob in BCC must be authorized as BCC',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Put Alice and Bob in BCC', 'Bob', 'to'),
-      false,
-      'Bob in grouped answer Put Alice and Bob in BCC must not be authorized as To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Alice and Bob', 'Alice', 'to'),
-      true,
-      'Alice in grouped prefix answer To: Alice and Bob must be authorized as To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Alice and Bob', 'Bob', 'to'),
-      true,
-      'Bob in grouped prefix answer To: Alice and Bob must be authorized as To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Alice and Bob', 'Bob', 'bcc'),
-      false,
-      'Bob in grouped prefix answer To: Alice and Bob must not be authorized as BCC',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(
-        [
-          { identity: 'alice@example.com', role: 'bcc', aliases: ['alice@example.com', 'Alice'] },
-          { identity: 'bob@example.com', role: 'bcc', aliases: ['bob@example.com', 'Bob'] },
-        ],
-        {
-          target_kind: 'named',
-          recipients: [
-            { identity: 'alice@example.com', role: 'to' },
-            { identity: 'bob@example.com', role: 'to' },
-          ],
-        },
-        null,
-        'Put Alice and Bob in BCC',
-      ),
-      [
-        { identity: 'alice@example.com', role: 'bcc' },
-        { identity: 'bob@example.com', role: 'bcc' },
-      ],
-      'grouped role answer Put Alice and Bob in BCC must rebind both recipients to BCC',
-    );
-
-    // Negated delivery-role rejection tests:
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not move Alice to To', 'Alice', 'to'),
-      false,
-      'negated delivery-role phrase "Do not move Alice to To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, "Don't put Alice in To", 'Alice', 'to'),
-      false,
-      'negated delivery-role phrase "Don\'t put Alice in To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Never put Alice in BCC', 'Alice', 'bcc'),
-      false,
-      'negated delivery-role phrase "Never put Alice in BCC" must not authorize BCC for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Not To: Alice', 'Alice', 'to'),
-      false,
-      'negated prefix role "Not To: Alice" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not move Alice and Bob to To', 'Alice', 'to'),
-      false,
-      'negated grouped role "Do not move Alice and Bob to To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not move Alice and Bob to To', 'Bob', 'to'),
-      false,
-      'negated grouped role "Do not move Alice and Bob to To" must not authorize To for Bob',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, '不要把Alice设为To', 'Alice', 'to'),
-      false,
-      'Chinese negated role "不要把Alice设为To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, '别把Alice移到To', 'Alice', 'to'),
-      false,
-      'Chinese negated role "别把Alice移到To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not move to To', 'Alice', 'to'),
-      false,
-      'negated single-clause answer without candidate spans must not authorize To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not forward Alice to To', 'Alice', 'to'),
-      false,
-      'negated delivery-role phrase "Do not forward Alice to To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Forward Alice to To', 'Alice', 'to'),
-      true,
-      'affirmative phrase "Forward Alice to To" must authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Alice; actually BCC: Alice', 'Alice', 'to'),
-      false,
-      'conflicting role phrase "To: Alice; actually BCC: Alice" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'To: Alice; actually BCC: Alice', 'Alice', 'bcc'),
-      false,
-      'conflicting role phrase "To: Alice; actually BCC: Alice" must not authorize BCC for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not, under any circumstances, put Alice in To', 'Alice', 'to'),
-      false,
-      'emphasized denial across commas "Do not, under any circumstances, put Alice in To" must not authorize To for Alice',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not put anyone in To, especially Alice in To', 'Alice', 'to'),
-      false,
-      'comma following negated role phrase "Do not put anyone in To, especially Alice in To" must retain negation',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not put anyone in To, including Alice in To', 'Alice', 'to'),
-      false,
-      'comma following negated role phrase "Do not put anyone in To, including Alice in To" must retain negation',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not put anyone in CC, especially Alice in To', 'Alice', 'to'),
-      true,
-      'denial of CC must not negate affirmative role in To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not put Bob in To, Alice in To', 'Alice', 'to'),
-      true,
-      'denial naming a different recipient must not negate Alice in To',
-    );
-    assert.equal(
-      helper.clarificationAuthorizesRecipientRole(null, 'Do not put Bob in To, put Alice in To', 'Alice', 'to'),
-      true,
-      'denial naming Bob followed by affirmative verb must authorize Alice in To',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(
-        [
-          { identity: 'alice@example.com', role: 'to', aliases: ['alice@example.com', 'Alice'] },
-        ],
-        {
-          target_kind: 'named',
-          recipients: [
-            { identity: 'alice@example.com', role: 'bcc' },
-          ],
-        },
-        null,
-        'To: Alice; actually BCC: Alice',
-      ),
-      [
-        { identity: 'alice@example.com', role: 'bcc' },
-      ],
-      'conflicting role mention "To: Alice; actually BCC: Alice" must reject rebinding and preserve prior BCC role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(
-        [
-          { identity: 'alice@example.com', role: 'to', aliases: ['alice@example.com', 'Alice'] },
-        ],
-        {
-          target_kind: 'named',
-          recipients: [
-            { identity: 'alice@example.com', role: 'bcc' },
-          ],
-        },
-        null,
-        'Do not move Alice to To',
-      ),
-      [
-        { identity: 'alice@example.com', role: 'bcc' },
-      ],
-      'negated role answer "Do not move Alice to To" must preserve previously authorized BCC role',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(
-        [
-          { identity: 'alice@example.com', role: 'to', aliases: ['alice@example.com', 'Alice'] },
-          { identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] },
-        ],
-        {
-          target_kind: 'named',
-          recipients: [
-            { identity: 'alice@example.com', role: 'bcc' },
-            { identity: 'bob@example.com', role: 'to' },
-          ],
-        },
-        null,
-        'Do not move Alice to To, keep Bob in To',
-      ),
-      [
-        { identity: 'alice@example.com', role: 'bcc' },
-        { identity: 'bob@example.com', role: 'to' },
-      ],
-      'answer with negated role for Alice and affirmative role for Bob must preserve Alice as BCC and Bob as To',
-    );
-    assert.deepEqual(
-      helper.resolveClarifiedRecipients(
-        [
-          { identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] },
-          { identity: 'dan@example.com', role: 'bcc', aliases: ['dan@example.com', 'Dan'] },
-        ],
-        {
-          target_kind: 'named',
-          recipients: [
-            { identity: 'alice@example.com', role: 'to' },
-            { identity: 'carol@example.com', role: 'bcc' },
-          ],
-        },
-        null,
-        'Bob and Dan',
-      ),
-      [
-        { identity: 'bob@example.com', role: 'to' },
-        { identity: 'dan@example.com', role: 'bcc' },
-      ],
-      'replacement recipients must match compatible observed slots instead of swapping roles',
-    );
-
     assert.equal(helper.messageTargetMatchesObservedIdentities(
       { target_kind: 'named', recipients: ['Alice', 'bob@example.com'] },
       ['Alice'],
@@ -5512,6 +5131,10 @@ test('direct-message recipient guard uses structured intent and exact active ide
       { target_kind: 'active_conversation', recipients: [] },
       ['清辉月下夜'],
     ), false, 'un-pinned active-conversation intent must never authorize dispatch');
+    assert.equal(helper.messageTargetMatchesObservedIdentities(
+      { target_kind: 'active_conversation', recipients: ['Ayşe'] },
+      ['Ayşe'],
+    ), false, 'a person named beside an un-pinned open conversation must not authorize dispatch by itself');
   }
   for (const getPolicy of [getMessageRecipientGuardPolicy, getMessageRecipientGuardPolicyFx]) {
     assert.deepEqual(getPolicy('https://mail.google.com/mail/u/0/#inbox'), {
@@ -5855,7 +5478,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.equal(readOnlyInconclusive?.reasonCode, 'message_send_classification_inconclusive',
       `${label}: inconclusive click did not fail closed`);
 
-    // The same read-only plan must still not deliver an actual message.
+    // The same read-only plan must still not deliver an actual message by
+    // itself: it is blocked until the user confirms it on WebBrain's card.
     probe = {
       success: true,
       conclusive: true,
@@ -5877,29 +5501,22 @@ test('direct-message recipient guard uses structured intent and exact active ide
     assert.equal(readOnlySend?.blocked, true,
       `${label}: read-only plan dispatched a conclusive message send`);
     assert.equal(readOnlySend?.reasonCode, 'authorized_recipient_missing');
+    assert.deepEqual(readOnlySend?.recipientConfirmation, { recipients: [{ identity: 'alice@example.com', role: 'to' }],
+      requested: [], host: 'mail.google.com', offerAll: false, reason: 'unrequested', message: 'Hello Alice' },
+      `${label}: the user is asked on WebBrain's card, with the message shown`);
 
-    // A read-only plan must never stage recipient consent: an answer to a recipient
-    // clarify must not elevate a read-only plan into a send-capable one.
-    assert.equal(
-      agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates,
-      null,
-      `${label}: read-only plan staged recipient candidates`,
-    );
-    assert.equal(
-      agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization,
-      false,
-      `${label}: read-only plan staged pendingRecipientAuthorization`,
-    );
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Reply to Alice (alice@example.com)'),
-      false,
-      `${label}: clarify answer elevated a read-only plan into an authorized sender`,
-    );
+    // Consent is never staged for, or read from, a question and its answer:
+    // there is no answer-binding path at all, whatever the plan says.
+    assert.equal(typeof agent._bindClarifiedMessageRecipient, 'undefined',
+      `${label}: an answer-binding path for recipients still exists`);
+    assert.equal(agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization, undefined,
+      `${label}: read-only plan staged recipient consent`);
+    assert.equal(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, undefined,
+      `${label}: read-only plan staged recipient candidates`);
     assert.equal(agent._planExecutionGuards.get(tabId)?.messaging, null);
 
-    // A plan without messaging authorization (e.g. submitting a LinkedIn application)
-    // must never stage recipient consent even when requiresSubmission and requiresStateChange
-    // are true: a recipient clarify must not authorize sending when the plan never requested it.
+    // A plan without messaging authorization (e.g. submitting a LinkedIn
+    // application) puts an actual send to the user on the card as well.
     agent._planExecutionGuards.set(tabId, {
       messaging: null,
       requiresSubmission: true,
@@ -5914,31 +5531,28 @@ test('direct-message recipient guard uses structured intent and exact active ide
     );
     assert.equal(unrelatedSubmissionSendBlock?.blocked, true);
     assert.equal(unrelatedSubmissionSendBlock?.reasonCode, 'authorized_recipient_missing');
-    assert.equal(
-      agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates,
-      null,
-      `${label}: plan without messaging authorization staged recipient candidates`,
-    );
-    assert.equal(
-      agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization,
-      false,
-      `${label}: plan without messaging authorization staged pendingRecipientAuthorization`,
-    );
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Reply to Alice (alice@example.com)'),
-      false,
-      `${label}: clarify answer elevated an unrelated plan into an authorized sender`,
-    );
+    assert.equal(unrelatedSubmissionSendBlock?.recipientConfirmation?.reason, 'unnamed');
     assert.equal(agent._planExecutionGuards.get(tabId)?.messaging, null);
 
-    // A messaging-authorized plan does stage consent for the clarify it asks for,
-    // and binds to the page-observed candidate rather than model-authored option text.
-    agent._planExecutionGuards.set(tabId, {
+    // WebBrain's card answers with fixed values; the planned target is never
+    // rewritten by an answer, and approval covers the confirmed person only.
+    const answerCard = (block, choice) => {
+      const cards = [];
+      const rerun = () => agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_send' },
+        'https://mail.google.com/mail/u/0/#inbox/thread-1', {});
+      return agent._resolveMessageRecipientConfirmation(tabId, block, (status, details) => {
+        if (status !== 'clarify') return;
+        cards.push(details);
+        agent._settleClarification(agent._pendingClarifications.get(tabId).get(details.clarifyId), { answer: choice, source: 'option' });
+      }, rerun, { allowPrompt: true }).then(result => ({ result, cards }));
+    };
+    const activeConversationPlan = {
       messaging: { target_kind: 'active_conversation', recipients: [] },
       messagingConversationScope: 'thread-authorized',
       requiresSubmission: true,
       requiresStateChange: true,
-    });
+    };
+    agent._planExecutionGuards.set(tabId, { ...activeConversationPlan });
     const authorizedSendBlock = await agent._messageRecipientGuardBlock(
       tabId,
       'click_ax',
@@ -5947,344 +5561,22 @@ test('direct-message recipient guard uses structured intent and exact active ide
       {},
     );
     assert.equal(authorizedSendBlock?.blocked, true);
-    assert.deepEqual(
-      agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates,
-      [{ identity: 'alice@example.com', role: 'to' }],
-      `${label}: blocked guard did not retain page-observed recipient candidates`,
-    );
-    assert.equal(agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization, true,
-      `${label}: blocked guard did not stage consent for the clarify it asks for`);
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Reply to Alice (alice@example.com)'),
-      true,
-      `${label}: a user answer naming an observed identity did not authorize it`,
-    );
+    assert.deepEqual(authorizedSendBlock?.recipientConfirmation?.recipients, [{ identity: 'alice@example.com', role: 'to' }],
+      `${label}: the card did not show the page-observed recipient`);
+    const approvedOnCard = await answerCard(authorizedSendBlock, 'once');
+    assert.equal(approvedOnCard.cards.length, 1);
+    assert.equal(approvedOnCard.result, null, `${label}: Send on the card did not let the send proceed`);
+    // The confirmed person becomes this task's target; the request is kept.
     assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
       target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }],
-    }, `${label}: clarify authorization did not reach the recipient guard`);
+    }, `${label}: the card did not bind the confirmed person`);
+    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.requestedMessaging, activeConversationPlan.messaging,
+      `${label}: the requested target was lost`);
+    assert.equal(await agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_send' },
+      'https://mail.google.com/mail/u/0/#inbox/thread-1', {}), null, `${label}: the confirmed person was asked about again`);
 
-    const clarifyGuardState = candidates => ({
-      messaging: { target_kind: 'active_conversation', recipients: [] },
-      requiresSubmission: true,
-      requiresStateChange: true,
-      pendingRecipientAuthorization: true,
-      observedRecipientCandidates: candidates,
-    });
-    const aliceOnly = () => clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]);
-
-    agent._planExecutionGuards.set(tabId, aliceOnly());
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Send it to mallory@evil.example'),
-      false,
-      `${label}: a recipient absent from the page was authorized by answer text alone`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'active_conversation', recipients: [],
-    });
-    // A failed match must consume the staged consent, not park it for whatever
-    // unrelated answer arrives next.
-    assert.equal(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, null,
-      `${label}: a non-matching answer left recipient consent pending`);
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com'),
-      false,
-      `${label}: a later clarify inherited consent staged for an earlier one`,
-    );
-
-    // A timed-out or auto-selected clarify must consume staged consent without binding.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'timeout'),
-      false,
-      `${label}: timed-out clarify bound a recipient`,
-    );
-    assert.equal(agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization, false,
-      `${label}: timed-out clarify left pendingRecipientAuthorization true`);
-    assert.equal(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, null,
-      `${label}: timed-out clarify left observedRecipientCandidates intact`);
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com'),
-      false,
-      `${label}: subsequent clarify inherited consent from timed-out clarify`,
-    );
-
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'auto'),
-      false,
-      `${label}: auto-selected clarify bound a recipient`,
-    );
-    assert.equal(agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization, false,
-      `${label}: auto-selected clarify left pendingRecipientAuthorization true`);
-    assert.equal(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, null,
-      `${label}: auto-selected clarify left observedRecipientCandidates intact`);
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com'),
-      false,
-      `${label}: subsequent clarify inherited consent from auto clarify`,
-    );
-
-    // Multi-recipient threads (e.g. Reply all): an answer naming all observed recipients
-    // authorizes the full recipient set.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([
-      { identity: 'alice@example.com', role: 'to' },
-      { identity: 'bob@example.com', role: 'to' },
-    ]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com and bob@example.com'),
-      true,
-      `${label}: an answer naming all observed recipients was rejected`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'named',
-      recipients: [
-        { identity: 'alice@example.com', role: 'to' },
-        { identity: 'bob@example.com', role: 'to' },
-      ],
-    }, `${label}: clarify authorization did not set full recipient set`);
-
-    // But naming only a subset of the observed recipients authorizes nothing.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([
-      { identity: 'alice@example.com', role: 'to' },
-      { identity: 'bob@example.com', role: 'to' },
-    ]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Send it to alice@example.com'),
-      false,
-      `${label}: an incomplete recipient subset authorized a send target`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'active_conversation', recipients: [],
-    });
-
-    // Consent is staged for exactly one clarify. Without that scope, an answer
-    // to an unrelated question that merely mentions someone on the page would
-    // authorize sending to them.
-    agent._planExecutionGuards.set(tabId, {
-      messaging: { target_kind: 'active_conversation', recipients: [] },
-      requiresSubmission: true,
-      requiresStateChange: true,
-      observedRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }],
-    });
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'The one from alice@example.com'),
-      false,
-      `${label}: an unstaged clarify answer authorized a send target`,
-    );
-
-    // A display name's letters turning up inside an ordinary word is not the
-    // user naming that person.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'Ann', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'I cannot decide'),
-      false,
-      `${label}: an incidental letter fragment authorized a recipient`,
-    );
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'Ann', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Send it to Ann, please'),
-      true,
-      `${label}: a short identity the user actually named was rejected`,
-    );
-
-    // Short identities (< 3 chars) require exact full-string match to avoid substring false positives.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'Li', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Lisa'),
-      false,
-      `${label}: a prefix matching a short identity authorized the recipient`,
-    );
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'Li', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Li'),
-      true,
-      `${label}: an exact match for a short identity was rejected`,
-    );
-
-    // Multi-recipient prefix collision resolution: non-overlapping distinct spans are required.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([
-      { identity: 'Ann', role: 'to' },
-      { identity: 'Ann Smith', role: 'to' },
-    ]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Send to Ann Smith'),
-      false,
-      `${label}: a single mention satisfied both prefix candidate and full name in agent binding`,
-    );
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([
-      { identity: 'Ann', role: 'to' },
-      { identity: 'Ann Smith', role: 'to' },
-    ]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Send to Ann and Ann Smith'),
-      true,
-      `${label}: distinct mentions for prefix and full name were rejected`,
-    );
-
-    // Clarification context validation: unrelated clarify question must not authorize recipient,
-    // and must consume the staged consent.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Should I book the flight to New York?',
-      }),
-      false,
-      `${label}: unrelated clarify question authorized a send target`,
-    );
-    assert.equal(agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization, false,
-      `${label}: unrelated clarify left pendingRecipientAuthorization true`);
-    assert.equal(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, null,
-      `${label}: unrelated clarify left observedRecipientCandidates intact`);
-
-    // Valid message_recipient clarification context authorizes candidate.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Who should I send the message to?',
-        purpose: 'message_recipient',
-      }),
-      true,
-      `${label}: valid recipient clarification context was rejected`,
-    );
-
-    // Natural recipient question without explicit purpose (e.g. "Which contact should receive this message?").
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Which contact should receive this message?',
-      }),
-      true,
-      `${label}: natural recipient question ("Which contact should receive this message?") was rejected`,
-    );
-
-    // Natural-language Chinese answer for CJK recipient.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: '王小明', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, '请发送给王小明', 'user', {
-        question: '请确认要发送给哪位联系人？',
-      }),
-      true,
-      `${label}: natural Chinese clarification question/answer was rejected`,
-    );
-
-    // Multi-recipient Reply-all answer exceeding 240 characters.
-    const twelveAgentCandidates = Array.from({ length: 12 }, (_, i) => ({
-      identity: `colleague-user-${i + 1}@enterprise-company-domain.com`,
-      role: i === 0 ? 'to' : 'cc',
-    }));
-    const twelveAgentAnswer = `Send to: ${twelveAgentCandidates.map(c => c.identity).join(', ')}`;
-    assert.ok(twelveAgentAnswer.length > 240);
-    agent._planExecutionGuards.set(tabId, clarifyGuardState(twelveAgentCandidates));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, twelveAgentAnswer, 'user', {
-        question: 'Who should receive this reply?',
-        purpose: 'message_recipient',
-      }),
-      true,
-      `${label}: multi-recipient reply-all answer exceeding 240 chars was rejected`,
-    );
-
-    // Recipient-change clarification check: when a target was already set, an explicit
-    // recipient_change context is required.
-    const recipientChangeGuardState = (candidates) => ({
-      messaging: { target_kind: 'named', recipients: [{ identity: 'bob@example.com', role: 'to' }] },
-      requiresSubmission: true,
-      requiresStateChange: true,
-      pendingRecipientAuthorization: 'recipient_change',
-      observedRecipientCandidates: candidates,
-    });
-
-    agent._planExecutionGuards.set(tabId, recipientChangeGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Who should I send the message to?',
-        purpose: 'message_recipient',
-      }),
-      false,
-      `${label}: standard recipient clarification authorized a recipient change`,
-    );
-
-    agent._planExecutionGuards.set(tabId, recipientChangeGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Do you want to switch recipient to Alice instead?',
-        purpose: 'recipient_change',
-      }),
-      true,
-      `${label}: explicit recipient change clarification was rejected`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'named',
-      recipients: [{ identity: 'alice@example.com', role: 'to' }],
-    }, `${label}: recipient change did not update target`);
-
-    // A mislabeled question with purpose: 'recipient_change' but lacking recipient-change semantics
-    // must never authorize changing the recipient.
-    agent._planExecutionGuards.set(tabId, recipientChangeGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Which colleague should present?',
-        purpose: 'recipient_change',
-      }),
-      false,
-      `${label}: mislabeled clarification question with purpose: recipient_change authorized recipient change`,
-    );
-
-    // A mislabeled question with purpose: 'message_recipient' must never authorize a standard recipient either.
-    agent._planExecutionGuards.set(tabId, clarifyGuardState([{ identity: 'alice@example.com', role: 'to' }]));
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Which colleague should present?',
-        purpose: 'message_recipient',
-      }),
-      false,
-      `${label}: mislabeled clarification question with purpose: message_recipient authorized recipient`,
-    );
-
-    // Role preservation during recipient-change clarification:
-    // A plan authorizing Alice as BCC when composer exposes Alice as To must retain BCC
-    // on an identity-only answer, preventing unauthorized exposure on next send.
-    const bccPlanState = {
-      messaging: { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'bcc' }] },
-      requiresSubmission: true,
-      requiresStateChange: true,
-      pendingRecipientAuthorization: 'recipient_change',
-      observedRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }],
-    };
-
-    agent._planExecutionGuards.set(tabId, { ...bccPlanState });
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'alice@example.com', 'user', {
-        question: 'Do you want to send to Alice instead?',
-        purpose: 'recipient_change',
-      }),
-      true,
-      `${label}: identity-confirmed clarify answer bound`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'named',
-      recipients: [{ identity: 'alice@example.com', role: 'bcc' }],
-    }, `${label}: identity-only answer must retain previously authorized BCC role`);
-
-    // Explicit role authorization in answer ("To: alice@example.com") updates the role to To.
-    agent._planExecutionGuards.set(tabId, { ...bccPlanState });
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'To: alice@example.com', 'user', {
-        question: 'Do you want to switch Alice to To?',
-        purpose: 'recipient_change',
-      }),
-      true,
-      `${label}: explicit role change clarification bound`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'named',
-      recipients: [{ identity: 'alice@example.com', role: 'to' }],
-    }, `${label}: explicit role answer must adopt the authorized To role`);
-
-    // Gmail recipient mismatch preserves observed candidates and stages recipient_change:
-    // When composer chips differ from the plan's authorized target, strongRecipientCandidates
-    // is empty, but observedRecipientCandidates carries the observed chips.
-    // The mismatch blocks dispatch, stages 'recipient_change', and clarification rebinds the target.
+    // A Gmail composer addressed to someone other than the planned recipient
+    // asks on the card with the observed chip; Don't send is final for it.
     const mismatchPlanState = {
       messaging: { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }] },
       requiresSubmission: true,
@@ -6299,7 +5591,8 @@ test('direct-message recipient guard uses structured intent and exact active ide
       messageBody: 'Hello Bob',
       messageBodyBaselineCount: 0,
       strongRecipientCandidates: [],
-      observedRecipientCandidates: [{ identity: 'bob@example.com', role: 'to' }],
+      observedRecipientCandidates: [{ identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] }],
+      messageRecipientDispatchBinding: { token: `mismatch-send-${label}` },
     };
     const mismatchSendBlock = await agent._messageRecipientGuardBlock(
       tabId,
@@ -6310,64 +5603,17 @@ test('direct-message recipient guard uses structured intent and exact active ide
     );
     assert.equal(mismatchSendBlock?.blocked, true, `${label}: mismatched Gmail recipient allowed dispatch`);
     assert.equal(mismatchSendBlock?.reasonCode, 'active_recipient_unverified');
-    assert.equal(agent._planExecutionGuards.get(tabId)?.pendingRecipientAuthorization, 'recipient_change',
-      `${label}: mismatched Gmail recipient did not stage recipient_change authorization`);
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, [
-      { identity: 'bob@example.com', role: 'to' },
-    ], `${label}: mismatched Gmail recipient did not preserve observed candidates in guard`);
-
-    // Clarification answer naming the observed candidate successfully rebinds target:
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Send to bob@example.com', 'user', {
-        question: 'The composer is addressed to Bob. Should I send to bob@example.com instead?',
-        purpose: 'recipient_change',
-      }),
-      true,
-      `${label}: clarify answer failed to rebind observed mismatched recipient`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'named',
-      recipients: [{ identity: 'bob@example.com', role: 'to' }],
-    }, `${label}: target was not rebound to clarified recipient`);
-
-    // Gmail display alias authorizes canonical email address on clarification:
-    agent._planExecutionGuards.set(tabId, { ...mismatchPlanState });
-    probe = {
-      success: true,
-      conclusive: true,
-      composerAvailable: true,
-      messageSend: true,
-      messageBody: 'Hello Bob',
-      messageBodyBaselineCount: 0,
-      strongRecipientCandidates: [],
-      observedRecipientCandidates: [
-        { identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] },
-      ],
-    };
-    await agent._messageRecipientGuardBlock(
-      tabId,
-      'click_ax',
-      { ref_id: 'ref_send' },
-      'https://mail.google.com/mail/u/0/#inbox/thread-1',
-      {},
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.observedRecipientCandidates, [
-      { identity: 'bob@example.com', role: 'to', aliases: ['bob@example.com', 'Bob'] },
-    ], `${label}: observed candidate with display aliases was not preserved in guard`);
-
-    // User answers with display name 'Bob' instead of full email 'bob@example.com':
-    assert.equal(
-      agent._bindClarifiedMessageRecipient(tabId, 'Bob', 'user', {
-        question: 'The composer is addressed to Bob. Should I send to Bob instead?',
-        purpose: 'recipient_change',
-      }),
-      true,
-      `${label}: display name clarify answer failed to authorize candidate with matching alias`,
-    );
-    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, {
-      target_kind: 'named',
-      recipients: [{ identity: 'bob@example.com', role: 'to' }],
-    }, `${label}: target was not rebound to canonical address when authorized via display alias`);
+    assert.deepEqual(mismatchSendBlock?.recipientConfirmation?.recipients, [{ identity: 'bob@example.com', role: 'to' }],
+      `${label}: mismatched Gmail recipient was not shown on the card`);
+    assert.deepEqual(mismatchSendBlock?.recipientConfirmation?.requested, ['alice@example.com']);
+    const declinedOnCard = await answerCard(mismatchSendBlock, 'deny');
+    assert.equal(declinedOnCard.result?.reasonCode, 'recipient_declined');
+    assert.deepEqual(agent._planExecutionGuards.get(tabId)?.messaging, mismatchPlanState.messaging,
+      `${label}: declining on the card changed the planned target`);
+    const afterDecline = await agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_send' },
+      'https://mail.google.com/mail/u/0/#inbox/thread-1', {});
+    assert.equal(afterDecline?.reasonCode, 'recipient_declined', `${label}: a declined person was offered again`);
+    assert.equal(afterDecline?.recipientConfirmation, undefined);
   }
 });
 
@@ -7350,15 +6596,32 @@ test('direct-message recipient probe accepts only a unique active-thread header 
     const visibilityStart = source.indexOf('  function _hasVisibleBox(');
     const visibilityEnd = source.indexOf('\n\n  function ', visibilityStart + 1);
     const recipientHelpersStart = [
-      source.indexOf('  const _MESSAGE_COMMIT_LABEL_RE'),
-      source.indexOf('  const _COMPOSER_UTILITY_LABEL_RE'),
+      source.indexOf('  const _MESSAGING_SURFACE_SELECTOR'),
+      source.indexOf('  const _PAGE_READING_CHOICES'),
     ].filter(index => index >= 0).sort((a, b) => a - b)[0] ?? -1;
     const recipientHelpers = recipientHelpersStart >= 0
       ? source.slice(recipientHelpersStart, start)
       : '';
-    const probe = vm.runInNewContext(
-      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; ${recipientHelpers}; (${source.slice(start, end)})`, context,
+    const guard = vm.runInNewContext(
+      `${source.slice(composedParentStart, composedParentEnd)}; ${source.slice(visibilityStart, visibilityEnd)}; ${source.slice(candidatesStart, candidatesEnd)}; ${recipientHelpers}; ({ probe: (${source.slice(start, end)}), remember: _rememberPageReadings, unread: _takeUnreadPageTexts })`, context,
     );
+    // The guard checks with the readings a model gave the texts it consulted,
+    // as the agent runs it: texts consulted unread are read, and it checks
+    // again.
+    const probe = params => {
+      const first = guard.probe(params);
+      const texts = guard.unread();
+      if (!texts.length) return first;
+      const readings = {};
+      for (const { kind, text } of texts) {
+        const choice = fixturePageTextReading(kind, text);
+        if (choice) (readings[kind] ??= {})[text] = choice;
+      }
+      guard.remember(readings);
+      const result = guard.probe(params);
+      guard.unread();
+      return result;
+    };
     const observationResult = probe({ tool: 'observe_active_conversation', args: {} });
     const enterResult = probe({ tool: 'press_keys', args: { key: 'Enter' } });
     const fieldSubmitResult = probe({
@@ -9741,22 +9004,34 @@ test('social adapters expose URL-specific infinite-scroll capture policy in both
 });
 
 test('mastodon observer detects recoverable remote-follow handoff', () => {
+  // A model reads the request's domains (home_instance) and the page's labels
+  // (follow_state) in any language; the fixture oracles stand in.
+  const home = text => domain => fixtureHomeInstanceReading(text, domain);
   assert.equal(inferMastodonHomeDomainFromUrl('https://mastoturk.org/home'), 'mastoturk.org');
-  assert.equal(inferMastodonHomeDomainFromTask('Follow https://fosstodon.org/@alice and https://hachyderm.io/@bob'), '');
-  assert.equal(inferMastodonHomeDomainFromTask('Follow these from my Mastodon instance mastoturk.org'), 'mastoturk.org');
+  assert.equal(inferMastodonHomeDomainFromUrl('https://x.com/home'), '', 'another site\'s home route is no instance');
+  const twoProfiles = 'Follow https://fosstodon.org/@alice and https://hachyderm.io/@bob';
+  assert.equal(inferMastodonHomeDomainFromTask(twoProfiles, home(twoProfiles)), '');
+  const fromHome = 'Follow these from my Mastodon instance mastoturk.org';
+  assert.equal(inferMastodonHomeDomainFromTask(fromHome, home(fromHome)), 'mastoturk.org');
+  const turkish = 'alice@fosstodon.org hesabını mastoturk.org sunucumdan takip et';
+  assert.equal(inferMastodonHomeDomainFromTask(turkish, home(turkish)), 'mastoturk.org', 'a Turkish request names its home server');
+  assert.equal(inferMastodonHomeDomainFromTask(fromHome), '', 'an unread domain names no home server');
 
   for (const [analyze, guard] of [
     [analyzeMastodonPage, mastodonProgressGuard],
     [analyzeMastodonPageFx, mastodonProgressGuardFx],
   ]) {
+    const taskText = 'Follow this user from my Mastodon instance mastoturk.org';
+    const readings = { readFollow: fixtureFollowStateReading, readHome: home(taskText) };
     const state = analyze({
       url: 'https://fosstodon.org/@alice',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org',
+      taskText,
       pageContent: [
         'heading "Sign in to continue"',
         'textbox "Mastodon server domain"',
         'button "Continue"',
       ].join('\n'),
+      ...readings,
     });
     assert.equal(state.homeDomain, 'mastoturk.org');
     assert.equal(state.remoteAccount.acct, 'alice@fosstodon.org');
@@ -9769,17 +9044,28 @@ test('mastodon observer detects recoverable remote-follow handoff', () => {
 
     const followed = analyze({
       url: 'https://mastoturk.org/@alice@fosstodon.org',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org',
+      taskText,
       pageContent: 'button "Takip ediliyor"',
       previous: state,
+      ...readings,
     });
     assert.equal(followed.canMarkProcessed, true);
     assert.equal(guard([{ id: 'alice@fosstodon.org', action: 'follow', status: 'processed' }], followed), null);
+    // A followed state in a language no word list had, read by a model.
+    const german = analyze({ url: 'https://mastoturk.org/@alice@fosstodon.org', taskText,
+      pageContent: 'button "Gefolgt"\nbutton "Antworten"', previous: state, ...readings });
+    assert.equal(german.hasFollowedState, true);
+    assert.equal(guard([{ id: 'alice@fosstodon.org', action: 'follow', status: 'processed' }], german), null);
+    // Unread labels show no followed state.
+    const unread = analyze({ url: 'https://fosstodon.org/@alice', taskText, pageContent: 'button "Gefolgt"', previous: state });
+    assert.equal(unread.hasFollowedState, false);
+    assert.equal(guard([{ id: 'alice@fosstodon.org', action: 'follow', status: 'processed' }], unread)?.blocked, true);
 
     const genericFollow = analyze({
       url: 'https://twitter.com/openai',
       taskText: 'Follow this account.',
       pageContent: 'button "Follow"',
+      ...readings,
     });
     assert.equal(genericFollow.hasFollowButton, true);
     assert.equal(genericFollow.remoteAccount, null);
@@ -9814,8 +9100,18 @@ test('Gmail result-count routes and toolbar ranges are parsed conservatively in 
     assert.equal(getPolicy(`${searchUrl}/FMfcgzExampleThread`), null, `${label}: Gmail thread route gained result counting`);
     assert.equal(getPolicy('https://example.test/#search/query'), null, `${label}: non-Gmail route gained result counting`);
     assert.deepEqual(parseRange('Showing most recent 1–50 of many Conversations'), {
-      text: '1–50 of many', start: 1, end: 50, total: null, approximate: true,
+      text: '1–50', start: 1, end: 50, total: null, approximate: true,
     }, `${label}: approximate Gmail toolbar range was not parsed`);
+    // The range is read by its numbers in any language: whatever separates
+    // the total, and words without a number for an unshown total.
+    for (const [text, total, approximate] of [['1–50 de 2.345', 2345, false], ['51–100 из 175', 175, false],
+      ['第 1-50 封，共 2,345 封', 2345, false], ['1–50 / 575', 575, false], ['1-50 sur 2 345', 2345, false],
+      ['1–50 von vielen', null, true], ['1–50 / çok sayıda', null, true], ['1–50', null, false]]) {
+      const parsed = parseRange(text);
+      assert.equal(parsed?.total, total, `${label}: ${text}`);
+      assert.equal(parsed?.approximate, approximate, `${label}: ${text}`);
+    }
+    assert.equal(parseRange('51-100 of 50'), null, `${label}: a total below the shown rows was accepted`);
     assert.deepEqual(parseRange('551-575 of 575'), {
       text: '551-575 of 575', start: 551, end: 575, total: 575, approximate: false,
     }, `${label}: exact Gmail toolbar range was not parsed`);
@@ -10103,6 +9399,18 @@ test('carousel slide count prefers an explicit total over the current index', ()
     assert.equal(parse(['Go to slide 1', 'Go to slide 2', 'Go to slide 16']), 16, `${label}: indexed dots did not yield the max`);
     assert.equal(parse([]), null);
     assert.equal(parse(null), null);
+    // The shape of the labels decides, in any language: a total after one
+    // word or a slash, or a series that differs only in its number.
+    assert.equal(parse(['Diapositiva 3 de 16']), 16, `${label}: Spanish total`);
+    assert.equal(parse(['Slayt 3 / 16', 'Beğen']), 16, `${label}: Turkish total`);
+    assert.equal(parse(['第3张，共16张']), 16, `${label}: Chinese total`);
+    assert.equal(parse(['Gehe zu Folie 1', 'Gehe zu Folie 2', 'Gehe zu Folie 16']), 16, `${label}: German series`);
+    // A time, a lone position, a position above its count and a series of
+    // one never set the total.
+    assert.equal(parse(['1:05', 'Oynat']), null, `${label}: a time was read as a position`);
+    assert.equal(parse(['Diapositiva 3']), null, `${label}: a lone position was read as the total`);
+    assert.equal(parse(['17 von 16']), null, `${label}: a position above its count was accepted`);
+    assert.equal(parse(['3 beğeni ve 25 yorum']), null, `${label}: two numbers joined by several words were read as a position`);
   }
 });
 
@@ -10163,7 +9471,14 @@ test('Instagram carousel navigation enumerates 16 slides monotonically and recor
     assert.equal(outOfRange.outOfRange, true);
     assert.equal(outOfRange.terminal, true);
 
-    agent._latestTaskText = () => 'Traverse this carousel in reverse order.';
+    // A model reads the order from the request, in any language.
+    const reverseRequest = 'Recorre este carrusel del último al primero.';
+    const orders = [];
+    agent._semanticDecision = async (_tab, kind, { request }) => {
+      orders.push({ kind, request });
+      return { choice: kind === 'carousel_order' && request === reverseRequest ? 'reverse' : 'forward', evidence: '', source: 'main_model' };
+    };
+    agent._latestTaskText = () => reverseRequest;
     const reverseStart = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 16 });
     const reverseNext = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 15 });
     assert.equal(reverseStart.success, true, `${label}: fresh explicit reverse traversal did not reset monotonic state`);
@@ -10172,6 +9487,18 @@ test('Instagram carousel navigation enumerates 16 slides monotonically and recor
     const reverseRevisit = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 16 });
     assert.equal(reverseRevisit.success, false, `${label}: reverse traversal revisited a processed slide`);
     assert.equal(reverseRevisit.nonMonotonic, true);
+    assert.deepEqual(orders.at(-1), { kind: 'carousel_order', request: reverseRequest },
+      `${label}: the order was not read from the request as written`);
+    // No sure answer keeps the usual order: the reverse scan cannot continue.
+    agent._semanticDecision = async () => ({ choice: null, evidence: '', source: 'unavailable' });
+    const unsure = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 14 });
+    assert.equal(unsure.traversalDirection === 'reverse', false, `${label}: an unread request reversed the scan`);
+    // A request that only mentions the word is read as a whole: the usual order.
+    agent._semanticDecision = async (_tab, kind) => ({ choice: kind === 'carousel_order' ? 'forward' : null, evidence: '', source: 'main_model' });
+    agent._latestTaskText = () => 'Record the reverse-side caption of every slide.';
+    const mention = await AgentClass.prototype.executeTool.call(agent, tabId, 'carousel_navigate', { index: 3 });
+    assert.equal(mention.success, true);
+    assert.equal(mention.traversalDirection, 'forward', `${label}: the word "reverse" reversed the scan`);
   }
 });
 
@@ -10266,7 +9593,14 @@ test('Instagram carousel navigation fails closed on duplicate media and a stripp
     let compatibleFingerprint = 'slide-1';
     compatible._currentUrl = async () => compatibleUrl;
     compatible._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: compatibleFingerprint });
-    compatible._getVisibleInteractiveElements = async () => [{ name: 'Next', role: 'button' }];
+    // The Next control is whichever label a model reads as "next", in any
+    // language; here a Turkish "Sonraki" beside other controls.
+    compatible._getVisibleInteractiveElements = async () => [{ name: 'Beğen', role: 'button' }, { name: 'Sonraki', role: 'button' }, { name: 'Önceki', role: 'button' }];
+    const readLabels = [];
+    compatible._semanticDecisions = async (_tab, kind, { items }) => {
+      readLabels.push(...items.map(item => [kind, item.label]));
+      return items.map(item => ({ choice: item.label === 'Sonraki' ? 'next' : item.label === 'Önceki' ? 'previous' : 'other', evidence: item.label, source: 'decision_model' }));
+    };
     compatible.executeTool = async (_tabId, name) => {
       if (name === 'wait_for_stable') return { success: true, stable: true };
       if (name === 'navigate') {
@@ -10278,6 +9612,7 @@ test('Instagram carousel navigation fails closed on duplicate media and a stripp
       return { success: true, dispatched: true, verified: true };
     };
     const compatibilityResult = await AgentClass.prototype.executeTool.call(compatible, tabId + 20, 'carousel_navigate', { index: 2 });
+    assert.deepEqual(readLabels, [['carousel_control', 'Beğen'], ['carousel_control', 'Sonraki'], ['carousel_control', 'Önceki']]);
     assert.equal(compatibilityResult.success, true, `${label}: one semantic Next compatibility fallback was rejected`);
     assert.equal(compatibilityResult.compatibilityFallback, true);
     assert.equal(compatibilityResult.queryContractHonored, false);
@@ -10285,6 +9620,26 @@ test('Instagram carousel navigation fails closed on duplicate media and a stripp
     const repeatedFallback = await AgentClass.prototype.executeTool.call(compatible, tabId + 20, 'carousel_navigate', { index: 3 });
     assert.equal(repeatedFallback.success, false, `${label}: compatibility fallback was reused`);
     assert.equal(repeatedFallback.adapterFailure, true);
+
+    // Two labels read as "next", or none, leave nothing to click.
+    for (const choices of [['next', 'next'], ['other', 'previous']]) {
+      const unclear = makeAgent();
+      let unclearUrl = 'https://www.instagram.com/p/UNCLEAR/';
+      unclear._currentUrl = async () => unclearUrl;
+      unclear._carouselPageState = async () => ({ discoveredSlideCount: 4, visibleMediaFingerprint: 'slide-1' });
+      unclear._getVisibleInteractiveElements = async () => [{ name: 'A', role: 'button' }, { name: 'B', role: 'button' }];
+      unclear._semanticDecisions = async (_tab, _kind, { items }) => items.map((_item, index) => ({ choice: choices[index], evidence: '', source: 'decision_model' }));
+      let clicked = false;
+      unclear.executeTool = async (_tabId, name) => {
+        if (name === 'wait_for_stable') return { success: true, stable: true };
+        if (name === 'click') clicked = true;
+        unclearUrl = 'https://www.instagram.com/p/UNCLEAR/';
+        return { success: true, dispatched: true, verified: true };
+      };
+      const result = await AgentClass.prototype.executeTool.call(unclear, tabId + 30, 'carousel_navigate', { index: 2 });
+      assert.equal(clicked, false, `${label}: ${choices.join('/')} clicked a control`);
+      assert.equal(result.success, false);
+    }
   }
 });
 
@@ -10454,16 +9809,21 @@ test('adapter workflow evidence kernel is bounded and mirrored', () => {
     { id: 'required-field' },
     { id: 'optional-field', required: false },
   ];
-  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, [], true), true);
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => false, true), true);
   // Skipping an optional row is only safe once it is known which controls the
   // request named; an unanswered classifier is not "the user named none".
-  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, [], false), false,
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => false, false), false,
     'an unresolved requested-label set allowed an optional row to be skipped');
   assert.equal(workflowRequiredRowsAreProcessed([
     { id: 'required-field', status: 'processed' },
     { id: 'optional-field', status: 'processed' },
-  ], inventory, optionalItems, [], false), true,
+  ], inventory, optionalItems, () => false, false), true,
     'a ledger that skipped nothing needed the requested-label set');
+  // An optional row that may be the one the request named cannot be skipped.
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => null, true), false,
+    'an optional row nobody has read against the request was skipped');
+  assert.equal(workflowRequiredRowsAreProcessed(optionalRows, inventory, optionalItems, () => true, true), false,
+    'an optional row the request named was skipped');
   assert.equal(workflowRequiredRowsAreProcessedFx(rows, inventory), false);
   const quotedAx = 'textbox "Title" [ref_title] value="Launch \\"Video\\" from C:\\\\Temp"';
   assert.equal(parseWorkflowAxQuotedValue(quotedAx), 'Launch "Video" from C:\\Temp');
@@ -17400,6 +16760,22 @@ test('carousel oscillation is detected across mixed forward and backward tools',
       'stop',
       `${label}: second overlapping carousel cycle did not stop`,
     );
+
+    // Captions in any language: the slide each click reaches shows the
+    // back-and-forth, not the word on the button.
+    const t = new Detector();
+    assert.equal(t._checkLoop(tab + 2, 'carousel_navigate', { index: 7 }, resultAt(7)).kind, 'none');
+    assert.equal(t._checkLoop(tab + 2, 'click_ax', { expected_name: 'Sonraki', ref_id: 'ref_10' }, resultAt(8)).kind, 'none');
+    assert.equal(t._checkLoop(tab + 2, 'click', { text: '上一张' }, resultAt(7)).kind, 'none');
+    assert.equal(t._checkLoop(tab + 2, 'click', { text: '下一张' }, resultAt(8)).kind, 'nudge',
+      `${label}: a back-and-forth through captions in other languages was not detected`);
+    // A forward scan that also clicks other controls on each slide is no loop.
+    const scan = new Detector();
+    for (const step of [2, 3, 4, 5]) {
+      assert.equal(scan._checkLoop(tab + 4, 'carousel_navigate', { index: step }, resultAt(step)).kind, 'none');
+      assert.equal(scan._checkLoop(tab + 4, 'click_ax', { expected_name: 'Beğen', ref_id: `ref_like_${step}` }, resultAt(step)).kind, 'none',
+        `${label}: a forward scan with clicks on slide ${step} was taken for a loop`);
+    }
   }
 });
 
@@ -18941,7 +18317,7 @@ button "Continue" [ref_3] type="submit"`;
   for (const [label, Detector, gate] of builds) {
     const detector = new Detector();
     const observe = (tree) => {
-      const challenge = gate.detectChallengeDialog(tree);
+      const challenge = gate.detectChallengeDialog(tree, readCaptchaTitle);
       return detector._checkVerificationChallengeLoop('verification-tab', {
         pageUrl,
         dialogLabel: challenge?.normalizedLabel || '',
@@ -18986,14 +18362,14 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
   ];
   for (const [build, gate] of [['chrome', CaptchaGateCh], ['firefox', CaptchaGateFx]]) {
     for (const example of cases) {
-      const challenge = gate.detectChallengeDialog(example.tree);
+      const challenge = gate.detectChallengeDialog(example.tree, readCaptchaTitle);
       assert.equal(challenge?.label, example.label, `${build}: failed to parse ${example.tree}`);
       assert.match(challenge?.normalizedLabel || '', example.normalized, `${build}: normalized challenge label missing`);
     }
     const genericFailure = 'dialog "Email verification failed" [ref_6]';
-    assert.equal(gate.detectChallengeDialog(genericFailure), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
+    assert.equal(gate.detectChallengeDialog(genericFailure, readCaptchaTitle), null, `${build}: generic application verification failure armed a CAPTCHA gate`);
     assert.equal(
-      gate.detectChallengeDialog(genericFailure),
+      gate.detectChallengeDialog(genericFailure, readCaptchaTitle),
       null,
       `${build}: generic failure became positive CAPTCHA evidence after a prior gate`,
     );
@@ -19002,6 +18378,315 @@ test('CAPTCHA dialog parsing handles descendant-only labels and escaped quotes',
       'CAPTCHA verification failed',
       `${build}: contextual CAPTCHA failure was missed`,
     );
+  }
+});
+
+test('a human-verification dialog in any language arms the CAPTCHA gate once a model reads its title', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    // An accessibility-tree read: the dialog's title is read first, and a
+    // Turkish "Güvenlik doğrulaması" reads as a human check.
+    const turkishTree = 'dialog "Güvenlik doğrulaması" [ref_1]\n button "Kapat" [ref_2]';
+    const agent = new AgentClass({});
+    const asked = stubCaptchaTitleReadings(agent);
+    const observation = await agent._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: turkishTree, pageUrl: 'https://www.linkedin.com/signup/cold-join', captchaChallengeVisibilityConfirmed: true }, {});
+    assert.ok(observation.gate, `${build}: a Turkish security verification dialog armed no gate`);
+    assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', 'Güvenlik doğrulaması']]);
+    // A title the model cannot read, or reads as something else, arms nothing.
+    const unread = new AgentClass({});
+    stubPageTextReadings(unread, () => null);
+    assert.equal((await unread._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: turkishTree, pageUrl: 'https://www.linkedin.com/signup/cold-join', captchaChallengeVisibilityConfirmed: true }, {})).gate, null,
+      `${build}: an unread title armed the gate`);
+    const cookie = new AgentClass({});
+    stubCaptchaTitleReadings(cookie);
+    assert.equal((await cookie._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: 'dialog "Çerez tercihleri" [ref_1]\n button "Kabul et" [ref_2]', pageUrl: 'https://example.test/', captchaChallengeVisibilityConfirmed: true }, {})).gate,
+      null, `${build}: a cookie dialog armed the gate`);
+    // A dialog naming a CAPTCHA product needs no reading.
+    const branded = new AgentClass({});
+    const brandedAsked = stubCaptchaTitleReadings(branded);
+    assert.ok((await branded._observeCaptchaChallenge(1, 'get_accessibility_tree',
+      { pageContent: 'dialog "reCAPTCHA doğrulaması" [ref_1]', pageUrl: 'https://example.test/', captchaChallengeVisibilityConfirmed: true }, {})).gate);
+    assert.deepEqual(brandedAsked, [], `${build}: a branded dialog title was sent to a model`);
+
+    // The scan before a mutation reports the visible dialog titles nobody has
+    // read; the agent reads them once and scans again with the readings.
+    const nodes = [captchaEl('div', { role: 'dialog', 'aria-label': 'Güvenlik doğrulaması' }, [
+      captchaEl('h2', { textContent: 'Güvenlik doğrulaması' }),
+      captchaEl('button', { textContent: 'Kapat', innerText: 'Kapat' }),
+    ])];
+    await withCaptchaFakePage(build, nodes, async () => {
+      const preflight = new AgentClass({});
+      const preflightAsked = stubCaptchaTitleReadings(preflight);
+      const found = await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(found.challenge?.label, 'Güvenlik doğrulaması', `${build}: the preflight missed a Turkish verification dialog`);
+      assert.equal(preflightAsked.length, 1);
+      await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(preflightAsked.length, 1, `${build}: a read title was asked about again`);
+      const none = new AgentClass({});
+      stubPageTextReadings(none, () => null);
+      assert.equal((await none._detectChallengeDialogBeforeMutation(1, { includeStatus: true })).challenge, null,
+        `${build}: an unread title stopped a mutation`);
+    });
+    // A title longer than 200 characters whose 200th character is a space is
+    // keyed alike in the page and in the agent, so its reading reaches the scan.
+    const longTitle = `Güvenlik doğrulaması ${'b'.repeat(178)} devam etmek için robot olmadığınızı doğrulayın`;
+    assert.equal(longTitle[199], ' ');
+    const longNodes = [captchaEl('div', { role: 'dialog', 'aria-label': longTitle }, [
+      captchaEl('button', { textContent: 'Kapat', innerText: 'Kapat' }),
+    ])];
+    await withCaptchaFakePage(build, longNodes, async () => {
+      const preflight = new AgentClass({});
+      stubCaptchaTitleReadings(preflight);
+      const found = await preflight._detectChallengeDialogBeforeMutation(1, { includeStatus: true });
+      assert.equal(found.challenge?.label, longTitle.slice(0, 199), `${build}: a long title read as a human check stopped nothing`);
+    });
+  }
+});
+
+test('a page read has its unread wall texts read in any language and reads the page again', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
+    const agent = new AgentClass({});
+    const asked = stubCaptchaTitleReadings(agent);
+    // The read carries the readings the agent holds, and only page reads do.
+    assert.deepEqual(agent._withPageBlockerReadings('click_ax', { ref_id: 'ref_1' }), { ref_id: 'ref_1' });
+    let dispatches = 0;
+    const reread = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }, { kind: 'message_status', text: 'Okundu' }] },
+      async () => { dispatches += 1; return { text: wall, textSource: 'page-gate', pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: wall } }; });
+    assert.equal(dispatches, 1, `${build}: the page was not read again after its wall text was read`);
+    assert.equal(reread.pageGate?.type, 'subscription');
+    assert.equal(reread.pageTextsNeeded, undefined);
+    assert.deepEqual(asked.map(item => [item.kind, item.text]), [['page_blocker', wall]],
+      `${build}: only the wall text was to be read, and once`);
+    assert.deepEqual(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker, { [wall]: 'subscription' });
+    // A text the agent already read that a page still reports did not reach
+    // it: it is not asked again, but the page is read once more with it.
+    const again = await agent._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'tree', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] },
+      async () => { dispatches += 1; return { pageContent: 'gate', pageGate: { type: 'subscription' } }; });
+    assert.equal(dispatches, 2, `${build}: a held reading the page lacked was not handed over`);
+    assert.deepEqual(again, { pageContent: 'gate', pageGate: { type: 'subscription' } });
+    assert.equal(asked.length, 1, `${build}: a held reading was asked again`);
+    // One nobody can read changes nothing, and the first answer stands.
+    const unread = new AgentClass({});
+    stubPageTextReadings(unread, () => null);
+    const first = await unread._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, async () => { throw new Error('read again'); });
+    assert.deepEqual(first, { text: 'SECRET_ARTICLE' }, `${build}: an unread wall changed the read`);
+    // When a text reads as a wall but the page cannot be read again, the
+    // answer made without that reading is not returned: it may hold what the
+    // wall withholds.
+    const failing = new AgentClass({});
+    stubCaptchaTitleReadings(failing);
+    for (const dispatch of [async () => { throw new Error('read again'); }, async () => ({ success: false, error: 'gone' })]) {
+      const refused = await failing._rereadWithPageBlockerReadings(1, 'read_page',
+        { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] }, dispatch);
+      assert.equal(refused.success, false, `${build}: a read made without its wall reading was returned`);
+      assert.doesNotMatch(JSON.stringify(refused), /SECRET_ARTICLE|\[|\]/);
+    }
+    // A text read as no wall keeps the first answer when the page cannot be
+    // read again.
+    const other = await failing._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bültenimize abone olun' }] },
+      async () => { throw new Error('read again'); });
+    assert.deepEqual(other, { text: 'ARTICLE' });
+  }
+});
+
+test('a reading older than the ones handed to the page still reaches it when the page asks for it', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const wall = 'Bu içerik abonelere özeldir Okumaya devam etmek için abone olun. Abone ol';
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (item.text === wall ? 'subscription' : 'other') : kind === 'message_control' ? 'other' : null));
+    await agent._readPageTexts(1, 'page_blocker', [wall], {}, { maxChars: 400 });
+    // Many texts read since push it out of the readings a page read carries.
+    await agent._readPageTexts(1, 'page_blocker', Array.from({ length: 450 }, (_, index) => `Bülten kutusu ${index}`), {}, { maxChars: 400 });
+    assert.equal(agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker[wall], undefined,
+      `${build}: the fixture did not push the old reading out`);
+    asked.length = 0;
+    let handed = null;
+    const reread = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_ARTICLE', pageTextsNeeded: [{ kind: 'page_blocker', text: wall }] },
+      async () => {
+        handed = agent._withPageBlockerReadings('read_page', {}).__wbPageReadings.page_blocker;
+        return { text: wall, textSource: 'page-gate', pageGate: { type: 'subscription', blocking: true, surface: 'dialog', label: wall } };
+      });
+    assert.equal(handed?.[wall], 'subscription', `${build}: the page was read again without the reading it lacked`);
+    assert.equal(reread.pageGate?.type, 'subscription');
+    assert.deepEqual(asked, [], `${build}: a held reading was asked of a model again`);
+    // The same holds for any question a check in the page reads, such as a
+    // messaging page's controls: a held reading becomes one of the most recent.
+    await agent._readPageTexts(1, 'message_control', ['Gönder'], {}, { maxChars: 400 });
+    await agent._readPageTexts(1, 'message_control', Array.from({ length: 450 }, (_, index) => `Düğme ${index}`), {}, { maxChars: 400 });
+    assert.equal(agent._messagingPageReadings().message_control['Gönder'], undefined);
+    assert.equal(await agent._readUnreadPageTexts(1, [{ kind: 'message_control', text: 'Gönder' }]), true);
+    assert.equal(agent._messagingPageReadings().message_control['Gönder'], 'other', `${build}: a held control reading did not reach the page`);
+    // Overlay and article-block texts stay out of the dialog-title readings
+    // the CAPTCHA scans carry, which are at most 200 characters.
+    const window = `${'Önizleme paragrafı. '.repeat(12)}Okumaya devam etmek için abone olun.`;
+    await agent._readPageTexts(1, 'page_blocker', [window], {}, { maxChars: 400 });
+    assert.equal(agent._pageBlockerReadings()[window], 'other');
+    assert.equal(agent._challengeTitleReadings()[window], undefined, `${build}: a long wall text was handed to the CAPTCHA scans`);
+  }
+});
+
+test('a page read reaching more unread wall texts after a reread is read again, at most three times', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    const batch = prefix => Array.from({ length: 40 }, (_, index) => ({ kind: 'page_blocker', text: `${prefix} ${index}` }));
+    // The page reports forty texts at a time; the wall's text comes with the
+    // second read.
+    const responses = [
+      { text: 'SECRET_SECOND', pageTextsNeeded: batch('Bülten B') },
+      { text: 'SECRET_THIRD', pageTextsNeeded: [{ kind: 'page_blocker', text: 'Okumaya devam etmek için abone olun.' }] },
+      { text: 'gate', pageGate: { type: 'subscription' } },
+      { text: 'never read' },
+    ];
+    let dispatches = 0;
+    const result = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_FIRST', pageTextsNeeded: batch('Bülten A') }, async () => responses[dispatches++]);
+    assert.equal(dispatches, 3, `${build}: the page was not read again for the texts each read reached`);
+    assert.deepEqual(result, { text: 'gate', pageGate: { type: 'subscription' } });
+    assert.equal(asked.length, 81);
+    // It stops after three reads even when every read reaches more.
+    const endless = new AgentClass({});
+    stubPageTextReadings(endless, () => 'other');
+    let reads = 0;
+    const last = await endless._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'tree', pageTextsNeeded: batch('Kutu 0') },
+      async () => { reads += 1; return { pageContent: `tree ${reads}`, pageTextsNeeded: batch(`Kutu ${reads}`) }; });
+    assert.equal(reads, 3);
+    assert.deepEqual(last, { pageContent: 'tree 3' });
+  }
+});
+
+// From review: a wall whose text changes on every read, such as a countdown,
+// was read as a wall each time, yet the page never met that reading again,
+// so after three reads the article behind it was returned.
+test('a wall whose text changes on every read fails the read instead of returning what it hides', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    const wallAt = n => [{ kind: 'page_blocker', text: `Okumaya devam etmek için abone olun. Kalan süre: ${59 - n} sn` }];
+    let reads = 0;
+    const result = await agent._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { reads += 1; return { text: `SECRET_${reads}`, pageTextsNeeded: wallAt(reads) }; });
+    assert.equal(reads, 3, `${build}: the page was not read again with each new wall text`);
+    assert.equal(result.success, false, `${build}: the article behind a changing wall was returned`);
+    assert.doesNotMatch(JSON.stringify(result), /SECRET/, `${build}: text behind the wall leaked`);
+    assert.match(result.error, /wall that WebBrain could not apply, as when its text changes on every read[\s\S]*Read the page again once; if the wall is still there, report it/);
+    // The same wall applied on the last read is returned as the page shows it.
+    const applied = new AgentClass({});
+    stubPageTextReadings(applied, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    let appliedReads = 0;
+    const gated = await applied._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { appliedReads += 1; return appliedReads < 3
+        ? { text: `SECRET_${appliedReads}`, pageTextsNeeded: wallAt(appliedReads) }
+        : { text: 'gate', pageGate: { type: 'subscription' }, pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bülten' }] }; });
+    assert.deepEqual(gated, { text: 'gate', pageGate: { type: 'subscription' } }, `${build}: an applied wall was refused`);
+    // Texts read as no wall leave the last read as it is.
+    const plain = new AgentClass({});
+    stubPageTextReadings(plain, () => 'other');
+    let plainReads = 0;
+    const last = await plain._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'article 0', pageTextsNeeded: wallAt(0) },
+      async () => { plainReads += 1; return { text: `article ${plainReads}`, pageTextsNeeded: wallAt(plainReads) }; });
+    assert.deepEqual(last, { text: 'article 3' }, `${build}: a page with no wall was refused`);
+
+    // From review: the next wall text got no answer from any model, so the
+    // loop stopped with the read made without the wall applied.
+    const unanswered = new AgentClass({});
+    stubPageTextReadings(unanswered, (kind, item) => (kind === 'page_blocker'
+      ? (/59 sn/.test(item.text) ? 'subscription' : null) : null));
+    let unansweredReads = 0;
+    const stopped = await unanswered._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { unansweredReads += 1; return { text: `SECRET_${unansweredReads}`, pageTextsNeeded: wallAt(unansweredReads) }; });
+    assert.equal(unansweredReads, 1);
+    assert.equal(stopped.success, false, `${build}: an unanswered later wall text returned the article`);
+    assert.doesNotMatch(JSON.stringify(stopped), /SECRET/);
+    // From review: the wall's new text dropped out of the last batch while
+    // other texts filled it, so only the last pass's texts were looked at.
+    const ticker = new AgentClass({});
+    stubPageTextReadings(ticker, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : 'other') : null));
+    let tickerReads = 0;
+    const crowded = await ticker._rereadWithPageBlockerReadings(1, 'get_accessibility_tree',
+      { pageContent: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => { tickerReads += 1; return { pageContent: `SECRET_${tickerReads}`,
+        pageTextsNeeded: [{ kind: 'page_blocker', text: `Borsa ${tickerReads}` }] }; });
+    assert.equal(tickerReads, 3);
+    assert.equal(crowded.success, false, `${build}: a wall crowded out of the last batch returned the article`);
+    assert.doesNotMatch(JSON.stringify(crowded), /SECRET/);
+    // A wall applied on a later read stands, whatever is still unread.
+    const appliedLater = new AgentClass({});
+    stubPageTextReadings(appliedLater, (kind, item) => (kind === 'page_blocker'
+      ? (/abone olun/.test(item.text) ? 'subscription' : null) : null));
+    const standing = await appliedLater._rereadWithPageBlockerReadings(1, 'read_page',
+      { text: 'SECRET_0', pageTextsNeeded: wallAt(0) },
+      async () => ({ text: 'gate', pageGate: { type: 'subscription' }, pageTextsNeeded: [{ kind: 'page_blocker', text: 'Bülten' }] }));
+    assert.deepEqual(standing, { text: 'gate', pageGate: { type: 'subscription' } }, `${build}: an applied wall was refused`);
+  }
+});
+
+test('a wall or dialog title no model answered is not asked again on every read for a while', async () => {
+  for (const [build, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const realNow = Date.now;
+    let now = 1_000_000;
+    Date.now = () => now;
+    try {
+      const agent = new AgentClass({});
+      // An active model that answers nothing, as one that times out.
+      agent._activeProvider = () => ({ chat: async () => ({}) });
+      const asked = stubPageTextReadings(agent, () => null);
+      const wall = 'Okumaya devam etmek için abone olun.';
+      assert.equal(await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]), false);
+      assert.equal(await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']), false);
+      assert.equal(asked.length, 2);
+      // Within half a minute neither is asked again, so reads and actions do
+      // not each wait for a model that cannot answer.
+      now += 29_000;
+      assert.equal(await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]), false);
+      assert.equal(await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']), false);
+      assert.equal(asked.length, 2, `${build}: an unanswered text was asked again at once`);
+      now += 2_000;
+      await agent._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      await agent._readChallengeTitles(1, ['Güvenlik doğrulaması']);
+      assert.equal(asked.length, 4, `${build}: an unanswered text was never asked again`);
+      // A read by the decision model alone leaves a title for the next full
+      // read, which may ask the active model at once; so does a read the
+      // active model could not take part in.
+      const decisionOnly = new AgentClass({});
+      decisionOnly._activeProvider = () => ({ chat: async () => ({}) });
+      const askedOnce = stubPageTextReadings(decisionOnly, () => null);
+      await decisionOnly._readChallengeTitles(1, ['Doğrulama gerekli'], { mainModel: false });
+      await decisionOnly._readChallengeTitles(1, ['Doğrulama gerekli']);
+      assert.equal(askedOnce.length, 2, `${build}: a decision-model-only miss held back the active model`);
+      const noModel = new AgentClass({});
+      noModel._activeProvider = () => null;
+      const askedNoModel = stubPageTextReadings(noModel, () => null);
+      await noModel._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      await noModel._readPageBlockerTexts(1, [{ kind: 'page_blocker', text: wall }]);
+      assert.equal(askedNoModel.length, 2, `${build}: a read no active model took part in held the text back`);
+      // Other questions are asked again at once, as before.
+      const other = new AgentClass({});
+      const askedOther = stubPageTextReadings(other, () => null);
+      await other._readControlEffects(1, ['Sil']);
+      await other._readControlEffects(1, ['Sil']);
+      assert.equal(askedOther.length, 2, `${build}: a control caption was held back`);
+    } finally {
+      Date.now = realNow;
+    }
   }
 });
 
@@ -19546,7 +19231,7 @@ test('backgrounds wire Cloudflare detection to narrow response and platform filt
   }
 });
 
-test('CAPTCHA English matcher has one canonical source with Chrome and Firefox parity', () => {
+test('CAPTCHA product-name matcher has one canonical source with Chrome and Firefox parity', () => {
   assert.equal(
     CaptchaGateCh.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
     CaptchaGateFx.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE,
@@ -19570,7 +19255,7 @@ test('CAPTCHA English matcher has one canonical source with Chrome and Firefox p
       );
       return count + source.split(gate.CAPTCHA_CHALLENGE_LABEL_PATTERN_SOURCE).length - 1;
     }, 0);
-    assert.equal(sourceCopies, 1, `${build}: CAPTCHA English matcher source is duplicated`);
+    assert.equal(sourceCopies, 1, `${build}: CAPTCHA product-name matcher source is duplicated`);
   }
 });
 
@@ -19600,6 +19285,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
       await withCaptchaFakePage(build, [dialog], async () => {
         assert.equal(detectCaptchaChallengeInPage(gate), null, `${build}: inactive dialog armed the mutation preflight`);
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         const observation = await agent._observeCaptchaChallenge(
           1,
           'get_accessibility_tree',
@@ -19658,7 +19344,7 @@ test('CAPTCHA preflight ignores hidden dialogs while ambiguous all-tree reads fa
           },
           document: globalThis.document,
         },
-        gate.captchaChallengeMatcherOptions(),
+        gate.captchaChallengeMatcherOptions(captchaTitleReadings),
       );
       const candidate = detected.candidates.find(
         entry => entry.websiteKey === 'VISIBILITY_OVERRIDE_KEY',
@@ -19750,6 +19436,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
         `${build}: shadow-rooted challenge dialog was invisible to the DOM scan`,
       );
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const observation = await agent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19774,6 +19461,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       }),
     ], async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const recheck = await agent._detectChallengeDialogBeforeMutation(1, {
         includeStatus: true,
       });
@@ -19797,6 +19485,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       assert.equal(agent._captchaGateStates.has(1), true, `${build}: unrelated hidden challenge failed open`);
 
       const sameLabelAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(sameLabelAgent);
       const sameLabelObservation = await sameLabelAgent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19818,6 +19508,8 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
     });
 
     const crossFrameAgent = new AgentClass({});
+
+    stubCaptchaTitleReadings(crossFrameAgent);
     crossFrameAgent._detectChallengeDialogBeforeMutation = async () => ({
       challenge: null,
       challengeHidden: true,
@@ -19867,6 +19559,7 @@ test('CAPTCHA visibility recheck sees shadow-rooted dialogs and keeps the gate o
       globalThis.chrome.scripting.executeScript = async () => { throw new Error('injection blocked'); };
       globalThis.browser.tabs.executeScript = async () => { throw new Error('injection blocked'); };
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       const observation = await agent._observeCaptchaChallenge(
         1,
         'get_accessibility_tree',
@@ -19969,7 +19662,7 @@ test('CAPTCHA challenge gate blocks dismiss/resubmit mutations but allows the on
   }
 });
 
-test('frame-backed CAPTCHA gate ignores English matcher misses after one solve', async () => {
+test('frame-backed CAPTCHA gate ignores dialog-title misses after one solve', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const tabId = label === 'chrome' ? 8821 : 8822;
     const agent = new AgentClass({ getVisionProvider: async () => null });
@@ -27710,6 +27403,8 @@ test('completion form classification ignores passive localized utility shells wi
           { tag: 'select', type: '', role: '', name: 'filter', value: '' },
         ],
         submits: [{ label: 'Filter' }],
+        // What a model read the caption as.
+        submitReadings: { Filter: 'view' },
       }),
       {
         label: '',
@@ -27729,6 +27424,7 @@ test('completion form classification ignores passive localized utility shells wi
           { tag: 'select', type: '', role: '', name: 'filter', value: 'recent' },
         ],
         submits: [{ label: 'Search' }],
+        submitReadings: { Search: 'view' },
       }),
       {
         label: '',
@@ -27740,6 +27436,24 @@ test('completion form classification ignores passive localized utility shells wi
       },
       `${label}: retained search query and filter values were treated as task drafts`,
     );
+    // A submit caption is read in any language; an unread one keeps the form
+    // relevant and asks the agent to read it, and one read as anything but
+    // showing or searching is task evidence.
+    const searchForm = { outsidePrimaryContent: false,
+      editable: [{ tag: 'input', type: 'search', role: '', name: 'q', value: '' }] };
+    assert.equal(classify({ ...searchForm, submits: [{ label: 'Ara' }], submitReadings: { Ara: 'view' } }).utility, true,
+      `${label}: a search form with a Turkish search button stayed a task form`);
+    assert.deepEqual(classify({ ...searchForm, submits: [{ label: 'Ara' }] }), {
+      label: '', relevant: true, utility: false, utilityReason: null, editableCount: 1, submitCount: 1,
+      searchCandidate: true, searchUtilityReason: 'semantic_search', submitLabels: ['Ara'],
+    }, `${label}: an unread search caption was decided without a reading`);
+    for (const reading of ['commit', 'publish', 'next_step', 'form_edit', 'delete_one', 'unclear']) {
+      const result = classify({ ...searchForm, submits: [{ label: 'Ekle' }], submitReadings: { Ekle: reading } });
+      assert.equal(result.relevant, true, `${label}: a ${reading} caption hid a task form`);
+      assert.equal(result.searchCandidate, undefined, `${label}: a ${reading} caption asked for another reading`);
+    }
+    assert.equal(classify({ ...searchForm, method: 'post', submits: [{ label: 'Ara' }] }).searchCandidate, undefined,
+      `${label}: structure that is task evidence asked for a caption reading`);
 
     for (const [caseName, override] of [
       ['primary-content form', { outsidePrimaryContent: false }],
@@ -30067,6 +29781,29 @@ test('inspect_viewport returns local-vision readiness immediately without captur
   ), false);
   assert.deepEqual(automaticUpdates.map(update => update.type), ['tool_call', 'tool_progress', 'tool_result']);
   assert.equal(automaticUpdates[2].data.result.code, 'vision_model_downloading');
+});
+
+test('automatic screenshot UI results include the description and distinguish raw-image and failed-description paths', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const source = fs.readFileSync(path.join(ROOT, `src/${browser}/src/agent/agent.js`), 'utf8');
+    // Locate the post-action capture result rather than other tool-result events.
+    const anchor = source.indexOf("bytes: shot.dataUrl.length,");
+    const resultStart = source.lastIndexOf('result: {', anchor) + 'result: '.length;
+    const resultEnd = source.indexOf('\n              },', anchor) + '\n              }'.length;
+    assert.ok(anchor > 0 && resultStart > 0 && resultEnd > resultStart);
+    const resultFor = Function('visionRoute', 'screenshotDescription', 'shot', 'visible',
+      `return (${source.slice(resultStart, resultEnd)});`);
+    const shot = { dataUrl: 'fixture', width: 800, height: 600 };
+    const described = resultFor({ rawImage: false, route: 'explicit_override' }, 'The receipt total is $42.', shot, []);
+    assert.equal(described.description, 'The receipt total is $42.', browser);
+    assert.equal(described.method, 'vision_describe', browser);
+    const raw = resultFor({ rawImage: true }, '', shot, []);
+    assert.equal(raw.method, 'image_attach', browser);
+    assert.match(raw.description, /no separate text description/, browser);
+    const failed = resultFor({ rawImage: false }, '', shot, [{}]);
+    assert.equal(failed.method, 'elements_only', browser);
+    assert.match(failed.description, /description unavailable/, browser);
+  }
 });
 
 test('staged screenshots use the shared vision route while ordinary uploads keep active-provider semantics', async () => {
@@ -33329,6 +33066,13 @@ test('OTP mailbox candidate filtering returns only service-matching bounded exce
     assert.equal(helper.otpTextMatchesService('row "Bank of America security code" [ref_bofa]', 'Bank of America'), true, `${label}: complete multiword issuer identity should match`);
     assert.equal(helper.otpTextMatchesService('row "Call me about your account" [ref_call]', 'ID.me'), false, `${label}: short connector tokens must not match independently`);
     assert.equal(helper.otpTextMatchesService('row "ID.me verification code" [ref_idme]', 'ID.me'), true, `${label}: short service identities should require their complete normalized phrase`);
+    // Words beside a service's name count the same in every language: none is
+    // set aside as filler, so an English "verification" is required like a
+    // Turkish "doğrulama" is.
+    for (const [service, wanted] of [['Acme verification', 'verification'], ['Acme doğrulama', 'doğrulama']]) {
+      assert.equal(helper.otpTextMatchesService('row "Your Acme sign-in link" [ref_acme]', service), false, `${label}: ${service} matched without ${wanted}`);
+      assert.equal(helper.otpTextMatchesService(`row "Acme ${wanted} 482913" [ref_acme]`, service), true, `${label}: ${service} did not match its own message`);
+    }
     const issuerCandidates = helper.otpEmailCandidates([
       'row "Bank security code" [ref_bank]',
       '  text "Code 111111"',
@@ -46599,7 +46343,7 @@ test('sidepanel suppresses streamed raw tool-call text before rendering tool ste
     assert.match(panel, /streamedAssistantTextByEl\.set\(textEl, nextText\);\s*textEl\.dataset\.streamedAssistantActive = 'true';\s*scheduleStreamedAssistantMarkdownRender\(textEl\);/, `${label}: text_delta should retain raw Markdown, persist only an active-stream marker, and schedule incremental rendering`);
     assert.match(panel, /const streamedAssistantRenderFrameByEl = new WeakMap\(\);[\s\S]*?function renderStreamedAssistantMarkdownNow\(textEl\)[\s\S]*?textEl\.innerHTML = formatMarkdown\(streamedText, \{ enhance: false, recoverNestedMarkdown: true \}\);[\s\S]*?scrollToBottom\(\);[\s\S]*?function scheduleStreamedAssistantMarkdownRender\(textEl\)[\s\S]*?requestAnimationFrame\([\s\S]*?renderStreamedAssistantMarkdownNow\(textEl\);/, `${label}: live Markdown should render nested fences at most once per animation frame before following output`);
     assert.match(panel, /function clearStreamedAssistantText\(textEl\)[\s\S]*?cancelAnimationFrame\(frame\);[\s\S]*?streamedAssistantRenderFrameByEl\.delete\(textEl\);/, `${label}: terminal and tool transitions should cancel pending stream renders`);
-    assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
+    assert.match(panel, /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\)[\s\S]*?flushPendingStreamedAssistantMarkdownRenders\(\);[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?return persistTabChat\(tabId, html, \{ allowHidden \}\);/, `${label}: tab switches and visibility handoffs should render a queued frame before serializing its last acknowledged stream chunk`);
     assert.doesNotMatch(panel, /const nextText = textEl\.textContent \+ data\.content;/, `${label}: rendered Markdown must never become the source for later deltas`);
     assert.match(panel, /function formatMarkdown\(text, options = \{\}\)[\s\S]*?const enhance = options\.enhance !== false;[\s\S]*?const highlighted = enhance \? highlightCode\(block\.code, block\.lang\) : escapeHtml\(block\.code\);[\s\S]*?if \(enhance\) scheduleMathRender\(\);[\s\S]*?if \(enhance && codeBlocks\.length > 0\)/, `${label}: syntax highlighting and interactive Markdown enhancements should wait for the terminal render`);
     assert.match(panel, /case 'run_complete':[\s\S]*?const streamedText = getStreamedAssistantText\(textEl\);[\s\S]*?const hasStreamedText = hasStreamedAssistantText\(textEl\);[\s\S]*?const visibleStreamedText = streamedText[\s\S]*?\|\| \(hasStreamedText \? textEl\?\.innerText \|\| textEl\?\.textContent \|\| '' : ''\);[\s\S]*?else if \(textEl && \(hasStreamedText\s*\|\| \(data\.status === 'completed' && textEl\.dataset\.responseIncomplete === 'true'\)\)\)[\s\S]*?const terminalContent = data\.status === 'stopped' \|\| data\.status === 'cancelled'[\s\S]*?\? visibleStreamedText[\s\S]*?renderAssistantTextUpdate\(currentAssistantEl, terminalContent, \{[\s\S]*?replace: terminalContent !== streamedText,[\s\S]*?else if \(textEl && !textEl\.textContent\.trim\(\)\)/, `${label}: restored/background streams and incomplete completed replies should receive one enhanced authoritative terminal render while stopped runs preserve visible partial text`);
@@ -47904,7 +47648,7 @@ test('sidepanel flushes run chat before queue settlement after immediate tab swi
     if (label === 'chrome' || label === 'firefox') {
       assert.match(
         panel,
-        /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?await persistTabChat\(tabId, html, \{ allowHidden \}\);[\s\S]*?\}/,
+        /async function flushRenderedTabChat\(\{ allowHidden = false \} = \{\}\) \{[\s\S]*?const tabId = renderedTabId;[\s\S]*?if \(persistTimer && persistTimerTabId === tabId\) \{[\s\S]*?clearTimeout\(persistTimer\);[\s\S]*?\}[\s\S]*?const html = messagesEl\.innerHTML;[\s\S]*?return persistTabChat\(tabId, html, \{ allowHidden \}\);[\s\S]*?\}/,
         `${label}: final flush should cancel stale debounced writes and persist the rendered tab immediately`,
       );
     }
@@ -50972,18 +50716,19 @@ test('sidepanel scopes async tab commands to the original tab', () => {
     assert.match(locale, /'sp\.screenshot\.save_as': 'Save as…'/, `${label}: screenshot Save As should have an English label`);
     assert.match(locale, /'sp\.screenshot\.save_failed': 'Could not save screenshot: \{msg\}'/, `${label}: screenshot save failures should have an English fallback`);
     const fullPageIdx = panel.indexOf("if (command.value === '/screenshot' && action === 'full-page')");
-    assert.match(panel, /function normalizeScreenshotRequestText\(text\) \{[\s\S]*?\.normalize\('NFKD'\)[\s\S]*?\.replace\(\/\[\\u0300-\\u036f\]\/g, ''\)[\s\S]*?\.replace\(\/\\u0131\/g, 'i'\)/, `${label}: plain screenshot request normalization should handle accented Turkish text`);
-    assert.match(panel, /function isPlainScreenshotRequest\(text\) \{[\s\S]*?const s = normalizeScreenshotRequestText\(text\);[\s\S]*?s\.startsWith\('\/'\)[\s\S]*?ekran goruntusu[\s\S]*?ekran goruntusunu/, `${label}: plain screenshot request routing should cover English and Turkish screenshot-only requests`);
     assert.notEqual(fullPageIdx, -1, `${label}: /screenshot --full-page parser missing`);
     const fullPageBody = panel.slice(fullPageIdx, panel.indexOf("if (command.value === '/record'", fullPageIdx));
     assert.match(fullPageBody, /tabs\.get\(tabId\)[\s\S]*?sendToBackground\('capture_full_page_screenshot', \{ tabId \}\);[\s\S]*?if \(currentTabId !== tabId\) return '';[\s\S]*?stageScreenshotAttachment\(tabId, res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?pageUrl,[\s\S]*?captureBounds: res\.captureBounds,[\s\S]*?redactionSnapshotReady: res\.redactionSnapshotReady === true,[\s\S]*?redactionSnapshot: res\.redactionSnapshot,[\s\S]*?\}\);[\s\S]*?addScreenshotResultMessage\(res\.dataUrl, \{[\s\S]*?fullPage: true,[\s\S]*?warning: res\.warning,[\s\S]*?pageUrl,[\s\S]*?stagedAttachment,[\s\S]*?\}\);/, `${label}: /screenshot --full-page should stage capture-time privacy geometry and render only in the initiating tab with URL-aware Save As`);
     assert.match(panel, /function renderScreenshotResult\(dataUrl,[\s\S]*?warningHtml = warning[\s\S]*?escapeHtml\(warning\)/, `${label}: fallback full-page images should display their escaped assembly warning`);
-    assert.match(panel, /function isPlainFullPageScreenshotRequest\(text\) \{[\s\S]*?full\|whole\|entire\|complete[\s\S]*?tam sayfa[\s\S]*?ekran goruntusu/, `${label}: plain full-page screenshot request routing should cover English and Turkish requests`);
-    assert.match(panel, /function normalizeScreenshotCommandText\(text\) \{[\s\S]*?isPlainFullPageScreenshotRequest\(text\)[\s\S]*?return '\/screenshot --full-page';[\s\S]*?isPlainScreenshotRequest\(text\)[\s\S]*?return '\/screenshot';/, `${label}: screenshot normalization should route full-page requests before viewport screenshots`);
+    // A typed message is sent as typed: its words never turn it into
+    // /screenshot. The agent's model reads a screenshot request in any
+    // language; /screenshot is the explicit local command.
+    assert.doesNotMatch(panel, /normalizeScreenshotCommandText|isPlainScreenshotRequest|isPlainFullPageScreenshotRequest|ekran goruntusu/,
+      `${label}: a typed request is still rewritten into /screenshot by its words`);
     const sendIdx = panel.search(/async function sendMessage\(extraChatParams(?: = \{\})?\)/);
     assert.notEqual(sendIdx, -1, `${label}: sendMessage missing`);
     const sendBody = panel.slice(sendIdx, panel.indexOf('let assistantEl = null;', sendIdx));
-    assert.match(sendBody, /const tabId = currentTabId;[\s\S]*?text = normalizeScreenshotCommandText\(text\);[\s\S]*?if \(isProcessing\)/, `${label}: plain screenshot requests should route to slash commands before busy gating`);
+    assert.match(sendBody, /const tabId = currentTabId;[\s\S]*?if \(isProcessing\)/, `${label}: sendMessage lost its busy gating`);
 
     if (label === 'chrome') {
       const fullScreenRecordIdx = panel.indexOf("if (command.value === '/record' && action === 'full-screen')");
@@ -51281,7 +51026,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     }
     assert.match(
       panel,
-      /function syncSendButtonState\(\) \{[\s\S]*?const draft = normalizeScreenshotCommandText\(inputEl\?\.value \|\| ''\)\.trim\(\);[\s\S]*?if \(!isProcessing\) \{[\s\S]*?sendBtn\.disabled = isAttachmentReadPendingForTab\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(!draft\) \{[\s\S]*?sendBtn\.disabled = true;[\s\S]*?return;[\s\S]*?\}[\s\S]*?sendBtn\.disabled = draft\.startsWith\('\/'\) && !isOutOfBandSlashDraft\(draft\);[\s\S]*?\}/,
+      /function syncSendButtonState\(\) \{[\s\S]*?const draft = String\(inputEl\?\.value \|\| ''\)\.trim\(\);[\s\S]*?if \(!isProcessing\) \{[\s\S]*?sendBtn\.disabled = isAttachmentReadPendingForTab\(\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?if \(!draft\) \{[\s\S]*?sendBtn\.disabled = true;[\s\S]*?return;[\s\S]*?\}[\s\S]*?sendBtn\.disabled = draft\.startsWith\('\/'\) && !isOutOfBandSlashDraft\(draft\);[\s\S]*?\}/,
       `${label}: send button state should gate attachment reads while idle, permit normal queued drafts while busy, and only block unsafe slash drafts`,
     );
     assert.match(
@@ -51291,7 +51036,7 @@ test('sidepanel allows safe slash commands and queues normal messages while busy
     );
     assert.match(
       panel,
-      /text = normalizeScreenshotCommandText\(text\);[\s\S]*?if \(isProcessing\) \{[\s\S]*?if \(isOutOfBandSlashDraft\(text\)\) \{[\s\S]*?await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?if \(text\.startsWith\('\/'\)\) \{[\s\S]*?showBusySlashCommandNotice\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);[\s\S]*?\}/,
+      /if \(isProcessing\) \{[\s\S]*?if \(isOutOfBandSlashDraft\(text\)\) \{[\s\S]*?await parseSlashCommands\(text, tabId, \{ permissionSkipContext \}\);[\s\S]*?return true;[\s\S]*?\}[\s\S]*?if \(text\.startsWith\('\/'\)\) \{[\s\S]*?showBusySlashCommandNotice\(\);[\s\S]*?return false;[\s\S]*?\}[\s\S]*?return enqueueQueuedComposerMessage\(tabId, text\);[\s\S]*?\}/,
       `${label}: busy send preflight should run safe slash commands and queue normal drafts`,
     );
     assert.match(
@@ -54373,8 +54118,8 @@ test('sidepanel long replies use reading-first turn navigation', () => {
     );
     assert.equal(
       (clarifySource.match(/scrollToBottom\(\{ force: true \}\);/g) || []).length,
-      4,
-      `${label}: workflow healing, submit, permission, and clarify prompts should override reading-first scroll suppression`,
+      6,
+      `${label}: workflow healing, submit, recipient, deletion, permission, and clarify prompts should override reading-first scroll suppression`,
     );
     assert.match(
       panel,
@@ -56090,7 +55835,7 @@ test('resume task identities survive persistence and keep identical requests sep
     const origin = h.jobs()[0].resumeTaskId;
     const saved = h.agent._conversationStorageEntry(77);
     h.agent.conversations.set(77, structuredClone(saved.messages));
-    h.agent.conversations.get(77).push({ role: 'user', content: 'continue' });
+    h.agent.conversations.get(77).push({ role: 'user', content: 'continue', webbrainTurnKind: 'continue' });
     assert.equal(h.agent._resumeTaskId(77), origin, `${label}: saved task identity was lost on continuation`);
     h.agent.conversations.get(77).push({ role: 'user', content: saved.messages[1].content });
     assert.equal(h.agent._resumeTaskId(77), '', `${label}: an identical new request inherited the old task identity`);
@@ -72095,7 +71840,7 @@ test('agent repairs only terminal content after raw tool-call and plan gates', (
     );
 
     const rawDoneGate = source.indexOf(
-      "toolResult.summary || partialAssistantText || '',",
+      "const doneSummaryText = toolResult.summary || partialAssistantText || '';",
     );
     const doneTerminalRepair = source.indexOf(
       'const repairedDoneSummary = fnArgs.data_ref ? rawDoneSummary : repairAssistantDisplayText(rawDoneSummary);',
@@ -78456,6 +78201,8 @@ test('form validation classifier surfaces native and custom submission errors', 
 
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    // What a model read each alert as saying.
+    agent._pageTextReading = fixturePageTextReading;
     const before = [{
       frameId: 0,
       url,
@@ -79602,6 +79349,8 @@ test('unattended custom submits preflight validation', async () => {
 
     let detections = 0;
     let captures = 0;
+    // What a model read the caption as: "Continue" moves the form on.
+    const asked = stubPageTextReadings(agent);
     agent._ensureGateSetting = async () => true;
     agent._skipPermissionGate = true;
     agent._currentUrl = async () => url;
@@ -79649,6 +79398,8 @@ test('unattended custom submits preflight validation', async () => {
     );
 
     assert.equal(detections, 1, `${AgentClass.name}: unattended custom submit skipped preflight detection`);
+    assert.deepEqual(asked.filter(item => item.kind === 'control_effect').map(item => item.text), ['Continue'],
+      `${AgentClass.name}: the caption of a control inside a form is read once`);
     assert.ok(captures >= 2, `${AgentClass.name}: unattended custom submit skipped validation capture`);
     const result = JSON.parse(agent._unwrapUntrusted(messages[0].content));
     assert.equal(result.formValidationFailed, true, `${AgentClass.name}: unattended custom submit missed validation feedback`);
@@ -79725,6 +79476,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
     'chrome and firefox duplicate-submit guards must remain byte-identical',
   );
 
+  // What a model read each caption as (the fixtures' own oracle).
+  const captionReading = async text => fixtureControlEffectReading(text);
   for (const guardModule of [SubmitClickGuardCh, SubmitClickGuardFx]) {
     const recentClicks = new Map();
     const tabId = 6201;
@@ -79743,6 +79496,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: '  Save changes  ' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'first submit-like click should be recorded and allowed',
@@ -79761,6 +79516,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
       { text: 'SAVE changes' },
       getCurrentUrl,
       () => now,
+      null,
+      captionReading,
     );
     assert.equal(duplicate.success, false);
     assert.equal(duplicate.dispatched, false);
@@ -79778,6 +79535,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Save changes' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'the same label after navigation should be allowed',
@@ -79791,6 +79550,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Save changes' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'an entry exactly at the expiry boundary should be allowed',
@@ -79805,6 +79566,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Save changes', _allowResubmit: true },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'explicit resubmit acknowledgement should bypass the guard',
@@ -79822,6 +79585,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
       { text: 'Save changes' },
       getCurrentUrl,
       () => now,
+      null,
+      captionReading,
     );
     assert.equal(
       thirdRapidClick.blockedDuplicateSubmit,
@@ -79838,6 +79603,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Continue' },
         getCurrentUrl,
         () => now,
+        null,
+        captionReading,
       ),
       null,
       'non-submit-like labels should bypass the guard',
@@ -79855,6 +79622,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
         { text: 'Publish' },
         failingUrlLookup,
         () => now,
+        null,
+        captionReading,
       ),
       null,
     );
@@ -79866,6 +79635,8 @@ test('duplicate submit-click guard is production code with Chrome/Firefox parity
           { text: 'Publish' },
           failingUrlLookup,
           () => now,
+          null,
+          captionReading,
         )
       ).blockedDuplicateSubmit,
       true,
@@ -79893,6 +79664,8 @@ test('Firefox blocks a duplicate submit click before content-script dispatch', a
 
     const agent = new AgentFx({ getVisionProvider: async () => null });
     agent._isPdfTab = async () => false;
+    // What a model read the caption as.
+    agent._pageTextReading = fixturePageTextReading;
     agent._recentSubmitClicks.set(tabId, [{
       key: `save|${url}`,
       ts: Date.now(),
@@ -83129,6 +82902,20 @@ test('GitHub edit-file workflow verifies the exact committed raw blob', async ()
           fields: [{ label: 'Editing file contents' }],
         },
       ), null, `${label}: the reversible commit-dialog launcher was blocked before its message field existed`);
+      // A commit message field beside the control, known by GitHub's own id in
+      // any interface language, means the click commits rather than opening
+      // the dialog.
+      assert.equal((await agent._workflowPreSubmitDispatchBlock(
+        tabId,
+        'click_ax',
+        {},
+        {
+          isSubmit: true,
+          validationSubmitEvidence: 'heuristic',
+          githubCommitDialogLauncher: true,
+          fields: [{ label: 'Editing file contents' }, { label: 'Wiadomość zatwierdzenia', id: 'commit-message-input' }],
+        },
+      ))?.noDispatch, true, `${label}: a launcher beside a commit message field was taken for the reversible dialog launcher`);
       assert.equal((await agent._workflowPreSubmitDispatchBlock(
         tabId,
         'click_ax',
@@ -83257,6 +83044,8 @@ test('GitHub edit-file workflow fails closed when submit detection is inconclusi
     ['firefox', AgentFx, 9452],
   ]) {
     const agent = new AgentClass({});
+    // What a model read each caption as.
+    agent._pageTextReading = fixturePageTextReading;
     agent._planExecutionGuards.set(tabId, {
       enabled: true,
       siteWorkflow: { adapterName: 'github', job: { id: 'edit-file-and-commit' } },
@@ -83279,6 +83068,17 @@ test('GitHub edit-file workflow fails closed when submit detection is inconclusi
     );
     assert.equal(commitText?.noDispatch, true, `${label}: text commit click bypassed the commit guard`);
     assert.equal(commitText?.inconclusiveSubmitDetection, undefined, `${label}: label-classified submit mislabeled as inconclusive`);
+    // A caption no model could read is no evidence: the click is inconclusive
+    // and stays blocked all the same.
+    const unread = new AgentClass({});
+    unread._planExecutionGuards.set(tabId, agent._planExecutionGuards.get(tabId));
+    unread._currentUrl = agent._currentUrl;
+    unread._workflowSubmitBindingForAttempt = agent._workflowSubmitBindingForAttempt;
+    const asked = stubPageTextReadings(unread, () => null);
+    const unreadText = await unread._workflowPreSubmitDispatchBlock(tabId, 'click', { text: 'Değişiklikleri kaydet' }, null);
+    assert.equal(unreadText?.noDispatch, true, `${label}: an unread caption bypassed the commit guard`);
+    assert.equal(unreadText?.inconclusiveSubmitDetection, true, `${label}: an unread caption was classified`);
+    assert.deepEqual(asked.map(item => item.text), ['Değişiklikleri kaydet'], `${label}: the caption was not read before the gate`);
     // Enter in a field is submit-capable and stays blocked; other keys and
     // non-submit field writes remain allowed.
     const inconclusiveEnter = await agent._workflowPreSubmitDispatchBlock(
@@ -83322,6 +83122,8 @@ test('GitHub edit-file workflow passes resolved navigation links', async () => {
     ['firefox', AgentFx, 9513],
   ]) {
     const agent = new AgentClass({});
+    // What a model read each caption as.
+    agent._pageTextReading = fixturePageTextReading;
     agent._planExecutionGuards.set(tabId, {
       enabled: true,
       siteWorkflow: { adapterName: 'github', job: { id: 'edit-file-and-commit' } },
@@ -85625,7 +85427,7 @@ test('submit detector source covers submit controls, Enter, set_field, iframes, 
     assert.match(agent, /publicationAccountIdentityComplete: publicationAccount\.complete/, `${label}: account evidence completeness should survive the page probe`);
     assert.match(agent, /evidence\.strong \? 'strong' : 'heuristic'/, `${label}: custom submit probes should label strong and heuristic evidence`);
     assert.match(agent, /detected\.validationSubmitEvidence === 'strong' \? 'strong' : 'heuristic'/, `${label}: submit evidence strength should survive page-probe normalization`);
-    assert.match(agent, /githubCommitDialogLauncher: githubEditPage[\s\S]*!controlInModal[\s\S]*commit changes/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
+    assert.match(agent, /githubCommitDialogLauncher: githubEditPage\s*&& !controlInModal\s*&& \(\/\(\?:\\\.\{3\}\|…\)\$\/u\.test\(controlLabel\) \|\| controlOpensDialog\)/, `${label}: GitHub's reversible commit-dialog launcher must be target- and modal-bound`);
     assert.match(agent, /const findTopmostModal = \(\) => \{[\s\S]*dialog\[open\][\s\S]*\[role="dialog"\]\[aria-modal="true"\][\s\S]*\[class\*="DialogOverlay"\]/, `${label}: text submit probing should mirror modal scoping`);
     assert.match(agent, /Array\.from\(\(findTopmostModal\(\) \|\| doc\)\.querySelectorAll/, `${label}: text submit probing should search inside the topmost modal when present`);
   }
@@ -86078,13 +85880,12 @@ test('submit confirmation UI and scheduled persistence omit always allow', () =>
     const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     const submitStart = panel.indexOf('if (data.submitConfirmation)');
     const permissionStart = panel.indexOf('if (data.permission && data.permission.capability)', submitStart);
-    const permissionCommentStart = panel.indexOf('// Permission-prompt mode', submitStart);
     assert.notEqual(submitStart, -1, `${label}: submit confirmation branch missing`);
     assert.notEqual(permissionStart, -1, `${label}: permission branch missing after submit branch`);
-    const submitBranch = panel.slice(
-      submitStart,
-      permissionCommentStart !== -1 && permissionCommentStart < permissionStart ? permissionCommentStart : permissionStart
-    );
+    // The submit branch ends where the next prompt kind's branch begins.
+    const submitEnd = Math.min(...['// Recipient confirmation', '// Deletion confirmation', '// Permission-prompt mode']
+      .map(marker => panel.indexOf(marker, submitStart)).filter(index => index !== -1), permissionStart);
+    const submitBranch = panel.slice(submitStart, submitEnd);
     assert.match(submitBranch, /card\.dataset\.submitConfirmation = '1'/, `${label}: submit card needs a separate marker`);
     assert.match(submitBranch, /WebBrain wants to submit this form on \$\{host\}\./, `${label}: submit question text missing`);
     assert.match(submitBranch, /Submit once/, `${label}: submit-once option missing`);
@@ -86259,6 +86060,29 @@ test('progress intent classifier accepts multilingual structured intent and fail
     });
     assert.equal(TurkishFollow.mode, 'active', `${AgentClass.name}: Turkish follow intent was not active`);
     assert.deepEqual(TurkishFollow.allowedActions, ['follow'], `${AgentClass.name}: Turkish takip et did not normalize to follow`);
+    assert.equal(TurkishFollow.excludedTargets, undefined, `${AgentClass.name}: an exclusion was invented`);
+
+    // Accounts the request leaves out are the intent model's to read, in any
+    // language; they reach the session and survive its rebuilds for the task.
+    let prompt = '';
+    agent._chatWithCostAllowance = async (_provider, messages) => {
+      prompt = messages[0].content;
+      return { content: JSON.stringify({ mode: 'active', allowedActions: ['follow'], forbiddenActions: [], targets: [],
+        excludedTargets: ['ChJus', 'ChJus', '@rafi'], confidence: 0.9, pageScopePolicy: 'page' }) };
+    };
+    const excluding = await agent._classifyProgressIntentWithProvider(tabId, {
+      provider: { chat: async () => ({ content: '{}' }) },
+      pageScope: 'https://github.com/foo/bar/stargazers',
+    });
+    assert.match(prompt, /"excludedTargets":\[\]/);
+    assert.match(prompt, /excludedTargets lists every item, account, user or name the user said to leave out/);
+    assert.deepEqual(excluding.excludedTargets, ['ChJus', '@rafi']);
+    const session = agent._setProgressSession(tabId, excluding, { pageScope: 'https://github.com/foo/bar/stargazers' });
+    assert.deepEqual(agent._excludedGithubUsernames(session), ['ChJus', 'rafi']);
+    const rebuilt = agent._setProgressSession(tabId, { mode: 'active', allowedActions: ['follow'], forbiddenActions: [], confidence: 1 },
+      { pageScope: 'https://github.com/foo/bar/stargazers', sessionId: session.sessionId, source: 'ledger' });
+    assert.deepEqual(rebuilt.excludedTargets, ['ChJus', '@rafi'], `${AgentClass.name}: a same-task rebuild dropped the exclusions`);
+    agent.progressSessions.delete(tabId);
 
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
@@ -86947,36 +86771,49 @@ test('progress session changes remove stale pinned ledger prompts', async () => 
 });
 
 test('progress ledger auto-detects item action clicks (chrome & firefox)', () => {
+  // A model reads what a clicked label does, in any language
+  // (progress_action); the fixture oracle stands in.
+  const readAction = (label, action) => fixtureProgressActionReading(label, action);
+  const all = ['follow', 'submit', 'save', 'send', 'add'];
   const result = {
     success: true,
     method: 'click_ax',
     name: 'Follow myxvisual',
     href: '/myxvisual',
   };
-  const chromeItem = detectProgressAction('click_ax', { ref_id: 'ref_1' }, result);
-  const firefoxItem = detectProgressActionFx('click_ax', { ref_id: 'ref_1' }, result);
+  const chromeItem = detectProgressAction('click_ax', { ref_id: 'ref_1' }, result, { allowedActions: ['follow'], readAction });
+  const firefoxItem = detectProgressActionFx('click_ax', { ref_id: 'ref_1' }, result, { allowedActions: ['follow'], readAction });
   for (const item of [chromeItem, firefoxItem]) {
     assert.equal(item.id, 'myxvisual');
     assert.equal(item.action, 'follow');
     assert.equal(item.status, 'acted');
   }
-  assert.equal(detectProgressAction('click', { text: 'Submit' }, { success: true, text: 'Submit' }), null);
+  assert.equal(detectProgressAction('click', { text: 'Submit' }, { success: true, text: 'Submit' }, { allowedActions: all, readAction }), null);
   for (const detect of [detectProgressAction, detectProgressActionFx]) {
-    assert.equal(detect('click', { text: 'Save changes' }, { success: true, text: 'Save changes' }), null);
-    assert.equal(detect('click', { text: 'Send message' }, { success: true, text: 'Send message' }), null);
-    assert.equal(detect('click', { text: 'Add comment' }, { success: true, text: 'Add comment' }), null);
+    assert.equal(detect('click', { text: 'Save changes' }, { success: true, text: 'Save changes' }, { allowedActions: all, readAction }), null);
+    assert.equal(detect('click', { text: 'Send message' }, { success: true, text: 'Send message' }, { allowedActions: all, readAction }), null);
+    assert.equal(detect('click', { text: 'Add comment' }, { success: true, text: 'Add comment' }, { allowedActions: all, readAction }), null);
+    // A Turkish label names its ledger row; nothing is recorded unread.
+    const rows = [{ id: 'ayse', label: 'ayse', target: 'ayse', action: 'follow' }, { id: 'mehmet', label: 'mehmet', action: 'follow' }];
+    assert.equal(detect('click', { text: 'Takip et ayse' }, { success: true, text: 'Takip et ayse' }, { allowedActions: ['follow'], readAction, rows })?.id, 'ayse');
+    assert.equal(detect('click', { text: 'Takip et ayse' }, { success: true, text: 'Takip et ayse' }, { allowedActions: ['follow'], rows }), null);
+    assert.equal(detect('click', { text: 'Takibi bırak ayse' }, { success: true, text: 'Takibi bırak ayse' }, { allowedActions: ['follow'], readAction, rows }), null);
+    assert.equal(detect('click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat' }, { readAction }), null,
+      'no allowed action, no record');
   }
 });
 
-test('agent only auto-records progress clicks inside repeated-item work', () => {
+test('agent only auto-records progress clicks inside repeated-item work', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    // A model reads what a clicked label does (progress_action); the fixture oracle stands in.
+    stubPageTextReadings(agent);
 
     agent.conversations.set(773, [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Update the settings form and save it.' },
     ]);
-    const ordinary = agent._autoRecordProgressAction(773, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
+    const ordinary = await agent._autoRecordProgressAction(773, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
     assert.equal(ordinary, null, `${AgentClass.name}: auto-recorded without ledger context`);
     assert.equal(agent.progressLedgers.get(773), undefined);
 
@@ -86985,7 +86822,7 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
       { role: 'user', content: 'Follow every stargazer on this page.' },
     ]);
     allowProgress(agent, 774, ['follow']);
-    const repeated = agent._autoRecordProgressAction(774, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
+    const repeated = await agent._autoRecordProgressAction(774, 'click', { text: 'Follow octocat' }, { success: true, text: 'Follow octocat', href: '/octocat' });
     assert.equal(repeated?.item.id, 'octocat', `${AgentClass.name}: repeated-item click was not recorded`);
 
     agent.conversations.set(775, [
@@ -86993,7 +86830,7 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
       { role: 'user', content: 'Continue the existing ledger.' },
     ]);
     agent._progressUpdate(775, { items: [{ id: 'rafi', label: 'rafi', action: 'follow', status: 'pending' }] });
-    const existing = agent._autoRecordProgressAction(775, 'click', { text: 'Follow rafi' }, { success: true, text: 'Follow rafi', href: '/rafi' });
+    const existing = await agent._autoRecordProgressAction(775, 'click', { text: 'Follow rafi' }, { success: true, text: 'Follow rafi', href: '/rafi' });
     assert.equal(existing?.item.id, 'rafi', `${AgentClass.name}: existing ledger click was not recorded`);
 
     agent.conversations.set(779, [
@@ -87003,7 +86840,7 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
       { role: 'user', content: 'Follow every stargazer on this page.' },
     ]);
     allowProgress(agent, 779, ['follow']);
-    const laterTask = agent._autoRecordProgressAction(779, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
+    const laterTask = await agent._autoRecordProgressAction(779, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
     assert.equal(laterTask?.item.id, 'monalisa', `${AgentClass.name}: latest repeated-item task was ignored`);
 
     agent.conversations.set(782, [
@@ -87013,16 +86850,18 @@ test('agent only auto-records progress clicks inside repeated-item work', () => 
     agent._progressUpdate(782, {
       items: [{ id: 'octocat', label: 'octocat', action: 'follow', status: 'processed' }],
     });
-    const staleTerminal = agent._autoRecordProgressAction(782, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
+    const staleTerminal = await agent._autoRecordProgressAction(782, 'click', { text: 'Follow monalisa' }, { success: true, text: 'Follow monalisa', href: '/monalisa' });
     assert.equal(staleTerminal, null, `${AgentClass.name}: stale terminal rows kept ledger context active`);
     assert.equal(agent.progressLedgers.get(782).length, 1, `${AgentClass.name}: stale terminal task recorded a new row`);
     assert.equal(agent._appendProgressLedgerToFinal(782, 'Done.'), 'Done.', `${AgentClass.name}: stale terminal rows were appended to an unrelated final answer`);
   }
 });
 
-test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
+test('agent reuses namespaced follow rows for auto-recorded clicks', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    // A model reads what a clicked label does (progress_action); the fixture oracle stands in.
+    stubPageTextReadings(agent);
     const tabId = 787;
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
@@ -87041,7 +86880,7 @@ test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
       ],
     });
 
-    const recorded = agent._autoRecordProgressAction(
+    const recorded = await agent._autoRecordProgressAction(
       tabId,
       'click',
       { text: 'Follow ChJus' },
@@ -87068,7 +86907,7 @@ test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
         fields: { followState: 'not_followed', refId: 'ref_99' },
       }],
     });
-    const refRecorded = agent._autoRecordProgressAction(
+    const refRecorded = await agent._autoRecordProgressAction(
       refTabId,
       'click_ax',
       { ref_id: 'ref_99' },
@@ -87093,7 +86932,7 @@ test('agent reuses namespaced follow rows for auto-recorded clicks', () => {
         fields: { followState: 'not_followed', refId: 'ref_stale' },
       }],
     });
-    const failedRecorded = agent._autoRecordProgressAction(
+    const failedRecorded = await agent._autoRecordProgressAction(
       failedTabId,
       'click_ax',
       { ref_id: 'ref_stale' },
@@ -87382,17 +87221,23 @@ test('colon-namespaced action ids share identities with recorded clicks', () => 
   }
 });
 
-test('progress ledger rejects malformed statuses and normalizes null-like fields', () => {
+test('progress ledger rejects malformed statuses and keeps only JSON null as a missing value', () => {
   assert.equal(isValidLedgerStatus('pending'), true);
   assert.equal(isValidLedgerStatus('「pending」'), true);
   assert.equal(isValidLedgerStatusFx('processed'), true);
   assert.equal(isValidLedgerStatusFx('done'), false);
 
-  const state = upsertLedgerItems([], [
-    { id: 'rafi', label: 'rafi', status: 'processed', fields: { email: 'null', note: 'not found' } },
-  ], { source: 'model', now: 100 });
-  assert.equal(state.rows[0].fields.email, null);
-  assert.equal(state.rows[0].fields.note, null);
+  // The literal null a model wrote as a string is null; any other text is
+  // the model's own value. Whether it only says "missing" is read by a model
+  // where it matters (the expected-items check), in any language.
+  for (const upsert of [upsertLedgerItems, upsertLedgerItemsFx]) {
+    const state = upsert([], [
+      { id: 'rafi', label: 'rafi', status: 'processed', fields: { email: 'null', note: 'not found', other: 'bulunamadı' } },
+    ], { source: 'model', now: 100 });
+    assert.equal(state.rows[0].fields.email, null);
+    assert.equal(state.rows[0].fields.note, 'not found');
+    assert.equal(state.rows[0].fields.other, 'bulunamadı');
+  }
 
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
@@ -87437,10 +87282,13 @@ test('mastodon progress guard blocks false terminal updates until handoff comple
       { role: 'user', content: 'Follow this user from my Mastodon instance mastoturk.org.' },
     ]);
     allowProgress(agent, tabId, ['follow']);
+    const taskText = 'Follow this user from my Mastodon instance mastoturk.org.';
+    const readings = { readFollow: fixtureFollowStateReading, readHome: domain => fixtureHomeInstanceReading(taskText, domain) };
     agent.mastodonStates.set(tabId, analyzeMastodonPage({
       url: 'https://fosstodon.org/@alice',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org.',
+      taskText,
       pageContent: 'heading "Sign in to continue"\ntextbox "Mastodon server domain"',
+      ...readings,
     }));
 
     for (const status of ['processed', 'skipped', 'failed', '「processed」', '「skipped」', '「failed」']) {
@@ -87459,9 +87307,10 @@ test('mastodon progress guard blocks false terminal updates until handoff comple
 
     agent.mastodonStates.set(tabId, analyzeMastodonPage({
       url: 'https://mastoturk.org/@alice@fosstodon.org',
-      taskText: 'Follow this user from my Mastodon instance mastoturk.org.',
+      taskText,
       pageContent: 'button "Following"',
       previous: agent.mastodonStates.get(tabId),
+      ...readings,
     }));
     const processed = agent._progressUpdate(tabId, {
       items: [{ id: 'alice@fosstodon.org', label: 'alice@fosstodon.org', action: 'follow', status: 'processed' }],
@@ -87488,6 +87337,44 @@ test('agent ignores generic follow buttons for Mastodon observations', async () 
 
     assert.equal(observed, null);
     assert.equal(agent.mastodonStates.has(tabId), false);
+    // A /@handle page of another site is no fediverse account either, so its
+    // follow rows are not held back for a Mastodon followed state.
+    for (const url of ['https://www.tiktok.com/@ayse', 'https://www.threads.net/@ayse', 'https://medium.com/@ayse']) {
+      assert.equal(await agent._rememberMastodonObservation(tabId, 'get_accessibility_tree', {
+        success: true, url, pageContent: 'button "Takip ediliyor"\nbutton "Mesaj gönder"',
+      }), null, `${AgentClass.name}: ${url} armed the Mastodon follow guard`);
+      assert.equal(agent.mastodonStates.has(tabId), false);
+    }
+  }
+});
+
+test('a Mastodon page\'s follow state is read in any language while a ledger tracks the run', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 784;
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'alice@fosstodon.org hesabını mastoturk.org sunucumdan takip et.' },
+    ]);
+    allowProgress(agent, tabId, ['follow']);
+    const asked = stubPageTextReadings(agent);
+    const prompt = await agent._rememberMastodonObservation(tabId, 'get_accessibility_tree', {
+      success: true, url: 'https://fosstodon.org/@alice',
+      pageContent: 'heading "Devam etmek için oturum açın"\ntextbox "Sunucu alan adınız"\nbutton "Devam"',
+    });
+    assert.equal(prompt?.homeDomain, 'mastoturk.org', `${AgentClass.name}: the Turkish request's home server`);
+    assert.equal(prompt.needsHandoff, true, `${AgentClass.name}: a Turkish server field arms the handoff`);
+    assert.match(prompt.instruction, /mastoturk\.org/);
+    assert.ok(asked.some(item => item.kind === 'home_instance' && item.text === 'mastoturk.org'));
+    assert.ok(asked.some(item => item.kind === 'follow_state' && item.text === 'Sunucu alan adınız'));
+    const blocked = agent._progressUpdate(tabId, { items: [{ id: 'alice@fosstodon.org', label: 'alice@fosstodon.org', action: 'follow', status: 'processed' }] });
+    assert.equal(blocked.success, false);
+    const followed = await agent._rememberMastodonObservation(tabId, 'get_accessibility_tree', {
+      success: true, url: 'https://mastoturk.org/@alice@fosstodon.org', pageContent: 'button "Takip ediliyor"',
+    });
+    assert.equal(followed?.canMarkProcessed, true, `${AgentClass.name}: a Turkish followed state was not read`);
+    const processed = agent._progressUpdate(tabId, { items: [{ id: 'alice@fosstodon.org', label: 'alice@fosstodon.org', action: 'follow', status: 'processed' }] });
+    assert.equal(processed.success, true, `${AgentClass.name}: ${processed.error || ''}`);
   }
 });
 
@@ -87549,53 +87436,46 @@ test('narrow hotel-name plans carry only the current deliverable and a strict or
   }
 });
 
-test('latest hotel-name narrowing deterministically strips stale planner deliverables', () => {
+test('the words of a narrowing request never rewrite the planner\'s plan', () => {
+  // The planner reads narrowing in any language and says so in its own plan,
+  // which the user reviews; nothing afterwards rewrites it from words.
   for (const [label, normalize] of [['chrome', normalizePlan], ['firefox', normalizePlanFx]]) {
-    const plan = normalize({
+    const stale = {
       request_kind: 'execute',
       scope_relation: 'continue',
       deliverables: ['hotel names', 'prices', 'availability', 'booking conditions'],
-      requires_state_change: true,
-      requires_submission: true,
-      completion_requirements: { download: true },
+      requires_state_change: false,
+      requires_submission: false,
       read_scope: 'visible_page',
       summary: 'Collect hotel names, prices, availability, and booking conditions.',
       confidence: 0.8,
-      steps: [
-        { id: '1', action: 'Collect names and prices.', tools: ['press_keys'] },
-        { id: '2', action: 'Check availability and booking terms.', tools: ['click'] },
-      ],
+      steps: [{ id: '1', action: 'Collect names and prices.', tools: ['read_page'] }],
       memory: { use_scratchpad: true, use_progress_ledger: false, progress_action: null },
-      scheduling: { tool: 'schedule_resume', hint: 'Wait for availability.' },
-      risks: ['Rates may change.'],
-      localized: { locale: 'en', summary: 'Collect names and prices.', steps: [], risks: ['Rates may change.'] },
-    }, {
-      requireIntent: true,
-      locale: 'en',
-      latestUserTask: 'Just give me the 15 hotel names.',
-    });
-    assert.equal(plan.scope_relation, 'narrow', `${label}: latest narrowing did not override stale relation`);
-    assert.deepEqual(plan.deliverables, ['15 hotel names']);
-    assert.equal(plan.requires_state_change, false);
-    assert.equal(plan.requires_submission, false);
-    assert.equal(plan.completion_requirements.download, false);
-    assert.equal(plan.scheduling, null);
-    assert.deepEqual(plan.steps[0].tools, ['carousel_navigate', 'progress_update']);
-    assert.deepEqual(plan.expected_items?.required_fields, ['hotel_name', 'carousel_position', 'evidence_source']);
-    assert.doesNotMatch(JSON.stringify(plan), /prices|availability|booking conditions|press_keys/i, `${label}: stale planner scope survived deterministic normalization`);
+      localized: { locale: 'en', summary: 'Collect names and prices.', steps: [], risks: [] },
+    };
+    for (const latestUserTask of ['Just give me the 15 hotel names.', 'Sadece 15 otel adını ver.']) {
+      const plan = normalize(stale, { requireIntent: true, locale: 'en', latestUserTask });
+      assert.equal(plan.scope_relation, 'continue', `${label}: "${latestUserTask}" rewrote the plan's scope`);
+      assert.deepEqual(plan.deliverables, stale.deliverables, `${label}: "${latestUserTask}" rewrote the deliverables`);
+      assert.equal(plan.expected_items, null, `${label}: "${latestUserTask}" invented an item contract`);
+    }
   }
 });
 
-test('reviewed hotel-name edits regenerate expected-item metadata without stale planner fields', () => {
+test('reviewed plans regenerate expected items only from their own expected-items line', () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({});
-    const expected = agent._plannerExpectedItemsFromApprovedPlanText('Just give me the 15 hotel names.');
-    assert.deepEqual(expected, {
+    const reviewed = '### Plan\nList the hotel names.\n- Expected items: 15 ordered=yes type=hotel; required fields=hotel_name, carousel_position, evidence_source';
+    assert.deepEqual(agent._plannerExpectedItemsFromApprovedPlanText(reviewed), {
       count: 15,
       item_type: 'hotel',
       ordered: true,
       required_fields: ['hotel_name', 'carousel_position', 'evidence_source'],
-    }, `${label}: edited hotel scope did not regenerate execution metadata`);
+    }, `${label}: the plan's own expected-items line was not read`);
+    // Prose is never parsed for a count, in any language.
+    for (const prose of ['Just give me the 15 hotel names.', '15 otel adını listele.']) {
+      assert.equal(agent._plannerExpectedItemsFromApprovedPlanText(prose), null, `${label}: "${prose}" produced an item contract`);
+    }
     assert.deepEqual(
       agent._plannerProgressLedgerGateFieldsFromApprovedPlanText('Just give me the 15 hotel names.'),
       { progressLedgerPolicy: 'disabled', progressAction: null },
@@ -87790,7 +87670,7 @@ test('eligible complete-thread reads coordinate a 12k tree page with a parseable
   }
 });
 
-test('progress_update aliases legacy scrape actions to process_item', () => {
+test('progress_update takes only canonical action names and sends any other word back', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = 778;
@@ -87800,23 +87680,78 @@ test('progress_update aliases legacy scrape actions to process_item', () => {
       { role: 'user', content: 'Scrape every search result on this page.' },
     ]);
 
+    // Another word for an action, in any language, is rejected like a bad
+    // status, with the canonical names to use instead; nothing is recorded.
+    for (const action of ['scrape', 'kazı', 'collect emails', 'visit page']) {
+      const rejected = agent._progressUpdate(tabId, {
+        items: [{ id: 'result-1', label: 'Result 1', action, status: 'pending' }],
+      });
+      assert.equal(rejected.success, false, `${AgentClass.name}: ${action} was accepted`);
+      assert.match(rejected.error, /unknown action value/i);
+      assert.match(rejected.error, /process_item/);
+      assert.equal(agent.progressLedgers.get(tabId)?.length || 0, 0, `${AgentClass.name}: ${action} recorded a row`);
+    }
+
     const created = agent._progressUpdate(tabId, {
-      items: [{ id: 'result-1', label: 'Result 1', action: 'scrape', status: 'pending' }],
+      items: [{ id: 'result-1', label: 'Result 1', action: 'process_item', status: 'pending' }],
     });
-    assert.equal(created.success, true, `${AgentClass.name}: scrape action update was rejected`);
-    assert.equal(agent.progressSessions.get(tabId)?.allowedActions[0], 'process_item', `${AgentClass.name}: scrape did not activate process_item session`);
-    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item', `${AgentClass.name}: scrape row was not stored canonically`);
+    assert.equal(created.success, true, `${AgentClass.name}: canonical action update was rejected`);
+    assert.equal(agent.progressSessions.get(tabId)?.allowedActions[0], 'process_item');
     assert.deepEqual(agent._progressRead(tabId).rows.map(row => [row.id, row.action, row.status]), [
       ['result-1', 'process_item', 'pending'],
     ]);
-    assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: aliased scrape row did not block unfinished done`);
-
+    assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: unfinished row did not block done`);
+    // Case and separators are not words: "Process-Item" is the same name.
     const closed = agent._progressUpdate(tabId, {
-      items: [{ id: 'result-1', label: 'Result 1', action: 'scrape', status: 'processed' }],
+      items: [{ id: 'result-1', label: 'Result 1', action: 'Process-Item', status: 'processed' }],
     });
-    assert.equal(closed.success, true, `${AgentClass.name}: aliased scrape close was rejected`);
-    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item', `${AgentClass.name}: closed scrape row lost canonical action`);
-    assert.equal(agent._shouldBlockDoneForProgress(tabId), false, `${AgentClass.name}: closed aliased scrape row still blocked done`);
+    assert.equal(closed.success, true);
+    assert.equal(agent.progressLedgers.get(tabId)[0].action, 'process_item');
+    assert.equal(agent._shouldBlockDoneForProgress(tabId), false, `${AgentClass.name}: closed row still blocked done`);
+  }
+  // The tool tells the model the names.
+  for (const build of ['chrome', 'firefox']) {
+    const { AGENT_TOOLS } = await import(`../src/${build}/src/agent/tools.js`);
+    const tool = AGENT_TOOLS.find(entry => entry.function.name === 'progress_update');
+    assert.ok(tool.function.parameters.properties.items.items.properties.action.enum.includes('process_item'));
+  }
+});
+
+test('a required value that only says it is missing is read by a model at done, in any language', async () => {
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 1778;
+    agent.conversationModes.set(tabId, 'act');
+    agent.conversations.set(tabId, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'List the two hotel names.' }]);
+    agent.progressExpectedItems.set(tabId, { count: 2, item_type: 'hotel', ordered: true, required_fields: ['hotel_name'] });
+    agent._currentTaskLedgerRows = () => [
+      { id: 'expected:1', status: 'processed', fields: { expectedOrdinal: 1, hotel_name: 'Hotel Pera' } },
+      { id: 'expected:2', status: 'processed', fields: { expectedOrdinal: 2, hotel_name: 'bilinmiyor' } },
+    ];
+    const asked = [];
+    agent._semanticDecisions = async (_tab, kind, { items }) => {
+      asked.push(...items.map(item => [kind, item.field, item.value]));
+      return items.map(item => ({ choice: item.value === 'bilinmiyor' ? 'missing' : 'value', evidence: '', source: 'decision_model' }));
+    };
+    // Before any reading, the text counts as a value (as for any language
+    // nothing has read).
+    assert.equal(agent._expectedItemsDoneBlock(tabId), null);
+    await agent._prepareMissingValueReadings(tabId);
+    assert.deepEqual(asked, [['missing_value', 'hotel_name', 'Hotel Pera'], ['missing_value', 'hotel_name', 'bilinmiyor']]);
+    const blocked = agent._expectedItemsDoneBlock(tabId);
+    assert.equal(blocked?.blocked, true, `${AgentClass.name}: a value read as missing completed the list`);
+    assert.match(blocked.error, /missing required fields: hotel_name/);
+    // Each value is read once.
+    await agent._prepareMissingValueReadings(tabId);
+    assert.equal(asked.length, 2);
+    // A real value, or no sure reading, completes it.
+    agent._currentTaskLedgerRows = () => [
+      { id: 'expected:1', status: 'processed', fields: { expectedOrdinal: 1, hotel_name: 'Hotel Pera' } },
+      { id: 'expected:2', status: 'processed', fields: { expectedOrdinal: 2, hotel_name: 'Otel Bilge' } },
+    ];
+    agent._semanticDecisions = async (_tab, _kind, { items }) => items.map(() => ({ choice: null, evidence: '', source: 'unavailable' }));
+    await agent._prepareMissingValueReadings(tabId);
+    assert.equal(agent._expectedItemsDoneBlock(tabId), null);
   }
 });
 
@@ -87891,11 +87826,15 @@ test('agent records GitHub stargazer observations into the progress ledger', asy
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = 772;
+    // The intent model copies the excluded account from the request, in any
+    // language; the request's words are not parsed for it.
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
-      { role: 'user', content: 'Follow all not-followed stargazers except ChJus, and while doing that keep usernames/emails.' },
+      { role: 'user', content: 'ChJus hariç takip etmediğim tüm yıldızlayanları takip et; kullanıcı adlarını ve e-postaları kaydet.' },
     ]);
     agent._currentUrl = async () => 'https://github.com/foo/bar/stargazers?page=2';
+    allowProgress(agent, tabId, ['follow'], { excludedTargets: ['@ChJus', 'not a username!'] });
+    assert.deepEqual(agent._excludedGithubUsernames(agent.progressSessions.get(tabId)), ['ChJus']);
     agent._progressUpdate(tabId, {
       items: [{
         id: 'myxvisual',
@@ -88098,7 +88037,7 @@ test('agent strips injected page context before inferring stargazer follow inten
   }
 });
 
-test('agent skips synthetic screenshot and document turns before inferring progress intent', () => {
+test('agent skips synthetic screenshot and document turns before inferring progress intent', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: true }) });
     const tabId = 785;
@@ -88136,7 +88075,8 @@ test('agent skips synthetic screenshot and document turns before inferring progr
 
     assert.equal(agent._latestTaskText(tabId), 'Follow every stargazer on this page.');
     allowProgress(agent, tabId, ['follow']);
-    const recorded = agent._autoRecordProgressAction(
+    stubPageTextReadings(agent);
+    const recorded = await agent._autoRecordProgressAction(
       tabId,
       'click',
       { text: 'Follow rafi' },
@@ -88379,7 +88319,7 @@ test('agent preserves active progress ledger for bare continuation turns', async
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Follow every stargazer on this page.' },
       { role: 'assistant', content: 'Paused with one row unresolved.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     agent._progressUpdate(tabId, {
       items: [{ id: 'octocat', label: 'octocat', action: 'follow', status: 'pending' }],
@@ -88388,7 +88328,8 @@ test('agent preserves active progress ledger for bare continuation turns', async
     assert.equal(agent._hasProgressLedgerContext(tabId), true, `${AgentClass.name}: bare continuation did not keep ledger context`);
     assert.equal(agent._shouldBlockDoneForProgress(tabId), true, `${AgentClass.name}: bare continuation did not block unresolved done`);
 
-    const recorded = agent._autoRecordProgressAction(
+    stubPageTextReadings(agent);
+    const recorded = await agent._autoRecordProgressAction(
       tabId,
       'click',
       { text: 'Follow monalisa' },
@@ -88423,7 +88364,7 @@ test('agent preserves active progress ledger for ongoing-action continuation wor
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Follow every stargazer on this page.' },
       { role: 'assistant', content: 'Paused with one row unresolved.' },
-      { role: 'user', content: 'Continue following the remaining stargazers.' },
+      { role: 'user', content: 'Continue following the remaining stargazers.', webbrainTurnKind: 'continue' },
     ]);
 
     assert.equal(agent._hasProgressLedgerContext(tabId), true, `${AgentClass.name}: ongoing-action continuation did not keep ledger context`);
@@ -88453,7 +88394,7 @@ test('agent preserves keyed rows for ledger continuation wording', () => {
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Follow every stargazer on this page.' },
       { role: 'assistant', content: 'Paused with one row unresolved.' },
-      { role: 'user', content: 'Continue the existing ledger.' },
+      { role: 'user', content: 'Continue the existing ledger.', webbrainTurnKind: 'continue' },
     ]);
 
     assert.equal(agent._currentTaskHasProgressIntent(tabId), true, `${AgentClass.name}: ledger continuation lost progress intent`);
@@ -88744,9 +88685,12 @@ test('accepted done emits successful result update after progress gate', async (
 });
 
 test('meta-only done summaries are rejected so questions receive the actual answer', async () => {
+  // Without a completion judge (Ask mode), a model reads a short summary, in
+  // any language, before it is shown as the answer; in Act mode the judge
+  // answers the same question with its verdict. No word list decides.
   const brokenSummaries = [
     'Explained how the saved-workflow replay feature is implemented in code, based on the actual files in PR #443.',
-    'Confirmed the exact UI entry points for saved workflows from the sidepanel.js diff in PR #443.',
+    'Kaydedilmiş iş akışlarına nasıl erişileceğini PR #443 kodundan açıkladım.',
   ];
   const deliveredAnswer = 'Open WebBrain\'s History menu, choose Saved workflows, select a workflow, and click Run.';
 
@@ -88761,63 +88705,53 @@ test('meta-only done summaries are rejected so questions receive the actual answ
     agent.conversationModes.set(tabId, 'ask');
     agent._persist = () => { };
     agent.providerManager = { ...(agent.providerManager || {}), getVisionProvider: async () => null };
-
-    assert.equal(agent._looksLikeMetaOnlyDoneSummary(brokenSummaries[index]), true, `${AgentClass.name}: exported broken summary was not recognized`);
-    assert.equal(agent._looksLikeMetaOnlyDoneSummary(deliveredAnswer), false, `${AgentClass.name}: direct answer was misclassified`);
-    assert.equal(
-      agent._looksLikeMetaOnlyDoneSummary(`Confirmed the exact UI entry points: ${deliveredAnswer}`),
-      false,
-      `${AgentClass.name}: status preface with an actual answer should be accepted`,
-    );
-    for (const directAnswer of [
-      'Confirmed the exact UI entry points are History > Saved workflows.',
-      'Confirmed the requested workflow is available from the History menu.',
-      'Reviewed the requested implementation and found the replay entry point in sidepanel.js.',
-    ]) {
-      assert.equal(
-        agent._looksLikeMetaOnlyDoneSummary(directAnswer),
-        false,
-        `${AgentClass.name}: valid declarative answer was misclassified: ${directAnswer}`,
+    const readings = [];
+    agent._semanticDecision = async (_tab, kind, { request, page }, options = {}) => {
+      readings.push({ kind, request, summary: page?.summary });
+      assert.equal(options.mainModel, false, 'an Ask answer is read by the decision model only');
+      return { choice: page?.summary === deliveredAnswer ? 'result' : 'meta_only', evidence: '', source: 'decision_model' };
+    };
+    const runDone = async (summary, extra = {}) => {
+      agent.executeTool = async () => ({ done: true, summary, outcome: 'success', ...extra });
+      const updates = [];
+      const result = await agent._executeToolBatch(
+        tabId,
+        [{ id: `meta_done_${index}_${readings.length}`, function: { name: 'done', arguments: JSON.stringify({ summary }) } }],
+        messages,
+        (type, data) => updates.push({ type, data }),
+        { supportsVision: false },
+        null,
+        new Set(['done']),
+        1,
       );
-    }
+      return { result, updates };
+    };
 
-    agent.executeTool = async () => ({ done: true, summary: brokenSummaries[index], outcome: 'success' });
-    const updates = [];
-    const blocked = await agent._executeToolBatch(
-      tabId,
-      [{ id: `meta_done_${index}`, function: { name: 'done', arguments: JSON.stringify({ summary: brokenSummaries[index] }) } }],
-      messages,
-      (type, data) => updates.push({ type, data }),
-      { supportsVision: false },
-      null,
-      new Set(['done']),
-      1,
-    );
-    assert.equal(blocked.action, 'continue', `${AgentClass.name}: meta-only summary ended the run`);
-    assert.equal(
-      updates.some(update => update.type === 'tool_result' && update.data?.result?.metaOnlySummary === true),
-      true,
-      `${AgentClass.name}: meta-only summary did not produce a recovery result`,
-    );
-    assert.equal(
-      updates.some(update => update.type === 'tool_result' && update.data?.result?.done === true),
-      false,
-      `${AgentClass.name}: meta-only summary was exposed as successful completion`,
-    );
+    const blocked = await runDone(brokenSummaries[index]);
+    assert.equal(blocked.result.action, 'continue', `${AgentClass.name}: meta-only summary ended the run`);
+    assert.ok(blocked.updates.some(update => update.type === 'tool_result' && update.data?.result?.metaOnlySummary === true),
+      `${AgentClass.name}: meta-only summary did not produce a recovery result`);
+    assert.ok(!blocked.updates.some(update => update.type === 'tool_result' && update.data?.result?.done === true),
+      `${AgentClass.name}: meta-only summary was exposed as successful completion`);
+    assert.deepEqual(readings.at(-1), { kind: 'done_summary', request: 'How do I access saved workflows from the WebBrain plugin?',
+      summary: brokenSummaries[index] }, `${AgentClass.name}: the summary was not read as written`);
 
-    agent.executeTool = async () => ({ done: true, summary: deliveredAnswer, outcome: 'success' });
-    const recovered = await agent._executeToolBatch(
-      tabId,
-      [{ id: `answer_done_${index}`, function: { name: 'done', arguments: JSON.stringify({ summary: deliveredAnswer }) } }],
-      messages,
-      () => { },
-      { supportsVision: false },
-      null,
-      new Set(['done']),
-      2,
-    );
-    assert.equal(recovered.action, 'return', `${AgentClass.name}: recovered answer did not finish`);
-    assert.equal(recovered.value, deliveredAnswer, `${AgentClass.name}: recovered answer was not shown verbatim`);
+    const recovered = await runDone(deliveredAnswer);
+    assert.equal(recovered.result.action, 'return', `${AgentClass.name}: recovered answer did not finish`);
+    assert.equal(recovered.result.value, deliveredAnswer, `${AgentClass.name}: recovered answer was not shown verbatim`);
+
+    // A summary with its own structure carries content and is not read.
+    const asked = readings.length;
+    const structured = `Confirmed the exact UI entry points: ${deliveredAnswer}`;
+    const listed = await runDone(structured);
+    assert.equal(listed.result.action, 'return');
+    assert.equal(readings.length, asked, `${AgentClass.name}: a structured answer was sent for reading`);
+
+    // In Act mode the completion judge's own answer decides; nothing else reads it.
+    agent.conversationModes.set(tabId, 'act');
+    const judged = await runDone(brokenSummaries[index], { verification: { decision: { outcome: 'succeeded', engine: 'llm', summaryKind: 'meta_only' } } });
+    assert.equal(judged.result.action, 'continue', `${AgentClass.name}: the judge's meta-only answer was ignored`);
+    assert.equal(readings.length, asked, `${AgentClass.name}: a judged summary was read again`);
   }
 });
 
@@ -89697,13 +89631,15 @@ test('non-stream and stream runs expose failure completion after a verifier make
           yield { type: 'done' };
         };
       } else {
-        provider.chat = async (_messages, options) => {
+        // A model reading a failed summary (fixed-choice question) is not a
+        // turn of the scripted run.
+        provider.chat = withoutFixedChoiceAnswers(async (_messages, options) => {
           provider.calls++;
           provider.requests.push(options);
           const next = responses.shift();
           assert.ok(next, `${AgentClass.name}: model was called too many times`);
           return next;
-        };
+        });
       }
 
       const agent = new AgentClass({
@@ -90425,6 +90361,25 @@ test('same-batch observation cannot clear debt that existed at batch start', () 
   }
 });
 
+test('a success claim on a create or edit route needs a submit transition, whatever language the summary is in', () => {
+  // The done outcome is the claim of success; the summary's words are not read.
+  for (const AgentClass of [AgentCh, AgentFx]) {
+    const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
+    const tabId = 24830;
+    agent._planExecutionGuards.set(tabId, { enabled: true, requestKind: 'execute', requiresStateChange: true, requiresSubmission: true });
+    const pageState = { url: 'https://example.test/items?create=1', openDialogCount: 0, visibleFormCount: 0,
+      relevantFormCount: 0, successMessages: [] };
+    for (const summary of ['Created.', 'Oluşturuldu.', '已创建。', 'The record exists now.']) {
+      assert.match(agent._completionPageWarning(tabId, summary, 'success', pageState, pageState.url)?.warning || '',
+        /create\/edit route/, `${AgentClass.name}: "${summary}" finished on a create route without a submit transition`);
+    }
+    assert.equal(agent._completionPageWarning(tabId, 'Oluşturulamadı.', 'failed', pageState, pageState.url), null,
+      `${AgentClass.name}: a failed outcome was held to the success check`);
+    assert.equal(agent._completionPageWarning(tabId, 'Oluşturuldu.', 'success', { ...pageState, url: 'https://example.test/items/7' },
+      'https://example.test/items/7'), null, `${AgentClass.name}: a resulting resource page was held as a create route`);
+  }
+});
+
 test('submit-aware completion accepts the observed AMO finish document and rejects real pending UI', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
@@ -90437,10 +90392,8 @@ test('submit-aware completion accepts the observed AMO finish document and rejec
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'Submit this extension version.' },
     ]);
-    assert.equal(agent._completionTextSignalsSuccess('Done'), false,
-      `${AgentClass.name}: bare completion word was trusted in arbitrary page content`);
-    assert.equal(agent._completionTextSignalsSuccess('Done', { allowBare: true }), true,
-      `${AgentClass.name}: bare completion word was rejected for a trusted live-region context`);
+    // What a model read the confirmation page's texts as saying.
+    agent._pageTextReading = fixturePageTextReading;
     let classifierCalls = 0;
     agent._classifyProgressIntentWithProvider = async () => {
       classifierCalls++;
@@ -90782,15 +90735,21 @@ test('submit-aware completion accepts the observed AMO finish document and rejec
       `${AgentClass.name}: short same-page success toast was rejected`,
     );
 
+    // A live message counts once a model read it as success; one read as an
+    // error leaves the still-visible form unverified.
+    stubPageTextReadings(agent);
+    const negatedState = {
+      ...finishState,
+      url: submitUrl,
+      visibleFormCount: 1,
+      relevantFormCount: 1,
+      liveRegionMessages: ['Changes were not saved'],
+      successMessages: ['Changes were not saved'],
+    };
+    await agent._readCompletionStatusTexts(tabId, negatedState);
+    assert.deepEqual(negatedState.successMessages, [], `${AgentClass.name}: a message read as an error stayed a success message`);
     assert.match(
-      agent._completionPageWarning(tabId, 'Saved.', 'success', {
-        ...finishState,
-        url: submitUrl,
-        visibleFormCount: 1,
-        relevantFormCount: 1,
-        liveRegionMessages: ['Changes were not saved'],
-        successMessages: ['Changes were not saved'],
-      }, submitUrl)?.warning || '',
+      agent._completionPageWarning(tabId, 'Saved.', 'success', negatedState, submitUrl)?.warning || '',
       /task-relevant form/i,
       `${AgentClass.name}: negated failure alert was accepted as same-page submit success`,
     );
@@ -91001,10 +90960,22 @@ test('decision completion recognizes published Reddit content while preserving v
       agent._completionDocumentStamp = async () => 'current-document';
       agent._captureViewportProbe = async () => page;
       let outcome = 'succeeded';
-      agent.evaluateSystemOne = async () => ({ model: 'kev-latest', answers: { task_outcome: {
-        type: 'choice', choice: outcome, confidence: .99,
-        probabilities: Object.fromEntries(['succeeded', 'pending', 'failed', 'uncertain'].map(key => [key, key === outcome ? .97 : .01])),
-      } } });
+      // The decision model answers the outcome and, in the same request,
+      // whether the request expects a later outcome (votes, moderation).
+      let later = 'asked';
+      const laterQuestions = [];
+      agent.evaluateSystemOne = async (_tab, _client, args) => {
+        assert.ok(args?.questions?.task_outcome && args.questions.later_outcome && args.questions.summary_kind,
+          'the side questions travel with the verdict question');
+        laterQuestions.push(args.state);
+        return { model: 'kev-latest', answers: {
+          task_outcome: { type: 'choice', choice: outcome, confidence: .99,
+            probabilities: Object.fromEntries(['succeeded', 'pending', 'failed', 'uncertain'].map(key => [key, key === outcome ? .97 : .01])) },
+          later_outcome: { type: 'choice', choice: later, confidence: .95,
+            probabilities: { asked: later === 'asked' ? .95 : .05, not_asked: later === 'asked' ? .05 : .95 } },
+          summary_kind: { type: 'choice', choice: 'result', confidence: .95, probabilities: { result: .9, meta_only: .05, plan_only: .05 } },
+        } };
+      };
       const execute = agent.executeTool.bind(agent);
       agent.executeTool = (tab, name, args) => name === 'get_accessibility_tree'
         ? Promise.resolve({ success: true, pageContent: 'Published WebBrain post by expected author; unrelated comment form.' })
@@ -91018,10 +90989,13 @@ test('decision completion recognizes published Reddit content while preserving v
       assert.equal(result.verification.decision.outcome, 'succeeded');
       assert.equal(guard.semanticSubmissionVerified, true);
       assert.match(result.summary, /Future upvotes and moderation outcomes remain unverified/);
+      assert.match(JSON.stringify(laterQuestions[0]), /will get upvotes/, `${AgentClass.name}: the request was not read as written`);
+      assert.equal(laterQuestions.length, 1, `${AgentClass.name}: the note cost another decision`);
 
       submit.formValidationFailed = true;
       const invalid = await agent.executeTool(tabId, 'done', { summary: 'Published.', outcome: 'success' });
       assert.equal(invalid.blockedDone, true, `${AgentClass.name}: semantic acceptance bypassed form validation`);
+      assert.doesNotMatch(String(invalid.summary || invalid.error || ''), /Future upvotes/, `${AgentClass.name}: a rejected completion carried the note`);
       submit.formValidationFailed = false;
       guard.siteWorkflow = { job: { requiresSubmission: true, id: 'reddit.publish' } };
       guard.semanticSubmissionVerified = false; guard.verifiedSubmissionEvidence = false;
@@ -91040,6 +91014,84 @@ test('decision completion recognizes published Reddit content while preserving v
       const publishedJson = await agent.executeTool(tabId, 'done_json', { summary: 'Published.', result: 'post-id' });
       assert.equal(publishedJson.doneJson, true); assert.equal(publishedJson.cloudResult, 'post-id');
       assert.match(publishedJson.summary, /Future upvotes and moderation outcomes remain unverified/);
+      // A request that expects nothing later gets no caveat.
+      agent._latestTaskText = () => 'Read the rules and publish the WebBrain post.';
+      later = 'not_asked'; agent._completionVerdicts.clear();
+      const plain = await agent.executeTool(tabId, 'done_json', { summary: 'Published.', result: 'post-id' });
+      assert.doesNotMatch(plain.summary, /Future upvotes/, `${AgentClass.name}: a caveat was added to a request that expects nothing later`);
+    }
+  } finally {
+    globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
+    cdpClientCh.evaluate = previousEvaluate;
+    cdpClientCh.attach = previousAttach; cdpClientCh.sendCommand = previousCommand;
+  }
+});
+
+test('the active-model completion judge itself says whether a request expects later votes or moderation', async () => {
+  const previousChrome = globalThis.chrome, previousBrowser = globalThis.browser;
+  const previousEvaluate = cdpClientCh.evaluate;
+  const previousAttach = cdpClientCh.attach, previousCommand = cdpClientCh.sendCommand;
+  try {
+    cdpClientCh.attach = async () => {};
+    cdpClientCh.sendCommand = async () => ({});
+    for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+      const tabId = 24960 + index;
+      const url = 'https://old.reddit.com/r/opencodeCLI/comments/new/webbrain';
+      const page = { url, title: 'Published WebBrain post', openDialogCount: 0, relevantFormCount: 1, visibleFormCount: 1, successMessages: [] };
+      // The decision model is off, so the active model judges the completion.
+      const storage = { get: async () => ({ systemOneEnabled: false }) };
+      globalThis.chrome = { ...previousChrome, storage: { ...previousChrome?.storage, local: storage } };
+      globalThis.browser = { ...previousBrowser, storage: { ...previousBrowser?.storage, local: storage }, tabs: { ...previousBrowser?.tabs, get: async () => ({ id: tabId, url }), executeScript: async () => [page] } };
+      cdpClientCh.evaluate = async () => ({ result: { value: page } });
+      const provider = { model: 'test-model', supportsVision: false, config: { category: 'local' }, chat() {} };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent.conversationModes.set(tabId, 'act');
+      agent.autoScreenshot = 'off';
+      agent._persist = () => {};
+      agent.systemOneContext = () => ({ isCurrent: () => true });
+      agent._completionDocumentStamp = async () => 'current-document';
+      agent._captureViewportProbe = async () => page;
+      agent.evaluateSystemOne = async () => { throw new Error('The decision model is off.'); };
+      const execute = agent.executeTool.bind(agent);
+      agent.executeTool = (tab, name, args) => name === 'get_accessibility_tree'
+        ? Promise.resolve({ success: true, pageContent: 'Published WebBrain post by expected author; unrelated comment form.' })
+        : execute(tab, name, args);
+      let later = 'asked';
+      const judged = [];
+      agent._chatWithCostAllowance = async (_provider, messages) => {
+        judged.push(messages);
+        return { content: JSON.stringify({ outcome: 'succeeded', reason: 'The requested post is published.', ...(later === undefined ? {} : { later }) }) };
+      };
+      const guard = { enabled: true, requiresSubmission: true, requiresStateChange: true };
+      agent._planExecutionGuards.set(tabId, guard);
+      agent._completionSubmitStates.set(tabId, { dispatched: true, observedAfterSubmit: true, currentUrl: url, documentChanged: true });
+      const done = async request => {
+        agent._latestTaskText = () => request;
+        agent._completionVerdicts?.clear(); judged.length = 0;
+        return agent.executeTool(tabId, 'done', { summary: 'Published the WebBrain post.', outcome: 'success' });
+      };
+
+      // A request in any language that expects votes and no removal.
+      const expecting = 'Kuralları oku ve beğeni toplayacak, moderatörlerin silmeyeceği bir WebBrain gönderisi paylaş.';
+      const result = await done(expecting);
+      assert.equal(result.done, true, `${AgentClass.name}: the published post was not accepted`);
+      assert.equal(result.verification.decision.engine, 'llm');
+      assert.match(result.summary, /Future upvotes and moderation outcomes remain unverified/, `${AgentClass.name}: the judge's answer was ignored`);
+      assert.equal(judged.length, 1, `${AgentClass.name}: the caveat cost another model call`);
+      assert.match(judged[0][0].content, /"later":"asked\|not_asked"/);
+      assert.match(judged[0][0].content, /Judge both in any language/);
+      assert.match(judged[0][1].content, /beğeni toplayacak/, `${AgentClass.name}: the judge did not read the request as written`);
+
+      // A request that only mentions the word, or an answer that is not a
+      // clear "asked", adds nothing.
+      for (const [request, answer] of [['Publish a WebBrain post titled "How upvotes work".', 'not_asked'],
+        [expecting, undefined], [expecting, 'yes'], [expecting, 'ASKED']]) {
+        later = answer;
+        const plain = await done(request);
+        assert.equal(plain.done, true);
+        assert.doesNotMatch(plain.summary, /Future upvotes/, `${AgentClass.name}: ${JSON.stringify(answer)} added a caveat`);
+        assert.equal(judged.length, 1);
+      }
     }
   } finally {
     globalThis.chrome = previousChrome; globalThis.browser = previousBrowser;
@@ -91761,12 +91813,12 @@ test('Act routes plain-text blockers to a structured failed done without unsafe 
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: withoutFixedChoiceAnswers(async () => {
         calls++;
         const next = responses.shift();
         assert.ok(next, `${AgentClass.name}: blocker recovery called the model too many times`);
         return next;
-      },
+      }),
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8606 + index;
@@ -91961,7 +92013,7 @@ test('Compact Act accepts structured failed done for a real blocker', async () =
       contextWindow: 128000,
       model: 'test-model',
       name: 'test-provider',
-      chat: async () => {
+      chat: withoutFixedChoiceAnswers(async () => {
         calls++;
         return {
           content: null,
@@ -91979,7 +92031,7 @@ test('Compact Act accepts structured failed done for a real blocker', async () =
             },
           ],
         };
-      },
+      }),
     };
     const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
     const tabId = 8623 + index;
@@ -92057,14 +92109,21 @@ test('structured blockers may describe future requirements without becoming plan
       null,
       `${AgentClass.name}: structured blocker was mistaken for a promise to execute`,
     );
+    // A failed or partial summary may list what the user still has to do;
+    // its words are not read, and a model's plan_only reading does not
+    // reject it either.
     assert.equal(
-      agent._planOnlyTerminalDecision(
-        tabId,
-        `${blocker}\n\nPlan:\n1. Wait for credentials.\n2. Apply the change.`,
-        { viaDone: true, outcome: 'failed' },
-      )?.retry,
+      agent._planOnlyTerminalDecision(tabId, `${blocker}\n\nPlan:\n1. Wait for credentials.\n2. Apply the change.`,
+        { viaDone: true, outcome: 'failed', summaryKind: 'plan_only' }),
+      null,
+      `${AgentClass.name}: a failed outcome's next steps were rejected as a plan`,
+    );
+    // A planner object is never a result, whatever the outcome.
+    assert.equal(
+      agent._planOnlyTerminalDecision(tabId, JSON.stringify({ summary: 'Wait for credentials.',
+        steps: [{ id: '1', action: 'Wait for credentials.' }], confidence: 0.4 }), { viaDone: true, outcome: 'failed' })?.retry,
       true,
-      `${AgentClass.name}: failed outcome bypassed an explicit plan heading`,
+      `${AgentClass.name}: failed outcome bypassed a planner object`,
     );
   }
 });
@@ -92081,12 +92140,15 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
       success: true,
       pageContent: 'textbox "Name*"',
     });
-    const falseModeBlocker = 'I could not fill the form because this session is currently in Ask mode. Switch to Act mode and retry.';
+    // A model reads the failed summary, in any language, and says it blames
+    // the agent's own mode.
+    const falseModeBlocker = 'Formu dolduramadım çünkü bu oturum şu anda Sor modunda. Eylem moduna geçip tekrar deneyin.';
+    const claim = { viaDone: true, outcome: 'failed', summaryKind: 'mode_claim' };
 
     const retry = agent._planOnlyTerminalDecision(
       tabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.equal(retry?.retry, true, `${AgentClass.name}: false mode claim did not trigger recovery`);
     assert.match(retry?.nudge || '', /trusted runtime[\s\S]*Act\/Dev, not Ask mode/i,
@@ -92097,7 +92159,7 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
     const failure = agent._planOnlyTerminalDecision(
       tabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.match(failure?.failure || '', /still claimed Ask mode after a runtime-mode correction/i,
       `${AgentClass.name}: repeated false mode claim was not reported transparently`);
@@ -92123,7 +92185,7 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
     const correctionAfterGeneric = agent._planOnlyTerminalDecision(
       mixedTabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.equal(correctionAfterGeneric?.retry, true,
       `${AgentClass.name}: generic recovery consumed the dedicated mode correction`);
@@ -92133,14 +92195,18 @@ test('false Ask-mode completions receive a focused Act recovery and honest termi
     const mixedFailure = agent._planOnlyTerminalDecision(
       mixedTabId,
       falseModeBlocker,
-      { viaDone: true, outcome: 'failed' },
+      claim,
     );
     assert.match(mixedFailure?.failure || '', /after a runtime-mode correction/i,
       `${AgentClass.name}: repeated mixed-sequence claim was not reported after its correction`);
   }
 });
 
-test('reported application read-only state is not a WebBrain runtime-mode contradiction', () => {
+test('reported application read-only state is not a WebBrain runtime-mode contradiction', async () => {
+  const { SEMANTIC_QUESTIONS } = await import('../src/chrome/src/agent/semantic-decisions.js');
+  // The model that reads the summary is told the difference: the agent's own
+  // mode, not a website or account that is read-only.
+  assert.match(SEMANTIC_QUESTIONS.done_summary.choices.mode_claim, /agent itself[\s\S]*A website, account or document being read-only is not this/);
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     const tabId = 8675 + index;
@@ -92151,33 +92217,19 @@ test('reported application read-only state is not a WebBrain runtime-mode contra
     agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
     const report = 'This session is in read-only mode. Editing controls are disabled for this account.';
     const applicationConsequence = 'This application session is in read-only mode, so I cannot edit these records.';
-    const drafted = 'Draft reply: “This session is in read-only mode.”';
 
-    assert.equal(agent._isRuntimeModeContradictionTerminal(report), false,
-      `${AgentClass.name}: observed application access state was treated as agent mode drift`);
-    assert.equal(agent._isRuntimeModeContradictionTerminal(drafted), false,
-      `${AgentClass.name}: drafted content was treated as agent mode drift`);
-    assert.equal(agent._isRuntimeModeContradictionTerminal(applicationConsequence), false,
-      `${AgentClass.name}: first-person consequence of application access was treated as agent mode drift`);
+    for (const summary of [report, applicationConsequence]) {
+      assert.equal(
+        agent._planOnlyTerminalDecision(tabId, summary, { viaDone: true, outcome: 'success', summaryKind: null }),
+        null,
+        `${AgentClass.name}: valid read-only state report was rejected after read evidence`,
+      );
+    }
     assert.equal(
-      agent._planOnlyTerminalDecision(tabId, report, { viaDone: true, outcome: 'success' }),
-      null,
-      `${AgentClass.name}: valid read-only state report was rejected after read evidence`,
-    );
-    assert.equal(
-      agent._planOnlyTerminalDecision(tabId, applicationConsequence, { viaDone: true, outcome: 'success' }),
-      null,
-      `${AgentClass.name}: valid application read-only consequence was rejected after read evidence`,
-    );
-    assert.equal(
-      agent._isRuntimeModeContradictionTerminal('I am running in read-only mode, so I cannot complete the submission.'),
+      agent._planOnlyTerminalDecision(tabId, 'I am running in read-only mode, so I cannot complete the submission.',
+        { viaDone: true, outcome: 'failed', summaryKind: 'mode_claim' })?.retry,
       true,
-      `${AgentClass.name}: explicit self/runtime inability claim was no longer detected`,
-    );
-    assert.equal(
-      agent._isRuntimeModeContradictionTerminal('This WebBrain run is in Ask mode, so WebBrain cannot complete the submission.'),
-      true,
-      `${AgentClass.name}: explicitly named runtime inability claim was no longer detected`,
+      `${AgentClass.name}: a summary read as blaming the agent's own mode was not corrected`,
     );
   }
 });
@@ -92243,7 +92295,7 @@ test('execution recovery restates the active task and approved plan for read-onl
     const retry = agent._planOnlyTerminalDecision(
       tabId,
       'I am running in read-only mode, so I cannot complete the submission.',
-      { viaDone: true, outcome: 'failed' },
+      { viaDone: true, outcome: 'failed', summaryKind: 'mode_claim' },
     );
     assert.equal(retry?.retry, true, `${AgentClass.name}: read-only mode drift was accepted as a terminal blocker`);
     assert.match(retry?.nudge || '', /trusted runtime[\s\S]*Act\/Dev, not Ask mode or a read-only mode/i,
@@ -92657,8 +92709,9 @@ async function recipientContinuationFixture(AgentClass, tabId, allowAll = false)
     { role: 'system', content: 'sys' },
     { role: 'user', content: 'Send the updates to the contacts I confirm.' },
   ]);
+  // Two planned contacts, so WebBrain's card also offers the send-all choice.
   const gate = { requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
-    messaging: { target_kind: 'named', recipients: ['Original contact'] } };
+    messaging: { target_kind: 'named', recipients: ['Original contact', 'Second contact'] } };
   const guard = agent._startPlanExecutionGuard(tabId, 'act', gate);
   let identity = 'Anne';
   agent._messageRecipientContentProbe = async () => ({
@@ -92668,13 +92721,17 @@ async function recipientContinuationFixture(AgentClass, tabId, allowAll = false)
   });
   const check = () => agent._messageRecipientGuardBlock(tabId, 'click', { selector: '#send' },
     'https://example.test/chat/one', {});
+  // The user's answer on WebBrain's own card: Send, or send all remaining.
   const grant = async (recipient, all = false) => {
     identity = recipient;
-    assert.equal((await check())?.reasonCode, 'active_recipient_unverified');
-    assert.equal(agent._bindClarifiedMessageRecipient(tabId,
-      all ? 'Send all remaining messages in this task without asking again' : recipient,
-      'option', { purpose: 'recipient_change', question: `Send to ${recipient} instead?`,
-        options: [recipient, 'Send all remaining messages in this task without asking again', 'Cancel'] }), true);
+    const block = await check();
+    assert.equal(block?.reasonCode, 'active_recipient_unverified');
+    const result = await agent._resolveMessageRecipientConfirmation(tabId, block, (status, details) => {
+      if (status !== 'clarify') return;
+      agent._settleClarification(agent._pendingClarifications.get(tabId).get(details.clarifyId),
+        { answer: all ? 'always' : 'once', source: 'option' });
+    }, check, { allowPrompt: true });
+    assert.equal(result, null, JSON.stringify(result));
   };
   await grant('Anne', allowAll);
   return { agent, guard, check, grant, gate: { ...gate, messaging: structuredClone(guard.messaging) },
@@ -92764,7 +92821,7 @@ test('empty-step planner JSON remains plan-only after successful task evidence',
     });
 
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(leakedPlanner),
+      agent._isStructuredPlanTerminal(leakedPlanner),
       true,
       `${AgentClass.name}: empty-step planner JSON was not recognized`,
     );
@@ -92797,69 +92854,59 @@ test('explicit planner-shaped result intent preserves requested JSON and Markdow
     ];
     for (const requestedResult of requestedResults) {
       assert.equal(
-        agent._looksLikePlanOnlyTerminal(requestedResult, state),
+        agent._isStructuredPlanTerminal(requestedResult, state),
         false,
         `${AgentClass.name}: explicitly requested planner-shaped result was classified as leaked output`,
       );
       assert.equal(
-        agent._planOnlyTerminalDecision(tabId, requestedResult, { viaDone: true }),
+        agent._planOnlyTerminalDecision(tabId, requestedResult, { viaDone: true, summaryKind: null }),
         null,
         `${AgentClass.name}: explicitly requested planner-shaped result was rejected after successful task evidence`,
       );
     }
+    // The completion judge, not a heading, says a summary only promises to act.
     const promisedResult = 'Steps:\n1. Next, I will submit the form.';
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(promisedResult, state),
-      true,
-      `${AgentClass.name}: requested heading exemption also disabled the future-promise guard`,
-    );
-    assert.equal(
-      agent._planOnlyTerminalDecision(tabId, promisedResult, { viaDone: true })?.retry,
+      agent._planOnlyTerminalDecision(tabId, promisedResult, { viaDone: true, summaryKind: 'plan_only' })?.retry,
       true,
       `${AgentClass.name}: requested planner-shaped result accepted a fresh promise to act`,
     );
   }
 });
 
-test('future-promise prose is gated by task evidence, not a planner flag', () => {
+test('future-promise prose is read by the completion judge, not by words', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     const draftedReply = 'I will attend tomorrow.';
 
-    // After a successful task tool, first-person future text is treated as
-    // possible drafted content (no allows_future_tense_result planner flag).
+    // A drafted reply the judge reads as the result finishes after task evidence.
     const afterEvidenceTabId = 8631 + index;
-    const afterEvidenceState = agent._startPlanExecutionGuard(afterEvidenceTabId, 'act', {
+    agent._startPlanExecutionGuard(afterEvidenceTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: false,
     });
     agent._markPlanExecutionToolCall(afterEvidenceTabId, 'read_page', { success: true });
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(draftedReply, afterEvidenceState),
-      false,
-      `${AgentClass.name}: drafted reply after task evidence was classified as an execution promise`,
-    );
-    assert.equal(
-      agent._planOnlyTerminalDecision(afterEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success' }),
+      agent._planOnlyTerminalDecision(afterEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success', summaryKind: null }),
       null,
       `${AgentClass.name}: drafted reply after task evidence was rejected`,
     );
+    assert.equal(
+      agent._planOnlyTerminalDecision(afterEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success', summaryKind: 'plan_only' })?.retry,
+      true,
+      `${AgentClass.name}: a summary the judge read as a plan finished`,
+    );
 
-    // Without evidence, the same wording is still a blocked promise to act.
+    // Without task evidence the done is rejected whatever its words say.
     const noEvidenceTabId = 8639 + index;
-    const noEvidenceState = agent._startPlanExecutionGuard(noEvidenceTabId, 'act', {
+    agent._startPlanExecutionGuard(noEvidenceTabId, 'act', {
       requestKind: 'execute',
       requiresStateChange: false,
     });
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(draftedReply, noEvidenceState),
-      true,
-      `${AgentClass.name}: future promise without evidence was accepted`,
-    );
-    assert.equal(
       agent._planOnlyTerminalDecision(noEvidenceTabId, draftedReply, { viaDone: true, outcome: 'success' })?.retry,
       true,
-      `${AgentClass.name}: future promise without evidence bypassed recovery`,
+      `${AgentClass.name}: a done without task evidence bypassed recovery`,
     );
   }
 });
@@ -92875,21 +92922,19 @@ test('completion words do not mask mixed progress plus plan terminals', () => {
     agent._markPlanExecutionToolCall(tabId, 'read_page', { success: true });
     const mixedTerminals = [
       'I opened the page.\n\nPlan:\n1. Fill out the form.\n2. Submit it.',
-      'I found the workflow. Next, I will apply it.',
+      'Sayfayı açtım. Sırada iş akışını uygulayacağım.',
     ];
 
-    const guardState = agent._planExecutionGuards.get(tabId);
     for (const mixedTerminal of mixedTerminals) {
       assert.equal(
-        agent._looksLikePlanOnlyTerminal(mixedTerminal, guardState),
-        true,
-        `${AgentClass.name}: completion wording masked a plan or promise`,
-      );
-      assert.equal(
-        agent._planOnlyTerminalDecision(tabId, mixedTerminal, { viaDone: true })?.retry,
+        agent._planOnlyTerminalDecision(tabId, mixedTerminal, { viaDone: true, summaryKind: 'plan_only' })?.retry,
         true,
         `${AgentClass.name}: mixed progress plus plan terminal bypassed recovery`,
       );
+      agent._planExecutionGuards.get(tabId).recoveryAttempted = false;
+      // A plain final ends no Act run, in any language.
+      assert.equal(agent._planOnlyTerminalDecision(tabId, mixedTerminal)?.retry, true,
+        `${AgentClass.name}: a plain final ended the Act run`);
       agent._planExecutionGuards.get(tabId).recoveryAttempted = false;
     }
   }
@@ -94875,10 +94920,17 @@ test('planner intent carries submit-required completion metadata into the execut
   });
 });
 
-test('adapter workflow jobs reach the executor and require submit plus complete reconciliation evidence', () => {
+test('adapter workflow jobs reach the executor and require submit plus complete reconciliation evidence', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     agent.useSiteAdapters = true;
+    // A model reads the lines naming an uploaded file (workflow_state,
+    // file_attached); the fixture oracle stands in.
+    stubPageTextReadings(agent);
+    const observeUpload = async (tab, result) => {
+      await agent._readWorkflowUploadLines(tab, 'get_accessibility_tree', result);
+      return agent._recordCompletionToolResult(tab, 'get_accessibility_tree', {}, result);
+    };
     const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=x';
     const selected = agent._resolvePlannerSiteWorkflow(formUrl, {
       request_kind: 'execute',
@@ -95205,7 +95257,7 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
       'button "Upload résumé" [ref_resume_multi] type="file" dom_id="resume-upload" field_name="resume"',
       'button "Upload cover letter" [ref_cover_multi] type="file" dom_id="cover-upload" field_name="cover"',
     ];
-    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+    await observeUpload(multiUploadTabId, {
       success: true,
       pageUrl: formUrl,
       pageContent: [
@@ -95217,14 +95269,14 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
     });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
       `${AgentClass.name}: an attachment name beside the wrong widget promoted a consumed upload`);
-    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+    await observeUpload(multiUploadTabId, {
       success: true,
       pageUrl: formUrl,
       pageContent: [...multiUploadControls, 'status "mycover.pdf uploaded" [ref_cover_collision]'].join('\n'),
     });
     assert.equal(Object.keys(multiUploadGuard.workflowControlActionEvidence || {}).length, 1,
       `${AgentClass.name}: a filename substring promoted a consumed upload`);
-    agent._recordCompletionToolResult(multiUploadTabId, 'get_accessibility_tree', {}, {
+    await observeUpload(multiUploadTabId, {
       success: true,
       pageUrl: formUrl,
       pageContent: [
@@ -95443,6 +95495,44 @@ test('adapter workflow jobs reach the executor and require submit plus complete 
   }
 });
 
+
+test('an upload is seen on the page when a model reads the line naming its file, in any language', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=upload-lines';
+    const selected = agent._resolvePlannerSiteWorkflow(formUrl, { request_kind: 'execute', site_job: 'submit-form' });
+    // A model reads each line naming the file; these answers stand in.
+    const readings = new Map([['cover.pdf · 96 KB · przesłano', 'reached'], ['cover.pdf · przesyłanie nie powiodło się', 'failed']]);
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'workflow_state' ? readings.get(item.text) || null : null));
+    const run = async (tabId, line) => {
+      agent.conversations.set(tabId, [{ role: 'system', content: 'sys' }, { role: 'user', content: 'Attach cover.pdf and submit.' }]);
+      const guard = agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+        requiresSubmission: true, siteWorkflow: selected });
+      agent._lastAxScopes.set(tabId, { documentToken: `upload-lines-${tabId}`, pageUrl: formUrl });
+      const control = 'button "Upload cover letter" [ref_cover] type="file" dom_id="cover-upload" field_name="cover"';
+      const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {},
+        { success: true, pageUrl: formUrl, pageContent: control });
+      agent._beginCompletionInvariant(tabId);
+      const upload = { success: true, dispatched: true, attachmentState: 'page_consumed', attached: { name: 'cover.pdf', size: 96 },
+        uploadTarget: { selector: '#cover-upload', domId: 'cover-upload', fieldName: 'cover', label: 'Upload cover letter' } };
+      await agent._readWorkflowUploadLines(tabId, 'upload_file', upload);
+      agent._recordCompletionToolResult(tabId, 'upload_file', { selector: '#cover-upload' }, upload);
+      const observation = { success: true, pageUrl: formUrl, pageContent: [control, `generic "${line}" [ref_cover_status]`].join('\n') };
+      await agent._readWorkflowUploadLines(tabId, 'get_accessibility_tree', observation);
+      agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, observation);
+      return guard.workflowControlActionEvidence?.[inventory.items[0].id];
+    };
+    const shown = await run(9470 + index * 3, 'cover.pdf · 96 KB · przesłano');
+    assert.equal(shown?.attachmentState, 'page_consumed_observed', `${AgentClass.name}: a Polish upload line was not read as shown`);
+    assert.ok(asked.some(item => item.kind === 'workflow_state' && item.text === 'cover.pdf · 96 KB · przesłano'
+      && /uploaded or attached/.test(item.state)));
+    assert.equal(await run(9471 + index * 3, 'cover.pdf · przesyłanie nie powiodło się'), undefined,
+      `${AgentClass.name}: a line read as a failed upload showed the file`);
+    assert.equal(await run(9472 + index * 3, 'cover.pdf · 96 KB · gotowe'), undefined,
+      `${AgentClass.name}: a line nobody read showed the file`);
+  }
+});
 test('iframe-backed application forms expose a complete trusted inventory and exact row evidence', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
@@ -95711,6 +95801,14 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
     const multiAgent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
     multiAgent.useSiteAdapters = true;
     multiAgent._persist = () => { };
+    // A model reads the lines naming an uploaded file (workflow_state,
+    // file_attached) before the observation is recorded, as the agent loop
+    // does; the fixture oracle stands in.
+    stubPageTextReadings(multiAgent);
+    const observeAssets = async (tab, result) => {
+      await multiAgent._readWorkflowUploadLines(tab, 'get_accessibility_tree', result);
+      return multiAgent._recordCompletionToolResult(tab, 'get_accessibility_tree', { filter: 'all' }, result);
+    };
     const multiTabId = 8944 + index;
     const multiTaskText = 'Upload dist/alpha.zip and dist/beta.zip to this release and save it.';
     multiAgent.conversations.set(multiTabId, [
@@ -95785,14 +95883,14 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
       },
     );
     recordAssetUpload('alpha.zip');
-    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+    await observeAssets(multiTabId, {
       success: true,
       pageUrl: releaseUrl,
       pageContent: 'link "prefix-alpha.zip" [ref_wrong_asset]',
     });
     assert.equal(Object.keys(multiGuard.workflowReleaseAssetEvidence || {}).length, 0,
       `${AgentClass.name}: a release filename substring proved an asset upload`);
-    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+    await observeAssets(multiTabId, {
       success: true,
       pageUrl: releaseUrl,
       pageContent: 'link "alpha.zip" [ref_alpha_asset]',
@@ -95806,7 +95904,7 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
       multiSession.sessionId,
     ).ok, false, `${AgentClass.name}: one uploaded release asset proved two requested rows`);
     recordAssetUpload('beta.zip');
-    multiAgent._recordCompletionToolResult(multiTabId, 'get_accessibility_tree', { filter: 'all' }, {
+    await observeAssets(multiTabId, {
       success: true,
       pageUrl: releaseUrl,
       pageContent: [
@@ -95828,6 +95926,7 @@ test('GitHub release-asset workflow seeds an exact single-target inventory', asy
 test('GitHub review-thread workflow inventories only unresolved thread controls', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the buttons' labels as doing
     agent.useSiteAdapters = true;
     const tabId = 8937 + index;
     const pullUrl = 'https://github.com/esokullu/webbrain/pull/320';
@@ -96043,6 +96142,69 @@ test('GitHub review-thread workflow inventories only unresolved thread controls'
   }
 });
 
+
+test('review-thread resolve controls are read by a model in any language before the read is recorded', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const pullUrl = 'https://github.com/esokullu/webbrain/pull/321';
+    const start = (agent, tabId) => {
+      agent.useSiteAdapters = true;
+      const selected = agent._resolvePlannerSiteWorkflow(pullUrl, { request_kind: 'execute', site_job: 'resolve-review-threads' });
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: 'Rozwiąż wszystkie otwarte wątki.' }]);
+      const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+        requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflow: selected,
+      });
+      agent._lastAxScopes.set(tabId, { documentToken: `polish-pr-${tabId}`, pageUrl: pullUrl });
+      return guard;
+    };
+    const polishTree = {
+      success: true,
+      pageUrl: pullUrl,
+      pageContent: [
+        'textbox "Odpowiedz" [ref_reply_1] value=""',
+        'button "Rozwiąż wątek" [ref_resolve_1]',
+        'button "Dodaj komentarz" [ref_add_comment]',
+        'textbox "Odpowiedz" [ref_reply_2] value=""',
+        'button "Rozwiąż wątek" [ref_resolve_2]',
+      ].join('\n'),
+      treeRevision: 'polish-review-threads',
+    };
+
+    // The agent loop reads the read's button labels first (here a model
+    // stand-in answers), then records the read: a Polish GitHub's resolve
+    // controls are the job's rows, and the comment button is not one.
+    const agent = new AgentClass({});
+    const asked = stubPageTextReadings(agent);
+    const tabId = 8975 + index;
+    start(agent, tabId);
+    await agent._readWorkflowReviewThreadControls?.(tabId, 'get_accessibility_tree', polishTree);
+    assert.deepEqual(asked.filter(item => item.kind === 'review_thread_control').map(item => item.text).sort(),
+      ['Dodaj komentarz', 'Rozwiąż wątek'], `${AgentClass.name}: the read's button labels were not each asked about once`);
+    const inventory = agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', {}, polishTree);
+    assert.equal(inventory?.complete, true);
+    assert.deepEqual(inventory.items.map(item => item.ref_id), ['ref_reply_1', 'ref_resolve_1', 'ref_reply_2', 'ref_resolve_2'],
+      `${AgentClass.name}: Polish resolve controls were not the review-thread inventory`);
+
+    // A label no model could read leaves the read incomplete instead of an
+    // empty inventory, so the empty no-op cannot report success over it.
+    const unreadAgent = new AgentClass({});
+    stubPageTextReadings(unreadAgent, () => null);
+    const unreadTabId = 8977 + index;
+    const unreadGuard = start(unreadAgent, unreadTabId);
+    await unreadAgent._readWorkflowReviewThreadControls?.(unreadTabId, 'get_accessibility_tree', polishTree);
+    const unread = unreadAgent._rememberWorkflowInventoryObservation(unreadTabId, 'get_accessibility_tree', {}, polishTree);
+    assert.equal(unread?.itemCount, 0);
+    assert.equal(unread?.complete, false, `${AgentClass.name}: unread button labels closed an empty review-thread inventory`);
+    assert.equal(unreadAgent._workflowEmptyInventoryNoOp(unreadGuard), false,
+      `${AgentClass.name}: unread resolve controls became a successful no-op`);
+
+    // Read once, the same page closes the inventory with its rows.
+    stubPageTextReadings(unreadAgent);
+    await unreadAgent._readWorkflowReviewThreadControls?.(unreadTabId, 'get_accessibility_tree', polishTree);
+    const reread = unreadAgent._rememberWorkflowInventoryObservation(unreadTabId, 'get_accessibility_tree', {}, polishTree);
+    assert.equal(reread?.complete, true);
+    assert.equal(reread?.itemCount, 4);
+  }
+});
 test('accessibility trees surface native and ARIA metadata choice values', () => {
   for (const [label, rel] of [
     ['chrome', 'src/chrome/src/content/accessibility-tree.js'],
@@ -96563,11 +96725,11 @@ test('publication workflows classify and bind requested payload fields', async (
     let xPrompt = '';
     agent._chatWithCostAllowance = async (_provider, messages) => {
       xPrompt = messages[0].content;
-      // This was previously a compliant classifier response for send-message.
+      // The model reads the body out of the request; no word list does.
       return {
         content: JSON.stringify({
           mode: 'inactive', allowedActions: [], forbiddenActions: [], targets: [],
-          workflowFields: [], confidence: 0.99, pageScopePolicy: 'page',
+          workflowFields: [{ field: 'body', value: 'Hello there' }], confidence: 0.99, pageScopePolicy: 'page',
         })
       };
     };
@@ -96579,16 +96741,12 @@ test('publication workflows classify and bind requested payload fields', async (
     });
     assert.match(xPrompt, /siteContext\.workflow\.template="message"/,
       `${AgentClass.name}: the classifier did not require direct-message fields`);
-    assert.equal(agent._extractWorkflowTaskBody(xTask, '', 'twitter'), 'Hello there',
-      `${AgentClass.name}: a route-local Send command did not recover its explicit X DM body`);
-    assert.equal(
-      agent._extractWorkflowTaskBody('Send an email to Alice with subject: Hello and body: How are you?', '', 'gmail'),
-      '',
-      `${AgentClass.name}: X route-local Send recovery rewrote Gmail subject/body metadata`,
-    );
+    assert.match(xPrompt, /return "start" and "end" instead of "value"/,
+      `${AgentClass.name}: the classifier was not told to quote long values by their first and last words`);
+    assert.equal(typeof agent._extractWorkflowTaskBody, 'undefined', `${AgentClass.name}: a word-based body parser remains`);
     assert.deepEqual(xGuard.workflowMetadataRequirements, [
       { field: 'body', value: 'Hello there' },
-    ], `${AgentClass.name}: an explicit X DM body was not bound after an empty classifier response`);
+    ], `${AgentClass.name}: the X DM body the model read was not bound`);
 
     const gmailTabId = 8997 + index;
     const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
@@ -96600,8 +96758,6 @@ test('publication workflows classify and bind requested payload fields', async (
       messaging: { target_kind: 'named', recipients: ['Alice'] },
     });
     assert.equal(gmailWorkflow?.job?.id, 'send-email');
-    assert.equal(agent._extractWorkflowTaskBody(gmailTask, '', 'gmail'), 'Hello and body: How are you?',
-      `${AgentClass.name}: the regression fixture no longer exercises Gmail's generic Send parser`);
     agent.conversations.set(gmailTabId, [
       { role: 'system', content: 'system' },
       { role: 'user', content: gmailTask },
@@ -96632,7 +96788,7 @@ test('publication workflows classify and bind requested payload fields', async (
     assert.deepEqual(gmailGuard.workflowMetadataRequirements, [
       { field: 'subject', value: 'Message: Hello' },
       { field: 'body', value: 'How are you?' },
-    ], `${AgentClass.name}: X's body recovery rewrote Gmail's structured subject/body fields`);
+    ], `${AgentClass.name}: Gmail's structured subject/body fields were rewritten`);
     const xTerminal = (body) => {
       const workflowBinding = agent._workflowSubmitBindingForAttempt(xTabId, xUrl, {
         messageRecipientGuardRequired: true,
@@ -96932,110 +97088,12 @@ test('a Bluesky DID and handle name one account only on the card that proves it'
   }
 });
 
-test('article-qualified mixed media requirements are counted and typed correctly', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const req1 = agent._parseWorkflowAttachmentRequirement('an image and a video');
-    assert.equal(req1.expectedCount, 2, AgentClass.name + ': expectedCount should be 2 for an image and a video');
-    assert.equal(req1.expectedImageCount, 1, AgentClass.name + ': expectedImageCount should be 1');
-    assert.equal(req1.expectedVideoCount, 1, AgentClass.name + ': expectedVideoCount should be 1');
-    assert.equal(req1.wantsImage, true, AgentClass.name + ': wantsImage should be true');
-    assert.equal(req1.wantsVideo, true, AgentClass.name + ': wantsVideo should be true');
-
-    const req2 = agent._parseWorkflowAttachmentRequirement('an image, a video');
-    assert.equal(req2.expectedCount, 2, AgentClass.name + ': expectedCount should be 2 for an image, a video');
-    assert.equal(req2.expectedImageCount, 1, AgentClass.name + ': expectedImageCount should be 1');
-    assert.equal(req2.expectedVideoCount, 1, AgentClass.name + ': expectedVideoCount should be 1');
-
-    const req3 = agent._parseWorkflowAttachmentRequirement('a photo and a clip');
-    assert.equal(req3.expectedCount, 2, AgentClass.name + ': expectedCount should be 2 for a photo and a clip');
-    assert.equal(req3.expectedImageCount, 1);
-    assert.equal(req3.expectedVideoCount, 1);
-  }
-});
-
-test('extracting post body skips URL scheme colons', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    assert.equal(
-      agent._extractWorkflowTaskBody('Publish this on https://x.com/home: Hello world'),
-      'Hello world',
-      AgentClass.name + ': URL scheme colon halted body extraction',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post to https://x.com: Hello world'),
-      'Hello world',
-      AgentClass.name + ': URL scheme colon before domain colon halted body extraction',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post the following on https://bluesky.app/: Announcing v2!'),
-      'Announcing v2!',
-      AgentClass.name + ': Bluesky URL scheme colon halted body extraction',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X: https://example.com/path'),
-      'https://example.com/path',
-      AgentClass.name + ': punctuation inside an unquoted URL truncated the post body',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X: Visit https://example.com/path today'),
-      'Visit https://example.com/path today',
-      AgentClass.name + ': an embedded unquoted URL truncated the surrounding post body',
-    );
-  }
-});
-
-test('extracting post body supports multilingual commands with colons and quotes', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    assert.equal(
-      agent._extractWorkflowTaskBody('Publica en X: Este es un texto largo para publicar'),
-      'Este es un texto largo para publicar',
-      AgentClass.name + ': Spanish colon extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Publícalo en Bluesky: «Bonjour tout le monde»'),
-      'Bonjour tout le monde',
-      AgentClass.name + ': French colon and guillemets extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Veröffentliche auf X: Dies ist ein langer Text'),
-      'Dies ist ein langer Text',
-      AgentClass.name + ': German colon extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Опубликуй в X: Длинный текст поста'),
-      'Длинный текст поста',
-      AgentClass.name + ': Russian colon extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Xに投稿：これはテスト投稿です'),
-      'これはテスト投稿です',
-      AgentClass.name + ': Japanese full-width colon extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('在X发布：这是长文本内容'),
-      '这是长文本内容',
-      AgentClass.name + ': Chinese full-width colon extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('X에 게시: 이것은 게시물 내용입니다'),
-      '이것은 게시물 내용입니다',
-      AgentClass.name + ': Korean colon extraction failed',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Publica en X "texto largo aquí"'),
-      'texto largo aquí',
-      AgentClass.name + ': Spanish quoted extraction failed',
-    );
-  }
-});
-
-test('publish-post alt text is a distinct verified metadata requirement', async () => {
+test('publish-post alt text is a distinct metadata requirement per attachment', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
-    assert.equal(agent._workflowMetadataFieldKey('alt text'), 'alt_text',
-      AgentClass.name + ': alt text did not normalize to its canonical field');
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's field labels as holding
+    assert.equal(agent._workflowFieldKey('publication_field', 'alt text'), 'alt_text',
+      AgentClass.name + ': alt text did not read as its canonical field');
     assert.match(
       agent._progressIntentClassifierMessages('Post chart.png on X with alt text "Sales growth"', {
         workflow: { job: 'publish-post' },
@@ -97043,44 +97101,6 @@ test('publish-post alt text is a distinct verified metadata requirement', async 
       /alt_text when the user explicitly requests attachment alternative text/,
       AgentClass.name + ': classifier prompt omitted publish-post alt text',
     );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post chart.png on X with alt text "Sales growth"'),
-      '',
-      AgentClass.name + ': quoted alt text was misclassified as the post body',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post chart.png on X with alternative text “Sales growth”'),
-      '',
-      AgentClass.name + ': smart-quoted alternative text was misclassified as the post body',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post "Launch update" on X with alt text "Sales growth"'),
-      'Launch update',
-      AgentClass.name + ': masking alt text hid the actual quoted post body',
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post chart.png on X with alt text: Sales growth'),
-      '',
-      AgentClass.name + ': unquoted alt text was misclassified as the post body',
-    );
-    for (const metadataOnlyTask of [
-      'Post with attachment "chart.png" on X',
-      'Post on X using account "@acme"',
-      'Post on X with visibility "public"',
-      'Post on X with tag "launch"',
-    ]) {
-      assert.equal(
-        agent._extractWorkflowTaskBody(metadataOnlyTask),
-        '',
-        AgentClass.name + `: quoted metadata was misclassified as body in "${metadataOnlyTask}"`,
-      );
-    }
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post "Launch update" on X using account "@acme" with visibility "public"'),
-      'Launch update',
-      AgentClass.name + ': masking quoted metadata hid the actual quoted body',
-    );
-
     const scopedAltDetails = agent._normalizeWorkflowMetadataRequirementsDetails([
       { field: 'attachment', value: 'chart.png and logo.png' },
       { field: 'alt_text', attachment: 'chart.png', value: 'Sales chart' },
@@ -97093,81 +97113,7 @@ test('publish-post alt text is a distinct verified metadata requirement', async 
       { field: 'alt_text', value: 'Sales chart', attachment: 'chart.png' },
       { field: 'alt_text', value: 'Company logo', attachment: 'logo.png' },
     ]);
-    const correctlyDescribedMedia = {
-      attachments: [
-        { type: 'image', name: 'chart.png', src: 'https://cdn.example/a', alt: 'Sales chart' },
-        { type: 'image', name: 'logo.png', src: 'https://cdn.example/b', alt: 'Company logo' },
-      ],
-    };
-    assert.equal(scopedAltDetails.items.filter(item => item.field === 'alt_text').every(
-      requirement => agent._workflowSocialPublishedAltTextObserved(requirement, correctlyDescribedMedia),
-    ), true, AgentClass.name + ': correct per-attachment alt text did not verify');
-    assert.equal(agent._workflowSocialPublishedAltTextObserved(
-      { field: 'alt_text', attachment: 'chart.png', value: 'Sales chart' },
-      {
-        attachments: [
-          { type: 'image', name: 'chart.png', alt: 'Company logo' },
-          { type: 'image', name: 'logo.png', alt: 'Sales chart' },
-        ],
-      },
-    ), false, AgentClass.name + ': alt text on the wrong attachment was accepted');
 
-  }
-});
-
-test('attachment requirement parser ignores numbers in specific attachment filenames', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const req1 = agent._parseWorkflowAttachmentRequirement('quarterly-chart-2.png');
-    assert.equal(req1.expectedCount, 1, AgentClass.name + ': quarterly-chart-2.png should expect 1 attachment');
-    assert.equal(req1.isGeneric, false, AgentClass.name + ': quarterly-chart-2.png should not be generic');
-
-    const req2 = agent._parseWorkflowAttachmentRequirement('photo-2024-12.jpg');
-    assert.equal(req2.expectedCount, 1, AgentClass.name + ': photo-2024-12.jpg should expect 1 attachment');
-    assert.equal(req2.isGeneric, false, AgentClass.name + ': photo-2024-12.jpg should not be generic');
-
-    const req3 = agent._parseWorkflowAttachmentRequirement('2 attachments');
-    assert.equal(req3.expectedCount, 2, AgentClass.name + ': 2 attachments should expect 2 attachments');
-    assert.equal(req3.isGeneric, true, AgentClass.name + ': 2 attachments should be generic');
-
-    const req4 = agent._parseWorkflowAttachmentRequirement('2枚');
-    assert.equal(req4.expectedCount, 2, AgentClass.name + ': 2枚 should expect 2 attachments');
-    assert.equal(req4.isGeneric, true, AgentClass.name + ': 2枚 should be generic');
-
-    const reqBrand = agent._parseWorkflowAttachmentRequirement('brand2images.png');
-    assert.equal(reqBrand.expectedCount, 1, AgentClass.name + ': brand2images.png should expect 1 attachment');
-    assert.equal(reqBrand.expectedImageCount, 0, AgentClass.name + ': brand2images.png should have 0 expectedImageCount');
-    assert.equal(reqBrand.hasExplicitImageCount, false, AgentClass.name + ': brand2images.png should not have explicit image count');
-    assert.equal(reqBrand.hasExplicitCardinality, false, AgentClass.name + ': brand2images.png should not have explicit cardinality');
-    assert.equal(reqBrand.isGeneric, false, AgentClass.name + ': brand2images.png should not be generic');
-    assert.equal(reqBrand.wantsImage, true, AgentClass.name + ': brand2images.png should want image');
-    assert.equal(reqBrand.wantsVideo, false, AgentClass.name + ': brand2images.png should not want video');
-
-    const brandVerified = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'brand2images.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/brand2images.png' }] },
-    );
-    assert.equal(brandVerified, true, AgentClass.name + ': single matching brand2images.png should pass');
-
-    const brandWrongFile = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'brand2images.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/other.png' }] },
-    );
-    assert.equal(brandWrongFile, false, AgentClass.name + ': non-matching file for brand2images.png should fail');
-
-    const reqBrandVid = agent._parseWorkflowAttachmentRequirement('brand2videos.mp4');
-    assert.equal(reqBrandVid.expectedCount, 1, AgentClass.name + ': brand2videos.mp4 should expect 1 attachment');
-    assert.equal(reqBrandVid.expectedVideoCount, 0, AgentClass.name + ': brand2videos.mp4 should have 0 expectedVideoCount');
-    assert.equal(reqBrandVid.hasExplicitVideoCount, false, AgentClass.name + ': brand2videos.mp4 should not have explicit video count');
-    assert.equal(reqBrandVid.isGeneric, false, AgentClass.name + ': brand2videos.mp4 should not be generic');
-    assert.equal(reqBrandVid.wantsVideo, true, AgentClass.name + ': brand2videos.mp4 should want video');
-    assert.equal(reqBrandVid.wantsImage, false, AgentClass.name + ': brand2videos.mp4 should not want image');
-
-    const brandVidVerified = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'brand2videos.mp4' },
-      { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/brand2videos.mp4' }] },
-    );
-    assert.equal(brandVidVerified, true, AgentClass.name + ': single matching brand2videos.mp4 should pass');
   }
 });
 
@@ -97204,27 +97150,18 @@ test('social upload filenames bind to type-compatible published DOM attachments'
     const cdnRecord = {
       attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/G7RANDOM?format=png' }],
     };
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' }, cdnRecord,
-    ), false, AgentClass.name + ': rewritten CDN URL unexpectedly retained the source filename');
+    assert.equal(cdnRecord.attachments.some(item => item.name === 'chart.png'), false,
+      AgentClass.name + ': rewritten CDN URL unexpectedly retained the source filename');
     const namedRecord = agent._workflowSocialRecordWithUploadedAttachmentNames(cdnRecord, binding);
     assert.equal(namedRecord.attachments?.[0]?.name, 'chart.png',
       AgentClass.name + ': upload provenance was not joined to the observed media node');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' }, namedRecord,
-    ), true, AgentClass.name + ': source filename did not verify the observed published media');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' }, agent._workflowSocialRecordWithUploadedAttachmentNames(
-        { attachments: [{ type: 'video', src: 'https://video.twimg.com/ext_tw_video/123/pu/vid/clip.mp4' }] },
-        binding,
-      ),
-    ), false, AgentClass.name + ': an image filename was attached to an incompatible video record');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' }, agent._workflowSocialRecordWithUploadedAttachmentNames(
-        { attachments: [] },
-        binding,
-      ),
-    ), false, AgentClass.name + ': upload provenance invented a missing published attachment');
+    assert.equal(agent._workflowSocialRecordWithUploadedAttachmentNames(
+      { attachments: [{ type: 'video', src: 'https://video.twimg.com/ext_tw_video/123/pu/vid/clip.mp4' }] },
+      binding,
+    ).attachments.some(item => item.name === 'chart.png'), false,
+    AgentClass.name + ': an image filename was attached to an incompatible video record');
+    assert.deepEqual(agent._workflowSocialRecordWithUploadedAttachmentNames({ attachments: [] }, binding).attachments, [],
+      AgentClass.name + ': upload provenance invented a missing published attachment');
 
     guard.successfulTaskToolCalls = 1;
     guard.evidenceTaskKey = guard.taskKey;
@@ -97321,20 +97258,14 @@ test('social upload provenance reconciles only from complete composer snapshots'
       AgentClass.name + ': reconciled active provenance did not join published media');
     assert.equal(joined.uploadNameBindingAmbiguous, true,
       AgentClass.name + ': same-type upload/DOM ordering was treated as a stable filename binding');
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved({ value: 'a.png and c.png' }, joined),
-      true,
-      AgentClass.name + ': active replacement media could not verify after reconciliation',
-    );
     const ambiguousAltRecord = agent._workflowSocialRecordWithUploadedAttachmentNames({
       attachments: [
         { type: 'image', src: 'https://cdn.example/opaque-1', alt: 'Alt for a' },
         { type: 'image', src: 'https://cdn.example/opaque-2', alt: 'Alt for c' },
       ],
     }, { uploadedAttachmentNames: ['a.png', 'c.png'] });
-    assert.equal(agent._workflowSocialPublishedAltTextObserved(
-      { attachment: 'a.png', value: 'Alt for a' }, ambiguousAltRecord,
-    ), false, AgentClass.name + ': upload order falsely bound targeted alt text to an opaque media card');
+    assert.equal(ambiguousAltRecord.uploadNameBindingAmbiguous, true,
+      AgentClass.name + ': upload order falsely bound a filename to an opaque media card');
     const stableAltRecord = agent._workflowSocialRecordWithUploadedAttachmentNames({
       attachments: [
         { type: 'image', src: 'https://cdn.example/c.png', alt: 'Alt for c' },
@@ -97345,1967 +97276,15 @@ test('social upload provenance reconciles only from complete composer snapshots'
       AgentClass.name + ': filename evidence did not disambiguate reordered media cards');
     assert.deepEqual(stableAltRecord.attachments.map(item => item.name), ['c.png', 'a.png'],
       AgentClass.name + ': stable per-card filename evidence was ignored');
-    assert.equal(agent._workflowSocialPublishedAltTextObserved(
-      { attachment: 'a.png', value: 'Alt for a' }, stableAltRecord,
-    ), true, AgentClass.name + ': stable reordered filename/alt provenance did not verify');
-  }
-});
-
-test('upper-bound attachment qualifiers verify as maximum counts', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const mixed = agent._parseWorkflowAttachmentRequirement('one video and at most two images');
-    assert.equal(mixed.isGeneric, true, AgentClass.name + ': "one video and at most two images" should be generic');
-    assert.deepEqual(mixed.specificTargets, [], AgentClass.name + ': an upper bound should not name a file');
-    assert.equal(mixed.expectedVideoCount, 1, AgentClass.name + ': the exact video count was lost');
-    assert.equal(mixed.expectedImageCount, 2, AgentClass.name + ': the image maximum was lost');
-    assert.equal(mixed.isImageMaximum, true, AgentClass.name + ': the image maximum was not retained');
-    assert.equal(mixed.isVideoMaximum, false, AgentClass.name + ': the maximum leaked onto the exact video count');
-    const capped = agent._parseWorkflowAttachmentRequirement('up to two images');
-    assert.equal(capped.isGeneric, true, AgentClass.name + ': "up to two images" should be generic');
-    assert.equal(capped.expectedImageCount, 2, AgentClass.name + ': the capped image count was lost');
-    assert.equal(capped.isImageMaximum, true, AgentClass.name + ': the capped maximum was not retained');
-    const image = index => ({ type: 'image', src: `https://pbs.twimg.com/media/image${index}.png` });
-    const video = index => ({ type: 'video', src: `https://video.twimg.com/media/video${index}.mp4` });
-    const gif = index => ({ type: 'animated_gif', src: `https://video.twimg.com/tweet_video/gif${index}.mp4` });
-    const pngImage = agent._parseWorkflowAttachmentRequirement('one PNG image');
-    assert.equal(pngImage.isGeneric, true,
-      AgentClass.name + ': a PNG media qualifier was parsed as a filename');
-    assert.deepEqual(pngImage.specificTargets, [],
-      AgentClass.name + ': a PNG media qualifier created a specific target');
-    assert.deepEqual(pngImage.requestedImageFormats, ['png']);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': a PNG image did not satisfy its format-qualified contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/media', name: 'source.png' }] }), true,
-      AgentClass.name + ': original upload provenance did not prove PNG format');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image' }, { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/image1.jpg' }] }), false,
-      AgentClass.name + ': a JPEG image satisfied a PNG-only contract');
-    const mp4Video = agent._parseWorkflowAttachmentRequirement('one MP4 video');
-    assert.equal(mp4Video.isGeneric, true,
-      AgentClass.name + ': an MP4 media qualifier was parsed as a filename');
-    assert.deepEqual(mp4Video.specificTargets, [],
-      AgentClass.name + ': an MP4 media qualifier created a specific target');
-    assert.deepEqual(mp4Video.requestedVideoFormats, ['mp4']);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one MP4 video' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': an MP4 video did not satisfy its format-qualified contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one MP4 video' }, { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/video1.webm' }] }), false,
-      AgentClass.name + ': a WebM video satisfied an MP4-only contract');
-    const postfixPngImage = agent._parseWorkflowAttachmentRequirement('one image in PNG format');
-    assert.equal(postfixPngImage.isGeneric, true,
-      AgentClass.name + ': a postfix PNG qualifier was parsed as a filename');
-    assert.deepEqual(postfixPngImage.specificTargets, [],
-      AgentClass.name + ': a postfix PNG qualifier created a specific target');
-    assert.deepEqual(postfixPngImage.requestedImageFormats, ['png']);
-    assert.equal(postfixPngImage.expectedImageCount, 1,
-      AgentClass.name + ': a postfix format duplicated the image count as an unrestricted slot');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image in PNG format' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': a PNG image did not satisfy its postfix format contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image in PNG format' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
-      AgentClass.name + ': a JPEG image satisfied a postfix PNG contract');
-    const postfixMp4Video = agent._parseWorkflowAttachmentRequirement('one video in MP4 format');
-    assert.equal(postfixMp4Video.isGeneric, true,
-      AgentClass.name + ': a postfix MP4 qualifier was parsed as a filename');
-    assert.deepEqual(postfixMp4Video.specificTargets, [],
-      AgentClass.name + ': a postfix MP4 qualifier created a specific target');
-    assert.deepEqual(postfixMp4Video.requestedVideoFormats, ['mp4']);
-    assert.equal(postfixMp4Video.expectedVideoCount, 1,
-      AgentClass.name + ': a postfix format duplicated the video count as an unrestricted slot');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video in MP4 format' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': an MP4 video did not satisfy its postfix format contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video in MP4 format' }, { attachments: [{ type: 'video', src: 'https://cdn.example/a.webm' }] }), false,
-      AgentClass.name + ': a WebM video satisfied a postfix MP4 contract');
-    const pngWithoutJpeg = agent._parseWorkflowAttachmentRequirement('one PNG image and no JPEG images');
-    assert.deepEqual(pngWithoutJpeg.requestedImageFormats, ['png'],
-      AgentClass.name + ': a negated JPEG qualifier was folded into the allowed image formats');
-    assert.deepEqual(pngWithoutJpeg.forbiddenImageFormats, ['jpeg'],
-      AgentClass.name + ': a negated JPEG qualifier was not retained');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image and no JPEG images' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': the required PNG was rejected by a separate JPEG prohibition');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image and no JPEG images' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
-      AgentClass.name + ': an explicitly prohibited JPEG satisfied the image contract');
-    const mp4WithoutWebm = agent._parseWorkflowAttachmentRequirement('one video in MP4 format and no WebM videos');
-    assert.deepEqual(mp4WithoutWebm.requestedVideoFormats, ['mp4']);
-    assert.deepEqual(mp4WithoutWebm.forbiddenVideoFormats, ['webm']);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video in MP4 format and no WebM videos' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': the required MP4 was rejected by a separate WebM prohibition');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video in MP4 format and no WebM videos' }, { attachments: [{ type: 'video', src: 'https://cdn.example/a.webm' }] }), false,
-      AgentClass.name + ': an explicitly prohibited WebM satisfied the video contract');
-    const gifWithoutPng = agent._parseWorkflowAttachmentRequirement('one GIF and no PNG images');
-    assert.equal(gifWithoutPng.wantsImage, false,
-      AgentClass.name + ': a negated PNG clause created positive image intent');
-    assert.equal(gifWithoutPng.wantsGif, true,
-      AgentClass.name + ': the affirmative GIF lost positive media intent');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF and no PNG images' }, { attachments: [gif(1)] }), true,
-      AgentClass.name + ': a GIF-only publication was rejected by a negated PNG clause');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF and no PNG images' }, { attachments: [gif(1), image(1)] }), false,
-      AgentClass.name + ': an image survived beside the required GIF despite the PNG prohibition');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF and no PNG images' }, { attachments: [image(1)] }), false,
-      AgentClass.name + ': an image without the required GIF satisfied the GIF contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'no PNG or JPEG images' }, { attachments: [] }), true,
-      AgentClass.name + ': the valid empty set was rejected by a format-only prohibition');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'no PNG or JPEG images' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
-      AgentClass.name + ': an explicitly prohibited JPEG satisfied a format-only prohibition');
-    const pngOrJpegImage = agent._parseWorkflowAttachmentRequirement('one PNG or JPEG image');
-    assert.equal(pngOrJpegImage.isGeneric, true,
-      AgentClass.name + ': a coordinated image-format choice was parsed as filenames');
-    assert.deepEqual(pngOrJpegImage.specificTargets, [],
-      AgentClass.name + ': a coordinated image-format choice created specific targets');
-    assert.deepEqual(pngOrJpegImage.requestedImageFormats, ['png', 'jpeg']);
-    assert.deepEqual(pngOrJpegImage.mediaAlternativeBranches, [],
-      AgentClass.name + ': format-choice glue became whole-media branches');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or JPEG image' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': PNG did not satisfy the coordinated format choice');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), true,
-      AgentClass.name + ': JPEG did not satisfy the coordinated format choice');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.webp' }] }), false,
-      AgentClass.name + ': WebP satisfied a PNG-or-JPEG format choice');
-    const repeatedCountFormatChoice = agent._parseWorkflowAttachmentRequirement('one PNG or one JPEG image');
-    assert.equal(repeatedCountFormatChoice.isGeneric, true,
-      AgentClass.name + ': a repeated-count format choice was parsed as filenames');
-    assert.deepEqual(repeatedCountFormatChoice.specificTargets, [],
-      AgentClass.name + ': a repeated-count format choice created specific targets');
-    assert.deepEqual(repeatedCountFormatChoice.requestedImageFormats, ['png', 'jpeg']);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or one JPEG image' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': PNG did not satisfy the repeated-count format choice');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or one JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), true,
-      AgentClass.name + ': JPEG did not satisfy the repeated-count format choice');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or one JPEG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.webp' }] }), false,
-      AgentClass.name + ': WebP satisfied a repeated-count format choice');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG or one JPEG image' }, { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] }), false,
-      AgentClass.name + ': two images satisfied a single-image format choice');
-    const ellipticalAndFormats = agent._parseWorkflowAttachmentRequirement('one PNG and one JPEG image');
-    assert.equal(ellipticalAndFormats.isGeneric, true,
-      AgentClass.name + ': an elliptical and-format conjunction was parsed as filenames');
-    assert.deepEqual(ellipticalAndFormats.imageFormatCounts, [
-      { format: 'png', count: 1 },
-      { format: 'jpeg', count: 1 },
-    ], AgentClass.name + ': elliptical and-format counts were not distributed');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG and one JPEG image' },
-      { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
-    ), true, AgentClass.name + ': one PNG plus one JPEG did not satisfy the elliptical conjunction');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG and one JPEG image' }, { attachments: [image(1)] },
-    ), false, AgentClass.name + ': one PNG satisfied a two-format elliptical conjunction');
-    const ellipticalPlusFormats = agent._parseWorkflowAttachmentRequirement('one PNG plus one JPEG image');
-    assert.equal(ellipticalPlusFormats.isGeneric, true,
-      AgentClass.name + ': an elliptical plus-format conjunction was parsed as filenames');
-    assert.deepEqual(ellipticalPlusFormats.imageFormatCounts, [
-      { format: 'png', count: 1 },
-      { format: 'jpeg', count: 1 },
-    ], AgentClass.name + ': elliptical plus-format counts were not distributed');
-    const ellipticalAlongsideFormats = agent._parseWorkflowAttachmentRequirement('one PNG alongside one JPEG image');
-    assert.equal(ellipticalAlongsideFormats.isGeneric, true,
-      AgentClass.name + ': an elliptical alongside-format conjunction was parsed as filenames');
-    assert.deepEqual(ellipticalAlongsideFormats.imageFormatCounts, [
-      { format: 'png', count: 1 },
-      { format: 'jpeg', count: 1 },
-    ], AgentClass.name + ': elliptical alongside-format counts were not distributed');
-    for (const conjunction of ['together with', 'along with']) {
-      const ellipticalFormats = agent._parseWorkflowAttachmentRequirement(`one PNG ${conjunction} one JPEG image`);
-      assert.equal(ellipticalFormats.isGeneric, true,
-        AgentClass.name + `: an elliptical ${conjunction} conjunction was parsed as filenames`);
-      assert.deepEqual(ellipticalFormats.imageFormatCounts, [
-        { format: 'png', count: 1 },
-        { format: 'jpeg', count: 1 },
-      ], AgentClass.name + `: elliptical ${conjunction} counts were not distributed`);
-    }
-    for (const [attachments, expected, message] of [
-      [[{ type: 'image', src: 'https://cdn.example/a.jpg' }], true, 'the required JPEG was rejected by a separate PNG prohibition'],
-      [[{ type: 'image', src: 'https://cdn.example/a.webp' }], false, 'an unrequested WebP satisfied a required JPEG'],
-      [[image(1)], false, 'a prohibited PNG satisfied the JPEG contract'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'no PNG images and one JPEG image' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    for (const [attachments, expected, message] of [
-      [[image(1)], true, 'one image alone was rejected by a no-more-than video cap'],
-      [[image(1), video(1)], true, 'one image plus one video was rejected by a no-more-than video cap'],
-      [[image(1), video(1), video(2)], false, 'too many videos satisfied a no-more-than video cap'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image and no more than one video' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    for (const [attachments, expected, message] of [
-      [[image(1), video(1), video(2)], true, 'image plus two videos was rejected by a contrastive video cap'],
-      [[], false, 'empty attachments satisfied a contrastive exact image'],
-      [[image(1)], true, 'one image alone was rejected by a contrastive video cap'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image but at most two videos' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    assert.equal(agent._parseWorkflowAttachmentRequirement('one image together with one video').isGeneric, true,
-      AgentClass.name + ': together-with conjunction was parsed as a filename');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image together with one video' }, { attachments: [image(1), video(1)] }), true,
-      AgentClass.name + ': one image together with one video was rejected');
-    assert.equal(agent._parseWorkflowAttachmentRequirement('one image along with one video').isGeneric, true,
-      AgentClass.name + ': along-with conjunction was parsed as a filename');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image along with one video' }, { attachments: [image(1), video(1)] }), true,
-      AgentClass.name + ': one image along with one video was rejected');
-    assert.equal(agent._parseWorkflowAttachmentRequirement('one image in addition to one video').isGeneric, true,
-      AgentClass.name + ': in-addition-to conjunction was parsed as a filename');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image in addition to one video' }, { attachments: [image(1), video(1)] }), true,
-      AgentClass.name + ': one image in addition to one video was rejected');
-    const unrestrictedOrPngImage = agent._parseWorkflowAttachmentRequirement('one image or one PNG image');
-    assert.equal(unrestrictedOrPngImage.mediaAlternativeBranches.length, 2,
-      AgentClass.name + ': a format token consumed the noun slot of a whole-media alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image or one PNG image' }, { attachments: [{ type: 'image', src: 'https://cdn.example/a.jpg' }] }), true,
-      AgentClass.name + ': the unrestricted image branch incorrectly required PNG');
-    const pngAndJpegImages = agent._parseWorkflowAttachmentRequirement('one PNG image and one JPEG image');
-    assert.equal(pngAndJpegImages.expectedImageCount, 2,
-      AgentClass.name + ': conjunctive image-format counts were not summed');
-    assert.deepEqual(pngAndJpegImages.imageFormatCounts, [
-      { format: 'png', count: 1 },
-      { format: 'jpeg', count: 1 },
-    ], AgentClass.name + ': conjunctive image-format counts were flattened');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image and one JPEG image' },
-      { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
-    ), true, AgentClass.name + ': one PNG plus one JPEG did not satisfy the conjunctive contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image and one JPEG image' }, { attachments: [image(1)] },
-    ), false, AgentClass.name + ': one PNG satisfied a two-format conjunctive contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one PNG image and one JPEG image' }, { attachments: [image(1), image(2)] },
-    ), false, AgentClass.name + ': two PNGs satisfied a PNG-plus-JPEG contract');
-    const twoPngAndJpegImages = agent._parseWorkflowAttachmentRequirement('two PNG images and one JPEG image');
-    assert.equal(twoPngAndJpegImages.expectedImageCount, 3,
-      AgentClass.name + ': unequal conjunctive format counts were not summed');
-    assert.deepEqual(twoPngAndJpegImages.imageFormatCounts, [
-      { format: 'png', count: 2 },
-      { format: 'jpeg', count: 1 },
-    ]);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'two PNG images and one JPEG image' },
-      { attachments: [image(1), image(2), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
-    ), true, AgentClass.name + ': two PNGs plus one JPEG did not satisfy the conjunctive contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'two PNG images and one JPEG image' },
-      { attachments: [image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }] },
-    ), false, AgentClass.name + ': too few PNGs satisfied unequal conjunctive format counts');
-    const exactAndCappedFormats = agent._parseWorkflowAttachmentRequirement(
-      'one PNG image and at most one JPEG image',
-    );
-    assert.deepEqual(exactAndCappedFormats.imageFormatConstraints, [
-      { format: 'png', exactCount: 1, minimumCount: 0, maximumCount: 0 },
-      { format: 'jpeg', exactCount: 0, minimumCount: 0, maximumCount: 1 },
-    ], AgentClass.name + ': exact and bounded format clauses were flattened');
-    assert.equal(exactAndCappedFormats.minimumImageCount, 1,
-      AgentClass.name + ': exact format count was omitted from the aggregate minimum');
-    assert.equal(exactAndCappedFormats.maximumImageCount, 2,
-      AgentClass.name + ': per-format maxima were collapsed into an image-wide cap');
-    for (const [attachments, expected, message] of [
-      [[], false, 'zero images satisfied a required exact PNG'],
-      [[{ type: 'image', src: 'https://cdn.example/a.jpg' }], false, 'a lone JPEG satisfied a required exact PNG'],
-      [[image(1)], true, 'the required PNG without an optional JPEG was rejected'],
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }], true, 'a PNG plus a capped JPEG was rejected'],
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }], false, 'too many JPEGs satisfied the per-format cap'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one PNG image and at most one JPEG image' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    const formattedAndUnrestricted = agent._parseWorkflowAttachmentRequirement('one PNG image and one image');
-    assert.equal(formattedAndUnrestricted.expectedImageCount, 2,
-      AgentClass.name + ': an unrestricted media conjunct was omitted from the exact total');
-    assert.deepEqual(formattedAndUnrestricted.imageUnrestrictedConstraint,
-      { format: '', exactCount: 1, minimumCount: 0, maximumCount: 0 },
-      AgentClass.name + ': an unrestricted media slot was not retained');
-    for (const [attachments, expected, message] of [
-      [[image(1)], true, 'the required PNG alone was rejected by its scoped JPEG cap'],
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }], true, 'a PNG plus a capped JPEG was capped by the total image count'],
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }], true, 'a PNG plus two capped JPEGs was capped by the total image count'],
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }, { type: 'image', src: 'https://cdn.example/c.jpg' }], false, 'too many JPEGs satisfied the scoped JPEG cap'],
-      [[{ type: 'image', src: 'https://cdn.example/a.jpg' }], false, 'a lone JPEG satisfied the required PNG minimum'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'at least one PNG image and at most two JPEG images' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    for (const [attachments, expected, message] of [
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }], true, 'a generic image plus two capped JPEGs was rejected'],
-      [[image(1), { type: 'image', src: 'https://cdn.example/a.jpg' }, { type: 'image', src: 'https://cdn.example/b.jpg' }, { type: 'image', src: 'https://cdn.example/c.jpg' }], false, 'a third JPEG overflowed into the generic image slot'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'at least one image and at most two JPEG images' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    for (const [attachments, expected, message] of [
-      [[image(1)], true, 'one image was rejected by a paired image bound'],
-      [[image(1), image(2)], true, 'two images were rejected by a paired image bound'],
-      [[], false, 'empty attachments satisfied a paired image minimum'],
-      [[image(1), image(2), image(3)], false, 'three images satisfied a paired image maximum'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'at least one and at most two images' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    for (const [attachments, expected, message] of [
-      [[video(1)], true, 'the required MP4 alone was rejected by its scoped MOV cap'],
-      [[video(1), { type: 'video', src: 'https://cdn.example/b.mov' }], true, 'an MP4 plus a capped MOV was capped by the total video count'],
-      [[video(1), { type: 'video', src: 'https://cdn.example/b.mov' }, { type: 'video', src: 'https://cdn.example/c.mov' }], true, 'an MP4 plus two capped MOVs was capped by the total video count'],
-      [[video(1), { type: 'video', src: 'https://cdn.example/b.mov' }, { type: 'video', src: 'https://cdn.example/c.mov' }, { type: 'video', src: 'https://cdn.example/d.mov' }], false, 'too many MOVs satisfied the scoped MOV cap'],
-      [[{ type: 'video', src: 'https://cdn.example/b.mov' }], false, 'a lone MOV satisfied the required MP4 minimum'],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'at least one MP4 video and at most two MOV videos' }, { attachments },
-      ), expected, AgentClass.name + ': ' + message);
-    }
-    const imageButNoVideo = agent._parseWorkflowAttachmentRequirement('one image but no video');
-    assert.equal(imageButNoVideo.isGeneric, true,
-      AgentClass.name + ': contrastive media conjunction was parsed as a filename');
-    assert.equal(imageButNoVideo.isVideoNegated, true,
-      AgentClass.name + ': contrastive negative video constraint was lost');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image but no video' }, { attachments: [image(1)] },
-    ), true, AgentClass.name + ': an image-only publication failed the contrastive contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image but no video' }, { attachments: [image(1), video(1)] },
-    ), false, AgentClass.name + ': a video passed a contrastive no-video contract');
-    const sharedImageChoice = agent._parseWorkflowAttachmentRequirement(
-      'one image and either one video or one GIF',
-    );
-    assert.deepEqual(sharedImageChoice.mediaAlternativeBranches.map(branch => branch.normalized), [
-      'one image and one video',
-      'one image and one gif',
-    ], AgentClass.name + ': shared media conjunct was not distributed into every scoped alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and either one video or one GIF' }, { attachments: [image(1), video(1)] },
-    ), true, AgentClass.name + ': image-plus-video scoped alternative was rejected');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and either one video or one GIF' }, { attachments: [image(1), gif(1)] },
-    ), true, AgentClass.name + ': image-plus-GIF scoped alternative was rejected');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and either one video or one GIF' }, { attachments: [gif(1)] },
-    ), false, AgentClass.name + ': GIF-only evidence omitted the shared image conjunct');
-    const sharedSuffixChoice = agent._parseWorkflowAttachmentRequirement(
-      'either one video or one GIF, and one image',
-    );
-    assert.deepEqual(sharedSuffixChoice.mediaAlternativeBranches.map(branch => branch.normalized), [
-      'one video and one image',
-      'one gif and one image',
-    ], AgentClass.name + ': shared media suffix was not distributed into every scoped alternative');
-    const enumeratedSharedChoice = agent._parseWorkflowAttachmentRequirement(
-      'one image and either one video, one GIF, or two videos',
-    );
-    assert.deepEqual(enumeratedSharedChoice.mediaAlternativeBranches.map(branch => branch.normalized), [
-      'one image and one video',
-      'one image and one gif',
-      'one image and two videos',
-    ], AgentClass.name + ': shared conjunct was lost from comma-enumerated media alternatives');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and either one video, one GIF, or two videos' },
-      { attachments: [image(1), gif(1)] },
-    ), true, AgentClass.name + ': valid image-plus-GIF enumerated choice was rejected');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and either one video, one GIF, or two videos' },
-      { attachments: [gif(1)] },
-    ), false, AgentClass.name + ': GIF-only evidence omitted the enumerated shared image conjunct');
-    const enumeratedSharedSuffix = agent._parseWorkflowAttachmentRequirement(
-      'either one video, one GIF, or two videos, and one image',
-    );
-    assert.deepEqual(enumeratedSharedSuffix.mediaAlternativeBranches.map(branch => branch.normalized), [
-      'one video and one image',
-      'one gif and one image',
-      'two videos and one image',
-    ], AgentClass.name + ': shared suffix was lost from comma-enumerated media alternatives');
-    const neitherVideoNorGif = agent._parseWorkflowAttachmentRequirement(
-      'one image but neither a video nor a GIF',
-    );
-    assert.equal(neitherVideoNorGif.isGeneric, true,
-      AgentClass.name + ': neither/nor media prohibition was parsed as a filename');
-    assert.equal(neitherVideoNorGif.isVideoNegated, true);
-    assert.equal(neitherVideoNorGif.isGifNegated, true);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image but neither a video nor a GIF' }, { attachments: [image(1)] },
-    ), true, AgentClass.name + ': image-only evidence failed a neither-video-nor-GIF contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image but neither a video nor a GIF' }, { attachments: [image(1), gif(1)] },
-    ), false, AgentClass.name + ': a GIF passed a neither-video-nor-GIF contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'neither images nor videos' }, { attachments: [] },
-    ), true, AgentClass.name + ': empty evidence failed a bare neither-images-nor-videos contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'neither images nor videos' }, { attachments: [image(1)] },
-    ), false, AgentClass.name + ': an image passed a bare neither-images-nor-videos contract');
-    for (const [requirement, makeAttachment, minField, maxField] of [
-      ['at least one image and at most two images', image, 'minimumImageCount', 'maximumImageCount'],
-      ['at least one video and at most two videos', video, 'minimumVideoCount', 'maximumVideoCount'],
-      ['at least one GIF and at most two GIFs', gif, 'minimumGifCount', 'maximumGifCount'],
-    ]) {
-      const parsedRange = agent._parseWorkflowAttachmentRequirement(requirement);
-      assert.equal(parsedRange[minField], 1, AgentClass.name + `: lower bound was lost for ${requirement}`);
-      assert.equal(parsedRange[maxField], 2, AgentClass.name + `: upper bound was lost for ${requirement}`);
-      for (const [count, expected] of [[0, false], [1, true], [2, true], [3, false]]) {
-        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-          { value: requirement },
-          { attachments: Array.from({ length: count }, (_value, index) => makeAttachment(index + 1)) },
-        ), expected, AgentClass.name + `: ${count} attachments misverified for ${requirement}`);
-      }
-    }
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'up to two images' }, { attachments: [] }), true,
-      AgentClass.name + ': zero images should satisfy "up to two images"');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'up to two images' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': one image should satisfy "up to two images"');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'up to two images' }, { attachments: [image(1), image(2)] }), true,
-      AgentClass.name + ': two images should satisfy "up to two images"');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'up to two images' }, { attachments: [image(1), image(2), image(3)] }), false,
-      AgentClass.name + ': three images should not satisfy "up to two images"');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two images' }, { attachments: [video(1), image(1)] }), true,
-      AgentClass.name + ': one video plus one image should satisfy the capped mixed requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two images' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': exact video plus zero optional images should satisfy the capped mixed requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two images' }, { attachments: [video(1), image(1), image(2)] }), true,
-      AgentClass.name + ': one video plus two images should satisfy the capped mixed requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two images' }, { attachments: [video(1), image(1), image(2), image(3)] }), false,
-      AgentClass.name + ': the image maximum incorrectly loosened to three images');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two images' }, { attachments: [video(1), image(1), video(2)] }), false,
-      AgentClass.name + ': the image maximum incorrectly loosened the exact video count');
-    const cappedGifs = agent._parseWorkflowAttachmentRequirement('one video and at most two GIFs');
-    assert.equal(cappedGifs.expectedVideoCount, 1, AgentClass.name + ': the exact ordinary-video count was lost');
-    assert.equal(cappedGifs.expectedGifCount, 2, AgentClass.name + ': the GIF maximum count was lost');
-    assert.equal(cappedGifs.isVideoMaximum, false, AgentClass.name + ': the GIF maximum leaked onto ordinary videos');
-    assert.equal(cappedGifs.isGifMaximum, true, AgentClass.name + ': the GIF upper bound was not retained');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two GIFs' }, { attachments: [video(1), gif(1)] }), true,
-      AgentClass.name + ': one video plus one GIF should satisfy the GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two GIFs' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': exact video plus zero optional GIFs should satisfy the GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two GIFs' }, { attachments: [video(1), gif(1), gif(2)] }), true,
-      AgentClass.name + ': one video plus two GIFs should satisfy the GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two GIFs' }, { attachments: [video(1), gif(1), gif(2), gif(3)] }), false,
-      AgentClass.name + ': three GIFs exceeded the requested maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one video and at most two GIFs' }, { attachments: [video(1), video(2), gif(1)] }), false,
-      AgentClass.name + ': the GIF maximum loosened the exact ordinary-video count');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and at most two GIFs' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': zero optional GIFs did not satisfy a mixed GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and at most two GIFs' }, { attachments: [image(1), gif(1)] }), true,
-      AgentClass.name + ': one GIF did not satisfy a mixed GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and at most two GIFs' }, { attachments: [image(1), gif(1), gif(2)] }), true,
-      AgentClass.name + ': two GIFs did not satisfy a mixed GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and at most two GIFs' }, { attachments: [image(1), video(1)] }), false,
-      AgentClass.name + ': an ordinary video satisfied a mixed GIF-only constraint');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'up to two videos' }, { attachments: [] }), true,
-      AgentClass.name + ': zero videos should satisfy a standalone video maximum');
-    const imageWithoutGifs = agent._parseWorkflowAttachmentRequirement('one image and no GIFs');
-    assert.equal(imageWithoutGifs.wantsVideo, false,
-      AgentClass.name + ': a negated GIF mention created positive video intent');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and no GIFs' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': one image did not satisfy a no-GIF requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and no GIFs' }, { attachments: [image(1), gif(1)] }), false,
-      AgentClass.name + ': a GIF satisfied a no-GIF requirement');
-    for (const coordinatedNegative of ['no images or videos', 'without images or videos']) {
-      const parsedCoordinatedNegative = agent._parseWorkflowAttachmentRequirement(coordinatedNegative);
-      assert.equal(parsedCoordinatedNegative.wantsNone, true,
-        AgentClass.name + `: coordinated media negation was split for "${coordinatedNegative}"`);
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: coordinatedNegative }, { attachments: [] }), true,
-        AgentClass.name + `: empty media did not satisfy "${coordinatedNegative}"`);
-      for (const forbidden of [image(1), video(1), gif(1)]) {
-        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-          { value: coordinatedNegative }, { attachments: [forbidden] }), false,
-          AgentClass.name + `: forbidden media satisfied "${coordinatedNegative}"`);
-      }
-    }
-    const gifWithOtherTypesProhibited = agent._parseWorkflowAttachmentRequirement(
-      'one GIF but no images or videos',
-    );
-    assert.notEqual(gifWithOtherTypesProhibited.wantsNone, true,
-      AgentClass.name + ': broad media negation discarded an affirmative GIF');
-    assert.equal(gifWithOtherTypesProhibited.wantsGif, true,
-      AgentClass.name + ': an affirmative GIF was treated as negated');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF but no images or videos' }, { attachments: [gif(1)] }), true,
-      AgentClass.name + ': a GIF did not satisfy the positive GIF-only contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF but no images or videos' }, { attachments: [video(1)] }), false,
-      AgentClass.name + ': an ordinary video satisfied the positive GIF-only contract');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF but no images or videos' }, { attachments: [gif(1), image(1)] }), false,
-      AgentClass.name + ': a prohibited image survived beside the required GIF');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and no videos or GIFs' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': embedded coordinated media negation rejected the required image');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image and no videos or GIFs' }, { attachments: [image(1), gif(1)] }), false,
-      AgentClass.name + ': embedded coordinated media negation allowed a GIF');
-    const imageWithoutArticleVideo = agent._parseWorkflowAttachmentRequirement('one image without a video');
-    assert.equal(imageWithoutArticleVideo.wantsVideo, false,
-      AgentClass.name + ': an article hid the negated video requirement');
-    assert.equal(imageWithoutArticleVideo.isVideoNegated, true,
-      AgentClass.name + ': without-a-video did not retain its negative subtype constraint');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image without a video' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': an image-only post failed without-a-video verification');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one image without a video' }, { attachments: [image(1), video(1)] }), false,
-      AgentClass.name + ': a forbidden video satisfied without-a-video verification');
-    const emptyOrVideo = agent._parseWorkflowAttachmentRequirement('either no images or one video');
-    assert.equal(emptyOrVideo.mediaAlternativeBranches.length, 2,
-      AgentClass.name + ': empty-or-video requirement did not preserve both branches');
-    assert.equal(emptyOrVideo.mediaAlternativeBranches[0].wantsNone, true,
-      AgentClass.name + ': leading either prevented parsing the negative media branch');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'either no images or one video' }, { attachments: [] }), true,
-      AgentClass.name + ': empty media did not satisfy the negative alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'either no images or one video' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': one video did not satisfy the positive alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'either no images or one video' }, { attachments: [image(1), image(2)] }), false,
-      AgentClass.name + ': multiple images incorrectly satisfied an empty-or-video contract');
-
-    const boundedImages = agent._parseWorkflowAttachmentRequirement('between one and two images');
-    assert.equal(boundedImages.isGeneric, true,
-      AgentClass.name + ': bounded image range was parsed as filenames');
-    assert.equal(boundedImages.hasBoundedCountRange, true,
-      AgentClass.name + ': bounded image range marker was lost');
-    assert.equal(boundedImages.minimumCount, 1,
-      AgentClass.name + ': bounded image lower limit was lost');
-    assert.equal(boundedImages.maximumCount, 2,
-      AgentClass.name + ': bounded image upper limit was lost');
-    assert.equal(boundedImages.boundedRangeKind, 'image',
-      AgentClass.name + ': bounded image range was not scoped to images');
-    assert.deepEqual(boundedImages.specificTargets, [],
-      AgentClass.name + ': bounded image range created filename targets');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': one image should satisfy the bounded range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images' }, { attachments: [image(1), image(2)] }), true,
-      AgentClass.name + ': two images should satisfy the bounded range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images' }, { attachments: [] }), false,
-      AgentClass.name + ': zero images satisfied a positive bounded range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images' }, { attachments: [image(1), image(2), image(3)] }), false,
-      AgentClass.name + ': three images exceeded the bounded range');
-    const bareBoundedImages = agent._parseWorkflowAttachmentRequirement('one to two images');
-    assert.deepEqual(bareBoundedImages.boundedCountRanges, [
-      { minimumCount: 1, maximumCount: 2, kind: 'image' },
-    ], AgentClass.name + ': bare attachment range was not preserved');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one to two images' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': one image should satisfy a bare one-to-two range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one to two images' }, { attachments: [image(1), image(2)] }), true,
-      AgentClass.name + ': two images should satisfy a bare one-to-two range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one to two images' }, { attachments: [image(1), image(2), image(3)] }), false,
-      AgentClass.name + ': three images exceeded the bare one-to-two range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images or one video' }, { attachments: [video(1)] }), true,
-      AgentClass.name + ': valid video alternative was rejected by the image range');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images or one video' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': valid bounded-image alternative was rejected');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images or one video' }, { attachments: [image(1), image(2), image(3)] }), false,
-      AgentClass.name + ': image alternative exceeded its bounded upper limit');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'between one and two images or one video' }, { attachments: [] }), false,
-      AgentClass.name + ': empty media satisfied a positive bounded alternative');
-    const twoBoundedTypes = { value: 'between one and two images and between one and two videos' };
-    const parsedTwoBoundedTypes = agent._parseWorkflowAttachmentRequirement(twoBoundedTypes);
-    assert.deepEqual(parsedTwoBoundedTypes.boundedCountRanges, [
-      { minimumCount: 1, maximumCount: 2, kind: 'image' },
-      { minimumCount: 1, maximumCount: 2, kind: 'video' },
-    ], AgentClass.name + ': multiple typed bounded ranges were not preserved');
-    for (const attachments of [
-      [image(1), video(1)],
-      [image(1), image(2), video(1)],
-      [image(1), video(1), video(2)],
-      [image(1), image(2), video(1), video(2)],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        twoBoundedTypes, { attachments }), true,
-        AgentClass.name + ': a valid combination of two bounded media types was rejected');
-    }
-    for (const attachments of [
-      [video(1)],
-      [image(1)],
-      [image(1), image(2), image(3), video(1)],
-      [image(1), video(1), video(2), video(3)],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        twoBoundedTypes, { attachments }), false,
-        AgentClass.name + ': an out-of-range bounded media type was accepted');
-    }
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'up to two GIFs' }, { attachments: [] }), true,
-      AgentClass.name + ': zero GIFs should satisfy a standalone GIF maximum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'at most two GIFs or one image' }, { attachments: [video(1)] }), false,
-      AgentClass.name + ': ordinary video satisfied neither GIF-maximum nor image alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'at most two GIFs or one image' }, { attachments: [video(1), video(2)] }), false,
-      AgentClass.name + ': ordinary videos were counted under the GIF-maximum alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'at most two GIFs or one image' }, { attachments: [gif(1)] }), true,
-      AgentClass.name + ': valid GIF-maximum alternative was rejected');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'at most two GIFs or one image' }, { attachments: [image(1)] }), true,
-      AgentClass.name + ': valid image alternative was rejected');
-  }
-});
-
-test('attachment requirement parser treats conjunction-based requirements as generic', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const req = agent._parseWorkflowAttachmentRequirement('an image and a video');
-    assert.equal(req.isGeneric, true, AgentClass.name + ': an image and a video should be generic');
-    assert.equal(req.expectedCount, 2, AgentClass.name + ': should expect 2 attachments');
-    assert.equal(req.expectedImageCount, 1, AgentClass.name + ': should expect 1 image');
-    assert.equal(req.expectedVideoCount, 1, AgentClass.name + ': should expect 1 video');
-
-    const verified = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'an image and a video' },
-      { attachments: [{ type: 'image', src: 'pic.png' }, { type: 'video', src: 'vid.mp4' }] }
-    );
-    assert.equal(verified, true, AgentClass.name + ': image plus video should satisfy generic conjunction requirement');
-  }
-});
-
-test('attachment requirement parser recognizes Korean generic media nouns and counts', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const reqImg = agent._parseWorkflowAttachmentRequirement('사진');
-    assert.equal(reqImg.isGeneric, true, AgentClass.name + ': 사진 should be generic');
-    assert.equal(reqImg.wantsImage, true, AgentClass.name + ': 사진 should want image');
-    assert.equal(reqImg.expectedCount, 1, AgentClass.name + ': 사진 should expect 1 attachment');
-
-    const reqVid = agent._parseWorkflowAttachmentRequirement('동영상');
-    assert.equal(reqVid.isGeneric, true, AgentClass.name + ': 동영상 should be generic');
-    assert.equal(reqVid.wantsVideo, true, AgentClass.name + ': 동영상 should want video');
-    assert.equal(reqVid.expectedCount, 1, AgentClass.name + ': 동영상 should expect 1 attachment');
-
-    const reqImg2 = agent._parseWorkflowAttachmentRequirement('사진 2장');
-    assert.equal(reqImg2.isGeneric, true, AgentClass.name + ': 사진 2장 should be generic');
-    assert.equal(reqImg2.expectedCount, 2, AgentClass.name + ': 사진 2장 should expect 2 attachments');
-    assert.equal(reqImg2.expectedImageCount, 2, AgentClass.name + ': 사진 2장 should expect 2 images');
-
-    const reqBoth = agent._parseWorkflowAttachmentRequirement('이미지와 동영상');
-    assert.equal(reqBoth.isGeneric, true, AgentClass.name + ': 이미지와 동영상 should be generic');
-    assert.equal(reqBoth.wantsImage, true, AgentClass.name + ': 이미지와 동영상 should want image');
-    assert.equal(reqBoth.wantsVideo, true, AgentClass.name + ': 이미지와 동영상 should want video');
-    assert.equal(reqBoth.expectedCount, 2, AgentClass.name + ': 이미지와 동영상 should expect 2 attachments');
-
-    const verifiedImg = agent._workflowSocialPublishedAttachmentObserved(
-      { value: '사진' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }] }
-    );
-    assert.equal(verifiedImg, true, AgentClass.name + ': valid image should satisfy 사진 requirement');
-
-    const rejectedImg = agent._workflowSocialPublishedAttachmentObserved(
-      { value: '사진' },
-      { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/clip.mp4' }] }
-    );
-    assert.equal(rejectedImg, false, AgentClass.name + ': video attachment should not satisfy 사진 requirement');
-
-    const verifiedVid = agent._workflowSocialPublishedAttachmentObserved(
-      { value: '동영상' },
-      { attachments: [{ type: 'video', src: 'https://video.twimg.com/media/clip.mp4' }] }
-    );
-    assert.equal(verifiedVid, true, AgentClass.name + ': valid video should satisfy 동영상 requirement');
-
-    const rejectedVid = agent._workflowSocialPublishedAttachmentObserved(
-      { value: '동영상' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }] }
-    );
-    assert.equal(rejectedVid, false, AgentClass.name + ': image attachment should not satisfy 동영상 requirement');
-  }
-});
-
-test('attachment verification requires each media type in unquantified mixed-media requests', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const req = agent._parseWorkflowAttachmentRequirement('image and video');
-    assert.equal(req.isGeneric, true, AgentClass.name + ': image and video should be generic');
-    assert.equal(req.wantsImage, true, AgentClass.name + ': should want image');
-    assert.equal(req.wantsVideo, true, AgentClass.name + ': should want video');
-    assert.equal(req.expectedCount, 2, AgentClass.name + ': should expect at least 2 attachments');
-
-    const twoImages = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'image and video' },
-      { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }] }
-    );
-    assert.equal(twoImages, false, AgentClass.name + ': two images without video should be rejected for image and video');
-
-    const twoVideos = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'image and video' },
-      { attachments: [{ type: 'video', src: 'clip1.mp4' }, { type: 'video', src: 'clip2.mp4' }] }
-    );
-    assert.equal(twoVideos, false, AgentClass.name + ': two videos without image should be rejected for image and video');
-
-    const imageAndVideo = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'image and video' },
-      { attachments: [{ type: 'image', src: 'pic.png' }, { type: 'video', src: 'clip.mp4' }] }
-    );
-    assert.equal(imageAndVideo, true, AgentClass.name + ': image plus video should satisfy image and video');
-
-    const twoImagesAndVideo = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'image and video' },
-      { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'video', src: 'clip.mp4' }] }
-    );
-    assert.equal(twoImagesAndVideo, true, AgentClass.name + ': 2 images plus video should satisfy image and video');
-  }
-});
-
-test('attachment verification rejects extra media beyond explicitly requested counts and types', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-
-    const reqOneImg = agent._parseWorkflowAttachmentRequirement('one image');
-    assert.equal(reqOneImg.hasExplicitCardinality, true, AgentClass.name + ': one image should have explicit cardinality');
-    assert.equal(reqOneImg.hasExplicitImageCount, true, AgentClass.name + ': one image should have explicit image count');
-    assert.equal(reqOneImg.expectedCount, 1, AgentClass.name + ': one image should expect 1');
-
-    // one image exact match
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }] }
-      ),
-      true,
-      AgentClass.name + ': exact one image should pass'
-    );
-
-    // one image with extra image
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }] }
-      ),
-      false,
-      AgentClass.name + ': extra image beyond one image should be rejected'
-    );
-
-    // one image with unintended video
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'video', src: 'vid.mp4' }] }
-      ),
-      false,
-      AgentClass.name + ': unintended video with one image should be rejected'
-    );
-
-    // two videos
-    const reqTwoVid = agent._parseWorkflowAttachmentRequirement('two videos');
-    assert.equal(reqTwoVid.hasExplicitCardinality, true, AgentClass.name + ': two videos should have explicit cardinality');
-    assert.equal(reqTwoVid.hasExplicitVideoCount, true, AgentClass.name + ': two videos should have explicit video count');
-    assert.equal(reqTwoVid.expectedCount, 2, AgentClass.name + ': two videos should expect 2');
-
-    // two videos exact match
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'two videos' },
-        { attachments: [{ type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }] }
-      ),
-      true,
-      AgentClass.name + ': exact two videos should pass'
-    );
-
-    // two videos with extra video
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'two videos' },
-        { attachments: [{ type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }, { type: 'video', src: 'vid3.mp4' }] }
-      ),
-      false,
-      AgentClass.name + ': extra video beyond two videos should be rejected'
-    );
-
-    // two videos with unintended image
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'two videos' },
-        { attachments: [{ type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }, { type: 'image', src: 'pic.png' }] }
-      ),
-      false,
-      AgentClass.name + ': unintended image with two videos should be rejected'
-    );
-
-    // one image and two videos
-    const reqMixed = agent._parseWorkflowAttachmentRequirement('one image and two videos');
-    assert.equal(reqMixed.hasExplicitCardinality, true, AgentClass.name + ': one image and two videos should have explicit cardinality');
-    assert.equal(reqMixed.hasExplicitImageCount, true, AgentClass.name + ': should have explicit image count');
-    assert.equal(reqMixed.hasExplicitVideoCount, true, AgentClass.name + ': should have explicit video count');
-    assert.equal(reqMixed.expectedCount, 3, AgentClass.name + ': should expect 3 attachments');
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image and two videos' },
-        { attachments: [{ type: 'image', src: 'pic.png' }, { type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }] }
-      ),
-      true,
-      AgentClass.name + ': exact 1 image + 2 videos should pass'
-    );
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one image and two videos' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'video', src: 'vid1.mp4' }, { type: 'video', src: 'vid2.mp4' }] }
-      ),
-      false,
-      AgentClass.name + ': 2 images + 2 videos should be rejected for 1 image and 2 videos'
-    );
-
-    // two attachments
-    const reqTwoAtt = agent._parseWorkflowAttachmentRequirement('two attachments');
-    assert.equal(reqTwoAtt.hasExplicitCardinality, true, AgentClass.name + ': two attachments should have explicit cardinality');
-    assert.equal(reqTwoAtt.expectedCount, 2, AgentClass.name + ': two attachments should expect 2');
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'two attachments' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'video', src: 'vid1.mp4' }] }
-      ),
-      true,
-      AgentClass.name + ': 2 attachments should pass'
-    );
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'two attachments' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'video', src: 'vid1.mp4' }, { type: 'image', src: 'pic2.png' }] }
-      ),
-      false,
-      AgentClass.name + ': 3 attachments should be rejected for two attachments'
-    );
-
-    // Korean 사진 2장
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: '사진 2장' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }] }
-      ),
-      true,
-      AgentClass.name + ': 2 images should satisfy 사진 2장'
-    );
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: '사진 2장' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'image', src: 'pic3.png' }] }
-      ),
-      false,
-      AgentClass.name + ': 3 images should be rejected for 사진 2장'
-    );
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: '사진 2장' },
-        { attachments: [{ type: 'image', src: 'pic1.png' }, { type: 'image', src: 'pic2.png' }, { type: 'video', src: 'vid.mp4' }] }
-      ),
-      false,
-      AgentClass.name + ': 2 images + 1 video should be rejected for 사진 2장'
-    );
-  }
-});
-
-
-test('attachment verification matches specific attachment names without substring collisions', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-
-    const oldChartUrl = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/old-chart.png', alt: 'old-chart.png' }] }
-    );
-    assert.equal(oldChartUrl, false, AgentClass.name + ': old-chart.png should not satisfy chart.png');
-
-    const notChartUrl = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/not-chart.png', alt: 'not-chart.png' }] }
-    );
-    assert.equal(notChartUrl, false, AgentClass.name + ': not-chart.png should not satisfy chart.png');
-
-    const oldChartAlt = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/random-id.jpg', alt: 'Uploaded old-chart.png' }] }
-    );
-    assert.equal(oldChartAlt, false, AgentClass.name + ': alt with old-chart.png should not satisfy chart.png');
-
-    const exactChartUrl = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] }
-    );
-    assert.equal(exactChartUrl, true, AgentClass.name + ': chart.png in URL should satisfy chart.png');
-
-    const exactChartWithExtra = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      {
-        attachments: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/stale.png' },
-        ],
-      }
-    );
-    assert.equal(exactChartWithExtra, false,
-      AgentClass.name + ': one named attachment should reject extra media');
-
-    const exactChartAlt = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/random-id.jpg', alt: 'Uploaded chart.png' }] }
-    );
-    assert.equal(exactChartAlt, false, AgentClass.name + ': alt text was treated as attachment filename evidence');
-
-    const wrongNameExactAlt = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'chart.png' },
-      { attachments: [{ type: 'image', name: 'wrong.png', src: 'https://pbs.twimg.com/media/random-id.jpg', alt: 'chart.png' }] },
-    );
-    assert.equal(wrongNameExactAlt, false,
-      AgentClass.name + ': exact requested filename in alt text overrode wrong upload provenance');
-
-    const cleanedPrefixAccepted = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'an image of chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] }
-    );
-    assert.equal(cleanedPrefixAccepted, true, AgentClass.name + ': an image of chart.png should accept chart.png');
-
-    const cleanedPrefixRejected = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'an image of chart.png' },
-      { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/old-chart.png' }] }
-    );
-    assert.equal(cleanedPrefixRejected, false, AgentClass.name + ': an image of chart.png should reject old-chart.png');
-
-    // Multiple specific attachment targets
-    const multiSpecificReq = agent._parseWorkflowAttachmentRequirement({ value: 'cat.png and dog.jpg' });
-    assert.equal(multiSpecificReq.expectedCount, 2, AgentClass.name + ': expectedCount for cat.png and dog.jpg should be 2');
-    assert.equal(multiSpecificReq.hasExplicitCardinality, true, AgentClass.name + ': hasExplicitCardinality should be true for multi-target');
-    assert.deepEqual(multiSpecificReq.specificTargets, ['cat.png', 'dog.jpg'], AgentClass.name + ': specific targets parsed correctly');
-
-    const bothMatched = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'cat.png and dog.jpg' },
-      {
-        attachments: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/dog.jpg' },
-        ],
-      }
-    );
-    assert.equal(bothMatched, true, AgentClass.name + ': both distinct attachments matched should satisfy requirement');
-
-    const duplicateAttachment = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'cat.png and dog.jpg' },
-      {
-        attachments: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
-        ],
-      }
-    );
-    assert.equal(duplicateAttachment, false, AgentClass.name + ': duplicate single attachment cannot satisfy two distinct targets');
-
-    const missingAttachment = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'cat.png and dog.jpg' },
-      {
-        attachments: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
-        ],
-      }
-    );
-    assert.equal(missingAttachment, false, AgentClass.name + ': missing second attachment should reject');
-
-    const wrongSecondAttachment = agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'cat.png and dog.jpg' },
-      {
-        attachments: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/cat.png' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/bird.png' },
-        ],
-      }
-    );
-    assert.equal(wrongSecondAttachment, false, AgentClass.name + ': wrong second attachment should reject');
-
-    const namedAlternatives = agent._parseWorkflowAttachmentRequirement({
-      value: 'chart.png or graph.png',
-    });
-    assert.deepEqual(namedAlternatives.specificTargetAlternatives, [['chart.png'], ['graph.png']],
-      AgentClass.name + ': named attachment alternatives were flattened into one required set');
-    for (const allowedName of ['chart.png', 'graph.png']) {
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: 'chart.png or graph.png' },
-          { attachments: [{ type: 'image', src: `https://pbs.twimg.com/media/${allowedName}` }] },
-        ),
-        true,
-        AgentClass.name + `: permitted attachment alternative ${allowedName} was rejected`,
-      );
-    }
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'chart.png or graph.png' },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/graph.png' },
-          ],
-        },
-      ),
-      false,
-      AgentClass.name + ': both alternatives were accepted when exactly one was requested',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'chart.png or graph.png' },
-        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/other.png' }] },
-      ),
-      false,
-      AgentClass.name + ': unrelated media satisfied a named attachment alternative',
-    );
-    assert.deepEqual(
-      agent._parseWorkflowAttachmentRequirement('either chart.png or graph.png').specificTargetAlternatives,
-      [['chart.png'], ['graph.png']],
-      AgentClass.name + ': either modifier became part of a filename alternative',
-    );
-    for (const commaChoice of [
-      'chart.png, graph.png, or logo.png',
-      'one of chart.png, graph.png, or logo.png',
-    ]) {
-      assert.deepEqual(
-        agent._parseWorkflowAttachmentRequirement(commaChoice).specificTargetAlternatives,
-        [['chart.png'], ['graph.png'], ['logo.png']],
-        AgentClass.name + `: Oxford-comma attachment choices were not preserved for "${commaChoice}"`,
-      );
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: commaChoice },
-          { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/graph.png' }] },
-        ),
-        true,
-        AgentClass.name + `: one permitted Oxford-comma attachment was rejected for "${commaChoice}"`,
-      );
-    }
-    assert.deepEqual(
-      agent._parseWorkflowAttachmentRequirement('report-or-draft.png').specificTargetAlternatives,
-      [],
-      AgentClass.name + ': disjunction text inside one hyphenated filename created alternatives',
-    );
-    const groupedAlternatives = agent._parseWorkflowAttachmentRequirement({
-      value: 'chart.png and logo.png or summary.jpg',
-    });
-    assert.deepEqual(groupedAlternatives.specificTargetAlternatives,
-      [['chart.png', 'logo.png'], ['summary.jpg']],
-      AgentClass.name + ': conjunctive groups inside attachment alternatives were not preserved');
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'chart.png and logo.png or summary.jpg' },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/logo.png' },
-          ],
-        },
-      ),
-      true,
-      AgentClass.name + ': complete conjunctive alternative group was rejected',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'chart.png and logo.png or summary.jpg' },
-        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] },
-      ),
-      false,
-      AgentClass.name + ': incomplete conjunctive alternative group was accepted',
-    );
-    const sharedConjunctAlternatives = agent._parseWorkflowAttachmentRequirement(
-      'logo.png and either chart.png or graph.png',
-    );
-    assert.deepEqual(sharedConjunctAlternatives.specificTargetAlternatives,
-      [['logo.png', 'chart.png'], ['logo.png', 'graph.png']],
-      AgentClass.name + ': shared conjunct was not retained in every explicit either/or branch');
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'logo.png and either chart.png or graph.png' },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/logo.png' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
-          ],
-        },
-      ),
-      true,
-      AgentClass.name + ': valid shared-conjunct alternative was rejected',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'logo.png and either chart.png or graph.png' },
-        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/graph.png' }] },
-      ),
-      false,
-      AgentClass.name + ': alternative file alone satisfied a missing shared conjunct',
-    );
-    const trailingSharedConjunct = agent._parseWorkflowAttachmentRequirement(
-      'either chart.png or graph.png, and logo.png',
-    );
-    assert.deepEqual(trailingSharedConjunct.specificTargetAlternatives,
-      [['chart.png', 'logo.png'], ['graph.png', 'logo.png']],
-      AgentClass.name + ': trailing shared conjunct was not retained in every alternative branch');
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'either chart.png or graph.png, and logo.png' },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/chart.png' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/logo.png' },
-          ],
-        },
-      ),
-      true,
-      AgentClass.name + ': valid choice plus trailing shared conjunct was rejected',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'either chart.png or graph.png, and logo.png' },
-        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/chart.png' }] },
-      ),
-      false,
-      AgentClass.name + ': choice without trailing shared conjunct was accepted',
-    );
-    for (const [allowedName, type] of [['chart.png', 'image'], ['clip.mp4', 'video']]) {
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: 'chart.png or clip.mp4' },
-          { attachments: [{ type, src: `https://cdn.example/${allowedName}` }] },
-        ),
-        true,
-        AgentClass.name + `: cross-type named alternative ${allowedName} was rejected`,
-      );
-    }
-
-    // Multilingual conjunctions / delimiters in specific targets
-    for (const conjCase of [
-      'image1.png, image2.png',
-      'chart.png und graphic.png',
-      'foto1.jpg y foto2.jpg',
-      'pic1.png & pic2.png',
-      'diagram1.png et diagram2.png',
-    ]) {
-      const parsedConj = agent._parseWorkflowAttachmentRequirement({ value: conjCase });
-      assert.equal(parsedConj.expectedCount, 2, AgentClass.name + `: expectedCount should be 2 for "${conjCase}"`);
-      assert.equal(parsedConj.specificTargets.length, 2, AgentClass.name + `: should parse 2 targets for "${conjCase}"`);
-    }
-
-    // A conjunction inside one filename is part of the name, not a separator.
-    for (const [singleName, expected] of [
-      ['"research and development.png"', 'research and development.png'],
-      ['research and development.png', 'research and development.png'],
-      ['sales & marketing.png', 'sales & marketing.png'],
-      ['\u201cq1 and q2 summary.pdf\u201d', 'q1 and q2 summary.pdf'],
-    ]) {
-      const parsedName = agent._parseWorkflowAttachmentRequirement({ value: singleName });
-      assert.deepEqual(parsedName.specificTargets, [expected],
-        AgentClass.name + `: "${singleName}" should stay one attachment target`);
-      assert.equal(parsedName.expectedCount, 1,
-        AgentClass.name + `: "${singleName}" should expect one attachment`);
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: singleName },
-          { attachments: [{ type: 'image', src: `https://pbs.twimg.com/media/${encodeURIComponent(expected)}` }] },
-        ),
-        true,
-        AgentClass.name + `: the uploaded "${expected}" should satisfy "${singleName}"`,
-      );
-    }
-
-    // A quoted name keeps its conjunction while the list around it still splits.
-    const quotedListReq = agent._parseWorkflowAttachmentRequirement({
-      value: '"research and development.png", "q1 report.png"',
-    });
-    assert.deepEqual(quotedListReq.specificTargets, ['research and development.png', 'q1 report.png'],
-      AgentClass.name + ': quoted names split on the delimiter but not on their own conjunctions');
-
-    // A finished quoted name still ends a target, so the list around it splits.
-    for (const [mixedValue, mixedTargets] of [
-      ['"research and development.png" and cover.jpg', ['research and development.png', 'cover.jpg']],
-      ['cover.jpg and "research and development.png"', ['cover.jpg', 'research and development.png']],
-      ['research and "development.png"', ['research', 'development.png']],
-      ['"my notes" and cover.jpg', ['my notes', 'cover.jpg']],
-    ]) {
-      assert.deepEqual(agent._parseSpecificAttachmentTargets(mixedValue), mixedTargets,
-        AgentClass.name + `: "${mixedValue}" should split around the quoted name`);
-    }
-
-    // An unquoted conjunction still separates two named files.
-    const mixedListReq = agent._parseWorkflowAttachmentRequirement({
-      value: 'research and development.png and cover.jpg',
-    });
-    assert.deepEqual(mixedListReq.specificTargets, ['research and development.png', 'cover.jpg'],
-      AgentClass.name + ': a trailing conjunction between two filenames still splits');
-
-    // A GIF is a video, but an ordinary video is not a GIF.
-    const gifMedia = {
-      mp4: { type: 'video', src: 'https://video.twimg.com/media/clip.mp4' },
-      altNamedMp4: { type: 'video', src: 'https://video.twimg.com/media/clip.mp4', alt: 'demo.gif' },
-      typed: { type: 'animated_gif', src: 'https://video.twimg.com/tweet_video/loop.mp4' },
-      named: { type: 'video', src: 'https://video.twimg.com/tweet_video/animation.gif.mp4', alt: 'animation.gif' },
-      plain: { type: 'video', src: 'https://cdn.example.com/loop.gif' },
-    };
-    for (const [gifKey, gifLabel] of [['typed', 'a typed animated GIF'], ['named', 'an mp4-served GIF'], ['plain', 'a plain .gif']]) {
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved({ value: 'a GIF' }, { attachments: [gifMedia[gifKey]] }),
-        true,
-        AgentClass.name + `: ${gifLabel} should satisfy a GIF requirement`,
-      );
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: 'one video and no GIFs' },
-          { attachments: [gifMedia[gifKey]] },
-        ),
-        false,
-        AgentClass.name + `: ${gifLabel} should not pass a negated GIF requirement`,
-      );
-    }
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved({ value: 'a GIF' }, { attachments: [gifMedia.mp4] }),
-      false,
-      AgentClass.name + ': an ordinary mp4 should not satisfy a GIF requirement',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one video and no GIFs' },
-        { attachments: [gifMedia.mp4] },
-      ),
-      true,
-      AgentClass.name + ': an ordinary mp4 should pass a negated GIF requirement',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved({ value: 'a GIF' }, { attachments: [gifMedia.altNamedMp4] }),
-      false,
-      AgentClass.name + ': alt text ending in .gif reclassified an ordinary mp4',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'one video and no GIFs' },
-        { attachments: [gifMedia.altNamedMp4] },
-      ),
-      true,
-      AgentClass.name + ': GIF-like alt text violated a no-GIF requirement for an ordinary mp4',
-    );
-    const twoGifRequirement = agent._parseWorkflowAttachmentRequirement({ value: 'two GIFs' });
-    assert.equal(twoGifRequirement.expectedGifCount, 2,
-      AgentClass.name + ': the GIF count was collapsed into the general video count');
-    assert.equal(twoGifRequirement.expectedVideoCount, 0,
-      AgentClass.name + ': GIFs were also counted as requested ordinary videos');
-    assert.equal(twoGifRequirement.hasExplicitGifCount, true);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'two GIFs' },
-      { attachments: [gifMedia.typed] },
-    ), false, AgentClass.name + ': one GIF satisfied an exact two-GIF requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'two GIFs' },
-      { attachments: [gifMedia.typed, gifMedia.named] },
-    ), true, AgentClass.name + ': two GIFs did not satisfy an exact two-GIF requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'two GIFs' },
-      { attachments: [gifMedia.typed, gifMedia.mp4] },
-    ), false, AgentClass.name + ': an ordinary video substituted for the second GIF');
-
-    const gifAndVideoRequirement = agent._parseWorkflowAttachmentRequirement({ value: 'one GIF and one video' });
-    assert.equal(gifAndVideoRequirement.expectedGifCount, 1);
-    assert.equal(gifAndVideoRequirement.expectedVideoCount, 1);
-    assert.equal(gifAndVideoRequirement.expectedCount, 2);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF and one video' },
-      { attachments: [gifMedia.typed, gifMedia.mp4] },
-    ), true, AgentClass.name + ': one GIF plus one ordinary video did not satisfy both typed counts');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF and one video' },
-      { attachments: [gifMedia.typed, gifMedia.named] },
-    ), false, AgentClass.name + ': two GIFs satisfied a GIF-plus-video requirement');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'one GIF and one video' },
-      { attachments: [gifMedia.typed, gifMedia.mp4, { ...gifMedia.mp4, src: 'second.mp4' }] },
-    ), false, AgentClass.name + ': an extra ordinary video bypassed the exact typed counts');
-
-    const minimumGifs = agent._parseWorkflowAttachmentRequirement({ value: 'at least two GIFs' });
-    assert.equal(minimumGifs.isGifMinimum, true);
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      { value: 'at least two GIFs' },
-      { attachments: [gifMedia.typed, gifMedia.named, gifMedia.plain] },
-    ), true, AgentClass.name + ': a GIF minimum was incorrectly treated as an exact count');
-
-    // A singular article counts as exactly one, the same as the word "one".
-    const oneImage = { type: 'image', src: 'https://pbs.twimg.com/media/first.png' };
-    const otherImage = { type: 'image', src: 'https://pbs.twimg.com/media/second.png' };
-    const oneVideo = { type: 'video', src: 'https://video.twimg.com/media/clip.mp4' };
-    for (const articleReq of ['a video', 'an image', 'un video', 'une image', 'ein bild', 'uma imagem']) {
-      assert.equal(agent._parseWorkflowAttachmentRequirement({ value: articleReq }).hasExplicitCardinality, true,
-        AgentClass.name + `: "${articleReq}" should read as an explicit count of one`);
-    }
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: 'a video' }, { attachments: [oneVideo] }), true,
-      AgentClass.name + ': one video should satisfy "a video"');
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'a video' },
-        { attachments: [oneVideo, { type: 'video', src: 'https://video.twimg.com/media/other.mp4' }] },
-      ),
-      false,
-      AgentClass.name + ': two videos should not satisfy "a video"',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'an image and a video' },
-        { attachments: [oneImage, oneVideo] },
-      ),
-      true,
-      AgentClass.name + ': one image and one video should satisfy "an image and a video"',
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'an image and a video' },
-        { attachments: [oneImage, otherImage, oneVideo] },
-      ),
-      false,
-      AgentClass.name + ': an extra image should not satisfy "an image and a video"',
-    );
-
-    // Minimum-count qualifiers bound the count from below instead of naming a file.
-    for (const [minReq, minCount] of [
-      ['one or more images', 1],
-      ['at least two images', 2],
-      ['at least 2 images', 2],
-      ['minimum of 3 photos', 3],
-      ['no fewer than two images', 2],
-      ['mindestens zwei bilder', 2],
-      ['au moins deux photos', 2],
-      ['al menos dos im\u00e1genes', 2],
-      ['en az 2 foto\u011fraf', 2],
-      ['\u81f3\u5c11\u4e24\u5f20\u56fe\u7247', 2],
-      ['\ucd5c\uc18c 2\uc7a5 \uc0ac\uc9c4', 2],
-    ]) {
-      const parsedMin = agent._parseWorkflowAttachmentRequirement({ value: minReq });
-      assert.equal(parsedMin.isGeneric, true,
-        AgentClass.name + `: "${minReq}" should read as a generic media requirement`);
-      assert.equal(parsedMin.isMinimumCount, true,
-        AgentClass.name + `: "${minReq}" should carry lower-bound semantics`);
-      assert.deepEqual(parsedMin.specificTargets, [],
-        AgentClass.name + `: "${minReq}" should not name an attachment`);
-      assert.equal(parsedMin.expectedCount, minCount,
-        AgentClass.name + `: "${minReq}" should expect ${minCount}`);
-      const images = count => ({
-        attachments: Array.from({ length: count }, (unused, index) => (
-          { type: 'image', src: `https://pbs.twimg.com/media/shot${index}.png` }
-        )),
-      });
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: minReq }, images(minCount)), true,
-        AgentClass.name + `: exactly ${minCount} attachments should satisfy "${minReq}"`);
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: minReq }, images(minCount + 1)), true,
-        AgentClass.name + `: more than ${minCount} attachments should satisfy "${minReq}"`);
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved({ value: minReq }, images(minCount - 1)), false,
-        AgentClass.name + `: fewer than ${minCount} attachments should reject "${minReq}"`);
-    }
-
-    // A minimum qualifier applies only to the media count in its own phrase.
-    const image = index => ({ type: 'image', src: `https://pbs.twimg.com/media/image${index}.png` });
-    const video = index => ({ type: 'video', src: `https://video.twimg.com/media/video${index}.mp4` });
-    const scopedImageMinimum = { value: 'at least two images and one video' };
-    const parsedScopedImageMinimum = agent._parseWorkflowAttachmentRequirement(scopedImageMinimum);
-    assert.equal(parsedScopedImageMinimum.isImageMinimum, true,
-      AgentClass.name + ': the image minimum qualifier was not retained');
-    assert.equal(parsedScopedImageMinimum.isVideoMinimum, false,
-      AgentClass.name + ': the image minimum qualifier leaked onto the exact video count');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      scopedImageMinimum,
-      { attachments: [image(1), image(2), video(1)] },
-    ), true, AgentClass.name + ': the exact mixed minimum requirement did not pass');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      scopedImageMinimum,
-      { attachments: [image(1), image(2), image(3), video(1)] },
-    ), true, AgentClass.name + ': an extra image did not satisfy the image minimum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      scopedImageMinimum,
-      { attachments: [image(1), image(2), video(1), video(2)] },
-    ), false, AgentClass.name + ': the image minimum incorrectly loosened the exact video count');
-
-    const scopedVideoMinimum = { value: 'one image and at least two videos' };
-    const parsedScopedVideoMinimum = agent._parseWorkflowAttachmentRequirement(scopedVideoMinimum);
-    assert.equal(parsedScopedVideoMinimum.isImageMinimum, false,
-      AgentClass.name + ': the video minimum qualifier leaked onto the exact image count');
-    assert.equal(parsedScopedVideoMinimum.isVideoMinimum, true,
-      AgentClass.name + ': the video minimum qualifier was not retained');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      scopedVideoMinimum,
-      { attachments: [image(1), video(1), video(2), video(3)] },
-    ), true, AgentClass.name + ': an extra video did not satisfy the video minimum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      scopedVideoMinimum,
-      { attachments: [image(1), image(2), video(1), video(2)] },
-    ), false, AgentClass.name + ': the video minimum incorrectly loosened the exact image count');
-
-    const postfixVideoMinimum = { value: 'one image and one or more videos' };
-    const parsedPostfixVideoMinimum = agent._parseWorkflowAttachmentRequirement(postfixVideoMinimum);
-    assert.equal(parsedPostfixVideoMinimum.isAlternative, false,
-      AgentClass.name + ': "or more" was parsed as a media alternative');
-    assert.equal(parsedPostfixVideoMinimum.isVideoMinimum, true,
-      AgentClass.name + ': postfix video minimum scope was lost');
-    assert.equal(parsedPostfixVideoMinimum.isImageMinimum, false,
-      AgentClass.name + ': postfix video minimum leaked onto the image count');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      postfixVideoMinimum,
-      { attachments: [image(1), video(1), video(2)] },
-    ), true, AgentClass.name + ': extra video did not satisfy the postfix minimum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      postfixVideoMinimum,
-      { attachments: [image(1)] },
-    ), false, AgentClass.name + ': missing videos satisfied the postfix minimum');
-
-    const independentlyScopedMaximum = { value: 'at least one image and at most two videos' };
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      independentlyScopedMaximum,
-      { attachments: [image(1), image(2), image(3), image(4)] },
-    ), true, AgentClass.name + ': the video maximum imposed an aggregate limit on valid images');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      independentlyScopedMaximum,
-      { attachments: [image(1), video(1), video(2)] },
-    ), true, AgentClass.name + ': the scoped video maximum rejected its boundary');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      independentlyScopedMaximum,
-      { attachments: [image(1), video(1), video(2), video(3)] },
-    ), false, AgentClass.name + ': the scoped video maximum accepted too many videos');
-
-    const alternativeScopedMinimum = { value: 'at least two images or one video' };
-    const parsedAlternativeScopedMinimum = agent._parseWorkflowAttachmentRequirement(alternativeScopedMinimum);
-    assert.equal(parsedAlternativeScopedMinimum.isImageMinimum, true,
-      AgentClass.name + ': the alternative image minimum qualifier was not retained');
-    assert.equal(parsedAlternativeScopedMinimum.isVideoMinimum, false,
-      AgentClass.name + ': an alternative image minimum leaked onto the exact video count');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      alternativeScopedMinimum,
-      { attachments: [image(1), image(2), image(3)] },
-    ), true, AgentClass.name + ': extra images did not satisfy the alternative image minimum');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      alternativeScopedMinimum,
-      { attachments: [video(1)] },
-    ), true, AgentClass.name + ': one video did not satisfy the exact alternative');
-    assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-      alternativeScopedMinimum,
-      { attachments: [video(1), video(2)] },
-    ), false, AgentClass.name + ': an image minimum loosened the alternative exact video count');
-
-    // An unqualified count stays exact.
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: 'two images' },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/one.png' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/two.png' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/three.png' },
-          ],
-        },
-      ),
-      false,
-      AgentClass.name + ': three attachments should not satisfy an exact two-image requirement',
-    );
-
-    // Negative attachment requirements
-    for (const negReq of [
-      'no attachments',
-      'without media',
-      'without any media',
-      '0 attachments',
-      'zero attachments',
-      'none',
-      'sin archivos',
-      'sans photos',
-      'sem anexos',
-      'senza allegati',
-      'ohne anhang',
-      'без вложений',
-      '添付なし',
-      '첨부 없음',
-      '无附件',
-      'ek yok',
-    ]) {
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: negReq },
-          { attachments: [] }
-        ),
-        true,
-        AgentClass.name + `: text-only post (0 attachments) should satisfy "${negReq}"`
-      );
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved(
-          { value: negReq },
-          { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }] }
-        ),
-        false,
-        AgentClass.name + `: post with attachment should reject "${negReq}"`
-      );
-    }
-
-    // Mixed positive and negative media types
-    const mixedCases = [
-      {
-        req: 'one video and no images',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: '2 photos without video',
-        valid: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/2.jpg' },
-        ],
-        invalidExtra: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/2.jpg' },
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' }],
-      },
-      {
-        req: '1 video, 0 images',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: 'un video sin imágenes',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: '1 vidéo sans photos',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: '1 Video ohne Bilder',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: '動画1つ、画像なし',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: '동영상 1개, 사진 없음',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: '1个视频，无图片',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: 'no images, no videos',
-        valid: [],
-        invalidExtra: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-        invalidWrong: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-      },
-      {
-        req: 'videos and no images',
-        valid: [
-          { type: 'video', src: 'https://video.twimg.com/clip1.mp4' },
-          { type: 'video', src: 'https://video.twimg.com/clip2.mp4' },
-        ],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip1.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-      {
-        req: 'images only',
-        valid: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic1.jpg' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic2.jpg' },
-        ],
-        invalidExtra: [
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic1.jpg' },
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-        ],
-        invalidWrong: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-      },
-      {
-        req: 'video only',
-        valid: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }],
-        invalidExtra: [
-          { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          { type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' },
-        ],
-        invalidWrong: [{ type: 'image', src: 'https://pbs.twimg.com/media/pic.jpg' }],
-      },
-    ];
-
-    for (const { req, valid, invalidExtra, invalidWrong } of mixedCases) {
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved({ value: req }, { attachments: valid }),
-        true,
-        AgentClass.name + `: valid post should satisfy "${req}"`
-      );
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved({ value: req }, { attachments: invalidExtra }),
-        false,
-        AgentClass.name + `: post with extra forbidden media should reject "${req}"`
-      );
-      assert.equal(
-        agent._workflowSocialPublishedAttachmentObserved({ value: req }, { attachments: invalidWrong }),
-        false,
-        AgentClass.name + `: post with wrong media should reject "${req}"`
-      );
-    }
-
-    // Media disjunctions (e.g. "one image or one video")
-    const altReq = 'one image or one video';
-    const parsedAlt = agent._parseWorkflowAttachmentRequirement({ value: altReq });
-    assert.equal(parsedAlt.isAlternative, true, AgentClass.name + ': isAlternative should be true for "one image or one video"');
-    assert.equal(parsedAlt.expectedCount, 1, AgentClass.name + ': expectedCount should be 1 for alternative');
-
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: altReq },
-        { attachments: [{ type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' }] },
-      ),
-      true,
-      AgentClass.name + ': 1 image should satisfy "one image or one video"'
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: altReq },
-        { attachments: [{ type: 'video', src: 'https://video.twimg.com/clip.mp4' }] },
-      ),
-      true,
-      AgentClass.name + ': 1 video should satisfy "one image or one video"'
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: altReq },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
-            { type: 'image', src: 'https://pbs.twimg.com/media/2.jpg' },
-          ],
-        },
-      ),
-      false,
-      AgentClass.name + ': 2 images should reject "one image or one video"'
-    );
-    assert.equal(
-      agent._workflowSocialPublishedAttachmentObserved(
-        { value: altReq },
-        {
-          attachments: [
-            { type: 'image', src: 'https://pbs.twimg.com/media/1.jpg' },
-            { type: 'video', src: 'https://video.twimg.com/clip.mp4' },
-          ],
-        },
-      ),
-      false,
-      AgentClass.name + ': simultaneous image and video should reject "one image or one video"'
-    );
-
-    const alternativeImage = index => ({ type: 'image', src: `https://example.test/alternative-${index}.png` });
-    const alternativeVideo = index => ({ type: 'video', src: `https://example.test/alternative-${index}.mp4` });
-    const alternativeGif = index => ({ type: 'animated_gif', src: `https://example.test/alternative-${index}.gif` });
-    const scopedCountAlternative = { value: 'one or two images and one video' };
-    const parsedScopedCountAlternative = agent._parseWorkflowAttachmentRequirement(scopedCountAlternative);
-    assert.equal(parsedScopedCountAlternative.isAlternative, false,
-      AgentClass.name + ': a same-type count choice made the surrounding media conjunctive clause alternative');
-    assert.deepEqual(parsedScopedCountAlternative.imageAlternativeCounts, [1, 2],
-      AgentClass.name + ': scoped image count alternatives were lost');
-    for (const attachments of [
-      [alternativeImage(1), alternativeVideo(1)],
-      [alternativeImage(1), alternativeImage(2), alternativeVideo(1)],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        scopedCountAlternative,
-        { attachments },
-      ), true, AgentClass.name + ': a valid scoped image-count branch was rejected');
-    }
-    for (const attachments of [
-      [alternativeImage(1), alternativeImage(2)],
-      [alternativeImage(1), alternativeImage(2), alternativeImage(3), alternativeVideo(1)],
-      [alternativeImage(1), alternativeVideo(1), alternativeVideo(2)],
-    ]) {
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        scopedCountAlternative,
-        { attachments },
-      ), false, AgentClass.name + ': invalid conjunctive media satisfied a scoped count alternative');
-    }
-    for (const { requirement, branchCount = 2, valid, invalid } of [
-      {
-        requirement: 'either one image or two videos',
-        valid: [[alternativeImage(1)], [alternativeVideo(1), alternativeVideo(2)]],
-        invalid: [[alternativeVideo(1)]],
-      },
-      {
-        requirement: 'one image or two GIFs',
-        valid: [[alternativeImage(1)], [alternativeGif(1), alternativeGif(2)]],
-        invalid: [[alternativeGif(1)], [alternativeVideo(1), alternativeVideo(2)], [alternativeImage(1), alternativeGif(1)]],
-      },
-      {
-        requirement: 'one GIF or two videos',
-        valid: [[alternativeGif(1)], [alternativeVideo(1), alternativeVideo(2)]],
-        invalid: [[alternativeVideo(1)], [alternativeGif(1), alternativeVideo(1)], [alternativeGif(1), alternativeGif(2)]],
-      },
-      {
-        requirement: 'either one image or both one GIF and one video',
-        valid: [[alternativeImage(1)], [alternativeGif(1), alternativeVideo(1)]],
-        invalid: [
-          [alternativeGif(1)],
-          [alternativeVideo(1)],
-          [alternativeGif(1), alternativeGif(2)],
-          [alternativeVideo(1), alternativeVideo(2)],
-          [alternativeImage(1), alternativeVideo(1)],
-        ],
-      },
-      {
-        requirement: 'one of an image, a video, and a GIF',
-        branchCount: 3,
-        valid: [[alternativeImage(1)], [alternativeVideo(1)], [alternativeGif(1)]],
-        invalid: [
-          [alternativeImage(1), alternativeVideo(1)],
-          [alternativeGif(1), alternativeVideo(1)],
-          [alternativeImage(1), alternativeImage(2)],
-        ],
-      },
-      {
-        requirement: 'either one image and one video or one GIF',
-        valid: [[alternativeImage(1), alternativeVideo(1)], [alternativeGif(1)]],
-        invalid: [
-          [alternativeImage(1), alternativeGif(1)],
-          [alternativeImage(1)],
-          [alternativeVideo(1)],
-        ],
-      },
-      {
-        requirement: 'either one image, two videos, or three GIFs',
-        branchCount: 3,
-        valid: [
-          [alternativeImage(1)],
-          [alternativeVideo(1), alternativeVideo(2)],
-          [alternativeGif(1), alternativeGif(2), alternativeGif(3)],
-        ],
-        invalid: [
-          [alternativeGif(1)],
-          [alternativeImage(1), alternativeVideo(1), alternativeVideo(2)],
-          [alternativeVideo(1), alternativeVideo(2), alternativeVideo(3)],
-        ],
-      },
-    ]) {
-      const parsedTypedAlternative = agent._parseWorkflowAttachmentRequirement({ value: requirement });
-      assert.equal(parsedTypedAlternative.isGeneric, true,
-        AgentClass.name + `: typed alternative was parsed as filenames for "${requirement}"`);
-      assert.equal(parsedTypedAlternative.isAlternative, true,
-        AgentClass.name + `: typed alternative grammar was lost for "${requirement}"`);
-      assert.equal(parsedTypedAlternative.mediaAlternativeBranches.length, branchCount,
-        AgentClass.name + `: complete typed alternative branches were not retained for "${requirement}"`);
-      for (const attachments of valid) {
-        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-          { value: requirement },
-          { attachments },
-        ), true, AgentClass.name + `: a permitted branch did not satisfy "${requirement}"`);
-      }
-      for (const attachments of invalid) {
-        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-          { value: requirement },
-          { attachments },
-        ), false, AgentClass.name + `: a non-permitted branch satisfied "${requirement}"`);
-      }
-    }
-
-    for (const [sameTypeRequirement, attachment] of [
-      ['one or two images', index => ({ type: 'image', src: `https://example.test/${index}.png` })],
-      ['one image or two images', index => ({ type: 'image', src: `https://example.test/${index}.png` })],
-      ['one or two videos', index => ({ type: 'video', src: `https://example.test/${index}.mp4` })],
-      ['one or two GIFs', index => ({ type: 'animated_gif', src: `https://example.test/${index}.gif` })],
-      ['one or two attachments', index => ({ type: 'image', src: `https://example.test/${index}.png` })],
-    ]) {
-      const parsedSameType = agent._parseWorkflowAttachmentRequirement(sameTypeRequirement);
-      assert.equal(parsedSameType.isAlternative, true,
-        AgentClass.name + `: same-type disjunction was not retained for "${sameTypeRequirement}"`);
-      assert.deepEqual(parsedSameType.alternativeCounts, [1, 2],
-        AgentClass.name + `: alternative counts were lost for "${sameTypeRequirement}"`);
-      for (const count of [1, 2]) {
-        assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-          { value: sameTypeRequirement },
-          { attachments: Array.from({ length: count }, (_, index) => attachment(index)) },
-        ), true, AgentClass.name + `: ${count} attachments should satisfy "${sameTypeRequirement}"`);
-      }
-      assert.equal(agent._workflowSocialPublishedAttachmentObserved(
-        { value: sameTypeRequirement },
-        { attachments: Array.from({ length: 3 }, (_, index) => attachment(index)) },
-      ), false, AgentClass.name + `: three attachments should reject "${sameTypeRequirement}"`);
-    }
-
-    // Media-only generic phrase check
-    const parsedOnly = agent._parseWorkflowAttachmentRequirement({ value: 'images only' });
-    assert.equal(parsedOnly.isGeneric, true, AgentClass.name + ': "images only" should be parsed as generic');
-    assert.equal(parsedOnly.wantsImage, true, AgentClass.name + ': "images only" should want image');
-  }
-});
-
-test('post body extraction prefers colon-introduced body when colon precedes incidental quotes', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    const longBodyWithQuotes = 'Post on X: Here is a long announcement containing "important news" and more updates today';
-    assert.equal(
-      agent._extractWorkflowTaskBody(longBodyWithQuotes),
-      'Here is a long announcement containing "important news" and more updates today',
-      AgentClass.name + ': colon-introduced body should preserve text containing incidental quotes'
-    );
-
-    const quotedBeforeColon = 'Post "breaking news" on X: see updates now';
-    assert.equal(
-      agent._extractWorkflowTaskBody(quotedBeforeColon),
-      'breaking news',
-      AgentClass.name + ': quote before colon should take precedence'
-    );
-
-    const colonWrappedInQuotes = 'Post on X: "Hello world with updates"';
-    assert.equal(
-      agent._extractWorkflowTaskBody(colonWrappedInQuotes),
-      'Hello world with updates',
-      AgentClass.name + ': colon body completely wrapped in quotes should be unwrapped'
-    );
-  }
-});
-
-test('post body extraction skips incidental command colons and parenthesized metadata', () => {
-  for (const AgentClass of [AgentCh, AgentFx]) {
-    const agent = new AgentClass({});
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X (account: @acme): Hello world'),
-      'Hello world',
-      AgentClass.name + ': parenthesized account metadata with colon should not be captured as body'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X [account: @acme]: Hello world'),
-      'Hello world',
-      AgentClass.name + ': bracketed account metadata with colon should not be captured as body'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X (account: @acme): Here is a long announcement containing "important news" and more updates today'),
-      'Here is a long announcement containing "important news" and more updates today',
-      AgentClass.name + ': parenthesized metadata with colon preceding inner quotes should extract full body'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X, account: @acme: Hello world'),
-      'Hello world',
-      AgentClass.name + ': metadata key prefix with colon should be skipped in favor of payload colon'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Xに投稿（アカウント：@acme）：こんにちは世界'),
-      'こんにちは世界',
-      AgentClass.name + ': Japanese full-width parenthesized account with colon should not be captured as body'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X (account: @acme): Breaking: Version 2 is released'),
-      'Breaking: Version 2 is released',
-      AgentClass.name + ': body containing colon should preserve colon after payload delimiter'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X at 3:00: Hello world'),
-      'Hello world',
-      AgentClass.name + ': clock colon in at 3:00 should not be captured as body delimiter'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X at 14:30: Hello world'),
-      'Hello world',
-      AgentClass.name + ': 24-hour clock colon in at 14:30 should not be captured as body delimiter'
-    );
-    assert.equal(
-      agent._extractWorkflowTaskBody('Post on X at 3:00 PM: Hello world'),
-      'Hello world',
-      AgentClass.name + ': clock colon with AM/PM should not be captured as body delimiter'
-    );
+    assert.equal(stableAltRecord.attachments.find(item => item.name === 'a.png')?.alt, 'Alt for a',
+      AgentClass.name + ': stable reordered filename/alt provenance did not join');
   }
 });
 
 test('YouTube metadata success requires exact app-classified post-save readback', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     agent._persist = () => { };
     const tabId = 8939 + index;
@@ -99350,11 +97329,11 @@ test('YouTube metadata success requires exact app-classified post-save readback'
       { field: 'title', value: 'Launch Video' },
       { field: 'visibility', value: 'Public' },
     ], `${AgentClass.name}: trusted task metadata requirements were not retained`);
-    assert.equal(agent._workflowMetadataFieldKey('Visibilité'), 'visibility',
+    assert.equal(agent._workflowFieldKey('metadata_field', 'Visibilité'), 'visibility',
       `${AgentClass.name}: localized French visibility label was not canonicalized`);
-    assert.equal(agent._workflowMetadataFieldKey('タイトル（必須）'), 'title',
+    assert.equal(agent._workflowFieldKey('metadata_field', 'タイトル（必須）'), 'title',
       `${AgentClass.name}: localized Japanese title label was not canonicalized`);
-    assert.equal(agent._workflowMetadataFieldKey('説明'), 'description',
+    assert.equal(agent._workflowFieldKey('metadata_field', '説明'), 'description',
       `${AgentClass.name}: localized Japanese description label was not canonicalized`);
 
     agent._beginCompletionInvariant(tabId);
@@ -99581,20 +97560,32 @@ test('compact workflow execution policy is brief and compact progress_update sch
 test('workflow metadata matching accepts AX truncation and keeps valid fields', () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({});
-    assert.equal(agent._workflowMetadataFieldKey('playlists'), 'playlist',
-      `${AgentClass.name}: playlist plural alias was not canonicalized`);
-    assert.equal(agent._workflowMetadataFieldKey('listes de lecture'), 'playlist');
-    assert.equal(agent._workflowMetadataFieldKey('tag'), 'tag',
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's field labels as holding
+    assert.equal(agent._workflowFieldKey('metadata_field', 'playlists'), 'playlist',
+      `${AgentClass.name}: a plural playlist label did not read as its field`);
+    assert.equal(agent._workflowFieldKey('metadata_field', 'listes de lecture'), 'playlist');
+    // A release's version tag and a video's tags are asked about by different
+    // questions, so one never stands for the other.
+    assert.equal(agent._workflowFieldKey('publication_field', 'tag'), 'tag',
       `${AgentClass.name}: a release tag was folded into YouTube tags`);
-    assert.equal(agent._workflowMetadataFieldKey('Choose a tag'), 'tag');
-    assert.equal(agent._workflowMetadataFieldKey('tags'), 'tags',
+    assert.equal(agent._workflowFieldKey('publication_field', 'Choose a tag'), 'tag');
+    assert.equal(agent._workflowFieldKey('metadata_field', 'tags'), 'tags',
       `${AgentClass.name}: plural tags lost its YouTube field`);
-    assert.equal(agent._workflowMetadataFieldKey('release notes'), 'notes');
-    assert.equal(agent._workflowMetadataFieldKey('post body'), 'body');
+    assert.equal(agent._workflowFieldKey('metadata_field', 'tag'), '',
+      `${AgentClass.name}: a release tag label held a video detail`);
+    assert.equal(agent._workflowFieldKey('publication_field', 'release notes'), 'notes');
+    assert.equal(agent._workflowFieldKey('publication_field', 'post body'), 'body');
+    // A label read as none of them, or not read at all, holds no field.
+    assert.equal(agent._workflowFieldKey('metadata_field', 'Search'), '');
+    assert.equal(agent._workflowFieldKey('', 'Title'), '');
+    // The intent model names fields with the canonical names its prompt
+    // lists; another name (a plural, a translation) names no field.
     assert.deepEqual(agent._normalizeWorkflowMetadataRequirements([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
-      { field: 'playlists', value: 'Favorites' },
+      { field: 'Playlist', value: 'Favorites' },
+      { field: 'playlists', value: 'Other' },
+      { field: 'başlık', value: 'Başka' },
       { field: 'title', value: 'Duplicate' },
     ]), [
       { field: 'title', value: 'Launch Video' },
@@ -99603,11 +97594,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
     const discarded = agent._normalizeWorkflowMetadataRequirementsDetails([
       { field: 'title', value: 'Launch Video' },
       { field: 'unknown-custom-field', value: 'nope' },
-      { field: 'playlists', value: 'Favorites' },
+      { field: 'playlist', value: 'Favorites' },
     ]);
     assert.equal(discarded.incomplete, true,
       `${AgentClass.name}: discarded classifier fields were treated as complete requirements`);
     assert.deepEqual(discarded.items.map(item => item.field), ['title', 'playlist']);
+    for (const key of ['commit message', 'commit-message', 'COMMIT_MESSAGE']) assert.equal(agent._workflowCanonicalFieldKey(key), 'commit_message');
+    for (const key of ['playlists', 'release notes', 'başlık', '标题', '']) assert.equal(agent._workflowCanonicalFieldKey(key), '');
 
     const longDescription = 'Launch the product with a detailed description that exceeds sixty characters and must still verify after save.';
     assert.ok(longDescription.length > 60);
@@ -99628,6 +97621,7 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
         observationSequence: 2,
       }]),
       0,
+      'metadata_field',
     ), true, `${AgentClass.name}: AX-truncated description did not verify`);
     const sameLengthDifferentTail = `${longDescription.slice(0, 60)}X${longDescription.slice(61)}`;
     assert.equal(sameLengthDifferentTail.length, longDescription.length);
@@ -99641,11 +97635,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
         observationSequence: 2,
       }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: a same-length different tail verified from the 60-char prefix`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'description', value: longDescription }],
       evidence([{ label: 'Description', value: truncated, observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: truncated prefix without value_len/value_fp verified`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'description', value: `B${longDescription.slice(1)}` }],
@@ -99657,6 +97653,7 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
         observationSequence: 2,
       }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: a different long string sharing a short prefix verified`);
     assert.equal(agent._workflowAxValueMatchesExpected(`${'A'.repeat(10)}...`, 'A'.repeat(80)), false,
       `${AgentClass.name}: a 10-char truncated prefix accepted a longer string`);
@@ -99680,11 +97677,13 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       [{ field: 'title', value: quotedTitle }],
       evidence([{ label: 'Title', value: quotedItems[0].value, observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), true, `${AgentClass.name}: a title with quotes and backslashes did not verify`);
     assert.equal(agent._workflowMetadataRequirementsMatchInventory(
       [{ field: 'title', value: 'Launch Video' }],
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), true, `${AgentClass.name}: value equal to the accessible name did not verify`);
     const incompleteReqs = [{ field: 'title', value: 'Launch Video' }];
     incompleteReqs.incomplete = true;
@@ -99692,6 +97691,7 @@ test('workflow metadata matching accepts AX truncation and keeps valid fields', 
       incompleteReqs,
       evidence([{ label: 'Title', value: 'Launch Video', observationSequence: 2 }]),
       0,
+      'metadata_field',
     ), false, `${AgentClass.name}: discarded classifier fields still allowed saved-state verification`);
   }
 });
@@ -100100,6 +98100,7 @@ test('paged iframe reads accumulate one complete application inventory', () => {
 test('form confirmations bind to the form this run inventoried', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const tabId = 9370 + index;
     const intendedUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=intended-form';
@@ -100156,10 +98157,79 @@ test('form confirmations bind to the form this run inventoried', () => {
   }
 });
 
-test('optional controls the user asked for cannot be skipped', () => {
+test('a form confirmation in any language counts only as a model reads it', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
     agent.useSiteAdapters = true;
+    const tabId = 9380 + index;
+    const url = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=intended-form';
+    agent.conversations.set(tabId, [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'Bu formu doldurup gönder.' },
+    ]);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+      siteWorkflow: resolveAdapterWorkflowJob(url, 'submit-form'),
+    });
+    guard.successfulConsequentialToolCalls = 1;
+    agent._rememberAxScope(tabId, 'intended-form-document', url);
+    agent._lastAxScopes.set(tabId, { documentToken: 'intended-form-document', pageUrl: url });
+    agent._rememberWorkflowInventoryObservation(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+      success: true, pageContent: 'textbox "Ad Soyad" [ref_name] required=true value="Ada"',
+      treeRevision: 'intended-form-tree', pageUrl: url,
+    });
+    const evidence = (verifiedFinalSubmit = true) => ({
+      submit: { dispatched: true, observedAfterSubmit: true, originatingUrl: url,
+        workflowBinding: agent._workflowSubmitBindingForAttempt(tabId, url) },
+      verifiedFinalSubmit, relevantForms: 0,
+    });
+    const confirmed = 'Yanıtınız gönderildi.', failed = 'Yanıtınız gönderilemedi.';
+    let readings = new Map([[confirmed, 'reached']]);
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'workflow_state' ? readings.get(item.text) || 'other' : null));
+    const check = async (pageState, submission = evidence()) => {
+      await agent._readWorkflowTerminalTexts(tabId, pageState, submission);
+      return agent._workflowTerminalEvidenceFromDone(tabId, pageState, url, submission, null);
+    };
+
+    assert.equal((await check({ workflowPageText: `Müşteri anketi\n${confirmed}` }))?.source, 'form_confirmation_state',
+      `${AgentClass.name}: a Turkish confirmation read as reached was not accepted`);
+    assert.deepEqual(asked.map(item => [item.kind, item.state, item.text]), [
+      ['workflow_state', 'the form or application was submitted and received', 'Müşteri anketi'],
+      ['workflow_state', 'the form or application was submitted and received', confirmed],
+    ]);
+
+    // Nothing is read until the rest of the evidence is in place.
+    asked.length = 0;
+    assert.equal(await check({ workflowPageText: 'Başka bir metin' }, evidence(false)), null);
+    assert.deepEqual(asked, [], `${AgentClass.name}: an unverified submit still asked for readings`);
+
+    // A text read as saying it failed outweighs one read as reached.
+    readings = new Map([[confirmed, 'reached'], [failed, 'failed']]);
+    assert.equal(await check({ workflowPageText: `${confirmed}\n${failed}` }), null,
+      `${AgentClass.name}: a failure text was ignored beside a confirmation`);
+
+    // A long page is not read line by line; its prominent texts are.
+    asked.length = 0;
+    readings = new Map([[confirmed, 'reached']]);
+    const longPage = `${'Uzun bir sayfa satırı.\n'.repeat(120)}${confirmed}`;
+    assert.equal(await check({ workflowPageText: longPage }), null,
+      `${AgentClass.name}: a long page was read line by line`);
+    assert.equal(asked.length, 0);
+    assert.equal((await check({ workflowPageText: longPage, workflowStatusTexts: [confirmed] }))?.source, 'form_confirmation_state');
+
+    // A text the model did not read as reached proves nothing.
+    readings = new Map();
+    assert.equal(await check({ workflowPageText: 'Teşekkürler!' }), null);
+  }
+});
+
+test('optional controls the user asked for cannot be skipped', async () => {
+  for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    const agent = new AgentClass({});
+    agent.useSiteAdapters = true;
+    // A model reads which form field each of the request's named fields is,
+    // in any language (form_field_match); the fixture oracle stands in.
+    const asked = stubPageTextReadings(agent);
     const tabId = 9380 + index;
     const formUrl = 'https://forms.cloud.microsoft/pages/responsepage.aspx?id=optional';
     const selected = resolveAdapterWorkflowJob(formUrl, 'submit-form');
@@ -100228,6 +98298,10 @@ test('optional controls the user asked for cannot be skipped', () => {
       `${AgentClass.name}: genuinely optional rows could not be skipped before the request was classified (${baseline.error || ''})`);
     guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['attach my cover letter']);
     guard.workflowRequestedControlLabelsResolved = true;
+    await agent._readWorkflowRequestedFieldMatches(tabId);
+    assert.deepEqual(asked.filter(item => item.kind === 'form_field_match').map(item => [item.named, item.text]).sort(),
+      [['attach my cover letter', 'Cover letter (optional)'], ['attach my cover letter', 'Referral code']],
+      `${AgentClass.name}: only the optional fields were to be read against the named field`);
     const requested = reconcile();
     assert.equal(requested.ok, false,
       `${AgentClass.name}: an optional control the user explicitly asked for was skipped`);
@@ -100278,6 +98352,7 @@ test('optional controls the user asked for cannot be skipped', () => {
       { label: 'cover letter', value: 'Dear hiring manager' },
     ]);
     guard.workflowRequestedControlValuesResolved = true;
+    await agent._readWorkflowRequestedFieldMatches(tabId);
     assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true,
       `${AgentClass.name}: the exact requested value did not read back from the inventory`);
     guard.workflowRequestedControlValues = agent._normalizeWorkflowRequestedControlValues([
@@ -100297,6 +98372,37 @@ test('optional controls the user asked for cannot be skipped', () => {
     ], `requested-value-typo-${index}`);
     assert.equal(typo.ok, false,
       `${AgentClass.name}: a form whose field holds the wrong value reconciled as complete`);
+
+    // A request in another language than the form names its fields in its
+    // own words: Turkish "ön yazı" is the English form's cover letter.
+    guard.workflowRequestedControlValues = agent._normalizeWorkflowRequestedControlValues([
+      { label: 'ön yazı', value: 'Dear hiring manager' },
+    ]);
+    guard.workflowRequestedControlLabels = agent._normalizeWorkflowRequestedControlLabels(['ön yazımı ekle']);
+    await agent._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true,
+      `${AgentClass.name}: a value requested in Turkish did not read back from the English form`);
+    const turkishSkip = agent._validateWorkflowReconciliation(tabId, {
+      job: 'submit-form',
+      coverageComplete: true,
+      itemCount: 3,
+      basis: 'Name answered; optional fields skipped.',
+    }, [
+      { id: nameItem.id, label: 'Full name', status: 'processed', fields: { verified: true } },
+      { id: coverItem.id, label: 'Cover letter (optional)', status: 'skipped' },
+      { id: referralItem.id, label: 'Referral code', status: 'skipped' },
+    ], `turkish-request-skip-${index}`);
+    assert.equal(turkishSkip.ok, false,
+      `${AgentClass.name}: the cover letter a Turkish request asked for was skipped`);
+    // Until a model reads a pair, a field may be the named one: it holds no
+    // requested value and cannot be skipped.
+    const unread = new AgentClass({});
+    unread._planExecutionGuards.set(tabId, guard);
+    stubPageTextReadings(unread, () => null);
+    await unread._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(unread._workflowRequestedControlValuesMatchInventory(guard), false,
+      `${AgentClass.name}: an unread field took the requested value`);
+    assert.equal(unread._workflowItemIsRequested(coverItem, unread._workflowRequestedFieldNames(guard)), null);
   }
 });
 
@@ -100472,6 +98578,7 @@ test('a wizard Next keeps earlier completed steps in the cumulative inventory', 
 test('an iframe-only application inventory can still verify its submit confirmation', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const tabId = 9396 + index;
     const applyUrl = 'https://acme.wd1.myworkdayjobs.com/en-US/jobs/job/1/apply';
@@ -100594,12 +98701,8 @@ test('the injected completion probe survives its own template literal', async ()
     const close = source.indexOf('`', anchor + 1);
     assert.ok(open > 0 && close > anchor, `${label}: completion probe template is not delimited`);
     const raw = source.slice(open + 1, close);
-    const { completionTextSignalsSuccess } = await import(
-      pathToFileURL(path.join(ROOT, 'src', label, 'src/agent/completion-verifier.js')).href,
-    );
     const injected = vm.runInNewContext('`' + raw + '`', {
       classifyCompletionForm: invariant.classifyCompletionForm,
-      completionTextSignalsSuccess,
       publicationResourceRecordRoot: invariant.publicationResourceRecordRoot,
       publicationDetailResource: invariant.publicationDetailResource,
       publicationReplyParent: invariant.publicationReplyParent,
@@ -100610,13 +98713,12 @@ test('the injected completion probe survives its own template literal', async ()
     );
     assert.match(injected, /\/\\r\\n\?\/g/,
       `${label}: the probe lost the CRLF normalization its line matching needs`);
-    const signalsStart = injected.indexOf('const successMessages = toasts.filter');
-    const signalsEnd = injected.indexOf('const publicationResourceIdentity', signalsStart);
-    assert.ok(signalsStart > 0 && signalsEnd > signalsStart);
-    const signals = vm.runInNewContext(injected.slice(signalsStart, signalsEnd) + '; successMessages;', {
-      toasts: ['QA submission recorded', 'Voice note recorded', 'Your submission will be recorded', 'Your submission was not recorded', 'Done'],
-    });
-    assert.deepEqual(Array.from(signals), ['QA submission recorded', 'Done'], `${label}: injected live-region recognizer lost inline acknowledgements or admitted unsupported evidence`);
+    // Live messages leave the page as they are: the agent reads what they say
+    // in any language, so the probe carries no wording of its own.
+    assert.doesNotMatch(injected, /successMessages|completionTextSignalsSuccess/,
+      `${label}: the probe still filters live messages by wording`);
+    assert.match(injected, /liveRegionMessages: toasts\.slice\(0, 6\)/, `${label}: the probe must return the live messages`);
+    assert.match(injected, /workflowStatusTexts: \[\.\.\.new Set\(\[document\.title/, `${label}: the probe must return the page's prominent status texts`);
   }
 });
 
@@ -101030,6 +99132,7 @@ test('an iframe wizard step stays complete after the frame advances', () => {
 test('a deferred reply stays bound to the thread the user authorized', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const tabId = 9474 + index;
     const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/FMfcgzAuthorized';
@@ -101129,34 +99232,69 @@ test('a deferred reply stays bound to the thread the user authorized', async () 
   }
 });
 
-test('requested field matching survives the words a request wraps around a label', () => {
-  for (const [label, isRequested] of [
-    ['chrome', workflowControlLabelIsRequested],
-    ['firefox', workflowControlLabelIsRequestedFx],
-  ]) {
-    // The page decorates with "(optional)"; the request wraps with "attach my".
-    // Neither string contains the other, so only the content words match up.
-    assert.equal(isRequested('Cover letter (optional)', ['attach my cover letter']), true,
-      `${label}: the documented request wording did not match its page label`);
-    assert.equal(isRequested('Cover letter', ['please upload the cover letter']), true,
-      `${label}: request filler words defeated the label match`);
-    assert.equal(isRequested('Resume/CV (optional)', ['attach my resume']), true,
-      `${label}: a request naming part of the label did not match`);
-    assert.equal(isRequested('Referral code', ['attach my cover letter']), false,
-      `${label}: an unrelated optional control was treated as requested`);
-    // One content word is a weak claim: "resume" also sits inside a consent
-    // checkbox nobody asked to tick.
-    assert.equal(isRequested('Consent to automated resume screening', ['attach my resume']), false,
-      `${label}: a lone request word claimed an unrelated consent control`);
-    assert.equal(isRequested('Upload your cover letter here please', ['cover letter']), true,
-      `${label}: a two-word request stopped matching a longer label`);
-    assert.equal(isRequested('Cover letter (optional)', []), false,
-      `${label}: an optional control was requested with no request at all`);
-    assert.equal(isRequested('', ['cover letter']), false,
-      `${label}: an unlabelled control matched a request`);
-    // Scripts without word separators still rely on whole-string containment.
-    assert.equal(isRequested('カバーレター', ['カバーレター']), true,
-      `${label}: an exact non-spaced label stopped matching`);
+test('which form field a request named is read by a model, never by word lists', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({});
+    const tabId = 98606;
+    const items = [
+      { id: 'name', label: 'Full name', required: true, value: 'Ada' },
+      { id: 'cover', label: 'Cover letter (optional)', required: false, value: 'Dear hiring manager' },
+      { id: 'referral', label: 'Referral code', required: false, value: '' },
+      { id: 'consent', label: 'Consent to automated resume screening', required: false, value: '' },
+    ];
+    const guard = {
+      workflowInventoryEvidence: { items },
+      workflowRequestedControlLabels: ['attach my resume'],
+      workflowRequestedControlValues: [{ label: 'my cover letter', value: 'Dear hiring manager' }],
+      workflowRequestedControlLabelsResolved: true,
+    };
+    agent._planExecutionGuards.set(tabId, guard);
+    // The page's labels are judged as the model reads them; these answers
+    // stand in for the model.
+    const readings = new Map([
+      ['my cover letter|Cover letter (optional)', 'same'], ['my cover letter|Referral code', 'different'],
+      ['my cover letter|Consent to automated resume screening', 'different'],
+      ['attach my resume|Cover letter (optional)', 'different'], ['attach my resume|Referral code', 'different'],
+    ]);
+    const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'form_field_match'
+      ? readings.get(`${item.named}|${item.text}`) || null : null));
+    await agent._readWorkflowRequestedFieldMatches(tabId);
+    // Each requested value is read against the fields holding it, and each
+    // named field against the fields the page marks optional.
+    assert.deepEqual(asked.map(item => `${item.named}|${item.text}`).sort(), [
+      'attach my resume|Consent to automated resume screening', 'attach my resume|Cover letter (optional)',
+      'attach my resume|Referral code', 'my cover letter|Consent to automated resume screening',
+      'my cover letter|Cover letter (optional)', 'my cover letter|Referral code',
+    ], `${label}: the wrong pairs were read`);
+    const named = agent._workflowRequestedFieldNames(guard);
+    assert.equal(agent._workflowItemIsRequested(items[1], named), true, `${label}: a field read as the named one`);
+    assert.equal(agent._workflowItemIsRequested(items[2], named), false, `${label}: a field read as another one`);
+    // The consent box was read as no named cover letter but never against
+    // the named resume: it may still be that field.
+    assert.equal(agent._workflowItemIsRequested(items[3], named), null, `${label}: an unread pair`);
+    assert.equal(agent._workflowRequestedControlValuesMatchInventory(guard), true);
+    readings.set('my cover letter|Cover letter (optional)', 'unclear');
+    const unsure = new AgentClass({});
+    unsure._planExecutionGuards.set(tabId, guard);
+    stubPageTextReadings(unsure, (kind, item) => (kind === 'form_field_match'
+      ? readings.get(`${item.named}|${item.text}`) || null : null));
+    await unsure._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(unsure._workflowRequestedControlValuesMatchInventory(guard), false,
+      `${label}: a value sat in a field no model read as the named one`);
+    // Only an optional field known not to be named may be skipped.
+    const rows = [{ id: 'name', status: 'processed' }, { id: 'cover', status: 'processed' },
+      { id: 'referral', status: 'skipped' }, { id: 'consent', status: 'skipped' }];
+    const inventory = { itemIds: items.map(item => item.id) };
+    assert.equal(agent._workflowRequiredTargetRowsAreProcessed(rows, inventory, guard), false,
+      `${label}: an optional field that may be the named one was skipped`);
+    readings.set('attach my resume|Consent to automated resume screening', 'different');
+    const read = new AgentClass({});
+    read._planExecutionGuards.set(tabId, guard);
+    stubPageTextReadings(read, (kind, item) => (kind === 'form_field_match'
+      ? readings.get(`${item.named}|${item.text}`) || null : null));
+    await read._readWorkflowRequestedFieldMatches(tabId);
+    assert.equal(read._workflowRequiredTargetRowsAreProcessed(rows, inventory, guard), true,
+      `${label}: optional fields read as not named could not be skipped`);
   }
 });
 
@@ -102103,7 +100241,7 @@ test('site workflow bindings are revalidated on the live URL and preserved acros
     const gate = await agent._maybeRunPlannerGate(
       tabId,
       agent.conversations.get(tabId),
-      { role: 'user', content: 'Continue' },
+      { role: 'user', content: 'Continue', webbrainTurnKind: 'continue' },
       () => { },
       'act',
       null,
@@ -102507,6 +100645,7 @@ test('generic submission evidence failure does not claim that a site workflow jo
 test('selected workflow submission evidence is job-bound and terminal-state specific', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
 
     const formTabId = 8970 + index;
@@ -103262,6 +101401,7 @@ test('selected workflow submission evidence is job-bound and terminal-state spec
 test('Gmail message workflows bind the reviewed subject and prove a saved draft', () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
     const agent = new AgentClass({});
+    agent._pageTextReading = fixturePageTextReading; // what a model read the page's status texts as saying
     agent.useSiteAdapters = true;
     const gmailUrl = 'https://mail.google.com/mail/u/0/#inbox';
 
@@ -103683,8 +101823,10 @@ test('Act keeps execution guard for negated approval waits', async () => {
 
 test('Act preserves safety refusals and inactive policy classifications', async () => {
   for (const [index, AgentClass] of [AgentCh, AgentFx].entries()) {
+    // A planner object the model rates at zero confidence is its refusal, in
+    // any language; its words are not read.
     const refusal = JSON.stringify({
-      summary: 'Refuse this request because it is unauthorized and unsafe.',
+      summary: index === 0 ? 'Refuse this request because it is unauthorized and unsafe.' : 'Bu isteği reddediyorum: yetkisiz ve güvensiz.',
       confidence: 0,
       steps: [{ id: '1', action: 'Do not proceed; no action will be executed.', tools: ['done'] }],
       memory: { use_scratchpad: false, scratchpad_notes: [], use_progress_ledger: false, progress_action: null },
@@ -103714,7 +101856,7 @@ test('Act preserves safety refusals and inactive policy classifications', async 
     assert.equal(final, refusal, `${AgentClass.name}: safety refusal was forced into execution`);
     assert.equal(calls, 1, `${AgentClass.name}: safety refusal triggered a recovery turn`);
     assert.equal(
-      agent._looksLikePlanOnlyTerminal(JSON.stringify({
+      agent._isStructuredPlanTerminal(JSON.stringify({
         mode: 'inactive',
         allowedActions: [],
         forbiddenActions: [],
@@ -103920,6 +102062,8 @@ test('context-compression placeholder recovery resets after tool progress', asyn
     };
     const updates = [];
 
+    agent._semanticDecision = async (_tab, kind) => (kind === 'user_turn_kind'
+      ? { choice: 'continue', evidence: 'continue', source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' });
     const final = await agent.processMessage(tabId, 'continue', (type, data) => {
       updates.push({ type, data });
     }, 'act');
@@ -104138,6 +102282,8 @@ test('plain final answers cannot bypass unresolved progress rows', async () => {
     };
     const updates = [];
 
+    agent._semanticDecision = async (_tab, kind) => (kind === 'user_turn_kind'
+      ? { choice: 'continue', evidence: 'continue', source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' });
     const final = await agent.processMessage(tabId, 'continue', (type, data) => {
       updates.push({ type, data });
     }, 'act');
@@ -104323,6 +102469,8 @@ test('empty-output recovery auto-schedules unresolved progress tasks', async () 
     assert.ok(sessionId, `${AgentClass.name}: progress session id missing before auto resume`);
     const updates = [];
 
+    agent._semanticDecision = async (_tab, kind) => (kind === 'user_turn_kind'
+      ? { choice: 'continue', evidence: 'continue', source: 'decision_model' } : { choice: null, evidence: '', source: 'unavailable' });
     const final = await agent.processMessage(tabId, 'continue', (type, data) => {
       updates.push({ type, data });
     }, 'act');
@@ -104454,6 +102602,9 @@ test('schedule_resume guards progress-ledger continuations against stale next-it
 });
 
 test('schedule_resume falls back to all-sessions progress read for legacy unscoped rows', async () => {
+  // Rows written before ledger rows were stamped belong to the current task
+  // when its classified progress intent (read by the intent model in any
+  // language) allows their action; the task's words alone attribute nothing.
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
     const tabId = AgentClass === AgentCh ? 803 : 804;
@@ -104461,11 +102612,17 @@ test('schedule_resume falls back to all-sessions progress read for legacy unscop
     agent.conversationIds.set(tabId, 'conv_legacy_progress_resume_guard');
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
-      { role: 'user', content: "follow 100 accounts i don't follow yet here" },
+      { role: 'user', content: 'buradaki takip etmediğim 100 hesabı takip et' },
     ]);
     agent.progressLedgers.set(tabId, [
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending' },
     ]);
+    assert.deepEqual(agent._legacyUnscopedProgressRowsForResumeGuard(tabId, agent.progressLedgers.get(tabId)), [],
+      `${AgentClass.name}: legacy rows were attributed without a classified intent`);
+    allowProgress(agent, tabId, ['unfollow']);
+    assert.deepEqual(agent._legacyUnscopedProgressRowsForResumeGuard(tabId, agent.progressLedgers.get(tabId)), [],
+      `${AgentClass.name}: legacy rows were attributed to an intent that does not allow their action`);
+    allowProgress(agent, tabId, ['follow']);
 
     let scheduledPayload = null;
     agent.setScheduler({
@@ -104675,11 +102832,6 @@ test('schedule_resume guards unscoped rows via task key match for non-English ta
     agent.progressLedgers.set(tabId, [
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending', taskKey },
     ]);
-    assert.equal(
-      agent._taskTextLooksLikeLegacyProgressWork(agent._latestTaskText(tabId), agent.progressLedgers.get(tabId)),
-      false,
-      `${AgentClass.name}: setup precondition — the lexical heuristic must not match this task text`,
-    );
 
     let scheduledPayload = null;
     agent.setScheduler({
@@ -104766,9 +102918,10 @@ test('schedule_resume mixed migration state: foreign stamped row does not starve
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending' },
     ]);
     assert.notEqual(agent._progressTaskKeyHash(tabId), 'tk_00000000', `${AgentClass.name}: setup precondition — stamped row must belong to a different task`);
+    allowProgress(agent, tabId, ['follow']);
 
     const guarded = agent._legacyUnscopedProgressRowsForResumeGuard(tabId, agent.progressLedgers.get(tabId));
-    assert.deepEqual(guarded.map(r => r.id), ['legacy_pending'], `${AgentClass.name}: unstamped current-task rows must still pass the lexical heuristic despite a foreign stamped row`);
+    assert.deepEqual(guarded.map(r => r.id), ['legacy_pending'], `${AgentClass.name}: unstamped current-task rows must still follow the classified intent despite a foreign stamped row`);
 
     const scopedRead = agent._progressRead(tabId, { currentTaskOnly: true });
     assert.deepEqual(scopedRead.rows.map(r => r.id), ['legacy_pending'], `${AgentClass.name}: currentTaskOnly progress_read must exclude rows the resume guard excluded`);
@@ -104796,7 +102949,7 @@ test('schedule_resume mixed migration state: foreign stamped row does not starve
 
     assert.equal(result.success, true, `${AgentClass.name}: mixed-state schedule_resume should succeed`);
     const instruction = scheduledPayload?.args?.resume_instruction || '';
-    assert.match(instruction, /^Continue the active Act-mode progress-ledger task/, `${AgentClass.name}: mixed-state guard should still attach via the legacy heuristic`);
+    assert.match(instruction, /^Continue the active Act-mode progress-ledger task/, `${AgentClass.name}: mixed-state guard should still attach through the classified intent`);
     assert.match(instruction, /1 row\(s\), 1 unresolved/, `${AgentClass.name}: guard counts must exclude the foreign stamped row`);
   }
 });
@@ -105001,7 +103154,7 @@ test('taskKey hash anchors to the task, not continuation phrases', async () => {
     const keyBefore = agent._progressTaskKeyHash(tabId);
     agent.conversations.get(tabId).push(
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
     assert.equal(agent._progressTaskKeyHash(tabId), keyBefore, `${AgentClass.name}: a continuation turn must not re-key the task`);
     agent.conversations.get(tabId).push(
@@ -105021,7 +103174,7 @@ test('continuation turns exclude foreign-stamped unscoped rows from the resume g
       { role: 'system', content: 'sys' },
       { role: 'user', content: "follow 100 accounts i don't follow yet here" },
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     const currentKey = agent._progressTaskKeyHash(tabId);
     agent.progressLedgers.set(tabId, [
@@ -105044,7 +103197,7 @@ test('continuation session derive after restart ignores a foreign task\'s scoped
       { role: 'system', content: 'sys' },
       { role: 'user', content: "follow 100 accounts i don't follow yet here" },
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     // Only a foreign task's scoped unresolved rows survive; no session cached.
     agent.progressLedgers.set(tabId, [
@@ -105070,7 +103223,7 @@ test('continuation ensure path after restart ignores a foreign task\'s scoped ro
       { role: 'assistant', content: 'Paused.' },
       { role: 'user', content: 'Check the deployment again in one minute.' },
       { role: 'assistant', content: 'Checked.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     // No cached session after restart, only rows from the older follow task.
     agent.progressLedgers.set(tabId, [
@@ -105105,7 +103258,7 @@ test('continue after an unrelated task does not revive the cached older session'
     // "continue" right after the follow task legitimately resumes it.
     agent.conversations.get(tabId).push(
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
     assert.equal(agent._currentProgressSession(tabId)?.sessionId, followSession.sessionId, `${AgentClass.name}: continue directly after the task should resume its session`);
 
@@ -105114,7 +103267,7 @@ test('continue after an unrelated task does not revive the cached older session'
       { role: 'assistant', content: 'Paused.' },
       { role: 'user', content: 'Check the deployment again in one minute.' },
       { role: 'assistant', content: 'Checked.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
     assert.equal(agent._currentProgressSession(tabId), null, `${AgentClass.name}: continue after an unrelated task must not revive the older follow session`);
 
@@ -105143,23 +103296,28 @@ test('continue after an unrelated task does not revive the cached older session'
   }
 });
 
-test('ack filter skips filler but not short tasks that start with an ack word', async () => {
+test('acknowledged and continued turns keep the earlier task; anything else is a new anchor', async () => {
   for (const AgentClass of [AgentCh, AgentFx]) {
     const agent = new AgentClass({ getActive: () => ({ contextWindow: 128000, supportsVision: false }) });
-    assert.equal(agent._isProgressAckText('ok'), true, `${AgentClass.name}: bare ok is filler`);
-    assert.equal(agent._isProgressAckText('ok 29'), true, `${AgentClass.name}: ok + number is filler`);
-    assert.equal(agent._isProgressAckText('sounds good!'), true, `${AgentClass.name}: ack + punctuation is filler`);
-    assert.equal(agent._isProgressAckText('ok star repo'), false, `${AgentClass.name}: ack + task words is a task`);
-    assert.equal(agent._isProgressAckText('sure follow 5 accounts'), false, `${AgentClass.name}: ack-prefixed instruction is a task`);
-
+    assert.equal(typeof agent._isProgressAckText, 'undefined', `${AgentClass.name}: an acknowledgement word list remains`);
+    assert.equal(typeof agent._isProgressContinuationText, 'undefined', `${AgentClass.name}: a continuation word list remains`);
     const tabId = AgentClass === AgentCh ? 851 : 852;
+    for (const kind of ['acknowledge', 'continue']) {
+      agent.conversations.set(tabId, [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'collect emails from this list' },
+        { role: 'assistant', content: 'Done with the first batch.' },
+        { role: 'user', content: kind === 'acknowledge' ? 'tamam' : 'devam et', webbrainTurnKind: kind },
+      ]);
+      assert.equal(agent._progressTaskAnchorText(tabId), 'collect emails from this list', `${AgentClass.name}: a ${kind} turn moved the anchor`);
+    }
     agent.conversations.set(tabId, [
       { role: 'system', content: 'sys' },
       { role: 'user', content: 'collect emails from this list' },
       { role: 'assistant', content: 'Done with the first batch.' },
       { role: 'user', content: 'ok star repo' },
     ]);
-    assert.equal(agent._progressTaskAnchorText(tabId), 'ok star repo', `${AgentClass.name}: an ack-prefixed task must become the new anchor`);
+    assert.equal(agent._progressTaskAnchorText(tabId), 'ok star repo', `${AgentClass.name}: a request must become the new anchor`);
   }
 });
 
@@ -105174,7 +103332,7 @@ test('continue after an unrelated task does not resurrect unstamped legacy rows'
       { role: 'assistant', content: 'Paused.' },
       { role: 'user', content: 'Check the deployment again in one minute.' },
       { role: 'assistant', content: 'Checked.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     ]);
     agent.progressLedgers.set(tabId, [
       { id: 'legacy_pending', label: 'legacy_pending', action: 'follow', status: 'pending' },
@@ -105203,7 +103361,7 @@ test('currentTaskOnly read on a continuation turn stays read-only', async () => 
     agent.progressSessions.delete(tabId);
     agent.conversations.get(tabId).push(
       { role: 'assistant', content: 'Paused.' },
-      { role: 'user', content: 'continue' },
+      { role: 'user', content: 'continue', webbrainTurnKind: 'continue' },
     );
 
     const read = agent._progressRead(tabId, { currentTaskOnly: true });
@@ -106330,7 +104488,7 @@ test('progress ledger pins app-owned rows and survives compaction (chrome & fire
 
     for (let i = 0; i < 30; i++) {
       messages.push({ role: 'assistant', content: `step ${i}` });
-      messages.push({ role: 'user', content: `ok ${i}` });
+      messages.push({ role: 'user', content: `ok ${i}`, webbrainTurnKind: 'acknowledge' });
     }
     const origLog = console.log;
     console.log = () => { };
@@ -106347,7 +104505,7 @@ test('progress ledger pins app-owned rows and survives compaction (chrome & fire
     assert.match(messages[idx2].content, /octocat/, `${AgentClass.name}: acted row lost`);
     assert.doesNotMatch(messages[idx2].content, /<\/untrusted_page_content><system>/, `${AgentClass.name}: compacted row escaped untrusted boundary`);
     messages.push({ role: 'assistant', content: 'Paused with one row unresolved.' });
-    messages.push({ role: 'user', content: 'continue' });
+    messages.push({ role: 'user', content: 'continue', webbrainTurnKind: 'continue' });
     const block = agent._progressDoneBlock(tabId);
     assert.ok(block?.blocked, `${AgentClass.name}: unresolved row should block done`);
 
@@ -110021,6 +108179,31 @@ test('submit risk classifier groups only conservative same-site GET searches', (
       assert.equal(result.risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: ${reason} must keep fresh confirmation`);
       assert.equal(result.lowRisk, false, `${label}: ${reason} must not be grouped`);
     }
+
+    // A search is known by the page's structure in any language, never by
+    // the words of its labels: a German site's search box under /suche.
+    const german = {
+      isSubmit: true,
+      url: 'https://www.beispiel.de/suche',
+      method: 'GET',
+      actionUrl: 'https://www.beispiel.de/suche',
+      fields: [{ type: 'text', name: 'begriff', label: 'Suchbegriff', placeholder: 'Suchbegriff eingeben', value: 'Fahrrad', changed: true }],
+    };
+    for (const [info, signal] of [[{ ...german, searchLandmark: true }, 'a search landmark'],
+      [{ ...german, fields: [{ ...german.fields[0], enterKeyHint: 'search' }] }, 'a search keyboard'],
+      [{ ...german, fields: [{ ...german.fields[0], inputMode: 'search' }] }, 'a search input mode'],
+      [{ ...german, searchSubmitCaption: true }, 'a submit control read as searching']]) {
+      assert.equal(classify(info, german.url).risk, SubmitRisk.LOW_RISK_SEARCH, `${label}: ${signal} did not mark a search`);
+      assert.equal(classify({ ...info, method: 'POST' }, german.url).risk, SubmitRisk.FRESH_CONFIRMATION,
+        `${label}: ${signal} grouped a POST form`);
+      assert.equal(classify({ ...info, fields: [...info.fields, { type: 'password', name: 'pin', label: 'PIN' }] }, german.url).risk,
+        SubmitRisk.FRESH_CONFIRMATION, `${label}: ${signal} grouped a form with a credential field`);
+    }
+    // Words in a label alone say nothing, in English as in German.
+    assert.equal(classify(german, german.url).risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: German label words`);
+    assert.equal(classify({ ...german, url: 'https://shop.example/products', actionUrl: 'https://shop.example/products',
+      fields: [{ type: 'text', name: 'kw', placeholder: 'Search products', value: 'bike', changed: true }] },
+    'https://shop.example/products').risk, SubmitRisk.FRESH_CONFIRMATION, `${label}: English label words`);
   }
 });
 
@@ -110664,6 +108847,385 @@ test('planner carries a language-neutral structured messaging target into execut
     }), { requireIntent: true, locale: 'en' });
     assert.equal(draftOnly?.messaging, null, `${label}: do-not-submit task armed the message-send guard`);
   }
+});
+
+// From a trace on web.whatsapp.com with one chat open: "send some test
+// messages to this one" and "send test messages to this user" were answered
+// six times with "which contact, and what text?", and no page was ever read.
+// The planner never sees the page, and its rules let only words like "reply
+// here" mean the open conversation.
+test('planner reads a pointer at the open conversation as that conversation and writes described messages itself', () => {
+  for (const [label, fullPrompt, intentPrompt] of [
+    ['chrome', PLANNER_SYSTEM_PROMPT, PLANNER_INTENT_SYSTEM_PROMPT],
+    ['firefox', PLANNER_SYSTEM_PROMPT_FX, PLANNER_INTENT_SYSTEM_PROMPT_FX],
+  ]) {
+    for (const [kind, prompt] of [['full', fullPrompt], ['intent', intentPrompt]]) {
+      const where = `${label} ${kind}`;
+      assert.match(prompt, /You do not see the live page; the agent that carries out the plan reads it\. Do not ask the user about something the page itself can show, such as what is on screen; plan to read it first\./,
+        `${where}: the planner may ask the user about what is on screen`);
+      assert.match(prompt, /Use target_kind="active_conversation" when the current request points at the conversation open on screen, or at the person or group in it, instead of naming them or referring back to someone named earlier, in any language/,
+        `${where}: a pointer at the open conversation is not read as that conversation`);
+      assert.match(prompt, /"this one", or "this user"/, `${where}: no example of a pointer at the open conversation`);
+      assert.match(prompt, /WebBrain reads that conversation's identity from the page itself and binds every send to it, and stops if no single conversation is open, so do not ask the user who or which conversation that is/,
+        `${where}: the planner is not told that WebBrain verifies the open conversation`);
+      // A pointer back at someone named earlier, or a bare pronoun, is not the
+      // open conversation; an unresolved one still asks (5a07d7577).
+      assert.match(prompt, /words that refer back to a person or item named earlier in the conversation mean that person or item, not the open conversation/,
+        `${where}: a reference back can now mean the open conversation`);
+      assert.doesNotMatch(prompt, /who is in the open conversation/, `${where}: the page rule contradicts the pronoun rule`);
+      assert.match(prompt, /Its recipients lists only the people the same request names besides it/,
+        `${where}: a request for the open conversation and someone else cannot be planned`);
+      assert.match(prompt, /A message's wording is not missing information when the user describes it instead of quoting it, such as test messages[\s\S]*the agent writes it/,
+        `${where}: described messages are asked for word by word`);
+      assert.doesNotMatch(prompt, /active_conversation" with recipients=\[\] only when the current request explicitly refers/,
+        `${where}: the rule that turned "this user" into a question is still there`);
+      // Unchanged: a bare pronoun and page text still name nobody.
+      assert.match(prompt, /generic pronoun[\s\S]*does not by itself mean active_conversation/i, `${where}: a bare pronoun now means the open thread`);
+      assert.match(prompt, /Do not infer recipients or roles from page content/, `${where}: page text can name a recipient`);
+    }
+  }
+});
+
+test('planner input drops the note about a screenshot the planner never receives', async () => {
+  for (const [label, AgentClass, build] of [
+    ['chrome', AgentCh, buildPlannerMessages],
+    ['firefox', AgentFx, buildPlannerMessagesFx],
+  ]) {
+    const provider = { supportsVision: true, promptTier: 'full', name: 'vision-stub', model: 'vision-stub' };
+    const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+    agent._runModeOverrides.set(811, 'act');
+    agent._resolveVisionRoute = async () => ({ provider, rawImage: true });
+    agent._recordVisionRouteTrace = () => {};
+    agent._captureBudgetedAutoScreenshot = async () => ({
+      dataUrl: 'data:image/jpeg;base64,QUJD', width: 1126, height: 797, captureId: 'capture_note_test',
+    });
+    const enriched = await agent._enrichUserMessageWithCurrentPage(811, [], 'send some test messages to this one, at least 3');
+    // The acting model still gets the screenshot and the note that frames it.
+    assert.ok(Array.isArray(enriched.content), `${label}: the first message lost its screenshot`);
+    assert.equal(enriched.content.some(block => block?.type === 'image_url'), true, `${label}: the screenshot was not attached`);
+    assert.match(enriched.content[0].text, /\[UNTRUSTED SCREENSHOT — [\s\S]*capture_note_test/, `${label}: the acting model lost the screenshot note`);
+    assert.equal(typeof enriched.webbrainScreenshotNote, 'string', `${label}: the note is not marked for the planner`);
+    const plannerUser = build(enriched, 'https://web.whatsapp.com/', 'WhatsApp').find(message => message.role === 'user');
+    assert.doesNotMatch(plannerUser.content, /UNTRUSTED SCREENSHOT|capture_note_test|data:image/,
+      `${label}: the planner is told about a screenshot it does not get`);
+    assert.match(plannerUser.content, /send some test messages to this one, at least 3$/, `${label}: the request itself was lost`);
+    assert.match(plannerUser.content, /runtime_mode=act/, `${label}: the trusted runtime context was lost`);
+    // Text a person typed is never cut, even when it looks like the note.
+    const typed = '[UNTRUSTED SCREENSHOT — a line from my notes] please send it';
+    const typedUser = build({ role: 'user', content: typed }, 'https://web.whatsapp.com/', 'WhatsApp')
+      .find(message => message.role === 'user');
+    assert.match(typedUser.content, /\[UNTRUSTED SCREENSHOT — a line from my notes\] please send it$/, `${label}: typed text was cut`);
+  }
+});
+
+test('the open conversation and someone else named in the same request each receive only their own sends', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27301 : 27302;
+    const chatUrl = 'https://web.whatsapp.com/';
+    agent._currentUrl = async () => chatUrl;
+    let probe = {
+      success: true, conclusive: true, messageSend: false,
+      strongIdentityCandidates: ['Mehmet'], identityCandidates: ['Mehmet'],
+    };
+    agent._messageRecipientContentProbe = async () => probe;
+
+    const mixed = { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] };
+    const pinned = await agent._pinActiveConversationMessagingTarget(tabId, mixed, chatUrl);
+    assert.equal(pinned.ok, true, `${label}: the open chat could not be pinned`);
+    assert.deepEqual(pinned.target, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] },
+      `${label}: the open chat is not the target`);
+    assert.deepEqual(pinned.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+      `${label}: the person named besides the open chat was dropped`);
+    assert.deepEqual(pinned.activeConversationRecipients, ['mehmet'], `${label}: the pinned chat is not kept`);
+    // The open chat alone pins exactly as before.
+    assert.deepEqual(
+      await agent._pinActiveConversationMessagingTarget(tabId, { target_kind: 'active_conversation', recipients: [] }, chatUrl),
+      { ok: true, target: { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] }, pinnedActiveConversation: true },
+      `${label}: the open chat alone no longer pins as before`,
+    );
+
+    // Mail sends one message to a set of people at once: the pin stays the
+    // thread's own recipients, as before, and a set that differs from it is
+    // confirmed on the card. A name the planner copied from the request
+    // could never match the addresses a mail composer shows.
+    probe = { success: true, conclusive: true, messageSend: false,
+      strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }] };
+    const mail = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Bob', role: 'cc' }] },
+      'https://mail.example.com/compose');
+    assert.deepEqual(mail.target, { target_kind: 'named', recipients: [{ identity: 'alice@example.com', role: 'to' }] },
+      `${label}: a reply here with a Cc is not pinned to the thread`);
+    assert.equal(mail.requestedMessaging, undefined, `${label}: a mail set was split into separate sends`);
+
+    // The run starts from that pin.
+    agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true, siteWorkflowUrl: chatUrl,
+      messaging: pinned.target, requestedMessaging: pinned.requestedMessaging,
+      activeConversationRecipients: pinned.activeConversationRecipients,
+    });
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.requestedMessaging, pinned.requestedMessaging, `${label}: the run lost the named person`);
+    assert.deepEqual(guard.activeConversationRecipients, ['mehmet'], `${label}: the run lost the pinned chat`);
+    const send = (identity, n) => ({
+      success: true, conclusive: true, messageSend: true, messageBody: 'Test message', messageBodyBaselineCount: 0,
+      strongIdentityCandidates: [identity], identityCandidates: [identity],
+      messageRecipientDispatchBinding: { token: `binding-${label}-${n}` },
+    });
+    const dispatch = context => agent._messageRecipientGuardBlock(tabId, 'set_field',
+      { ref_id: 'composer', text: 'Test message', submit: true }, chatUrl, context);
+
+    probe = send('Mehmet', 1);
+    const first = {};
+    assert.equal(await dispatch(first), null, `${label}: the open chat the request pointed at needed a card`);
+    assert.equal(first.messageRecipientGuardRequired, true, `${label}: the send to the open chat was not bound`);
+
+    probe = send('Rüstem Bey', 2);
+    const toNamed = await dispatch({});
+    assert.equal(toNamed?.reasonCode, 'active_recipient_unverified', `${label}: a different chat was sent to without a card`);
+    assert.deepEqual(toNamed.recipientConfirmation.recipients, [{ identity: 'Rüstem Bey', role: 'to' }]);
+    assert.deepEqual(toNamed.recipientConfirmation.requested, ['Rustem Bey'], `${label}: the card does not show who was asked for`);
+    assert.equal(agent._approveConfirmedRecipients(tabId, toNamed.recipientConfirmation), true);
+    assert.equal(await dispatch({}), null, `${label}: the person confirmed on the card was asked again`);
+
+    probe = send('Mehmet', 3);
+    const back = {};
+    assert.equal(await dispatch(back), null, `${label}: the open chat needed a card after a named person was confirmed`);
+    assert.deepEqual(agent._planExecutionGuards.get(tabId).messaging,
+      { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] },
+      `${label}: the target did not return to the open chat`);
+
+    probe = send('Ayşe', 4);
+    assert.equal((await dispatch({}))?.reasonCode, 'active_recipient_unverified', `${label}: someone nobody asked for was sent to`);
+  }
+});
+
+test('planner gates carry the open conversation and a person named besides it into the run', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [routeIndex, route] of ['intent', 'full', 'run'].entries()) {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-open-chat-test',
+          name: 'planner-open-chat-test',
+          chat: async () => ({
+            content: plannerFixtureJson({
+              requires_state_change: true,
+              requires_submission: true,
+              confidence: 0.95,
+              messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+              summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+              steps: [
+                { id: '1', action: 'Observe the open chat.', tools: ['chat_observe'] },
+                { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.', tools: ['chat_send'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+                steps: [
+                  { id: '1', action: 'Observe the open chat.' },
+                  { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.' },
+                ],
+                risks: [],
+              },
+            }),
+            usage: {},
+          }),
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'never' });
+        agent._messageRecipientContentProbe = async () => ({
+          success: true, conclusive: true, strongIdentityCandidates: ['Mehmet'],
+        });
+        const tabId = 9480 + (agentIndex * 20) + (routeIndex * 10);
+        const args = [
+          tabId,
+          { role: 'user', content: 'send some test messages to this one, at least 3, then thank Rustem Bey' },
+          () => { },
+          null,
+          null,
+          '',
+          { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' },
+        ];
+        // "run" is the path a real run takes, which hands the gate's outcome
+        // on field by field.
+        agent._persist = () => { };
+        agent._persistSubmittedTurn = async () => { };
+        agent._currentUrl = async () => 'https://web.whatsapp.com/';
+        agent._getTabUrlTitle = async () => ({ tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' });
+        const gate = route === 'intent'
+          ? await agent._runPlannerIntentGate(...args, 'act', { locale: 'en' })
+          : route === 'full'
+            ? await agent._runPlannerGate(...args, 'try', 'act', { locale: 'en' })
+            : await agent._maybeRunPlannerGate(tabId, [{ role: 'system', content: 'system' }], args[1], () => { }, 'act',
+              null, null, { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' }, { locale: 'en' });
+        const where = `${AgentClass.name} ${route}`;
+        assert.equal(gate.proceed, true, `${where}: the plan did not run: ${gate.message || gate.reason}`);
+        assert.deepEqual(gate.messaging, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] },
+          `${where}: the open chat is not the target`);
+        assert.deepEqual(gate.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+          `${where}: the person named besides the open chat was dropped`);
+        assert.deepEqual(gate.activeConversationRecipients, ['mehmet'], `${where}: the pinned chat was not handed on`);
+      }
+    }
+  });
+});
+
+// From review: the same person named besides "reply here" on Gmail, whose
+// pin waits for the reply composer, made a set no send could match, so every
+// send asked on the card where it sent before.
+test('a Gmail reply here that also names someone sends to the composer recipients as before', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27311 : 27312;
+    const threadUrl = 'https://mail.google.com/mail/u/0/#inbox/thread-7';
+    agent._currentUrl = async () => threadUrl;
+    let probe = { success: false, conclusive: false, composerAvailable: false, composerSetup: true, messageSend: null,
+      strongIdentityCandidates: [], identityCandidates: [] };
+    agent._messageRecipientContentProbe = async () => probe;
+    const pin = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Bob', role: 'cc' }] }, threadUrl);
+    assert.equal(pin.ok, true, `${label}: the collapsed reply blocked planning`);
+    assert.equal(pin.deferredActiveConversation, true);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+      requiresSubmission: true, siteWorkflowUrl: threadUrl, messaging: pin.target });
+    probe = { success: true, conclusive: true, composerAvailable: true, messageSend: true,
+      messageBody: 'Thanks, Alice', messageBodyBaselineCount: 0, gmailComposeFlow: true,
+      strongRecipientCandidates: [{ identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' }],
+      messageRecipientDispatchBinding: { token: `gmail-mixed-${label}` } };
+    const context = {};
+    const result = await agent._messageRecipientGuardBlock(tabId, 'click_ax', { ref_id: 'ref_send' }, threadUrl, context);
+    assert.equal(result, null, `${label}: the reply with its Cc needed a card: ${JSON.stringify(result?.recipientConfirmation || result)}`);
+    assert.equal(context.messageRecipientGuardRequired, true, `${label}: the send was not bound`);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.messaging, { target_kind: 'named', recipients: [
+      { identity: 'alice@example.com', role: 'to' }, { identity: 'bob@example.com', role: 'cc' }] });
+    assert.equal(guard.requestedMessaging, undefined, `${label}: a mail set was split into separate sends`);
+    assert.deepEqual(guard.activeConversationRecipients, [], `${label}: a mail thread became a chat`);
+  }
+});
+
+// From review: when a WhatsApp contact's identity still needs its drawer
+// while planning, the open chat is pinned at its first send; the person
+// named besides it must still be kept for the card then.
+test('a WhatsApp chat pinned at its first send keeps the person named besides it for the card', async () => {
+  for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+    const agent = new AgentClass({ getVisionProvider: async () => null });
+    const tabId = label === 'chrome' ? 27321 : 27322;
+    const chatUrl = 'https://web.whatsapp.com/';
+    agent._currentUrl = async () => chatUrl;
+    let probe = { success: true, conclusive: false, messageSend: false, composerAvailable: true,
+      nativeWhatsappRepairAvailable: true, identityCandidates: [] };
+    agent._messageRecipientContentProbe = async () => probe;
+    const pin = await agent._pinActiveConversationMessagingTarget(tabId,
+      { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] }, chatUrl);
+    assert.equal(pin.ok, true);
+    assert.equal(pin.nativeWhatsappRepair, true, `${label}: the pin did not wait for the contact's drawer`);
+    agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true,
+      requiresSubmission: true, siteWorkflowUrl: chatUrl, messaging: pin.target });
+    const phone = `whatsapp:phone:${'a'.repeat(32)}`;
+    const send = (identity, n) => ({ success: true, conclusive: true, messageSend: true, messageBody: `Test ${n}`,
+      messageBodyBaselineCount: 0, strongIdentityCandidates: [identity],
+      nativeChatMessageBaseline: { threadKey: `dom:${identity}` },
+      messageRecipientDispatchBinding: { token: `wa-${label}-${n}` } });
+    const dispatch = (n, context = {}) => agent._messageRecipientGuardBlock(tabId, 'set_field',
+      { ref_id: 'composer', text: `Test ${n}`, submit: true }, chatUrl, context);
+    probe = send(phone, 1);
+    assert.equal(await dispatch(1), null, `${label}: the open chat needed a card at its first send`);
+    const guard = agent._planExecutionGuards.get(tabId);
+    assert.deepEqual(guard.messaging, { target_kind: 'named', recipients: [{ identity: phone, role: 'to' }] });
+    assert.deepEqual(guard.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+      `${label}: the person named besides the open chat was dropped at its first send`);
+    assert.deepEqual(guard.activeConversationRecipients, [phone], `${label}: the chat pinned at its first send is not kept`);
+    // Another chat goes to the card, which shows who was asked for.
+    probe = send(`whatsapp:phone:${'b'.repeat(32)}`, 2);
+    const other = await dispatch(2);
+    assert.equal(other?.reasonCode, 'active_recipient_unverified', `${label}: another chat was sent to without a card`);
+    assert.deepEqual(other.recipientConfirmation.requested, ['Rustem Bey']);
+    // A chat whose contact this run can no longer check is reported as such,
+    // not as something to re-read and retry.
+    const spentError = 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at.';
+    probe = { success: true, conclusive: false, messageSend: null, composerAvailable: true, nativeWhatsappRepairAvailable: false,
+      nativeWhatsappRepairSpent: true, reasonCode: 'native_whatsapp_contact_check_spent', identityCandidates: [], error: spentError };
+    const spent = await dispatch(3);
+    assert.equal(spent?.reasonCode, 'native_whatsapp_contact_check_spent', JSON.stringify(spent));
+    assert.equal(spent.retryable, false, `${label}: a spent contact check was offered as retryable`);
+    assert.equal(spent.error, spentError);
+    probe = { success: true, conclusive: false, messageSend: null, composerAvailable: true, nativeWhatsappRepairAvailable: true,
+      reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [], error: 'drawer needed' };
+    const needsDrawer = await dispatch(4);
+    assert.equal(needsDrawer?.reasonCode, 'native_whatsapp_contact_binding_required');
+    assert.notEqual(needsDrawer.retryable, false, `${label}: a contact check still available was made final`);
+    assert.match(needsDrawer.error, /could not conclusively resolve/);
+  }
+});
+
+// From review: the reviewed plan showed only the pinned chat, and the
+// reviewed path's hand-off was untested.
+test('a reviewed plan shows the person named besides the open conversation and an approved one hands them on', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    for (const [agentIndex, AgentClass] of [AgentCh, AgentFx].entries()) {
+      for (const [editIndex, edited] of [false, true].entries()) {
+        const provider = {
+          promptTier: 'full',
+          model: 'planner-open-chat-review-test',
+          name: 'planner-open-chat-review-test',
+          chat: async () => ({
+            content: plannerFixtureJson({
+              requires_state_change: true,
+              requires_submission: true,
+              confidence: 0.95,
+              messaging: { target_kind: 'active_conversation', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+              summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+              steps: [
+                { id: '1', action: 'Observe the open chat.', tools: ['chat_observe'] },
+                { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.', tools: ['chat_send'] },
+              ],
+              localized: {
+                locale: 'en',
+                summary: 'Send three test messages in the open chat, then a thank-you to Rustem Bey.',
+                steps: [
+                  { id: '1', action: 'Observe the open chat.' },
+                  { id: '2', action: 'Send three test messages and a thank-you to Rustem Bey.' },
+                ],
+                risks: [],
+              },
+            }),
+            usage: {},
+          }),
+        };
+        const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent._messageRecipientContentProbe = async () => ({ success: true, conclusive: true, strongIdentityCandidates: ['Mehmet'] });
+        let reviewed = null;
+        agent._waitForPlanReview = async (_tabId, _planId, _plan, compact, _onUpdate, verbose) => {
+          reviewed = { compact, verbose };
+          return edited
+            ? { action: 'approve', markdownMode: 'compact', editedText: compact.replace('Observe the open chat.', 'Observe the chat.') }
+            : { action: 'approve', markdownMode: 'compact', editedText: '' };
+        };
+        const tabId = 9580 + (agentIndex * 20) + (editIndex * 10);
+        const gate = await agent._runPlannerGate(tabId,
+          { role: 'user', content: 'send some test messages to this one, at least 3, then thank Rustem Bey' },
+          () => { }, null, null, '', { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' }, 'try', 'act', { locale: 'en' });
+        const where = `${AgentClass.name} ${edited ? 'edited' : 'unedited'}`;
+        assert.equal(gate.proceed, true, `${where}: the reviewed plan did not run: ${gate.message || gate.reason}`);
+        assert.match(reviewed?.verbose || '', /- Message targets: to:Mehmet\n- Also named, each verified before any send to them: to:Rustem Bey/,
+          `${where}: the reviewed plan does not show the person named besides the open chat`);
+        if (edited) {
+          // An edited plan carries no send target at all, as before.
+          assert.equal(gate.messaging, null);
+          assert.equal(gate.requestedMessaging, null);
+          assert.deepEqual(gate.activeConversationRecipients, []);
+        } else {
+          assert.deepEqual(gate.messaging, { target_kind: 'named', recipients: [{ identity: 'Mehmet', role: 'to' }] });
+          assert.deepEqual(gate.requestedMessaging, { target_kind: 'named', recipients: [{ identity: 'Rustem Bey', role: 'to' }] },
+            `${where}: the approved plan dropped the person named besides the open chat`);
+          assert.deepEqual(gate.activeConversationRecipients, ['mehmet'], `${where}: the approved plan dropped the pinned chat`);
+        }
+      }
+    }
+  });
 });
 
 test('unverified active recipients keep the user answer bound to the original send task', async () => {
@@ -114881,7 +113443,8 @@ test('Chrome bounds trusted checkbox recovery before and during the CDP click', 
     };
     cdpClientCh.attach = async () => ({ attached: true });
     cdpClientCh.clickElement = async (_tabId, _selector, options) => {
-      options.beforeDispatch();
+      // The press reached its transport boundary (after its fences).
+      options.onDispatch();
       markClickStarted();
       return delayedClick;
     };
@@ -116585,7 +115148,7 @@ test('planner gate: skips one explicit Continue after a newly approved try-mode 
       const outcome = await agent._maybeRunPlannerGate(
         tabId,
         agent.conversations.get(tabId),
-        { role: 'user', content: enrichedFollowUp },
+        { role: 'user', content: enrichedFollowUp, webbrainTurnKind: 'continue' },
         () => { },
         'act',
         null,
@@ -124172,14 +122735,14 @@ async function withCaptchaFakePage(build, nodes, callback) {
 async function detectCaptchaOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return (await mod.detectCaptcha(1)).selected;
+    return (await mod.detectCaptcha(1, { challengeReadings: captchaTitleReadingsFor(nodes) })).selected;
   });
 }
 
 async function detectCaptchaDetailsOnFakePage(build, nodes) {
   return withCaptchaFakePage(build, nodes, async () => {
     const mod = await import(pathToFileURL(path.join(ROOT, `src/${build}/src/agent/captcha-solver.js`)).href);
-    return mod.detectCaptcha(1);
+    return mod.detectCaptcha(1, { challengeReadings: captchaTitleReadingsFor(nodes) });
   });
 }
 
@@ -124192,6 +122755,7 @@ test('CAPTCHA providers: hCaptcha stays manual when CapSolver is also enabled', 
     ])];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['2captcha'];
       agent._currentUrl = async () => 'https://example.test/form';
@@ -124623,6 +123187,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, supportedNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -124643,6 +123208,8 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(agent._captchaGateBlockResult(1, 'click')?.solveCaptchaRequired, true, `${build}: Dismiss/Continue click was not blocked`);
 
       const disabledAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(disabledAgent);
       disabledAgent.captchaSolverEnabled = false;
       disabledAgent._currentUrl = async () => 'https://example.test/signup';
       const disabledObservation = await disabledAgent._observeCaptchaChallenge(
@@ -124659,6 +123226,8 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
       assert.equal(enabledGate?.status, 'solve_required', `${build}: enabling the solver did not re-evaluate the manual gate before mutation`);
 
       const transientAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(transientAgent);
       transientAgent.captchaSolverEnabled = true;
       transientAgent.captchaProviderIds = ['capsolver'];
       transientAgent._currentUrl = async () => 'https://example.test/signup';
@@ -124722,6 +123291,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, invisibleV3Nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -124745,6 +123315,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, unrelatedV3Nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -124774,6 +123345,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, unrelatedVisibleNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -124810,6 +123382,7 @@ test('challenge-dialog routing detects supported widgets and diagnoses unsupport
     ];
     await withCaptchaFakePage(build, arkoseNodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -124881,6 +123454,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
     for (const example of supportedCases) {
       await withCaptchaFakePage(build, example.nodes, async () => {
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
@@ -124917,6 +123491,8 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
 
         const disabledAgent = new AgentClass({});
+
+        stubCaptchaTitleReadings(disabledAgent);
         disabledAgent.captchaSolverEnabled = false;
         disabledAgent._currentUrl = async () => 'https://example.test/signup';
         const disabled = await disabledAgent._observeCaptchaChallenge(
@@ -124937,6 +123513,8 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         );
 
         const preflightAgent = new AgentClass({});
+
+        stubCaptchaTitleReadings(preflightAgent);
         preflightAgent.captchaSolverEnabled = true;
         preflightAgent.captchaProviderIds = ['capsolver'];
         preflightAgent._currentUrl = async () => 'https://example.test/signup';
@@ -125006,6 +123584,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
         ]),
       ], async () => {
         const agent = new AgentClass({});
+        stubCaptchaTitleReadings(agent);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
         agent._currentUrl = async () => 'https://example.test/signup';
@@ -125037,6 +123616,7 @@ test('language-neutral CAPTCHA challenge frames arm the gate without matching di
       }),
     ], async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -125335,6 +123915,7 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
     ];
     await withCaptchaFakePage(build, nodes, async () => {
       const agent = new AgentClass({});
+      stubCaptchaTitleReadings(agent);
       agent.captchaSolverEnabled = true;
       agent.captchaProviderIds = ['capsolver'];
       agent._currentUrl = async () => 'https://example.test/signup';
@@ -125345,6 +123926,8 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(agent._captchaGateBlockResult(1, 'click_ax')?.solveCaptchaRequired, true, `${build}: detected Dismiss click was not blocked`);
 
       const disabledAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(disabledAgent);
       disabledAgent.captchaSolverEnabled = false;
       disabledAgent._currentUrl = async () => 'https://example.test/signup';
       const disabledGate = await disabledAgent._captchaMutationPreflight(2, 'click_ax');
@@ -125354,6 +123937,8 @@ test('enabled CAPTCHA gate performs a read-only dialog preflight before the firs
       assert.equal(disabledAgent._captchaGateBlockResult(2, 'click_ax')?.manualCompletionRequired, true, `${build}: disabled preflight allowed the challenge mutation`);
 
       const abandonmentAgent = new AgentClass({});
+
+      stubCaptchaTitleReadings(abandonmentAgent);
       abandonmentAgent.captchaSolverEnabled = false;
       const abandonmentGate = await abandonmentAgent._captchaMutationPreflight(
         3,
@@ -125544,6 +124129,7 @@ test('Chrome CAPTCHA detection preserves navigation-frame diagnostics when scrip
 test('challenge dialog with no enabled supported solver stops the batch for manual completion', async () => {
   for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
     const agent = new AgentClass({ getVisionProvider: async () => null });
+    stubCaptchaTitleReadings(agent);
     const tabId = label === 'chrome' ? 8811 : 8812;
     const messages = [];
     const updates = [];
@@ -125582,6 +124168,7 @@ test('CAPTCHA batch routing offers native tools only in Act/Dev mid/full and exi
     for (const [mode, tier] of [['ask', 'full'], ['act', 'compact'], ['act', 'mid'], ['act', 'full'], ['dev', 'mid'], ['dev', 'full']]) {
       await withCaptchaFakePage(build, [], async () => {
         const agent = new AgentClass({ getActive: () => ({ promptTier: tier }), getVisionProvider: async () => null });
+        stubCaptchaTitleReadings(agent);
         agent.conversationModes.set(1, mode);
         agent.captchaSolverEnabled = true;
         agent.captchaProviderIds = ['capsolver'];
@@ -126380,7 +124967,7 @@ test('Firefox detects and injects an inherited-origin srcdoc CAPTCHA through its
       },
     };
 
-    const detection = await firefoxMod.detectCaptcha(91);
+    const detection = await firefoxMod.detectCaptcha(91, { challengeReadings: captchaTitleReadingsFor([verificationDialog]) });
     assert.equal(sawBlankMatching, true, 'Firefox detector did not request about:blank matching');
     assert.equal(detection.error, null, 'srcdoc CAPTCHA detection failed');
     assert.equal(detection.selected.websiteKey, 'KEY_SRCDOC', 'srcdoc site key was lost');
@@ -127880,11 +126467,12 @@ test('execute protocol suppresses planner payloads, rejects false Ask claims, an
     const tabId = AgentClass === AgentCh ? 9911 : 9912;
     assert.equal(agent._isPlannerShapedJson(plannerPayload), true, `${AgentClass.name}: planner JSON was not detected`);
     agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: false });
-    assert.equal(
-      agent._looksLikePlanOnlyTerminal('You are currently in Ask mode. Switch to Act mode to continue.', agent._planExecutionGuards.get(tabId)),
-      true,
-      `${AgentClass.name}: false runtime-mode claim was accepted`,
-    );
+    // A plain final ends no Act run, whatever it claims about the mode; the
+    // one recovery already says the trusted runtime is Act/Dev.
+    const claim = agent._planOnlyTerminalDecision(tabId, 'Şu anda Sor modundasınız. Devam etmek için Eylem moduna geçin.');
+    assert.equal(claim?.retry, true, `${AgentClass.name}: false runtime-mode claim was accepted`);
+    assert.match(claim?.nudge || '', /trusted runtime is Act\/Dev, not Ask or read-only mode/);
+    agent._planExecutionGuards.get(tabId).recoveryAttempted = false;
     const first = agent._planOnlyTerminalDecision(tabId, plannerPayload);
     assert.equal(first?.retry, true, `${AgentClass.name}: first planner terminal did not receive one recovery`);
     const second = agent._planOnlyTerminalDecision(tabId, plannerPayload);

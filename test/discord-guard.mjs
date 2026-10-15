@@ -8,6 +8,7 @@ import { getMessageRecipientGuardPolicy } from '../src/chrome/src/agent/adapters
 import { getMessageRecipientGuardPolicy as firefoxPolicy } from '../src/firefox/src/agent/adapters.js';
 import { advanceChatSession, createChatSession, markChatSendPending } from '../src/chrome/src/agent/chat-workflow.js';
 import { advanceChatSession as advanceChatSessionFirefox } from '../src/firefox/src/agent/chat-workflow.js';
+import { guardProbeWithReadings, stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 const url = 'https://discord.com/channels/123/456';
 const fixture = `<!doctype html><style>
@@ -22,7 +23,7 @@ ol {min-height:30px} main {position:fixed;left:320px;top:0;width:550px;height:70
 <header><div id="server" role="button" tabindex="0" aria-label="Test, sunucu işlemleri" aria-expanded="false"><h2>Test</h2></div></header>
 <div id="channels"><button id="create" type="button" aria-label="Kanal oluştur">+</button>
 <button id="category" type="button" aria-label="Metin kanalları (kategori)" aria-expanded="true">Metin kanalları</button>
-<a id="channel" href="/channels/123/456" aria-label="genel (metin kanalı)" aria-current="page">genel</a>
+<a id="channel" href="/channels/123/456" aria-label="general (metin kanalı)" aria-current="page">general</a>
 <button id="edit" type="button" aria-label="Kanalı düzenle">Kanalı düzenle</button>
 <button id="nav-send" type="button">Send message</button></div></nav>
 <section class="panels_fixture" aria-label="User status and settings"><div class="accountPopoutButtonWrapper_fixture"><img id="profile-avatar" src="https://cdn.discordapp.com/avatars/11/self.webp?size=56"></div><div class="nameTag_fixture"><div class="panelTitleContainer_fixture">WebBrain</div><div class="panelSubtext_fixture"><span class="hovered_fixture">webbrain_one</span></div></div><div class="buttons_fixture"><button id="user-settings-trigger" aria-label="Kullanıcı ayarları">⚙</button><button id="mute" role="switch" aria-label="Sessize al">●</button></div></section>
@@ -59,6 +60,9 @@ for (const [kind, engine, AgentClass, policy] of [
       await page.goto(url);
       for (const source of sources) await page.addScriptTag({content:source});
       const agent=new AgentClass({getActive:()=>({supportsVision:false})});
+      // Control names are read by the fixtures' model oracle, as the agent's
+      // model reads them before the guard decides.
+      stubPageTextReadings(agent);
       agent._messageRecipientContentProbe=(_,params)=>call(page,'probe_message_recipient_guard',params);
       const guard=async(tool,args)=>{
         if(tool==='set_field' && args.selector){
@@ -67,7 +71,7 @@ for (const [kind, engine, AgentClass, policy] of [
         }
         return agent._messageRecipientGuardBlock(1,tool,args,page.url());
       };
-      const probe=(tool,args)=>call(page,'probe_message_recipient_guard',{tool,args,adapterName:'discord'});
+      const probe=(tool,args)=>guardProbeWithReadings(params=>call(page,'probe_message_recipient_guard',params),{tool,args,adapterName:'discord'});
       return {page,guard,probe};
     };
     try {
@@ -167,7 +171,11 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('#topic').focus();
           assert.equal(await guard('press_keys',{key:'Enter'}),null);
           assert.notEqual((await probe('click',{selector:'#input-send'})).nonMessagingTarget,true);
-          await page.locator('#topic').evaluate(el=>el.setAttribute('aria-label','Message #general'));
+          // A channel composer (Discord's channelTextArea) inside the dialog,
+          // whatever its localized name, denies the management classification.
+          await page.locator('#topic').evaluate(el=>{
+            const area=document.createElement('div');area.className='channelTextArea_fixture';el.before(area);area.append(el);
+          });
           assert.notEqual((await probe('click',{selector:'#save'})).nonMessagingTarget,true);
         } finally {await page.close();}
       });
@@ -254,6 +262,11 @@ for (const [kind, engine, AgentClass, policy] of [
           assert.equal(result.threadKey,'dom:discord:dm:456');
           assert.equal(result.conversationIdentity,'direct-message-456');
           assert.equal(result.messages[0].id,'discord:456:1001');
+          // The selected rail link names the contact in any language: its text
+          // that the composer's label also contains, not a status line beside it.
+          await page.locator('#channel').evaluate(el=>{el.innerHTML='<span>Ada</span><span>Spielt gerade</span>';});
+          await page.locator('#composer').evaluate(el=>el.setAttribute('aria-label','Nachricht an @Ada'));
+          assert.equal((await observe()).conversationIdentity,'Ada');
 
           await page.locator('#channel').evaluate(el=>el.remove());
           assert.equal((await observe()).success,true,'matching message-row channel IDs bind the DM pane without an active rail link');
@@ -317,6 +330,7 @@ for (const [kind, engine, AgentClass, policy] of [
           await page.locator('section').evaluate(el=>el.setAttribute('aria-label','Benutzerstatus und Einstellungen'));
           const localized=await observe();
           assert.equal(localized.success,true,JSON.stringify(localized));
+          assert.equal(localized.conversationIdentity,'#general','the channel is named in any language');
           assert.equal(localized.conversationId,result.conversationId);
           assert.equal(localized.threadKey,result.threadKey);
           assert.deepEqual(localized.messages,result.messages);

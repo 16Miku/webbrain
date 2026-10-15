@@ -168,6 +168,8 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         function isAwaitingPlanReviewForTab() { return false; }
         function hasQueuedContextMenuPromptForTab() { return false; }
         function drainQueuedContextMenuPrompts() {}
+        function holdQueuedContextMenuPromptsForTab() {}
+        function getHeldContextMenuPromptsForTab() { return []; }
         function resetComposerHistoryNavigation() {} function syncComposerDeliveryState() {} function syncSendButtonState() {}
         function autoResizeInput() {} function updateSlashCommandAutocomplete() {} function hideSlashCommandAutocomplete() {}
         function saveInputDraftForTab(tabId, text) { drafts.set(Number(tabId), text); }

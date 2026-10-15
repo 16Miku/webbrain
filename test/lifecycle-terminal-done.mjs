@@ -5,6 +5,7 @@
 // must not discard the completion-recovery turn.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 
 const PAGE_URL = 'https://example.com/settings';
 const TREE = 'main [ref_main]\n heading "Settings" [ref_h]\n button "Save" [ref_save]';
@@ -25,7 +26,8 @@ function makeAgent(Agent, next) {
   const provider = {
     name: 'lifecycle test', model: 'test', promptTier: 'full', contextWindow: 128000,
     supportsTools: true, supportsVision: false,
-    chat: (messages, options) => next(messages, options),
+    // A model reading a failed or partial summary is not a turn of the run.
+    chat: withoutFixedChoiceAnswers((messages, options) => next(messages, options)),
     async *chatStream(messages, options) {
       const response = await next(messages, options);
       if (response.content) yield { type: 'text', content: response.content };

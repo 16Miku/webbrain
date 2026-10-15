@@ -21,7 +21,7 @@ An exhausted publication check stops the run with a clear failure message and ap
 ## Deterministic enforcement
 
 - Preserve exact body and alt text, accepting only NFC equivalence and CRLF normalization. Compose requests bind completion to the audited draft.
-- App-observed non-submit controls such as X's “Add post” remain repeatable while composing a thread. Label-based duplicate-submit protection still applies to unresolved and actual publish controls.
+- App-observed non-submit controls such as X's “Add post” remain repeatable while composing a thread. Duplicate-submit protection, for a caption a model read as a commit, still applies to unresolved and actual publish controls.
 - Chrome text replacement sends the browser's explicit Select All editing command before Delete, including on macOS, and still requires a proven empty field before inserting the replacement.
 - Read ProseMirror paragraph boundaries and hard breaks as document text, excluding its trailing caret placeholder. Field verification, field digests, Chrome CDP verification, and publication snapshots preserve the same spaces and line breaks.
 - Require complete composer/account/media/context observations and a pre-dispatch permalink baseline. Unassigned or shared thread media makes the observation incomplete.
@@ -33,11 +33,12 @@ An exhausted publication check stops the run with a clear failure message and ap
 - Track each contract action as pending, failed, or verified. Uncertain delivery never unlocks an alternative or fallback, and cannot authorize another publish attempt.
 - Preserve the contract, authentic clarification pairs, and outcomes only across the existing trusted Continue boundary. A new user task gets a new contract. Clarification after an attempted publication retains its outcomes and blocks further dispatch under the stale instructions; it cannot reset delivery uncertainty or authorize a duplicate.
 - Preserve bound upload evidence when clarification recompiles an unchanged, unattempted action in the same workflow. Changed action constraints or workflow bindings reset it; every refreshed contract still requires a fresh authorization audit.
-- Recognize Bluesky desktop composer launchers as non-submitting controls outside forms/dialogs. Actual publish buttons retain the full contract checks.
+- Recognize Bluesky desktop composer launchers as ordinary controls when a model reads their caption as opening an editor, in any language. Actual publish buttons retain the full contract checks.
 - Ordinary X/Bluesky controls (menus, tabs, settings toggles, reply openers, composer tools with non-publish ids) pass without a contract; unidentified controls are reported as unidentified and stay blocked. An unmodified Enter in the app-marked post editor edits the draft.
 - Repeating an identical post under a revised task is blocked and reported as already published (verified) or already attempted under the earlier instruction.
+- Deleting a post whose record shows its permalink (X, Bluesky, LinkedIn, GitHub release or commit links) or a native Mastodon status keeps the exact URL rule. The visible-text binding for requested deletions of ordinary rows (see `architecture.md`) never applies to records with permalink evidence.
 - Markdown blockquote markers copied from a chat answer are formatting, not post text: an exact body whose continuation lines all carry `>` markers is published as the rendered text. Greentext (every line quoted, no empty quoted line) keeps its characters.
-- Recognize the modal Cancel and Keep editing controls as non-submitting recovery actions, rejecting conflicting publish labels, test IDs, or form ownership.
+- Recognize the modal Cancel, Keep editing and Close controls as non-submitting recovery actions when a model reads their captions as only changing the view, in any language; publish test IDs, captions read as a publication, unrecognized app test IDs on typeless buttons, and form ownership keep the checks.
 - A corrected replacement after an uncertain text write can proceed only after a read-only digest proves the original replacement landed in the same document and field. Changed, incomplete, or unavailable readbacks retain the block; generic page reads never clear it.
 - Convert screenshot clicks to CSS coordinates before target/iframe preflight, and use that same point for dispatch.
 

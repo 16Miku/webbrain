@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { fixtureFixedChoiceReply } from './semantic-decision-stub.mjs';
 
 // Offline actual-method protocol fixture. Only page capture/transport and the
 // independent provider are simulated; no browser, network, image, or upload opens.
@@ -44,6 +45,10 @@ for (const build of ['chrome', 'firefox']) {
     agent._hasPendingSteering = () => h.steering;
     agent.recordSystemOneVerdict = () => {};
     agent._chatWithCostAllowance = async (_provider, messages, options) => {
+      // The page's status message is read with its own fixed-choice question,
+      // the way a model would read this fixture's "All changes saved.".
+      const reading = fixtureFixedChoiceReply(messages);
+      if (reading) { h.readings = (h.readings || 0) + 1; return { content: reading }; }
       h.judges++;
       assert.equal(options.tools, undefined, 'The independent completion provider must never receive action tools.');
       assert.match(messages[0].content, /^Evaluate only the observable requirements/);
@@ -66,6 +71,10 @@ for (const build of ['chrome', 'firefox']) {
     scope();
     if (dispatch) {
       const result = dispatchResult || { success: true, tag: 'button', name: 'Publish', verified: true };
+      // After a dispatched click in a run that has to prove a submission, the
+      // pipeline reads what the clicked control's caption means, as a model
+      // would read this fixture's "Publish".
+      await agent._readControlEffect(51, agent._controlCaption('click_ax', { ref_id: 'ref_51' }, result));
       record('click_ax', { ref_id: 'ref_51' }, result, true);
       h.submit = agent._recordCompletionSubmitAttempt(51, semanticCommit ? { isSubmit: true, semanticCommit: true } : null,
         'click_ax', { ref_id: 'ref_51' }, url, url, result,
@@ -82,6 +91,29 @@ for (const build of ['chrome', 'firefox']) {
     h.close = () => { globalThis.chrome = savedChrome; globalThis.browser = savedBrowser; if (cdp) Object.assign(cdp, savedCdp); };
     return h;
   }
+
+  test(`${build}: a fresh conversation result earns generic submission evidence despite unrelated page text`, async () => {
+    const h = await fixture();
+    try {
+      h.tree = 'main "Accounts"\n textbox "Search accounts"';
+      h.agent._completionResultSnapshot = async () => ({ identity: `${h.url}|${h.identityEpoch}`, scopeRef: 'ref_80',
+        text: 'Support team conversation\nThe requested handover request is sent.\n11:24 AM', composerEmpty: true });
+      h.agent._chatWithCostAllowance = async (_provider, messages, options) => {
+        const reading = fixtureFixedChoiceReply(messages);
+        if (reading) return { content: reading };
+        h.judges++;
+        assert.equal(options.tools, undefined);
+        const state = JSON.parse(messages[1].content);
+        assert.match(state[1].observation, /requested handover request is sent/);
+        return { content: '{"outcome":"succeeded","reason":"Fresh conversation contains the requested sent message."}' };
+      };
+      const result = await h.done();
+      assert.equal(result.outcome, 'success'); assert.equal(result.done, true);
+      assert.equal(h.guard.verifiedSubmissionEvidence, true);
+      assert.equal(h.judges, 1);
+      assert.equal(h.agent._planOnlyTerminalDecision(51, result.summary, { viaDone: true, outcome: result.outcome }), null);
+    } finally { h.close(); }
+  });
 
   test(`${build}: unrelated video metadata contract cannot block an independently verified form-less profile Publish`, async () => {
     const h = await fixture();

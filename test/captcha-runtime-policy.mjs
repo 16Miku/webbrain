@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
+import { fixturePageBlockerReading, stubPageTextReadings } from './semantic-decision-stub.mjs';
 const captchaNames = ['get_captcha_capabilities', 'solve_captcha', 'apply_captcha_solution'];
 const solverInstructions = /get_captcha_capabilities|solve_captcha|apply_captcha_solution|\[CAPTCHA SOLVER/;
 test('CAPTCHA tool matrix matches Ask, Compact, Mid, Full and Dev availability', async () => {
@@ -42,6 +43,8 @@ for (const build of ['chrome', 'firefox']) {
   });
   function agentFor(mode, tier, enabled = true) {
     const agent = new Agent({ getActive: () => ({ promptTier: tier }) });
+    // A model reads dialog titles (page_blocker); the fixture oracle stands in.
+    stubPageTextReadings(agent, (kind, item) => (kind === 'page_blocker' ? fixturePageBlockerReading(item.text) : null));
     agent.conversationModes.set(1, mode);
     agent.captchaSolverEnabled = enabled;
     agent.captchaProviderIds = enabled ? ['nonecap'] : [];

@@ -70,6 +70,32 @@ function batchAgent(Agent, tabId) {
 }
 
 for (const build of ['chrome', 'firefox']) {
+  test(`${build}: an unconfirmed dispatched generic submission ends partial without claiming action failure`, async () => {
+    const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
+    const tabId = 4402, agent = batchAgent(Agent, tabId);
+    const guard = agent._startPlanExecutionGuard(tabId, 'act', {
+      requestKind: 'execute', requiresStateChange: true, requiresSubmission: true,
+    });
+    guard.successfulConsequentialToolCalls = 1; guard.successfulTaskToolCalls = 1; guard.evidenceTaskKey = guard.taskKey;
+    agent._completionSubmitStates.set(tabId, { dispatched: true, taskKey: guard.taskKey });
+    agent._completionVerdicts = new Map([[tabId, { outcome: 'uncertain', engine: 'legacy' }]]);
+    const updates = [], messages = [];
+    const batch = id => agent._executeToolBatch(tabId, [{ id, function: { name: 'done',
+      arguments: JSON.stringify({ summary: 'Sent.', outcome: 'success' }) } }], messages,
+    (type, data) => updates.push({ type, data }), { supportsVision: false }, null, new Set(['done']), 1, {});
+    assert.equal((await batch('done_1')).action, 'continue');
+    const result = await batch('done_2');
+    assert.equal(result.action, 'return'); assert.equal(result.status, 'partial');
+    assert.match(result.value, /I submitted it, but I couldn't confirm/);
+    const done = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1).data.result;
+    assert.equal(done.outcome, 'partial'); assert.equal(done.success, true); assert.equal(done.error, undefined);
+    assert.match(done.verificationWarning, /generic submission evidence was still missing/);
+    assert.notEqual(guard.verifiedSubmissionEvidence, true);
+    agent._completionSubmitStates.get(tabId).formValidationFailed = true;
+    assert.equal(agent._planOnlyTerminalDecision(tabId, 'Sent.', { viaDone: true, outcome: 'success' }).status,
+      'required_evidence_missing', 'A real validation failure must retain failure semantics');
+  });
+
   test(`${build}: a publication that could not be confirmed ends with a plain answer and keeps the diagnostic`, async () => {
     const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
     const { normalizePublicationContract } = await import(`../src/${build}/src/agent/social-publish-contract.js`);

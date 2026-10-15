@@ -175,6 +175,7 @@ export function classifyCompletionForm({
   hiddenNamedCount = 0,
   editable = [],
   submits = [],
+  submitReadings = {},
 } = {}) {
   const fields = Array.isArray(editable) ? editable : [];
   const submitControls = Array.isArray(submits) ? submits : [];
@@ -201,22 +202,31 @@ export function classifyCompletionForm({
   // normal search-results state and is not task evidence by itself.
   const searchFieldsOnly = normalizedFields.length > 0
     && normalizedFields.every(field => semanticSearchField(field) || conventionalSearchField(field));
-  const searchSubmitsOnly = normalizedSubmits.every(control => /search|filter|go/i.test(control.label));
-  const searchHasTaskEvidence = !!(
+  // What a submit control's caption means is read by a model in any language
+  // (the agent's control_effect readings, `submitReadings` by label): only
+  // controls read as showing, filtering or searching ("view") leave a
+  // search form a search form. An unread caption is no evidence, so it keeps
+  // the form relevant here; `searchCandidate` tells the agent to read it.
+  const readings = submitReadings && typeof submitReadings === 'object' ? submitReadings : {};
+  const readingOf = control => (Object.prototype.hasOwnProperty.call(readings, control.label) ? readings[control.label] : null);
+  const searchSubmitsOnly = normalizedSubmits.every(control => readingOf(control) === 'view');
+  const searchStructureHasTaskEvidence = !!(
     insideDialog
     || normalizedMethod !== 'get'
     || Number(hiddenNamedCount || 0) !== 0
-    || !searchSubmitsOnly
     || normalizedFields.some(field => (
       field.required
       || field.focused
       || (!!field.name && !conventionalSearchField(field))
     ))
   );
+  const searchHasTaskEvidence = searchStructureHasTaskEvidence || !searchSubmitsOnly;
   // Primary content alone is not task evidence: result pages commonly place
   // genuine search/filter forms there.
   const safeSearchOnly = searchFieldsOnly && !searchHasTaskEvidence;
   const hasSemanticSearchField = normalizedFields.some(semanticSearchField);
+  const searchCandidate = searchFieldsOnly && !searchStructureHasTaskEvidence && !searchSubmitsOnly
+    && normalizedSubmits.every(control => readingOf(control) === null || readingOf(control) === 'view');
 
   const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
   const passiveUtilityShell = !!(
@@ -251,6 +261,12 @@ export function classifyCompletionForm({
     utilityReason,
     editableCount: normalizedFields.length,
     submitCount: normalizedSubmits.length,
+    ...(searchCandidate && !utility ? {
+      searchCandidate: true,
+      searchUtilityReason: hasSemanticSearchField ? 'semantic_search' : 'conventional_search',
+      // Every submit's caption, so the agent can tell when one has none to read.
+      submitLabels: normalizedSubmits.map(control => control.label.slice(0, 120)).slice(0, 4),
+    } : {}),
   };
 }
 

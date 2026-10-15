@@ -15712,6 +15712,13 @@ function hasMastodonInteractionSignal(url, path) {
     && isMastodonRemoteUri(url.searchParams.get('uri'));
 }
 
+// Whether a page is a Mastodon instance's own page, by its address: a known
+// or mastodon.* instance's app, profile or status routes, a remote account's
+// profile (/@user@host), or the remote interaction routes.
+export function isMastodonPageUrl(url) {
+  try { return isMastodonUrl(url); } catch { return false; }
+}
+
 function isMastodonUrl(url) {
   const u = new URL(url);
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
@@ -18010,23 +18017,35 @@ function gmailCountNumber(value) {
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
 
-/** Parse Gmail toolbar labels such as "1-50 of many" and "551-575 of 575". */
+// A count as Gmail writes it in any locale: digits with dots, commas or
+// a space before a group of three ("2 345").
+const GMAIL_COUNT = String.raw`\d(?:[\d.,]|\s(?=\d{3}(?!\d)))*`;
+const GMAIL_RANGE = new RegExp(String.raw`(${GMAIL_COUNT})\s*[\u2012\u2013\u2014-]\s*(${GMAIL_COUNT})(?:([^\d]{1,16}?)(${GMAIL_COUNT}))?`, 'u');
+
+/**
+ * Parse Gmail's toolbar range in any language by its numbers: the two numbers
+ * joined by a dash are the shown rows, and a number shortly after them,
+ * whatever word or symbol separates it ("of", "de", "/", "共"), is the total.
+ * Words with no number after the range ("of many") mean Gmail does not show
+ * the total.
+ */
 export function parseGmailPaginationRange(value) {
   const text = String(value || '').replace(/\s+/g, ' ').trim();
-  const match = /(\d[\d\s.,]*)\s*[\u2012\u2013\u2014-]\s*(\d[\d\s.,]*?)(?:\s*(?:of|de|sur|von|di|van|z|av|af|iz|共|\/)\s*(many|\d[\d\s.,]*))?(?=\D|$)/iu.exec(text);
+  const match = GMAIL_RANGE.exec(text);
   if (!match) return null;
   const start = gmailCountNumber(match[1]);
   const end = gmailCountNumber(match[2]);
-  const total = /^many$/i.test(match[3] || '') ? null : gmailCountNumber(match[3]);
+  const total = match[4] == null ? null : gmailCountNumber(match[4]);
   const empty = start === 0 && end === 0 && total === 0;
   if (start == null || end == null || (!empty && (start < 1 || end < start)) || end - start >= 1000) return null;
   if (total != null && total < end) return null;
+  const approximate = total == null && /^\s*[^\s\d]/u.test(text.slice(match.index + match[0].length));
   return {
     text: match[0].trim(),
     start,
     end,
     total,
-    approximate: /many/i.test(match[3] || ''),
+    approximate,
     ...(empty ? { empty: true } : {}),
   };
 }
@@ -18159,33 +18178,44 @@ export function getCarouselNavigationTarget(url, index) {
   return { ...policy, requestedIndex: targetIndex, targetUrl: target.href };
 }
 
+const CAROUSEL_MAX_SLIDES = 100;
+
 /**
- * Infer a carousel total from aria-labels. Prefer an explicit "N of M" / "N/M"
- * total; never treat a lone current-position label such as "Slide 3" as the
- * last slide, which would abort a forward scan.
+ * Infer a carousel total from its aria-labels in any language, by their
+ * shape, not their words. A short label with two numbers joined by one word
+ * or a slash, the first not above the second ("Slide 3 of 10", "Diapositiva
+ * 3 de 10", "3/10"), gives the total. Labels that differ only in one number
+ * ("Slide 1", "Slide 2", ...) give their highest number. A lone position label
+ * such as "Slide 3" never sets the total, which would abort a forward scan;
+ * neither does a time ("1:05").
  */
 export function parseCarouselSlideCount(labels) {
   if (!Array.isArray(labels) || !labels.length) return null;
   let total = null;
-  const indexes = [];
+  const series = new Map();
   for (const raw of labels) {
-    const label = String(raw || '');
-    const ofMatch = /(?:slide|image)\s+(\d+)\s*(?:of|\/|de|von|sur)\s+(\d+)/i.exec(label);
-    if (ofMatch) {
-      const count = Number(ofMatch[2]);
-      if (Number.isInteger(count) && count >= 1) total = Math.max(total || 0, count);
+    const label = String(raw || '').replace(/\s+/g, ' ').trim();
+    if (!label || label.length > 40) continue;
+    const numbers = [...label.matchAll(/\d+/g)];
+    if (numbers.length === 2) {
+      const between = label.slice(numbers[0].index + numbers[0][0].length, numbers[1].index);
+      const [position, count] = numbers.map(match => Number(match[0]));
+      if (/^\s*(?:\/|[^\s\d:.,]{1,6})\s*$/u.test(between) && position >= 1 && position <= count && count <= CAROUSEL_MAX_SLIDES) {
+        total = Math.max(total || 0, count);
+      }
       continue;
     }
-    const slideMatch = /(?:slide|image)\s+(\d+)/i.exec(label);
-    if (slideMatch) {
-      const n = Number(slideMatch[1]);
-      if (Number.isInteger(n) && n >= 1) indexes.push(n);
+    if (numbers.length === 1) {
+      const position = Number(numbers[0][0]);
+      if (position < 1 || position > CAROUSEL_MAX_SLIDES) continue;
+      const shape = label.replace(/\d+/, '#');
+      if (!series.has(shape)) series.set(shape, new Set());
+      series.get(shape).add(position);
     }
   }
   if (Number.isInteger(total) && total >= 1) return total;
-  const unique = [...new Set(indexes)];
-  if (unique.length < 2) return null;
-  return Math.max(...unique);
+  const longest = [...series.values()].reduce((best, values) => (values.size > (best?.size || 0) ? values : best), null);
+  return longest && longest.size >= 2 ? Math.max(...longest) : null;
 }
 
 /**

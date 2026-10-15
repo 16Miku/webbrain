@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
+import { withoutFixedChoiceAnswers } from './semantic-decision-stub.mjs';
 import { makeSchedulerHarness } from './lib/scheduler-harness.mjs';
 import { CDPClient, cdpClient } from '../src/chrome/src/cdp/cdp-client.js';
 
@@ -1435,14 +1436,15 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: current read-only form verification survives top-frame page focus`, async () => {
     const tab = nextTab++, entered = deferred(), release = deferred(), updates = [];
     let requests = 0, nativeReads = 0, formRead = null;
-    const agent = setup(Agent, { supportsTools: true, chat: async () => {
+    // A model reading the partial result is not a decision of this run.
+    const agent = setup(Agent, { supportsTools: true, chat: withoutFixedChoiceAnswers(async () => {
       requests++;
       if (requests === 1) {
         entered.resolve(); await release.promise;
         return { content: null, toolCalls: [{ id: 'current-form-read', function: { name: 'verify_form', arguments: '{"selector":"#current-form","urlFilter":""}' } }] };
       }
       return { content: null, toolCalls: [{ id: 'honest-partial', function: { name: 'done', arguments: '{"summary":"The current form was inspected; no save is claimed.","outcome":"partial"}' } }] };
-    } });
+    }) });
     allowBatchPreparation(agent);
     agent.planBeforeAct = false; agent.maxSteps = 3; agent.autoScreenshot = 'off';
     agent._maybeRunPlannerGate = async () => ({ proceed: true, requestKind: 'execute', requiresStateChange: true });

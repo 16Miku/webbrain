@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta property="og:type" content="article">
+  <title>Türkçe abonelik duvarı fixture</title>
+  <style>
+    body { margin: 0; font: 18px/1.5 sans-serif; }
+    article { max-width: 700px; margin: 32px auto; }
+    .abone-perdesi { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(255,255,255,.98); }
+    .abone-kutusu { width: 560px; padding: 36px; border: 1px solid #aaa; }
+  </style>
+</head>
+<body>
+  <article>
+    <h1>Fixture manşeti</h1>
+    <p>SECRET_TURKISH_ARTICLE_BODY abonelik perdesinin altında sunucuda çizilmiştir ve okunmamalıdır.</p>
+    <a href="https://example.com/SECRET_TURKISH_LINK_TARGET">SECRET_TURKISH_LINK_TEXT</a>
+  </article>
+  <div class="abone-perdesi" role="dialog" aria-modal="true">
+    <div class="abone-kutusu">
+      <h2>Bu içerik abonelere özeldir</h2>
+      <p>Okumaya devam etmek için abone olun.</p>
+      <button type="button">Abone ol</button>
+    </div>
+  </div>
+</body>
+</html>

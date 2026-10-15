@@ -704,6 +704,13 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
     const source = String(matcherOptions?.challengeLabelPatternSource || '');
     if (source) challengeDialogRe = new RegExp(source, 'i');
   } catch (_) {}
+  // A dialog naming a CAPTCHA product, or one whose title a model read as
+  // asking to prove the person is human (the agent's page_blocker readings,
+  // keyed by the title as captcha-gate.js takes it).
+  const givenTitleReadings = matcherOptions?.challengeReadings && typeof matcherOptions.challengeReadings === 'object'
+    ? matcherOptions.challengeReadings : {};
+  const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
+    .replace(/[\ud800-\udbff]$/, '').trim();
   const challengeDialogs = Array.from(
     pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
   ).filter((element) => {
@@ -717,22 +724,33 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
         .map(id => pageDocument.getElementById?.(id)?.textContent || '')
         .join(' ');
     } catch (_) {}
-    let renderedHeadings = '';
+    let headings = [];
     try {
-      renderedHeadings = Array.from(
+      headings = Array.from(
         element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
       )
         .filter(visibleElement)
-        .map(heading => heading.textContent || '')
-        .join(' ');
+        .map(heading => heading.textContent || '');
     } catch (_) {}
-    return [
+    if ([
       element.getAttribute?.('aria-label'),
       labelledBy,
-      renderedHeadings,
+      headings.join(' '),
       element.getAttribute?.('title'),
       element.innerText,
-    ].some(value => challengeDialogRe.test(String(value || '')));
+    ].some(value => challengeDialogRe.test(String(value || '')))) return true;
+    let title = titleText(element.getAttribute?.('aria-label')) || titleText(labelledBy)
+      || headings.map(titleText).find(Boolean) || titleText(element.getAttribute?.('title'));
+    if (!title) {
+      let editable = true;
+      try {
+        editable = Array.from(element.querySelectorAll?.('[contenteditable]') || [])
+          .some(node => String(node.getAttribute?.('contenteditable') || '').toLowerCase() !== 'false');
+      } catch (_) {}
+      if (!editable) title = titleText(String(element.innerText || '').split(/\r?\n/).find(line => line.trim()));
+    }
+    return !!title && Object.prototype.hasOwnProperty.call(givenTitleReadings, title)
+      && givenTitleReadings[title] === 'human_check';
   });
   const elementInChallengeDialog = (element) => {
     if (!element) return false;
@@ -1502,8 +1520,11 @@ export function observeAwsWafChallengeInPage() {
   const jsapiScript = awsScript('jsapi');
   const challengeScript = awsScript('challenge');
   const captchaScript = awsScript('captcha');
-  const fullPage = !!(goku?.key && (challengeScript || captchaScript)
-    && /let['’]s confirm you are human/i.test(document.body?.innerText || ''));
+  // AWS WAF's own interstitial publishes gokuProps and loads its CAPTCHA
+  // script only when it asks for a puzzle; a silent challenge loads the
+  // challenge script alone and resolves by itself. That holds in every
+  // language the interstitial is shown in, unlike its heading.
+  const fullPage = !!(goku?.key && captchaScript);
   return {
     pageUrl: String(location.href),
     websiteKey: text(goku?.key),

@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // The actual installed MV3 background, monitor, Agent and CDP input operate on
 // React/DraftJS document nodes. Only inference and owned HTTP responses are
@@ -90,6 +91,16 @@ const server = http.createServer(async (request, response) => {
       auxiliaryRequests.push(input);
       response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ id: 'owned-inline-memory',
         choices: [{ message: { role: 'assistant', content: '{"memories":[]}' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 100, completion_tokens: 10 } }));
+      return;
+    }
+    // What a status on the page says, read the way a model would read it.
+    // These questions carry page text only, never the task.
+    const pageTextReply = fixturePageTextReply(input.messages);
+    if (pageTextReply) {
+      auxiliaryRequests.push(input);
+      response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ id: 'owned-inline-page-text',
+        choices: [{ message: { role: 'assistant', content: pageTextReply }, finish_reason: 'stop' }],
         usage: { prompt_tokens: 100, completion_tokens: 10 } }));
       return;
     }
@@ -332,6 +343,14 @@ try {
     return route.continue();
   });
   worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
+  // The worker can be reported before its extension APIs and module have
+  // finished loading; wait for both before wrapping them.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const ready = await worker.evaluate(() => !!(globalThis.chrome?.tabs && globalThis.chrome?.debugger && globalThis.inlineFixtureAgent))
+      .catch(() => false);
+    if (ready) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     const fetchOriginal = fetch.bind(globalThis);
     globalThis.inlineFixtureProbe = { commands: [], transports: [], feedback: [], blocked: [] };

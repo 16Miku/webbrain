@@ -936,12 +936,17 @@
     return redundantButtonDescription(el) || redundantOwnedButtonWrapperDescription(el);
   }
   function buttonTextWithoutDescription(el, description) {
-    if (!description || !el.contains(description)) return el.textContent;
+    // A <time datetime> element renders its value as text that changes on its
+    // own ("2 min", "3 dk"); its datetime value is what it means, and is bound
+    // instead, so a relative timestamp ticking over is not a change of context.
+    const times = !!el.querySelector?.('time[datetime]');
+    if (!times && (!description || !el.contains(description))) return el.textContent;
     const pending = [...el.childNodes].reverse(); let text = '';
     while (pending.length) {
       const node = pending.pop();
       if (node === description) continue;
       if (node.nodeType === 3) text += node.data;
+      else if (node.nodeType === 1 && node.matches?.('time[datetime]')) text += `\u0000${node.getAttribute('datetime')}\u0000`;
       else pending.push(...[...node.childNodes].reverse());
     }
     return text;
@@ -1336,6 +1341,40 @@
     }
     return null;
   }
+  // A focusable item the page names for assistive technology (tabindex with
+  // its own aria-label, or a complete aria-labelledby), as Mastodon marks a
+  // post shown on its own page and each reply around it. It is the nearest
+  // such ancestor below the given boundary; widgets, fields, composers,
+  // forms, landmarks and other entities are never items, and an item must
+  // link somewhere (its permalink or author) and stay bounded.
+  function namedFocusableItem(action, boundary) {
+    const stop = 'html,body,main,[role="main"],form,[role="form"],aside,[role="complementary"],'
+      + entityOwnerSelector + ',' + navigationOwnerSelector
+      + ',[role="toolbar"],[role="menu"],[role="menubar"],[role="listbox"],[role="grid"],[role="tree"],[role="treegrid"],[role="tabpanel"]';
+    for (let node = bindingParent(action), depth = 0; node && node !== boundary && depth < 12; node = bindingParent(node), depth++) {
+      if (!(node instanceof Element) || node.matches(stop)) return null;
+      if (!node.hasAttribute('tabindex') || !(node.tabIndex >= 0)
+          || node.matches('a,button,input,select,textarea,summary,label,option,[contenteditable]:not([contenteditable="false"])')) continue;
+      const role = String(node.getAttribute('role') || '').trim().toLowerCase();
+      if (role && role !== 'group') continue;
+      let named = !!String(node.getAttribute('aria-label') || '').trim();
+      if (!named) {
+        const ids = String(node.getAttribute('aria-labelledby') || '').trim().split(/\s+/).filter(Boolean);
+        const labels = ids.length ? modelLabels(node) : null;
+        named = !!labels && ids.every(id => labels.some(label => label.node.id === id))
+          && labels.some(label => String(window.__wb_ax_name?.(label.node) || label.node.textContent || '').trim());
+      }
+      if (!named) continue;
+      if (node.querySelectorAll('*').length > 256 || node.querySelectorAll(modelControlSelector).length > 64
+          || node.querySelector('input:not([type="hidden"]),textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) return null;
+      const linked = [...node.querySelectorAll('a[href]')].some(link => {
+        const href = String(link.getAttribute('href') || '').trim();
+        return visible(link) && !!href && !href.startsWith('#') && !/^javascript:/i.test(href);
+      });
+      return linked ? node : null;
+    }
+    return null;
+  }
   function actionFootprint(target, readonlyPreparation = null) {
     if (readonlyPreparation && !readonlyPreparationMatches(readonlyPreparation, target)) return null;
     const structuralFile = target instanceof Element && target.tagName === 'INPUT' && target.type === 'file';
@@ -1366,6 +1405,14 @@
       return !!labels && ids.every(id => labels.some(label => label.node.id === id))
         && labels.some(label => ids.includes(label.node.id) && String(window.__wb_ax_name?.(label.node) || label.node.textContent || '').trim());
     };
+    // Inside an unnamed region, or outside any entity, a named focusable item
+    // owns its controls, so a change in the items around it is not its context.
+    let namedItemOwner = false;
+    if (!conversation && !readonlyPreparation && !form && !structuralFile
+        && (!owner || (owner.matches('[role="region"]') && !owner.matches(modelEntityIdentitySelector)))) {
+      const item = namedFocusableItem(action, owner);
+      if (item) { owner = item; namedItemOwner = true; }
+    }
     if (!owner && !conversation && !readonlyPreparation) {
       const semanticScope = form || action.closest('section,[role="form"]');
       if (namedSemanticScope(semanticScope)) owner = semanticScope;
@@ -1549,7 +1596,14 @@
       const identities = [...owner.querySelectorAll(modelEntityIdentitySelector)].filter(node => belongs(node, navigationOwner));
       if (identities.length > 64) return null;
       for (const identity of identities) if (!addNode(identity, { text: true, control: true })) return null;
-      meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector);
+      // An item of an ARIA feed (an article with its position in the feed,
+      // as Mastodon and other social timelines mark each post) is an entity
+      // of its own: its controls are bound with the item, and changes in other
+      // items of the feed are not this item's context.
+      const feedItem = owner.matches('article[aria-posinset],[role="article"][aria-posinset]')
+        && !!owner.parentElement?.closest('[role="feed"]');
+      meaningfulOwner ||= headings.length > 0 || identities.length > 0 || owner.matches(modelEntityIdentitySelector) || feedItem
+        || namedItemOwner;
       if (meaningfulOwner) {
         const images = [...owner.querySelectorAll('img')].filter(node => belongs(node, navigationOwner)
           && !node.closest('input,textarea,[contenteditable]:not([contenteditable="false"])')
@@ -1836,12 +1890,21 @@
   }
   function captureModel(params = {}) {
     if (!active || params.runToken !== runToken) return { ready: false, runToken, documentToken };
+    // Which header controls of a conversation are actions, read by the
+    // agent's model in any language, decides who owns its footer actions.
+    try { window.__wb_remember_page_readings?.(params.pageReadings); } catch { /* Unread texts stay unread. */ }
     flushPendingMutations(); sampleFormControls();
     const authority = Object.freeze({ runToken, documentToken, owner: params.nativeChatOwner,
       userAt: lastUserAt, interventionRevision });
     identityPreparationCapture = authority;
-    try { return captureCurrentModel(params, authority); }
-    finally { if (identityPreparationCapture === authority) identityPreparationCapture = null; }
+    try {
+      const result = captureCurrentModel(params, authority);
+      let unread = false;
+      try { unread = window.__wb_page_texts_unread?.() === true; } catch { unread = false; }
+      // The agent reads texts consulted unread (it asks content.js for them)
+      // and captures again.
+      return unread && result && typeof result === 'object' ? { ...result, pageTextsUnread: true } : result;
+    } finally { if (identityPreparationCapture === authority) identityPreparationCapture = null; }
   }
   function currentIdentityPreparationCapture(authority, owner) {
     return !!authority && authority === identityPreparationCapture && active && !disposed

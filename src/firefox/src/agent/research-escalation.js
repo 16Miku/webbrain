@@ -43,8 +43,11 @@ export function probeChatGptPage() {
     document.querySelector('textarea[data-id="root"]'),
     ...document.querySelectorAll('main textarea, main [contenteditable="true"]'),
   ].find(visible) || null;
-  const loginRequired = [...document.querySelectorAll('button, a')].some((element) => visible(element)
-    && /^(?:log in|sign up(?: for free)?|giriş yap|oturum aç|connexion|s['’]?inscrire|iniciar sesión|registrarse|anmelden|registrieren)$/i.test(String(element.getAttribute('aria-label') || element.title || element.innerText || '').trim()));
+  // ChatGPT marks its log-in and sign-up controls in every language with
+  // the same test ids and auth links; their words are not read.
+  const loginRequired = [...document.querySelectorAll(
+    '[data-testid="login-button"], [data-testid="signup-button"], a[href*="/auth/login"], a[href^="https://auth.openai.com"]',
+  )].some(visible);
   const assistantMessages = [...document.querySelectorAll('[data-message-author-role="assistant"]')]
     .filter(visible);
   const last = assistantMessages[assistantMessages.length - 1] || null;
@@ -54,11 +57,8 @@ export function probeChatGptPage() {
   })).filter((entry, index, all) => entry.url && all.findIndex(other => other.url === entry.url) === index).slice(0, 30) : [];
   const stopButton = [
     document.querySelector('[data-testid="stop-button"]'),
-    document.querySelector('button[aria-label*="Stop" i]'),
-    ...document.querySelectorAll('main button'),
-  ].find((button) => visible(button)
-    && (button.getAttribute('data-testid') === 'stop-button'
-      || /stop|durdur|arrêter|detener|停止|중지/i.test(String(button.getAttribute('aria-label') || button.title || button.innerText || '')))) || null;
+    document.querySelector('#composer-submit-button[data-testid="stop-button"]'),
+  ].find((button) => visible(button) && button.getAttribute('data-testid') === 'stop-button') || null;
   const pageText = String(document.body?.innerText || '').slice(0, 12000);
   return {
     url: location.href,
@@ -68,7 +68,7 @@ export function probeChatGptPage() {
     answer: String(last?.innerText || '').trim().slice(0, 30000),
     links,
     generating: !!stopButton,
-    loginRequired: loginRequired || (!composer && /log in|sign up|giriş yap|oturum aç|connexion|iniciar sesión|anmelden/i.test(pageText)),
+    loginRequired,
     pageText: composer && !loginRequired ? '' : pageText.slice(0, 1200),
   };
 }
@@ -95,8 +95,11 @@ export function submitChatGptPrompt(prompt, submitOnly = false) {
     const style = getComputedStyle(element);
     return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
   };
-  const loginRequired = [...document.querySelectorAll('button, a')].some((element) => visible(element)
-    && /^(?:log in|sign up(?: for free)?|giriş yap|oturum aç|connexion|s['’]?inscrire|iniciar sesión|registrarse|anmelden|registrieren)$/i.test(String(element.getAttribute('aria-label') || element.title || element.innerText || '').trim()));
+  // ChatGPT marks its log-in and sign-up controls in every language with
+  // the same test ids and auth links; their words are not read.
+  const loginRequired = [...document.querySelectorAll(
+    '[data-testid="login-button"], [data-testid="signup-button"], a[href*="/auth/login"], a[href^="https://auth.openai.com"]',
+  )].some(visible);
   if (loginRequired) {
     return { success: false, requiresLogin: true, error: 'ChatGPT is asking the user to log in or sign up before a prompt can be submitted.' };
   }
@@ -123,14 +126,12 @@ export function submitChatGptPrompt(prompt, submitOnly = false) {
     composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
   }
   if (!submitOnly) return { success: true, filled: true };
+  // The send control is ChatGPT's own send-button test id, whatever its
+  // label says in the user's language.
   const sendButton = [
     document.querySelector('[data-testid="send-button"]'),
-    document.querySelector('button[aria-label*="Send" i]'),
-    ...document.querySelectorAll('form button, main button'),
-  ].find((button) => visible(button)
-    && !button.disabled
-    && (/send|gönder|envoyer|enviar|senden|送信|전송/i.test(String(button.getAttribute('aria-label') || button.title || button.innerText || ''))
-      || button.getAttribute('data-testid') === 'send-button')) || null;
+    document.querySelector('#composer-submit-button[data-testid="send-button"]'),
+  ].find((button) => visible(button) && !button.disabled && button.getAttribute('data-testid') === 'send-button') || null;
   if (!sendButton) return { success: false, error: 'ChatGPT send button did not become available after filling the prompt.' };
   if (!originAllowed()) return unexpectedOrigin();
   sendButton.click();

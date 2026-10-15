@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { withFixtureCalculationReadings } from './calculation-fixture-readings.mjs';
 import { test } from 'node:test';
 
 const ROOT = new URL('../', import.meta.url);
@@ -38,7 +39,7 @@ function add(a, tab, id, name, result, args = {}) {
 }
 function setup(Agent, next) {
   const provider = { name: 'execution evidence fixture', model: 'fixture', contextWindow: 128000, promptTier: 'full', supportsTools: true, supportsVision: false,
-    chat: next, async *chatStream(messages, options) { const r = await next(messages, options); if (r.content) yield { type: 'text', content: r.content };
+    chat: withFixtureCalculationReadings(next), async *chatStream(messages, options) { const r = await next(messages, options); if (r.content) yield { type: 'text', content: r.content };
       if (r.toolCalls) yield { type: 'tool_call', content: r.toolCalls.map((c, index) => ({ ...c, index })) };
       if (r.usage) yield { type: 'usage', usage: r.usage }; yield { type: 'done' }; } };
   const a = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });

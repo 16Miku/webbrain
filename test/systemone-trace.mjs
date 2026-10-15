@@ -23,6 +23,33 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     }
   });
 
+  test(`${build}: done verification attempts keep their engine, outcome and timing, never the evidence`, async () => {
+    const { projectTraceEventData } = await import(`../src/${build}/src/trace/privacy.js`);
+    const metadata = { phase: 'done_verification', engine: 'llm', modality: 'vision', outcome: 'failed', reason: 'judged',
+      captureMs: 420, evaluateMs: 3100, elapsedMs: 3600, probability: 0.97, confidence: 0.9, laterOutcome: 'asked',
+      model: 'owned-model', evidence: 'secret page text', summary: 'secret summary' };
+    for (const includeContent of [false, true]) {
+      const data = projectTraceEventData('note', { step: 0, note: 'system_one', extra: metadata }, { includeContent });
+      assert.deepEqual(data.extra, { phase: 'done_verification', engine: 'llm', modality: 'vision', outcome: 'failed',
+        reason: 'judged', model: 'owned-model', captureMs: 420, evaluateMs: 3100, elapsedMs: 3600 });
+    }
+    const unsafe = projectTraceEventData('note', { step: 0, note: 'system_one', extra: {
+      engine: 'llm with spaces', outcome: 'x'.repeat(200), captureMs: -1, evaluateMs: Infinity, elapsedMs: '9' } }, {});
+    assert.deepEqual(unsafe.extra, {});
+  });
+
+  test(`${build}: completion timing keeps only its numbers and the verdict's names`, async () => {
+    const { projectTraceEventData } = await import(`../src/${build}/src/trace/privacy.js`);
+    const timing = { preparationMs: 1200, readingMs: 300, verificationMs: 4100, outcome: 'uncertain', engine: 'legacy',
+      summary: 'secret', pageText: 'secret', url: 'https://owned.example.test/private' };
+    for (const includeContent of [false, true]) {
+      assert.deepEqual(projectTraceEventData('note', { step: 3, note: 'done_timing', extra: timing }, { includeContent }),
+        { step: 3, note: 'done_timing', extra: { preparationMs: 1200, readingMs: 300, verificationMs: 4100, outcome: 'uncertain', engine: 'legacy' } });
+    }
+    assert.deepEqual(projectTraceEventData('note', { step: 0, note: 'done_timing', extra: {
+      preparationMs: -5, readingMs: 'x', verificationMs: Infinity, outcome: 'done', engine: 'bad engine' } }, {}).extra, {});
+  });
+
   test(`${build}: late scheduler usage updates durable totals once without reopening the run`, async () => {
     const browser = await engine.launch();
     try {

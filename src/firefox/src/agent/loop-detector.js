@@ -180,6 +180,10 @@ export class LoopDetector {
     return { buf, key };
   }
 
+  // A step through a carousel: its direction when the tool itself has one
+  // (carousel_navigate, arrow keys, going back), and the slide it reached when
+  // the result reports one. A click's caption is not read, in any language;
+  // the slide index it reaches shows whether the carousel went back and forth.
   _semanticCarouselIntent(name, args = {}, result = {}) {
     let direction = '';
     const key = String(args?.key || '');
@@ -187,13 +191,6 @@ export class LoopDetector {
     else if (name === 'press_keys' && key === 'ArrowRight') direction = 'forward';
     else if (name === 'press_keys' && key === 'ArrowLeft') direction = 'backward';
     else if (name === 'go_back') direction = 'backward';
-    const label = String(
-      args?.expected_name || args?.text || result?.name || result?.text
-      || result?.coordinateReconciliation?.target?.name || '',
-    ).replace(/\s+/g, ' ').trim().toLowerCase();
-    if (/^(next|sonraki)$/.test(label)) direction = 'forward';
-    if (/^(previous|prev|go back|önceki|geri)$/.test(label)) direction = 'backward';
-    if (!direction) return null;
 
     const url = String(result?.resolvedUrl || result?.currentUrl || result?.pageUrl || '');
     let canonical = String(result?.canonicalPostUrl || '');
@@ -201,10 +198,11 @@ export class LoopDetector {
     try {
       const parsed = new URL(url);
       const parsedIndex = Number(parsed.searchParams.get('img_index'));
-      if (!Number.isInteger(index) && Number.isInteger(parsedIndex)) index = parsedIndex;
+      if (!Number.isInteger(index) && parsed.searchParams.has('img_index') && Number.isInteger(parsedIndex)) index = parsedIndex;
       parsed.searchParams.delete('img_index');
       if (!canonical) canonical = parsed.href;
     } catch {}
+    if (!direction && !Number.isInteger(index)) return null;
     return {
       direction,
       canonical: canonical || 'carousel',
@@ -222,6 +220,7 @@ export class LoopDetector {
     if (history.length > 8) history.shift();
     const last4 = history.slice(-4);
     const directionCycle = last4.length === 4
+      && last4.every(entry => entry.direction)
       && last4[0].direction === last4[2].direction
       && last4[1].direction === last4[3].direction
       && last4[0].direction !== last4[1].direction;
