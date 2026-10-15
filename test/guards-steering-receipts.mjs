@@ -661,7 +661,11 @@ for (const build of ['chrome', 'firefox']) {
       'X Pro, caption read': { url: pro, caption: 'Post', now: xPublish('WebBrain test post', '') },
       'X Pro, caption unread': { url: pro, now: xPublish('WebBrain test post', '') },
       'X Pro, a script': { url: pro, name: 'execute_js', args: { code: 'document.querySelector("button").click()' }, now: xPublish('WebBrain test post', '') },
-      'X Pro, Space on the button': { url: pro, name: 'press_keys', args: { key: 'Space' }, now: xPublish('WebBrain test post', '') },
+      'X Pro, Enter on the focused button': { url: pro, name: 'press_keys', args: { key: 'Enter' }, now: xPublish('WebBrain test post', '') },
+      // A plain Post button whose caption no model read in time looks
+      // ordinary to the probe; that proves nothing.
+      'X Pro, a plain button whose caption went unread': { url: pro, probe: { isSubmit: false, resolvedOrdinaryActivationTarget: true, captionUnread: true },
+        now: xPublish('WebBrain test post', '') },
       'mobile Twitter': { url: 'https://mobile.twitter.com/compose/tweet', caption: 'Tweet', now: xPublish('WebBrain test post') },
       'staging Bluesky': { url: 'https://staging.bsky.app/', caption: 'Post', now: bskyPublish('WebBrain test post', '') },
       // A control the probe resolved as one that submits nothing is not a
@@ -670,6 +674,12 @@ for (const build of ['chrome', 'firefox']) {
         now: xPublish('WebBrain test post', ''), allowed: true },
       // A click the browser refused sent nothing.
       'X Pro, refused': { url: pro, caption: 'Post', result: refused, now: xPublish('WebBrain test post', ''), allowed: true },
+      // An ordinary button whose caption a model read, and Enter in the post
+      // editor, which edits the draft, post nothing.
+      'X Pro, an ordinary button read as such': { url: pro, probe: { isSubmit: false, resolvedOrdinaryActivationTarget: true },
+        now: xPublish('WebBrain test post', ''), allowed: true },
+      'X Pro, Enter in the draft': { url: pro, name: 'press_keys', args: { key: 'Enter' }, probe: { isSubmit: false, resolvedEditableTarget: true },
+        now: xPublish('WebBrain test post', ''), allowed: true },
     };
     for (const [variant, spec] of Object.entries(cases)) {
       const h = await fixture('Post "WebBrain test post" on X and on mastoturk.org.', { pageUrl: spec.now.url });
@@ -703,8 +713,12 @@ for (const build of ['chrome', 'firefox']) {
         attempt(h, mastodonCompose, deliveredUnobserved);
         await h.steer('ok now on X');
         // Under a correction a control the probe could not identify is not
-        // clicked at all; one it identified as a form goes ahead.
+        // clicked at all, nor one that looks ordinary only because its caption
+        // went unread; one it identified as a form goes ahead.
         assert.equal(h.steeringBlock(null)?.actionGuard.reason, 'target_unresolved');
+        assert.equal(h.steeringBlock({ isSubmit: false, resolvedOrdinaryActivationTarget: true, captionUnread: true })?.actionGuard.reason,
+          'target_unresolved');
+        assert.equal(h.steeringBlock({ isSubmit: false, resolvedOrdinaryActivationTarget: true }), null);
         attempt(h, { ...formOn(pro), actionUrl: 'https://pro.x.com/i/api/compose' });
         if (resume === 'Continue' || resume === 'typed continue') {
           h.agent._storeContinuationExecutionEvidence(h.tab);

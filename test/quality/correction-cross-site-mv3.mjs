@@ -25,6 +25,11 @@ import { fixedChoiceQuestion, fixtureFixedChoiceReply, fixturePageTextReply } fr
 //   xpro-then-x: the X post is made from X Pro (pro.x.com), whose Post
 //     button WebBrain does not recognize, then the Mastodon post, then "ok
 //     now on X": the X Pro post still counts, so x.com gets no second one.
+//   xpro-slow-plain-then-x: the same with a plain Post button, while the
+//     model takes six seconds to read captions, longer than WebBrain waits:
+//     the button looks ordinary, and its post still counts.
+//   xpro-enter-then-x: only Enter is pressed in an X Pro draft that is never
+//     posted: that is no post, so the X post after the correction goes out.
 // Pages, posts and the model are owned local fixtures; nothing leaves the host.
 const require = createRequire(import.meta.url);
 const library = (name, file) => fs.readFile(path.join(path.dirname(require.resolve(`${name}/package.json`)), file), 'utf8');
@@ -49,14 +54,15 @@ document.querySelector('#compose').addEventListener('submit', async event => {
 const mastodonHome = posts => `<!doctype html><meta charset="utf-8"><title>Anasayfa - MastoTurk</title>
 <h1>Anasayfa</h1><div role="feed" aria-label="Anasayfa">${posts.map((post, index) =>
   `<article aria-label="esokullu"><a href="/@esokullu/${1000 + index}">esokullu</a><p>${post.replace(/</g, '&lt;')}</p></article>`).join('')}</div>`;
-// X Pro: a deck with its own composer, whose Post button sits outside any form.
-const xProHtml = `<!doctype html><meta charset="utf-8"><title>X Pro</title>
+// X Pro: a deck with its own composer, whose Post button sits outside any
+// form; on the second deck the button carries no app marker at all.
+const xProHtml = ({ plain = false } = {}) => `<!doctype html><meta charset="utf-8"><title>X Pro</title>
 <style>body{font:15px sans-serif;margin:24px} [role=textbox]{border:1px solid #888;min-height:80px;width:500px;padding:8px} button{padding:8px 16px}</style>
 <main aria-label="Deck"><section aria-label="Compose a post">
-<div role="textbox" contenteditable="true" aria-multiline="true" aria-label="Post text"></div>
-<div><button type="button" data-testid="tweetButton">Post</button></div></section></main>
+<div role="textbox" contenteditable="true" aria-multiline="true" aria-label="Post text" data-testid="tweetTextarea_0"></div>
+<div><button type="button" id="post"${plain ? '' : ' data-testid="tweetButton"'}>Post</button></div></section></main>
 <script>
-document.querySelector('[data-testid="tweetButton"]').addEventListener('click', async () => {
+document.querySelector('#post').addEventListener('click', async () => {
   const box = document.querySelector('[role="textbox"]'), body = box.textContent;
   if (!body.trim()) return;
   await fetch('/owned-fixture/post', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body }) });
@@ -197,6 +203,58 @@ const variants = {
       () => ({ name: 'done', args: { outcome: 'partial', summary: 'The post was already made on X from X Pro; it was not posted again.' } }),
     ],
   },
+  'xpro-slow-plain-then-x': {
+    task: 'try to post something on X from X Pro (pro.x.com), then on mastoturk.org',
+    slowCaptionReadings: true,
+    before: [
+      () => ({ name: 'navigate', args: { url: 'https://pro.x.com/i/decks/2' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'type_ax', args: { ref_id: refFrom(tree, /textbox "Post text"/), text: 'WebBrain test post', clear: true } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'click_ax', args: { ref_id: refFrom(tree, /button "Post"/) } }),
+      () => ({ name: 'navigate', args: { url: 'https://mastoturk.org/publish' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'set_field', args: { ref_id: refFrom(tree, /textbox "Aklında ne var\?"/), text: 'WebBrain test gönderisi', submit: false } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'click_ax', args: { ref_id: refFrom(tree, /button "Gönder"/) } }),
+      async (_tree, run) => { await run.steer(); return { name: 'get_accessibility_tree', args: { filter: 'all' } }; },
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+    ],
+    after: [
+      () => ({ name: 'navigate', args: { url: 'https://x.com/home' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'type_ax', args: { ref_id: refFrom(tree, /textbox "Post text"/), text: 'WebBrain test post', clear: true } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'click_ax', args: { ref_id: refFrom(tree, /button "Post"/) } }),
+      () => ({ name: 'done', args: { outcome: 'partial', summary: 'The post was already made on X from X Pro; it was not posted again.' } }),
+    ],
+  },
+  'xpro-enter-then-x': {
+    task: 'write a two-line draft on X Pro (pro.x.com) without posting it, then try to post something on mastoturk.org',
+    before: [
+      () => ({ name: 'navigate', args: { url: 'https://pro.x.com/i/decks/1' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'type_ax', args: { ref_id: refFrom(tree, /textbox "Post text"/), text: 'First line', clear: true } }),
+      () => ({ name: 'press_keys', args: { key: 'Enter' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      () => ({ name: 'navigate', args: { url: 'https://mastoturk.org/publish' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'set_field', args: { ref_id: refFrom(tree, /textbox "Aklında ne var\?"/), text: 'WebBrain test gönderisi', submit: false } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'click_ax', args: { ref_id: refFrom(tree, /button "Gönder"/) } }),
+      async (_tree, run) => { await run.steer(); return { name: 'get_accessibility_tree', args: { filter: 'all' } }; },
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+    ],
+    after: [
+      () => ({ name: 'navigate', args: { url: 'https://x.com/home' } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'type_ax', args: { ref_id: refFrom(tree, /textbox "Post text"/), text: 'WebBrain test post', clear: true } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      tree => ({ name: 'click_ax', args: { ref_id: refFrom(tree, /button "Post"/) } }),
+      () => ({ name: 'get_accessibility_tree', args: { filter: 'all' } }),
+      () => ({ name: 'done', args: { outcome: 'success', summary: 'Drafted on X Pro, posted on mastoturk.org and on X.' } }),
+    ],
+  },
   'leave-prompt': {
     before: [
       () => ({ name: 'navigate', args: { url: 'https://x.com/home' } }),
@@ -220,6 +278,7 @@ async function runVariant(variant, script) {
   const task = script.task || (variant === 'leave-prompt'
     ? 'open x.com, write a draft post without posting it, then go to mastoturk.org/home' : request);
   const mastodonPosts = [], xPosts = [], xProPosts = [], unknownPrompts = [], dialogs = [], settleDialogs = [];
+  let slowReadings = 0;
   let steered = false, judgeCalls = 0, blockedRemote = 0, base = '', harnessAnswered = 0;
   const phase = { name: 'before', index: 0, lastId: null, emitted: 0 };
   const completionRecovery = { reads: 0 };
@@ -260,6 +319,12 @@ async function runVariant(variant, script) {
     let raw = ''; for await (const part of incoming) raw += part;
     const input = JSON.parse(raw), system = textOf(input.messages?.[0]?.content);
     let completion;
+    // A slow model: caption readings take longer than WebBrain waits for
+    // them, until the X Pro post is out.
+    if (script.slowCaptionReadings && !xProPosts.length && fixedChoiceQuestion(input.messages)?.kind === 'control_effect') {
+      slowReadings++;
+      await new Promise(resolve => setTimeout(resolve, 6000));
+    }
     try {
       if (system.startsWith('Extract stable user preferences')) completion = { role: 'assistant', content: '{"memories":[]}' };
       // The provider check made when the provider is saved.
@@ -349,7 +414,7 @@ async function runVariant(variant, script) {
           xProPosts.push(JSON.parse(routed.postData() || '{}').body);
           return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
         }
-        if (routed.isNavigationRequest()) return route.fulfill({ contentType: 'text/html', body: xProHtml });
+        if (routed.isNavigationRequest()) return route.fulfill({ contentType: 'text/html', body: xProHtml({ plain: requested.pathname === '/i/decks/2' }) });
         return route.fulfill({ status: 404, body: '' });
       }
       if (/^https?:$/.test(requested.protocol)) { blockedRemote++; return route.abort('blockedbyclient'); }
@@ -444,12 +509,19 @@ async function runVariant(variant, script) {
       assert.deepEqual(xPosts, ['WebBrain test post'], `No second X post after "continue": ${JSON.stringify(continuedResults)}`);
       const again = continuedResults.filter(item => item.name === 'click_ax');
       assert.deepEqual(again.map(item => item.reason), ['earlier_attempt_on_platform'], JSON.stringify(continuedResults));
-    } else if (variant === 'xpro-then-x') {
+    } else if (variant === 'xpro-then-x' || variant === 'xpro-slow-plain-then-x') {
+      if (script.slowCaptionReadings) assert.ok(slowReadings > 0, 'A caption reading was slower than WebBrain waits');
       assert.deepEqual(xProPosts, ['WebBrain test post'], `The X Pro post went out: ${JSON.stringify(toolResults)}`);
       assert.deepEqual(mastodonPosts, ['WebBrain test gönderisi'], 'One Mastodon post');
       assert.deepEqual(xPosts, [], `No second X post on x.com: ${JSON.stringify(toolResults)}`);
       const xClick = toolResults.filter(item => item.name === 'click_ax').at(-1);
       assert.equal(xClick?.reason, 'earlier_attempt_on_platform', JSON.stringify(toolResults));
+    } else if (variant === 'xpro-enter-then-x') {
+      assert.deepEqual(xProPosts, [], 'The X Pro draft was never posted');
+      assert.deepEqual(mastodonPosts, ['WebBrain test gönderisi'], 'One Mastodon post');
+      const stopped = toolResults.filter(item => ['earlier_attempt_on_platform', 'attempt_history_unknown'].includes(item.reason));
+      assert.deepEqual(stopped, [], `Enter in a draft is no post: ${JSON.stringify(toolResults)}`);
+      assert.deepEqual(xPosts, ['WebBrain test post'], `One X post: ${JSON.stringify(toolResults)}`);
     } else {
       assert.ok(dialogs.includes('beforeunload'), `The X page asked before it was left: ${JSON.stringify(dialogs)}`);
       assert.equal(harnessAnswered, 0, 'WebBrain answered the leave prompt for its own navigation; nobody else had to');

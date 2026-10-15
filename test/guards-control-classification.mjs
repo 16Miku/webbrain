@@ -242,6 +242,46 @@ for (const build of ['chrome', 'firefox']) {
           }
         });
 
+        // X Pro (pro.x.com) has none of the app markers the X adapter reads.
+        // A plain Post button whose caption no model read in time looks
+        // ordinary to the probe, which says so; Enter in the app-marked post
+        // editor edits the draft there as on x.com.
+        await t.test('on X Pro an unread caption proves nothing, and Enter in the post editor edits the draft', async () => {
+          const html = '<main><div><div data-testid="tweetTextarea_0" contenteditable="true" role="textbox" id="editor">Draft</div><button id="t" type="button">Post</button></div></main>';
+          for (const reading of ['unread', 'read']) {
+            const f = await setup('https://pro.x.com/i/decks/1', html, { steering: true });
+            if (reading === 'unread') {
+              const chat = f.agent._chatWithCostAllowance;
+              f.agent._chatWithCostAllowance = async (provider, messages, options, cost, meta) => meta?.generationName === 'semantic_control_effect'
+                ? { content: '' } : chat(provider, messages, options, cost, meta);
+            }
+            const { detected, block } = await gate(f, 'click_ax', { ref_id: await ref('t') });
+            if (reading === 'unread') {
+              assert.equal(detected?.resolvedOrdinaryActivationTarget, true, reading);
+              assert.equal(detected.captionUnread, true, reading);
+              assert.equal(f.agent._cannotPost(detected), false, reading);
+            } else {
+              assert.notEqual(detected?.resolvedOrdinaryActivationTarget, true, 'read as a post, it is no ordinary button');
+            }
+            // Under a correction it is not clicked either way.
+            assert.equal(block?.actionGuard?.reason, 'target_unresolved', reading);
+          }
+          const f = await setup('https://pro.x.com/i/decks/1', html, { steering: true });
+          await page.locator('#editor').focus();
+          const result = await gate(f, 'press_keys', { key: 'Enter' });
+          assert.equal(result.detected?.resolvedEditableTarget, true, 'Enter in the X Pro post editor');
+          assert.equal(f.agent._cannotPost(result.detected), true);
+          assert.equal(result.block, null);
+          // On a site that is not X or Bluesky nothing changes.
+          const other = await setup('https://deck.example/', html);
+          const chat = other.agent._chatWithCostAllowance;
+          other.agent._chatWithCostAllowance = async (provider, messages, options, cost, meta) => meta?.generationName === 'semantic_control_effect'
+            ? { content: '' } : chat(provider, messages, options, cost, meta);
+          const plain = await gate(other, 'click_ax', { ref_id: await ref('t') });
+          assert.equal(plain.detected?.resolvedOrdinaryActivationTarget, true);
+          assert.equal(plain.detected.captionUnread, undefined);
+        });
+
         await t.test('the duplicate-click window exempts draft tools and popups, not ordinary commits by caption', async () => {
           const f = await setup('https://x.com/home', '<nav><a data-testid="AppTabBar_Profile_Link" href="/alice">Profile</a></nav><div><div data-testid="tweetTextarea_0" contenteditable="true" role="textbox">Hello</div><nav aria-label="Composer tools"><button id="emoji" type="button" aria-label="Add emoji">Add emoji</button></nav><button type="button" data-testid="tweetButtonInline">Post</button></div>');
           const emoji = await f.agent._detectLikelySubmitAction(1, 'click', { text: 'Add emoji' });

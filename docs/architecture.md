@@ -109,7 +109,10 @@ is not one. Their other hosts and clients, such as X Pro, post without the
 composer controls WebBrain recognizes, so there any action that may have been
 sent counts as a publication unless the page probe proved it cannot post (an
 ordinary form, a deletion, or a control resolved as a link, field, menu item or
-other non-submitting control).
+other non-submitting control). There, a control that looks ordinary only
+because no model read its caption in time proves nothing, and under a
+correction it is not clicked; Enter in the app-marked post editor edits the
+draft, as on x.com.
 The agent records, for the task from its first run on, the site of every
 dispatched attempt that may have changed something and of every publication
 among them (a search, a send the browser refused or a form the page rejected

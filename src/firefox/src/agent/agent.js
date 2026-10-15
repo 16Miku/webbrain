@@ -5258,7 +5258,7 @@ export class Agent extends LoopDetector {
     const resolvedNonSubmit = detectedSubmit?.isSubmit !== true && (detectedSubmit?.resolvedNavigationTarget === true
         || detectedSubmit?.resolvedEditableTarget === true
         || detectedSubmit?.resolvedNonSubmitTarget === true
-        || detectedSubmit?.resolvedOrdinaryActivationTarget === true
+        || (detectedSubmit?.resolvedOrdinaryActivationTarget === true && detectedSubmit.captionUnread !== true)
         || detectedSubmit?.resolvedPreparatoryTarget === true);
     if (!isNetworkMutation(name, args) && name !== 'chrome_web_store_publish'
         && !(detectedSubmit?.isSubmit || (!resolvedNonSubmit && this._isFormValidationCandidate(name, args)))) return null;
@@ -5557,6 +5557,9 @@ export class Agent extends LoopDetector {
   _cannotPost(detected) {
     if (!detected || typeof detected !== 'object' || detected.publicationControl === true) return false;
     if (detected.publicationControl === false || detected.mutationKind === 'delete') return true;
+    // An ordinary control on X or Bluesky whose caption no model read proves
+    // nothing: it may be a Post button.
+    if (detected.captionUnread === true) return false;
     return detected.isSubmit === false && (detected.resolvedNavigationTarget === true || detected.resolvedEditableTarget === true
       || detected.resolvedNonSubmitTarget === true || detected.resolvedOrdinaryActivationTarget === true
       || detected.resolvedPreparatoryTarget === true);
@@ -5701,8 +5704,12 @@ export class Agent extends LoopDetector {
       const platforms = add(record.platforms, potential.keys);
       const publications = potential.publication ? add(record.publications, potential.keys)
         : potential.keys.includes('*') ? add(record.publications, ['*']) : record.publications;
+      // Where there is no session storage at all, nothing is restored after a
+      // restart either, so there is nothing to keep in step.
+      const session = globalThis.browser?.storage?.session;
+      if (typeof session?.set !== 'function') return potential;
       try {
-        await browser.storage.session.set({ [this._taskAttemptCheckpointKey(tabId)]: { ...record,
+        await session.set({ [this._taskAttemptCheckpointKey(tabId)]: { ...record,
           platforms: platforms?.length > 64 ? null : platforms, publications: publications?.length > 64 ? null : publications } });
       } catch {
         const matters = potential.keys.includes('*')
@@ -5951,7 +5958,7 @@ export class Agent extends LoopDetector {
     // to look for the other site's post on this page.
     if (prior && publication && otherSite && !crossPlatform) {
       return blocked(earlierAttemptHere ? 'earlier_attempt_on_platform' : 'attempt_history_unknown', earlierAttemptHere
-        ? `Nothing was published. This task already made an attempt on this site, and WebBrain can check only the latest attempt from before the correction${priorHost ? `, on ${priorHost}` : ''}, so this post could repeat the earlier one or sit beside it. Do not publish it again. Tell the user what was not done and that the earlier attempt on this site may already be there; they can check it and ask again.`
+        ? `Nothing was published. This task already sent something on this site that may have been a post, and WebBrain can check only the latest attempt from before the correction${priorHost ? `, on ${priorHost}` : ''}, so this post could repeat it or sit beside it. Do not publish it again. Tell the user what was not done and that what was sent earlier on this site may already be a post there; they can check it and ask again.`
         : `Nothing was published. WebBrain has no full record of what this task attempted (for example after WebBrain restarted), so it cannot rule out an earlier attempt on this site, and the latest attempt from before the correction${priorHost ? `, on ${priorHost},` : ''} cannot be checked here. Do not publish it again. Tell the user what was not done; they can ask again to post it.`,
       { retryable: false });
     }
@@ -25779,6 +25786,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (ordinaryActivations.length === 1 && ['click', 'click_ax', 'iframe_click'].includes(name)) {
         return { isSubmit: false, resolvedOrdinaryActivationTarget: true,
           ...(ordinaryActivations[0].resolvedPreparatoryTarget === true ? { resolvedPreparatoryTarget: true } : {}),
+          ...(ordinaryActivations[0].captionUnread === true ? { captionUnread: true } : {}),
           ...(ordinaryActivations[0].mutationKind === 'delete' ? { mutationKind: 'delete' } : {}),
           ...(ordinaryActivations[0].popupLauncherToken ? { popupLauncherToken: ordinaryActivations[0].popupLauncherToken } : {}),
           frameDocumentIdentity: ordinaryActivations[0].frameDocumentIdentity,
@@ -26496,6 +26504,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (siteHost === 'bsky.app') return 'bluesky';
       return '';
     };
+    // Any host of X or Bluesky, including those whose composer WebBrain does
+    // not read, such as X Pro (pro.x.com).
+    const socialSiteHost = () => /(?:^|\.)(?:x\.com|twitter\.com|bsky\.app)$/.test(String(host || '').toLowerCase().replace(/\.$/, ''));
     const socialPublishComposerFor = (candidate) => {
       if (!socialPublishAdapterName() || !candidate || candidate.nodeType !== 1) return null;
       let node = candidate;
@@ -27656,8 +27667,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (form) return submitInfo(form, 'Enter key in a form field', null, null, 'strong', field);
         // X and Bluesky publish from the keyboard only with a modifier, which
         // press_keys cannot send. An unmodified Enter in the app-marked post
-        // editor edits the draft (a line break or a typeahead choice).
-        const postEditor = !!field && !!socialPublishAdapterName()
+        // editor edits the draft (a line break or a typeahead choice), on X
+        // Pro as on x.com.
+        const postEditor = !!field && socialSiteHost()
           && (field.isContentEditable || String(field.tagName || '').toUpperCase() === 'TEXTAREA')
           && !!field.closest?.('[data-testid^="tweetTextarea_"],[data-testid="composerTextInput"]');
         return postEditor ? { isSubmit: false, host, url, tool: toolName,
@@ -27801,6 +27813,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           if (popupTarget && !actionResource && recordOwnerFor(control)) rememberMenuLaunch(control);
           return { isSubmit: false, host, url, resolvedOrdinaryActivationTarget: true,
             resolvedPreparatoryTarget: popupTarget,
+            // On an X or Bluesky host whose app markers WebBrain does not
+            // read, a caption no model read leaves a Post button looking
+            // ordinary.
+            ...(captionsReading(labels) === null && socialSiteHost() && !socialPublishAdapterName() ? { captionUnread: true } : {}),
             frameDocumentIdentity: [url, performance.timeOrigin].join('|'), actionResource,
             popupLauncherToken: popupTarget ? rememberPopupLauncher(control, actionResource) : '' };
         }
