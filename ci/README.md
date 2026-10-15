@@ -77,7 +77,7 @@ APIs were actually exercised successfully.
 
 ## Rubric
 
-Scenarios are graded from three independent signals are:
+Scenarios are graded from three independent signals:
 
 1. WebBrain run status and schema-valid `done_json` output.
 2. Expected structured-result values and final host.
