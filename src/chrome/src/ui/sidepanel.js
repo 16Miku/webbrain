@@ -1,3 +1,4 @@
+import { historyRecoveryMetadata } from '../chat-history-recovery.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
 import { renderPageFeedbackNote } from './page-feedback-ui.js';
 import { appendGeneratedMedia, restoreGeneratedMedia } from './generated-media-view.js';
@@ -33,6 +34,7 @@ import {
   SELECTION_ONLY_SOURCE_GROUNDING,
 } from '../context-menu-storage.js';
 import {
+  listChatHistoryRecords,
   deleteChatHistoryRecord,
   repairChatHistoryRecordMessages,
   saveChatHistoryRecord,
@@ -1272,6 +1274,7 @@ const recordingStopBtn = document.getElementById('btn-recording-stop');
 
 let currentTabId = null;
 let renderedTabId = null;
+const historyRecoveryTabs = new Set();
 let tabSwitchTransitionId = null;
 let tabSwitchGeneration = 0;
 let queuedTabSwitchMessages = [];
@@ -2221,10 +2224,10 @@ async function flushRenderedTabChat({ allowHidden = false } = {}) {
   }
   flushPendingStreamedAssistantMarkdownRenders();
   const html = messagesEl.innerHTML;
-  if (document.visibilityState !== 'hidden') {
+  if (document.visibilityState !== 'hidden' || allowHidden) {
     lastVisibleTabChatSnapshot = { tabId: Number(tabId), html };
   }
-  await persistTabChat(tabId, html, { allowHidden });
+  return persistTabChat(tabId, html, { allowHidden });
 }
 
 function clearCachedTabChat(tabId) {
@@ -3081,6 +3084,11 @@ function extractChatHistoryMessages(root = messagesEl) {
       index,
       createdAt: messageCreatedAt(msgEl),
       ...(attachments.length ? { attachments } : {}),
+      ...(role === 'user' ? historyRecoveryMetadata({
+        userTextSource: typeof msgEl.dataset.composerHistoryText === 'string' ? 'protected'
+          : msgEl.dataset.composerHistoryVerbatim === 'true' ? 'verbatim' : null,
+        modelText: msgEl.dataset.composerHistoryText,
+      }) : {}),
     };
   }).filter((message) => message.text || message.attachments?.length);
 }
@@ -3161,9 +3169,9 @@ async function prepareChatHistoryForTurn(tabId, mode) {
   await hydrateChatHistoryIdentity(tabId, mode, { allowFallback: true, refreshTabInfo: true });
 }
 
-async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false } = {}) {
+async function persistChatHistorySnapshot(tabId, { refreshTabInfo = false, allowHidden = false } = {}) {
   const numericTabId = Number(tabId);
-  if (document.visibilityState === 'hidden'
+  if ((document.visibilityState === 'hidden' && !allowHidden)
       || !Number.isFinite(numericTabId)
       || renderedTabId !== numericTabId) return;
   const messages = extractChatHistoryMessages(messagesEl);
@@ -5188,6 +5196,12 @@ if (verboseBtn) {
 
 activityProgressToggle?.addEventListener('click', toggleCompactProgressVisibility);
 
+async function waitForHistoryRecovery(tabId) {
+  while (historyRecoveryTabs.has(Number(tabId))) {
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+}
+
 async function switchToTab(newTabId) {
   // Reserve the user's latest tab intent before any lookup can yield. Returning
   // to the already-rendered tab must also invalidate an older pending switch.
@@ -5197,6 +5211,9 @@ async function switchToTab(newTabId) {
   queuedTabSwitchMessages = queuedTabSwitchMessages.filter(msg => msg?.tabId === newTabId);
   syncSendButtonState();
   try {
+    await waitForHistoryRecovery(renderedTabId);
+    if (switchGeneration !== tabSwitchGeneration) return;
+    historyPopover?.hidePopover();
     if (newTabId === currentTabId && renderedTabId === newTabId) {
       if (interruptedTransition) await restoreActiveRunState(newTabId);
       return;
@@ -5298,6 +5315,7 @@ async function switchToTab(newTabId) {
 }
 
 async function refreshVisibleSidePanelState() {
+  await waitForHistoryRecovery(currentTabId);
   if (document.visibilityState === 'hidden' || tabSwitchTransitionId != null) return;
   const tabId = Number(currentTabId);
   if (!Number.isFinite(tabId)) return;
@@ -10224,15 +10242,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.target !== 'sidepanel'
       || msg.action !== 'tab_chat_handoff_request'
       || String(msg.ownerId || '') !== tabChatHandoffOwnerId) return;
-  const snapshot = lastVisibleTabChatSnapshot;
-  if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)) return;
-  sendResponse({
-    ok: true,
-    tabId: Number(snapshot.tabId),
-    ownerId: tabChatHandoffOwnerId,
-    generation: Number(msg.generation),
-    html: snapshot.html,
-  });
+  const respond = () => {
+    const snapshot = lastVisibleTabChatSnapshot;
+    if (!snapshot || !sameTabId(snapshot.tabId, msg.tabId)) { sendResponse({ ok: false }); return; }
+    sendResponse({
+      ok: true,
+      tabId: Number(snapshot.tabId),
+      ownerId: tabChatHandoffOwnerId,
+      generation: Number(msg.generation),
+      html: snapshot.html,
+    });
+  };
+  if (historyRecoveryTabs.has(Number(msg.tabId))) {
+    void waitForHistoryRecovery(msg.tabId).then(respond);
+    return true;
+  }
+  respond();
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
@@ -14214,6 +14239,13 @@ async function handleGlobalKeydown(e) {
     // clicking the trigger leaves focus on a sibling. This listener is on the
     // capture phase either way, so without closing the popover here Escape
     // would fall through to abortRun() and cancel a running agent.
+    if (historyPopover?.matches(':popover-open')) {
+      e.preventDefault();
+      e.stopPropagation();
+      historyPopover.hidePopover();
+      historyBtn?.focus();
+      return;
+    }
     if (closeUiScalePopover()) {
       e.preventDefault();
       uiScaleBtn?.focus();
@@ -15576,8 +15608,115 @@ async function openChatHistoryPage() {
   }
 }
 
-historyBtn?.addEventListener('click', () => {
-  void openChatHistoryPage();
+const historyPopover = document.getElementById('history-popover');
+let historyPopoverRequest = 0;
+
+async function recoverHistoryRecord(recordId, tabId, pageUrl) {
+  if (tabSwitchTransitionId != null || isTabProcessing(tabId) || isConversationClearInProgress(tabId)
+      || !sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+  historyRecoveryTabs.add(tabId);
+  setConversationClearInProgress(tabId, true);
+  try {
+    if ((await getTabInfoForHistory(tabId)).url !== pageUrl) throw new Error(t('sp.history.changed'));
+    await flushChatHistorySnapshot(tabId, { refreshTabInfo: true });
+    const result = await sendToBackground('recover_chat_history', { tabId, recordId });
+    if (!result?.ok) throw new Error(result?.error || t('sp.history.failed'));
+    if (!sameTabId(currentTabId, tabId) || !sameTabId(renderedTabId, tabId)) return;
+    if (historyPersistTimer) clearTimeout(historyPersistTimer);
+    nextChatHistorySaveSeqForTab(tabId);
+    releaseRetryAttachmentsInTree(messagesEl);
+    clearRetryAttachmentsForTab(tabId);
+    setApiMutationsAllowedForTab(tabId, false);
+    clearPendingAttachmentsForTab(tabId);
+    clearQueuedComposerMessagesForTab(tabId);
+    resetComposerHistoryNavigation(tabId);
+    resetChatNavigation();
+    messagesEl.replaceChildren();
+    currentAssistantEl = null;
+    chatHistoryRecordIdsByTab.set(tabId, result.conversationId);
+    chatHistoryConversationIdsByTab.set(tabId, result.conversationId);
+    chatHistoryCreatedAtByTab.set(tabId, Date.now());
+    applyConversationScopeState(tabId, result);
+    setMode('ask');
+    for (const message of result.record.messages || []) {
+      if (!['user', 'assistant'].includes(message.role)) continue;
+      const restored = addMessage(message.role, message.text, { createdAt: message.createdAt,
+        attachments: message.attachments, attachmentState: 'included' });
+      if (message.role === 'user') {
+        delete restored.dataset.composerHistoryVerbatim;
+        delete restored.dataset.composerHistoryText;
+        const provenance = historyRecoveryMetadata(message);
+        if (provenance.userTextSource === 'verbatim') restored.dataset.composerHistoryVerbatim = 'true';
+        if (provenance.modelText) restored.dataset.composerHistoryText = provenance.modelText;
+      }
+    }
+    const saved = await flushRenderedTabChat({ allowHidden: true });
+    if (!saved?.ok || saved.skipped) throw new Error(t('sp.history.failed'));
+    await flushChatHistorySnapshot(tabId, { refreshTabInfo: true, allowHidden: true });
+    historyPopover.hidePopover();
+  } catch (error) {
+    showComposerToast(error?.message || t('sp.history.failed'), { duration: 7000 });
+  } finally {
+    historyRecoveryTabs.delete(tabId);
+    setConversationClearInProgress(tabId, false);
+  }
+}
+
+historyPopover?.addEventListener('toggle', () => {
+  historyBtn?.setAttribute('aria-expanded', String(historyPopover.matches(':popover-open')));
+  if (!historyPopover.matches(':popover-open')) historyPopoverRequest++;
+});
+
+historyBtn?.addEventListener('click', async () => {
+  if (historyPopover.matches(':popover-open')) { historyPopover.hidePopover(); return; }
+  const request = ++historyPopoverRequest;
+  const tabId = currentTabId;
+  const anchor = historyBtn.getBoundingClientRect();
+  historyPopover.style.left = `${Math.max(8, Math.min(anchor.right - 320, window.innerWidth - 328))}px`;
+  historyPopover.style.bottom = `${window.innerHeight - anchor.top + 8}px`;
+  historyPopover.style.maxHeight = `${Math.max(60, Math.min(420, anchor.top - 16))}px`;
+  historyPopover.replaceChildren();
+  const status = document.createElement('p');
+  status.textContent = t('sp.history.loading');
+  status.setAttribute('role', 'status');
+  historyPopover.append(status);
+  const more = document.createElement('button');
+  more.type = 'button';
+  more.className = 'history-more';
+  more.textContent = t('sp.providers.more');
+  more.addEventListener('click', () => { historyPopover.hidePopover(); void openChatHistoryPage(); });
+  historyPopover.append(more);
+  historyPopover.showPopover();
+  try {
+    const tab = await getTabInfoForHistory(tabId);
+    const records = tab.url ? await listChatHistoryRecords({ limit: 5, url: tab.url }) : [];
+    if (request !== historyPopoverRequest || !sameTabId(currentTabId, tabId)) return;
+    status.textContent = records.length ? t('sp.history.recent') : t('hist.no_match');
+    for (const record of records) {
+      const row = document.createElement('div');
+      row.className = 'history-popover-record';
+      const summary = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = formatSelectionPromptForDisplay(record.title || record.firstUserMessage || record.url);
+      title.title = title.textContent;
+      const date = document.createElement('small');
+      date.textContent = new Date(record.updatedAt).toLocaleString(getLocale());
+      summary.append(title, date);
+      const recover = document.createElement('button');
+      recover.type = 'button';
+      recover.textContent = t('sp.history.recover');
+      recover.disabled = isTabProcessing(tabId) || isConversationClearInProgress(tabId);
+      recover.addEventListener('click', async () => {
+        recover.disabled = true;
+        try { await recoverHistoryRecord(record.id, tabId, tab.url); }
+        finally { recover.disabled = false; }
+      });
+      row.append(summary, recover);
+      historyPopover.insertBefore(row, more);
+    }
+  } catch {
+    if (request === historyPopoverRequest) status.textContent = t('sp.history.failed');
+  }
 });
 
 settingsBtn.addEventListener('click', () => {
