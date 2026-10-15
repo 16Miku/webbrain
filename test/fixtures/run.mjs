@@ -1209,10 +1209,11 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
         if (ticked.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(ticked))) {
           throw new Error(`${action} at ${n} s: the countdown wall fell before its new text was read: ${JSON.stringify({ pageGate: ticked.pageGate })}`);
         }
-        // The first read after a tick reports the new text; once read, it is known.
-        if (action === 'get_page_info_cdp'
-            && !(ticked.pageTextsNeeded || []).some(entry => new RegExp(`Kalan süre: ${n} sn`).test(entry.text))) {
-          throw new Error(`${action} at ${n} s: the countdown's new text was not reported to be read`);
+        // At 58 s the new text is reported to be read; once two texts of
+        // its shape read as the wall, a new number is not read again.
+        const reported = (ticked.pageTextsNeeded || []).some(entry => /Kalan süre/.test(entry.text));
+        if (action === 'get_page_info_cdp' && reported !== (n === 58)) {
+          throw new Error(`${action} at ${n} s: the countdown's new text was ${reported ? '' : 'not '}reported to be read`);
         }
         if (action === 'get_accessibility_tree' && !/Abone ol/.test(ticked.pageContent || '')) {
           throw new Error(`${action} at ${n} s: the wall's own control is gone`);
@@ -1246,6 +1247,13 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     const corrected = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: quotaReadings } });
     if (corrected.pageGate || !/QUOTA_ARTICLE_BODY/.test(corrected.text || '')) {
       throw new Error(`a quota read as no wall stayed a wall: ${JSON.stringify({ pageGate: corrected.pageGate })}`);
+    }
+    // Its shape now has a reading as no wall, so another number is asked
+    // about, not guessed.
+    await page.evaluate(text => { document.querySelector('#count').textContent = text; }, quota(5));
+    const another = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: quotaReadings } });
+    if (another.pageGate || !(another.pageTextsNeeded || []).some(entry => /5 ücretsiz makale/.test(entry.text))) {
+      throw new Error(`a quota with a reading as no wall was guessed at another number: ${JSON.stringify({ pageGate: another.pageGate })}`);
     }
 
     const counter = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı.`;
@@ -1557,6 +1565,14 @@ test('Chrome CDP mirror keeps a wall whose number changes a wall while its new t
   if (ticked.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(ticked))
       || !(ticked.pageTextsNeeded || []).some(entry => /Kalan süre: 58 sn/.test(entry.text))) {
     throw new Error(`CDP countdown wall mismatch: ${JSON.stringify({ pageGate: ticked.pageGate, needed: ticked.pageTextsNeeded })}`);
+  }
+  // Read at 58 s too, the shape is confirmed: 57 s is the wall without a read.
+  await readGateTextsLikeTheAgent(() => client.readPage(1, { pageBlockerReadings: readings }), readings);
+  await page.evaluate(text => { document.querySelector('#count').textContent = text; }, countdown(57));
+  const confirmed = await client.readPage(1, { pageBlockerReadings: readings });
+  if (confirmed.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(confirmed))
+      || (confirmed.pageTextsNeeded || []).some(entry => /Kalan süre/.test(entry.text))) {
+    throw new Error(`CDP confirmed countdown mismatch: ${JSON.stringify({ pageGate: confirmed.pageGate, needed: confirmed.pageTextsNeeded })}`);
   }
   // A quota like a wall but for its number is a wall until its own text is read.
   const quota = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı. Kayıt olun.`;

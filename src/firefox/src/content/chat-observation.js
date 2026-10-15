@@ -744,14 +744,14 @@
     return !whatsappRepairAnchor.invalidated && sameWhatsappPins(whatsappRepairAnchor.pins) ? pins : null;
   };
   // A run checks one contact through its drawer: the anchor is the first
-  // chat the run looked at, and once WhatsApp's chat selection changed, or
-  // that chat's header was replaced, no chat can be checked again until the
-  // next run (a new owner). True when that is why no check is available.
+  // chat the run looked at, and once it is invalidated, as when WhatsApp's
+  // chat selection changes, no chat can be checked again until the next run
+  // (a new owner). True when that is why no check is available. Anchored
+  // nodes that are only hidden for now, as behind a modal, do not count.
   window.__wb_native_whatsapp_repair_spent = () => {
-    if (!whatsappOwner || !whatsappRepairAnchor) return false;
+    if (!whatsappOwner || whatsappRepairAnchor?.invalidated !== true) return false;
     const composers = query(document, '[data-testid="conversation-compose-box-input"][contenteditable="true"][role="textbox"]');
-    return composers.length === 1 && whatsappNativeComposer(composers[0])
-      && (whatsappRepairAnchor.invalidated || !sameWhatsappPins(whatsappRepairAnchor.pins));
+    return composers.length === 1 && whatsappNativeComposer(composers[0]);
   };
   window.__wb_native_whatsapp_repair_action = target => {
     const pins = window.__wb_get_native_whatsapp_repair();

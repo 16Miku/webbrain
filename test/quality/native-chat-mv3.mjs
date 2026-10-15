@@ -357,6 +357,15 @@ try {
     }) : structuredPath(dispatchPath) ? sendAttempts.filter(event => heldStructuredSend(event.data.result)) : [];
     if (dispatchPath === 'generic_submit') assert.equal(feedbackSkips.length, current.feedbackRecoveries || 0);
     else assert.ok(feedbackSkips.length <= 2, 'Browser changes held back a send more than twice.');
+    // Each held send has page feedback around it: after the step before it
+    // and before the next step after it. A skip for any other reason counts.
+    for (const skip of structuredPath(dispatchPath) ? feedbackSkips : []) {
+      const updates = run.result.updates, at = updates.indexOf(skip);
+      const from = updates.slice(0, at).findLastIndex(event => event.type === 'tool_result');
+      const next = updates.findIndex((event, index) => index > at && event.type === 'tool_call');
+      assert.ok(updates.slice(from + 1, next < 0 ? updates.length : next).some(event => event.type === 'page_feedback'),
+        'A send was held back without page feedback around it: ' + JSON.stringify(skip.data.result).slice(0, 300));
+    }
     const dispatches = dispatchPath === 'structured_prefill' ? sendAttempts.filter(event => event.data.result.success === true)
       : sendAttempts.filter(event => !feedbackSkips.includes(event));
     assert.equal(dispatches.length, expectedCount);

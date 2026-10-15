@@ -67,13 +67,15 @@
     if (!text) return 'other';
     const known = _pageReading('page_blocker', text, null, { queue: false, maxLength: PAGE_GATE_TEXT_LIMIT });
     if (known) return PAGE_GATE_TYPES.has(known) ? known : 'other';
-    // A text that differs only in its numbers from a text read as a wall,
-    // such as a countdown's next second, is that wall for now, and is still
-    // reported to be read: a model's reading of the text itself then
-    // replaces this, so a quota that stops being a wall when its number
-    // changes reads as what it is.
+    // A text that differs only in its numbers from texts read as a wall,
+    // such as a countdown's next second, is that wall: at once, and still
+    // reported to be read until two texts of its shape were read as that
+    // wall, so a model's reading of the text itself replaces the guess and a
+    // quota that stops being a wall when its number changes reads as what it
+    // is.
     const shaped = _pageBlockerWallByShape(text);
-    const provisional = shaped && PAGE_GATE_TYPES.has(shaped) ? shaped : null;
+    if (shaped?.confirmed && PAGE_GATE_TYPES.has(shaped.choice)) return shaped.choice;
+    const provisional = shaped && PAGE_GATE_TYPES.has(shaped.choice) ? shaped.choice : null;
     if (!budget.seen.has(text)) {
       if (budget.left <= 0) return provisional;
       budget.left -= 1;
@@ -5915,12 +5917,15 @@
     'draft_tool', 'conversation_tool']);
   const _pageReadings = new Map();
   const _pageReadingsUnread = new Map();
-  // Wall readings of overlay and article-block texts that hold digits, by the
-  // text with each run of digits as one '#'. A wall whose number changes on
-  // every read, such as a countdown, stays a wall while its new text is read
-  // (see pageGateReading). Only walls carry over this way: a text read as no
-  // wall is simply unread again when its numbers change.
-  const _pageBlockerWallShapes = new Map();
+  // Readings of overlay and article-block texts that hold digits, by the
+  // text with each run of digits as one '#': which wall the texts of a shape
+  // were read as (up to four of them), and whether one was read as no wall
+  // or as another wall. A text of a shape read only as one wall is that wall
+  // for now and is still read (see pageGateReading); once two texts of the
+  // shape were read so, a countdown's next number is that wall without
+  // another read. A shape with any other reading carries nothing over, as a
+  // quota that stops being a wall at another number.
+  const _pageBlockerShapes = new Map();
   const _PAGE_BLOCKER_WALL_TYPES = new Set(['subscription', 'registration', 'login']);
 
   function _pageReadingText(value) {
@@ -5931,11 +5936,13 @@
     return /\p{Nd}/u.test(text) ? text.replace(/\p{Nd}+/gu, '#') : '';
   }
 
-  // The wall reading a text gets from a text read as a wall that differs from
-  // it only in its numbers, or null.
+  // The wall a text gets from texts read as that wall that differ from it
+  // only in their numbers, { choice, confirmed }, or null.
   function _pageBlockerWallByShape(value) {
     const shape = _pageReadingDigitShape(_pageReadingText(value));
-    return shape ? _pageBlockerWallShapes.get(shape) || null : null;
+    const entry = shape ? _pageBlockerShapes.get(shape) : null;
+    if (!entry || entry.mixed || !entry.walls.size || !_PAGE_BLOCKER_WALL_TYPES.has(entry.choice)) return null;
+    return { choice: entry.choice, confirmed: entry.walls.size >= 2 };
   }
 
   // `readings` is { question: { text: choice } }.
@@ -5953,15 +5960,21 @@
         _pageReadings.delete(key);
         _pageReadings.set(key, choice);
         _pageReadingsUnread.delete(key);
-        const shape = kind === 'page_blocker' && _PAGE_BLOCKER_WALL_TYPES.has(choice) ? _pageReadingDigitShape(text) : '';
+        const shape = kind === 'page_blocker' ? _pageReadingDigitShape(text) : '';
         if (shape) {
-          _pageBlockerWallShapes.delete(shape);
-          _pageBlockerWallShapes.set(shape, choice);
+          const entry = _pageBlockerShapes.get(shape) || { choice: '', walls: new Set(), mixed: false };
+          if (!_PAGE_BLOCKER_WALL_TYPES.has(choice) || (entry.choice && entry.choice !== choice)) entry.mixed = true;
+          else {
+            entry.choice = choice;
+            if (entry.walls.size < 4) entry.walls.add(text);
+          }
+          _pageBlockerShapes.delete(shape);
+          _pageBlockerShapes.set(shape, entry);
         }
       }
     }
     while (_pageReadings.size > 3200) _pageReadings.delete(_pageReadings.keys().next().value);
-    while (_pageBlockerWallShapes.size > 800) _pageBlockerWallShapes.delete(_pageBlockerWallShapes.keys().next().value);
+    while (_pageBlockerShapes.size > 800) _pageBlockerShapes.delete(_pageBlockerShapes.keys().next().value);
   }
 
   // The reading of one text: its choice, '' when there is no text, or null

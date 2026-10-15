@@ -106,6 +106,17 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       const offered = await probe(ownerFor());
       assert.equal(offered.nativeWhatsappRepairAvailable, true, JSON.stringify(offered));
       assert.equal(offered.nativeWhatsappRepairSpent, undefined);
+      // From review: the chat hidden for a moment, as behind a modal, is not
+      // a spent check; the same chat is offered its check again afterwards.
+      await page.evaluate(() => document.querySelector('#main').setAttribute('aria-hidden', 'true'));
+      const hidden = await observe();
+      assert.notEqual(hidden.reason, 'native_whatsapp_contact_check_spent', JSON.stringify(hidden));
+      assert.notEqual(hidden.retryable, false, JSON.stringify(hidden));
+      assert.equal((await probe(ownerFor())).nativeWhatsappRepairSpent, undefined);
+      await page.evaluate(() => document.querySelector('#main').removeAttribute('aria-hidden'));
+      const shown = await observe();
+      assert.equal(shown.reason, 'native_whatsapp_contact_binding_required', JSON.stringify(shown));
+      assert.ok(shown.nativeWhatsappRepair, 'the chat shown again is not offered its contact check');
       await page.evaluate(() => {
         const selected = document.querySelector('[aria-selected]');
         selected.setAttribute('aria-selected', 'false'); selected.setAttribute('aria-selected', 'true');
