@@ -397,8 +397,32 @@ try {
       assert.equal(drafts.length, 2);
       assert.ok(drafts.every(event => event.data.result.success === true && event.data.result.verified === true
         && !event.data.result.outcomeUnknown && !event.data.result.repeatBlocked));
-      assert.deepEqual(dispatches.map(event => event.data.result.chatDeliveryProgress?.id),
-        Array.from({ length: 6 }, (_, index) => `expected:${index + 1}`));
+      // Each delivered reply processes its own reply row once, in order. A
+      // send held back by page feedback leaves its draft typed; the send that
+      // submits that draft proves delivery, and, as the presubmit harness
+      // documents, the next native read may be the first receipt that
+      // processes its row. Every other send carries its own receipt.
+      const expectedIds = Array.from({ length: 6 }, (_, index) => `expected:${index + 1}`);
+      const updates = run.result.updates;
+      const receipts = dispatches.map(event => {
+        const result = event.data.result;
+        if (result.chatDeliveryProgress || !feedbackSkips.length) return result.chatDeliveryProgress;
+        const at = updates.indexOf(event);
+        assert.ok(feedbackSkips.some(skip => skip.data.result.messageKey === result.messageKey && updates.indexOf(skip) < at),
+          'Only the send that submits a held draft may leave its receipt to the next native read: '
+            + JSON.stringify(result).slice(0, 300));
+        const read = updates.find((later, index) => index > at && later.type === 'tool_result');
+        const sentId = result.chatWorkflow?.newMessages?.find(row => row.direction === 'outgoing')?.id;
+        assert.equal(read?.data?.name, 'chat_observe', 'The submitted held draft needs its own native read next.');
+        assert.ok(sentId && read.data.result?.chatDeliveryProgress?.messageId === sentId,
+          'The native read after a submitted held draft must process that draft\'s own message.');
+        return read.data.result.chatDeliveryProgress;
+      });
+      assert.deepEqual(receipts.map(receipt => receipt?.id), expectedIds);
+      assert.deepEqual(receipts.map(receipt => receipt.counts.processed), [1, 2, 3, 4, 5, 6]);
+      assert.equal(new Set(receipts.map(receipt => receipt.messageId)).size, 6);
+      assert.deepEqual(actualResults.map(event => event.data.result?.chatDeliveryProgress?.id).filter(Boolean), expectedIds,
+        'No reply row is processed twice or by any other result.');
       assert.equal(actualResults.filter(event => event.data.name === 'get_accessibility_tree').length, 1,
         'The recovered explicit empty write is independently observed before a self-verifying send.');
       assert.equal(run.events.some(event => event.type === 'tool_call' && event.data?.name === 'progress_update'), false);
