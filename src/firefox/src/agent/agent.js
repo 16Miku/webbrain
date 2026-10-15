@@ -5,6 +5,7 @@ import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config
 import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
 import { completionFrameSnapshot } from './completion-frame.js';
+import { completionResultSnapshot, completionResultPixelRect } from './completion-result.js';
 import { captureSemanticNavigationDocument, semanticCommitNavigationRequest, recordSemanticCommitNavigation, semanticCommitIsCurrent, canRecordSemanticCommitDispatch } from './semantic-commit-navigation.js';
 import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from './page-feedback.js';
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
@@ -1778,6 +1779,8 @@ export class Agent extends LoopDetector {
       formRef: /^ref_\d+$/.test(String(detectedSubmit?.formRef || ''))
         && this._normalizeUrl(detectedSubmit?.url || '') === before
         ? detectedSubmit.formRef : '',
+      resultBaseline: detectedSubmit?.resultBaseline || null,
+      actionRef: name !== 'iframe_click' && /^ref_\d+$/.test(String(args?.ref_id || '')) ? args.ref_id : '',
       actionSequence: Number(this.completionInvariants.get(tabId)?.lastAction?.sequence || 0),
       submitLike: true,
       semanticCommit: semanticCommit ? {
@@ -7060,6 +7063,24 @@ export class Agent extends LoopDetector {
     return frame ? JSON.stringify([identity, frame.frameId, frame.identity]) : '';
   }
 
+  async _readCompletionResult(tabId, actionRef) {
+    try {
+      const rows = await browser.tabs.executeScript(tabId, { frameId: 0,
+        code: `(${completionResultSnapshot.toString()})(${JSON.stringify(actionRef)})` });
+      return rows?.[0] || null;
+    } catch { return null; }
+  }
+
+  async _completionResultSnapshot(tabId) {
+    const submit = this._currentCompletionSubmitState(tabId), baseline = submit?.resultBaseline;
+    if (!submit?.dispatched || !submit.observedAfterSubmit || submit.formValidationFailed || !baseline
+        || submit.documentChanged || submit.iframeSubmission || !/^ref_\d+$/.test(submit.actionRef || '')
+        || this._normalizeUrl(submit.originatingUrl || '') !== this._normalizeUrl(submit.currentUrl || '')) return null;
+    const result = await this._readCompletionResult(tabId, submit.actionRef);
+    return result?.identity === baseline.identity && result.scopeRef === baseline.scopeRef
+      && typeof result.text === 'string' && this._sha256TextSync(result.text) !== baseline.textSha256 ? result : null;
+  }
+
   async _completionLiveStatusMessages(tabId) {
     const result = await browser.tabs.executeScript(tabId, { code: `(() => {
       const messages = [];
@@ -7087,10 +7108,13 @@ export class Agent extends LoopDetector {
     return Array.isArray(result?.[0]) ? result[0] : null;
   }
 
-  async _captureCompletionJudgeImage(tabId) {
+  async _captureCompletionJudgeImage(tabId, resultScope = null) {
     if (!this._canTakeAutoScreenshot(tabId)) return null;
     let image = await this._withIndicatorsHidden(tabId, () => browser.tabs.captureTab(tabId, { format: 'png' }));
     if (image && this.screenshotRedaction) image = await this._redactScreenshotDataUrl(tabId, image, { coordinateSpace: 'viewport' });
+    // Redact against the full viewport before cropping; sensitive-field
+    // coordinates must never be interpreted relative to the smaller image.
+    if (image && resultScope) image = (await this._cropDataUrl(image, resultScope.rect, 'image/png', resultScope.viewport))?.dataUrl || null;
     if (image) this._recordAutoScreenshot(tabId);
     return image;
   }
@@ -12176,6 +12200,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             this._throwIfAborted(abortSignal);
             const currentValidationBlock = this._formValidationBlocks.get(tabId) || null;
             const obviousSubmit = this._formValidationActionLooksSubmit(fnName, fnArgs, null, detected);
+            if ((obviousSubmit || detected?.isSubmit === true) && detected && fnName !== 'iframe_click'
+                && /^ref_\d+$/.test(String(fnArgs?.ref_id || ''))) {
+              const baseline = await this._readCompletionResult(tabId, fnArgs.ref_id);
+              if (baseline?.identity && baseline.scopeRef && typeof baseline.text === 'string') {
+                detected.resultBaseline = { identity: baseline.identity, scopeRef: baseline.scopeRef,
+                  textSha256: this._sha256TextSync(baseline.text) };
+              }
+              this._throwIfAborted(abortSignal);
+            }
             // A control the probe saw inside a form, or a caption not read
             // yet, may still turn out to submit: keep the page's state from
             // before the click, so a rejection it shows is new.
@@ -13355,12 +13388,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // The tool result keeps the guard's diagnostic for verbose rows,
           // traces and later model turns; the chat shows the plain account.
           const failedResult = {
-            success: false,
+            success: planOnlyDecision.outcome === 'partial',
             done: true,
-            outcome: 'failed',
+            outcome: planOnlyDecision.outcome || 'failed',
             planOnlyTerminal: true,
             summary: planOnlyDecision.userMessage || planOnlyDecision.failure,
-            error: planOnlyDecision.failure,
+            ...(planOnlyDecision.outcome === 'partial'
+              ? { verificationWarning: planOnlyDecision.failure }
+              : { error: planOnlyDecision.failure }),
           };
           onUpdate('tool_result', { name: fnName, result: failedResult });
           messages.push({
@@ -15956,10 +15991,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
   }
 
-  async _cropDataUrl(dataUrl, rect, mimeType = 'image/png') {
+  async _cropDataUrl(dataUrl, rect, mimeType = 'image/png', cssViewport = null) {
     const img = await this._loadImageFromDataUrl(dataUrl);
     const sourceW = img.naturalWidth || img.width;
     const sourceH = img.naturalHeight || img.height;
+    if (cssViewport) {
+      rect = completionResultPixelRect(rect, cssViewport, sourceW, sourceH);
+      if (!rect) throw new Error('Invalid completion result crop.');
+    }
     const x = Math.max(0, Math.min(sourceW - 1, Math.round(rect.x)));
     const y = Math.max(0, Math.min(sourceH - 1, Math.round(rect.y)));
     const width = Math.max(1, Math.min(sourceW - x, Math.round(rect.width)));
@@ -32759,13 +32798,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         'required_evidence_missing', this._socialPublicationOutcomeFacts(state));
     }
     if (missingRequiredSubmission) {
-      return terminal('submission_missing', this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
+      const submit = this._currentCompletionSubmitState(tabId);
+      const unconfirmed = !state.siteWorkflow?.job && submit?.dispatched === true
+        && submit.taskKey === state.taskKey && !submit.formValidationFailed
+        && this._completionVerdicts?.get(tabId)?.outcome === 'uncertain';
+      const result = terminal('submission_missing', this._workflowVerificationKind(state.siteWorkflow) === 'published_resource'
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch. ${this._workflowPublicationRecoveryInstruction(state)}]`
           : state.siteWorkflow?.job?.id
           ? `[Agent stopped because the selected ${state.siteWorkflow.job.id} job required job-bound terminal evidence after its commit/submit dispatch, but that evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]`
           : '[Agent stopped because the approved task required verified terminal evidence after its submit/send/publish dispatch, but no structured site workflow was bound and generic submission evidence was still missing after one recovery nudge. Some fields or page state may have changed; inspect the current page before retrying to avoid duplicate submission.]',
-        'required_evidence_missing', { submitted: this._completionSubmitStates.get(tabId)?.dispatched === true
-          && this._completionSubmitStates.get(tabId)?.taskKey === state.taskKey });
+        unconfirmed ? 'partial' : 'required_evidence_missing', { submitted: submit?.dispatched === true
+          && submit.taskKey === state.taskKey });
+      if (unconfirmed) result.outcome = 'partial';
+      return result;
     }
     if (forbiddenSubmission) {
       return terminal('forbidden_submission',

@@ -92,6 +92,29 @@ for (const build of ['chrome', 'firefox']) {
     return h;
   }
 
+  test(`${build}: a fresh conversation result earns generic submission evidence despite unrelated page text`, async () => {
+    const h = await fixture();
+    try {
+      h.tree = 'main "Accounts"\n textbox "Search accounts"';
+      h.agent._completionResultSnapshot = async () => ({ identity: `${h.url}|${h.identityEpoch}`, scopeRef: 'ref_80',
+        text: 'Support team conversation\nThe requested handover request is sent.\n11:24 AM', composerEmpty: true });
+      h.agent._chatWithCostAllowance = async (_provider, messages, options) => {
+        const reading = fixtureFixedChoiceReply(messages);
+        if (reading) return { content: reading };
+        h.judges++;
+        assert.equal(options.tools, undefined);
+        const state = JSON.parse(messages[1].content);
+        assert.match(state[1].observation, /requested handover request is sent/);
+        return { content: '{"outcome":"succeeded","reason":"Fresh conversation contains the requested sent message."}' };
+      };
+      const result = await h.done();
+      assert.equal(result.outcome, 'success'); assert.equal(result.done, true);
+      assert.equal(h.guard.verifiedSubmissionEvidence, true);
+      assert.equal(h.judges, 1);
+      assert.equal(h.agent._planOnlyTerminalDecision(51, result.summary, { viaDone: true, outcome: result.outcome }), null);
+    } finally { h.close(); }
+  });
+
   test(`${build}: unrelated video metadata contract cannot block an independently verified form-less profile Publish`, async () => {
     const h = await fixture();
     try {

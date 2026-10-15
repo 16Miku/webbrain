@@ -176,7 +176,8 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       // Re-read the bounded AX evidence actually sent to the judge. Full-body
       // clocks/feeds outside that evidence do not establish staleness.
       const fresh = await capture('ax', true);
-      return fresh?.key === (evidence.key || evidence.evidenceKey) && await currentIdentity(evidence);
+      return (!evidence.resultScope || fresh?.resultScope === evidence.resultScope)
+        && fresh?.key === (evidence.key || evidence.evidenceKey) && await currentIdentity(evidence);
     }
     // Text and input stamps cannot detect canvas, image or CSS changes. Take a
     // new redacted, budgeted capture after the request; never reuse that cache.
@@ -227,6 +228,11 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // Entered values can be secrets without recognizable labels. Action names
   // supply history without sending arbitrary tool arguments to another judge.
   const recordedActions = calls.filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name }));
+  const resultSnapshot = async () => {
+    try { return await agent._completionResultSnapshot?.(tabId); } catch { return null; }
+  };
+  const initialResult = await resultSnapshot();
+  const preferAx = !!initialResult?.scopeRef && !!initialResult?.text;
   const captures = new Map();
   const capture = async (modality, refresh = false) => {
     const before = await agent._completionDocumentStamp(tabId, true);
@@ -237,33 +243,50 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     // A new vision judgment needs both its evidence and its post-request
     // freshness capture. With only one slot left, use AX before paying a judge.
     if (modality === 'vision' && agent._canTakeAutoScreenshot?.(tabId, refresh || reusable ? 1 : 2) === false) return null;
-    let observation;
+    let observation, resultScope, resultView, resultFingerprint;
     if (modality === 'vision') {
-      let pixels = await agent._captureCompletionJudgeImage(tabId);
+      const result = await resultSnapshot();
+      if (result?.identity === before && result.scopeRef && result.rect && result.viewport) {
+        resultScope = result.scopeRef;
+        resultView = { rect: result.rect, viewport: result.viewport };
+        resultFingerprint = await evidenceKey([result.scopeRef, result.text, result.composerEmpty, result.truncated, result.controlFingerprint]);
+      }
+      if (refresh && cached?.resultScope && cached.resultScope !== resultScope) return null;
+      let pixels = await agent._captureCompletionJudgeImage(tabId, resultView || null);
       if (!pixels) return null;
       const budget = agent._budgetForCapture();
       pixels = (await agent._shrinkImageForBudget(pixels, 0, 0, { ...budget, maxTargetPx: Math.min(1408, budget.maxTargetPx), maxTargetTokens: Math.min(1400, budget.maxTargetTokens) })).dataUrl;
       observation = { type: 'image_url', image_url: { url: pixels } };
     } else {
-      const submit = agent._currentCompletionSubmitState(tabId);
-      // Certify a single same-document form against its entire subtree rather
-      // than unrelated page counters or feeds. Unknown/replaced scopes and
-      // navigation still require the complete page. Live statuses and dialogs
-      // outside the form are refreshed below and participate in freshness.
-      const sameForm = guard?.requiresSubmission === true && !guard?.siteWorkflow?.job
-        && Number(pageState.relevantFormCount) === 1 && submit?.dispatched === true
-        && submit.observedAfterSubmit === true && submit.documentChanged !== true
-        && /^ref_\d+$/.test(String(submit.formRef || ''))
-        && agent._normalizeUrl(submit.originatingUrl || '') === agent._normalizeUrl(pageUrl)
-        && agent._normalizeUrl(submit.currentUrl || '') === agent._normalizeUrl(pageUrl)
-        && (!submit.originatingDocument || !submit.currentDocument || submit.originatingDocument === submit.currentDocument);
-      let result = await agent.executeTool(tabId, 'get_accessibility_tree',
-        sameForm ? { ref_id: submit.formRef, filter: 'all', maxChars: 5500 } : { maxChars: 5500 });
-      if (sameForm && (result?.success === false || result?.error || !result?.pageContent)) {
-        result = await agent.executeTool(tabId, 'get_accessibility_tree', { maxChars: 5500 });
+      const result = await resultSnapshot();
+      if (result?.identity === before && result.scopeRef && typeof result.text === 'string' && result.text) {
+        resultScope = result.scopeRef;
+        resultFingerprint = await evidenceKey([result.scopeRef, result.text, result.composerEmpty, result.truncated, result.controlFingerprint]);
+        observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.text), 4500)),
+          truncated: result.truncated === true, composerEmpty: result.composerEmpty === true };
       }
-      if (result?.success === false || !result?.pageContent) return null;
-      observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.pageContent), 4500)) };
+      if (refresh && cached?.resultScope && cached.resultScope !== resultScope) return null;
+      if (!observation) {
+        const submit = agent._currentCompletionSubmitState(tabId);
+        // Certify a single same-document form against its entire subtree rather
+        // than unrelated page counters or feeds. Unknown/replaced scopes and
+        // navigation still require the complete page. Live statuses and dialogs
+        // outside the form are refreshed below and participate in freshness.
+        const sameForm = guard?.requiresSubmission === true && !guard?.siteWorkflow?.job
+          && Number(pageState.relevantFormCount) === 1 && submit?.dispatched === true
+          && submit.observedAfterSubmit === true && submit.documentChanged !== true
+          && /^ref_\d+$/.test(String(submit.formRef || ''))
+          && agent._normalizeUrl(submit.originatingUrl || '') === agent._normalizeUrl(pageUrl)
+          && agent._normalizeUrl(submit.currentUrl || '') === agent._normalizeUrl(pageUrl)
+          && (!submit.originatingDocument || !submit.currentDocument || submit.originatingDocument === submit.currentDocument);
+        let result = await agent.executeTool(tabId, 'get_accessibility_tree',
+          sameForm ? { ref_id: submit.formRef, filter: 'all', maxDepth: 15, maxChars: 5500 } : { filter: 'all', maxDepth: 15, maxChars: 5500 });
+        if (sameForm && (result?.success === false || result?.error || !result?.pageContent)) {
+          result = await agent.executeTool(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15, maxChars: 5500 });
+        }
+        if (result?.success === false || !result?.pageContent) return null;
+        observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.pageContent), 4500)) };
+      }
     }
     // A bounded or scoped AX tree can omit inline confirmation outside a form.
     // Include visible live-region and open-dialog text separately and refresh it with the
@@ -280,7 +303,8 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     const workflowBinding = binding ? { adapterName: binding.adapterName, revision: binding.revision,
       job: binding.job, verificationKind: binding.verificationKind, recipientBound: binding.recipientBound === true } : null;
     const info = {
-      task: boundedText(redactSystemOneText(String(task || '')), 2500),
+      task: boundedText(redactSystemOneText(String(task || '')), guard?.approvedPlanAnchor ? 1700 : 2500),
+      ...(guard?.approvedPlanAnchor ? { approved_plan: boundedText(redactSystemOneText(guard.approvedPlanAnchor), 800) } : {}),
       requirements: { requiresSubmission: guard?.requiresSubmission, requiresStateChange: guard?.requiresStateChange, workflow: boundedText(guard?.siteWorkflow?.job?.id, 120) },
       action: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({ submit: submit ? {
         dispatched: submit.dispatched, observedAfterSubmit: submit.observedAfterSubmit,
@@ -292,6 +316,8 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
         workflowBinding,
       } : null, lastAction: run?.lastAction })), 1000)),
       recorded_reads: history, recorded_actions: recordedActions, document: boundedText(redactSystemOneText(pageUrl), 1000),
+      ...(resultScope ? { result_scope: resultScope } : {}),
+      ...(resultView ? { result_view: resultView } : {}),
       ...(calculationEvidence ? { recorded_calculations: [{ tool: 'calculate',
         expression: boundedText(calculationEvidence.actualExpression, 1000), result: boundedText(calculationEvidence.result, 1000),
         ...(calculationEvidence.fraction ? { fraction: boundedText(calculationEvidence.fraction, 1000) } : {}) }] } : {}),
@@ -306,7 +332,9 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       candidate_summary_not_proof: wrapSystemOneData(boundedText(redactSystemOneText(String(summary)), 600)),
     };
     const state = [info, observation];
-    const evidence = { identity, modality, state, ...(frame ? { submittedFrameStamp: frame.stamp } : {}), key: await evidenceKey(state) };
+    // Fingerprint the complete local read too: redaction/truncation must not
+    // let a changed result reuse an earlier judgment. Raw text stays local.
+    const evidence = { identity, modality, state, ...(resultScope ? { resultScope } : {}), ...(frame ? { submittedFrameStamp: frame.stamp } : {}), key: await evidenceKey([state, resultFingerprint || null]) };
     captures.set(modality, evidence);
     return evidence;
   };
@@ -355,12 +383,12 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       return { ...llmCompletionVerdict(result.content), model: provider.model };
     },
   } : null;
-  const verdict = await verifyCompletion({ decision, llm, capture, isCurrent: current, signal,
+  const verdict = await verifyCompletion({ decision, llm, capture, isCurrent: current, signal, preferAx,
     onAttempt: ({ reason, ...metadata }) => agent.recordSystemOneVerdict(tabId, {
       phase: 'done_verification', ...metadata,
       // A model's own words never reach the trace: a sure verdict is recorded
       // as judged, an unsure one as insufficient evidence.
-      ...(reason ? { reason: /^(?:capture_unavailable|unavailable|time_budget|http_\d{3}|JEV_[A-Z_]+)$/.test(reason) ? reason
+      ...(reason ? { reason: /^(?:capture_unavailable|unavailable|time_budget|COMPLETION_VISUAL_CHANGED|http_\d{3}|JEV_[A-Z_]+)$/.test(reason) ? reason
         : metadata.outcome && metadata.outcome !== 'uncertain' ? 'judged' : 'insufficient_evidence' } : {}),
     }, context) });
   const accepted = { ...verdict, scope, ...(captures.get(verdict.modality)?.submittedFrameStamp
