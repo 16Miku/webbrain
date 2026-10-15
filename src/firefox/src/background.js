@@ -1918,10 +1918,11 @@ browser.tabs.onRemoved.addListener((tabId) => {
   clearRunUiSnapshot(tabId);
   clearDetachedRunFailure(tabId);
   flashedBadgeTabs.delete(tabId);
+  attentionBadgeOwners.delete(tabId);
 });
 
-// ─── Completion attention flash ─────────────────────────────────────
-// When a run settles on a background tab, the side panel asks us to make
+// ─── Completion and plan attention flash ─────────────────────────────────────
+// When a run settles or presents a plan on a background tab, make
 // that tab noticeable. The preferred path blinks the page title/favicon
 // via the content script; when no receiver answers (restricted pages,
 // discarded tabs, …) we fall back to a per-tab toolbar badge that clears
@@ -1946,23 +1947,31 @@ browser.notifications.onClosed.addListener((notificationId) => {
   completionNotificationFocusHandlers.delete(notificationId);
 });
 
-async function showCompletionNotification(tabId, success) {
+async function showCompletionNotification(tabId, success, reason = 'completion', isCurrent = () => true) {
   let tab = null;
   try {
     tab = await browser.tabs.get(tabId);
   } catch { return; }
-  const message = tab?.title || tab?.url || 'A background task finished.';
+  if (!isCurrent()) return;
+  const planReview = reason === 'plan_review';
+  const attention = planReview ? planReviewAttentionByTab.get(tabId) : null;
+  const message = tab?.title || tab?.url || (planReview ? 'A plan is waiting for your review.' : 'A background task finished.');
   let notificationId = null;
   try {
     notificationId = await browser.notifications.create({
       type: 'basic',
-      iconUrl: browser.runtime.getURL('icons/icon48.png'),
-      title: `WebBrain — ${success ? 'Task finished' : 'Task needs attention'}`,
+      iconUrl: browser.runtime.getURL(planReview ? 'icons/plan-review.png' : 'icons/icon48.png'),
+      title: planReview ? 'WebBrain — ⚠️ Plan ready for review' : `WebBrain — ${success ? 'Task finished' : 'Task needs attention'}`,
       message,
       silent: true,
     });
   } catch { return; }
   if (!notificationId) return;
+  if (!isCurrent()) {
+    void browser.notifications.clear(notificationId).catch(() => {});
+    return;
+  }
+  if (attention) attention.notificationId = notificationId;
   setTimeout(() => {
     completionNotificationFocusHandlers.delete(notificationId);
     browser.notifications.clear(notificationId).catch(() => {});
@@ -1980,6 +1989,7 @@ async function showCompletionNotification(tabId, success) {
 
 browser.tabs.onActivated.addListener(({ tabId } = {}) => {
   flashedBadgeTabs.delete(tabId);
+  attentionBadgeOwners.delete(tabId);
   // Clear unconditionally so badge cleanup never depends on volatile state.
   // Resetting the per-tab override is idempotent and restores any global badge.
   browser.browserAction.setBadgeText({ tabId, text: '' }).catch(() => {});
@@ -1997,6 +2007,7 @@ browser.windows.onFocusChanged.addListener(async (windowId) => {
     const activeTabId = Number(activeTab?.id);
     if (!Number.isInteger(activeTabId)) return;
     flashedBadgeTabs.delete(activeTabId);
+    attentionBadgeOwners.delete(activeTabId);
     await browser.browserAction.setBadgeText({ tabId: activeTabId, text: '' });
   } catch { /* best-effort cleanup */ }
 });
@@ -2026,12 +2037,17 @@ async function maybeFlashScheduledTerminalEvent(_tabId, type, data) {
 }
 
 async function flashTabAttention(msg) {
+  const isCurrent = typeof msg?.isCurrent === 'function' ? msg.isCurrent : () => true;
   try {
     const stored = await browser.storage.local.get('completionFlashTab');
     if (stored?.completionFlashTab === false) return { ok: true, mode: 'disabled' };
   } catch { /* setting defaults to on */ }
+  if (!isCurrent()) return { ok: true, mode: 'stale' };
   const tabId = Number(msg?.tabId);
   const success = msg?.success !== false;
+  const reason = msg?.reason === 'plan_review' ? 'plan_review' : 'completion';
+  const planReview = reason === 'plan_review';
+  const attentionId = String(msg?.attentionId || '');
   if (!Number.isInteger(tabId) || tabId < 0) {
     return { ok: false, error: 'flash_tab_attention requires a valid tabId.' };
   }
@@ -2040,6 +2056,7 @@ async function flashTabAttention(msg) {
   } catch {
     return { ok: false, error: `Tab ${tabId} no longer exists.` };
   }
+  if (!isCurrent()) return { ok: true, mode: 'stale' };
   // Discarded/unloaded tabs and pages whose content script declines to
   // blink (document already visible) both fall through to the badge
   // fallback — which works without touching the page and survives until
@@ -2049,13 +2066,24 @@ async function flashTabAttention(msg) {
     const response = await browser.tabs.sendMessage(tabId, {
       target: 'content',
       action: 'attention_flash_start',
-      params: { success },
+      params: { success, reason, attentionId },
     });
     flashAccepted = response?.started === true;
   } catch {
     flashAccepted = false;
   }
-  if (flashAccepted) return { ok: true, mode: 'title-flash' };
+  if (!isCurrent()) {
+    if (flashAccepted && attentionId) {
+      void browser.tabs.sendMessage(tabId, {
+        target: 'content', action: 'attention_flash_stop', params: { attentionId },
+      }).catch(() => {});
+    }
+    return { ok: true, mode: 'stale' };
+  }
+  if (flashAccepted) {
+    if (planReview) await showCompletionNotification(tabId, false, reason, isCurrent);
+    return { ok: true, mode: planReview ? 'title-flash+notification' : 'title-flash' };
+  }
   // No content-script receiver (or it declined) — fall back to a per-tab
   // toolbar badge. But re-check first whether the user is actually looking
   // at the tab: "active" only means selected within its own window, so an
@@ -2074,17 +2102,30 @@ async function flashTabAttention(msg) {
   } catch {
     return { ok: false, error: `Tab ${tabId} no longer exists.` };
   }
+  if (!isCurrent()) return { ok: true, mode: 'stale' };
   if (tabIsWatched) return { ok: true, mode: 'skipped-tab-watched' };
+  const badgeOwner = { attentionId };
+  attentionBadgeOwners.set(tabId, badgeOwner);
+  const attention = planReviewAttentionByTab.get(tabId);
+  if (attention?.id === attentionId) attention.badge = true;
   try {
-    await browser.browserAction.setBadgeText({ tabId, text: success ? '✓' : '!' });
+    await browser.browserAction.setBadgeText({ tabId, text: planReview ? '⚠' : success ? '✓' : '!' });
+    if (!isCurrent()) {
+      await clearAttentionBadge(tabId, badgeOwner);
+      return { ok: true, mode: 'stale' };
+    }
     await browser.browserAction.setBadgeBackgroundColor({
       tabId,
-      color: success ? '#22c55e' : '#ef4444',
+      color: planReview ? '#f59e0b' : success ? '#22c55e' : '#ef4444',
     });
+    if (!isCurrent()) {
+      await clearAttentionBadge(tabId, badgeOwner);
+      return { ok: true, mode: 'stale' };
+    }
     flashedBadgeTabs.add(tabId);
     // The badge itself is invisible while another tab is selected — pair it
     // with a system notification so the completion is discoverable anyway.
-    await showCompletionNotification(tabId, success);
+    await showCompletionNotification(tabId, success, reason, isCurrent);
     return { ok: true, mode: 'badge+notification' };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
@@ -2154,6 +2195,7 @@ const runUiJournal = new RunUiJournal({
 const runUiSnapshotReads = new Map();
 
 function beginRunUiSnapshot(tabId, requestId, metadata = {}) {
+  clearPlanReviewAttention(tabId);
   runUiSnapshotReads.delete(tabId);
   runUiPersistenceFailures.delete(tabId);
   return runUiJournal.begin(tabId, requestId, metadata);
@@ -2286,6 +2328,7 @@ async function getRunUiSnapshot(tabId) {
 }
 
 function clearRunUiSnapshot(tabId) {
+  clearPlanReviewAttention(tabId);
   runUiSnapshotReads.delete(tabId);
   runUiSnapshotPersistence.cancel(tabId);
   runUiJournal.clear(tabId);
@@ -2301,12 +2344,64 @@ function clearRunUiSnapshot(tabId) {
 function sendAgentUpdate(tabId, requestId, type, data) {
   const event = recordRunUiEvent(tabId, requestId, type, data);
   if (!event) return;
+  if (type === 'plan_review') notifyPlanReview(tabId, requestId, event.data ?? data);
+  if (type === 'plan_resolved') clearPlanReviewAttention(tabId, requestId, data?.planId);
   if (type === 'clarify') agent._capturePendingClarificationForUi?.(tabId, requestId, event.data ?? data, event);
   browser.runtime.sendMessage({
     target: 'sidepanel', action: 'agent_update', tabId, requestId,
     runId: event?.runId || agent.currentRunId.get(tabId) || null,
     seq: event?.seq || null, type, data: event?.data ?? data,
   }).catch(() => {});
+}
+
+// Alert only for newly emitted plans. Journal replay never passes through
+// this dispatcher, and each live plan can be delivered more than once.
+const planReviewAlertIds = new WeakMap();
+const planReviewAttentionByTab = new Map();
+const attentionBadgeOwners = new Map();
+
+async function clearAttentionBadge(tabId, owner) {
+  const current = attentionBadgeOwners.get(tabId);
+  if (current && current !== owner) return;
+  attentionBadgeOwners.delete(tabId);
+  flashedBadgeTabs.delete(tabId);
+  await browser.browserAction.setBadgeText({ tabId, text: '' });
+}
+
+function clearPlanReviewAttention(tabId, requestId = null, planId = null) {
+  const attention = planReviewAttentionByTab.get(tabId);
+  if (!attention || (requestId && attention.requestId !== requestId)
+      || (planId && attention.planId !== String(planId))) return;
+  planReviewAttentionByTab.delete(tabId);
+  void browser.tabs.sendMessage(tabId, {
+    target: 'content', action: 'attention_flash_stop', params: { attentionId: attention.id },
+  }).catch(() => {});
+  const badgeOwner = attentionBadgeOwners.get(tabId);
+  if (attention.badge && badgeOwner?.attentionId === attention.id) {
+    void clearAttentionBadge(tabId, badgeOwner).catch(() => {});
+  }
+  if (attention.notificationId) {
+    completionNotificationFocusHandlers.delete(attention.notificationId);
+    void browser.notifications.clear(attention.notificationId).catch(() => {});
+  }
+}
+
+function notifyPlanReview(tabId, requestId, data) {
+  const snapshot = runUiJournal.get(tabId);
+  const planId = String(data?.planId || '');
+  const isCurrent = () => !!planId && runUiJournal.get(tabId) === snapshot
+    && snapshot?.requestId === requestId && snapshot.status === 'awaiting_plan'
+    && snapshot.pendingPlanId === planId;
+  if (!isCurrent()) return;
+  let alerted = planReviewAlertIds.get(snapshot);
+  if (!alerted) planReviewAlertIds.set(snapshot, alerted = new Set());
+  if (alerted.has(planId)) return;
+  alerted.add(planId);
+  clearPlanReviewAttention(tabId);
+  const attentionId = JSON.stringify([tabId, requestId, planId]);
+  planReviewAttentionByTab.set(tabId, { id: attentionId, requestId, planId });
+  void playWatchAlert(browser, { style: 'plan_review', isCurrent, planReview: { tabId, requestId, planId } }).catch(() => {});
+  void flashTabAttention({ tabId, success: false, reason: 'plan_review', isCurrent, attentionId }).catch(() => {});
 }
 
 function sendScheduledAgentUpdate(tabId, type, data, owner) {
@@ -2509,6 +2604,7 @@ async function sendAgentRunComplete(tabId, snapshot = null) {
     && snapshot.requestId === requestId && snapshot.status === status
     && snapshot.endedAt === endedAt && snapshot.seq === seq;
   if (endedAt == null || !['completed', 'stopped', 'failed', 'cancelled', 'clarification_required'].includes(status)) return;
+  clearPlanReviewAttention(tabId, snapshot.requestId);
   await flushRunUiSnapshot(tabId, snapshot.requestId);
   if (!isCurrent()) return;
   // Live runs continue in the background even if their side panel is closed
