@@ -162,7 +162,7 @@ for (const build of ['chrome', 'firefox']) {
         assert.deepEqual(f.reads, [], 'An independent reply needs no repeated page refresh.');
       } finally { f.clean(); }
     });
-    for (const change of ['model-steering', 'scope-steering', 'scope-document', 'scope-provider', 'final-user', 'scope-candidate', 'scope-ignored-steering']) {
+    for (const change of ['model-steering', 'scope-steering', 'scope-document', 'scope-provider', 'scope-candidate', 'scope-ignored-steering']) {
       test(`${build}: ${streaming ? 'stream' : 'chat'} ${response} cannot retain stale authority after ${change}`, async () => {
         const f = fixture(Agent, { streaming, response, change });
         try {
@@ -173,6 +173,15 @@ for (const build of ['chrome', 'firefox']) {
         } finally { f.clean(); }
       });
     }
+    // The person typing on the page while the answer is checked does not make
+    // it stale: the answer is delivered once instead of being written again.
+    test(`${build}: ${streaming ? 'stream' : 'chat'} ${response} is kept when the person types on the page during the final check`, async () => {
+      const f = fixture(Agent, { streaming, response, change: 'final-user' });
+      try {
+        assert.equal(await f.run(), f.old);
+        assert.equal(f.counts().mainCalls, 1);
+      } finally { f.clean(); }
+    });
     test(`${build}: ${streaming ? 'stream' : 'chat'} ${response} still refreshes a page-dependent answer`, async () => {
       const f = fixture(Agent, { streaming, response, change: 'dependent', dependent: true });
       try {

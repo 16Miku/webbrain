@@ -380,7 +380,38 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(agent._pageFeedbackRuns.size, 0);
       });
     }
-    for (const response of ['done', 'prose']) for (const change of ['human_input', 'unknown', 'navigation', 'style', 'frame', 'task_steering', 'document', 'mode_change']) {
+    // The person typing on the page while an Ask answer is written does not
+    // make the answer stale: it is delivered once, not written again.
+    for (const response of ['done', 'prose']) {
+      test(`${build}: ${streaming ? 'stream' : 'chat'} Ask ${response} is kept after the person types on the page`, async () => {
+        const tab = nextTab++, delivered = [];
+        let agent, send, requests = 0;
+        const next = async () => {
+          assert.equal(++requests, 1, 'The answer is not written again');
+          send({ kind: 'input', source: 'user' });
+          return response === 'done' ? call('answer', 'done', { summary: 'The answer' }) : { content: 'The answer' };
+        };
+        agent = makeAgent(Agent, next);
+        agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
+          send = bind(agent, tab); return { role: 'user', content };
+        };
+        agent.executeTool = async (_tab, name, args) => {
+          if (name === 'get_accessibility_tree') return { success: true, pageContent: 'article "Context" [ref_1]' };
+          assert.equal(name, 'done');
+          delivered.push(args.summary);
+          return { success: true, done: true, summary: args.summary };
+        };
+        const options = { detachedRequestId: 'ask-kept-run', askStreamingEnabled: true };
+        const result = streaming
+          ? await agent.processMessageStream(tab, 'Read the current question', () => {}, 'ask', options)
+          : await agent.processMessage(tab, 'Read the current question', () => {}, 'ask', [], options);
+        assert.equal(result, 'The answer');
+        assert.equal(requests, 1);
+        assert.deepEqual(delivered, response === 'done' ? ['The answer'] : []);
+        assert.equal(agent._pageFeedbackRuns.size, 0);
+      });
+    }
+    for (const response of ['done', 'prose']) for (const change of ['unknown', 'navigation', 'style', 'frame', 'task_steering', 'document', 'mode_change']) {
       test(`${build}: ${streaming ? 'stream' : 'chat'} Ask ${response} is reconsidered after ${change}`, async () => {
         const tab = nextTab++, updates = [], delivered = [];
         let agent, send, requests = 0;

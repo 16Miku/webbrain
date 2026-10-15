@@ -455,6 +455,14 @@ to the older full `processMessageStream()` loop. Attachments, detached-run
 ownership, reconnect replay, persistence, traces, tool guards, and completion
 invariants therefore keep one production lifecycle.
 
+An Ask answer is about the page as the person asked about it. What they do on
+the page while it is written (scrolling, selecting, clicking, typing, and the
+page's changes from those), and any scroll or viewport resize, does not make
+it stale: the answer already shown is kept and is not written again. A
+navigation of the page to another address, a new document, a correction, and
+the page's own changes are weighed as before, so a page-dependent answer still
+refreshes after automatic churn within its retry budget.
+
 ### Selected-text source scopes
 
 Selected-text runs always carry an explicit, durable `source_grounding` policy.

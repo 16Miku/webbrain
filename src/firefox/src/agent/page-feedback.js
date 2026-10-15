@@ -25,11 +25,16 @@ const userIntervention = events => events.some(event => event?.source === 'user'
 const UNKNOWN_ATTRIBUTION_LIMIT = 4;
 const unknownAttribution = new WeakMap();
 
-// Viewing gestures (scroll, selection, pointer/key activity) cannot change the
-// content behind a read-only Ask answer. Clicks, input, navigation and DOM
-// changes they cause are reported separately and still invalidate it.
-const askRelevantFeedback = events => events.filter(event => !(event?.source === 'user'
-  && ['scroll', 'selection', 'activity'].includes(event.kind)));
+// A read-only Ask answer is about the page as the person asked about it. What
+// they do there while it is being written (scrolling, selecting, clicking,
+// typing, and the page's changes from those), and any scroll or viewport
+// resize, cannot make it stale, so an answer already shown stays. Their
+// navigation of the page to another address still does, and the page's own
+// changes are weighed as before.
+const mainFrameNavigation = event => event?.kind === 'navigation'
+  && !(Number.isSafeInteger(event.frameId) && event.frameId > 0);
+const askRelevantFeedback = events => events.filter(event => !['scroll', 'selection', 'resize'].includes(event?.kind)
+  && (event?.source !== 'user' || mainFrameNavigation(event)));
 
 function automaticAnswerFeedback(events) {
   const relevant = askRelevantFeedback(events);
