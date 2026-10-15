@@ -44,6 +44,26 @@ for (const build of ['chrome', 'firefox']) {
     const compass = config.resolveDecisionConfig({ decisionProvider: 'local', systemOneDoneEnabled: false }, { baseUrl: 'https://api.webbrain.one/v1' });
     assert.equal(compass.provider, 'compass'); assert.equal(compass.enabled, true); assert.equal(compass.doneEnabled, true);
   });
+  test(`${build}: Compass credentials never fall back to saved decision-provider keys`, async () => {
+    const saved = { systemOneEnabled: false, decisionApiKey: 'saved-openrouter-key',
+      typesafeApiKey: 'saved-typesafe-key', decisionLocalApiKey: 'saved-local-key' };
+    for (const decisionProvider of ['openrouter', 'typesafe', 'local']) {
+      for (const apiKey of [undefined, '', '  ', 'managed-compass-key']) {
+        const selected = config.resolveDecisionConfig({ ...saved, decisionProvider }, { baseUrl: 'https://api.webbrain.one/v1', apiKey });
+        assert.equal(selected.apiKey, (apiKey || '').trim());
+        let request;
+        const client = judge.createSystemOneJudge({ fetchImpl: async (url, options) => {
+          request = { url, ...options };
+          return { ok: true, json: async () => response() };
+        } });
+        await client.evaluate({ config: selected, apiKey: saved.typesafeApiKey, state: {}, questions: verifier.completionQuestions() });
+        assert.equal(request.url, 'https://api.webbrain.one/v1/decisions');
+        assert.equal(request.headers.Authorization, selected.apiKey ? `Bearer ${selected.apiKey}` : undefined);
+      }
+      const byo = config.resolveDecisionConfig({ ...saved, decisionProvider, systemOneEnabled: true });
+      assert.equal(byo.apiKey, decisionProvider === 'typesafe' ? saved.typesafeApiKey : decisionProvider === 'local' ? saved.decisionLocalApiKey : saved.decisionApiKey);
+    }
+  });
   // The judge answers every question it is asked: the outcome, and the two
   // side questions about later outcomes and the candidate summary.
   const side = (choices, choice) => ({ type: 'choice', choice, confidence: .95,

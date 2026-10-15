@@ -7095,17 +7095,18 @@ export class Agent extends LoopDetector {
     return image;
   }
 
-  async _jevSettings() {
+  async _jevSettings(tabId, provider = this._activeProvider(tabId)) {
     const stored = await browser.storage.local.get([...JEV_FAST_KEYS, ...DECISION_SETTINGS_KEYS]);
-    const decisionConfig = resolveDecisionConfig(stored);
+    const compass = provider?.config?.providerName === 'webbrain-cloud' ? provider.config : null;
+    const decisionConfig = resolveDecisionConfig(stored, compass);
     return decisionConfig.enabled && !this.strictSecretMode && (decisionConfig.local || globalThis.navigator?.onLine !== false) ? { ...stored, decisionConfig } : null;
   }
 
   async _jevClassify(tabId, instructions, criteria, state) {
     const context = this.systemOneContext(tabId);
     try {
-      const settings = await this._jevSettings();
-      if (!settings?.systemOneFastClassifications || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
+      const settings = await this._jevSettings(tabId);
+      if (settings?.systemOneEnabled !== true || !settings.systemOneFastClassifications || this._jevSessions?.get(tabId)?.hardStopped || this._checkAbort(tabId) || !context.isCurrent()) return null;
       // Classification receives plain text only; multimodal requests stay with the active provider.
       if (!state || Object.values(state).some(value => value != null && typeof value !== 'string')) return null;
       const text = JSON.stringify(state);
@@ -7157,7 +7158,7 @@ export class Agent extends LoopDetector {
     const runSignal = signal || this._runAbortSignal(tabId);
     const context = this.systemOneContext(tabId);
     try {
-      const settings = await this._jevSettings();
+      const settings = await this._jevSettings(tabId, provider);
       if (settings && !this._checkAbort(tabId)) {
         const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 2500, maxRetries: 0 }), {
           config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
@@ -7220,7 +7221,7 @@ export class Agent extends LoopDetector {
     let open = pending();
     if (open.length) {
       try {
-        const settings = await this._jevSettings();
+        const settings = await this._jevSettings(tabId, provider);
         for (const chunk of settings ? semanticBatchChunks(open.map(index => data[index]), SEMANTIC_BATCH_LIMITS.decision) : []) {
           if (this._checkAbort(tabId)) break;
           const indexes = chunk.map(position => open[position]);
@@ -7400,8 +7401,8 @@ export class Agent extends LoopDetector {
     if (!['act', 'dev'].includes(mode) || this._checkAbort(tabId)) return null;
     let session;
     try {
-      const settings = await this._jevSettings();
-      if (!settings?.systemOneFastBrowser || !context.isCurrent()) return null;
+      const settings = await this._jevSettings(tabId, provider);
+      if (settings?.systemOneEnabled !== true || !settings.systemOneFastBrowser || !context.isCurrent()) return null;
       let skipReason = '';
       if (recovery) skipReason = 'recovery_turn';
       else if (runOptions.cloudRun) skipReason = 'cloud_run';
@@ -7488,7 +7489,14 @@ export class Agent extends LoopDetector {
 
   async evaluateSystemOne(tabId, client, args, context = this.systemOneContext(tabId)) {
     const costState = context.costState || this.currentCostState.get(tabId) || this._newCostRunState();
+    const activeConfig = this._activeProvider(tabId)?.config;
+    const compass = args.config?.provider === 'compass' && activeConfig?.providerName === 'webbrain-cloud' ? activeConfig : null;
     return client.evaluate({ ...args,
+      ...(compass ? {
+        headers: { 'X-WebBrain-Device-Id': compass.deviceGuid || '', 'X-WebBrain-Client': 'extension',
+          'X-WebBrain-Help-Improve': compass.helpImproveWebBrain === false ? '0' : '1', ...args.headers },
+        metadata: { session_id: this.conversationIds.get(tabId), ...args.metadata },
+      } : {}),
       beforeRequest: async () => {
         if (this.strictSecretMode || (!args.config?.local && globalThis.navigator?.onLine === false) || context.isCurrent?.() === false) throw new Error('Jev unavailable.');
         const message = await this._checkCostAllowance(args.config || SYSTEM_ONE_COST_PROVIDER, costState);

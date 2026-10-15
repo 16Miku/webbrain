@@ -31,7 +31,7 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Invalid decision endpoint.');
   const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if (url.protocol === 'http:' && !loopback) throw new Error('Decision endpoints require HTTPS outside localhost.');
-  const apiKey = String(compass?.apiKey || (provider === 'typesafe' ? stored.typesafeApiKey : provider === 'local' ? stored.decisionLocalApiKey : stored.decisionApiKey) || '').trim();
+  const apiKey = String((provider === 'compass' ? compass?.apiKey : provider === 'typesafe' ? stored.typesafeApiKey : provider === 'local' ? stored.decisionLocalApiKey : stored.decisionApiKey) || '').trim();
   const visionMode = compass ? 'auto' : (stored.decisionVisionMode || 'auto');
   const rate = (value, fallback) => Number.isFinite(value) && value >= 0 ? value : fallback;
   return {
