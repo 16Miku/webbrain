@@ -37721,11 +37721,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (skillTool.skillId === 'wikipedia') {
         return await executeWikipediaSkillTool(skillTool, args, {
-          executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId }),
+          executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId, signal: typeof executionContext !== 'undefined' ? executionContext?._contentActionAbortSignal : undefined }),
         });
       }
       return await executeHttpSkillTool(skillTool, args, {
         tabId,
+        signal: typeof executionContext !== 'undefined' ? executionContext?._contentActionAbortSignal : undefined,
         onProgress: message => onUpdate?.('tool_progress', { name, message }),
       });
     }

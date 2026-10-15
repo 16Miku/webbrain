@@ -32142,6 +32142,8 @@ test('executeHttpSkillTool cleans up failures and preserves timed-out provider j
         assertResult(result, label) {
           assert.match(result.error, /wait limit/i, `${label}: timeout error missing`);
           assert.equal(result.statusUrl, 'https://freeskillz.xyz/v1/media/jobs/job_timeout');
+          assert.equal(result.executionContext, 'remote_service', `${label}: timeout should identify the remote execution context`);
+          assert.equal(result.browserLoginAffectsRequest, false, `${label}: browser login must not be presented as affecting the provider request`);
         },
       },
     ];
