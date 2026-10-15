@@ -103,17 +103,26 @@ Mastodon post or a form, is placed by the site it was made on. Hosts that share
 their last two labels count as one site, and x.com and twitter.com as one
 platform. A post on another site than the earlier attempt counts as another
 platform only when the correction's receipt lists every publication the task
-had made and none was on the post's site; on X and Bluesky only a composer
-publication posts, so a settings save or a consent click there is not one.
+had made and none was on the post's site; on x.com, twitter.com and bsky.app
+only a composer publication posts, so a settings save or a consent click there
+is not one. Their other hosts and clients, such as X Pro, post without the
+composer controls WebBrain recognizes, so there any action that may have been
+sent counts as a publication unless the page probe proved it cannot post (an
+ordinary form, a deletion, or a control resolved as a link, field, menu item or
+other non-submitting control).
 The agent records, for the task from its first run on, the site of every
 dispatched attempt that may have changed something and of every publication
 among them (a search, a send the browser refused or a form the page rejected
 is not one; an action Stop interrupted after it was sent is). The record is
 saved with the conversation, and on its own just before each action that may
 commit something is sent, so a restart right after that action still counts
-it; each correction copies the record into its receipt. A post made under
-the correction is kept from repeating by the publication contract's outcomes
-and dispatch records of the run that applied it; a run rebuilt from the saved
+it. When that save fails before a possible post on X or Bluesky, or an action
+of unknown site, the action is not sent and the run stops with persistence
+degraded, as it does when the run's recovery checkpoint cannot be saved. Each
+correction copies the record into its receipt. A post made under the
+correction is kept from repeating by the publication contract's outcomes and
+dispatch records of the run that applied it, and by that run's own list of
+the possible posts they never see, such as one from X Pro; a run rebuilt from the saved
 conversation, as after a restart or a typed "continue", has neither, so there
 a publication anywhere in the task on the post's site holds it too. Without a
 complete record, or with an earlier publication on the post's own site, the

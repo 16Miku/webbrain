@@ -428,6 +428,21 @@ for (const build of ['chrome', 'firefox']) {
         } finally { (r || h).close(); }
       }
     }
+    // Saved with the record, by a version whose receipts list only the sites
+    // attempted: that list covers the publications among them.
+    {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
+      let r;
+      try {
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        delete h.agent.conversations.get(h.tab).findLast(message => message.webbrainSteering).webbrainSteering.priorSubmission.taskAttemptPublications;
+        r = await h.restart([{ role: 'user', content: 'continue', webbrainTurnKind: 'continue' }]);
+        r.read();
+        const blocked = await r.check(xPublish('WebBrain test post', ''));
+        assert.equal(blocked, null, blocked?.error);
+      } finally { (r || h).close(); }
+    }
   });
 
   // The trace again, with the X post sent under the correction and its
@@ -614,18 +629,164 @@ for (const build of ['chrome', 'firefox']) {
     } finally { h.close(); }
   });
 
-  // Only a composer publication posts on X: a settings save or a consent
-  // click there earlier in the task is not a post that a new one repeats.
+  // Only a composer publication posts on x.com: a settings save or a consent
+  // click there earlier in the task is not a post that a new one repeats. The
+  // probe proves such a form ordinary on x.com; on a host whose composer
+  // WebBrain does not read, such as X Pro, nothing proves it, so it counts.
   test(`${build}: a commit on X that is not a post does not hold a later X post`, async () => {
-    const h = await fixture('Turn off X ads personalization, then post on mastoturk.org.', { pageUrl: 'https://x.com/home' });
+    for (const host of ['x.com', 'pro.x.com']) {
+      const h = await fixture('Turn off X ads personalization, then post on mastoturk.org.', { pageUrl: 'https://x.com/home' });
+      try {
+        // What x.com's probe reports for a form without a composer in it.
+        attempt(h, { ...formOn(`https://${host}/settings/ads`), ...(host === 'x.com' ? { publicationControl: false } : {}) });
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        const guard = await h.steer('ok now on X');
+        assert.deepEqual(guard.steeringPriorSubmission.taskAttemptPlatforms, ['twitter', 'mastoturk.org'], host);
+        assert.deepEqual(guard.steeringPriorSubmission.taskAttemptPublications, host === 'x.com' ? [] : ['twitter'], host);
+        h.read();
+        const blocked = await h.check(xPublish('WebBrain test post'));
+        if (host === 'x.com') assert.equal(blocked, null, blocked?.error);
+        else assert.equal(blocked?.actionGuard.reason, 'earlier_attempt_on_platform', host);
+      } finally { h.close(); }
+    }
+  });
+
+  // "Post on X and on mastoturk.org" with the X tab on X Pro, then "ok now on
+  // X". X Pro's Post button sits outside any form and is not one WebBrain
+  // recognizes, so the probe resolves nothing; the post it sent still counts,
+  // whether a model read its caption as a post or the caption went unread.
+  test(`${build}: a post from an X or Bluesky host whose composer WebBrain does not read holds a later post there`, async () => {
+    const pro = 'https://pro.x.com/i/decks/1';
+    const cases = {
+      'X Pro, caption read': { url: pro, caption: 'Post', now: xPublish('WebBrain test post', '') },
+      'X Pro, caption unread': { url: pro, now: xPublish('WebBrain test post', '') },
+      'X Pro, a script': { url: pro, name: 'execute_js', args: { code: 'document.querySelector("button").click()' }, now: xPublish('WebBrain test post', '') },
+      'X Pro, Space on the button': { url: pro, name: 'press_keys', args: { key: 'Space' }, now: xPublish('WebBrain test post', '') },
+      'mobile Twitter': { url: 'https://mobile.twitter.com/compose/tweet', caption: 'Tweet', now: xPublish('WebBrain test post') },
+      'staging Bluesky': { url: 'https://staging.bsky.app/', caption: 'Post', now: bskyPublish('WebBrain test post', '') },
+      // A control the probe resolved as one that submits nothing is not a
+      // post, whatever its caption reads as.
+      'X Pro, a link the probe resolved': { url: pro, caption: 'Post', probe: { isSubmit: false, resolvedNonSubmitTarget: true },
+        now: xPublish('WebBrain test post', ''), allowed: true },
+      // A click the browser refused sent nothing.
+      'X Pro, refused': { url: pro, caption: 'Post', result: refused, now: xPublish('WebBrain test post', ''), allowed: true },
+    };
+    for (const [variant, spec] of Object.entries(cases)) {
+      const h = await fixture('Post "WebBrain test post" on X and on mastoturk.org.', { pageUrl: spec.now.url });
+      try {
+        if (spec.caption) await h.agent._readControlEffect(h.tab, spec.caption);
+        h.agent._recordCompletionSubmitAttempt(h.tab, spec.probe || null, spec.name || 'click_ax', spec.args || { ref_id: 'ref_7' },
+          spec.url, spec.url, spec.result || { success: true, dispatched: true, ...(spec.caption ? { name: spec.caption } : {}) },
+          `${spec.url}|doc`, `${spec.url}|doc`);
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        h.read();
+        const blocked = await h.check(spec.now);
+        if (spec.allowed) assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
+        else {
+          assert.equal(blocked?.actionGuard.reason, 'earlier_attempt_on_platform', `${variant}: ${blocked?.error}`);
+          assert.equal(h.audits.length, 0, variant);
+        }
+      } finally { h.close(); }
+    }
+  });
+
+  // A post from X Pro under the correction, then the post on x.com. The run's
+  // publication contract and dispatch records never see the X Pro post, so
+  // the run keeps its own list of such posts; a later run has the record.
+  test(`${build}: a post from X Pro under the correction holds a later x.com post in every run`, async () => {
+    const pro = 'https://pro.x.com/i/decks/1';
+    for (const resume of ['same run', 'Continue', 'typed continue', 'restart']) {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
+      let r = h;
+      try {
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        // Under a correction a control the probe could not identify is not
+        // clicked at all; one it identified as a form goes ahead.
+        assert.equal(h.steeringBlock(null)?.actionGuard.reason, 'target_unresolved');
+        attempt(h, { ...formOn(pro), actionUrl: 'https://pro.x.com/i/api/compose' });
+        if (resume === 'Continue' || resume === 'typed continue') {
+          h.agent._storeContinuationExecutionEvidence(h.tab);
+          h.agent._beginCompletionInvariant(h.tab);
+          h.agent._startPlanExecutionGuard(h.tab, 'act', h.gate, resume === 'Continue' ? { trustedContinuation: true } : {});
+        } else if (resume === 'restart') {
+          r = await h.restart([
+            { role: 'assistant', content: '', tool_calls: [{ id: 'call_pro', type: 'function', function: { name: 'click_ax', arguments: '{"ref_id":"ref_7"}' } }] },
+            { role: 'tool', tool_call_id: 'call_pro', content: '{"success":true,"dispatched":true}' }]);
+        }
+        assert.equal(r.agent._planExecutionGuards.get(r.tab).steeringHistoryInMemory === true, ['same run', 'Continue'].includes(resume), resume);
+        r.read();
+        const blocked = await r.check(xPublish('WebBrain test post'));
+        assert.equal(blocked?.actionGuard.reason, 'earlier_attempt_on_platform', `${resume}: ${blocked?.error}`);
+      } finally { r.close(); }
+    }
+  });
+
+  // The pipeline's stand-ins for page and permission checks around a click.
+  const pipelineReady = agent => Object.assign(agent, { _skipPermissionGate: true, _ensureGateSetting: async () => true,
+    _chromeProtectedPageFailure: async () => null, _captchaMutationPreflight: async () => null, _adoptLiveSocialPublishWorkflow: async () => false,
+    _workflowPreSubmitDispatchBlock: async () => null, _messageRecipientGuardBlock: async () => null, _captureFormValidationState: async () => [],
+    _waitForFormValidationFailure: async () => null, _readControlEffect: async () => {},
+    _withContentActionDeadline: async fn => fn(new AbortController().signal), _preflightRichTextToolbarTarget: async () => ({ block: null }),
+    _socialPublicationPreSubmitBlock: async () => null, _auditRichTextToolbarTarget: async () => {}, _shouldAutoScreenshot: () => false,
+    _resourceMutationPreSubmitBlock: async () => null, _steeringPriorSubmissionBlock: () => null });
+
+  // The record could not be saved just before an X post: the post is not
+  // sent, as an action whose recovery checkpoint could not be saved is not,
+  // because after a restart WebBrain would not know it was attempted. The
+  // record decides nothing for a form elsewhere, which goes ahead.
+  test(`${build}: a possible post whose record cannot be saved is not sent`, async () => {
+    for (const target of ['X post', 'Mastodon form']) {
+      const h = await fixture('go to mastoturk.org and try to post something',
+        { pageUrl: target === 'X post' ? 'https://x.com/home' : 'https://mastoturk.org/publish' });
+      const set = area.set;
+      try {
+        const { agent, tab } = h;
+        pipelineReady(agent);
+        h.probe = target === 'X post' ? xPublish('WebBrain test post') : mastodonCompose;
+        area.set = async values => {
+          if (Object.keys(values || {}).some(key => key.startsWith('agentAttempts:'))) throw new Error('QUOTA_BYTES quota exceeded');
+          return set(values);
+        };
+        let sent = 0;
+        agent.executeTool = async () => { sent++; return { success: true, dispatched: true }; };
+        const messages = agent.conversations.get(tab);
+        const call = { id: 'call_post', type: 'function', function: { name: 'click_ax', arguments: '{"ref_id":"ref_9"}' } };
+        messages.push({ role: 'assistant', content: '', tool_calls: [call] });
+        const outcome = await agent._executeToolBatch(tab, [call], messages, () => {}, h.provider, null, new Set(['click_ax']), 1,
+          { beforeConsequentialTool: async () => true });
+        const answer = messages.find(message => message.role === 'tool' && message.tool_call_id === 'call_post');
+        if (target === 'X post') {
+          assert.equal(sent, 0, 'the X click was not sent');
+          assert.equal(outcome?.status, 'persistence_degraded');
+          assert.match(String(answer?.content), /checkpoint_not_durable/);
+          assert.equal(agent.persistenceDegradedTabs.get(tab)?.reason, 'attempt_record');
+          assert.deepEqual(agent._taskAttemptLedgers.get(tab).publications, [], 'nothing was attempted');
+        } else {
+          assert.equal(sent, 1, target);
+          assert.equal(agent.persistenceDegradedTabs.has(tab), false, target);
+        }
+      } finally { area.set = set; h.close(); }
+    }
+  });
+
+  // Only an action that may commit something has sites to save, and only
+  // then is the page's address read. An X Pro click that may post is saved
+  // before it is sent, though the probe could not identify its control.
+  test(`${build}: the record is saved before an action only when the action may commit something`, async () => {
+    const pro = 'https://pro.x.com/i/decks/1';
+    const h = await fixture('Post "WebBrain test post" on X and on mastoturk.org.', { pageUrl: pro });
     try {
-      attempt(h, formOn('https://x.com/settings/ads'));
-      attempt(h, mastodonCompose, deliveredUnobserved);
-      const guard = await h.steer('ok now on X');
-      assert.deepEqual(guard.steeringPriorSubmission.taskAttemptPlatforms, ['twitter', 'mastoturk.org']);
-      assert.deepEqual(guard.steeringPriorSubmission.taskAttemptPublications, []);
-      h.read();
-      assert.equal(await h.check(xPublish('WebBrain test post')), null);
+      let reads = 0;
+      h.agent._currentUrl = async () => { reads++; return pro; };
+      assert.equal(await h.agent._checkpointTaskAttempt(h.tab, 'get_accessibility_tree', { filter: 'all' }, null), null);
+      assert.equal(await h.agent._checkpointTaskAttempt(h.tab, 'type_ax', { ref_id: 'ref_3', text: 'hi' }, { isSubmit: false, resolvedForm: true }), null);
+      assert.equal(reads, 0, 'no page address is read for an action that commits nothing');
+      assert.equal(await h.agent._checkpointTaskAttempt(h.tab, 'click_ax', { ref_id: 'ref_8' }, { isSubmit: false, resolvedNonSubmitTarget: true }), null);
+      assert.equal(sessionStore.has(`agentAttempts:${h.tab}`), false, 'a control that submits nothing is not saved');
+      assert.deepEqual(await h.agent._checkpointTaskAttempt(h.tab, 'click_ax', { ref_id: 'ref_7' }, null), { keys: ['twitter'], publication: true });
+      assert.deepEqual(sessionStore.get(`agentAttempts:${h.tab}`)?.publications, ['twitter'], 'saved before the click is sent');
     } finally { h.close(); }
   });
 

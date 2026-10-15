@@ -503,6 +503,10 @@ const PUBLICATION_SITE_ALIASES = Object.freeze({
   'x.com': 'twitter', 'twitter.com': 'twitter', 'bsky.app': 'bluesky',
   'threads.net': 'threads', 'threads.com': 'threads', 'fb.com': 'facebook', 'facebook.com': 'facebook',
 });
+// X and Bluesky: WebBrain recognizes their posts only by the composer's own
+// controls on x.com, twitter.com and bsky.app, while their other hosts and
+// clients, such as X Pro, post too.
+const SOCIAL_POST_SITES = new Set(['twitter', 'bluesky']);
 
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'chat_observe',
@@ -1986,7 +1990,7 @@ export class Agent extends LoopDetector {
   _recordCompletionSubmitAttempt(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result, beforeDocument = '', afterDocument = '', executionContext = {}) {
     const state = this._recordCompletionSubmitState(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result,
       beforeDocument, afterDocument, executionContext);
-    this._recordTaskAttempt(tabId, name, args, detectedSubmit, result, state);
+    this._recordTaskAttempt(tabId, name, args, detectedSubmit, result, state, beforeUrl);
     return state;
   }
 
@@ -2091,6 +2095,8 @@ export class Agent extends LoopDetector {
       taskKey: this._progressTaskKeyHash(tabId),
       runToken: this.completionInvariants.get(tabId)?.runToken || '',
       mutationKind: detectedSubmit?.mutationKind || (detectedSubmit?.publicationControl === true ? 'publish' : 'submit'),
+      // An ordinary form, a deletion or a control that submits nothing.
+      ...(this._cannotPost(detectedSubmit) ? { cannotPost: true } : {}),
       actionDocument: detectedSubmit?.frameDocumentIdentity || '',
       actionResource: detectedSubmit?.actionResource ? structuredClone(detectedSubmit.actionResource) : null,
       // Identity only: the receipt is persisted, and its row text is not needed.
@@ -5872,18 +5878,84 @@ export class Agent extends LoopDetector {
     return created;
   }
 
+  // What the page probe proved an action cannot post: an ordinary HTML form,
+  // a deletion, or a control it resolved as a link, a field, a menu item or
+  // another control that submits nothing.
+  _cannotPost(detected) {
+    if (!detected || typeof detected !== 'object' || detected.publicationControl === true) return false;
+    if (detected.publicationControl === false || detected.mutationKind === 'delete') return true;
+    return detected.isSubmit === false && (detected.resolvedNavigationTarget === true || detected.resolvedEditableTarget === true
+      || detected.resolvedNonSubmitTarget === true || detected.resolvedOrdinaryActivationTarget === true
+      || detected.resolvedPreparatoryTarget === true);
+  }
+
+  // Whether an attempt that may have changed something counts as a post: one
+  // made with a recognized publish control, or on X or Bluesky any other one
+  // the probe did not prove cannot post. Those sites post from hosts and
+  // clients whose controls WebBrain does not recognize, such as X Pro.
+  _attemptMayPost(keys, recognized, cannotPost) {
+    return recognized === true || (cannotPost !== true && keys.some(key => SOCIAL_POST_SITES.has(key)));
+  }
+
+  // The same for a receipt. One of unknown site may have been a post anywhere.
+  _receiptMayPost(receipt, keys = this._receiptPlatformKeys(receipt)) {
+    return keys.includes('*') || !!receipt?.publicationSnapshot || !!receipt?.workflowBinding?.socialPublication?.snapshot
+      || this._attemptMayPost(keys, receipt?.mutationKind === 'publish', receipt?.cannotPost === true || receipt?.mutationKind === 'delete');
+  }
+
+  // Enter, Return or Space sent by press_keys activates the focused control.
+  _pressesActivationKey(name, args) {
+    if (name !== 'press_keys') return false;
+    const keys = args?.key ?? args?.keys ?? '';
+    return (Array.isArray(keys) ? keys : [keys]).some(key => typeof key === 'string' && /^(?:enter|return|space|spacebar| )$/i.test(key));
+  }
+
+  // Whether an action may commit anything at all: a request that sends a
+  // change, a store publication, a detected submission, or an activation
+  // (a click, a script, a submitted field, Enter or Space).
+  _mayCommitAction(name, args, detected) {
+    return isNetworkMutation(name, args) || name === 'chrome_web_store_publish' || detected?.isSubmit === true
+      || this._isFormValidationCandidate(name, args) || this._pressesActivationKey(name, args);
+  }
+
+  // An activation on an X or Bluesky page that the probe did not prove cannot
+  // post, such as a click on X Pro's Post button, may be a post.
+  _socialActivationMayPost(name, args, detected, pageUrl = '') {
+    if (!this._isFormValidationCandidate(name, args) && !this._pressesActivationKey(name, args)) return false;
+    if (this._cannotPost(detected) || this._nonCommittingSubmission(detected)) return false;
+    return this._attemptPlatformKeys(detected?.publicationSnapshot?.account, [detected?.url || pageUrl, detected?.frameUrl])
+      .some(key => SOCIAL_POST_SITES.has(key));
+  }
+
+  // Whether an action's result leaves open that it was sent, judged as the
+  // submit receipt judges it.
+  _actionMayHaveBeenSent(result) {
+    if (!result || typeof result !== 'object') return false;
+    const explicitlyNotSent = (result.dispatched === false || result.noDispatch === true)
+      && result.dispatched !== true && result.missingToolResponse !== true
+      && result.outcomeUnknown !== true && result.nativeInputAcknowledged !== true;
+    return !explicitlyNotSent && (result.dispatched === true || result.nativeInputAcknowledged === true
+      || result.missingToolResponse === true || result.outcomeUnknown === true || (result.success !== false && !result.error));
+  }
+
   // Adds what an attempt may have changed to the task's record: a dispatched
-  // submission, publication or deletion that commits something, a fetch that
-  // sends a mutation, and a store publication. A search, a send the browser
-  // refused and a form the page rejected commit nothing.
-  _recordTaskAttempt(tabId, name, args, detected, result, submitState) {
+  // submission, publication or deletion that commits something, an activation
+  // on X or Bluesky that may have posted without leaving a receipt, a fetch
+  // that sends a mutation, and a store publication. A search, a send the
+  // browser refused and a form the page rejected commit nothing.
+  _recordTaskAttempt(tabId, name, args, detected, result, submitState, pageUrl = '') {
     try {
       const keys = new Set();
       let publication = false;
       if (submitState?.dispatched === true && submitState.formValidationFailed !== true && submitState.nonCommitting !== true) {
         for (const key of this._attemptPlatformKeys(submitState.publicationSnapshot?.account,
           [submitState.originatingUrl, detected?.url, detected?.frameUrl, submitState.iframeSubmission?.currentUrl])) keys.add(key);
-        publication = detected?.publicationControl === true || submitState.mutationKind === 'publish';
+        publication = this._attemptMayPost([...keys], detected?.publicationControl === true || submitState.mutationKind === 'publish',
+          submitState.cannotPost === true || submitState.mutationKind === 'delete' || this._cannotPost(detected));
+      } else if (!submitState && this._socialActivationMayPost(name, args, detected, pageUrl) && this._actionMayHaveBeenSent(result)) {
+        for (const key of this._attemptPlatformKeys(detected?.publicationSnapshot?.account,
+          [detected?.url || pageUrl, detected?.frameUrl])) keys.add(key);
+        publication = true;
       }
       if (isNetworkMutation(name, args) || name === 'chrome_web_store_publish') {
         const notSent = result?.noDispatch === true || result?.denied || result?.skipped || result?.cancelled
@@ -5896,7 +5968,7 @@ export class Agent extends LoopDetector {
         }
       }
       if (keys.size) {
-        this._addTaskAttemptKeys(tabId, [...keys], publication);
+        this._addTaskAttemptKeys(tabId, [...keys], publication, detected?.publicationControl === true);
         this._taskAttemptCheckpoints?.delete(tabId);
       } else {
         this._resaveTaskAttemptCheckpoint(tabId);
@@ -5907,18 +5979,21 @@ export class Agent extends LoopDetector {
   }
 
   // What an action may commit, judged before it is sent: the sites it may
-  // change and whether it may publish there, or null when it commits nothing.
+  // change and whether it may post there, or null when it commits nothing.
   // A control without its own address acts on the page it is on.
   _potentialTaskAttempt(name, args, detected, pageUrl = '') {
     const network = isNetworkMutation(name, args) || name === 'chrome_web_store_publish';
     const commit = (detected?.isSubmit === true && !this._nonCommittingSubmission(detected))
-      || name === 'execute_js' || this._formValidationActionLooksSubmit(name, args, null, detected);
+      || name === 'execute_js' || this._formValidationActionLooksSubmit(name, args, null, detected)
+      || this._socialActivationMayPost(name, args, detected, pageUrl);
     if (!commit && !network) return null;
     const keys = new Set(commit ? this._attemptPlatformKeys(detected?.publicationSnapshot?.account,
       [detected?.url || pageUrl, detected?.frameUrl]) : []);
     if (network) keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
       ? 'https://chromewebstore.google.com/' : args?.url) || '*');
-    return { keys: [...keys], publication: network || detected?.publicationControl === true || name === 'execute_js' };
+    const list = [...keys];
+    return { keys: list, publication: network || name === 'execute_js'
+      || this._attemptMayPost(list, detected?.publicationControl === true, this._cannotPost(detected)) };
   }
 
   // An action that may have been sent but whose result was never recorded,
@@ -5927,7 +6002,7 @@ export class Agent extends LoopDetector {
   _recordInterruptedTaskAttempt(tabId, name, args, detected, potential = undefined) {
     try {
       const attempt = potential === undefined ? this._potentialTaskAttempt(name, args, detected) : potential;
-      if (attempt) this._addTaskAttemptKeys(tabId, attempt.keys, attempt.publication);
+      if (attempt) this._addTaskAttemptKeys(tabId, attempt.keys, attempt.publication, detected?.publicationControl === true);
       this._taskAttemptCheckpoints?.delete(tabId);
     } catch {
       this._markTaskAttemptsUnknown(tabId);
@@ -5936,10 +6011,14 @@ export class Agent extends LoopDetector {
 
   // Before an action that may commit something is sent, the record is saved
   // with its sites as possibly attempted, so a restart right after it cannot
-  // forget it. The conversation itself is saved only every so often.
+  // forget it. The conversation itself is saved only every so often. Only an
+  // action that may commit anything needs its page's address. A possible post
+  // on X or Bluesky, or an action of unknown site, whose record could not be
+  // saved comes back marked notSaved, and is not sent.
   async _checkpointTaskAttempt(tabId, name, args, detected) {
     let potential = null;
     try {
+      if (!this._mayCommitAction(name, args, detected)) return null;
       const pageUrl = detected?.url ? '' : await this._currentUrl(tabId).catch(() => '');
       potential = this._potentialTaskAttempt(name, args, detected, pageUrl);
       if (!potential) return potential;
@@ -5947,10 +6026,17 @@ export class Agent extends LoopDetector {
       if (!record) return potential;
       const add = (list, values) => Array.isArray(list) ? [...new Set([...list, ...values])].slice(0, 65) : null;
       const platforms = add(record.platforms, potential.keys);
-      const publications = potential.publication ? add(record.publications, potential.keys) : record.publications;
-      await chrome.storage.session.set({ [this._taskAttemptCheckpointKey(tabId)]: { ...record,
-        platforms: platforms?.length > 64 ? null : platforms, publications: publications?.length > 64 ? null : publications } });
-      this._taskAttemptCheckpoints.add(tabId);
+      const publications = potential.publication ? add(record.publications, potential.keys)
+        : potential.keys.includes('*') ? add(record.publications, ['*']) : record.publications;
+      try {
+        await chrome.storage.session.set({ [this._taskAttemptCheckpointKey(tabId)]: { ...record,
+          platforms: platforms?.length > 64 ? null : platforms, publications: publications?.length > 64 ? null : publications } });
+      } catch {
+        const matters = potential.keys.includes('*')
+          || (potential.publication && potential.keys.some(key => SOCIAL_POST_SITES.has(key)));
+        return matters ? { ...potential, notSaved: true } : potential;
+      }
+      (this._taskAttemptCheckpoints ||= new Set()).add(tabId);
     } catch {}
     return potential;
   }
@@ -5967,7 +6053,7 @@ export class Agent extends LoopDetector {
 
   _taskAttemptCheckpointKey(tabId) { return `agentAttempts:${tabId}`; }
 
-  _addTaskAttemptKeys(tabId, keys, publication) {
+  _addTaskAttemptKeys(tabId, keys, publication, contracted = false) {
     const ledger = this._taskAttemptLedger(tabId);
     const add = (list, values) => {
       if (!Array.isArray(list)) return null;
@@ -5977,6 +6063,14 @@ export class Agent extends LoopDetector {
     ledger.platforms = add(ledger.platforms, keys);
     if (publication) ledger.publications = add(ledger.publications, keys);
     else if (keys.includes('*')) ledger.publications = add(ledger.publications, ['*']);
+    // The run keeps its own list of the posts its publication contract and
+    // dispatch records never see, such as one from X Pro, and of attempts of
+    // unknown site.
+    const guard = this._planExecutionGuards?.get(tabId);
+    if (guard && ((publication && !contracted) || keys.includes('*'))) {
+      guard.uncontractedPublications = add(guard.uncontractedPublications === null ? null : guard.uncontractedPublications || [],
+        publication ? keys : ['*']);
+    }
   }
 
   // A record that could not be updated is no longer complete; the action
@@ -5985,6 +6079,8 @@ export class Agent extends LoopDetector {
     try {
       const entry = this._taskAttemptLedgers?.get(tabId);
       if (entry) { entry.platforms = null; entry.publications = null; }
+      const guard = this._planExecutionGuards?.get(tabId);
+      if (guard) guard.uncontractedPublications = null;
     } catch {}
   }
 
@@ -6022,8 +6118,7 @@ export class Agent extends LoopDetector {
       const ledger = this._taskAttemptLedger(tabId, messages, binding);
       const committed = receipt && receipt.nonCommitting !== true && receipt.formValidationFailed !== true;
       const keys = committed ? this._receiptPlatformKeys(receipt) : [];
-      const published = committed && (receipt.mutationKind === 'publish' || !!receipt.publicationSnapshot
-        || !!receipt.workflowBinding?.socialPublication?.snapshot || keys.includes('*'));
+      const published = committed && this._receiptMayPost(receipt, keys);
       const add = (list, values) => {
         if (!Array.isArray(list)) return null;
         const merged = [...new Set([...list, ...values])];
@@ -6092,15 +6187,19 @@ export class Agent extends LoopDetector {
     // checked against the X and Bluesky outcomes and the receipts archived at
     // earlier corrections. A sent-nothing outcome is not an attempt; an
     // attempt of unknown site may have been anywhere.
-    const attempted = Array.isArray(prior?.taskAttemptPublications) ? prior.taskAttemptPublications : null;
+    // A receipt that lists only the sites attempted covers its publications too.
+    const attempted = Array.isArray(prior?.taskAttemptPublications) ? prior.taskAttemptPublications
+      : Array.isArray(prior?.taskAttemptPlatforms) ? prior.taskAttemptPlatforms : null;
     const outcomePlatforms = archive => (archive?.contract?.actions || [])
       .filter(action => action?.id && archive.outcomes?.[action.id] && archive.outcomes[action.id].status !== 'failed')
       .map(action => action.platform || '*');
     // Posts made under the correction itself: in the run that applied it, or
     // a Continue that carries that run, the publication contract's outcomes
-    // and the dispatch records stop a repeat. A run rebuilt from the
-    // conversation has neither, so the task's record of publications does.
-    const sinceCorrection = guard.steeringHistoryInMemory === true ? []
+    // and the dispatch records stop a repeat, and the run's own list holds the
+    // posts they never see, such as one from X Pro. A run rebuilt from the
+    // conversation has none of them, so the task's record of publications does.
+    const sinceCorrection = guard.steeringHistoryInMemory === true
+      ? (guard.uncontractedPublications === null ? null : guard.uncontractedPublications || [])
       : this._taskAttemptLedger(tabId).publications;
     const earlierPlatforms = [...(attempted || []), ...(sinceCorrection || []),
       ...[guard.steeringPriorPublication, guard.steeringPriorContext?.socialPublication].flatMap(outcomePlatforms),
@@ -6108,8 +6207,7 @@ export class Agent extends LoopDetector {
           && receipt.nonCommitting !== true && receipt.formValidationFailed !== true)
         .flatMap(receipt => {
           const keys = this._receiptPlatformKeys(receipt);
-          return receipt.mutationKind === 'publish' || receipt.publicationSnapshot || receipt.workflowBinding?.socialPublication?.snapshot
-            || keys.includes('*') ? keys : [];
+          return this._receiptMayPost(receipt, keys) ? keys : [];
         })];
     const earlierAttemptHere = earlierPlatforms.some(platform => currentPlatforms.includes(platform));
     const historyKnown = !!attempted && Array.isArray(sinceCorrection) && !earlierPlatforms.includes('*');
@@ -14707,6 +14805,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._throwIfAborted(this._runAbortSignal(tabId));
       const _toolStart = Date.now();
       let steeringBeforeDispatch = false;
+      let attemptRecordNotSaved = false;
       let toolbarPreflight = { block: null };
       let rawToolResult = protectedPageFailure;
       let toolResult;
@@ -14749,6 +14848,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               // sent, ahead of the last correction check.
               callState.potentialAttempt = await this._checkpointTaskAttempt(tabId, fnName, fnArgs, detectedSubmitAction);
               this._throwIfAborted(abortSignal);
+              // A possible post whose record could not be saved is not sent:
+              // after a restart WebBrain would not know it was attempted.
+              if (callState.potentialAttempt?.notSaved === true) return { attemptRecordNotSaved: true };
               if (this._hasPendingSteering(tabId) || await this._refreshPageFeedbackForCall(tabId, tc, onUpdate)) {
                 this._resaveTaskAttemptCheckpoint(tabId);
                 return { steered: true };
@@ -14881,6 +14983,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               this._runAbortSignal(tabId),
             );
             steeringBeforeDispatch = pipelineResult.steered === true;
+            attemptRecordNotSaved = pipelineResult.attemptRecordNotSaved === true;
             toolbarPreflight = pipelineResult.toolbarPreflight;
             rawToolResult = pipelineResult.rawToolResult;
             toolResult = pipelineResult.toolResult;
@@ -14901,10 +15004,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } else {
           const pipelineResult = await runActionPipeline(null);
           steeringBeforeDispatch = pipelineResult.steered === true;
+          attemptRecordNotSaved = pipelineResult.attemptRecordNotSaved === true;
           toolbarPreflight = pipelineResult.toolbarPreflight;
           rawToolResult = pipelineResult.rawToolResult;
           toolResult = pipelineResult.toolResult;
         }
+      }
+      if (attemptRecordNotSaved) {
+        const value = 'Stopped before sending the page action because the record of what this task has posted could not be saved. Retry after extension storage is available.';
+        this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
+          success: false, dispatched: false, noDispatch: true, outcomeUnknown: false,
+          errorCode: 'checkpoint_not_durable', error: value,
+        }));
+        this._markPersistenceDegraded(tabId, 'attempt_record');
+        onUpdate('warning', { message: value });
+        return { action: 'return', value, status: 'persistence_degraded' };
       }
       if (steeringBeforeDispatch) {
         this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
@@ -35027,6 +35141,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // keeps them; any other start rebuilds the guard from the conversation.
       steeringHistoryInMemory: carryMatches && !!carried.steeringPriorSubmission
         && carried.steeringHistoryInMemory === true,
+      // The posts of that run its contract and dispatch records never saw.
+      uncontractedPublications: carryMatches && !!carried.steeringPriorSubmission && carried.steeringHistoryInMemory === true
+        ? (Array.isArray(carried.uncontractedPublications) ? [...carried.uncontractedPublications] : null) : [],
       steeringMutationReceipts: carryMatches ? structuredClone(carried.steeringMutationReceipts || []) : [],
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
@@ -35561,6 +35678,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         steeringPriorSubmission: guard.steeringPriorSubmission ? structuredClone(guard.steeringPriorSubmission) : null,
         steeringPriorReadAfterCorrection: guard.steeringPriorReadAfterCorrection === true,
         steeringHistoryInMemory: guard.steeringHistoryInMemory === true,
+        uncontractedPublications: Array.isArray(guard.uncontractedPublications) ? [...guard.uncontractedPublications]
+          : guard.uncontractedPublications === null ? null : [],
         steeringMutationReceipts: structuredClone(guard.steeringMutationReceipts || []),
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
