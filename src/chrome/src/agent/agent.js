@@ -23534,15 +23534,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Plan-before-Act gate: push user message, pin approved plan after it, or stop early.
    */
   async _maybeRunPlannerGate(tabId, messages, enriched, onUpdate, mode, costState, runId, tabInfo = null, runOptions = {}) {
-    // Managed cloud runs have no interactive review channel. They must never
-    // enter the planner gate, even if the profile later enables planning for
-    // manual side-panel runs.
+    // Cloud runs never enter interactive plan review. A fresh Cloud ACT task
+    // still needs the existing lightweight intent contract, especially exact
+    // message recipients. Prior turns and model-produced resume instructions
+    // are not new user grants. ASK/recovery remains without write authority.
     const standaloneChatRun = this._isStandaloneChatRun(runOptions);
     const plannerMode = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun
       ? this._plannerMode()
       : 'off';
     const runPlanner = plannerMode !== 'off';
-    const runIntent = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun;
+    const cloudIntent = this._isActionMode(mode) && runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
+      && runOptions?.apiMutationsDenied !== true;
+    const runIntent = this._isActionMode(mode) && !standaloneChatRun
+      && (runOptions?.cloudRun !== true || cloudIntent);
+    const intentMessage = cloudIntent
+      ? { role: 'user', content: this._plannerUserAuthoredText(enriched) } : enriched;
 
     // Snapshot prior turns for the planner digest BEFORE appending, then always
     // record the user's turn first so a planner failure (or a throw while
@@ -23560,7 +23566,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._messagesForSourceGroundedRun(messages, runOptions, null, sourceBoundPriorMessages)
       : null;
     const priorMessages = runIntent || runReadScopeClassifier
-      ? (sourceBoundRun
+      ? (cloudIntent ? [] : sourceBoundRun
         ? sourceBoundPlannerMessages.slice(sourceBoundPlannerMessages[0]?.role === 'system' ? 1 : 0)
         : messages.slice())
       : null;
@@ -23594,7 +23600,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return { proceed: true, requestKind: 'execute', requiresStateChange: false };
     }
-    const fastPathPlan = runOptions.steeringRevision == null
+    const fastPathPlan = !cloudIntent && runOptions.steeringRevision == null
       ? this._recommendedActionFastPathPlan(runOptions) : null;
     if (fastPathPlan) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -23624,13 +23630,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
-    const followUpContext = { ...this._buildPlannerFollowUpContext(priorMessages),
-      authenticTaskText: this._activeTaskBinding(messages).text };
+    const followUpContext = cloudIntent ? { authenticTaskText: this._plannerUserAuthoredText(enriched) }
+      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._activeTaskBinding(messages).text };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
       gate = await this._runPlannerIntentGate(
-        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+        tabId, intentMessage, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
     } else {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -23639,7 +23645,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
         )
         : await this._runPlannerIntentGate(
-          tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+          tabId, intentMessage, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
         );
     }
     if (this._steeringGateSuperseded(tabId, runOptions)) return { proceed: false, steeringSuperseded: true };
@@ -24640,6 +24646,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
+        };
+      }
+      if (runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
+          && runOptions?.apiMutationsDenied !== true && plan.messaging?.target_kind === 'named') {
+        // Semantic intent is necessary but cannot invent a named destination.
+        // The fresh authenticated task must itself contain each exact identity;
+        // a page title, OCR, prior turn or address suffix cannot provide it.
+        const authored = normalizeRecipientAnswer(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
+        const tokenChar = /[\p{L}\p{N}@._%+-]/u;
+        const present = plan.messaging.recipients.every(recipient => {
+          const identity = normalizeRecipientIdentity(recipient.identity);
+          if (!identity) return false;
+          for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
+            const before = authored[at - 1] || '';
+            const end = at + identity.length;
+            const after = authored[end] || '';
+            const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
+            if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
+          }
+          return false;
+        });
+        if (!present) return {
+          proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
+          requiresStateChange: false, requiresSubmission: false, messaging: null,
+          message: 'The recipient could not be verified from the current task. Name the exact recipient and retry. No page tools ran.',
         };
       }
       const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
