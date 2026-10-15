@@ -18,13 +18,19 @@ for (const build of ['chrome', 'firefox']) {
   const xWorkflow = resolveAdapterWorkflowJob('https://x.com/', 'publish-post');
 
   // A restart is a new Agent given the conversation as it was saved.
-  async function fixture(task, { pageUrl = formUrl, gate: gateOverrides = {}, messages = null, tab: fixedTab = null } = {}) {
+  async function fixture(task, { pageUrl = formUrl, gate: gateOverrides = {}, saved = null, tab: fixedTab = null } = {}) {
     const tab = fixedTab ?? nextTab++, options = { detachedRequestId: `guards-${tab}`, askStreamingEnabled: false };
     const provider = { model: 'owned-offline', supportsVision: false, supportsTools: true, promptTier: 'full',
       contextWindow: 128000, config: { category: 'local' }, chat() {} };
     const agent = new Agent({ getActive: () => provider, getProvider: () => provider });
-    agent.conversations.set(tab, messages ? JSON.parse(JSON.stringify(messages))
-      : [{ role: 'system', content: 'System' }, { role: 'user', content: task }]);
+    if (saved) {
+      // Hydrate from the saved session entry, as the real code does.
+      const read = area.get;
+      area.get = async key => key === agent._convKey(tab) ? { [key]: JSON.parse(JSON.stringify(saved)) } : read(key);
+      try { await agent._hydrate(tab); } finally { area.get = read; }
+    } else {
+      agent.conversations.set(tab, [{ role: 'system', content: 'System' }, { role: 'user', content: task }]);
+    }
     agent.conversationModes.set(tab, 'act');
     agent._persist = () => {}; agent._persistNow = async () => ({ ok: true });
     agent._ensureProgressSessionForCurrentTask = async () => {};
@@ -55,10 +61,15 @@ for (const build of ['chrome', 'firefox']) {
     };
     h.steeringBlock = (detected, name = 'click_ax', args = { ref_id: 'ref_9' }) => agent._steeringPriorSubmissionBlock(tab, name, args, detected);
     h.close = () => { agent._finishSteeringRun(tab); agent._releaseRunEntry(tab); };
-    // WebBrain restarted: only the saved conversation is left.
-    h.restart = async (extra = []) => {
+    // WebBrain restarted: only what was saved with the conversation is left,
+    // here with any steps it took after the last save. An entry saved by an
+    // earlier version has no record of attempts.
+    h.restart = async (extra = [], { record = true } = {}) => {
+      const entry = agent._conversationStorageEntry(tab);
+      entry.messages = [...entry.messages, ...extra];
+      if (!record) delete entry.taskAttemptLedger;
       h.close();
-      return fixture(task, { pageUrl, gate: gateOverrides, tab, messages: [...agent.conversations.get(tab), ...extra] });
+      return fixture(task, { pageUrl, gate: gateOverrides, tab, saved: entry });
     };
     // A page read, the way the automatic screenshot after an action reads one.
     h.read = (url = pageUrl) => agent._recordCompletionToolResult(tab, 'auto_screenshot', {},
@@ -238,6 +249,9 @@ for (const build of ['chrome', 'firefox']) {
   const bskyPublish = (body, account = 'bluesky:alice.bsky.social') => ({ ...publish(snap(body, account)), url: 'https://bsky.app/', host: 'bsky.app' });
   const newsletter = () => ({ ...formOn('https://newsletter.test/subscribe'), actionUrl: 'https://newsletter.test/subscribe/save',
     fields: [{ label: 'Email', type: 'email', value: 'alice@example.test' }] });
+  // A Mastodon composer bound to its form action, as a corrected post on it is.
+  const mastodonForm = text => ({ ...mastodonCompose, actionUrl: 'https://mastoturk.org/api/v1/statuses',
+    fields: [{ label: 'Aklında ne var?', type: 'textarea', value: text }] });
   const xSearch = () => ({ ...formOn('https://x.com/explore'), nonCommittingControl: true, method: 'GET',
     fields: [{ label: 'Search', type: 'search', value: 'webbrain' }] });
   // An action's result, recorded the way every action's result is.
@@ -340,8 +354,9 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${build}: a correction's receipt lists the platforms the task attempted, so a restart keeps them`, async () => {
-    // The trace, with WebBrain restarted after the correction.
+  test(`${build}: what a task attempted is saved with the conversation, so a restart keeps it`, async () => {
+    // The trace, with WebBrain restarted after the correction, before or
+    // after other steps of the run.
     for (const afterCorrection of ['nothing', 'tool steps']) {
       const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
       let r;
@@ -353,20 +368,16 @@ for (const build of ['chrome', 'firefox']) {
           { role: 'tool', tool_call_id: 'call_nav', content: '{"success":true}' }]);
         const guard = r.agent._planExecutionGuards.get(r.tab);
         assert.deepEqual(guard.steeringPriorSubmission?.taskAttemptPlatforms, ['mastoturk.org'], afterCorrection);
+        assert.deepEqual(r.agent._taskAttemptLedgers.get(r.tab).publications, [], afterCorrection);
         assert.equal(guard.steeringPriorReadAfterCorrection, false, 'a restarted run reads again');
         assert.equal((await r.check(xPublish('WebBrain test post', ''))).actionGuard.reason, 'prior_effect_unreconciled', afterCorrection);
         r.read();
         assert.equal(await r.check(xPublish('WebBrain test post', '')), null, afterCorrection);
-        // Only steps after the correction leave the record incomplete, which
-        // matters for the next correction.
         attempt(r, xPublish('WebBrain test post'));
         await r.steer('now on Bluesky too');
         r.read();
         const next = await r.check(bskyPublish('WebBrain test post', ''));
-        if (afterCorrection === 'nothing') assert.equal(next, null, next?.error);
-        else assert.equal(next?.actionGuard.reason, 'attempt_history_unknown', afterCorrection);
-        // With both accounts read the platforms differ by account, as before.
-        assert.equal(await r.check(bskyPublish('WebBrain test post')), null, afterCorrection);
+        assert.equal(next, null, `${afterCorrection}: ${next?.error}`);
       } finally { (r || h).close(); }
     }
     // The X post and the newsletter, then "fix the typo in the tweet", then a
@@ -383,23 +394,167 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal((await r.check(xPublish('Hello world'))).actionGuard.reason, 'earlier_attempt_on_platform');
       } finally { (r || h).close(); }
     }
-    // A conversation saved before the record existed: WebBrain cannot know,
-    // so it says so once instead of looking for the Mastodon post on X.
-    {
+    // Saved by an earlier version, without the record or the receipt's list:
+    // WebBrain cannot know, so it says so once instead of looking for the
+    // Mastodon post on X.
+    for (const afterCorrection of ['nothing', 'tool steps']) {
       const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
       let r;
       try {
         attempt(h, mastodonCompose, deliveredUnobserved);
         await h.steer('ok now on X');
-        const saved = h.agent.conversations.get(h.tab);
-        delete saved.findLast(message => message.webbrainSteering).webbrainSteering.priorSubmission.taskAttemptPlatforms;
-        r = await h.restart();
+        delete h.agent.conversations.get(h.tab).findLast(message => message.webbrainSteering).webbrainSteering.priorSubmission.taskAttemptPlatforms;
+        r = await h.restart(afterCorrection === 'nothing' ? [] : [
+          { role: 'assistant', content: '', tool_calls: [{ id: 'call_nav', type: 'function', function: { name: 'navigate', arguments: '{}' } }] },
+          { role: 'tool', tool_call_id: 'call_nav', content: '{"success":true}' }], { record: false });
         r.read();
         const blocked = await r.check(xPublish('WebBrain test post', ''));
-        assert.equal(blocked.actionGuard.reason, 'attempt_history_unknown', blocked.error);
+        assert.equal(blocked.actionGuard.reason, 'attempt_history_unknown', `${afterCorrection}: ${blocked.error}`);
         assert.equal(blocked.retryable, false);
       } finally { (r || h).close(); }
     }
+  });
+
+  // The trace again, with the X post sent under the correction and its
+  // result unknown, then the task continued: a run rebuilt from the
+  // conversation has no publication contract outcome or dispatch record of
+  // that post, so the task's record is what stops a second one.
+  test(`${build}: a post made under the correction holds a second one there in any later run`, async () => {
+    for (const resume of ['same run', 'Continue', 'typed continue', 'restart', 'restart, saved by an earlier version']) {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
+      let r = h;
+      try {
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        h.read();
+        assert.equal(await h.check(xPublish('WebBrain test post')), null);
+        attempt(h, xPublish('WebBrain test post'), deliveredUnobserved);
+        if (resume === 'Continue' || resume === 'typed continue') {
+          h.agent._storeContinuationExecutionEvidence(h.tab);
+          h.agent._beginCompletionInvariant(h.tab);
+          h.agent._startPlanExecutionGuard(h.tab, 'act', h.gate, resume === 'Continue' ? { trustedContinuation: true } : {});
+        } else if (resume.startsWith('restart')) {
+          r = await h.restart([], { record: resume === 'restart' });
+        }
+        assert.equal(r.agent._planExecutionGuards.get(r.tab).steeringHistoryInMemory === true, ['same run', 'Continue'].includes(resume), resume);
+        r.read();
+        const audited = r.audits.length;
+        const again = await r.check(xPublish('WebBrain test post'));
+        const another = await r.check(xPublish('WebBrain test post, take two'));
+        if (['same run', 'Continue'].includes(resume)) {
+          // The run that sent it still has its dispatch record; a different
+          // post is the publication contract's to refuse, as before.
+          assert.equal(again?.actionGuard.reason, 'duplicate_publication', resume);
+        } else {
+          const reason = resume === 'restart, saved by an earlier version' ? 'attempt_history_unknown' : 'earlier_attempt_on_platform';
+          assert.equal(again?.actionGuard.reason, reason, `${resume}: ${again?.error}`);
+          assert.equal(another?.actionGuard.reason, reason, resume);
+          assert.equal(r.audits.length, audited, `${resume}: neither reached authorization`);
+        }
+      } finally { r.close(); }
+    }
+  });
+
+  // Where the earlier attempt and the new post are told apart by account
+  // names, or the new one is an ordinary form such as a Mastodon composer,
+  // the earlier result still has to be observed as before; a page read
+  // under the correction does not stand in for it there.
+  test(`${build}: a page read under the correction counts only where the record clears the post`, async () => {
+    for (const variant of ['read in the run', 'search, then read', 'typed continue']) {
+      for (const kind of ['bluesky', 'mastodon']) {
+        const h = await fixture('Post "Hello wrold" on Bluesky and on X.', { pageUrl: kind === 'bluesky' ? 'https://bsky.app/' : 'https://mastoturk.org/publish' });
+        try {
+          if (kind === 'bluesky') attempt(h, bskyPublish('Hello wrold'), deliveredUnobserved);
+          else attempt(h, mastodonForm('Hello wrold'), deliveredUnobserved);
+          attempt(h, xPublish('Hello wrold'), deliveredUnobserved);
+          await h.steer(`fix the typo in the ${kind === 'bluesky' ? 'Bluesky' : 'Mastodon'} post`);
+          if (variant === 'search, then read') attempt(h, xSearch());
+          if (variant === 'typed continue') {
+            h.agent._beginCompletionInvariant(h.tab);
+            h.agent._startPlanExecutionGuard(h.tab, 'act', h.gate, {});
+          }
+          h.read();
+          const corrected = kind === 'bluesky' ? bskyPublish('Hello world') : mastodonForm('Hello world');
+          const blocked = await h.check(corrected);
+          const label = `${kind}, ${variant}`;
+          // The live receipt read in the run is the earlier result observed.
+          if (variant === 'read in the run') assert.equal(blocked, null, `${label}: ${blocked?.error}`);
+          else {
+            assert.equal(blocked?.actionGuard.reason, 'prior_effect_unreconciled', label);
+            assert.match(blocked.error, /Read the page that shows its result/, label);
+          }
+        } finally { h.close(); }
+      }
+    }
+  });
+
+  // Stop pressed while the X Post click was on its way: the tool's result
+  // never arrived, but the click may have posted.
+  test(`${build}: an action Stop interrupted after it was sent joins the record`, async () => {
+    const h = await fixture('Post "WebBrain test post" on X, then on mastoturk.org.', { pageUrl: 'https://x.com/home' });
+    try {
+      const { agent, tab } = h;
+      Object.assign(agent, { _skipPermissionGate: true, _ensureGateSetting: async () => true, _chromeProtectedPageFailure: async () => null,
+        _captchaMutationPreflight: async () => null, _adoptLiveSocialPublishWorkflow: async () => false, _workflowPreSubmitDispatchBlock: async () => null,
+        _messageRecipientGuardBlock: async () => null, _captureFormValidationState: async () => [], _withContentActionDeadline: async fn => fn(new AbortController().signal),
+        _preflightRichTextToolbarTarget: async () => ({ block: null }), _socialPublicationPreSubmitBlock: async () => null,
+        _auditRichTextToolbarTarget: async () => {}, _shouldAutoScreenshot: () => false });
+      h.probe = xPublish('WebBrain test post');
+      agent.executeTool = async (_tab, _name, _args, _update, context) => {
+        context._contentActionDispatchState.started = true;
+        agent.abort(tab);
+        throw context._contentActionAbortSignal.reason;
+      };
+      const messages = agent.conversations.get(tab);
+      const call = { id: 'call_post_x', type: 'function', function: { name: 'click_ax', arguments: '{"ref_id":"ref_9"}' } };
+      messages.push({ role: 'assistant', content: '', tool_calls: [call] });
+      await assert.rejects(agent._executeToolBatch(tab, [call], messages, () => {}, h.provider, null, new Set(['click_ax']), 1,
+        { beforeConsequentialTool: async () => true }), error => error.name === 'AbortError');
+      assert.deepEqual(agent._taskAttemptLedgers.get(tab).publications, ['twitter']);
+      // The task goes on: a Mastodon post, then "ok now on X".
+      agent._runAbortStates?.delete?.(tab);
+      h.close();
+      await agent._claimRunEntry(tab, 'interactive', h.options);
+      agent._beginSteeringRun(tab, () => {}, h.options);
+      agent._beginCompletionInvariant(tab);
+      agent._startPlanExecutionGuard(tab, 'act', h.gate, {});
+      attempt(h, mastodonCompose, deliveredUnobserved);
+      await h.steer('ok now on X');
+      h.read();
+      assert.equal((await h.check(xPublish('WebBrain test post'))).actionGuard.reason, 'earlier_attempt_on_platform');
+    } finally { h.close(); }
+  });
+
+  // Sent nothing, or committed nothing: neither is an attempt.
+  test(`${build}: a form the page rejected and a search before a correction are not attempts`, async () => {
+    for (const variant of ['rejected X post', 'search on X, then a correction']) {
+      const h = await fixture('Post "Hello" on X, then on mastoturk.org.', { pageUrl: 'https://x.com/home' });
+      try {
+        if (variant === 'rejected X post') attempt(h, xPublish('Hello'), { success: false, dispatched: true, formValidationFailed: true });
+        else { attempt(h, xSearch()); await h.steer('use the search results'); }
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        h.read();
+        const blocked = await h.check(xPublish('Hello'));
+        assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
+      } finally { h.close(); }
+    }
+  });
+
+  // A deletion's receipt keeps its own rules; its guidance does not claim
+  // that no page was read.
+  test(`${build}: after a deletion on another site, the guidance does not blame a missing read`, async () => {
+    const h = await fixture('Delete my Mastodon post, then post on X.', { pageUrl: 'https://x.com/home' });
+    try {
+      h.agent._completionSubmitStates.set(h.tab, { dispatched: true, actionSequence: 4, mutationKind: 'delete',
+        originatingUrl: 'https://mastoturk.org/@alice/1', currentUrl: 'https://mastoturk.org/@alice', originatingDocument: 'm-doc',
+        actionResource: { complete: true, url: 'https://mastoturk.org/@alice/1' }, observedAfterSubmit: false });
+      await h.steer('ok now on X');
+      h.read();
+      const blocked = await h.check(xPublish('Hello'));
+      assert.equal(blocked?.actionGuard.reason, 'prior_effect_unreconciled');
+      assert.doesNotMatch(blocked.error, /no page was read/);
+    } finally { h.close(); }
   });
 
   // The trace's shape: the Mastodon post, "ok now on X", a page read, a search

@@ -103,15 +103,22 @@ Mastodon post or a form, is placed by the site it was made on. Hosts that share
 their last two labels count as one site, and x.com and twitter.com as one
 platform. A post on another site than the earlier attempt counts as another
 platform only when the correction's receipt lists every site the task had
-attempted and the post's site is not among them. The agent records the site of
-every dispatched attempt that may have changed something (a search, or a send
-the browser refused, is not one) for the task, from its first run on; each
-correction copies that list into its receipt, and a run rebuilt from the saved
-conversation, for example after a restart, reads it there. Without a complete
-list, or with an earlier attempt on the post's own site, the post stops once
-with a report instead of a search for the other site's post. For a post on
-another platform, any page read since the earlier attempt was sent, including
-one after the correction, makes its outcome known. Whether a correction
+attempted and the post's site is not among them. The agent records, for the
+task from its first run on, the site of every dispatched attempt that may have
+changed something and of every publication among them (a search, a send the
+browser refused or a form the page rejected is not one; an action Stop
+interrupted after it was sent is). The record is saved with the conversation,
+and each correction copies its sites into its receipt. A post made under the
+correction is kept from repeating by the publication contract's outcomes and
+dispatch records of the run that applied it; a run rebuilt from the saved
+conversation, as after a restart or a typed "continue", has neither, so there
+a publication anywhere in the task on the post's site holds it too. Without a
+complete record, or with an earlier attempt on the post's own site, the post
+stops once with a report instead of a search for the other site's post. For
+such a post, any page read since the earlier attempt was sent, including one
+after the correction, makes its outcome known; where account names or an
+ordinary form tell the targets apart, the earlier result must be observed as
+before. Whether a correction
 asks to delete the earlier post or record first is a fixed-choice question
 that a model answers from the correction as the user wrote it, in any language
 (see "Language decisions" below): removing characters, words or hashtags from a

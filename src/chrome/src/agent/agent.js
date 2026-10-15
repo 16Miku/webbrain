@@ -2120,6 +2120,8 @@ export class Agent extends LoopDetector {
       actionRef: name !== 'iframe_click' && /^ref_\d+$/.test(String(args?.ref_id || '')) ? args.ref_id : '',
       actionSequence: Number(this.completionInvariants.get(tabId)?.lastAction?.sequence || 0),
       submitLike: true,
+      // A search or an in-form toggle reaches here too; it commits nothing.
+      ...(this._nonCommittingSubmission(detectedSubmit) ? { nonCommitting: true } : {}),
       semanticCommit: semanticCommit ? {
         taskKey: this._progressTaskKeyHash(tabId), runToken: this.completionInvariants.get(tabId)?.runToken,
         sourceSha256: this._sha256TextSync(this._progressTaskAnchorText(tabId)),
@@ -5507,6 +5509,9 @@ export class Agent extends LoopDetector {
       guard.steeringPriorSubmission = priorSubmission ? { ...structuredClone(priorSubmission),
         taskAttemptPlatforms: this._correctionAttemptPlatforms(tabId, messages, this._activeTaskBinding(messages), priorSubmission) } : null;
       guard.steeringPriorReadAfterCorrection = false;
+      // This run applied the correction: what it sends under it stays in its
+      // publication contract and dispatch records.
+      guard.steeringHistoryInMemory = true;
       guard.steeringMutationReceipts = structuredClone(previous?.steeringMutationReceipts || []);
       // Action sequences restart with each run, so a receipt is one attempt
       // only within its run.
@@ -5631,13 +5636,13 @@ export class Agent extends LoopDetector {
 
   // Outcome knowledge that does not depend on the current page: a cached
   // reconciliation of this exact receipt, a job-verified publication outcome,
-  // or an explicit page observation after the dispatch, including any page
-  // read under the correction, which came after it.
-  _steeringPriorEffectKnown(tabId, guard, prior) {
+  // or an explicit page observation after the dispatch. Where the caller asks,
+  // any page read under the correction counts too, since it came after it.
+  _steeringPriorEffectKnown(tabId, guard, prior, { readAfterCorrection = false } = {}) {
     const cached = guard?.steeringPriorSubmissionReconciliation;
     return (cached?.verified === true && cached.actionSequence === prior?.actionSequence)
       || this._steeringPriorPublicationOutcome(guard, prior) === 'verified'
-      || (!!prior && guard?.steeringPriorSubmission === prior && guard.steeringPriorReadAfterCorrection === true)
+      || (readAfterCorrection && !!prior && guard?.steeringPriorSubmission === prior && guard.steeringPriorReadAfterCorrection === true)
       || this._steeringPriorEffectObserved(tabId, prior);
   }
 
@@ -5829,18 +5834,20 @@ export class Agent extends LoopDetector {
         && !this._isScheduledResumeTurn(message)));
   }
 
-  // The platforms of every attempt the current task has dispatched, from its
-  // first run on, or platforms null when WebBrain cannot know them all. In a
-  // session the record follows the task through its runs, corrections and
-  // Continue. Without one, for example after WebBrain restarted, only a task
-  // that has not run since its request, or since the correction whose receipt
-  // lists the platforms before it, is known.
+  // What the current task has attempted, from its first run on: the sites of
+  // every dispatched attempt that may have changed something (platforms) and
+  // of every publication among them (publications). Either is null when
+  // WebBrain cannot know it. The record follows the task through its runs,
+  // corrections and Continue, and is saved with the conversation. Without a
+  // record, as for a conversation saved by an earlier version, only a task
+  // that has not run since its request is known, and of a correction with
+  // nothing run since it only the sites its receipt lists.
   _taskAttemptLedger(tabId, messages = this.conversations?.get(tabId) || [], binding = this._activeTaskBinding(messages)) {
     const key = this._taskAttemptLedgerKey(tabId, messages, binding);
     const ledgers = this._taskAttemptLedgers ||= new Map();
     const entry = ledgers.get(tabId);
     if (key && entry?.key === key) return entry;
-    let platforms = null;
+    let platforms = null, publications = null;
     if (key) {
       const prior = binding.priorSubmission;
       let from = binding.taskIndex;
@@ -5851,46 +5858,96 @@ export class Agent extends LoopDetector {
         }
       }
       if (this._noTaskRunSince(messages, from)) {
-        if (!prior) platforms = [];
+        if (!prior) { platforms = []; publications = []; }
         else if (Array.isArray(prior.taskAttemptPlatforms)) platforms = [...prior.taskAttemptPlatforms];
       }
     }
-    const created = { key, platforms };
+    const created = { key, platforms, publications };
     ledgers.set(tabId, created);
     return created;
   }
 
   // Adds what an attempt may have changed to the task's record: a dispatched
   // submission, publication or deletion that commits something, a fetch that
-  // sends a mutation, and a store publication. A search commits nothing.
+  // sends a mutation, and a store publication. A search, a send the browser
+  // refused and a form the page rejected commit nothing.
   _recordTaskAttempt(tabId, name, args, detected, result, submitState) {
     try {
-      this._addTaskAttempt(tabId, name, args, detected, result, submitState);
+      const keys = new Set();
+      let publication = false;
+      if (submitState?.dispatched === true && submitState.formValidationFailed !== true && submitState.nonCommitting !== true) {
+        for (const key of this._attemptPlatformKeys(submitState.publicationSnapshot?.account,
+          [submitState.originatingUrl, detected?.url, detected?.frameUrl, submitState.iframeSubmission?.currentUrl])) keys.add(key);
+        publication = detected?.publicationControl === true || submitState.mutationKind === 'publish';
+      }
+      if (isNetworkMutation(name, args) || name === 'chrome_web_store_publish') {
+        const notSent = result?.noDispatch === true || result?.denied || result?.skipped || result?.cancelled
+          || (result?.dispatched === false && result?.outcomeUnknown !== true && result?.missingToolResponse !== true);
+        // A request goes to its own address, not the page's, and may publish there.
+        if (!notSent) {
+          keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
+            ? 'https://chromewebstore.google.com/' : args?.url) || '*');
+          publication = true;
+        }
+      }
+      if (keys.size) this._addTaskAttemptKeys(tabId, [...keys], publication);
     } catch {
-      // A record that could not be updated is no longer complete; the action
-      // itself is unaffected.
-      try { const entry = this._taskAttemptLedgers?.get(tabId); if (entry) entry.platforms = null; } catch {}
+      this._markTaskAttemptsUnknown(tabId);
     }
   }
 
-  _addTaskAttempt(tabId, name, args, detected, result, submitState) {
-    const keys = new Set();
-    if (submitState?.dispatched === true && !this._nonCommittingSubmission(detected)) {
-      for (const key of this._attemptPlatformKeys(submitState.publicationSnapshot?.account,
-        [submitState.originatingUrl, detected?.url, detected?.frameUrl, submitState.iframeSubmission?.currentUrl])) keys.add(key);
-    }
-    if (isNetworkMutation(name, args) || name === 'chrome_web_store_publish') {
-      const notSent = result?.noDispatch === true || result?.denied || result?.skipped || result?.cancelled
-        || (result?.dispatched === false && result?.outcomeUnknown !== true && result?.missingToolResponse !== true);
-      // A request goes to its own address, not the page's.
-      if (!notSent) keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
+  // An action that may have been sent but whose result was never recorded,
+  // because Stop or an error interrupted it: its site joins the record when
+  // it may have committed something, and an unknown site makes it unknown.
+  _recordInterruptedTaskAttempt(tabId, name, args, detected) {
+    try {
+      const network = isNetworkMutation(name, args) || name === 'chrome_web_store_publish';
+      const commit = (detected?.isSubmit === true && !this._nonCommittingSubmission(detected))
+        || name === 'execute_js' || this._formValidationActionLooksSubmit(name, args, null, detected);
+      if (!commit && !network) return;
+      const keys = new Set(commit ? this._attemptPlatformKeys(detected?.publicationSnapshot?.account, [detected?.url, detected?.frameUrl]) : []);
+      if (network) keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
         ? 'https://chromewebstore.google.com/' : args?.url) || '*');
+      this._addTaskAttemptKeys(tabId, [...keys], network || detected?.publicationControl === true || name === 'execute_js');
+    } catch {
+      this._markTaskAttemptsUnknown(tabId);
     }
-    if (!keys.size) return;
+  }
+
+  _addTaskAttemptKeys(tabId, keys, publication) {
     const ledger = this._taskAttemptLedger(tabId);
-    if (!Array.isArray(ledger.platforms)) return;
-    const platforms = [...new Set([...ledger.platforms, ...keys])];
-    ledger.platforms = platforms.length > 64 ? null : platforms;
+    const add = (list, values) => {
+      if (!Array.isArray(list)) return null;
+      const merged = [...new Set([...list, ...values])];
+      return merged.length > 64 ? null : merged;
+    };
+    ledger.platforms = add(ledger.platforms, keys);
+    if (publication) ledger.publications = add(ledger.publications, keys);
+    else if (keys.includes('*')) ledger.publications = add(ledger.publications, ['*']);
+  }
+
+  // A record that could not be updated is no longer complete; the action
+  // itself is unaffected.
+  _markTaskAttemptsUnknown(tabId) {
+    try {
+      const entry = this._taskAttemptLedgers?.get(tabId);
+      if (entry) { entry.platforms = null; entry.publications = null; }
+    } catch {}
+  }
+
+  // The record as saved with the conversation, and as read back.
+  _persistedTaskAttemptLedger(tabId) {
+    const entry = this._taskAttemptLedgers?.get(tabId);
+    return entry?.key ? { key: entry.key,
+      platforms: Array.isArray(entry.platforms) ? [...entry.platforms] : null,
+      publications: Array.isArray(entry.publications) ? [...entry.publications] : null } : null;
+  }
+
+  _restoreTaskAttemptLedger(tabId, saved) {
+    const list = value => Array.isArray(value) && value.length <= 64 && value.every(item => typeof item === 'string' && item.length <= 300)
+      ? [...value] : null;
+    if (!saved || typeof saved !== 'object' || typeof saved.key !== 'string' || !saved.key || saved.key.length > 300) return;
+    (this._taskAttemptLedgers ||= new Map()).set(tabId, { key: saved.key, platforms: list(saved.platforms), publications: list(saved.publications) });
   }
 
   // The platforms of every attempt the task made up to a correction, its
@@ -5899,7 +5956,8 @@ export class Agent extends LoopDetector {
     try {
       const ledger = this._taskAttemptLedger(tabId, messages, binding).platforms;
       if (!Array.isArray(ledger)) return null;
-      const platforms = [...new Set([...ledger, ...(receipt ? this._receiptPlatformKeys(receipt) : [])])];
+      const committed = receipt && receipt.nonCommitting !== true && receipt.formValidationFailed !== true;
+      const platforms = [...new Set([...ledger, ...(committed ? this._receiptPlatformKeys(receipt) : [])])];
       return platforms.length > 64 ? null : platforms;
     } catch {
       return null;
@@ -5965,13 +6023,21 @@ export class Agent extends LoopDetector {
     const outcomePlatforms = archive => (archive?.contract?.actions || [])
       .filter(action => action?.id && archive.outcomes?.[action.id] && archive.outcomes[action.id].status !== 'failed')
       .map(action => action.platform || '*');
-    const earlierPlatforms = [...(attempted || []),
+    // Posts made under the correction itself: in the run that applied it, or
+    // a Continue that carries that run, the publication contract's outcomes
+    // and the dispatch records stop a repeat. A run rebuilt from the
+    // conversation has neither, so the task's record of publications does.
+    const sinceCorrection = guard.steeringHistoryInMemory === true ? []
+      : this._taskAttemptLedger(tabId).publications;
+    const earlierPlatforms = [...(attempted || []), ...(sinceCorrection || []),
       ...[guard.steeringPriorPublication, guard.steeringPriorContext?.socialPublication].flatMap(outcomePlatforms),
-      ...(guard.steeringMutationReceipts || []).filter(receipt => receipt?.dispatched === true)
+      ...(guard.steeringMutationReceipts || []).filter(receipt => receipt?.dispatched === true
+          && receipt.nonCommitting !== true && receipt.formValidationFailed !== true)
         .flatMap(receipt => this._receiptPlatformKeys(receipt))];
     const earlierAttemptHere = earlierPlatforms.some(platform => currentPlatforms.includes(platform));
-    const historyKnown = !!attempted && !earlierPlatforms.includes('*');
-    const crossPlatform = accountCrossPlatform || (otherSite && historyKnown && !earlierAttemptHere);
+    const historyKnown = !!attempted && Array.isArray(sinceCorrection) && !earlierPlatforms.includes('*');
+    const siteCrossPlatform = otherSite && historyKnown && !earlierAttemptHere;
+    const crossPlatform = accountCrossPlatform || siteCrossPlatform;
     if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform && !otherSite) {
       const account = String(detected.publicationSnapshot?.account || '').split(':').slice(1).join(':');
       if (!account || !latest.toLowerCase().includes(account.toLowerCase())) return blocked('replacement_account_changed');
@@ -6037,8 +6103,8 @@ export class Agent extends LoopDetector {
     // to look for the other site's post on this page.
     if (prior && publication && otherSite && !crossPlatform) {
       return blocked(earlierAttemptHere ? 'earlier_attempt_on_platform' : 'attempt_history_unknown', earlierAttemptHere
-        ? `Nothing was published. Before the latest correction this task already made an attempt on this site, and only the latest attempt${priorHost ? `, on ${priorHost},` : ''} can be checked, so this post could repeat the earlier one or sit beside it. Do not publish it again. Tell the user what was not done and that the earlier attempt on this site may already be there; they can check it and ask again.`
-        : `Nothing was published. WebBrain has no full record of what this task attempted before the latest correction (for example after WebBrain restarted), so it cannot rule out an earlier attempt on this site, and the latest attempt${priorHost ? `, on ${priorHost},` : ''} cannot be checked here. Do not publish it again. Tell the user what was not done; they can ask again to post it.`,
+        ? `Nothing was published. This task already made an attempt on this site, and WebBrain can check only the latest attempt from before the correction${priorHost ? `, on ${priorHost}` : ''}, so this post could repeat the earlier one or sit beside it. Do not publish it again. Tell the user what was not done and that the earlier attempt on this site may already be there; they can check it and ask again.`
+        : `Nothing was published. WebBrain has no full record of what this task attempted (for example after WebBrain restarted), so it cannot rule out an earlier attempt on this site, and the latest attempt from before the correction${priorHost ? `, on ${priorHost},` : ''} cannot be checked here. Do not publish it again. Tell the user what was not done; they can ask again to post it.`,
       { retryable: false });
     }
     if (prior) {
@@ -6066,16 +6132,19 @@ export class Agent extends LoopDetector {
           : genericCommit && (!!priorSnapshot || !priorForm || priorForm !== detected.actionUrl);
         const live = submitted && submitted.actionSequence === prior.actionSequence ? submitted : prior;
         const inPlace = !!live.currentUrl && this._normalizeUrl(live.currentUrl) === this._normalizeUrl(live.originatingUrl || '');
-        if (differentTarget && this._steeringPriorEffectKnown(tabId, guard, prior)) observedKind = publication ? 'cross_platform' : 'distinct_target';
-        else if (formCommit && priorForm && priorForm === detected.actionUrl && inPlace
+        // A page read under the correction counts only where the record
+        // shows the post cannot repeat an earlier attempt.
+        if (differentTarget && this._steeringPriorEffectKnown(tabId, guard, prior, { readAfterCorrection: publication && siteCrossPlatform })) {
+          observedKind = publication ? 'cross_platform' : 'distinct_target';
+        } else if (formCommit && priorForm && priorForm === detected.actionUrl && inPlace
             && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
       }
       if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind)) {
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
-          : crossPlatform
-            // Any page read since the correction is enough for a post on
-            // another platform, so the model is not sent back to the other site.
+          : publication && siteCrossPlatform && prior.mutationKind !== 'delete'
+            // Any page read since the correction is enough here, so the model
+            // is not sent back to the other site.
             ? `The earlier submission from before the latest correction${priorHost ? `, on ${priorHost},` : ''} has not been observed yet: no page was read since it was sent. Read the current page, then retry; nothing about it needs to be found here, and do not repeat it.`
             : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
       }
@@ -13156,6 +13225,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._throwIfAborted(this._runAbortSignal(tabId));
       return result;
     } catch (error) {
+      // An action that was sent, or may have been, before Stop or an error
+      // cut its bookkeeping short still joins the task's record of attempts.
+      const interrupted = cancellationState.active;
+      if (interrupted?.invoked && !interrupted.attemptRecorded) {
+        const raw = interrupted.result || interrupted.dispatchState?.rawToolResult;
+        const unsent = raw?.noDispatch === true || raw?.dispatched === false
+          || (!raw && interrupted.dispatchState?.tracksTextMutationDispatch === true && interrupted.dispatchState.started !== true);
+        if (!unsent) this._recordInterruptedTaskAttempt(tabId, interrupted.name, interrupted.args, interrupted.detected);
+      }
       if (this._checkAbort(tabId) || error?.name === 'AbortError') {
         // Repair the whole assistant tool batch before any caller persists a
         // terminal cancellation. Earlier completed results must stay intact.
@@ -14518,6 +14596,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       callState.consequential = missingResponseOutcomeUnknown;
       callState.args = fnArgs;
+      callState.name = fnName;
+      callState.detected = detectedSubmitAction;
       onUpdate('tool_call', {
         name: fnName,
         args: fnArgs,
@@ -14879,6 +14959,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         beforeDocument, String(this._lastAxScopes.get(tabId)?.documentToken || ''),
         messageRecipientExecutionContext,
       );
+      callState.attemptRecorded = true;
       if (toolResult && typeof toolResult === 'object' && !toolResult.done) {
         bulkApiShortcut = this._detectBulkApiMutationShortcut(tabId, fnName, fnArgs, toolResult, {
           startedAt: _toolStart,
@@ -18704,6 +18785,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
         }
         this._restorePersistedRichTextToolbarAudit(tabId, entry.richTextToolbarAudit);
+        this._restoreTaskAttemptLedger(tabId, entry.taskAttemptLedger);
         const savedDispatch = entry.nativeCaptchaDispatch;
         const rootDocument = Array.isArray(savedDispatch?.documents)
           ? savedDispatch.documents.find(document => document?.frameId === 0) : null;
@@ -18841,6 +18923,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       clarificationAuthorizationGuard: persistedClarificationGuard,
       continuationResponseLanguagePolicy: persistedContinuationLanguage,
       richTextToolbarAudit: this._persistedRichTextToolbarAudit(tabId),
+      // The sites the current task attempted, so a correction after a restart
+      // still knows them; never authorization.
+      taskAttemptLedger: this._persistedTaskAttemptLedger(tabId),
       captchaGateState: captchaGateState?.cloudflareManagedChallenge === true
         || captchaGateState?.publicGate?.cloudflareManagedChallenge === true
         ? null
@@ -34843,6 +34928,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // a read in this run.
       steeringPriorReadAfterCorrection: carryMatches && !!carried.steeringPriorSubmission
         && carried.steeringPriorReadAfterCorrection === true,
+      // Only a Continue that carries the run's contract and dispatch records
+      // keeps them; any other start rebuilds the guard from the conversation.
+      steeringHistoryInMemory: carryMatches && !!carried.steeringPriorSubmission
+        && carried.steeringHistoryInMemory === true,
       steeringMutationReceipts: carryMatches ? structuredClone(carried.steeringMutationReceipts || []) : [],
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
@@ -35376,6 +35465,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
         steeringPriorSubmission: guard.steeringPriorSubmission ? structuredClone(guard.steeringPriorSubmission) : null,
         steeringPriorReadAfterCorrection: guard.steeringPriorReadAfterCorrection === true,
+        steeringHistoryInMemory: guard.steeringHistoryInMemory === true,
         steeringMutationReceipts: structuredClone(guard.steeringMutationReceipts || []),
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
@@ -40145,6 +40235,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (blocked) return blocked;
       }
 
+      // The page's leave prompt is answered only through the run's debugger
+      // connection: arm it again when the run started where none was
+      // possible, such as chrome://extensions, or the connection dropped.
+      // This comes before anything listens for the navigation, so a page
+      // that navigates by itself meanwhile is not taken for this one.
+      await cdpClient.ensureDialogHandling(tabId);
+      // Stop while dialog handling was being armed ends the run here,
+      // before anything is sent.
+      if (this._checkAbort(tabId) || earlyCdpAbortSignal?.aborted) {
+        return { success: false, dispatched: false, noDispatch: true, cancelled: true,
+          error: 'navigate: stopped before the navigation was sent.' };
+      }
+
       let beforeUrl = '';
       try {
         const tab = await chrome.tabs.get(tabId);
@@ -40245,17 +40348,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
 
       try {
-        // The page's leave prompt is answered only through the run's debugger
-        // connection: arm it again when the run started where none was
-        // possible, such as chrome://extensions, or the connection dropped.
-        await cdpClient.ensureDialogHandling(tabId);
-        // Stop while dialog handling was being armed ends the run here,
-        // before anything is sent.
-        if (this._checkAbort(tabId) || earlyCdpAbortSignal?.aborted) {
-          removeNavigationListener();
-          return { success: false, dispatched: false, noDispatch: true, cancelled: true,
-            error: 'navigate: stopped before the navigation was sent.' };
-        }
         releaseDialogNavigation = cdpClient.authorizeNavigationDialog(tabId, beforeUrl, earlyCdpAbortSignal);
         await beforePageAgentDispatch(globalThis.chrome, tabId, { kind: 'navigate', url: rawUrl });
         await chrome.tabs.update(tabId, { url: rawUrl });
