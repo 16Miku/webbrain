@@ -935,17 +935,19 @@ async function callBrowserDownloadAction(name, ...args) {
   }
 }
 
-async function prepareStagedSkillDownload(url, expectedUrl) {
+async function prepareStagedSkillDownload(url, expectedUrl, signal = null) {
   const initialUrlCheck = validateSkillDownloadFinalUrl(url, expectedUrl);
   if (!initialUrlCheck.ok) {
     return { success: false, blocked: true, finalUrl: url, error: initialUrlCheck.error };
   }
   try {
+    throwIfSkillAborted(signal);
     const response = await fetch(url, {
       method: 'GET',
       credentials: 'omit',
       redirect: 'manual',
       cache: 'no-store',
+      ...(signal ? { signal } : {}),
     });
     if (response?.type === 'opaqueredirect' || isHttpRedirectStatus(response?.status)) {
       return {
@@ -980,6 +982,7 @@ async function prepareStagedSkillDownload(url, expectedUrl) {
     const responseBlob = typeof response.blob === 'function'
       ? await response.blob()
       : new Blob([await response.arrayBuffer()], { type: responseContentType || 'application/octet-stream' });
+    throwIfSkillAborted(signal);
     const contentType = safeDataUrlMimeType(responseContentType || responseBlob.type);
     const blob = responseBlob.type === contentType
       ? responseBlob
@@ -1005,6 +1008,7 @@ async function prepareStagedSkillDownload(url, expectedUrl) {
       ...(contentDisposition ? { contentDisposition } : {}),
     };
   } catch (error) {
+    if (signal?.aborted || error?.name === 'AbortError') throw responseAbortError(signal);
     return { success: false, finalUrl: url, error: `Skill download staging failed: ${error.message}` };
   }
 }
@@ -1086,7 +1090,7 @@ async function downloadSkillFile(url, filename, waitMs = 60000, signal = null) {
   const file = await fetchSkillDownloadData(url, url, signal);
   let staged = null;
   if (file.tooLarge === true) {
-    staged = await prepareStagedSkillDownload(url, url);
+    staged = await prepareStagedSkillDownload(url, url, signal);
     if (!staged?.success) {
       return {
         success: false,
@@ -1121,17 +1125,20 @@ async function downloadSkillFile(url, filename, waitMs = 60000, signal = null) {
     || filenameFromContentDisposition(file.contentDisposition);
   const opts = { url: staged ? staged.localUrl : file.dataUrl, conflictAction: 'uniquify' };
   const safeName = safeDownloadFilename(filename) || responseFilename || defaultSkillDownloadFilename(contentType);
-  const configuredName = await filenameInConfiguredDownloadDirectory(browser, safeName);
-  if (configuredName) opts.filename = configuredName;
   let downloadId;
+  let info;
   try {
+    const configuredName = await filenameInConfiguredDownloadDirectory(browser, safeName);
+    if (configuredName) opts.filename = configuredName;
+    throwIfSkillAborted(signal);
     downloadId = await browser.downloads.download(opts);
+    info = await resolveDownloadInfo(downloadId, waitMs, { signal });
+    throwIfSkillAborted(signal);
   } catch (error) {
+    if (downloadId != null) await callBrowserDownloadAction('cancel', downloadId);
     await releaseStagedSkillDownload(staged?.releaseToken);
     throw error;
   }
-  const info = await resolveDownloadInfo(downloadId, waitMs, { signal });
-  throwIfSkillAborted(signal);
   const result = {
     downloadId,
     success: false,
@@ -1271,14 +1278,14 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
   }
 
   let cleanup = null;
+  let cleanupScheduled = false;
   try {
     throwIfSkillAborted(signal);
     const download = await downloadSkillFile(fileEndpoint.url, payload.filename, Math.min(tool.job?.timeoutMs || 90000, 120000), signal);
-    throwIfSkillAborted(signal);
     const releaseToken = download.releaseToken || '';
     if (Object.prototype.hasOwnProperty.call(download, 'releaseToken')) delete download.releaseToken;
     const cleanupDeferred = cleanupEndpoint.ok && download.pending === true;
-    const cleanupScheduled = cleanupDeferred
+    cleanupScheduled = cleanupDeferred
       ? scheduleSkillDownloadCleanup(
         download.downloadId,
         cleanupEndpoint.url,
@@ -1287,6 +1294,7 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
         { releaseToken },
       )
       : false;
+    throwIfSkillAborted(signal);
     if (cleanupEndpoint.ok && !cleanupDeferred) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     if (!download.success) {
       return {
@@ -1317,8 +1325,8 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}
       ...download,
     };
   } catch (e) {
+    if (cleanupEndpoint.ok && !cleanupScheduled) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     if (signal?.aborted || e?.name === 'AbortError') throw responseAbortError(signal);
-    if (cleanupEndpoint.ok) cleanup = await cleanupSkillDownloadJob(cleanupEndpoint.url, endpoint, tool);
     return { success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', jobId, fileUrl: fileEndpoint.url, cleanup, error: `Skill download failed: ${e.message}` };
   }
 }
