@@ -67,16 +67,20 @@
     if (!text) return 'other';
     const known = _pageReading('page_blocker', text, null, { queue: false, maxLength: PAGE_GATE_TEXT_LIMIT });
     if (known) return PAGE_GATE_TYPES.has(known) ? known : 'other';
-    // A wall whose number changed since it was read, such as a countdown.
+    // A text that differs only in its numbers from a text read as a wall,
+    // such as a countdown's next second, is that wall for now, and is still
+    // reported to be read: a model's reading of the text itself then
+    // replaces this, so a quota that stops being a wall when its number
+    // changes reads as what it is.
     const shaped = _pageBlockerWallByShape(text);
-    if (shaped && PAGE_GATE_TYPES.has(shaped)) return shaped;
+    const provisional = shaped && PAGE_GATE_TYPES.has(shaped) ? shaped : null;
     if (!budget.seen.has(text)) {
-      if (budget.left <= 0) return null;
+      if (budget.left <= 0) return provisional;
       budget.left -= 1;
       budget.seen.add(text);
     }
     _pageReading('page_blocker', text, null, { maxLength: PAGE_GATE_TEXT_LIMIT });
-    return null;
+    return provisional;
   }
 
   // Whether an element lays its children out as blocks, so its text splits
@@ -5913,8 +5917,9 @@
   const _pageReadingsUnread = new Map();
   // Wall readings of overlay and article-block texts that hold digits, by the
   // text with each run of digits as one '#'. A wall whose number changes on
-  // every read, such as a countdown, keeps its reading. Only walls carry over
-  // this way: a text read as no wall is read again when its numbers change.
+  // every read, such as a countdown, stays a wall while its new text is read
+  // (see pageGateReading). Only walls carry over this way: a text read as no
+  // wall is simply unread again when its numbers change.
   const _pageBlockerWallShapes = new Map();
   const _PAGE_BLOCKER_WALL_TYPES = new Set(['subscription', 'registration', 'login']);
 
@@ -6785,10 +6790,16 @@
             nativeWhatsappRepair: true, identityCandidates: [] };
         }
         if (nativeLayoutContext?.service !== 'whatsapp') {
+          // No check left in this run: say so, rather than send the agent
+          // after a header click that cannot help.
+          const spent = !repair && window.__wb_native_whatsapp_repair_spent?.() === true;
           return { success: true, messageSend: observationOnly ? false : null, conclusive: false,
             composerAvailable: true, nativeWhatsappRepairAvailable: !!repair,
-            reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [],
-            error: 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
+            ...(spent ? { nativeWhatsappRepairSpent: true } : {}),
+            reasonCode: spent ? 'native_whatsapp_contact_check_spent' : 'native_whatsapp_contact_binding_required', identityCandidates: [],
+            error: spent
+              ? 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at, and WhatsApp\'s chat selection or that chat\'s header changed since. Nothing was sent. Report what was sent and that a message to this chat needs a new request; do not retry it in this run.'
+              : 'Native WhatsApp contact identity needs a fresh guarded header click, its contact drawer phone, and closing that same drawer. No message or editor write was authorized.' };
         }
       }
       const layoutComposer = layoutCandidate

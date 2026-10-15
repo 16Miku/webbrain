@@ -18578,7 +18578,7 @@ test('a wall whose text changes on every read fails the read instead of returnin
     assert.equal(reads, 3, `${build}: the page was not read again with each new wall text`);
     assert.equal(result.success, false, `${build}: the article behind a changing wall was returned`);
     assert.doesNotMatch(JSON.stringify(result), /SECRET/, `${build}: text behind the wall leaked`);
-    assert.match(result.error, /wall that WebBrain could not apply, as when its text changes on every read/);
+    assert.match(result.error, /wall that WebBrain could not apply, as when its text changes on every read[\s\S]*Read the page again once; if the wall is still there, report it/);
     // The same wall applied on the last read is returned as the page shows it.
     const applied = new AgentClass({});
     stubPageTextReadings(applied, (kind, item) => (kind === 'page_blocker'
@@ -109135,6 +109135,21 @@ test('a WhatsApp chat pinned at its first send keeps the person named besides it
     const other = await dispatch(2);
     assert.equal(other?.reasonCode, 'active_recipient_unverified', `${label}: another chat was sent to without a card`);
     assert.deepEqual(other.recipientConfirmation.requested, ['Rustem Bey']);
+    // A chat whose contact this run can no longer check is reported as such,
+    // not as something to re-read and retry.
+    const spentError = 'This run can no longer confirm a WhatsApp contact: its contact check belongs to the first chat it looked at.';
+    probe = { success: true, conclusive: false, messageSend: null, composerAvailable: true, nativeWhatsappRepairAvailable: false,
+      nativeWhatsappRepairSpent: true, reasonCode: 'native_whatsapp_contact_check_spent', identityCandidates: [], error: spentError };
+    const spent = await dispatch(3);
+    assert.equal(spent?.reasonCode, 'native_whatsapp_contact_check_spent', JSON.stringify(spent));
+    assert.equal(spent.retryable, false, `${label}: a spent contact check was offered as retryable`);
+    assert.equal(spent.error, spentError);
+    probe = { success: true, conclusive: false, messageSend: null, composerAvailable: true, nativeWhatsappRepairAvailable: true,
+      reasonCode: 'native_whatsapp_contact_binding_required', identityCandidates: [], error: 'drawer needed' };
+    const needsDrawer = await dispatch(4);
+    assert.equal(needsDrawer?.reasonCode, 'native_whatsapp_contact_binding_required');
+    assert.notEqual(needsDrawer.retryable, false, `${label}: a contact check still available was made final`);
+    assert.match(needsDrawer.error, /could not conclusively resolve/);
   }
 });
 
@@ -109188,7 +109203,7 @@ test('a reviewed plan shows the person named besides the open conversation and a
           () => { }, null, null, '', { tabUrl: 'https://web.whatsapp.com/', tabTitle: 'WhatsApp' }, 'try', 'act', { locale: 'en' });
         const where = `${AgentClass.name} ${edited ? 'edited' : 'unedited'}`;
         assert.equal(gate.proceed, true, `${where}: the reviewed plan did not run: ${gate.message || gate.reason}`);
-        assert.match(reviewed?.verbose || '', /- Message targets: to:Mehmet\n- Also named, each confirmed on WebBrain's card before the first send to them: to:Rustem Bey/,
+        assert.match(reviewed?.verbose || '', /- Message targets: to:Mehmet\n- Also named, each verified before any send to them: to:Rustem Bey/,
           `${where}: the reviewed plan does not show the person named besides the open chat`);
         if (edited) {
           // An edited plan carries no send target at all, as before.

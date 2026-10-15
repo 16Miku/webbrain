@@ -4047,10 +4047,12 @@ export class CDPClient {
         const gateNormalize = (value) => String(value ?? '').replace(/[\\u200b-\\u200d\\ufeff]/g, '').replace(/\\s+/g, ' ').trim();
         const gateSlice = (value) => gateNormalize(gateNormalize(value).slice(0, GATE_TEXT_LIMIT)
           .replace(/^[\\udc00-\\udfff]/, '').replace(/[\\ud800-\\udbff]$/, ''));
-        // A wall whose number changed since it was read, such as a
-        // countdown, keeps its reading: wall readings of texts with digits
-        // by the text with each run of digits as one '#'. A text read as no
-        // wall is read again when its numbers change.
+        // A text that differs only in its numbers from a text read as a
+        // wall, such as a countdown's next second, is that wall for now and
+        // is still reported to be read, as in content.js: wall readings of
+        // texts with digits, by the text with each run of digits as one '#'.
+        // A text read as no wall is simply unread again when its numbers
+        // change.
         const gateDigitShape = (text) => (/\\p{Nd}/u.test(text) ? text.replace(/\\p{Nd}+/gu, '#') : '');
         const gateWallShapes = new Map();
         for (const [text, choice] of Object.entries(pageBlockerReadings)) {
@@ -4062,12 +4064,12 @@ export class CDPClient {
           const reading = Object.prototype.hasOwnProperty.call(pageBlockerReadings, text) ? String(pageBlockerReadings[text] || '') : '';
           if (reading) return GATE_TYPES.includes(reading) ? reading : 'other';
           const shape = gateDigitShape(text);
-          if (shape && gateWallShapes.has(shape)) return gateWallShapes.get(shape);
+          const provisional = shape && gateWallShapes.has(shape) ? gateWallShapes.get(shape) : null;
           if (!unreadGateTexts.includes(text)) {
-            if (unreadGateTexts.length >= 40) return null;
+            if (unreadGateTexts.length >= 40) return provisional;
             unreadGateTexts.push(text);
           }
-          return null;
+          return provisional;
         };
         const gateHasBlockChildren = (el, depth = 0) => {
           for (const child of el.children) {

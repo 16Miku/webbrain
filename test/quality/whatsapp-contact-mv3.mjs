@@ -419,7 +419,10 @@ const server = http.createServer(async (request, response) => {
         if (scenario === 'peer_switch') {
           // Native selection feedback may suppress the prepared send before
           // its handler is called; either boundary must retain no dispatch.
-          assert.ok(last.result?.noDispatch === true || last.result?.reason === 'chat_root_unverified', last.content);
+          // The run's one contact check is spent once the selection changed,
+          // and the observation before the send says so, final.
+          assert.ok(last.result?.noDispatch === true || last.result?.reason === 'chat_root_unverified'
+            || (last.result?.reason === 'native_whatsapp_contact_check_spent' && last.result?.retryable === false), last.content);
           name = 'done'; args = { outcome: 'partial', summary: 'The native contact changed; no reply was dispatched.' };
         }
         else { assert.notEqual(last.result?.dispatched, false, last.content); stage = 'verified'; name = 'chat_observe'; }

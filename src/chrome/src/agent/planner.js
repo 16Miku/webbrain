@@ -1260,7 +1260,7 @@ function appendPlanExecutionMetadata(lines, plan) {
     // at, once that conversation is pinned (Agent._activeConversationPin).
     const alsoNamed = plan.requested_messaging?.target_kind === 'named' ? plan.requested_messaging.recipients || [] : [];
     if (alsoNamed.length) {
-      lines.push(`- Also named, each confirmed on WebBrain's card before the first send to them: ${alsoNamed.map(recipient => `${recipient.role}:${recipient.identity}`).join(', ')}`);
+      lines.push(`- Also named, each verified before any send to them: ${alsoNamed.map(recipient => `${recipient.role}:${recipient.identity}`).join(', ')}`);
     }
   } else if (plan.messaging?.target_kind === 'active_conversation') {
     const also = (plan.messaging.recipients || []).map(recipient => `${recipient.role}:${recipient.identity}`).join(', ');

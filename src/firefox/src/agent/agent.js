@@ -10835,9 +10835,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // not). Otherwise a read that cannot be repeated keeps the answer before it.
   async _rereadWithPageBlockerReadings(tabId, name, response, dispatch) {
     if ((name !== 'read_page' && name !== 'get_accessibility_tree') || !response || typeof response !== 'object') return response;
-    const wallUnapplied = { success: false, error: 'This page shows a subscription, registration or sign-in wall '
+    // A wall can also go away during the read, as an overlay a subscriber's
+    // page removes does, so a fresh read may succeed.
+    const wallUnapplied = { success: false, error: 'This page showed a subscription, registration or sign-in wall '
       + 'that WebBrain could not apply, as when its text changes on every read, so nothing behind it was returned. '
-      + 'Report the wall instead of reading past it.' };
+      + 'Read the page again once; if the wall is still there, report it instead of reading past it.' };
     const isWall = entry => entry?.kind === 'page_blocker'
       && ['subscription', 'registration', 'login'].includes(this._pageTextReading('page_blocker', entry.text));
     let current = response;
@@ -24780,6 +24782,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const missingLinkedInComposer = policy.adapterName === 'linkedin'
       && probe?.success === true && probe?.composerAvailable === false;
     const inconclusive = probe?.success !== true || probe?.conclusive !== true || probe?.messageSend !== true;
+    // A native WhatsApp run that can no longer check any contact's drawer
+    // says so, instead of sending the agent to re-read and retry in vain.
+    const contactCheckSpent = inconclusive && probe?.nativeWhatsappRepairSpent === true
+      && probe?.reasonCode === 'native_whatsapp_contact_check_spent' && typeof probe?.error === 'string';
     // Human-readable view of who the page actually addresses, so a mismatch
     // block can name the exact observed recipient.
     const observedRecipientLabel = (() => {
@@ -24799,11 +24805,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       noDispatch: true,
       dispatched: false,
       messageRecipientGuard: true,
-      ...((missingLinkedInComposer || (!inconclusive && target)) ? { retryable: false } : {}),
+      ...((missingLinkedInComposer || (!inconclusive && target) || contactCheckSpent) ? { retryable: false } : {}),
       reasonCode: inconclusive
         ? (probe?.reasonCode || 'message_send_classification_inconclusive')
         : (target ? 'active_recipient_unverified' : 'authorized_recipient_missing'),
-      error: missingLinkedInComposer
+      error: contactCheckSpent ? String(probe.error || '') : missingLinkedInComposer
         ? (probe?.reasonCode === 'message_commit_without_composer'
           ? 'Message send blocked: this control commits a message (for example "Send" / "Send without a note") but no active composer or recipient could be verified. Changing click targeting methods will not help. Open the intended conversation so its composer and recipient are visible, or report that the message could not be sent.'
           : 'Message send blocked: no message composer is visible, so this send cannot be verified. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.')

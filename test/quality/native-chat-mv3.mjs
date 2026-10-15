@@ -341,12 +341,22 @@ try {
       && result.chatWorkflow.pendingOutbound === false && !result.chatWorkflow.userInput));
     const sendAttempts = actualResults.filter(event => event.data.name === (structuredPath(dispatchPath) ? 'chat_send'
       : dispatchPath === 'generic_submit' ? 'set_field' : 'click_ax'));
+    // A send held back because the browser changed during it sends nothing:
+    // these paths run in tabs of one browser, and a tab that closes resizes
+    // the others, which page feedback reports. The model reads the chat again
+    // and sends once more; exactly-once delivery is checked above by the
+    // page's own replies and outgoing bubbles, not by counting attempts.
+    const heldStructuredSend = result => result?.success !== true && result?.deliveryVerified !== true
+      && ((result?.skipped === true && result.noDispatch === true && result.dispatched === false && !result.outcomeUnknown)
+        || (result?.reason === 'native_chat_submit_blocked_before_dispatch' && result.submissionDispatched === false
+          && result.submissionBlockReason === 'page_feedback_pending'));
     const feedbackSkips = dispatchPath === 'generic_submit' ? sendAttempts.filter(event => {
       const result = event.data.result;
       return result.pageFeedbackPending === true && result.noDispatch === true
         && result.dispatched === false && !result.outcomeUnknown;
-    }) : [];
-    assert.equal(feedbackSkips.length, current.feedbackRecoveries || 0);
+    }) : structuredPath(dispatchPath) ? sendAttempts.filter(event => heldStructuredSend(event.data.result)) : [];
+    if (dispatchPath === 'generic_submit') assert.equal(feedbackSkips.length, current.feedbackRecoveries || 0);
+    else assert.ok(feedbackSkips.length <= 2, 'Browser changes held back a send more than twice.');
     const dispatches = dispatchPath === 'structured_prefill' ? sendAttempts.filter(event => event.data.result.success === true)
       : sendAttempts.filter(event => !feedbackSkips.includes(event));
     assert.equal(dispatches.length, expectedCount);
@@ -371,7 +381,7 @@ try {
       if (structuredPath(dispatchPath)) assert.ok(dispatches.every(event => event.data.result.deliveryVerified === true));
     }
     if (dispatchPath === 'structured_prefill') {
-      assert.equal(sendAttempts.length, 7);
+      assert.equal(sendAttempts.length, 7 + feedbackSkips.length);
       assert.equal(sendAttempts[0].data.result.reason, 'composer_not_empty');
       assert.equal(sendAttempts[0].data.result.noDispatch, true);
       const drafts = actualResults.filter(event => event.data.name === 'set_field');
