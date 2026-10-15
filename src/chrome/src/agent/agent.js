@@ -41597,10 +41597,14 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
       }
       if (skillTool.skillId === 'wikipedia') {
         return await executeWikipediaSkillTool(skillTool, args, {
-          executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId }),
+          executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId, signal: typeof executionContext !== 'undefined' ? executionContext?._contentActionAbortSignal : undefined }),
         });
       }
-      return await executeHttpSkillTool(skillTool, args, { tabId });
+      return await executeHttpSkillTool(skillTool, args, {
+        tabId,
+        signal: typeof executionContext !== 'undefined' ? executionContext?._contentActionAbortSignal : undefined,
+        onProgress: message => onUpdate?.('tool_progress', { name, message }),
+      });
     }
     const skillEndpointRedirect = this._skillEndpointToolRedirect(name, args, tabId);
     if (skillEndpointRedirect) {
