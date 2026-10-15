@@ -98,16 +98,20 @@ record identity is bound by its action and values: an identical resubmission is
 reported as already made, a corrected in-place save needs the observed earlier
 result and authorization under the latest request, and a different target
 (another form or platform) needs a known earlier outcome. Account names, read
-on X and Bluesky only, name a post's platform; a post or form anywhere else,
-such as Mastodon, is named by the site it was made on, so "ok now on X" after a
-Mastodon post is a post on another platform and is never sent to look for the
-Mastodon post on X. Hosts that share their last two labels count as one site,
-and x.com and twitter.com as one platform. Every attempt the task dispatched
-before the correction counts, not only the latest: an earlier post on the new
-post's platform, or an attempt whose site is unknown, holds the new post to that
-attempt's own reconciliation, even when a form on another site came after it.
-For a post on another platform, a known earlier outcome means a page was read
-after the earlier attempt was sent. Whether a correction
+on X and Bluesky only, name a post's platform; any other attempt, such as a
+Mastodon post or a form, is placed by the site it was made on. Hosts that share
+their last two labels count as one site, and x.com and twitter.com as one
+platform. A post on another site than the earlier attempt counts as another
+platform only when the correction's receipt lists every site the task had
+attempted and the post's site is not among them. The agent records the site of
+every dispatched attempt that may have changed something (a search, or a send
+the browser refused, is not one) for the task, from its first run on; each
+correction copies that list into its receipt, and a run rebuilt from the saved
+conversation, for example after a restart, reads it there. Without a complete
+list, or with an earlier attempt on the post's own site, the post stops once
+with a report instead of a search for the other site's post. For a post on
+another platform, any page read since the earlier attempt was sent, including
+one after the correction, makes its outcome known. Whether a correction
 asks to delete the earlier post or record first is a fixed-choice question
 that a model answers from the correction as the user wrote it, in any language
 (see "Language decisions" below): removing characters, words or hashtags from a
@@ -1256,7 +1260,8 @@ A run whose start page the debugger cannot attach to, such as
 chrome://extensions, or whose debugger connection drops, keeps its wish to
 answer dialogs: the next debugger attach arms it, and each navigation and
 history navigation arms it before dispatch and again on the page it reaches.
-The person cancelling the debugger ends it for the run.
+Stop while a navigation waits for that arming sends nothing. The person
+cancelling the debugger ends it for the run.
 Ask mode and idle tabs do not auto-answer dialogs. Already-observed dialogs are
 resolved before startup commands. Dialogs opened before debugger attachment
 may need manual dismissal. Startup responds to Stop and times out after five

@@ -17,12 +17,14 @@ for (const build of ['chrome', 'firefox']) {
   const { resolveAdapterWorkflowJob } = await import(`../src/${build}/src/agent/adapters.js`);
   const xWorkflow = resolveAdapterWorkflowJob('https://x.com/', 'publish-post');
 
-  async function fixture(task, { pageUrl = formUrl, gate: gateOverrides = {} } = {}) {
-    const tab = nextTab++, options = { detachedRequestId: `guards-${tab}`, askStreamingEnabled: false };
+  // A restart is a new Agent given the conversation as it was saved.
+  async function fixture(task, { pageUrl = formUrl, gate: gateOverrides = {}, messages = null, tab: fixedTab = null } = {}) {
+    const tab = fixedTab ?? nextTab++, options = { detachedRequestId: `guards-${tab}`, askStreamingEnabled: false };
     const provider = { model: 'owned-offline', supportsVision: false, supportsTools: true, promptTier: 'full',
       contextWindow: 128000, config: { category: 'local' }, chat() {} };
     const agent = new Agent({ getActive: () => provider, getProvider: () => provider });
-    agent.conversations.set(tab, [{ role: 'system', content: 'System' }, { role: 'user', content: task }]);
+    agent.conversations.set(tab, messages ? JSON.parse(JSON.stringify(messages))
+      : [{ role: 'system', content: 'System' }, { role: 'user', content: task }]);
     agent.conversationModes.set(tab, 'act');
     agent._persist = () => {}; agent._persistNow = async () => ({ ok: true });
     agent._ensureProgressSessionForCurrentTask = async () => {};
@@ -53,6 +55,14 @@ for (const build of ['chrome', 'firefox']) {
     };
     h.steeringBlock = (detected, name = 'click_ax', args = { ref_id: 'ref_9' }) => agent._steeringPriorSubmissionBlock(tab, name, args, detected);
     h.close = () => { agent._finishSteeringRun(tab); agent._releaseRunEntry(tab); };
+    // WebBrain restarted: only the saved conversation is left.
+    h.restart = async (extra = []) => {
+      h.close();
+      return fixture(task, { pageUrl, gate: gateOverrides, tab, messages: [...agent.conversations.get(tab), ...extra] });
+    };
+    // A page read, the way the automatic screenshot after an action reads one.
+    h.read = (url = pageUrl) => agent._recordCompletionToolResult(tab, 'auto_screenshot', {},
+      { success: true, method: 'image_attach', _attachImage: true, pageUrl: url });
     return h;
   }
 
@@ -114,7 +124,8 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(blocked.actionGuard.reason, variant === 'denied' ? 'latest_request_not_authorized' : 'prior_effect_unreconciled', variant);
           assert.equal(h.steeringBlock(corrected).noDispatch, true, variant);
         }
-        assert.deepEqual(guard.steeringPriorSubmission, archived, 'the original receipt stays immutable');
+        // Only the list of platforms the task attempted is added, at the correction.
+        assert.deepEqual(guard.steeringPriorSubmission, { ...archived, taskAttemptPlatforms: ['example.test'] }, 'the original receipt stays immutable');
       } finally { h.close(); }
     }
   });
@@ -221,87 +232,245 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
-  // An earlier post on the same platform still counts when something on
-  // another site came after it: "Post 'Hello wrold' on X, then sign me up for
-  // the newsletter", then "fix the typo in the tweet".
-  const typoReceipt = () => ({ ...publicationReceipt(), publicationSnapshot: snap('Hello wrold'),
-    workflowBinding: { preDispatchPublishedResourceIdentities: [], socialPublication: { contractKey: 'contract-1', actionId: 'x-post', snapshot: snap('Hello wrold') } } });
-  const newsletterReceipt = (urls = true) => ({ dispatched: true, actionSequence: 9, mutationKind: 'submit',
-    originatingUrl: urls ? 'https://news.example.test/subscribe' : '', currentUrl: urls ? 'https://news.example.test/thanks' : '',
-    originatingDocument: 'news-doc', submittedActionUrl: urls ? 'https://news.example.test/subscribe/save' : '',
-    submittedFields: [{ label: 'Email', type: 'email', value: 'alice@example.test' }], observedAfterSubmit: true });
+  // X and Bluesky composers are the publication controls WebBrain reads; a
+  // Mastodon composer or a newsletter is an ordinary form.
+  const xPublish = (body, account = 'twitter:alice') => ({ ...publish(snap(body, account)), url: 'https://x.com/home', host: 'x.com' });
+  const bskyPublish = (body, account = 'bluesky:alice.bsky.social') => ({ ...publish(snap(body, account)), url: 'https://bsky.app/', host: 'bsky.app' });
+  const newsletter = () => ({ ...formOn('https://newsletter.test/subscribe'), actionUrl: 'https://newsletter.test/subscribe/save',
+    fields: [{ label: 'Email', type: 'email', value: 'alice@example.test' }] });
+  const xSearch = () => ({ ...formOn('https://x.com/explore'), nonCommittingControl: true, method: 'GET',
+    fields: [{ label: 'Search', type: 'search', value: 'webbrain' }] });
+  // An action's result, recorded the way every action's result is.
+  let nextRef = 60;
+  const attempt = (h, detected, result = { success: true, dispatched: true }) => h.agent._recordCompletionSubmitAttempt(h.tab,
+    detected, 'click_ax', { ref_id: `ref_${nextRef++}` }, detected.url, detected.url, result, `${detected.url}|doc`, `${detected.url}|doc`);
+  const refused = { success: false, dispatched: false, noDispatch: true };
 
-  test(`${build}: an earlier post on the same platform holds a new one there, whatever came after it`, async () => {
+  // "Post 'Hello wrold' on X, then sign me up for the newsletter", then "fix
+  // the typo in the tweet": the latest attempt is the newsletter, which can
+  // never be found on X, and the X post before it is what a new X post may
+  // repeat. WebBrain stops there once, instead of sending the model to look
+  // for the newsletter on X until the step limit.
+  test(`${build}: after a correction a post is held to an earlier attempt on its own platform, and says so once`, async () => {
+    const mastodon = mastodonCompose;
     const cases = {
-      // The earlier X post is not on the page: it has to be found first.
-      'x-form-x-unread': { earlier: [typoReceipt(), newsletterReceipt()], now: publishOn('https://x.com/home', 'twitter:alice'),
-        reason: 'prior_effect_unreconciled', guidance: /on this platform/ },
-      // Found on the page, the X post itself is reconciled, not the form.
-      'x-form-x-found': { earlier: [typoReceipt(), newsletterReceipt()], now: { ...publishOn('https://x.com/home', 'twitter:alice'),
-        reconciliationResources: [record(xPost, 'Hello wrold')] }, allowed: 'resource_identity' },
-      // Bluesky after an X post and a form elsewhere is another platform.
-      'x-form-bluesky': { earlier: [typoReceipt(), newsletterReceipt()], now: publishOn('https://bsky.app/', 'bluesky:alice.bsky.social'),
-        allowed: 'cross_platform' },
-      // An attempt whose site is unknown could have been on this platform.
-      'unknown-site-x': { earlier: [newsletterReceipt(false)], now: publishOn('https://x.com/home', 'twitter:alice'),
-        reason: 'prior_effect_unreconciled', guidance: /on this platform/ },
+      'x-form-x': { before: [[xPublish('Hello wrold')], [newsletter()]], correction: 'fix the typo in the tweet',
+        now: xPublish('Hello world'), reason: 'earlier_attempt_on_platform' },
+      // The same post again is still not repeated.
+      'x-form-same-x': { before: [[xPublish('Hello wrold')], [newsletter()]], correction: 'post it again',
+        now: xPublish('Hello wrold'), reason: 'earlier_attempt_on_platform' },
+      'x-form-bluesky': { before: [[xPublish('Hello wrold')], [newsletter()]], correction: 'now post it on Bluesky too',
+        now: bskyPublish('Hello world'), allowed: true },
+      // A search on X sends nothing and a refused click sent nothing.
+      'x-search-mastodon-x': { before: [[xSearch()], [mastodon, deliveredUnobserved]], correction: 'ok now on X',
+        now: xPublish('WebBrain test post', ''), allowed: true },
+      'x-refused-mastodon-x': { before: [[xPublish('WebBrain test post'), refused], [mastodon, deliveredUnobserved]], correction: 'ok now on X',
+        now: xPublish('WebBrain test post'), allowed: true },
+      // An attempt with no usable address may have been on X.
+      'unknown-mastodon-x': { before: [[{ ...formSubmit('x'), url: '' }], [mastodon, deliveredUnobserved]], correction: 'ok now on X',
+        now: xPublish('WebBrain test post', ''), reason: 'attempt_history_unknown' },
     };
     for (const [variant, spec] of Object.entries(cases)) {
       const h = await fixture('Post "Hello wrold" on X, then sign me up for the newsletter.', { pageUrl: spec.now.url });
       try {
-        // As the real recorder keeps them: every attempt of the revision, the
-        // latest also as the live receipt.
-        h.agent._planExecutionGuards.get(h.tab).dispatchedAttempts = structuredClone(spec.earlier);
-        h.agent._completionSubmitStates.set(h.tab, structuredClone(spec.earlier.at(-1)));
-        const guard = await h.steer(variant === 'x-form-bluesky' ? 'now post it on Bluesky too' : 'fix the typo in the tweet');
-        assert.deepEqual(guard.steeringMutationReceipts.map(receipt => receipt.actionSequence), spec.earlier.map(receipt => receipt.actionSequence), variant);
+        for (const [detected, result] of spec.before) attempt(h, detected, result);
+        const guard = await h.steer(spec.correction);
+        h.read();
         const blocked = await h.check(spec.now);
         if (spec.allowed) {
           assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
-          assert.equal(guard.steeringPriorSubmissionReconciliation.verificationKind, spec.allowed, variant);
-          if (spec.allowed === 'resource_identity') {
-            assert.equal(guard.steeringPriorSubmissionReconciliation.resourceUrl, xPost, variant);
-            assert.equal(guard.steeringPriorSubmissionReconciliation.actionSequence, 7, `${variant}: the X post, not the form`);
-            // The deletion question describes the X post, not the form.
-            assert.deepEqual([h.decisions('deletion_prerequisite').at(-1).page.previous.link,
-              h.decisions('deletion_prerequisite').at(-1).page.previous.snapshot.account], [xPost, 'twitter:alice'], variant);
-          }
-        } else {
-          assert.equal(blocked?.noDispatch, true, variant);
-          assert.equal(blocked.actionGuard.reason, spec.reason, `${variant}: ${blocked.error}`);
-          assert.match(blocked.error, spec.guidance, variant);
-          assert.equal(h.audits.length, 0, variant);
+          assert.equal(guard.steeringPriorSubmissionReconciliation.verificationKind, 'cross_platform', variant);
+          continue;
         }
+        assert.equal(blocked?.noDispatch, true, variant);
+        assert.equal(blocked.actionGuard.reason, spec.reason, `${variant}: ${blocked.error}`);
+        assert.equal(blocked.retryable, false, variant);
+        assert.match(blocked.error, /^The consequential action was not dispatched \([a-z_]+\)\. Nothing was published\./, variant);
+        assert.match(blocked.error, /Do not publish it again\. Tell the user what was not done/, variant);
+        assert.doesNotMatch(blocked.error, /then retry/, `${variant}: no instruction that loops`);
+        assert.equal(h.audits.length, 0, variant);
+        assert.equal(h.steeringBlock(spec.now)?.noDispatch, true, variant);
+        // Reading more pages changes nothing: the same answer, not a new search.
+        h.read();
+        assert.equal((await h.check(spec.now)).actionGuard.reason, spec.reason, variant);
       } finally { h.close(); }
     }
   });
 
-  test(`${build}: every dispatched attempt of a revision is archived at the correction, the live receipt last`, async () => {
-    const h = await fixture('Post on X, then sign me up for the newsletter.', { pageUrl: 'https://x.com/home' });
+  // "Post on X and Bluesky": the X page did not open, so nothing was sent
+  // there; the Bluesky post went out; then "now retry the X post".
+  test(`${build}: an X attempt that sent nothing does not hold a later X post`, async () => {
+    for (const xOutcome of ['failed', 'pending']) {
+      for (const account of ['twitter:alice', '']) {
+        const variant = `${xOutcome}${account ? '' : '-account-unread'}`;
+        const h = await fixture('Post "Hello world" on X and Bluesky.', { pageUrl: 'https://x.com/home' });
+        try {
+          h.agent._planExecutionGuards.get(h.tab).socialPublication = { key: 'contract-1',
+            contract: { actions: [{ id: 'x-post', platform: 'twitter' }, { id: 'bsky-post', platform: 'bluesky' }] },
+            outcomes: { 'x-post': xOutcome === 'failed' ? { status: 'failed', cause: 'unavailable' } : { status: 'pending', cause: 'publish_failed' } } };
+          attempt(h, bskyPublish('Hello world'));
+          await h.steer('now retry the X post');
+          h.read();
+          const blocked = await h.check(xPublish('Hello world', account));
+          // Both accounts read: another platform by account, as before.
+          if (xOutcome === 'failed' || account) assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
+          else assert.equal(blocked?.actionGuard.reason, 'earlier_attempt_on_platform', variant);
+        } finally { h.close(); }
+      }
+    }
+  });
+
+  // "Post on X": the X page did not open and nothing was sent anywhere; then
+  // "try again". The receipt is the outcome alone, and it holds nothing.
+  test(`${build}: a correction after an attempt that sent nothing lets the post go ahead`, async () => {
+    for (const status of ['failed', 'pending']) {
+      const h = await fixture('Post "Hello world" on X.', { pageUrl: 'https://x.com/home' });
+      try {
+        h.agent._planExecutionGuards.get(h.tab).socialPublication = { key: 'contract-1',
+          contract: { actions: [{ id: 'x-post', platform: 'twitter' }] },
+          outcomes: { 'x-post': status === 'failed' ? { status, cause: 'unavailable' } : { status, cause: 'publish_failed' } } };
+        const guard = await h.steer('try again');
+        assert.deepEqual(Object.keys(guard.steeringPriorSubmission.publicationOutcomes), ['x-post'], status);
+        h.read();
+        const blocked = await h.check(xPublish('Hello world'));
+        if (status === 'failed') assert.equal(blocked, null, blocked?.error);
+        // An outcome that may have been delivered could be on X itself.
+        else assert.equal(blocked?.noDispatch, true, status);
+      } finally { h.close(); }
+    }
+  });
+
+  test(`${build}: a correction's receipt lists the platforms the task attempted, so a restart keeps them`, async () => {
+    // The trace, with WebBrain restarted after the correction.
+    for (const afterCorrection of ['nothing', 'tool steps']) {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
+      let r;
+      try {
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        r = await h.restart(afterCorrection === 'nothing' ? [] : [
+          { role: 'assistant', content: '', tool_calls: [{ id: 'call_nav', type: 'function', function: { name: 'navigate', arguments: '{"url":"https://x.com/home"}' } }] },
+          { role: 'tool', tool_call_id: 'call_nav', content: '{"success":true}' }]);
+        const guard = r.agent._planExecutionGuards.get(r.tab);
+        assert.deepEqual(guard.steeringPriorSubmission?.taskAttemptPlatforms, ['mastoturk.org'], afterCorrection);
+        assert.equal(guard.steeringPriorReadAfterCorrection, false, 'a restarted run reads again');
+        assert.equal((await r.check(xPublish('WebBrain test post', ''))).actionGuard.reason, 'prior_effect_unreconciled', afterCorrection);
+        r.read();
+        assert.equal(await r.check(xPublish('WebBrain test post', '')), null, afterCorrection);
+        // Only steps after the correction leave the record incomplete, which
+        // matters for the next correction.
+        attempt(r, xPublish('WebBrain test post'));
+        await r.steer('now on Bluesky too');
+        r.read();
+        const next = await r.check(bskyPublish('WebBrain test post', ''));
+        if (afterCorrection === 'nothing') assert.equal(next, null, next?.error);
+        else assert.equal(next?.actionGuard.reason, 'attempt_history_unknown', afterCorrection);
+        // With both accounts read the platforms differ by account, as before.
+        assert.equal(await r.check(bskyPublish('WebBrain test post')), null, afterCorrection);
+      } finally { (r || h).close(); }
+    }
+    // The X post and the newsletter, then "fix the typo in the tweet", then a
+    // restart: the X post before the newsletter still holds a new X post.
+    {
+      const h = await fixture('Post "Hello wrold" on X, then sign me up for the newsletter.', { pageUrl: 'https://x.com/home' });
+      let r;
+      try {
+        attempt(h, xPublish('Hello wrold'));
+        attempt(h, newsletter());
+        await h.steer('fix the typo in the tweet');
+        r = await h.restart();
+        r.read();
+        assert.equal((await r.check(xPublish('Hello world'))).actionGuard.reason, 'earlier_attempt_on_platform');
+      } finally { (r || h).close(); }
+    }
+    // A conversation saved before the record existed: WebBrain cannot know,
+    // so it says so once instead of looking for the Mastodon post on X.
+    {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
+      let r;
+      try {
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        const saved = h.agent.conversations.get(h.tab);
+        delete saved.findLast(message => message.webbrainSteering).webbrainSteering.priorSubmission.taskAttemptPlatforms;
+        r = await h.restart();
+        r.read();
+        const blocked = await r.check(xPublish('WebBrain test post', ''));
+        assert.equal(blocked.actionGuard.reason, 'attempt_history_unknown', blocked.error);
+        assert.equal(blocked.retryable, false);
+      } finally { (r || h).close(); }
+    }
+  });
+
+  // The trace's shape: the Mastodon post, "ok now on X", a page read, a search
+  // on X that replaces the live receipt, then the X post.
+  test(`${build}: a page read under the correction counts after a later receipt or run replaces the live one`, async () => {
+    for (const variant of ['search-after-read', 'no-read', 'continue', 'typed-continue']) {
+      const h = await fixture('go to mastoturk.org and try to post something', { pageUrl: 'https://x.com/home' });
+      try {
+        attempt(h, mastodonCompose, deliveredUnobserved);
+        await h.steer('ok now on X');
+        if (variant !== 'no-read') h.read();
+        if (variant === 'search-after-read') attempt(h, xSearch());
+        if (variant === 'continue' || variant === 'typed-continue') {
+          h.agent._storeContinuationExecutionEvidence(h.tab);
+          h.agent._beginCompletionInvariant(h.tab);
+          h.agent._startPlanExecutionGuard(h.tab, 'act', h.gate, variant === 'continue' ? { trustedContinuation: true } : {});
+          assert.equal(h.agent._planExecutionGuards.get(h.tab).steeringPriorReadAfterCorrection, variant === 'continue', variant);
+          if (variant === 'typed-continue') h.read();
+        }
+        const blocked = await h.check(xPublish('WebBrain test post'));
+        if (variant === 'no-read') {
+          assert.equal(blocked.actionGuard.reason, 'prior_effect_unreconciled');
+          assert.match(blocked.error, /on mastoturk\.org, has not been observed yet: no page was read since it was sent\. Read the current page, then retry/);
+        } else assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
+      } finally { h.close(); }
+    }
+  });
+
+  test(`${build}: the task's record holds what may have changed something, through every correction`, async () => {
+    const h = await fixture('Post on X, then sign me up for the newsletter.', { pageUrl: 'https://bsky.app/' });
     try {
-      const xNow = body => ({ ...publish(snap(body, 'twitter:alice')), url: 'https://x.com/home', host: 'x.com' });
-      h.agent._recordCompletionSubmitAttempt(h.tab, xNow('Hello wrold'), 'click_ax', { ref_id: 'ref_1' },
-        'https://x.com/home', 'https://x.com/home', { success: true, dispatched: true }, 'x-doc', 'x-doc');
-      // A preparation the browser refused sends nothing and is not archived.
-      h.agent._recordCompletionSubmitAttempt(h.tab, formOn('https://news.example.test/subscribe'), 'click_ax', { ref_id: 'ref_2' },
-        'https://news.example.test/subscribe', 'https://news.example.test/subscribe', { success: false, dispatched: false, noDispatch: true }, 'news-doc', 'news-doc');
-      h.agent._recordCompletionSubmitAttempt(h.tab, formOn('https://news.example.test/subscribe'), 'click_ax', { ref_id: 'ref_2' },
-        'https://news.example.test/subscribe', 'https://news.example.test/thanks', { success: true, dispatched: true }, 'news-doc', 'news-doc');
-      assert.deepEqual(h.agent._planExecutionGuards.get(h.tab).dispatchedAttempts.map(receipt => receipt.originatingUrl),
-        ['https://x.com/home', 'https://news.example.test/subscribe']);
-      h.agent._completionSubmitStates.set(h.tab, { ...h.agent._completionSubmitStates.get(h.tab), observedAfterSubmit: true });
-      const guard = await h.steer('fix the typo in the tweet');
-      assert.deepEqual(guard.steeringMutationReceipts.map(receipt => receipt.originatingUrl),
-        ['https://x.com/home', 'https://news.example.test/subscribe']);
-      assert.equal(guard.steeringMutationReceipts.at(-1).observedAfterSubmit, true, 'The live receipt replaces its archived copy');
-      assert.deepEqual(guard.dispatchedAttempts || [], [], 'The revision starts its own list');
-      // The corrected post is held to the X post; the same post again is a
-      // duplicate.
-      const blocked = await h.check(xNow('Hello world'));
-      assert.equal(blocked.actionGuard.reason, 'prior_effect_unreconciled', blocked.error);
-      assert.match(blocked.error, /on this platform/);
-      assert.equal((await h.check(xNow('Hello wrold'))).actionGuard.reason, 'duplicate_publication');
+      attempt(h, xPublish('Hello wrold'));
+      attempt(h, newsletter(), refused);
+      attempt(h, xSearch());
+      attempt(h, newsletter());
+      // A request that changes something is recorded at its own address.
+      h.agent._recordCompletionSubmitAttempt(h.tab, null, 'fetch_url', { url: 'https://api.example.org/v1/items', method: 'POST' },
+        'https://newsletter.test/thanks', 'https://newsletter.test/thanks', { success: true, status: 201 });
+      h.agent._recordCompletionSubmitAttempt(h.tab, null, 'fetch_url', { url: 'https://read.example.net/v1/items' },
+        'https://newsletter.test/thanks', 'https://newsletter.test/thanks', { success: true, status: 200 });
+      let guard = await h.steer('fix the typo in the tweet');
+      assert.deepEqual(guard.steeringPriorSubmission.taskAttemptPlatforms, ['twitter', 'newsletter.test', 'example.org']);
+      assert.deepEqual(h.agent.conversations.get(h.tab).findLast(message => message.webbrainSteering).webbrainSteering
+        .priorSubmission.taskAttemptPlatforms, ['twitter', 'newsletter.test', 'example.org'], 'the saved receipt lists them too');
+      h.read();
+      assert.equal(await h.check(bskyPublish('Hello world')), null);
+      attempt(h, bskyPublish('Hello world'));
+      guard = await h.steer('and on Mastodon');
+      assert.deepEqual(guard.steeringPriorSubmission.taskAttemptPlatforms, ['twitter', 'newsletter.test', 'example.org', 'bluesky']);
     } finally { h.close(); }
+  });
+
+  test(`${build}: an over-long record counts as unknown, and receipts from two runs stay two`, async () => {
+    const h = await fixture('Sign me up on every site.', { pageUrl: 'https://x.com/home' });
+    try {
+      for (let index = 0; index < 65; index++) attempt(h, formOn(`https://site${index}.test/subscribe`));
+      const guard = await h.steer('ok now on X');
+      assert.equal(guard.steeringPriorSubmission.taskAttemptPlatforms, null, 'past 64 sites the record is not kept');
+      h.read();
+      assert.equal((await h.check(xPublish('Hello', ''))).actionGuard.reason, 'attempt_history_unknown');
+    } finally { h.close(); }
+    // Action sequences restart with each run: the same sequence and page in
+    // two runs are two attempts, and both are archived.
+    const r = await fixture('Post "Hello world" on X.', { pageUrl: 'https://x.com/home' });
+    try {
+      r.agent._completionSubmitStates.set(r.tab, { ...publicationReceipt(), runToken: 'completion_run_1' });
+      await r.steer('Also send me the link.');
+      r.agent._completionSubmitStates.set(r.tab, { ...publicationReceipt(), publicationSnapshot: snap('Hello again'), runToken: 'completion_run_2' });
+      const guard = await r.steer('And keep it short.');
+      assert.deepEqual(guard.steeringMutationReceipts.map(receipt => receipt.runToken), ['completion_run_1', 'completion_run_2']);
+    } finally { r.close(); }
   });
 
   test(`${build}: an unchanged post under a revision reports the earlier publication instead of repeating it`, async () => {

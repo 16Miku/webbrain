@@ -337,6 +337,12 @@ function defaultPlanExecutionBlockNudge({
 const HUMANIZER_SKILL_SITE_ADAPTERS = new Set([
   'gmail', 'outlook', 'yahoo-mail', 'proton-mail', 'fastmail', 'zoho-mail', 'yandex-mail',
 ]);
+// Sites that are one publishing platform under more than one name.
+const PUBLICATION_SITE_ALIASES = Object.freeze({
+  'x.com': 'twitter', 'twitter.com': 'twitter', 'bsky.app': 'bluesky',
+  'threads.net': 'threads', 'threads.com': 'threads', 'fb.com': 'facebook', 'facebook.com': 'facebook',
+});
+
 const COMPLETION_DOCUMENT_OBSERVATION_TOOLS = new Set([
   'chat_observe',
   'auto_screenshot',
@@ -763,6 +769,9 @@ export class Agent extends LoopDetector {
     this._isPdfTabCache = new Map();
     this._doneBlockCount = new Map();
     this._completionSubmitStates = new Map(); // tabId -> trusted submit transition metadata
+    // tabId -> { key, platforms }: the platforms (sites) of every attempt the
+    // current task dispatched, or platforms null when they are not all known.
+    this._taskAttemptLedgers = new Map();
     this._recentSubmitClicks = new Map();
     this._formValidationBlocks = new Map(); // tabId -> validation state that must change before another submit
     this._steeringRuns = new Map(); // tabId -> inbox owned by one interactive run
@@ -1510,6 +1519,14 @@ export class Agent extends LoopDetector {
         taskKey: terminalGuard.taskKey,
         popupLauncherToken: detectedSubmit.popupLauncherToken || '', launcherDispatched: true };
     }
+    // A page read under a correction's guard is a read since the earlier
+    // attempt was sent, which was before the correction. It counts whichever
+    // page it was and whatever later replaced the live receipt, including in
+    // a later run of the same correction.
+    if (terminalGuard?.steeringPriorSubmission && COMPLETION_DOCUMENT_OBSERVATION_TOOLS.has(name)
+        && next.lastObservation && Number(next.lastObservation.sequence) !== Number(state.lastObservation?.sequence ?? -1)) {
+      terminalGuard.steeringPriorReadAfterCorrection = true;
+    }
     let submitState = this._completionSubmitStates.get(tabId);
     if (submitState?.semanticCommit && Number(next.lastAction?.sequence) > Number(state.lastAction?.sequence || 0)) {
       submitState = recordSemanticCommitNavigation(submitState, state, next,
@@ -1652,7 +1669,16 @@ export class Agent extends LoopDetector {
     return next;
   }
 
+  // Every action's result passes here: its submit receipt, if it is one, and
+  // what it may have changed, for the task's record of attempted platforms.
   _recordCompletionSubmitAttempt(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result, beforeDocument = '', afterDocument = '', executionContext = {}) {
+    const state = this._recordCompletionSubmitState(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result,
+      beforeDocument, afterDocument, executionContext);
+    this._recordTaskAttempt(tabId, name, args, detectedSubmit, result, state);
+    return state;
+  }
+
+  _recordCompletionSubmitState(tabId, detectedSubmit, name, args, beforeUrl, afterUrl, result, beforeDocument = '', afterDocument = '', executionContext = {}) {
     // API-backed Chrome Web Store submission is verified by the subsequent
     // chrome_web_store_status observation. Do not create DOM-form transition
     // state for a dashboard Chrome intentionally prevents us from inspecting.
@@ -1809,12 +1835,6 @@ export class Agent extends LoopDetector {
       };
     }
     this._completionSubmitStates.set(tabId, state);
-    // Every dispatched attempt of this revision is kept, not only the latest,
-    // so a correction archives all of them: a post on X followed by a form on
-    // another site still holds a corrected X post to that X post.
-    if (state.dispatched && publicationGuard) {
-      publicationGuard.dispatchedAttempts = [...(publicationGuard.dispatchedAttempts || []), structuredClone(state)].slice(-12);
-    }
     if (state.dispatched && publicationGuard?.resourceMutationAuthorization) {
       const record = state.actionRecord;
       (publicationGuard.resourceMutationDispatches ||= []).push({ key: publicationGuard.resourceMutationAuthorization.key,
@@ -5069,7 +5089,10 @@ export class Agent extends LoopDetector {
       messages.push({ role: 'user', content: item.text, webbrainSteering: {
         requestId: run.requestId, messageId: item.id, revision: ++run.revision, parentTaskKey,
         // A durable attempt receipt is separate from revised completion proof.
-        ...(priorSubmission ? { priorSubmission: structuredClone(priorSubmission) } : {}),
+        // It lists every platform the task attempted up to it, null when not
+        // all are known, so a later run, even after a restart, knows them.
+        ...(priorSubmission ? { priorSubmission: { ...structuredClone(priorSubmission),
+          taskAttemptPlatforms: this._correctionAttemptPlatforms(tabId, messages, priorBinding, priorSubmission) } } : {}),
       } });
       onUpdate('steering_applied', item);
       this._traceSteeringRevision(tabId, 'steering_applied', { revision: run.revision, messageId: item.id });
@@ -5154,9 +5177,15 @@ export class Agent extends LoopDetector {
       // Revised goal counters are separate from the immutable original attempt.
       const guard = this._startPlanExecutionGuard(tabId, mode, gate, revisionOptions);
       this._resetCompletionForSteeringRevision(tabId);
-      guard.steeringPriorSubmission = priorSubmission ? structuredClone(priorSubmission) : null;
-      guard.steeringMutationReceipts = this._mergeSubmissionReceipts(previous?.steeringMutationReceipts,
-        [...(previous?.dispatchedAttempts || []), ...(priorSubmission ? [priorSubmission] : [])]);
+      guard.steeringPriorSubmission = priorSubmission ? { ...structuredClone(priorSubmission),
+        taskAttemptPlatforms: this._correctionAttemptPlatforms(tabId, messages, this._activeTaskBinding(messages), priorSubmission) } : null;
+      guard.steeringPriorReadAfterCorrection = false;
+      guard.steeringMutationReceipts = structuredClone(previous?.steeringMutationReceipts || []);
+      // Action sequences restart with each run, so a receipt is one attempt
+      // only within its run.
+      if (priorSubmission && !guard.steeringMutationReceipts.some(receipt => receipt.actionSequence === priorSubmission.actionSequence
+          && receipt.originatingDocument === priorSubmission.originatingDocument
+          && (receipt.runToken || '') === (priorSubmission.runToken || ''))) guard.steeringMutationReceipts.push(structuredClone(priorSubmission));
       guard.steeringPriorContext = previous?.steeringPriorContext || (priorSubmission ? {
         siteWorkflow: structuredClone(previous?.siteWorkflow || null),
         socialPublication: structuredClone(previous?.socialPublication || null),
@@ -5275,11 +5304,13 @@ export class Agent extends LoopDetector {
 
   // Outcome knowledge that does not depend on the current page: a cached
   // reconciliation of this exact receipt, a job-verified publication outcome,
-  // or an explicit page observation after the dispatch.
+  // or an explicit page observation after the dispatch, including any page
+  // read under the correction, which came after it.
   _steeringPriorEffectKnown(tabId, guard, prior) {
     const cached = guard?.steeringPriorSubmissionReconciliation;
     return (cached?.verified === true && cached.actionSequence === prior?.actionSequence)
       || this._steeringPriorPublicationOutcome(guard, prior) === 'verified'
+      || (!!prior && guard?.steeringPriorSubmission === prior && guard.steeringPriorReadAfterCorrection === true)
       || this._steeringPriorEffectObserved(tabId, prior);
   }
 
@@ -5408,18 +5439,6 @@ export class Agent extends LoopDetector {
         : !!subject.resourceUrl && entry.resourceUrl === subject.resourceUrl)) || null;
   }
 
-  // Receipts of dispatched attempts in the order they were made, one per
-  // attempt; a later copy of the same attempt, such as the live receipt with
-  // its later page reads, replaces the earlier copy in place. Bounded.
-  _mergeSubmissionReceipts(archived, receipts) {
-    const merged = new Map();
-    for (const receipt of [...(Array.isArray(archived) ? archived : []), ...(Array.isArray(receipts) ? receipts : [])]) {
-      if (!receipt || typeof receipt !== 'object') continue;
-      merged.set(`${receipt.actionSequence ?? ''}|${receipt.originatingDocument ?? ''}|${receipt.originatingUrl ?? ''}`, structuredClone(receipt));
-    }
-    return [...merged.values()].slice(-24);
-  }
-
   // The platform a post or form belongs to, named by the site it was made on:
   // X and Bluesky as their account identities name them, any other site by the
   // last two labels of its host. Hosts that share them count as one site, so
@@ -5431,7 +5450,133 @@ export class Agent extends LoopDetector {
     const labels = host.split('.').filter(Boolean);
     if (labels.length < 2 || labels.every(label => /^\d+$/.test(label))) return host;
     const site = labels.slice(-2).join('.');
-    return site === 'x.com' || site === 'twitter.com' ? 'twitter' : site === 'bsky.app' ? 'bluesky' : site;
+    return PUBLICATION_SITE_ALIASES[site] || site;
+  }
+
+  // The platforms an attempt may have changed: its account's platform where
+  // WebBrain read one (X and Bluesky) and the site of each address it was
+  // made from. An attempt with no usable address may have been anywhere, '*'.
+  _attemptPlatformKeys(account, urls = []) {
+    const keys = new Set();
+    const platform = String(account || '').split(':')[0].trim().toLowerCase();
+    if (platform) keys.add(platform);
+    for (const url of urls) {
+      const site = url ? this._publicationSiteOf(url) : '';
+      if (site) keys.add(site);
+    }
+    return keys.size ? [...keys] : ['*'];
+  }
+
+  // Where a receipt's attempt was made. The page it went to afterwards, such
+  // as the next site of a task, is not where it was made.
+  _receiptPlatformKeys(receipt) {
+    if (!receipt || typeof receipt !== 'object') return ['*'];
+    // A receipt made only of X and Bluesky outcomes, kept when no submission
+    // was sent: outcomes that all failed sent nothing anywhere.
+    if (receipt.publicationOutcomes && !receipt.originatingUrl && !receipt.currentUrl) {
+      return Object.values(receipt.publicationOutcomes).every(outcome => outcome?.status === 'failed') ? [] : ['*'];
+    }
+    const snapshot = receipt.publicationSnapshot || receipt.workflowBinding?.socialPublication?.snapshot;
+    return this._attemptPlatformKeys(snapshot?.account,
+      [receipt.originatingUrl || receipt.currentUrl, receipt.iframeSubmission?.currentUrl]);
+  }
+
+  // A task is known by its original request, which every correction and
+  // clarification of it keeps, in this conversation.
+  _taskAttemptLedgerKey(tabId, messages, binding) {
+    const root = Number.isInteger(binding?.taskIndex) && binding.taskIndex >= 0 ? messages[binding.taskIndex] : null;
+    const text = root ? this._plannerUserAuthoredText(root) : '';
+    return text ? `${this.conversationIds?.get(tabId) || ''}|${this._sha256TextSync(text)}` : '';
+  }
+
+  // Whether nothing ran after this message: only app state (scratchpad,
+  // progress, memory), local status notes, planner questions and the person's
+  // own replies follow it. Anything else, including a recovery placeholder or
+  // a summary of earlier steps, may stand for an action no longer on record.
+  _noTaskRunSince(messages, fromIndex) {
+    if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= messages.length) return false;
+    return messages.slice(fromIndex + 1).every(message => this._isPinnedAgentStateMessage(message)
+      || this._isLocalConversationStatusMessage(message)
+      || (message?.role === 'assistant' && !!message.webbrainPlannerClarification && !message.tool_calls?.length)
+      || (message?.role === 'user' && !message.webbrainAppOwned && !this._isAgentInjectedUserMessage(message)
+        && !this._isScheduledResumeTurn(message)));
+  }
+
+  // The platforms of every attempt the current task has dispatched, from its
+  // first run on, or platforms null when WebBrain cannot know them all. In a
+  // session the record follows the task through its runs, corrections and
+  // Continue. Without one, for example after WebBrain restarted, only a task
+  // that has not run since its request, or since the correction whose receipt
+  // lists the platforms before it, is known.
+  _taskAttemptLedger(tabId, messages = this.conversations?.get(tabId) || [], binding = this._activeTaskBinding(messages)) {
+    const key = this._taskAttemptLedgerKey(tabId, messages, binding);
+    const ledgers = this._taskAttemptLedgers ||= new Map();
+    const entry = ledgers.get(tabId);
+    if (key && entry?.key === key) return entry;
+    let platforms = null;
+    if (key) {
+      const prior = binding.priorSubmission;
+      let from = binding.taskIndex;
+      if (prior) {
+        from = -1;
+        for (let index = Math.min(binding.index, messages.length - 1); index > binding.taskIndex; index--) {
+          if (messages[index]?.webbrainSteering?.priorSubmission?.dispatched === true) { from = index; break; }
+        }
+      }
+      if (this._noTaskRunSince(messages, from)) {
+        if (!prior) platforms = [];
+        else if (Array.isArray(prior.taskAttemptPlatforms)) platforms = [...prior.taskAttemptPlatforms];
+      }
+    }
+    const created = { key, platforms };
+    ledgers.set(tabId, created);
+    return created;
+  }
+
+  // Adds what an attempt may have changed to the task's record: a dispatched
+  // submission, publication or deletion that commits something, a fetch that
+  // sends a mutation, and a store publication. A search commits nothing.
+  _recordTaskAttempt(tabId, name, args, detected, result, submitState) {
+    try {
+      this._addTaskAttempt(tabId, name, args, detected, result, submitState);
+    } catch {
+      // A record that could not be updated is no longer complete; the action
+      // itself is unaffected.
+      try { const entry = this._taskAttemptLedgers?.get(tabId); if (entry) entry.platforms = null; } catch {}
+    }
+  }
+
+  _addTaskAttempt(tabId, name, args, detected, result, submitState) {
+    const keys = new Set();
+    if (submitState?.dispatched === true && !this._nonCommittingSubmission(detected)) {
+      for (const key of this._attemptPlatformKeys(submitState.publicationSnapshot?.account,
+        [submitState.originatingUrl, detected?.url, detected?.frameUrl, submitState.iframeSubmission?.currentUrl])) keys.add(key);
+    }
+    if (isNetworkMutation(name, args) || name === 'chrome_web_store_publish') {
+      const notSent = result?.noDispatch === true || result?.denied || result?.skipped || result?.cancelled
+        || (result?.dispatched === false && result?.outcomeUnknown !== true && result?.missingToolResponse !== true);
+      // A request goes to its own address, not the page's.
+      if (!notSent) keys.add(this._publicationSiteOf(name === 'chrome_web_store_publish'
+        ? 'https://chromewebstore.google.com/' : args?.url) || '*');
+    }
+    if (!keys.size) return;
+    const ledger = this._taskAttemptLedger(tabId);
+    if (!Array.isArray(ledger.platforms)) return;
+    const platforms = [...new Set([...ledger.platforms, ...keys])];
+    ledger.platforms = platforms.length > 64 ? null : platforms;
+  }
+
+  // The platforms of every attempt the task made up to a correction, its
+  // receipt included, or null when they are not all known.
+  _correctionAttemptPlatforms(tabId, messages, binding, receipt) {
+    try {
+      const ledger = this._taskAttemptLedger(tabId, messages, binding).platforms;
+      if (!Array.isArray(ledger)) return null;
+      const platforms = [...new Set([...ledger, ...(receipt ? this._receiptPlatformKeys(receipt) : [])])];
+      return platforms.length > 64 ? null : platforms;
+    } catch {
+      return null;
+    }
   }
 
   async _resourceMutationPreSubmitBlock(tabId, name, args, detected, provider = this._activeProvider(tabId)) {
@@ -5466,40 +5611,41 @@ export class Agent extends LoopDetector {
       return blocked('resource_unresolved', 'This Delete or Remove control is not inside one identifiable record (for example a toolbar, bulk, selection or unlinked menu action). Use the Delete or Remove control inside the specific row the user named; toolbar and bulk deletions cannot be bound to a record.');
     }
     if (genericCommit && !formCommit && !permalinked) return blocked('resource_unresolved');
-    const latestPrior = guard.steeringPriorSubmission;
+    const prior = guard.steeringPriorSubmission;
     const task = this._activeTaskBinding(this.conversations.get(tabId) || []);
     const latest = this._latestAcceptedRequestText(task);
+    const priorSnapshot = prior?.publicationSnapshot || prior?.workflowBinding?.socialPublication?.snapshot;
     // An account belongs to its platform's namespace. A post on another
     // platform is a separate publication bound to its own contract action,
-    // not a replacement of the earlier post under a changed account. Account
-    // names are read on X and Bluesky only; a post or form anywhere else, such
-    // as Mastodon, is named by the site it was made on. Every attempt the task
-    // made before the correction counts, not only the latest: an earlier post
-    // on this platform, or an attempt whose platform is unknown, holds the new
-    // post to that attempt's own reconciliation, whatever came after it.
+    // not a replacement of the earlier post under a changed account.
     const platformOf = account => String(account || '').split(':')[0];
-    const snapshotOf = receipt => receipt?.publicationSnapshot || receipt?.workflowBinding?.socialPublication?.snapshot;
-    const receiptPlatform = receipt => platformOf(snapshotOf(receipt)?.account)
-      || this._publicationSiteOf(receipt?.originatingUrl || receipt?.currentUrl);
-    const currentPlatform = platformOf(detected.publicationSnapshot?.account) || this._publicationSiteOf(detected.url);
-    const earlierAttempts = this._mergeSubmissionReceipts(guard.steeringMutationReceipts, latestPrior ? [latestPrior] : [])
-      .filter(receipt => receipt.dispatched === true || receipt.outcomeUnknown === true || receipt.nativeInputAcknowledged === true);
-    const sameNetworkAttempts = publication ? earlierAttempts.filter(receipt => {
-      const platform = receiptPlatform(receipt);
-      return !platform || platform === currentPlatform;
-    }) : [];
-    const attemptedPlatforms = archive => (archive?.contract?.actions || [])
-      .filter(action => archive.outcomes?.[action?.id]).map(action => action.platform);
-    const earlierPostOnPlatform = publication && (
-      [guard.steeringPriorPublication, guard.steeringPriorContext?.socialPublication]
-        .some(archive => attemptedPlatforms(archive).includes(currentPlatform))
-      || (guard.resourceMutationDispatches || []).some(dispatch => dispatch?.mutationKind === 'publish'
-        && (!dispatch.publicationSnapshot?.account || platformOf(dispatch.publicationSnapshot.account) === currentPlatform)));
-    const prior = sameNetworkAttempts.at(-1) || latestPrior;
-    const priorSnapshot = snapshotOf(prior);
-    const crossPlatform = publication && !!currentPlatform && earlierAttempts.length > 0
-      && !sameNetworkAttempts.length && !earlierPostOnPlatform;
-    if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform) {
+    const accountCrossPlatform = publication && !!priorSnapshot?.account && !!detected.publicationSnapshot?.account
+      && platformOf(priorSnapshot.account) !== platformOf(detected.publicationSnapshot.account);
+    // Account names are read on X and Bluesky only. A post or form anywhere
+    // else, such as Mastodon, is placed by the site it was made on. A post on
+    // another site than the earlier attempt cannot repeat that attempt, but it
+    // may repeat an attempt before it: it counts as another platform only when
+    // the correction's receipt lists every platform the task had attempted and
+    // this post's platform is not among them.
+    const priorPlatforms = prior ? this._receiptPlatformKeys(prior) : ['*'];
+    const currentPlatforms = this._attemptPlatformKeys(detected.publicationSnapshot?.account, [detected.url, detected.frameUrl]);
+    const otherSite = publication && !priorPlatforms.includes('*') && !currentPlatforms.includes('*')
+      && !currentPlatforms.some(platform => priorPlatforms.includes(platform));
+    // The receipt's list, checked against the X and Bluesky outcomes and the
+    // receipts archived at earlier corrections. A sent-nothing outcome is not
+    // an attempt; an attempt of unknown site may have been anywhere.
+    const attempted = Array.isArray(prior?.taskAttemptPlatforms) ? prior.taskAttemptPlatforms : null;
+    const outcomePlatforms = archive => (archive?.contract?.actions || [])
+      .filter(action => action?.id && archive.outcomes?.[action.id] && archive.outcomes[action.id].status !== 'failed')
+      .map(action => action.platform || '*');
+    const earlierPlatforms = [...(attempted || []),
+      ...[guard.steeringPriorPublication, guard.steeringPriorContext?.socialPublication].flatMap(outcomePlatforms),
+      ...(guard.steeringMutationReceipts || []).filter(receipt => receipt?.dispatched === true)
+        .flatMap(receipt => this._receiptPlatformKeys(receipt))];
+    const earlierAttemptHere = earlierPlatforms.some(platform => currentPlatforms.includes(platform));
+    const historyKnown = !!attempted && !earlierPlatforms.includes('*');
+    const crossPlatform = accountCrossPlatform || (otherSite && historyKnown && !earlierAttemptHere);
+    if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform && !otherSite) {
       const account = String(detected.publicationSnapshot?.account || '').split(':').slice(1).join(':');
       if (!account || !latest.toLowerCase().includes(account.toLowerCase())) return blocked('replacement_account_changed');
     }
@@ -5557,6 +5703,17 @@ export class Agent extends LoopDetector {
     // receipt or adopting a success assertion from a model/tool result.
     const fresh = await this._detectLikelySubmitAction(tabId, name, args, { mutationReconciliation: true });
     if (!current() || !fresh || this._resourceMutationActionKey(tabId, name, args, fresh) !== key) return blocked('resource_changed');
+    const priorHost = (() => { try { return new URL(prior?.originatingUrl || prior?.currentUrl || '').hostname; } catch { return ''; } })();
+    // The latest attempt was on another site, so it can never be found here,
+    // and an earlier attempt on this site, or one WebBrain has no record of,
+    // may be what this post repeats. Say so once instead of sending the model
+    // to look for the other site's post on this page.
+    if (prior && publication && otherSite && !crossPlatform) {
+      return blocked(earlierAttemptHere ? 'earlier_attempt_on_platform' : 'attempt_history_unknown', earlierAttemptHere
+        ? `Nothing was published. Before the latest correction this task already made an attempt on this site, and only the latest attempt${priorHost ? `, on ${priorHost},` : ''} can be checked, so this post could repeat the earlier one or sit beside it. Do not publish it again. Tell the user what was not done and that the earlier attempt on this site may already be there; they can check it and ask again.`
+        : `Nothing was published. WebBrain has no full record of what this task attempted before the latest correction (for example after WebBrain restarted), so it cannot rule out an earlier attempt on this site, and the latest attempt${priorHost ? `, on ${priorHost},` : ''} cannot be checked here. Do not publish it again. Tell the user what was not done; they can ask again to post it.`,
+      { retryable: false });
+    }
     if (prior) {
       const matching = this._steeringPriorResourceMatches(tabId, guard, prior, fresh);
       const reconciled = guard.steeringPriorSubmissionReconciliation;
@@ -5587,12 +5744,11 @@ export class Agent extends LoopDetector {
             && this._steeringPriorEffectObserved(tabId, prior)) observedKind = 'form_observation';
       }
       if (prior.dispatched !== true || (matching.length !== 1 && !deletedVerifiedResource && !observedKind)) {
-        const priorHost = (() => { try { return new URL(prior.originatingUrl || prior.currentUrl || '').hostname; } catch { return ''; } })();
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
           : crossPlatform
-            // Any page read since it was sent is enough for a post elsewhere,
-            // so the model is not sent back to the other site.
+            // Any page read since the correction is enough for a post on
+            // another platform, so the model is not sent back to the other site.
             ? `The earlier submission from before the latest correction${priorHost ? `, on ${priorHost},` : ''} has not been observed yet: no page was read since it was sent. Read the current page, then retry; nothing about it needs to be found here, and do not repeat it.`
             : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
       }
@@ -29517,6 +29673,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._nytimesPageGateNotified.delete(tabId);
     this._doneBlockCount.delete(tabId);
     this._completionSubmitStates.delete(tabId);
+    this._taskAttemptLedgers.delete(tabId);
     this._recentSubmitClicks.delete(tabId);
     this._formValidationBlocks.delete(tabId);
     // A conversation clear preserves the run guard while the document is
@@ -31960,8 +32117,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       steeringPriorSubmission: carryMatches && carried.steeringPriorSubmission
         ? structuredClone(carried.steeringPriorSubmission)
         : structuredClone(this._activeTaskBinding(this.conversations.get(tabId) || []).priorSubmission || null),
+      // A read in an earlier run of the same correction was already a read
+      // since its receipt was sent; a receipt read from the conversation needs
+      // a read in this run.
+      steeringPriorReadAfterCorrection: carryMatches && !!carried.steeringPriorSubmission
+        && carried.steeringPriorReadAfterCorrection === true,
       steeringMutationReceipts: carryMatches ? structuredClone(carried.steeringMutationReceipts || []) : [],
-      dispatchedAttempts: carryMatches ? structuredClone(carried.dispatchedAttempts || []) : [],
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
       resourceMutationDispatches: carryMatches ? structuredClone(carried.resourceMutationDispatches || []) : [],
@@ -32074,6 +32235,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       staleCancellationRecoveryAttempted: false,
     };
     this._planExecutionGuards.set(tabId, state);
+    // Start or keep the record of what this task has attempted, before any of
+    // this run's actions. Without it the record is incomplete, which only
+    // holds posts back.
+    try { this._taskAttemptLedger(tabId); } catch {}
     this._armWorkflowJobRequiredEvidence(tabId, state);
     const messages = this.conversations.get(tabId);
     if (messages?.[0]?.role === 'system') {
@@ -32489,8 +32654,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         successfulRequiredSchedulingToolCalls: guard.successfulRequiredSchedulingToolCalls,
         verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
         steeringPriorSubmission: guard.steeringPriorSubmission ? structuredClone(guard.steeringPriorSubmission) : null,
+        steeringPriorReadAfterCorrection: guard.steeringPriorReadAfterCorrection === true,
         steeringMutationReceipts: structuredClone(guard.steeringMutationReceipts || []),
-        dispatchedAttempts: structuredClone(guard.dispatchedAttempts || []),
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
         resourceMutationDispatches: structuredClone(guard.resourceMutationDispatches || []),

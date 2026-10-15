@@ -765,3 +765,53 @@ test('history navigation after a dropped connection answers its own leave prompt
     assert.deepEqual(state.answers(), [{ accept: true }]);
   });
 });
+
+// Stop pressed while a navigation waits for dialog handling to be armed, for
+// example behind a prompt that already holds the page: nothing is sent.
+for (const tool of ['navigate', 'go_back']) {
+  test(`Stop while dialog handling is armed for ${tool} sends nothing`, async () => {
+    const tabId = tool === 'navigate' ? 4305 : 4306;
+    await withNavigationFixture(tabId, 'https://x.com/compose/post', async ({ state, cdpClient, agent }) => {
+      const controller = new AbortController();
+      await cdpClient.startDialogHandling(tabId, { signal: controller.signal });
+      cdpClient._onDebuggerDetach({ tabId }, 'target_closed');
+      // Re-arming hangs: Page.enable never answers.
+      cdpClient.sendCommand = async (...args) => { state.calls.push(args); return args[1] === 'Page.enable' ? new Promise(() => {}) : {}; };
+      let historyRan = false;
+      state.chrome.scripting.executeScript = async ({ func }) => {
+        if (String(func).includes('history.go')) historyRan = true;
+        return [{ result: { attachedFiles: 0, dirtyFields: 0, before: state.url } }];
+      };
+      const started = Date.now();
+      const pending = agent.executeTool(tabId, tool, tool === 'navigate' ? { url: 'https://mastoturk.org/home' } : { force: true });
+      setTimeout(() => { agent.abort(tabId); controller.abort(); }, 50);
+      const result = await pending;
+      assert.equal(result.success, false);
+      assert.equal(result.dispatched, false, result.error);
+      assert.equal(result.noDispatch, true);
+      assert.match(result.error, /stopped before the (?:history )?navigation was sent/);
+      assert.equal(state.url, 'https://x.com/compose/post', 'The page was not left');
+      assert.equal(historyRan, false, 'history.go never ran');
+      assert.ok(Date.now() - started < 1400, 'Stop does not wait for the arming to time out');
+    });
+  });
+}
+
+// The person cancelling the debugger while a run starts stops it, as before.
+test('the person cancelling the debugger while a run starts ends its dialog handling as a stop', async () => {
+  const { client } = harness();
+  let entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  client.attach = () => { entered(); return new Promise(() => {}); };
+  const startup = client.startDialogHandling(7);
+  await ready;
+  client._onDebuggerDetach({ tabId: 7 }, 'canceled_by_user');
+  await assert.rejects(startup, error => error.name === 'AbortError');
+  assert.equal(client.dialogIntents.has(7), false);
+  assert.equal(client.dialogRuns.has(7), false);
+  client.attach = async id => client.sessions.set(id, { tabId: id });
+  assert.equal(await client.ensureDialogHandling(7), false, 'Nothing arms it again');
+  await client.attach(7);
+  await tick();
+  assert.equal(client.dialogRuns.has(7), false);
+});
