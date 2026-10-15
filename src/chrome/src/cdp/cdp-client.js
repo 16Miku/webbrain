@@ -528,7 +528,7 @@ export class CDPClient {
       // the run's: the next attach or navigation arms it again. The person
       // cancelling the debugger ends it for the run.
       if (reason === 'canceled_by_user') this.stopDialogHandling(tabId);
-      else this._disarmDialogHandling(tabId);
+      else this._disarmDialogHandling(tabId, 'dropped');
       this.pendingDialogs.delete(tabId);
       this._dropWebMCPSession(tabId, `Debugger detached: ${reason || 'unknown reason'}`);
       this.sessions.delete(tabId);
@@ -752,9 +752,11 @@ export class CDPClient {
   }
 
   // Arms the run's dialog handling on the tab's current debugger connection.
-  // A failure leaves the run's wish in place for a later connection.
-  _armDialogHandling(tabId, intent) {
-    this._disarmDialogHandling(tabId);
+  // A failure leaves the run's wish in place for a later connection. Arming
+  // during a run waits less than a run's start: a setup that hangs behind an
+  // open prompt must not hold every navigation for long.
+  _armDialogHandling(tabId, intent, timeoutMs = intent.timeoutMs ?? 5000) {
+    this._disarmDialogHandling(tabId, 'replaced');
     if (intent.signal?.aborted || this.dialogIntents.get(tabId) !== intent) return Promise.resolve();
     const owner = { signal: intent.signal, onHandled: intent.onHandled };
     owner.onAbort = () => {
@@ -762,7 +764,7 @@ export class CDPClient {
     };
     this.dialogRuns.set(tabId, owner);
     owner.signal?.addEventListener('abort', owner.onAbort, { once: true });
-    owner.arming = this._armDialogOwner(tabId, owner, intent.timeoutMs ?? 5000);
+    owner.arming = this._armDialogOwner(tabId, owner, timeoutMs);
     return owner.arming;
   }
 
@@ -776,10 +778,14 @@ export class CDPClient {
       }
     };
     const interrupted = new Promise((_, reject) => {
-      owner.cancelStartup = () => {
+      owner.cancelStartup = (cause = 'stopped') => {
         markPendingAttachCancelled();
-        const error = new Error('Stopped during browser dialog setup');
-        error.name = 'AbortError';
+        // Only Stop, abort and the run's end stop the run. A connection that
+        // dropped, or a newer arming, leaves it running without this setup.
+        const error = new Error(cause === 'stopped' ? 'Stopped during browser dialog setup'
+          : 'The debugger connection changed during browser dialog setup');
+        if (cause === 'stopped') error.name = 'AbortError';
+        else error.code = cause === 'dropped' ? 'dialog_connection_dropped' : 'dialog_setup_replaced';
         reject(error);
       };
       timer = setTimeout(() => {
@@ -817,13 +823,13 @@ export class CDPClient {
    * leave prompt. Resolves whether it is armed; never throws, so a page the
    * debugger cannot reach still navigates.
    */
-  async ensureDialogHandling(tabId) {
+  async ensureDialogHandling(tabId, { timeoutMs = 1500 } = {}) {
     const intent = this.dialogIntents.get(tabId);
     if (!intent || intent.signal?.aborted) return false;
     const owner = this.dialogRuns.get(tabId);
     try {
       if (owner) await owner.arming;
-      else await this._armDialogHandling(tabId, intent);
+      else await this._armDialogHandling(tabId, intent, timeoutMs);
     } catch {}
     return this.dialogIntents.get(tabId) === intent && this.dialogRuns.has(tabId);
   }
@@ -833,7 +839,7 @@ export class CDPClient {
   _resumeDialogHandling(tabId) {
     const intent = this.dialogIntents.get(tabId);
     if (!intent || intent.signal?.aborted || this.dialogRuns.has(tabId)) return;
-    this._armDialogHandling(tabId, intent).catch(() => {});
+    this._armDialogHandling(tabId, intent, 1500).catch(() => {});
   }
 
   stopDialogHandling(tabId) {
@@ -843,10 +849,10 @@ export class CDPClient {
     this._disarmDialogHandling(tabId);
   }
 
-  _disarmDialogHandling(tabId) {
+  _disarmDialogHandling(tabId, cause = 'stopped') {
     const owner = this.dialogRuns.get(tabId);
     owner?.navigation?.release();
-    owner?.cancelStartup?.();
+    owner?.cancelStartup?.(cause);
     owner?.signal?.removeEventListener('abort', owner.onAbort);
     this.dialogRuns.delete(tabId);
   }

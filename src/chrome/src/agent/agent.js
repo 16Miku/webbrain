@@ -2120,6 +2120,12 @@ export class Agent extends LoopDetector {
       };
     }
     this._completionSubmitStates.set(tabId, state);
+    // Every dispatched attempt of this revision is kept, not only the latest,
+    // so a correction archives all of them: a post on X followed by a form on
+    // another site still holds a corrected X post to that X post.
+    if (state.dispatched && publicationGuard) {
+      publicationGuard.dispatchedAttempts = [...(publicationGuard.dispatchedAttempts || []), structuredClone(state)].slice(-12);
+    }
     if (state.dispatched && publicationGuard?.resourceMutationAuthorization) {
       const record = state.actionRecord;
       (publicationGuard.resourceMutationDispatches ||= []).push({ key: publicationGuard.resourceMutationAuthorization.key,
@@ -5476,9 +5482,8 @@ export class Agent extends LoopDetector {
       const guard = this._startPlanExecutionGuard(tabId, mode, gate, revisionOptions);
       this._resetCompletionForSteeringRevision(tabId);
       guard.steeringPriorSubmission = priorSubmission ? structuredClone(priorSubmission) : null;
-      guard.steeringMutationReceipts = structuredClone(previous?.steeringMutationReceipts || []);
-      if (priorSubmission && !guard.steeringMutationReceipts.some(receipt => receipt.actionSequence === priorSubmission.actionSequence
-          && receipt.originatingDocument === priorSubmission.originatingDocument)) guard.steeringMutationReceipts.push(structuredClone(priorSubmission));
+      guard.steeringMutationReceipts = this._mergeSubmissionReceipts(previous?.steeringMutationReceipts,
+        [...(previous?.dispatchedAttempts || []), ...(priorSubmission ? [priorSubmission] : [])]);
       guard.steeringPriorContext = previous?.steeringPriorContext || (priorSubmission ? {
         siteWorkflow: structuredClone(previous?.siteWorkflow || null),
         socialPublication: structuredClone(previous?.socialPublication || null),
@@ -5730,6 +5735,18 @@ export class Agent extends LoopDetector {
         : !!subject.resourceUrl && entry.resourceUrl === subject.resourceUrl)) || null;
   }
 
+  // Receipts of dispatched attempts in the order they were made, one per
+  // attempt; a later copy of the same attempt, such as the live receipt with
+  // its later page reads, replaces the earlier copy in place. Bounded.
+  _mergeSubmissionReceipts(archived, receipts) {
+    const merged = new Map();
+    for (const receipt of [...(Array.isArray(archived) ? archived : []), ...(Array.isArray(receipts) ? receipts : [])]) {
+      if (!receipt || typeof receipt !== 'object') continue;
+      merged.set(`${receipt.actionSequence ?? ''}|${receipt.originatingDocument ?? ''}|${receipt.originatingUrl ?? ''}`, structuredClone(receipt));
+    }
+    return [...merged.values()].slice(-24);
+  }
+
   // The platform a post or form belongs to, named by the site it was made on:
   // X and Bluesky as their account identities name them, any other site by the
   // last two labels of its host. Hosts that share them count as one site, so
@@ -5776,20 +5793,39 @@ export class Agent extends LoopDetector {
       return blocked('resource_unresolved', 'This Delete or Remove control is not inside one identifiable record (for example a toolbar, bulk, selection or unlinked menu action). Use the Delete or Remove control inside the specific row the user named; toolbar and bulk deletions cannot be bound to a record.');
     }
     if (genericCommit && !formCommit && !permalinked) return blocked('resource_unresolved');
-    const prior = guard.steeringPriorSubmission;
+    const latestPrior = guard.steeringPriorSubmission;
     const task = this._activeTaskBinding(this.conversations.get(tabId) || []);
     const latest = this._latestAcceptedRequestText(task);
-    const priorSnapshot = prior?.publicationSnapshot || prior?.workflowBinding?.socialPublication?.snapshot;
     // An account belongs to its platform's namespace. A post on another
     // platform is a separate publication bound to its own contract action,
     // not a replacement of the earlier post under a changed account. Account
-    // names are read on X and Bluesky only; for a post or form anywhere else,
-    // such as Mastodon, the site it was made on names its platform, so a post
-    // on another site is never sent to look for the earlier one on its own page.
+    // names are read on X and Bluesky only; a post or form anywhere else, such
+    // as Mastodon, is named by the site it was made on. Every attempt the task
+    // made before the correction counts, not only the latest: an earlier post
+    // on this platform, or an attempt whose platform is unknown, holds the new
+    // post to that attempt's own reconciliation, whatever came after it.
     const platformOf = account => String(account || '').split(':')[0];
-    const priorPlatform = platformOf(priorSnapshot?.account) || this._publicationSiteOf(prior?.originatingUrl || prior?.currentUrl);
+    const snapshotOf = receipt => receipt?.publicationSnapshot || receipt?.workflowBinding?.socialPublication?.snapshot;
+    const receiptPlatform = receipt => platformOf(snapshotOf(receipt)?.account)
+      || this._publicationSiteOf(receipt?.originatingUrl || receipt?.currentUrl);
     const currentPlatform = platformOf(detected.publicationSnapshot?.account) || this._publicationSiteOf(detected.url);
-    const crossPlatform = publication && !!priorPlatform && !!currentPlatform && priorPlatform !== currentPlatform;
+    const earlierAttempts = this._mergeSubmissionReceipts(guard.steeringMutationReceipts, latestPrior ? [latestPrior] : [])
+      .filter(receipt => receipt.dispatched === true || receipt.outcomeUnknown === true || receipt.nativeInputAcknowledged === true);
+    const sameNetworkAttempts = publication ? earlierAttempts.filter(receipt => {
+      const platform = receiptPlatform(receipt);
+      return !platform || platform === currentPlatform;
+    }) : [];
+    const attemptedPlatforms = archive => (archive?.contract?.actions || [])
+      .filter(action => archive.outcomes?.[action?.id]).map(action => action.platform);
+    const earlierPostOnPlatform = publication && (
+      [guard.steeringPriorPublication, guard.steeringPriorContext?.socialPublication]
+        .some(archive => attemptedPlatforms(archive).includes(currentPlatform))
+      || (guard.resourceMutationDispatches || []).some(dispatch => dispatch?.mutationKind === 'publish'
+        && (!dispatch.publicationSnapshot?.account || platformOf(dispatch.publicationSnapshot.account) === currentPlatform)));
+    const prior = sameNetworkAttempts.at(-1) || latestPrior;
+    const priorSnapshot = snapshotOf(prior);
+    const crossPlatform = publication && !!currentPlatform && earlierAttempts.length > 0
+      && !sameNetworkAttempts.length && !earlierPostOnPlatform;
     if (publication && priorSnapshot?.account && detected.publicationSnapshot?.account !== priorSnapshot.account && !crossPlatform) {
       const account = String(detected.publicationSnapshot?.account || '').split(':').slice(1).join(':');
       if (!account || !latest.toLowerCase().includes(account.toLowerCase())) return blocked('replacement_account_changed');
@@ -5881,7 +5917,11 @@ export class Agent extends LoopDetector {
         const priorHost = (() => { try { return new URL(prior.originatingUrl || prior.currentUrl || '').hostname; } catch { return ''; } })();
         return blocked('prior_effect_unreconciled', publication && !crossPlatform
           ? 'The earlier post from before the latest correction has not been matched yet. Read it on this platform (its permalink or the account\'s recent posts), then retry; do not repeat an uncertain publication.'
-          : `The earlier submission from before the latest correction${crossPlatform && priorHost ? `, on ${priorHost},` : ''} has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.`);
+          : crossPlatform
+            // Any page read since it was sent is enough for a post elsewhere,
+            // so the model is not sent back to the other site.
+            ? `The earlier submission from before the latest correction${priorHost ? `, on ${priorHost},` : ''} has not been observed yet: no page was read since it was sent. Read the current page, then retry; nothing about it needs to be found here, and do not repeat it.`
+            : 'The earlier submission from before the latest correction has not been observed yet. Read the page that shows its result, then retry; do not repeat an uncertain mutation.');
       }
       if (matching.length === 1 || deletedVerifiedResource) {
         guard.steeringPriorSubmissionReconciliation = { verified: true, verificationKind: 'resource_identity', taskKey: guard.taskKey,
@@ -34642,6 +34682,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? structuredClone(carried.steeringPriorSubmission)
         : structuredClone(this._activeTaskBinding(this.conversations.get(tabId) || []).priorSubmission || null),
       steeringMutationReceipts: carryMatches ? structuredClone(carried.steeringMutationReceipts || []) : [],
+      dispatchedAttempts: carryMatches ? structuredClone(carried.dispatchedAttempts || []) : [],
       steeringPriorContext: carryMatches ? structuredClone(carried.steeringPriorContext || null) : null,
       steeringPriorSubmissionReconciliation: carryMatches ? structuredClone(carried.steeringPriorSubmissionReconciliation || null) : null,
       resourceMutationDispatches: carryMatches ? structuredClone(carried.resourceMutationDispatches || []) : [],
@@ -35170,6 +35211,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         verifiedSubmissionEvidence: guard.verifiedSubmissionEvidence === true,
         steeringPriorSubmission: guard.steeringPriorSubmission ? structuredClone(guard.steeringPriorSubmission) : null,
         steeringMutationReceipts: structuredClone(guard.steeringMutationReceipts || []),
+        dispatchedAttempts: structuredClone(guard.dispatchedAttempts || []),
         steeringPriorContext: structuredClone(guard.steeringPriorContext || null),
         steeringPriorSubmissionReconciliation: structuredClone(guard.steeringPriorSubmissionReconciliation || null),
         resourceMutationDispatches: structuredClone(guard.resourceMutationDispatches || []),

@@ -221,6 +221,89 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  // An earlier post on the same platform still counts when something on
+  // another site came after it: "Post 'Hello wrold' on X, then sign me up for
+  // the newsletter", then "fix the typo in the tweet".
+  const typoReceipt = () => ({ ...publicationReceipt(), publicationSnapshot: snap('Hello wrold'),
+    workflowBinding: { preDispatchPublishedResourceIdentities: [], socialPublication: { contractKey: 'contract-1', actionId: 'x-post', snapshot: snap('Hello wrold') } } });
+  const newsletterReceipt = (urls = true) => ({ dispatched: true, actionSequence: 9, mutationKind: 'submit',
+    originatingUrl: urls ? 'https://news.example.test/subscribe' : '', currentUrl: urls ? 'https://news.example.test/thanks' : '',
+    originatingDocument: 'news-doc', submittedActionUrl: urls ? 'https://news.example.test/subscribe/save' : '',
+    submittedFields: [{ label: 'Email', type: 'email', value: 'alice@example.test' }], observedAfterSubmit: true });
+
+  test(`${build}: an earlier post on the same platform holds a new one there, whatever came after it`, async () => {
+    const cases = {
+      // The earlier X post is not on the page: it has to be found first.
+      'x-form-x-unread': { earlier: [typoReceipt(), newsletterReceipt()], now: publishOn('https://x.com/home', 'twitter:alice'),
+        reason: 'prior_effect_unreconciled', guidance: /on this platform/ },
+      // Found on the page, the X post itself is reconciled, not the form.
+      'x-form-x-found': { earlier: [typoReceipt(), newsletterReceipt()], now: { ...publishOn('https://x.com/home', 'twitter:alice'),
+        reconciliationResources: [record(xPost, 'Hello wrold')] }, allowed: 'resource_identity' },
+      // Bluesky after an X post and a form elsewhere is another platform.
+      'x-form-bluesky': { earlier: [typoReceipt(), newsletterReceipt()], now: publishOn('https://bsky.app/', 'bluesky:alice.bsky.social'),
+        allowed: 'cross_platform' },
+      // An attempt whose site is unknown could have been on this platform.
+      'unknown-site-x': { earlier: [newsletterReceipt(false)], now: publishOn('https://x.com/home', 'twitter:alice'),
+        reason: 'prior_effect_unreconciled', guidance: /on this platform/ },
+    };
+    for (const [variant, spec] of Object.entries(cases)) {
+      const h = await fixture('Post "Hello wrold" on X, then sign me up for the newsletter.', { pageUrl: spec.now.url });
+      try {
+        // As the real recorder keeps them: every attempt of the revision, the
+        // latest also as the live receipt.
+        h.agent._planExecutionGuards.get(h.tab).dispatchedAttempts = structuredClone(spec.earlier);
+        h.agent._completionSubmitStates.set(h.tab, structuredClone(spec.earlier.at(-1)));
+        const guard = await h.steer(variant === 'x-form-bluesky' ? 'now post it on Bluesky too' : 'fix the typo in the tweet');
+        assert.deepEqual(guard.steeringMutationReceipts.map(receipt => receipt.actionSequence), spec.earlier.map(receipt => receipt.actionSequence), variant);
+        const blocked = await h.check(spec.now);
+        if (spec.allowed) {
+          assert.equal(blocked, null, `${variant}: ${blocked?.error}`);
+          assert.equal(guard.steeringPriorSubmissionReconciliation.verificationKind, spec.allowed, variant);
+          if (spec.allowed === 'resource_identity') {
+            assert.equal(guard.steeringPriorSubmissionReconciliation.resourceUrl, xPost, variant);
+            assert.equal(guard.steeringPriorSubmissionReconciliation.actionSequence, 7, `${variant}: the X post, not the form`);
+            // The deletion question describes the X post, not the form.
+            assert.deepEqual([h.decisions('deletion_prerequisite').at(-1).page.previous.link,
+              h.decisions('deletion_prerequisite').at(-1).page.previous.snapshot.account], [xPost, 'twitter:alice'], variant);
+          }
+        } else {
+          assert.equal(blocked?.noDispatch, true, variant);
+          assert.equal(blocked.actionGuard.reason, spec.reason, `${variant}: ${blocked.error}`);
+          assert.match(blocked.error, spec.guidance, variant);
+          assert.equal(h.audits.length, 0, variant);
+        }
+      } finally { h.close(); }
+    }
+  });
+
+  test(`${build}: every dispatched attempt of a revision is archived at the correction, the live receipt last`, async () => {
+    const h = await fixture('Post on X, then sign me up for the newsletter.', { pageUrl: 'https://x.com/home' });
+    try {
+      const xNow = body => ({ ...publish(snap(body, 'twitter:alice')), url: 'https://x.com/home', host: 'x.com' });
+      h.agent._recordCompletionSubmitAttempt(h.tab, xNow('Hello wrold'), 'click_ax', { ref_id: 'ref_1' },
+        'https://x.com/home', 'https://x.com/home', { success: true, dispatched: true }, 'x-doc', 'x-doc');
+      // A preparation the browser refused sends nothing and is not archived.
+      h.agent._recordCompletionSubmitAttempt(h.tab, formOn('https://news.example.test/subscribe'), 'click_ax', { ref_id: 'ref_2' },
+        'https://news.example.test/subscribe', 'https://news.example.test/subscribe', { success: false, dispatched: false, noDispatch: true }, 'news-doc', 'news-doc');
+      h.agent._recordCompletionSubmitAttempt(h.tab, formOn('https://news.example.test/subscribe'), 'click_ax', { ref_id: 'ref_2' },
+        'https://news.example.test/subscribe', 'https://news.example.test/thanks', { success: true, dispatched: true }, 'news-doc', 'news-doc');
+      assert.deepEqual(h.agent._planExecutionGuards.get(h.tab).dispatchedAttempts.map(receipt => receipt.originatingUrl),
+        ['https://x.com/home', 'https://news.example.test/subscribe']);
+      h.agent._completionSubmitStates.set(h.tab, { ...h.agent._completionSubmitStates.get(h.tab), observedAfterSubmit: true });
+      const guard = await h.steer('fix the typo in the tweet');
+      assert.deepEqual(guard.steeringMutationReceipts.map(receipt => receipt.originatingUrl),
+        ['https://x.com/home', 'https://news.example.test/subscribe']);
+      assert.equal(guard.steeringMutationReceipts.at(-1).observedAfterSubmit, true, 'The live receipt replaces its archived copy');
+      assert.deepEqual(guard.dispatchedAttempts || [], [], 'The revision starts its own list');
+      // The corrected post is held to the X post; the same post again is a
+      // duplicate.
+      const blocked = await h.check(xNow('Hello world'));
+      assert.equal(blocked.actionGuard.reason, 'prior_effect_unreconciled', blocked.error);
+      assert.match(blocked.error, /on this platform/);
+      assert.equal((await h.check(xNow('Hello wrold'))).actionGuard.reason, 'duplicate_publication');
+    } finally { h.close(); }
+  });
+
   test(`${build}: an unchanged post under a revision reports the earlier publication instead of repeating it`, async () => {
     for (const variant of ['found-on-page', 'not-found', 'verified-outcome']) {
       const h = await fixture('Post "Hello world" on X.', { pageUrl: 'https://x.com/home' });

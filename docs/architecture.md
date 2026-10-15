@@ -102,7 +102,12 @@ on X and Bluesky only, name a post's platform; a post or form anywhere else,
 such as Mastodon, is named by the site it was made on, so "ok now on X" after a
 Mastodon post is a post on another platform and is never sent to look for the
 Mastodon post on X. Hosts that share their last two labels count as one site,
-and x.com and twitter.com as one platform. Whether a correction
+and x.com and twitter.com as one platform. Every attempt the task dispatched
+before the correction counts, not only the latest: an earlier post on the new
+post's platform, or an attempt whose site is unknown, holds the new post to that
+attempt's own reconciliation, even when a form on another site came after it.
+For a post on another platform, a known earlier outcome means a page was read
+after the earlier attempt was sent. Whether a correction
 asks to delete the earlier post or record first is a fixed-choice question
 that a model answers from the correction as the user wrote it, in any language
 (see "Language decisions" below): removing characters, words or hashtags from a

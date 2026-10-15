@@ -55,13 +55,17 @@ test('inactive tabs, stop, abort, and cleanup never auto-answer dialogs', async 
   assert.ok(calls.every(call => call[1] === 'Page.enable'));
 });
 
-test('failed startup and already-aborted runs do not retain dialog handling', async () => {
+test('failed startup and already-aborted runs arm nothing; a failed start keeps only the run\'s wish until it stops', async () => {
   const { client } = harness();
   await client.startDialogHandling(7, { signal: AbortSignal.abort() });
   assert.equal(client.dialogRuns.size, 0);
+  assert.equal(client.dialogIntents.size, 0, 'An aborted run has no wish to answer dialogs');
   client.sendCommand = async () => { throw new Error('detached'); };
   await assert.rejects(client.startDialogHandling(7));
-  assert.equal(client.dialogRuns.size, 0);
+  assert.equal(client.dialogRuns.size, 0, 'Nothing answers dialogs after a failed start');
+  assert.equal(client.dialogIntents.has(7), true, 'The run may arm on a later connection');
+  client.stopDialogHandling(7);
+  assert.equal(client.dialogIntents.size, 0);
 });
 
 test('dialog races consume protocol failures without retrying the next dialog', async () => {
@@ -493,7 +497,7 @@ function navigationFixture(tabId, startUrl) {
       emit: (...args) => [...listeners].forEach(fn => fn(...args)) };
   };
   const events = { committed: event(), errors: event(), updated: event() };
-  const state = { url: startUrl, leavePrompt: false, calls: [] };
+  const state = { url: startUrl, leavePrompt: false, calls: [], events };
   state.answers = () => state.calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').map(call => call[2]);
   state.chrome = {
     storage: { local: area, session: area }, runtime: { getURL: value => value },
@@ -518,7 +522,7 @@ function navigationFixture(tabId, startUrl) {
         return {};
       },
     },
-    webNavigation: { onCommitted: events.committed, onErrorOccurred: events.errors },
+    webNavigation: { onCommitted: events.committed, onErrorOccurred: events.errors, onHistoryStateUpdated: event() },
     scripting: { executeScript: async () => [{ result: { attachedFiles: 0, dirtyFields: 0 } }] },
   };
   return state;
@@ -645,4 +649,119 @@ test('any later debugger attach arms the dialog handling its run could not arm a
   } finally {
     globalThis.chrome = previousChrome;
   }
+});
+
+test('mid-run arming behind a hung Page.enable gives up quickly and keeps the run\'s wish', async () => {
+  const { client, calls } = harness();
+  client.sendCommand = async () => { throw new Error('Cannot access a chrome:// URL'); };
+  await assert.rejects(client.startDialogHandling(7));
+  // Page.enable never answers, as behind an already open prompt.
+  client.sendCommand = (...args) => { calls.push(args); return args[1] === 'Page.enable' ? new Promise(() => {}) : Promise.resolve({}); };
+  const started = Date.now();
+  assert.equal(await client.ensureDialogHandling(7, { timeoutMs: 40 }), false);
+  assert.ok(Date.now() - started < 1000);
+  assert.equal(client.dialogRuns.has(7), false);
+  assert.equal(client.dialogIntents.has(7), true);
+  client.sendCommand = async (...args) => { calls.push(args); return {}; };
+  assert.equal(await client.ensureDialogHandling(7), true, 'A later navigation arms it');
+  client.stopDialogHandling(7);
+});
+
+test('after re-arming, a leave prompt WebBrain did not ask for still stays, and only its own navigation leaves', async () => {
+  const { client, calls } = harness();
+  await client.startDialogHandling(7);
+  client._onDebuggerDetach({ tabId: 7 }, 'target_closed');
+  assert.equal(await client.ensureDialogHandling(7), true);
+  const emit = () => {
+    client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: 'https://x.com/home' });
+    client._onDebuggerEvent({ tabId: 7 }, 'Page.javascriptDialogClosed', {});
+  };
+  emit();
+  const release = client.authorizeNavigationDialog(7, 'https://x.com/home');
+  emit();
+  release();
+  assert.deepEqual(calls.filter(call => call[1] === 'Page.handleJavaScriptDialog').map(call => call[2].accept), [false, true]);
+  client.stopDialogHandling(7);
+});
+
+test('a connection that drops while a run starts does not stop the run', async () => {
+  const { client } = harness();
+  let entered;
+  const ready = new Promise(resolve => { entered = resolve; });
+  client.attach = () => { entered(); return new Promise(() => {}); };
+  const startup = client.startDialogHandling(7);
+  await ready;
+  client._onDebuggerDetach({ tabId: 7 }, 'target_closed');
+  await assert.rejects(startup, error => error.name !== 'AbortError' && error.code === 'dialog_connection_dropped');
+  assert.equal(client.dialogIntents.has(7), true);
+  client.attach = async id => client.sessions.set(id, { tabId: id });
+  assert.equal(await client.ensureDialogHandling(7), true);
+  // Stop during a start is still a stop.
+  client.attach = () => { entered(); return new Promise(() => {}); };
+  const stopped = client.startDialogHandling(8);
+  client.stopDialogHandling(8);
+  await assert.rejects(stopped, error => error.name === 'AbortError');
+  client.stopDialogHandling(7);
+});
+
+test('an aborted run is not armed again by a later debugger attach', async () => {
+  const previousChrome = globalThis.chrome;
+  const sent = [];
+  let attaches = 0;
+  globalThis.chrome = {
+    runtime: { getURL: value => value, lastError: undefined },
+    debugger: {
+      attach: (_target, _version, callback) => {
+        const attempt = ++attaches;
+        setTimeout(() => {
+          if (attempt === 1) globalThis.chrome.runtime.lastError = { message: 'Cannot access a chrome:// URL' };
+          callback();
+          globalThis.chrome.runtime.lastError = undefined;
+        }, 0);
+      },
+      detach: (_target, callback) => callback?.(),
+      sendCommand: (_target, method, params, callback) => { sent.push(method); callback({}); },
+      onEvent: { addListener: () => {}, removeListener: () => {} },
+      onDetach: { addListener: () => {}, removeListener: () => {} },
+    },
+  };
+  try {
+    const client = new CDPClient(), controller = new AbortController();
+    await assert.rejects(client.startDialogHandling(61, { signal: controller.signal }), /chrome:\/\//);
+    controller.abort();
+    assert.equal(client.dialogIntents.has(61), false);
+    await client.attach(61);
+    await tick();
+    assert.equal(client.dialogRuns.has(61), false);
+    assert.deepEqual(sent, []);
+  } finally {
+    globalThis.chrome = previousChrome;
+  }
+});
+
+test('history navigation after a dropped connection answers its own leave prompt', async () => {
+  const tabId = 4304;
+  await withNavigationFixture(tabId, 'https://x.com/compose/post', async ({ state, cdpClient, agent }) => {
+    await cdpClient.startDialogHandling(tabId);
+    cdpClient._onDebuggerDetach({ tabId }, 'target_closed');
+    // history.go runs in the page; the prompt comes from the page being left.
+    state.chrome.scripting.executeScript = async ({ func }) => {
+      if (String(func).includes('history.go')) {
+        const before = state.url;
+        const answers = state.answers().length;
+        state.client._onDebuggerEvent({ tabId }, 'Page.javascriptDialogOpening', { type: 'beforeunload', url: before });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        state.client._onDebuggerEvent({ tabId }, 'Page.javascriptDialogClosed', {});
+        if (state.answers()[answers]?.accept) {
+          state.url = 'https://x.com/home';
+          state.events.committed.emit({ tabId, frameId: 0, url: state.url, transitionQualifiers: ['forward_back'] });
+        }
+        return [{ result: { before } }];
+      }
+      return [{ result: { attachedFiles: 0, dirtyFields: 0 } }];
+    };
+    const result = await agent.executeTool(tabId, 'go_back', { force: true });
+    assert.equal(result.success, true, result.error);
+    assert.deepEqual(state.answers(), [{ accept: true }]);
+  });
 });
