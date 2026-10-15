@@ -415,13 +415,12 @@ export function createTabChatHandoffCoordinator(storageArea, {
       }
       if (typeof html !== 'string' || typeof commit !== 'function') throw new Error('No recovered transcript.');
       const generation = current.generation + 1;
-      const persistedHtml = compactTabChatForPersist(html);
       // The model snapshot, transcript, and ownership generation are one storage
       // transaction. A failed write leaves the previous conversation intact.
-      const state = await commit({
-        [TAB_CHAT_PREFIX + queuedTabId]: persistedHtml,
+      const state = await commit(({ retry } = {}) => ({
+        [TAB_CHAT_PREFIX + queuedTabId]: compactTabChatForPersist(html, retry ? TAB_CHAT_QUOTA_RETRY_BUDGET : TAB_CHAT_PERSIST_BUDGET),
         [TAB_CHAT_HANDOFF_PREFIX + queuedTabId]: { ownerId, generation },
-      });
+      }));
       latestHtml.set(queuedTabId, html);
       return { ...state, html, handoffOwnerId: ownerId, handoffGeneration: generation };
     });

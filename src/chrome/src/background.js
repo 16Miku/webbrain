@@ -2152,7 +2152,8 @@ const recoveringHistoryTabs = new Set();
 
 function assertNoActiveTabRun(tabId) {
   if (recoveringHistoryTabs.has(tabId)) throw new Error('Conversation recovery is in progress.');
-  if (agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId) || scheduler.isRunning(tabId)) {
+  if (agent.activeRunState(tabId)?.running || detachedRunStarts.has(tabId)
+      || scheduler.isRunning(tabId) || cloudRunController.isRunning(tabId)) {
     throw new Error('A run is already active for this tab.');
   }
 }

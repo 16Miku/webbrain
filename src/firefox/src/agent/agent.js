@@ -7834,18 +7834,19 @@ export class Agent extends LoopDetector {
     }
     const snapshot = snapshotForBudget || (maxBytes => this._conversationStorageEntry(tabId, { maxBytes }));
     const entry = snapshot(SESSION_CONVERSATION_BUDGET_BYTES);
+    const extraEntries = retry => typeof storageEntries === 'function' ? storageEntries({ retry }) : storageEntries;
     const failed = error => preserveStateOnFailure
       ? { ok: false, degraded: false, reason: isSessionQuotaError(error) ? 'quota' : 'unavailable' }
       : this._markPersistenceDegraded(tabId, isSessionQuotaError(error) ? 'quota' : 'unavailable', error);
     if (!entry) return { ok: false, degraded: false, reason: 'no_conversation' };
     try {
-      await browser.storage.session.set({ ...storageEntries, [this._convKey(tabId)]: entry });
+      await browser.storage.session.set({ ...extraEntries(false), [this._convKey(tabId)]: entry });
       return { ok: true, degraded: entry.sessionSnapshotCompacted === true, reason: entry.sessionSnapshotCompacted ? 'sanitized' : null };
     } catch (error) {
       if (isSessionQuotaError(error)) {
         const compactEntry = snapshot(SESSION_CONVERSATION_RETRY_BUDGET_BYTES);
         try {
-          await browser.storage.session.set({ ...storageEntries, [this._convKey(tabId)]: compactEntry });
+          await browser.storage.session.set({ ...extraEntries(true), [this._convKey(tabId)]: compactEntry });
           return { ok: true, degraded: true, reason: 'quota_compacted' };
         } catch (retryError) {
           return failed(retryError);
