@@ -41,6 +41,7 @@ Files (1280×800):
 - 05-plan-before-act.png: Plan review with Approve/Adjust before actions run
 - 06-launch-offer.png: WebBrain Compass $5/mo (reg. $8), Save 35%
 - 07-social-proof.png: ~1300 GitHub stars, 80+ contributors, GPL — repo bar with contributor avatars
+- 14-record-video.png: Record calls and demos with `/record`; illustrated call preview and screen/window command
 
 Light-background alternates of the two dark slides (originals kept, use whichever fits the gallery):
 - 01-hero-light.png
@@ -60,7 +61,11 @@ Regenerate:
 node assets/webstore-explainer-2026/render.mjs
 ```
 
+Render only the recording slide with `ONLY=14-record-video.png node assets/webstore-explainer-2026/render.mjs`.
+
 The renderer also writes copy-free variants of slides 02, 03, 04, and 08 to
 the Chrome and Firefox `install-assets` directories. The install page overlays
 localized HTML copy on those variants; the Web Store images in this directory
 keep their original English text.
+
+If browser launch is unavailable, `python3 assets/webstore-explainer-2026/render-record.py` renders slide 14 directly with Pillow and the same vendored fonts. This fallback uses an independently drawn layout.

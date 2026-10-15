@@ -648,11 +648,48 @@ function safeSocialScene() {
     </div>`);
 }
 
+/* ---------- 14 VIDEO RECORDING ---------- */
+function recordScene() {
+  const participants = [
+    ['AL', 'Alex', '#d9d1fb', '#6757b7'], ['JM', 'Jamie', '#cde9df', '#337b67'],
+    ['SK', 'Sam', '#f7daca', '#ad6948'], ['YOU', 'You', '#d1dff8', '#4b6eae'],
+  ];
+  return featureScene('14-record-video.png', 'Keep the whole call.',
+    'Record Zoom calls, demos, and more.<br>Just type <span style="font-family:var(--mono); font-weight:650; color:var(--accent);">/record</span>.', `
+    <div style="${featureCard}">
+      <div style="display:flex; align-items:center; justify-content:space-between;">
+        <span style="${cardLabel}">Video recording</span>
+        <span style="display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:13px; font-weight:650; color:#cc4456;">
+          <span style="width:9px; height:9px; border-radius:50%; background:#e54f62;"></span>REC · 12:34
+        </span>
+      </div>
+      <div style="margin-top:18px; padding:12px; border-radius:16px; background:#202636;">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          ${participants.map(([initials, name, bg, ink]) => `
+            <div style="height:105px; position:relative; display:grid; place-items:center; background:${bg}; border-radius:9px;">
+              <span style="width:52px; height:52px; display:grid; place-items:center; border-radius:50%; background:${ink}; color:#fff; font-size:${initials === 'YOU' ? 15 : 21}px; font-weight:700;">${initials}</span>
+              <span style="position:absolute; bottom:6px; left:7px; padding:3px 7px; border-radius:4px; background:rgba(24,32,51,0.76); color:#fff; font-size:11px; font-weight:650;">${name}</span>
+            </div>`).join('')}
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; margin-top:12px; color:#e1e6ef; font-size:12px; font-weight:600;">
+          <span style="font-size:16px;">▶</span>
+          <span style="height:4px; flex:1; border-radius:8px; background:#51596c;"><span style="display:block; width:65%; height:4px; border-radius:8px; background:#b1a3ff;"></span></span>
+          <span>12:34</span>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:12px; padding:14px 16px; border:1px solid var(--border); border-radius:16px; background:#fbfbfe; margin-top:20px;">
+        <span style="flex:1; font-family:var(--mono); font-size:22px; font-weight:650; color:var(--ink);">/record<span style="display:inline-block; width:3px; height:24px; background:var(--accent); margin-left:4px; vertical-align:-4px; border-radius:2px;"></span></span>
+        <span style="width:40px; height:40px; border-radius:12px; background:var(--accent); color:#fff; display:grid; place-items:center; font-size:19px; font-weight:900;">&#8593;</span>
+      </div>
+      <div style="margin-top:16px; font-size:14px; font-weight:600; line-height:1.4; color:var(--muted);">Tab: /record · Screen or window: /record --full-screen</div>
+    </div>`);
+}
+
 const scenes = [
   hero(), actScene(), askScene(), modelsScene(), planScene(), offerScene(), proofScene(),
   apocalypseScene(),
   apocalypseScene({ nuke: true }),
-  screenshotScene(), bulkDownloadScene(), captchaScene(), safeSocialScene(),
+  screenshotScene(), bulkDownloadScene(), captchaScene(), safeSocialScene(), recordScene(),
   hero(true), planScene(true),
   // The install page renders localized HTML over these copy-free variants.
   // Keep the Web Store artwork above unchanged: its English copy is intentional.
