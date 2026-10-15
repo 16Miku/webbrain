@@ -131,7 +131,8 @@ for (const build of BUILDS) {
       rejected: { args: { maxChars: 1000 }, stops: true },
       executed: { args: { offset: 0 }, stops: false, executeTool: async () => ({ success: false, error: 'Element not found' }) },
     };
-    // Loop state after each stuck attempt, until the run stops or 14 attempts.
+    // Loop state after each stuck attempt, until the run stops (on a stuck
+    // attempt, or on the tenth refusal of one name) or 14 attempts.
     async function run(tabId, loop, pattern) {
       const { agent } = makeAgent(tabId);
       if (loop.executeTool) agent.executeTool = loop.executeTool;
@@ -143,11 +144,12 @@ for (const build of BUILDS) {
           const before = agent.loopNudges.get(tabId) || 0;
           const call = await callOnce(agent, tabId, name, name === 'read_page' ? loop.args : {}, ++step, allowed);
           if (name !== 'read_page') {
+            if (call.outcome?.action === 'recover') return { trace, outcome: call.outcome, stoppedBy: name, refusalNudgeChanges };
             if ((agent.loopNudges.get(tabId) || 0) !== before) refusalNudgeChanges.push(step);
             continue;
           }
           trace.push(`${agent.loopNudges.get(tabId) || 0}:${call.outcome?.status || call.outcome?.action || '-'}`);
-          if (call.outcome?.action === 'recover') return { trace, outcome: call.outcome, refusalNudgeChanges };
+          if (call.outcome?.action === 'recover') return { trace, outcome: call.outcome, stoppedBy: name, refusalNudgeChanges };
           if (trace.length >= 14) return { trace, outcome: null, refusalNudgeChanges };
         }
       }
@@ -160,9 +162,17 @@ for (const build of BUILDS) {
         [89, ['read_page', 'screenshot', 'list_tabs']], // refusals between every attempt
       ]) {
         const mixed = await run(tabId, loop, pattern);
-        assert.deepEqual(mixed.trace, alone.trace, `${kind} ${pattern}: refused calls changed the loop`);
         assert.deepEqual(mixed.refusalNudgeChanges, [], `${kind} ${pattern}: a refused call changed the loop's nudge count`);
-        if (loop.stops) assert.match(mixed.outcome.value, /looping on the same call to read_page/);
+        if (mixed.stoppedBy === 'screenshot') {
+          // Its own budget: the tenth screenshot stops the run, which the
+          // stuck loop had not done by then; up to there the loop ran as alone.
+          assert.match(mixed.outcome.value, /^Stopped: I called screenshot 10 times/);
+          assert.deepEqual(mixed.trace, alone.trace.slice(0, mixed.trace.length), `${kind} ${pattern}: refused calls changed the loop`);
+          assert.ok(mixed.trace.length < alone.trace.length);
+        } else {
+          assert.deepEqual(mixed.trace, alone.trace, `${kind} ${pattern}: refused calls changed the loop`);
+          if (loop.stops) assert.match(mixed.outcome.value, /looping on the same call to read_page/);
+        }
       }
     }
   });
@@ -211,6 +221,24 @@ for (const build of BUILDS) {
     assert.equal(rejected.result.errorCode, 'invalid_tool_arguments');
     assert.equal(other.recentCalls.get(94)?.length, 1);
     assert.equal(other.healthyCallsSinceLoop.get(94), 1);
+  });
+
+  test(`${build}: a navigation between refusals does not reset the unavailable-tool count`, () => {
+    const tabId = 95;
+    const { agent } = makeAgent(tabId);
+    const refusal = { success: false, denied: true, noDispatch: true, errorCode: 'retired_tool', error: 'retired' };
+    const kinds = [];
+    for (let step = 1; step <= 10; step++) {
+      const url = `https://example.test/page-${step}`;
+      agent._checkLoop(tabId, 'navigate', { url }, { success: true, pageUrlChanged: true, currentUrl: url });
+      kinds.push(agent._checkLoop(tabId, 'screenshot', {}, refusal).kind);
+    }
+    assert.deepEqual(kinds, ['none', 'none', ...Array(7).fill('nudge'), 'stop']);
+    // Only the run boundary clears it.
+    agent._checkLoop(tabId, 'screenshot', {}, refusal);
+    agent._checkLoop(tabId, 'screenshot', {}, refusal);
+    agent._clearRunLoopState(tabId);
+    assert.equal(agent._checkLoop(tabId, 'screenshot', {}, refusal).kind, 'none');
   });
 
   test(`${build}: missing required arguments are named apart from invalid ones`, () => {

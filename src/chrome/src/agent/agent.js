@@ -10115,6 +10115,12 @@ export class Agent extends LoopDetector {
       const fnName = tc?.function?.name || 'unknown_tool';
       const fnArgs = this._toolCallArgsWithReplayMethod(tabId, fnName, this._toolCallArgs(tc));
       const result = makeResult(fnName, fnArgs, i);
+      // An action call answered here as not sent (a steering skip, a
+      // recovery checkpoint that could not be saved) is the latest action
+      // call for the dispatch record, like any other unsent result.
+      if (result?.noDispatch === true || result?.dispatched === false) {
+        this._noteProgressActionDispatch(tabId, fnName, fnArgs, result, false);
+      }
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
@@ -13595,16 +13601,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // An action that was sent, or may have been, before Stop or an error
       // cut its bookkeeping short still joins the task's record of attempts.
       const interrupted = cancellationState.active;
+      const interruptedRaw = interrupted?.result || interrupted?.dispatchState?.rawToolResult;
+      const interruptedUnsent = !interrupted?.invoked || interruptedRaw?.noDispatch === true || interruptedRaw?.dispatched === false
+        || (!interruptedRaw && interrupted.dispatchState?.tracksTextMutationDispatch === true && interrupted.dispatchState.started !== true);
       if (interrupted && !interrupted.attemptRecorded) {
-        const raw = interrupted.result || interrupted.dispatchState?.rawToolResult;
-        const unsent = !interrupted.invoked || raw?.noDispatch === true || raw?.dispatched === false
-          || (!raw && interrupted.dispatchState?.tracksTextMutationDispatch === true && interrupted.dispatchState.started !== true);
-        if (!unsent) {
+        if (!interruptedUnsent) {
           this._recordInterruptedTaskAttempt(tabId, interrupted.name, interrupted.args, interrupted.detected,
             Object.hasOwn(interrupted, 'potentialAttempt') ? interrupted.potentialAttempt : undefined);
         } else {
           this._resaveTaskAttemptCheckpoint(tabId);
         }
+      }
+      // So does the progress ledger's dispatch record, unless the call's own
+      // bookkeeping got that far: a call that may have been sent counts as
+      // sent, so it can back an "acted" row, and only a provably unsent one
+      // can be held against a row.
+      if (interrupted?.name && !interrupted.dispatchNoted) {
+        this._noteProgressActionDispatch(tabId, interrupted.name, interrupted.args || {}, interruptedRaw, !interruptedUnsent);
       }
       if (this._checkAbort(tabId) || error?.name === 'AbortError') {
         // Repair the whole assistant tool batch before any caller persists a
@@ -13649,6 +13662,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } : {}),
           };
           const name = call.function?.name || 'unknown_tool';
+          // A call the batch never reached was not sent, and is noted like any
+          // other unsent result; the interrupted call was noted above.
+          if (!active) this._noteProgressActionDispatch(tabId, name, this._toolCallArgs(call), result, false);
           const message = { role: 'tool', tool_call_id: call.id, content: serialize(name, result) };
           messages.push(message);
           notifications.push({ name, args: active?.args || this._toolCallArgs(call), result, message, active });
@@ -15260,6 +15276,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         toolResult,
         { detectedSubmit: detectedSubmitAction, messageRecipientContext: messageRecipientExecutionContext },
       );
+      // That also noted the call in the dispatch record; see the catch in
+      // _executeToolBatch for a call interrupted before this point.
+      callState.dispatchNoted = true;
       const readCompletenessBeforeTool = this.readCompletenessStates.get(tabId) || null;
       const readCompletenessAfterTool = this._recordReadCompleteness(tabId, fnName, fnArgs, toolResult);
       const requiredReadProgress = readCompletenessMadeProgress(
@@ -34252,11 +34271,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // and keeps the latest one whose result proves it did not (blocked,
   // denied, never dispatched). A verified no-op, such as set_checked on a box
   // already in the requested state, leaves that state in place and so is not
-  // a failed send.
-  _noteProgressActionDispatch(tabId, name, args, result) {
+  // a failed send. A caller that knows better than the result, such as an
+  // interrupted or a synthetic answer, passes `sent` itself.
+  _noteProgressActionDispatch(tabId, name, args, result, sent = didCompletionActionExecute(name, args, result)) {
     if (!isCompletionActionTool(name, args)) return;
     const record = this.progressActionDispatches.get(tabId) || { sent: 0, unsent: null, fence: null };
-    if (didCompletionActionExecute(name, args, result)) {
+    if (sent) {
       record.sent += 1;
       record.unsent = null;
     } else {
@@ -34278,22 +34298,47 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // progress update. A saved null means that history has no action call.
   _restoredProgressActionDispatches(entry) {
     const raw = entry?.progressActionDispatches;
-    if (raw === null) return null;
     const fence = raw?.fence ?? null;
     const unsentName = raw?.unsent?.name;
-    if (Number.isSafeInteger(raw?.sent) && raw.sent >= 0
+    let record = null;
+    if (raw !== null && Number.isSafeInteger(raw?.sent) && raw.sent >= 0
         && (fence === null || (Number.isSafeInteger(fence) && fence >= 0 && fence <= raw.sent))
         && (raw.unsent == null || (typeof unsentName === 'string' && unsentName))) {
-      return {
+      record = {
         sent: raw.sent,
         unsent: raw.unsent == null ? null : { name: unsentName.slice(0, 80) },
         fence,
         ...(raw.historyUnknown === true ? { historyUnknown: true } : {}),
       };
+    } else if (raw !== null) {
+      return Array.isArray(entry?.messages) && entry.messages.length
+        ? { sent: 0, unsent: null, fence: null, historyUnknown: true }
+        : null;
     }
-    return Array.isArray(entry?.messages) && entry.messages.length
-      ? { sent: 0, unsent: null, fence: null, historyUnknown: true }
-      : null;
+    // A worker that stopped mid-action saved the call but not its outcome,
+    // so the record may not count it: that call is the latest one and is not
+    // known to be unsent.
+    return this._historyEndsWithUncountedAction(entry?.messages)
+      ? { ...(record || { sent: 0, fence: null }), unsent: null, historyUnknown: true }
+      : record;
+  }
+
+  // Whether the last tool batch of a restored history holds an action call
+  // whose result is missing or reports an unknown outcome.
+  _historyEndsWithUncountedAction(messages) {
+    if (!Array.isArray(messages)) return false;
+    const batchIndex = messages.findLastIndex(message => message?.role === 'assistant'
+      && Array.isArray(message.tool_calls) && message.tool_calls.length);
+    if (batchIndex < 0) return false;
+    const results = new Map(messages.slice(batchIndex + 1).filter(message => message?.role === 'tool')
+      .map(message => [message.tool_call_id, String(message.content ?? '')]));
+    return messages[batchIndex].tool_calls.some(call => {
+      let args = {};
+      try { args = JSON.parse(call?.function?.arguments || '{}') || {}; } catch {}
+      if (!isCompletionActionTool(call?.function?.name, args)) return false;
+      const content = results.get(call?.id);
+      return content === undefined || /"(?:outcomeUnknown|missingToolResponse|mutationMayHaveOccurred)":true/.test(content);
+    });
   }
 
   // A model-written "acted" row claims its action reached the page. When the
@@ -34322,16 +34367,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       .map(row => row.id))];
     if (!ids.length) return null;
     const name = record.unsent.name;
-    // The refusal states what the runtime knows. It must not say this row's
-    // action was never sent: that action may predate the last update.
-    const guidance = record.fence == null
-      ? `and no action call has been sent yet. Retry the action and mark the row acted after it goes through, keep it pending, or mark it failed or skipped with the reason.`
-      : `and no action call has been sent since your last successful progress_update. If a row's action was sent before that update, do not repeat it: check the page and record what it shows (processed once the result is visible), or keep the row pending. Otherwise it has not happened yet: retry the action and mark the row acted after it goes through, keep it pending, or mark it failed or skipped with the reason.`;
+    // The refusal states only what the runtime knows and sends the model to
+    // the page first. It never asks for a retry outright: a row's action may
+    // predate the last update, and repeating a follow, send or post that did
+    // land would do it twice.
+    const since = record.fence == null ? 'yet' : 'since your last successful progress_update';
     return {
       success: false,
       actionNotDispatched: true,
       undispatchedAction: { name },
-      error: `progress_update: ${ids.slice(0, 6).join(', ')} cannot be marked acted now. Your latest ${name} call was not sent (it was blocked or never dispatched), ${guidance}`,
+      error: `progress_update: ${ids.slice(0, 6).join(', ')} cannot be marked acted now. Your latest ${name} call was not sent (it was blocked or never dispatched), and no action call has been sent ${since}. Check the page first and record what it shows: mark a row processed if its result is visible there; otherwise keep it pending, or mark it failed or skipped with the reason. Send an action again only if the page shows it did not happen.`,
       ids: ids.slice(0, 20),
     };
   }

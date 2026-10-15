@@ -62,6 +62,8 @@ export class LoopDetector {
     // Calls naming a tool the run does not offer, counted per name apart from
     // recentCalls: in that window a refusal would dilute or complete another
     // call's loop, and as a clean call it would retire a real loop's nudges.
+    // A navigation does not make such a tool available, so only the run
+    // boundary (or two clean calls in a row) clears it.
     this.unavailableToolCalls = new Map(); // tabId -> { counts: Map(name -> refusals), cleanCalls }
   }
 
@@ -156,6 +158,7 @@ export class LoopDetector {
     const reason = toolResult?.errorCode === 'retired_tool' ? 'it is retired' : 'this run does not offer it';
     if (count >= 10) {
       this._clearLoopState(tabId);
+      this.unavailableToolCalls.delete(tabId);
       return {
         kind: 'stop',
         message: `Stopped: I called ${name} ${count} times, but ${reason}, so nothing was run. Please give a different instruction.`,
@@ -372,23 +375,26 @@ export class LoopDetector {
 
   /**
    * Clear everything the detector accumulated for `tabId` except the nav
-   * arrival history, which must outlive intra-run resets so navigation
-   * ping-pong is still catchable. See _clearRunLoopState for the run boundary.
+   * arrival history and the unavailable-tool counts, which must outlive
+   * intra-run resets so navigation ping-pong and a repeated refused tool are
+   * still catchable. See _clearRunLoopState for the run boundary.
    */
   _clearLoopState(tabId) {
     this.recentCalls.delete(tabId);
     this.loopNudges.delete(tabId);
     this.healthyCallsSinceLoop.delete(tabId);
-    this.unavailableToolCalls.delete(tabId);
     this._clearPageLoopState(tabId);
   }
 
   /**
    * Run-boundary reset. Only here is the nav arrival history discarded, since
-   * a new run may legitimately revisit URLs the previous run already saw.
+   * a new run may legitimately revisit URLs the previous run already saw, and
+   * the unavailable-tool counts, which every real navigation would otherwise
+   * reset (navigate, screenshot, navigate, screenshot... never repeats).
    */
   _clearRunLoopState(tabId) {
     this.recentNavUrls.delete(tabId);
+    this.unavailableToolCalls.delete(tabId);
     this._clearLoopState(tabId);
     this.verificationChallengeStates.delete(tabId);
     this.carouselIntentStates.delete(tabId);

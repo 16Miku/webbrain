@@ -37,7 +37,8 @@ const rowStatus = (agent, tabId, sessionId, id) => agent._rowsForProgressSession
   .find(row => row.id === id)?.status;
 
 // An in-memory storage.session (JSON round-trip, like the browser's) under
-// both globals, since each build reads its own.
+// both globals, since each build reads its own, plus the few tab and runtime
+// calls an interrupted batch's cleanup makes.
 async function withSessionStorage(fn) {
   const store = new Map();
   const copy = value => JSON.parse(JSON.stringify(value));
@@ -48,7 +49,11 @@ async function withSessionStorage(fn) {
     remove: async key => { for (const name of Array.isArray(key) ? key : [key]) store.delete(name); },
   };
   const saved = { chrome: globalThis.chrome, browser: globalThis.browser };
-  globalThis.chrome = globalThis.browser = { storage: { session: area, local: area } };
+  globalThis.chrome = globalThis.browser = {
+    storage: { session: area, local: area },
+    runtime: { getURL: value => value, sendMessage: async () => ({}) },
+    tabs: { get: async id => ({ id, url: 'https://example.test/' }) },
+  };
   try {
     return await fn(store);
   } finally {
@@ -65,6 +70,29 @@ async function restart(Agent, tabId) {
   agent._persist = () => {};
   await agent._hydrate(tabId);
   return agent;
+}
+
+// One tool batch whose first call reached `active` (the batch's record of the
+// call in flight) and was then cut short, by Stop or by an ordinary error;
+// `more` are later calls of the batch it never reached.
+async function interruptBatch(agent, tabId, active, { stop, more = [] }) {
+  const messages = agent.conversations.get(tabId);
+  const [call, ...rest] = [active, ...more].map((entry, index) => ({ id: `call_${messages.length}_${index}`, type: 'function',
+    function: { name: entry.name, arguments: JSON.stringify(entry.args || {}) } }));
+  messages.push({ role: 'assistant', content: '', tool_calls: [call, ...rest] });
+  agent._executeToolBatchInner = async (...params) => {
+    params[10].active = { index: 0, consequential: true, result: null, ...active };
+    if (!stop) throw new Error('The page connection was lost after the action was sent.');
+    agent._checkAbort = () => true;
+    throw new DOMException('Stopped', 'AbortError');
+  };
+  try {
+    await assert.rejects(agent._executeToolBatch(tabId, [call, ...rest], messages, () => {}, {}, null));
+  } finally {
+    delete agent._executeToolBatchInner;
+    delete agent._checkAbort;
+  }
+  return messages.filter(message => message.tool_call_id === call.id);
 }
 const blocked = { success: false, noDispatch: true, dispatched: false, error: 'Blocked before dispatch.' };
 const sent = { success: true, dispatched: true };
@@ -125,8 +153,10 @@ for (const build of BUILDS) {
     assert.deepEqual(rejected.ids, ['alice']);
     assert.deepEqual(rejected.undispatchedAction, { name: 'click_ax' });
     assert.match(rejected.error, /^progress_update: alice cannot be marked acted now\. Your latest click_ax call was not sent/);
-    assert.match(rejected.error, /no action call has been sent yet/);
+    assert.match(rejected.error, /no action call has been sent yet\. Check the page first and record what it shows/);
     assert.match(rejected.error, /failed or skipped/);
+    assert.match(rejected.error, /Send an action again only if the page shows it did not happen\.$/);
+    assert.doesNotMatch(rejected.error, /retry the action/i, 'a refusal must not send the model to repeat the action');
     assert.equal(rowStatus(agent, tabId, sessionId, 'alice'), 'pending', 'the refused update changed nothing');
     assert.equal(agent._deliveryCheckpointMadeMeaningfulProgress('progress_update', rejected), false,
       'a refused update is not delivery progress');
@@ -171,8 +201,9 @@ for (const build of BUILDS) {
     assert.equal(fenced.success, false, 'the earlier dispatch was already recorded by the last update');
     assert.equal(fenced.actionNotDispatched, true);
     assert.match(fenced.error, /^progress_update: bob cannot be marked acted now\. Your latest click_ax call was not sent/);
-    assert.match(fenced.error, /no action call has been sent since your last successful progress_update/);
-    assert.match(fenced.error, /If a row's action was sent before that update, do not repeat it/);
+    assert.match(fenced.error, /no action call has been sent since your last successful progress_update\. Check the page first/);
+    assert.match(fenced.error, /Send an action again only if the page shows it did not happen\.$/);
+    assert.doesNotMatch(fenced.error, /retry the action/i, 'a refusal must not send the model to repeat the action');
     assert.doesNotMatch(fenced.error, /the last click_ax call|bob[^.]*was not sent/, 'the refusal says this row\'s action was never sent');
 
     // Runtime rows (observe, auto) are not the model recording its dispatches.
@@ -333,6 +364,121 @@ for (const build of BUILDS) {
       quiet.progressActionDispatches.set(58, { sent: 3, unsent: null, fence: 1 });
       await quiet.forkConversation(57, 58);
       assert.equal(quiet.progressActionDispatches.has(58), false);
+    });
+  });
+
+  test(`${build}: an action cut short after it may have been sent backs an acted row`, async () => {
+    await withSessionStorage(async () => {
+      const cases = [
+        ['Stop after dispatch', true, { dispatchState: { started: true, rawToolResult: { success: true, dispatched: true } } }],
+        ['an error after dispatch', false, { dispatchState: { started: true } }],
+        ['Stop with an unknown outcome', true, { result: { success: false, outcomeUnknown: true, error: 'No response.' }, dispatchState: {} }],
+      ];
+      for (const [index, [label, stop, state]] of cases.entries()) {
+        const tabId = 80 + index;
+        const sessionId = `${build}-interrupted-${index}`;
+        const agent = makeAgent(Agent, tabId, 'Follow alice.');
+        seedRows(agent, tabId, sessionId, ['alice']);
+        agent._beginCompletionInvariant(tabId);
+        agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, blocked); // an earlier blocked attempt
+        const results = await interruptBatch(agent, tabId, {
+          name: 'click_ax', args: { ref_id: 'ref_2' }, invoked: true, ...state,
+        }, { stop });
+        if (stop) assert.equal(JSON.parse(results[0].content.replace(/^[^\n]*\n|\n[^\n]*$/g, '')).cancelled, true, label);
+        assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 1, unsent: null, fence: null }, label);
+        agent._beginCompletionInvariant(tabId); // the next run records the row
+        const claim = agent._progressUpdate(tabId, { items: [{ id: 'alice', status: 'acted' }] }, { sessionId });
+        assert.equal(claim.success, true, `${label}: ${claim.error || ''}`);
+      }
+
+      // Stop also answers the calls the batch never reached; they were not sent.
+      const tailTab = 84;
+      const tailSession = `${build}-interrupted-tail`;
+      const tailAgent = makeAgent(Agent, tailTab, 'Follow alice and bob.');
+      seedRows(tailAgent, tailTab, tailSession, ['alice', 'bob']);
+      tailAgent._beginCompletionInvariant(tailTab);
+      const answered = await interruptBatch(tailAgent, tailTab, { name: 'click_ax', args: { ref_id: 'ref_1' }, invoked: true,
+        dispatchState: { started: true, rawToolResult: sent } }, { stop: true, more: [{ name: 'click_ax', args: { ref_id: 'ref_2' } }] });
+      assert.equal(answered.length, 1);
+      assert.deepEqual(tailAgent.progressActionDispatches.get(tailTab), { sent: 1, unsent: { name: 'click_ax' }, fence: null });
+      tailAgent._beginCompletionInvariant(tailTab);
+      assert.equal(tailAgent._progressUpdate(tailTab, { items: [{ id: 'alice', status: 'acted' }] }, { sessionId: tailSession }).success, true);
+      assert.equal(tailAgent._progressUpdate(tailTab, { items: [{ id: 'bob', status: 'acted' }] }, { sessionId: tailSession }).success, false);
+
+      // A call cut short before it was invoked was not sent; a call whose own
+      // bookkeeping already ran is not counted twice.
+      const tabId = 85;
+      const sessionId = `${build}-interrupted-unsent`;
+      const agent = makeAgent(Agent, tabId, 'Follow alice and bob.');
+      seedRows(agent, tabId, sessionId, ['alice', 'bob']);
+      agent._beginCompletionInvariant(tabId);
+      agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, sent);
+      assert.equal(agent._progressUpdate(tabId, { items: [{ id: 'alice', status: 'acted' }] }, { sessionId }).success, true);
+      await interruptBatch(agent, tabId, { name: 'click_ax', args: { ref_id: 'ref_2' }, invoked: false }, { stop: true });
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 1, unsent: { name: 'click_ax' }, fence: 1 });
+      await interruptBatch(agent, tabId, { name: 'click_ax', args: { ref_id: 'ref_3' }, invoked: true, dispatchNoted: true,
+        dispatchState: { started: true, rawToolResult: sent } }, { stop: false });
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 1, unsent: { name: 'click_ax' }, fence: 1 });
+      agent._beginCompletionInvariant(tabId);
+      const refused = agent._progressUpdate(tabId, { items: [{ id: 'bob', status: 'acted' }] }, { sessionId });
+      assert.equal(refused.success, false);
+      assert.match(refused.error, /Check the page first and record what it shows/);
+      assert.doesNotMatch(refused.error, /retry the action/i);
+    });
+  });
+
+  test(`${build}: a call answered as not sent without running is noted as unsent`, () => {
+    const tabId = 86;
+    const agent = makeAgent(Agent, tabId, 'Follow alice.');
+    agent._beginCompletionInvariant(tabId);
+    agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, sent);
+    const calls = [
+      { id: 'skip_1', function: { name: 'read_page', arguments: '{}' } },
+      { id: 'skip_2', function: { name: 'click_ax', arguments: '{"ref_id":"ref_2"}' } },
+    ];
+    const messages = [];
+    agent._appendSyntheticToolResults(tabId, calls, 0, messages, () => {}, 1, () => ({
+      success: false, dispatched: false, noDispatch: true, errorCode: 'checkpoint_not_durable', error: 'Not saved.',
+    }));
+    assert.equal(messages.length, 2);
+    assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 1, unsent: { name: 'click_ax' }, fence: null });
+    // A synthetic answer that does not say the call went unsent changes nothing.
+    agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_3' }, sent);
+    agent._appendSyntheticToolResults(tabId, [calls[1]], 0, [], () => {}, 1, () => ({ success: false, skipped: true, error: 'skipped' }));
+    assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 2, unsent: null, fence: null });
+  });
+
+  test(`${build}: a restored history ending in an action without a known outcome refuses nothing`, async () => {
+    await withSessionStorage(async store => {
+      const sessionId = `${build}-trailing`;
+      const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
+      const tails = [
+        ['a missing result', [{ role: 'assistant', content: '', tool_calls: [call('t1', 'click_ax', { ref_id: 'ref_2' })] }], true],
+        ['an unknown outcome', [{ role: 'assistant', content: '', tool_calls: [call('t1', 'click_ax', { ref_id: 'ref_2' })] },
+          { role: 'tool', tool_call_id: 't1', content: JSON.stringify({ success: false, outcomeUnknown: true, cancelled: true }) }], true],
+        ['a read without a result', [{ role: 'assistant', content: '', tool_calls: [call('t1', 'read_page', {})] }], false],
+        ['an action proven unsent', [{ role: 'assistant', content: '', tool_calls: [call('t1', 'click_ax', { ref_id: 'ref_2' })] },
+          { role: 'tool', tool_call_id: 't1', content: JSON.stringify(blocked) }], false],
+      ];
+      for (const [index, [label, tail, unknown]] of tails.entries()) {
+        const tabId = 90 + index;
+        const before = makeAgent(Agent, tabId, 'Follow alice.');
+        seedRows(before, tabId, sessionId, ['alice']);
+        before._beginCompletionInvariant(tabId);
+        before._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, blocked);
+        before.conversations.get(tabId).push(...tail); // the worker stopped here
+        assert.equal((await before._persistNow(tabId)).ok, true);
+        const after = await restart(Agent, tabId);
+        assert.deepEqual(after.progressActionDispatches.get(tabId), unknown
+          ? { sent: 0, unsent: null, fence: null, historyUnknown: true }
+          : { sent: 0, unsent: { name: 'click_ax' }, fence: null }, label);
+        after._beginCompletionInvariant(tabId);
+        after._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_3' }, blocked);
+        const claim = after._progressUpdate(tabId, { items: [{ id: 'alice', status: 'acted' }] }, { sessionId });
+        assert.equal(claim.success, unknown, `${label}: ${claim.error || ''}`);
+        if (!unknown) assert.doesNotMatch(claim.error, /retry the action/i);
+      }
+      assert.ok(store.size >= tails.length);
     });
   });
 
