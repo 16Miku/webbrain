@@ -18,8 +18,9 @@ export function completionFrameSnapshot() {
     if (messages.length >= 6) break;
   }
   const text = String(document.body?.innerText || '').slice(0, 4000);
-  const validationFailed = Array.from(document.querySelectorAll('[aria-invalid="true"]')).some(visible)
-    || messages.some(message => /\b(?:failed|failure|error|rejected|invalid|not saved|not submitted|not sent)\b/i.test(message));
+  // An invalid field is marked in the page's structure. What the messages
+  // say is read by the agent in any language, not matched here.
+  const validationFailed = Array.from(document.querySelectorAll('[aria-invalid="true"]')).some(visible);
   const fields = Array.from(document.querySelectorAll('input,textarea,select,button,[contenteditable],[aria-invalid]')).slice(0, 1000)
     .map(element => [element.tagName, element.id, element.value, element.checked, element.disabled,
       element.isContentEditable ? element.textContent : '', element.getAttribute('aria-invalid')]);

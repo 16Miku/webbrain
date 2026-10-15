@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 // Installed MV3 background, real content dispatch and persisted progress. Only
 // the model provider is scripted; no Agent lifecycle/completion helper is mocked.
@@ -173,8 +174,13 @@ const server = http.createServer(async (request, response) => {
       state.retryObserved = true; state.retryAt = Date.now();
     }
     await new Promise(resolve => setTimeout(resolve, 100));
+    // WebBrain's fixed-choice questions, read the way a model would read this
+    // fixture (its row receipts say each save was recorded).
+    const fixedChoice = fixtureFixedChoiceReply(input.messages);
     let completion;
-    if (isJudge) {
+    if (fixedChoice) {
+      completion = { role: 'assistant', content: fixedChoice };
+    } else if (isJudge) {
       const outcome = state.receipts.length === 20 ? 'succeeded' : 'pending';
       state.judgments.push({ phase: state.phase, receipts: state.receipts.length, outcome });
       completion = { role: 'assistant', content: JSON.stringify({ outcome, reason: outcome === 'succeeded' ? 'All 20 independent saved receipts are visible and recorded.' : 'The complete 20-row result is not yet present.' }) };

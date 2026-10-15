@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
+import { guardProbeWithReadings } from './semantic-decision-stub.mjs';
 
 // Actual native shapes are grounded in the sanitized current WhatsApp capture.
 // All contacts, phone numbers, text and browser requests belong to this fixture.
@@ -56,7 +57,10 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         return JSON.stringify([run,current.taskKey,generation,provider,'owned-model',current.taskSha256,current.resumeTaskId,current.providerSha256]);
       };
       let owner = ownerFor(), restore = null;
-      const observe = () => call('observe_chat', { _nativeChatOwner: owner, _nativeChatPendingRestore: restore, adapterName: 'generic-messaging' });
+      // Observes the way the agent does: texts the observation consulted
+      // unread (a sent message's status) are read, and it observes again.
+      const observe = () => guardProbeWithReadings(params => call('observe_chat', params),
+        { _nativeChatOwner: owner, _nativeChatPendingRestore: restore, adapterName: 'generic-messaging' });
       const read = () => call('get_accessibility_tree', { filter: 'all' });
       const click = async selector => {
         await read();
@@ -85,6 +89,51 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       const expected = 'whatsapp:phone:' + createHash('sha256').update('+905550000001').digest('hex').slice(0,32);
       assert.equal(observation.conversationId, expected); assert.equal(observation.conversationIdentity, 'Fixture Mom');
       assert.equal(JSON.stringify(observation).includes('905550000001'), false); assert.equal(await page.evaluate(() => fixtureOpenCount), 2);
+    });
+  });
+
+  // From review: a run's contact check belongs to the first chat it looked
+  // at, so once the chat selection changed the agent was sent after a header
+  // click that could not help, with "re-read and retry". It is told plainly
+  // instead, and the next run can check a contact again.
+  test(`${build}: once the chat selection changed, a run says it can no longer check a contact`, async () => {
+    await fixture(async ({ page, call, observe, ownerFor, setOwner }) => {
+      const before = await observe();
+      assert.equal(before.reason, 'native_whatsapp_contact_binding_required', JSON.stringify(before));
+      assert.ok(before.nativeWhatsappRepair, 'the open chat offers its contact check');
+      const probe = owner => call('probe_message_recipient_guard', { tool: 'observe_active_conversation', args: {},
+        adapterName: 'generic-messaging', _nativeChatOwner: owner });
+      const offered = await probe(ownerFor());
+      assert.equal(offered.nativeWhatsappRepairAvailable, true, JSON.stringify(offered));
+      assert.equal(offered.nativeWhatsappRepairSpent, undefined);
+      // From review: the chat hidden for a moment, as behind a modal, is not
+      // a spent check; the same chat is offered its check again afterwards.
+      await page.evaluate(() => document.querySelector('#main').setAttribute('aria-hidden', 'true'));
+      const hidden = await observe();
+      assert.notEqual(hidden.reason, 'native_whatsapp_contact_check_spent', JSON.stringify(hidden));
+      assert.notEqual(hidden.retryable, false, JSON.stringify(hidden));
+      assert.equal((await probe(ownerFor())).nativeWhatsappRepairSpent, undefined);
+      await page.evaluate(() => document.querySelector('#main').removeAttribute('aria-hidden'));
+      const shown = await observe();
+      assert.equal(shown.reason, 'native_whatsapp_contact_binding_required', JSON.stringify(shown));
+      assert.ok(shown.nativeWhatsappRepair, 'the chat shown again is not offered its contact check');
+      await page.evaluate(() => {
+        const selected = document.querySelector('[aria-selected]');
+        selected.setAttribute('aria-selected', 'false'); selected.setAttribute('aria-selected', 'true');
+      });
+      const after = await observe();
+      assert.equal(after.reason, 'native_whatsapp_contact_check_spent', JSON.stringify(after));
+      assert.equal(after.retryable, false);
+      assert.match(after.error, /can no longer confirm a WhatsApp contact[\s\S]*needs a new request/);
+      const spent = await probe(ownerFor());
+      assert.equal(spent.nativeWhatsappRepairSpent, true, JSON.stringify(spent));
+      assert.equal(spent.reasonCode, 'native_whatsapp_contact_check_spent');
+      assert.equal(spent.conclusive, false);
+      // The next run checks a contact again.
+      setOwner(ownerFor('owned-run-2'));
+      const next = await observe();
+      assert.equal(next.reason, 'native_whatsapp_contact_binding_required', JSON.stringify(next));
+      assert.ok(next.nativeWhatsappRepair, 'a new run cannot check a contact');
     });
   });
 

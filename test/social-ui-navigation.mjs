@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { chromium, firefox } from 'playwright';
 import { createCompletionInvariantState } from '../src/chrome/src/agent/completion-invariant.js';
+import { defaultDecide, semanticQuestionOf } from './semantic-decision-stub.mjs';
 
 // The page, native AX refs, submit probe, normalized intent contract, and
 // content dispatch are real. Every browser request is fulfilled locally.
@@ -49,7 +50,12 @@ for (const build of ['chrome','firefox']) {
         agent._persist=()=>{};
         agent.conversations.set(1,[{role:'system',content:'system'},{role:'user',content:options.request||'Inspect the current UI and dismiss its informational dialog. Send and publish nothing.'}]);
         const guard=agent._startPlanExecutionGuard(1,'act',{requestKind:'execute',requiresStateChange:false,requiresSubmission:false,...options.gate});
-        agent._chatWithCostAllowance=async()=>({content:JSON.stringify(options.contract||noneContract)});
+        // Fixed-choice decisions about the request get a model's reading; the
+        // publication contract comes from the fixture.
+        agent._chatWithCostAllowance=async(_p,messages,_o,_c,meta)=>{
+          const kind=String(meta?.generationName||'').match(/^semantic_(.+)$/)?.[1];
+          return {content:JSON.stringify(kind?defaultDecide(kind,semanticQuestionOf(agent,messages)):(options.contract||noneContract))};
+        };
         if(options.compile!==false)await agent._ensureSocialPublicationContract(1,provider);
         return {agent,guard,provider};
       };
@@ -236,9 +242,11 @@ for (const build of ['chrome','firefox']) {
         assert.equal(opened.result.success,true);
         f.agent._recordCompletionToolResult(1,'click_ax',args,opened.result,{detectedSubmit:opened.detected});
         assert.equal(f.guard.resolvedResourceScope.launcherDispatched,true);
-        const wrong=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('wrong')});
+        const wrongArgs={ref_id:await targetRef('wrong')}, wrong=await f.agent._detectLikelySubmitAction(1,'click_ax',wrongArgs);
         assert.equal(wrong.actionResource,undefined,'An existing different owner vetoes fallback, even if it lacks a permalink');
-        assert.equal((await f.agent._resourceMutationPreSubmitBlock(1,'click_ax',{},wrong,f.provider)).actionGuard.reason,'resource_unresolved');
+        // B is bound only to its own visible record, which this request never asks to delete.
+        assert.equal(wrong.actionRecord?.text,'Unbound resource B');
+        assert.equal((await f.agent._resourceMutationPreSubmitBlock(1,'click_ax',wrongArgs,wrong,f.provider)).actionGuard.reason,'deletion_not_requested');
         portal=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('portal')});
         assert.equal(portal.actionResource.url,url,'A native aria-controls/labelledby relation resolves the actual opened A menu');
         const foreign=await f.agent._detectLikelySubmitAction(1,'click_ax',{ref_id:await targetRef('foreign')});

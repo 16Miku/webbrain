@@ -38,6 +38,7 @@ function seededConversation(Agent, createChatSession, tabId) {
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const { createChatSession } = await import(`../src/${build}/src/agent/chat-workflow.js`);
+  const { STEERING_JOURNAL_PREFIX } = await import(`../src/${build}/src/agent/steering-journal.js`);
 
   for (const errorMessage of ['Storage unavailable', 'QUOTA_BYTES quota exceeded']) {
     test(`${build}: failed recovery preserves the complete current conversation (${errorMessage})`, async () => {
@@ -65,6 +66,8 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: recovery keeps old state until commit, then clears stale workflow and continuation state`, async () => {
     const tabId = build === 'chrome' ? 143 : 144;
     const { agent, cancelled, conversationId } = seededConversation(Agent, createChatSession, tabId);
+    const steeringKey = `${STEERING_JOURNAL_PREFIX}${tabId}`;
+    await agent._steeringJournal.accept(tabId, 'current-request', { id: 'old-correction', text: 'Keep working on the old task' });
     await agent._persistNow(tabId);
     const previousMessages = agent.conversations.get(tabId);
     let releaseWrite, notifyWrite;
@@ -76,7 +79,10 @@ for (const build of ['chrome', 'firefox']) {
       await new Promise(resolve => { releaseWrite = resolve; });
       return write(values);
     };
-    removeSession = async () => { removed = true; };
+    removeSession = async keys => {
+      if ([keys].flat().includes(agent._convKey(tabId))) removed = true;
+      return remove(keys);
+    };
     try {
       const recovery = agent.recoverChatHistory(tabId, archive);
       await started;
@@ -84,8 +90,10 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(agent.conversations.get(tabId), previousMessages);
       assert.equal(agent._latestWorkflowDrafts.has(tabId), true);
       assert.equal(cancelled.length, 0);
+      assert.equal(session[steeringKey].entries.length, 1, 'Old corrections remain available before recovery commits');
       releaseWrite();
       const result = await recovery;
+      await agent._steeringJournal.settled(tabId);
       assert.notEqual(result.conversationId, conversationId);
       assert.equal(agent._latestWorkflowDrafts.has(tabId), false);
       assert.equal(agent.chatSessions.has(tabId), false);
@@ -94,6 +102,7 @@ for (const build of ['chrome', 'firefox']) {
       assert.equal(agent.apiAllowedTabs.has(tabId), false);
       assert.equal(cancelled.length, 1);
       assert.equal(removed, false, 'Committing the in-memory replacement must preserve its durable snapshot');
+      assert.equal(session[steeringKey], undefined, 'Corrections belonging to the replaced conversation must be discarded');
       const stored = session[agent._convKey(tabId)];
       assert.equal(stored.conversationId, result.conversationId);
       assert.deepEqual(stored.messages, agent.conversations.get(tabId));

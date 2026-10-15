@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
+import { fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 // Optional real-time matrix: installed MV3, unchanged Agent/Scheduler, native
 // chrome.alarms and an actual service-worker restart. Only the model and the
@@ -88,8 +89,14 @@ const server = http.createServer(async (request, response) => {
     await sleep(180);
     const isJudge = system.startsWith('Evaluate only the observable requirements of the genuine user task');
     const isAction = Array.isArray(input.tools) && input.tools.length > 0;
+    // WebBrain's fixed-choice questions carry short page texts (the receipt
+    // line), not the task; read them the way a model would.
+    const fixedChoice = fixtureFixedChoiceReply(input.messages);
     let completion;
-    if (isJudge) {
+    if (fixedChoice) {
+      metrics.fixedChoiceQuestions = (metrics.fixedChoiceQuestions || 0) + 1;
+      completion = { role: 'assistant', content: fixedChoice };
+    } else if (isJudge) {
       metrics.judgeCalls++;
       // A positive independent verdict is based on a fresh native read AND
       // the actual owned server acknowledgement; it cannot manufacture a send.

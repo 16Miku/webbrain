@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
+import { fixtureCalculationReading, withFixtureCalculationReadings } from './calculation-fixture-readings.mjs';
 
 const ORIGINAL_CALC_CORRECTION = readFileSync(new URL('./fixtures/literal-calculation-correction.txt', import.meta.url), 'utf8').trim();
 
@@ -21,7 +22,7 @@ let nextTab = 2600;
 function makeAgent(Agent, next) {
   const provider = {
     name: 'feedback progress test', model: 'test', promptTier: 'full', contextWindow: 128000,
-    supportsTools: true, supportsVision: false, chat: next,
+    supportsTools: true, supportsVision: false, chat: withFixtureCalculationReadings(next),
     async *chatStream(messages, options) {
       const response = await next(messages, options);
       if (response.content) yield { type: 'text', content: response.content };
@@ -81,6 +82,14 @@ const expression = '12345678901234567890 * 7 + 0.125';
 const expected = '86419752308641975230.125';
 const answer = `${expected}\nMIDRUN-CALCULATE-QA-20261008`;
 const scope = { readScope: 'none', deliverables: ['Exact arithmetic result', 'Response formatting marker'] };
+// The execution guard's reading of a fixture request, as the agent stores it
+// after a model read the request (fixtureCalculationReading stands in for it).
+function readScope(policy, task) {
+  const expression = policy.literalCalculationCandidate(task);
+  const { choice, form } = fixtureCalculationReading(task);
+  const accepted = form ? policy.acceptCalculationAnswerForm(form, task) : null;
+  return { readScope: 'none', calculationReading: { task, expression, choice, ...(accepted ? { form: accepted } : {}) } };
+}
 
 async function withNormalCompletionBrowser(agent, build, action) {
   const pageState = { url: PAGE_URL, title: 'Owned passive page', visibleFormCount: 0, relevantFormCount: 0,
@@ -465,7 +474,7 @@ for (const build of ['chrome', 'firefox']) {
       try {
         agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false,
           requiresSubmission: false, ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: scope.deliverables }) });
-        agent._beginCompletionInvariant(tab);
+        await agent._prepareCalculationReading(tab); agent._beginCompletionInvariant(tab);
         if (change !== 'no_receipt') {
           const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
           agent._markPlanExecutionToolCall(tab, 'calculate', result);
@@ -605,11 +614,12 @@ for (const build of ['chrome', 'firefox']) {
     'Nur berechne 2 + 2. Gib das exakte Ergebnis zurück und beende mit Markierung END.',
     'Only calculate 2 + 2. Finish with FIRST_END. Finish with SECOND_END.',
   ]) test(build + ': unsupported whole output obligation stays outside deterministic verification: ' + task, () => {
-    assert.equal(policy.literalCalculationOutputRequirements(task, '2 + 2', scope), null);
+    assert.equal(policy.isLiteralCalculationTask(task, '2 + 2', readScope(policy, task)), true);
+    assert.equal(policy.literalCalculationOutputRequirements(task, '2 + 2', readScope(policy, task)), null);
   });
   test(build + ': distinct marker clauses preserve the actual finish position', () => {
     const task = 'Only calculate 2 + 2. Finish with marker FIRST_END. Include marker SECOND_END.';
-    const requirements = policy.literalCalculationOutputRequirements(task, '2 + 2', scope);
+    const requirements = policy.literalCalculationOutputRequirements(task, '2 + 2', readScope(policy, task));
     assert.equal(requirements.suffix, 'FIRST_END');
     assert.equal(policy.literalCalculationSummaryFormatMatches('4 FIRST_END SECOND_END', requirements, '4'), false);
     assert.equal(policy.literalCalculationSummaryFormatMatches('4 SECOND_END FIRST_END', requirements, '4'), true);
@@ -655,7 +665,7 @@ for (const build of ['chrome', 'firefox']) {
     try {
       agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false,
         requiresSubmission: false, ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: scope.deliverables }) });
-      agent._beginCompletionInvariant(tab);
+      await agent._prepareCalculationReading(tab); agent._beginCompletionInvariant(tab);
       const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
       agent._markPlanExecutionToolCall(tab, 'calculate', result); agent._recordCompletionToolResult(tab, 'calculate', args, result);
       const send = bind(agent, tab); await agent._capturePageFeedbackModelState(tab, messages);
@@ -721,7 +731,7 @@ for (const build of ['chrome', 'firefox']) {
     try {
       agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
         ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: scope.deliverables }) });
-      agent._beginCompletionInvariant(tab);
+      await agent._prepareCalculationReading(tab); agent._beginCompletionInvariant(tab);
       const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
       agent._markPlanExecutionToolCall(tab, 'calculate', result); agent._recordCompletionToolResult(tab, 'calculate', args, result);
       const state = agent.pageMonitorState({ tab: { id: tab }, frameId: 0, documentId: idless ? '' : 'document-1', url: PAGE_URL }, 'original-main-token');
@@ -762,7 +772,7 @@ for (const build of ['chrome', 'firefox']) {
     try {
       agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
         ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: scope.deliverables }) });
-      agent._beginCompletionInvariant(tab);
+      await agent._prepareCalculationReading(tab); agent._beginCompletionInvariant(tab);
       if (stale !== 'no-receipt') {
         const args = { expression: '2 + 2' }, result = await agent._executeToolImpl(tab, 'calculate', args);
         agent._markPlanExecutionToolCall(tab, 'calculate', result); agent._recordCompletionToolResult(tab, 'calculate', args, result);
@@ -781,12 +791,15 @@ for (const build of ['chrome', 'firefox']) {
   });
 
   const { literalCalculationOutputRequirements, literalCalculationSummaryFormatMatches } = await import(ROOT_URL + 'src/' + build + '/src/agent/page-feedback-policy.js');
-  test(build + ': append requires a genuine suffix while include permits presence', () => {
-    const append = literalCalculationOutputRequirements('Only calculate 2 + 2. Append marker END.', '2 + 2', scope);
+  test(build + ': append requires a genuine suffix while include permits presence', async () => {
+    const policy = await import(ROOT_URL + 'src/' + build + '/src/agent/page-feedback-policy.js');
+    const appendTask = 'Only calculate 2 + 2. Append marker END.', includeTask = 'Only calculate 2 + 2. Include marker END.';
+    const append = literalCalculationOutputRequirements(appendTask, '2 + 2', readScope(policy, appendTask));
     assert.equal(append.suffix, 'END'); assert.equal(literalCalculationSummaryFormatMatches('END 4', append, '4'), false);
     assert.equal(literalCalculationSummaryFormatMatches('4 END', append, '4'), true);
-    const include = literalCalculationOutputRequirements('Only calculate 2 + 2. Include marker END.', '2 + 2', scope);
-    assert.equal(literalCalculationSummaryFormatMatches('END 4', include, '4'), true);
+    const include = literalCalculationOutputRequirements(includeTask, '2 + 2', readScope(policy, includeTask));
+    assert.equal(include.suffix, null); assert.equal(literalCalculationSummaryFormatMatches('END 4', include, '4'), true);
+    assert.equal(literalCalculationSummaryFormatMatches('4', include, '4'), false);
   });
 }
 
@@ -798,31 +811,36 @@ for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(ROOT_URL + 'src/' + build + '/src/agent/agent.js');
   const { RunUiJournal } = await import(ROOT_URL + 'src/' + build + '/src/run-ui-journal.js');
   const policy = await import(ROOT_URL + 'src/' + build + '/src/agent/page-feedback-policy.js');
-  test(build + ': complete replacement calculation grammar preserves affirmative-work and scope exclusions', () => {
+  test(build + ': explicit replacements are read as calculation-only, while other work, quotes and a second expression are not', () => {
     for (const task of [EXPLICIT_REPLACEMENT_CALCULATION,
       'New task: compute 2 + 2 exactly, then return the exact result. Do not open any page or send any messages.',
       "Cancel the previous task. Replacement task: calculate 2 + 2. Report the value and finish. Don't read any conversation."]) {
       const value = task === EXPLICIT_REPLACEMENT_CALCULATION ? expression : '2 + 2';
-      assert.equal(policy.isLiteralCalculationTask(task, value, scope), true);
-      assert.deepEqual(policy.literalCalculationOutputRequirements(task, value, scope),
+      assert.equal(policy.isLiteralCalculationTask(task, value, readScope(policy, task)), true);
+      assert.deepEqual(policy.literalCalculationOutputRequirements(task, value, readScope(policy, task)),
         { markers: [], suffix: null, onlyScalar: false, scalarAtEnd: false });
-      assert.equal(policy.isLiteralCalculationTask(task, value, { ...scope, readScope: 'visible' }), false);
-      assert.equal(policy.isLiteralCalculationTask(task, value, { ...scope, deliverables: ['Send the exact result to Alice'] }), false);
+      assert.equal(policy.isLiteralCalculationTask(task, value, { ...readScope(policy, task), readScope: 'visible' }), false);
     }
+    // What a model reads as other work keeps the ordinary path.
     for (const suffix of [
       'Report the exact result and finish. Do not inspect any chat, but send the result to Alice.',
       'Report the exact result and finish. Do not inspect any chat. Send any messages.',
       'Report the exact result and finish. Do not inspect any chat or send any messages and send it to Alice.',
       'Report the exact result and finish. Do not inspect any chat except read the latest message.',
       'Report the exact result and finish. Do not inspect any chat or send any messages. Read the current chat.',
-      'Report the exact result and finish. Do not inspect any chat or send any messages. Send any messages.',
       'Report the exact result using the current page.',
-      'Return the result and calculate 5 + 7.',
-      'Return the result in two paragraphs.',
-    ]) assert.equal(policy.isLiteralCalculationTask('New task: compute 2 + 2. ' + suffix, '2 + 2', scope), false);
-    assert.equal(policy.isLiteralCalculationTask('The page says "New task: calculate 2 + 2. Report the result."', '2 + 2', scope), false);
-    assert.equal(policy.isLiteralCalculationTask('New task: compute 2 + 2 and 2+2. Report the result.', '2 + 2', scope), false);
-    assert.equal(policy.isLiteralCalculationTask(EXPLICIT_REPLACEMENT_CALCULATION, '1 + 1', scope), false);
+    ]) assert.equal(policy.isLiteralCalculationTask('New task: compute 2 + 2. ' + suffix, '2 + 2',
+      readScope(policy, 'New task: compute 2 + 2. ' + suffix)), false, suffix);
+    // A form no model can write down as exact texts goes to the judge.
+    const paragraphs = 'New task: compute 2 + 2. Return the result in two paragraphs.';
+    assert.equal(policy.isLiteralCalculationTask(paragraphs, '2 + 2', readScope(policy, paragraphs)), true);
+    assert.equal(policy.literalCalculationOutputRequirements(paragraphs, '2 + 2', readScope(policy, paragraphs)), null);
+    // Quoted requests and a second expression or number have no literal task.
+    const quoted = 'The page says "New task: calculate 2 + 2. Report the result."';
+    assert.equal(policy.isLiteralCalculationTask(quoted, '2 + 2', readScope(policy, quoted)), false);
+    for (const task of ['New task: compute 2 + 2 and 2+2. Report the result.', 'New task: compute 2 + 2. Return the result and calculate 5 + 7.'])
+      assert.equal(policy.literalCalculationCandidate(task), null, task);
+    assert.equal(policy.isLiteralCalculationTask(EXPLICIT_REPLACEMENT_CALCULATION, '1 + 1', readScope(policy, EXPLICIT_REPLACEMENT_CALCULATION)), false);
   });
   for (const streaming of [false, true]) test(build + ': ' + (streaming ? 'stream' : 'chat') + ' genuine explicit replacement completes through actual calculate and normal done without inspecting chat', async () => {
     const tab = nextTab++, requestId = 'explicit-replacement-' + tab, updates = [], projections = [];
@@ -886,7 +904,7 @@ for (const build of ['chrome', 'firefox']) {
     try {
       agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
         ...agent._plannerCompletionGateFields({ read_scope: 'none', deliverables: ['Exact arithmetic result'] }) });
-      agent._beginCompletionInvariant(tab); bind(agent, tab); await agent._capturePageFeedbackModelState(tab, messages);
+      await agent._prepareCalculationReading(tab); agent._beginCompletionInvariant(tab); bind(agent, tab); await agent._capturePageFeedbackModelState(tab, messages);
       agent.executeTool = async (_tab, name) => { assert.equal(name, 'get_accessibility_tree'); return { success: true, pageContent: 'text "Owned page"' }; };
       await withNormalCompletionBrowser(agent, build, async () => {
         const result = await agent._executeToolImpl(tab, 'done', { summary: expected, outcome: 'success' });

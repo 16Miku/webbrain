@@ -95,18 +95,34 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   acknowledgements, interrupted authority and unresolved reads retain repeat
   locks; observing effects never sends a second click or clears queued feedback.
   The agent's own hover may move a certified native button by up to 8 px
-  (lift, border or scale); it is then pressed at its re-verified current
-  centre, and any other change refuses before input.
+  (lift, border or scale), also through a CSS transition or a page hover
+  animation. Without sending input, the agent then samples that exact button
+  read-only, at most 600 ms, until two consecutive samples have the same
+  rectangle and the same hit node at its centre and no finite geometry
+  transition is still running on it or an ancestor. The settled button is
+  re-verified, the monitor fence refreshes its geometry proof only for the
+  same node with identical semantics and hit, and it is pressed once at that
+  settled centre. A button that keeps moving (including an infinite
+  animation), a covering, hidden or replaced node, a changed document or
+  route, a semantic change, a move beyond 8 px from the prepared centre, any
+  user input or Stop during the wait refuses before input.
 - Trusted CDP input is marked dispatched only at the transport boundary, after
   the receiving-node and page-feedback fences pass. A rejection before the
   protocol call means nothing was sent; any later failure means the input was
   delivered with an unknown outcome. Such input is never resent and never
-  followed by a DOM, script or content-script fallback. For `click_ax`, only
-  the browser's missing-receiver error proves that the click was not
-  delivered. A possibly delivered, unverified trusted click locks its exact
-  document and ref for the rest of the task, including Continue and Retry; a
-  verified effect or a new task releases it. Stop between a field write and
-  its submit or Enter prevents the submit and reports the write as it happened.
+  followed by a DOM, script or content-script fallback. This covers hover
+  (from its first pointer move) and drag_drop and set_checked (from their
+  press; the no-button move before a press is pointer preparation, as for a
+  click). In Firefox, a trusted BiDi action is dispatched when its native
+  request is posted after the preparation probe and page-feedback fence, and
+  a content-script action when its message is sent; a refusal before either,
+  a content-side fence or a companion refusal before input reports no
+  dispatch. For `click_ax`, only the browser's missing-receiver error proves
+  that the click was not delivered. A possibly delivered, unverified trusted
+  click locks its exact document and ref for the rest of the task, including
+  Continue and Retry; a verified effect or a new task releases it. Stop
+  between a field write and its submit or Enter prevents the submit and
+  reports the write as it happened.
 - Meaningful visible content, control state, visibility and geometry changes are
   coalesced. Visible subtree identity changes invalidate targets even when the
   replacement has identical text and geometry. CSS animation and extension
@@ -216,6 +232,28 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   under an unchanged authored name; a generic account label cannot conceal a
   different rendered account name. This rule uses semantic structure on every
   site, without URL or control-name exceptions.
+- An item of an ARIA feed (an `article`, or `role="article"`, with its
+  `aria-posinset` inside a `role="feed"`, as Mastodon and other social
+  timelines mark each post) owns the controls inside it, like an entity with
+  a heading. Its controls, author link and attributes stay bound with it, so a
+  change to the clicked post invalidates the decision; changes in other items
+  of the feed do not. An article outside a feed, or without its position in
+  one, gains nothing from this rule. A `<time datetime>` element inside a bound
+  control is bound by its `datetime` value rather than its rendered text, so a
+  relative timestamp ticking over ("2 min" to "3 min") is not a change of
+  context, while a changed `datetime` still is.
+- Inside an unnamed region, or outside any entity, the nearest focusable item
+  the page names for assistive technology owns the controls inside it: an
+  element in the tab order (`tabindex` 0 or more), with no role or
+  `role="group"`, named by its own `aria-label` or a complete
+  `aria-labelledby`, that links somewhere (its permalink or author), holds no
+  field or editor, and stays within 256 elements and 64 controls. This is how
+  Mastodon marks a post shown on its own page and each reply around it. The
+  item's name, controls, images and attributes stay bound, so another post
+  taking its place or a change to its own controls invalidates the decision,
+  while changes in the replies around it do not. Forms, landmarks, toolbars,
+  menus, grids, other entities, unnamed or unfocusable wrappers and items that
+  link nowhere gain nothing from this rule.
 - Noninteractive `aria-hidden` icon labels inside an exact control remain
   privately bound without requiring model-visible dialog identity from an AX
   hidden node. The bounded predicate is rechecked for every hidden descendant;
@@ -277,9 +315,38 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   Existing recipient approvals survive trusted Continue within the same task
   and execution scope; independent tasks and changed scope clear them. Missing live
   identity, draft, baseline or dispatch proof produces a technical blocker;
-  another approval question cannot repair missing evidence. Recipient
-  clarifications report `recipientBinding` separately from general user
-  authorization and suppress repeated questions for known technical blockers.
+  another approval question cannot repair missing evidence, and a question
+  declared to be about the recipient is refused while such a blocker stands.
+- When a send would reach recipients other than the ones the task named, and
+  approval is the only thing missing (the plan authorizes sending, the body,
+  baseline and dispatch binding are present), WebBrain asks the user on its
+  own card: "Send to <recipients>?" with fixed choices (Send; on tasks with
+  several recipients also "Send, and don't ask again in this task"; Don't
+  send) and no free text. The card shows the recipients from the page probe
+  and the names the request used. Send approves those recipients for the rest
+  of the task and the guard runs again on a fresh observation before dispatch;
+  a conversation that changed meanwhile is not sent to. Don't send blocks
+  that send for the rest of the task without asking again. Stop cancels the
+  card. Unattended scheduled runs are not asked and send nothing. The model
+  is never told to obtain consent itself.
+- A typed message that the task never named a recipient for, or never asked
+  to send, gets the same card once its recipients, draft and baseline are
+  verified. The card says why WebBrain is asking and shows the message text;
+  the send keeps the reason `authorized_recipient_missing` until the user
+  confirms. An attachment still needs a plan that authorizes sending one, and
+  a send whose draft cannot be verified keeps its previous block. A
+  correction sent while the card is open applies the correction; it is not
+  treated as Stop. When the latest request says not to send the message
+  ("draft it but don't send"), the send is refused without a card; a model
+  reads that from the request in any language, and no answer means the card.
+- A question the model asks itself never approves a recipient, whatever the
+  user picks or types on it, in any language; the model is told that WebBrain
+  confirms the recipient itself, and the send still gets WebBrain's card. No
+  question or answer wording is read for consent. Icon-only attachment and
+  picker launchers beside a chat composer, named by their icon's label or
+  title, are composer utilities when a model reads that name, in any
+  language, as only working on the draft; Like, Send, mixed, unread and
+  unnamed icons stay guarded.
 - A cancelled `beforeinput` handled by a native chat editor can receive an
   exact read-only draft certificate while its original operation, document,
   identity nodes, editor, focus and selection remain current. The certificate

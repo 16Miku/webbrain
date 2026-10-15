@@ -1,4 +1,4 @@
-import { canRetainPageFeedbackCalls, isAutomaticPageFeedback, isLiteralCalculationTask, isPageIndependentCalculationCompletion, isPassivePageFeedback, literalCalculationOutputRequirements, literalCalculationTaskExpression, pageFeedbackCallPolicy } from './page-feedback-policy.js';
+import { acceptCalculationAnswerForm, calculationAnswerFormMessages, canRetainPageFeedbackCalls, isAutomaticPageFeedback, isLiteralCalculationTask, isPageIndependentCalculationCompletion, isPassivePageFeedback, literalCalculationCandidate, literalCalculationOutputRequirements, literalCalculationTaskExpression, pageFeedbackCallPolicy } from './page-feedback-policy.js';
 import { accountFeedbackSupersession, resetFeedbackSupersession } from './page-feedback-recovery.js';
 import { captureMediaDownloadStateInPage } from './media-download-binding.js';
 import * as trace from '../trace/recorder.js';
@@ -25,17 +25,22 @@ const userIntervention = events => events.some(event => event?.source === 'user'
 const UNKNOWN_ATTRIBUTION_LIMIT = 4;
 const unknownAttribution = new WeakMap();
 
-// Viewing gestures (scroll, selection, pointer/key activity) cannot change the
-// content behind a read-only Ask answer. Clicks, input, navigation and DOM
-// changes they cause are reported separately and still invalidate it.
-const askRelevantFeedback = events => events.filter(event => !(event?.source === 'user'
-  && ['scroll', 'selection', 'activity'].includes(event.kind)));
+// A read-only Ask answer is about the page as the person asked about it. What
+// they do there while it is being written (scrolling, selecting, clicking,
+// typing, and the page's changes from those), and any scroll or viewport
+// resize, cannot make it stale, so an answer already shown stays. Their
+// navigation of the page to another address still does, and the page's own
+// changes are weighed as before.
+const mainFrameNavigation = event => event?.kind === 'navigation'
+  && !(Number.isSafeInteger(event.frameId) && event.frameId > 0);
+const askRelevantFeedback = events => events.filter(event => !['scroll', 'selection', 'resize'].includes(event?.kind)
+  && (event?.source !== 'user' || mainFrameNavigation(event)));
 
 function automaticAnswerFeedback(events) {
   const relevant = askRelevantFeedback(events);
   return !!relevant.length && relevant.every(event => ['page', 'unknown'].includes(event.source)
     && (event.kind === 'dom' || (event.kind === 'navigation' && event.frameId > 0)
-      || (['activity', 'resize'].includes(event.kind) && event.source === 'page')));
+      || (event.kind === 'activity' && event.source === 'page')));
 }
 
 // Busy renderers can stall browser messaging indefinitely; Stop must not wait.
@@ -706,12 +711,19 @@ export const pageFeedbackMethods = {
     return !!this._pageFeedbackRuns?.get(tabId)?.events.size;
   },
 
-  async _waitForPageFeedbackIdle(tabId, { automaticAskReply = false } = {}) {
+  async _waitForPageFeedbackIdle(tabId, { automaticAskReply = false, askReply = false } = {}) {
     const run = this._pageFeedbackRuns?.get(tabId);
     const signal = this._runAbortSignal(tabId);
     while (run && this._pageFeedbackRuns.get(tabId) === run) {
       this._throwIfAborted(signal);
       if (this._hasPendingSteering?.(tabId)) return;
+      // Nothing the person does on the page can change a read-only Ask
+      // answer, so its decision does not wait for them to stop typing or
+      // scrolling; only a change that can still make it stale is waited for.
+      if (askReply) {
+        const events = [...run.events.values()];
+        if (!askRelevantFeedback(events).length || automaticAnswerFeedback(events)) return;
+      }
       // Automatic child commits can continue indefinitely. A read-only terminal
       // candidate still waits for actual user gestures, then uses its reply scope
       // or bounded recovery; browser actions keep the full activity wait.
@@ -740,6 +752,44 @@ export const pageFeedbackMethods = {
     // A genuine explicit replacement may retire an earlier read-only task.
     // The composite anchor still binds the receipt to the full authority turn.
     return update?.kind === 'steering' ? update.text : binding?.text || '';
+  },
+
+  // Whether a request that contains one arithmetic expression asks for its
+  // result and nothing else is read once by a model, in any language (the
+  // calculation_request question), and kept on the execution guard for the
+  // synchronous checks. Only requests the planner gave no page reads, state
+  // changes or submissions are read; no sure reading means the ordinary path.
+  async _prepareCalculationReading(tabId) {
+    const guard = this._planExecutionGuards?.get(tabId);
+    if (!guard?.enabled || (guard.readScope != null && guard.readScope !== 'none')
+        || guard.requiresStateChange !== false || guard.requiresSubmission !== false
+        || guard.siteWorkflow || guard.messaging || guard.draftRecipients) return;
+    const task = String(this._pageFeedbackLiteralCalculationTask(tabId) || '').trim();
+    const expression = task && literalCalculationCandidate(task);
+    if (!expression || (guard.calculationReading?.task === task && guard.calculationReading.expression === expression)) return;
+    const reading = await this._semanticDecision(tabId, 'calculation_request', { request: task, page: { expression } });
+    const form = reading.choice === 'only_result_with_form' ? await this._calculationAnswerForm(tabId, task, expression) : null;
+    if (this._planExecutionGuards?.get(tabId) === guard) {
+      guard.calculationReading = { task, expression, choice: reading.choice, ...(form ? { form } : {}) };
+    }
+  },
+
+  // The form a request sets for a calculation's answer, written down by the
+  // active model with each required text copied from the request. No usable
+  // answer leaves the form to the completion judge.
+  async _calculationAnswerForm(tabId, task, expression) {
+    const provider = this._activeProvider?.(tabId);
+    if (!provider?.chat) return null;
+    try {
+      const response = await withCompletionTimeout(signal => this._chatWithCostAllowance(provider,
+        calculationAnswerFormMessages(task, expression), { temperature: 0, maxTokens: 300, signal },
+        this.currentCostState?.get(tabId) || null, { tabId, generationName: 'calculation_answer_form' }),
+      this._runAbortSignal(tabId), 10000);
+      return acceptCalculationAnswerForm(this._socialPublicationResponseObject(response, { maxTokens: 300 }), task);
+    } catch (error) {
+      if (this._isCostAllowanceError?.(error) || this._checkAbort?.(tabId)) throw error;
+      return null;
+    }
   },
 
   _rememberPageFeedbackCalculation(tabId, name, args, result, completion) {
@@ -949,14 +999,28 @@ export const pageFeedbackMethods = {
     if (Array.isArray(messages) && /^https?:\/\//i.test(url) && state.frames.get(0)?.token) {
       try {
         const api = apiFor();
-        const capture = await settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_capture_model',
+        const requestCapture = () => settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_capture_model',
           params: { runToken: run.token, includeTree: true,
             ...(monitoringRetry ? { relaxedMonitorGrantToken: monitoringRetry.grantToken } : {}),
             ...(nativeChatOwner ? { nativeChatOwner } : {}),
             ...(run.uploadObservationScope?.documentToken === state.frames.get(0)?.token
               && run.uploadObservationScope.url === url ? { uploadTargets: run.uploadObservationScope.selectors } : {}),
             ...(run.actionObservationScope ? { observationRef: run.actionObservationScope.ref } : {}),
-            ...(run.actionCaptureTarget ? { actionTarget: run.actionCaptureTarget } : {}) } }, { frameId: 0 }));
+            ...(run.actionCaptureTarget ? { actionTarget: run.actionCaptureTarget } : {}),
+            pageReadings: this._messagingPageReadings?.() || {} } }, { frameId: 0 }));
+        let capture = await requestCapture();
+        // Who a conversation's footer actions belong to depends on what its
+        // header controls do, read from their names in any language. Texts the
+        // monitor consulted unread are read once, and the page captured again.
+        if (capture?.pageTextsUnread === true && typeof this._readUnreadPageTexts === 'function') {
+          const unread = await settle(api.tabs.sendMessage(tabId, { target: 'content', action: 'take_unread_page_texts' },
+            { frameId: 0 })).catch(() => null);
+          if (Array.isArray(unread?.texts) && unread.texts.length) {
+            await this._readUnreadPageTexts(tabId, unread.texts.slice(0, 64));
+            stopIfAborted();
+            capture = await requestCapture();
+          }
+        }
         const [tab, frames] = await settle(Promise.all([api.tabs.get(tabId), api.webNavigation?.getAllFrames?.({ tabId })]));
         const currentDocument = frames?.find(frame => frame.frameId === 0)?.documentId;
         actionCaptureStatus = capture?.ready === true ? 'context_changed' : 'observation_unavailable';
@@ -979,6 +1043,7 @@ export const pageFeedbackMethods = {
           if (capture.observationScopeCaptured === false) run.actionObservationScope = null;
           run.actionCaptureTarget = null;
           state.page = run.latestPage = capture.page;
+          this._preReadControlCaptions?.(tabId, capture.page.pageContent, url);
           for (let index = messages.length - 1; index >= 0; index--) {
             if (messages[index]?.webbrainAppOwnedKind === 'page_action_observation') messages.splice(index, 1);
           }
@@ -1248,7 +1313,9 @@ export const pageFeedbackMethods = {
         || (responseToolCalls === null && pendingRun?.askAutomaticRetry))
       && this._pageFeedbackAskOwnerCurrent(tabId, pendingRun, pendingRun?.modelState)
       && automaticAnswerFeedback([...pendingRun.events.values()]);
-    await this._waitForPageFeedbackIdle(tabId, { automaticAskReply });
+    const askReply = !!askAnswerCandidate(responseToolCalls, responseWithoutTools, responseContent).trim()
+      && this._pageFeedbackAskOwnerCurrent(tabId, pendingRun, pendingRun?.modelState);
+    await this._waitForPageFeedbackIdle(tabId, { automaticAskReply, askReply });
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run || this._checkAbort(tabId)) return false;
     const events = [...run.events.values()], batchRevision = run.revision;

@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 // Exercise the installed MV3 background, provider, Agent and content transport.
 // A loopback provider returns deterministic calls; browser actions remain real.
@@ -32,8 +33,12 @@ const server = http.createServer(async (request, response) => {
     const isAction = Array.isArray(input.tools) && input.tools.length > 0;
     const isCompletionEvaluation = String(input.messages?.[0]?.content || '').startsWith('Evaluate only the observable requirements of the genuine user task');
     const number = actionCalls;
+    // WebBrain's fixed-choice questions, read the way a model would read
+    // this fixture: its submission receipt says the submission was recorded.
+    const fixedChoice = fixtureFixedChoiceReply(input.messages);
     let completion;
-    if (isCompletionEvaluation) completion = { role: 'assistant', content: JSON.stringify({ outcome: 'uncertain', reason: 'Exercise the deterministic inline-submit evidence fallback.' }) };
+    if (fixedChoice) completion = { role: 'assistant', content: fixedChoice };
+    else if (isCompletionEvaluation) completion = { role: 'assistant', content: JSON.stringify({ outcome: 'uncertain', reason: 'Exercise the deterministic inline-submit evidence fallback.' }) };
     else if (!isAction) completion = { role: 'assistant', content: JSON.stringify({ request_kind: 'execute', scope_relation: 'new', deliverables: [fullForm ? 'Submit and verify the owned QA form' : 'Fill the Name field'], requires_state_change: true, requires_submission: fullForm, messaging: null, completion_requirements: { download: false }, allows_planner_shaped_result: false, allows_app_state_tool_evidence: false, read_scope: 'visible_page', summary: fullForm ? 'Fill the owned form, submit once and verify its confirmation.' : 'Fill the owned Name field and leave the form unsubmitted.', steps: [{ id: '1', action: fullForm ? 'Fill all specified fields, submit once and verify confirmation.' : 'Fill Name with WebBrain QA.' }], memory: { use_progress_ledger: false, progress_action: null }, scheduling: null, risks: [] }) };
     else {
       actionCalls++;

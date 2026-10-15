@@ -297,13 +297,72 @@ export function createContextMenuStorage(getStore) {
         prompt = stored?.[k] || null;
       } catch { /* best effort */ }
     }
-    pending.delete(numericTabId);
+    // A held prompt keeps its memory copy, so a failed durable write of the
+    // hold cannot release it once a panel has read it.
+    if (prompt?.held !== true) pending.delete(numericTabId);
     // Do NOT remove from storage here. The chat handler clears storage via
     // contextMenuClear once the background has actually received the run request.
     // Deleting here would permanently lose the prompt if the SW crashes between
     // this consume response and the chat handler — exactly the pre-acceptance
     // loss that the contextMenuClear design is meant to prevent.
     return { ok: true, prompt: prompt?.text ? prompt : null };
+  }
+
+  async function readPrompt(numericTabId) {
+    const k = key(numericTabId);
+    const store = getStore();
+    let prompt = pending.get(numericTabId) || null;
+    if (!prompt && store) {
+      try {
+        const stored = await store.get(k);
+        prompt = stored?.[k] || null;
+      } catch { /* best effort */ }
+    }
+    return prompt;
+  }
+
+  // A user Stop holds the tab's pending prompt (or only `promptId`, when given):
+  // claim and reserve refuse it until resume() releases the hold, so it never
+  // starts on its own. The flag lives on the stored prompt, so it survives
+  // panel reloads and worker restarts. A newer save replaces the held prompt.
+  async function hold(tabId, promptId) {
+    const normalizedPromptId = promptId == null ? '' : String(promptId);
+    return enqueue(tabId, async (numericTabId) => {
+      const prompt = await readPrompt(numericTabId);
+      if (!prompt?.text || (normalizedPromptId && String(prompt.id || '') !== normalizedPromptId)) {
+        return { ok: true, held: false, reason: 'missing' };
+      }
+      if (prompt.held === true) return { ok: true, held: true, prompt };
+      const heldPrompt = { ...prompt, held: true };
+      pending.set(numericTabId, heldPrompt);
+      const store = getStore();
+      if (store) {
+        try { await store.set({ [key(numericTabId)]: heldPrompt }); } catch { /* the memory copy still holds it */ }
+      }
+      return { ok: true, held: true, prompt: heldPrompt };
+    });
+  }
+
+  // The user chose to run a held prompt. Release the hold; the panel then
+  // claims and runs it like any other pending prompt.
+  async function resume(tabId, promptId) {
+    const normalizedPromptId = String(promptId || '');
+    if (!normalizedPromptId) return { ok: false, resumed: false, error: 'Prompt ID is required.' };
+    return enqueue(tabId, async (numericTabId) => {
+      const prompt = await readPrompt(numericTabId);
+      if (!prompt?.text || String(prompt.id || '') !== normalizedPromptId) {
+        return { ok: true, resumed: false, reason: 'missing' };
+      }
+      const resumedPrompt = { ...prompt };
+      delete resumedPrompt.held;
+      pending.set(numericTabId, resumedPrompt);
+      const store = getStore();
+      if (store) {
+        // If this write fails, a restarted worker only finds the prompt held again.
+        try { await store.set({ [key(numericTabId)]: resumedPrompt }); } catch { /* best effort */ }
+      }
+      return { ok: true, resumed: true, prompt: resumedPrompt };
+    });
   }
 
   async function claim(tabId, promptId, claimantId, isRunActive = () => false, now) {
@@ -326,6 +385,7 @@ export function createContextMenuStorage(getStore) {
       if (!prompt?.text || String(prompt.id || '') !== normalizedPromptId) {
         return { ok: true, claimed: false, reason: 'missing' };
       }
+      if (prompt.held === true) return { ok: true, claimed: false, reason: 'held' };
 
       let activeClaim = claims.get(numericTabId) || null;
       if (!activeClaim && store) {
@@ -394,6 +454,8 @@ export function createContextMenuStorage(getStore) {
       if (!prompt?.text || String(prompt.id || '') !== normalizedPromptId) {
         return { ok: true, reserved: false, reason: 'missing' };
       }
+      // A Stop between claim and run start still wins.
+      if (prompt.held === true) return { ok: true, reserved: false, reason: 'held' };
 
       let activeClaim = claims.get(numericTabId) || null;
       if (!activeClaim && store) {
@@ -564,6 +626,8 @@ export function createContextMenuStorage(getStore) {
     claimKey,
     save,
     consume,
+    hold,
+    resume,
     claim,
     reserve,
     release,

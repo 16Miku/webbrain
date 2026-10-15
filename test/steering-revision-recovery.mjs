@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { withFixtureCalculationReadings } from './calculation-fixture-readings.mjs';
 import fs from 'node:fs';
 import { test } from 'node:test';
 
@@ -22,7 +23,7 @@ const call = (id, name, args) => ({ toolCalls: [{ id, function: { name, argument
 let nextTab = 8700;
 function setup(Agent, next) {
   const provider = { name: 'revision test', model: 'fixture', contextWindow: 128000, promptTier: 'full', supportsTools: true, supportsVision: false,
-    chat: next, async *chatStream(messages, options) { const r = await next(messages, options); if (r.content) yield { type: 'text', content: r.content };
+    chat: withFixtureCalculationReadings(next), async *chatStream(messages, options) { const r = await next(messages, options); if (r.content) yield { type: 'text', content: r.content };
       if (r.toolCalls) yield { type: 'tool_call', content: r.toolCalls.map((c, index) => ({ ...c, index })) }; yield { type: 'done' }; } };
   const a = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
   for (const name of ['_hydrate', '_manageContext', '_recordCostUsage', '_maybeEmitAskModeHandoff', '_maybeReinjectAdapter', '_ensureProgressSessionForCurrentTask']) a[name] = async () => {};
@@ -50,7 +51,7 @@ async function begin(a, tab, text = CORRECTION) {
   await a._claimRunEntry(tab, 'interactive', options); a._beginSteeringRun(tab, () => {}, options); a._beginCompletionInvariant(tab);
   a._startPlanExecutionGuard(tab, 'act', { proceed: true, requestKind: 'execute', requiresStateChange: false, requiresSubmission: false,
     ...a._plannerCompletionGateFields({ read_scope: 'none', deliverables: ['Exact arithmetic result and literal ending'] }) });
-  bind(a, tab); return options;
+  await a._prepareCalculationReading(tab); bind(a, tab); return options;
 }
 function finish(a, tab) { a._finishSteeringRun(tab); a._releaseRunEntry(tab); }
 
@@ -91,6 +92,8 @@ for (const build of ['chrome', 'firefox']) {
       await a._revalidatePendingSteering(tab, a.conversations.get(tab), () => {}, 'act', null, null, options);
       const after = a.completionInvariants.get(tab); assert.equal(after.runToken, before.runToken); assert.equal(after.sequence, sequence);
       assert.equal(after.hadAction, false); assert.equal(after.lastAction, null); assert.equal(after.verificationDebt, false);
+      // The loop reads the revised request before its next model request.
+      await a._prepareCalculationReading(tab);
       assert.equal(a._doneBlockCount.has(tab), false); assert.equal(a._pureCalculationToolPolicy(tab).attempted, false);
     } finally { finish(a, tab); }
   });

@@ -27,6 +27,7 @@ import {
   fitReadPageWindowResult as fitFirefoxReadPageWindowResult,
 } from '../../src/firefox/src/agent/read-page-window.js';
 import { CDPClient, cdpClient } from '../../src/chrome/src/cdp/cdp-client.js';
+import { fixturePageBlockerReading } from '../semantic-decision-stub.mjs';
 import {
   SELECTION_SHORTCUT_LOCALES,
   getSelectionShortcutLocalization,
@@ -298,12 +299,43 @@ async function call(page, action, params) {
   };
 }
 
-async function readThroughCdpMirror(page, opts = {}) {
+// A text as the agent keys a reading of it (its _pageTextKey), so a reading
+// handed back reaches the page only when the page keyed the text alike.
+const agentReadingKey = text => String(text ?? '').replace(/\s+/g, ' ').trim();
+
+// The way the agent reads the overlay and article-block texts a page read
+// consulted unread (a model; the fixture oracle stands in): at most 48 of
+// them, then the page once more, up to three times while texts get read.
+// `stats.needed` records how many texts each read reported.
+async function readGateTextsLikeTheAgent(readOnce, readings, stats = null) {
+  let result = await readOnce();
+  for (let pass = 0; pass < 3; pass += 1) {
+    const needed = (result?.pageTextsNeeded || []).filter(entry => entry?.kind === 'page_blocker');
+    stats?.needed?.push(needed.length);
+    const texts = [...new Set(needed.map(entry => agentReadingKey(entry.text)))].filter(Boolean).slice(0, 48);
+    if (!texts.length) break;
+    for (const text of texts) readings[text] = fixturePageBlockerReading(text);
+    result = await readOnce();
+  }
+  if (result && typeof result === 'object') delete result.pageTextsNeeded;
+  return result;
+}
+
+async function readThroughCdpMirror(page, opts = {}, stats = null) {
   const client = new CDPClient();
   client.evaluate = async (_tabId, expression) => ({
     result: { value: await page.evaluate(expression) },
   });
-  return client.readPage(1, opts);
+  const readings = { ...(opts.pageBlockerReadings || {}) };
+  return readGateTextsLikeTheAgent(() => client.readPage(1, { ...opts, pageBlockerReadings: readings }), readings, stats);
+}
+
+// A page read the way the agent reads it: overlay and article-block texts the
+// page-gate check consulted unread are read by a model (the fixture oracle
+// stands in) and the page is read again with those readings.
+async function readWithGateReadings(page, action, params = {}, stats = null) {
+  const readings = {};
+  return readGateTextsLikeTheAgent(() => call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } }), readings, stats);
 }
 
 async function clickedSentinel(page) {
@@ -1006,7 +1038,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']]) {
   test(`${label}: blocking NYTimes registration dialog suppresses article DOM`, async (page) => {
     await setupContentFixture(page, 'nyt-registration-gate.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate?.blocking !== true || result.pageGate?.surface !== 'dialog' || result.pageGate?.type !== 'registration') {
       throw new Error(`registration pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
     }
@@ -1020,7 +1052,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     if (JSON.stringify(result).indexOf('"pageGate"') > JSON.stringify(result).indexOf('"text"')) {
       throw new Error('pageGate must serialize before long article text for trace visibility');
     }
-    const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
     if (tree.pageGate?.blocking !== true || !/Create a free account/i.test(tree.pageGate.label || '')) {
       throw new Error(`accessibility tree omitted structured pageGate: ${JSON.stringify(tree.pageGate)}`);
     }
@@ -1037,7 +1069,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     if (clickResult?.success !== true || !gateControlClicked) {
       throw new Error(`gate control ref was not actionable: ${JSON.stringify(clickResult)}`);
     }
-    const basicResult = await call(page, 'get_page_info', {});
+    const basicResult = await readWithGateReadings(page, 'get_page_info', {});
     if (/SECRET_NYT_(?:ARTICLE|LINK|IMAGE|FORM|SHADOW)/.test(JSON.stringify(basicResult))) {
       throw new Error(`basic page info leaked blocked article data: ${JSON.stringify(basicResult)}`);
     }
@@ -1045,7 +1077,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 
   test(`${label}: The Athletic covering subscription overlay suppresses server-rendered body`, async (page) => {
     await setupContentFixture(page, 'athletic-subscription-overlay.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'dialog') {
       throw new Error(`Athletic pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
     }
@@ -1056,7 +1088,7 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
 
   test(`${label}: inline article gate returns only the visible preview`, async (page) => {
     await setupContentFixture(page, 'inline-article-paywall.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate?.blocking !== true || result.pageGate?.surface !== 'inline') {
       throw new Error(`inline pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
     }
@@ -1066,33 +1098,252 @@ for (const [label, browserKind] of [['Chrome', 'chrome'], ['Firefox', 'firefox']
     if (!/\(pre-gate\)$/.test(result.textSource || '')) {
       throw new Error(`inline textSource missing pre-gate marker: ${result.textSource}`);
     }
-    const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
     if (!/VISIBLE_PREVIEW_PARAGRAPH/.test(tree.pageContent || '') || /SECRET_POST_GATE_PARAGRAPH/.test(tree.pageContent || '')) {
       throw new Error(`inline accessibility boundary mismatch: ${JSON.stringify(tree)}`);
     }
   });
 
+  test(`${label}: a wall inside the block its preview begins leaves that preview readable`, async (page) => {
+    await setupContentFixture(page, 'inline-wrapped-preview-paywall.html', browserKind);
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
+    if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'inline') {
+      throw new Error(`wrapped preview pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
+    }
+    if (!/WRAPPED_PREVIEW_PARAGRAPH/.test(result.text || '') || /SECRET_WRAPPED_REST_PARAGRAPH/.test(result.text || '')) {
+      throw new Error(`wrapped preview boundary mismatch: ${JSON.stringify(result.text)}`);
+    }
+    if (!/Subscribe to continue reading/.test(result.pageGate.label || '')) {
+      throw new Error(`wrapped preview label does not start at the wall: ${JSON.stringify(result.pageGate)}`);
+    }
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    if (!/WRAPPED_PREVIEW_PARAGRAPH/.test(tree.pageContent || '') || /SECRET_WRAPPED_REST_PARAGRAPH/.test(tree.pageContent || '')) {
+      throw new Error(`wrapped preview accessibility boundary mismatch: ${JSON.stringify(tree)}`);
+    }
+  });
+
+  test(`${label}: a wall after more than 400 characters of preview still withholds the rest`, async (page) => {
+    await setupContentFixture(page, 'inline-long-preview-paywall.html', browserKind);
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
+    if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'inline') {
+      throw new Error(`long preview pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
+    }
+    if (/SECRET_LONG_REST_PARAGRAPH/.test(JSON.stringify(result))) {
+      throw new Error(`long preview leaked the rest of the article: ${JSON.stringify(result.text)}`);
+    }
+    for (const marker of ['ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX']) {
+      if (!new RegExp(`LONG_PREVIEW_${marker}`).test(result.text || '')) {
+        throw new Error(`long preview lost LONG_PREVIEW_${marker}: ${JSON.stringify(result.text)}`);
+      }
+    }
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    if (tree.pageGate?.type !== 'subscription' || /SECRET_LONG_REST_PARAGRAPH/.test(tree.pageContent || '')
+      || !/LONG_PREVIEW_SIX/.test(tree.pageContent || '')) {
+      throw new Error(`long preview accessibility read mismatch: ${JSON.stringify(tree)}`);
+    }
+  });
+
+  for (const [fixture, secret, visible, what] of [
+    ['inline-bare-prompt-paywall.html', /SECRET_BARE_(?:BETWEEN|AFTER)/, null, 'a wall text standing directly in its block, repeated after the withheld article'],
+    ['inline-close-repeat-paywall.html', /SECRET_CLOSE_(?:SHORT|AFTER)/, /VISIBLE_CLOSE_PREVIEW/, 'a line reading like the wall a short sentence after it'],
+    ['inline-long-hidden-paywall.html', /HIDDEN_LINE_\d\d/, /PREVIEW_LINE_12/, 'a wall after twelve preview lines with twelve withheld lines rendered after it'],
+    ['inline-long-paragraph-paywall.html', /SECRET_PARAGRAPH_REST/, /LONG_PARAGRAPH_ONE/, 'a long wall paragraph after long preview paragraphs'],
+    ['inline-many-blocks-paywall.html', /SECRET_MANY_REST/, /STORY_LINE_20/, 'a wall among several blocks named like paywalls'],
+    ['inline-middle-wall-paywall.html', /SECRET_MIDDLE_REST/, /MIDDLE_PREVIEW_06/, 'a wall between a long preview and a long withheld article in one block'],
+    ['inline-span-words-paywall.html', /SECRET_SPAN_REST/, /SPAN_PREVIEW_5_word1\b/, 'a wall after long preview paragraphs of inline words'],
+    ['inline-locked-box-paywall.html', /SECRET_LOCKED/, null, 'a wall box holding the locked article right after its heading'],
+  ]) {
+    test(`${label}: ${what} withholds the article after it`, async (page) => {
+      await setupContentFixture(page, fixture, browserKind);
+      for (const [action, field] of [['get_page_info_cdp', 'text'], ['get_accessibility_tree', 'pageContent']]) {
+        const result = await readWithGateReadings(page, action, action === 'get_accessibility_tree' ? { filter: 'visible', maxDepth: 6 } : {});
+        if (!['subscription', 'registration', 'login'].includes(result.pageGate?.type) || result.pageGate?.surface !== 'inline') {
+          throw new Error(`${action}: wall missed: ${JSON.stringify(result.pageGate)}`);
+        }
+        if (secret.test(JSON.stringify(result))) {
+          throw new Error(`${action}: the withheld article was returned: ${JSON.stringify({ pageGate: result.pageGate, text: result[field] })}`);
+        }
+        if (visible && !visible.test(result[field] || '')) {
+          throw new Error(`${action}: the preview before the wall was withheld: ${JSON.stringify(result[field])}`);
+        }
+      }
+    });
+  }
+
+  test(`${label}: an overlay wall in the middle of a long text, or among two hundred other blocks, is still read`, async (page) => {
+    for (const [fixture, secret] of [['dialog-long-intro-wall.html', /SECRET_DIALOG_ARTICLE_BODY/],
+      ['overlay-among-many-blocks.html', /SECRET_NOTES_ARTICLE_BODY/]]) {
+      await setupContentFixture(page, fixture, browserKind);
+      for (const action of ['get_page_info_cdp', 'get_accessibility_tree']) {
+        const result = await readWithGateReadings(page, action, action === 'get_accessibility_tree' ? { filter: 'visible', maxDepth: 6 } : {});
+        if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'dialog' || secret.test(JSON.stringify(result))) {
+          throw new Error(`${fixture} ${action}: overlay wall mismatch: ${JSON.stringify({ pageGate: result.pageGate, textSource: result.textSource })}`);
+        }
+      }
+    }
+  });
+
+  // From review: a wall whose number changes on every read, such as a
+  // countdown, was read as a wall each time but never met that reading
+  // again. A text that differs from a wall only in its numbers is now that
+  // wall at once and is still read: a quota that stops being a wall when its
+  // number changes reads as what it is once a model has read it. A text read
+  // as no wall is read again when its number changes.
+  test(`${label}: a wall whose number changes stays a wall while its new text is read, and a changed counter is read again`, async (page) => {
+    const countdown = n => `Okumaya devam etmek için abone olun. Kalan süre: ${n} sn`;
+    await setupContentHtml(page, `<!doctype html><meta property="og:type" content="article">
+      <article><h1>Geri sayım</h1><p>SECRET_COUNTDOWN_BODY sunucuda çizilmiştir.</p></article>
+      <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+        <p id="count">${countdown(59)}</p><button>Abone ol</button></div>`, browserKind);
+    const readings = {};
+    const readOnce = (action, params = {}) => call(page, action, { ...params, __wbPageReadings: { page_blocker: readings } });
+    const first = await readGateTextsLikeTheAgent(() => readOnce('get_page_info_cdp'), readings);
+    if (first.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(first))) {
+      throw new Error(`countdown wall was not applied: ${JSON.stringify({ pageGate: first.pageGate })}`);
+    }
+    for (const n of [58, 9]) {
+      await page.evaluate(text => { document.querySelector('#count').textContent = text; }, countdown(n));
+      for (const [action, params] of [['get_page_info_cdp', {}], ['get_accessibility_tree', { filter: 'visible', maxDepth: 6 }]]) {
+        // Before any model reads the new text, the wall already stands.
+        const ticked = await readOnce(action, params);
+        if (ticked.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(ticked))) {
+          throw new Error(`${action} at ${n} s: the countdown wall fell before its new text was read: ${JSON.stringify({ pageGate: ticked.pageGate })}`);
+        }
+        // At 58 s the new text is reported to be read; once two texts of
+        // its shape read as the wall, a new number is not read again.
+        const reported = (ticked.pageTextsNeeded || []).some(entry => /Kalan süre/.test(entry.text));
+        if (action === 'get_page_info_cdp' && reported !== (n === 58)) {
+          throw new Error(`${action} at ${n} s: the countdown's new text was ${reported ? '' : 'not '}reported to be read`);
+        }
+        if (action === 'get_accessibility_tree' && !/Abone ol/.test(ticked.pageContent || '')) {
+          throw new Error(`${action} at ${n} s: the wall's own control is gone`);
+        }
+        const read = await readGateTextsLikeTheAgent(() => readOnce(action, params), readings);
+        if (read.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(read))) {
+          throw new Error(`${action} at ${n} s: the read countdown wall fell: ${JSON.stringify({ pageGate: read.pageGate })}`);
+        }
+      }
+    }
+
+    // A quota read as a wall at 0, shown again with another number: a wall
+    // until a model reads the new text, then what that reading says.
+    const quota = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı. Kayıt olun.`;
+    await setupContentHtml(page, `<!doctype html><meta property="og:type" content="article">
+      <article><h1>Kota</h1><p>QUOTA_ARTICLE_BODY bu ay okunabilir.</p></article>
+      <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+        <p id="count">${quota(3)}</p><button>Kapat</button></div>`, browserKind);
+    const quotaText = (await call(page, 'get_page_info_cdp', {})).pageTextsNeeded
+      ?.find(entry => /ücretsiz makale/.test(entry.text))?.text || '';
+    if (!quotaText) throw new Error('the quota text was not reported');
+    const quotaReadings = { [quotaText.replace('3', '0')]: 'registration' };
+    const provisional = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: quotaReadings } });
+    if (provisional.pageGate?.type !== 'registration' || /QUOTA_ARTICLE_BODY/.test(JSON.stringify(provisional))) {
+      throw new Error(`a text like a wall but for its number was not that wall at once: ${JSON.stringify({ pageGate: provisional.pageGate })}`);
+    }
+    if (!(provisional.pageTextsNeeded || []).some(entry => entry.text === quotaText)) {
+      throw new Error('a text taken for a wall by its numbers was not reported to be read');
+    }
+    quotaReadings[quotaText] = 'other';
+    const corrected = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: quotaReadings } });
+    if (corrected.pageGate || !/QUOTA_ARTICLE_BODY/.test(corrected.text || '')) {
+      throw new Error(`a quota read as no wall stayed a wall: ${JSON.stringify({ pageGate: corrected.pageGate })}`);
+    }
+    // Its shape now has a reading as no wall, so another number is asked
+    // about, not guessed.
+    await page.evaluate(text => { document.querySelector('#count').textContent = text; }, quota(5));
+    const another = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: quotaReadings } });
+    if (another.pageGate || !(another.pageTextsNeeded || []).some(entry => /5 ücretsiz makale/.test(entry.text))) {
+      throw new Error(`a quota with a reading as no wall was guessed at another number: ${JSON.stringify({ pageGate: another.pageGate })}`);
+    }
+
+    const counter = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı.`;
+    await setupContentHtml(page, `<!doctype html><meta property="og:type" content="article">
+      <article><h1>Sayaç</h1><p>READABLE_COUNTER_BODY herkes okuyabilir.</p></article>
+      <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+        <p id="count">${counter(3)}</p><button>Kapat</button></div>`, browserKind);
+    const counterReadings = {};
+    const read = await readGateTextsLikeTheAgent(
+      () => call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: counterReadings } }), counterReadings);
+    if (read.pageGate || !/READABLE_COUNTER_BODY/.test(read.text || '')) {
+      throw new Error(`a counter read as no wall withheld the page: ${JSON.stringify({ pageGate: read.pageGate })}`);
+    }
+    await page.evaluate(text => { document.querySelector('#count').textContent = text; }, counter(2));
+    const changed = await call(page, 'get_page_info_cdp', { __wbPageReadings: { page_blocker: counterReadings } });
+    if (changed.pageGate || !/READABLE_COUNTER_BODY/.test(changed.text || '')) {
+      throw new Error(`a changed counter was taken for a wall: ${JSON.stringify({ pageGate: changed.pageGate })}`);
+    }
+    if (!(changed.pageTextsNeeded || []).some(entry => /2 ücretsiz makale/.test(entry.text))) {
+      throw new Error(`a counter read as no wall was not read again when its number changed: ${JSON.stringify(changed.pageTextsNeeded)}`);
+    }
+  });
+
+  test(`${label}: an article whose body is named for a paywall reads whole, at a bounded cost`, async (page) => {
+    await setupContentFixture(page, 'paywall-class-article-no-wall.html', browserKind);
+    const stats = { needed: [] };
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {}, stats);
+    if (result.pageGate || !/READABLE_BODY_01/.test(result.text || '') || !/READABLE_BODY_30/.test(result.text || '')) {
+      throw new Error(`readable paywall-named article mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: String(result.text || '').slice(-300) })}`);
+    }
+    if (!(stats.needed[0] > 0 && stats.needed[0] <= 12)) {
+      throw new Error(`a readable article asked for ${JSON.stringify(stats.needed)} wall readings; at most 12 expected`);
+    }
+  });
+
+  test(`${label}: a wall's text repeated after the withheld article does not open what lies between`, async (page) => {
+    await setupContentFixture(page, 'inline-repeated-prompt-paywall.html', browserKind);
+    for (const [action, field] of [['get_page_info_cdp', 'text'], ['get_accessibility_tree', 'pageContent']]) {
+      const result = await readWithGateReadings(page, action, action === 'get_accessibility_tree' ? { filter: 'visible', maxDepth: 5 } : {});
+      if (result.pageGate?.type !== 'subscription' || !/VISIBLE_REPEAT_PREVIEW/.test(result[field] || '')
+        || /SECRET_BETWEEN_PROMPTS|SECRET_AFTER_SECOND_PROMPT/.test(JSON.stringify(result))) {
+        throw new Error(`${action}: repeated prompt boundary mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: result[field] })}`);
+      }
+    }
+  });
+
   test(`${label}: readable article ignores header controls, inline upsells, and hidden gate markup`, async (page) => {
     await setupContentFixture(page, 'readable-article-no-gate.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate) throw new Error(`false-positive pageGate: ${JSON.stringify(result.pageGate)}`);
     if (!/READABLE_ARTICLE_BODY/.test(result.text || '') || !/READABLE_ARTICLE_AFTER_UPSELL/.test(result.text || '') || result.textSource === 'page-gate') {
       throw new Error(`readable article body missing: ${JSON.stringify({ textSource: result.textSource, text: result.text })}`);
     }
   });
 
+  test(`${label}: a Turkish subscription wall is read by meaning before the article is withheld`, async (page) => {
+    await setupContentFixture(page, 'turkish-subscription-overlay.html', browserKind);
+    // Unread, the wall decides nothing: the page reads as before and the
+    // wall's text goes back to the agent to be read.
+    const unread = await call(page, 'get_page_info_cdp', {});
+    if (unread.pageGate || !(unread.pageTextsNeeded || []).some(entry => entry.kind === 'page_blocker'
+      && /Okumaya devam etmek için abone olun/.test(entry.text))) {
+      throw new Error(`unread wall text was not reported: ${JSON.stringify({ pageGate: unread.pageGate, needed: unread.pageTextsNeeded })}`);
+    }
+    // Read as a subscription wall, it withholds the article and its links.
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
+    if (result.pageGate?.type !== 'subscription' || result.pageGate?.surface !== 'dialog' || result.textSource !== 'page-gate') {
+      throw new Error(`Turkish pageGate mismatch: ${JSON.stringify(result.pageGate)}`);
+    }
+    if (/SECRET_TURKISH_(?:ARTICLE|LINK)/.test(JSON.stringify(result))) {
+      throw new Error(`Turkish wall leaked the article: ${JSON.stringify(result)}`);
+    }
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 5 });
+    if (tree.pageGate?.type !== 'subscription' || /SECRET_TURKISH_ARTICLE_BODY/.test(tree.pageContent || '')) {
+      throw new Error(`Turkish wall accessibility read mismatch: ${JSON.stringify(tree)}`);
+    }
+  });
+
   test(`${label}: non-article signup dialog preserves form controls`, async (page) => {
     await setupContentFixture(page, 'non-article-signup-dialog.html', browserKind);
-    const result = await call(page, 'get_page_info_cdp', {});
+    const result = await readWithGateReadings(page, 'get_page_info_cdp', {});
     if (result.pageGate) throw new Error(`non-article dialog became a page gate: ${JSON.stringify(result.pageGate)}`);
     if (result.forms?.length !== 1 || result.forms[0]?.inputs?.[0]?.name !== 'email') {
       throw new Error(`signup form was stripped from page info: ${JSON.stringify(result.forms)}`);
     }
-    const basicResult = await call(page, 'get_page_info', {});
+    const basicResult = await readWithGateReadings(page, 'get_page_info', {});
     if (basicResult.pageGate || basicResult.forms?.length !== 1) {
       throw new Error(`basic page info stripped the signup form: ${JSON.stringify(basicResult)}`);
     }
-    const tree = await call(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 6 });
+    const tree = await readWithGateReadings(page, 'get_accessibility_tree', { filter: 'visible', maxDepth: 6 });
     if (tree.pageGate || !/Work email/.test(tree.pageContent || '')) {
       throw new Error(`signup accessibility tree was stripped: ${JSON.stringify(tree)}`);
     }
@@ -1227,6 +1478,132 @@ test('Chrome CDP mirror suppresses a blocking Athletic article body', async (pag
   }
   if (result.links?.length || result.forms?.length || result.shadowHosts?.length || result.iframes?.length) {
     throw new Error(`CDP blocking gate retained auxiliary page data: ${JSON.stringify(result)}`);
+  }
+});
+
+test('Chrome CDP mirror keeps a wrapped preview readable and withholds the rest after a long preview', async (page) => {
+  await page.goto(fixtureUrl('inline-wrapped-preview-paywall.html'));
+  const wrapped = await readThroughCdpMirror(page);
+  if (wrapped.pageGate?.type !== 'subscription' || wrapped.pageGate?.surface !== 'inline'
+    || !/WRAPPED_PREVIEW_PARAGRAPH/.test(wrapped.text || '') || /SECRET_WRAPPED_REST_PARAGRAPH/.test(JSON.stringify(wrapped))) {
+    throw new Error(`CDP wrapped preview mismatch: ${JSON.stringify({ pageGate: wrapped.pageGate, text: wrapped.text })}`);
+  }
+  await page.goto(fixtureUrl('inline-long-preview-paywall.html'));
+  const long = await readThroughCdpMirror(page);
+  if (long.pageGate?.type !== 'subscription' || !/LONG_PREVIEW_SIX/.test(long.text || '')
+    || /SECRET_LONG_REST_PARAGRAPH/.test(JSON.stringify(long))) {
+    throw new Error(`CDP long preview mismatch: ${JSON.stringify({ pageGate: long.pageGate, text: long.text })}`);
+  }
+});
+
+test('Chrome CDP mirror does not open the article between a wall text and its repeat', async (page) => {
+  await page.goto(fixtureUrl('inline-repeated-prompt-paywall.html'));
+  const result = await readThroughCdpMirror(page);
+  if (result.pageGate?.type !== 'subscription' || !/VISIBLE_REPEAT_PREVIEW/.test(result.text || '')
+    || /SECRET_BETWEEN_PROMPTS|SECRET_AFTER_SECOND_PROMPT/.test(JSON.stringify(result))) {
+    throw new Error(`CDP repeated prompt mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: result.text })}`);
+  }
+});
+
+test('Chrome CDP mirror withholds the article after walls the content script finds', async (page) => {
+  for (const [fixture, secret] of [
+    ['inline-bare-prompt-paywall.html', /SECRET_BARE_(?:BETWEEN|AFTER)/],
+    ['inline-close-repeat-paywall.html', /SECRET_CLOSE_(?:SHORT|AFTER)/],
+    ['inline-long-hidden-paywall.html', /HIDDEN_LINE_\d\d/],
+    ['inline-long-paragraph-paywall.html', /SECRET_PARAGRAPH_REST/],
+    ['inline-many-blocks-paywall.html', /SECRET_MANY_REST/],
+    ['inline-middle-wall-paywall.html', /SECRET_MIDDLE_REST/],
+    ['inline-span-words-paywall.html', /SECRET_SPAN_REST/],
+    ['inline-locked-box-paywall.html', /SECRET_LOCKED/],
+    ['dialog-long-intro-wall.html', /SECRET_DIALOG_ARTICLE_BODY/],
+    ['overlay-among-many-blocks.html', /SECRET_NOTES_ARTICLE_BODY/],
+  ]) {
+    await page.goto(fixtureUrl(fixture));
+    const result = await readThroughCdpMirror(page);
+    if (!['subscription', 'registration', 'login'].includes(result.pageGate?.type) || secret.test(JSON.stringify(result))) {
+      throw new Error(`CDP ${fixture} mismatch: ${JSON.stringify({ pageGate: result.pageGate, text: result.text })}`);
+    }
+  }
+  await page.goto(fixtureUrl('paywall-class-article-no-wall.html'));
+  const stats = { needed: [] };
+  const readable = await readThroughCdpMirror(page, {}, stats);
+  if (readable.pageGate || !/READABLE_BODY_30/.test(readable.text || '') || !(stats.needed[0] > 0 && stats.needed[0] <= 12)) {
+    throw new Error(`CDP readable paywall-named article mismatch: ${JSON.stringify({ pageGate: readable.pageGate, needed: stats.needed })}`);
+  }
+});
+
+test('Chrome CDP mirror keys a wall text cut at its length limit as the agent does', async (page) => {
+  // The overlay's text has a space at its 400th and at its 600th character,
+  // where a page read cuts it; the agent keys its reading without that space.
+  const opening = 'Okumaya devam etmek için abone olun. ';
+  const text = opening + 'x'.repeat(399 - opening.length) + ' ' + 'z'.repeat(199) + ' ' + 'CUT_TAIL ' + 'y'.repeat(80);
+  if (text[399] !== ' ' || text[599] !== ' ') throw new Error('the fixture text must have spaces at its 400th and 600th characters');
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Kesik duvar</h1><p>SECRET_CUT_ARTICLE_BODY sunucuda çizilmiştir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff"><p>${text}</p></div>`);
+  const result = await readThroughCdpMirror(page);
+  if (result.pageGate?.type !== 'subscription' || result.textSource !== 'page-gate' || /SECRET_CUT_ARTICLE_BODY/.test(JSON.stringify(result))) {
+    throw new Error(`CDP cut wall text mismatch: ${JSON.stringify({ pageGate: result.pageGate, textSource: result.textSource })}`);
+  }
+});
+
+test('Chrome CDP mirror keeps a wall whose number changes a wall while its new text is read', async (page) => {
+  const countdown = n => `Okumaya devam etmek için abone olun. Kalan süre: ${n} sn`;
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Geri sayım</h1><p>SECRET_COUNTDOWN_BODY sunucuda çizilmiştir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+      <p id="count">${countdown(59)}</p><button>Abone ol</button></div>`);
+  const client = new CDPClient();
+  client.evaluate = async (_tabId, expression) => ({ result: { value: await page.evaluate(expression) } });
+  const readings = {};
+  const first = await readGateTextsLikeTheAgent(() => client.readPage(1, { pageBlockerReadings: readings }), readings);
+  if (first.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(first))) {
+    throw new Error(`CDP countdown wall was not applied: ${JSON.stringify({ pageGate: first.pageGate })}`);
+  }
+  await page.evaluate(text => { document.querySelector('#count').textContent = text; }, countdown(58));
+  const ticked = await client.readPage(1, { pageBlockerReadings: readings });
+  if (ticked.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(ticked))
+      || !(ticked.pageTextsNeeded || []).some(entry => /Kalan süre: 58 sn/.test(entry.text))) {
+    throw new Error(`CDP countdown wall mismatch: ${JSON.stringify({ pageGate: ticked.pageGate, needed: ticked.pageTextsNeeded })}`);
+  }
+  // Read at 58 s too, the shape is confirmed: 57 s is the wall without a read.
+  await readGateTextsLikeTheAgent(() => client.readPage(1, { pageBlockerReadings: readings }), readings);
+  await page.evaluate(text => { document.querySelector('#count').textContent = text; }, countdown(57));
+  const confirmed = await client.readPage(1, { pageBlockerReadings: readings });
+  if (confirmed.pageGate?.type !== 'subscription' || /SECRET_COUNTDOWN_BODY/.test(JSON.stringify(confirmed))
+      || (confirmed.pageTextsNeeded || []).some(entry => /Kalan süre/.test(entry.text))) {
+    throw new Error(`CDP confirmed countdown mismatch: ${JSON.stringify({ pageGate: confirmed.pageGate, needed: confirmed.pageTextsNeeded })}`);
+  }
+  // A quota like a wall but for its number is a wall until its own text is read.
+  const quota = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı. Kayıt olun.`;
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Kota</h1><p>QUOTA_ARTICLE_BODY bu ay okunabilir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+      <p id="count">${quota(3)}</p><button>Kapat</button></div>`);
+  const quotaText = (await client.readPage(1, {})).pageTextsNeeded?.find(entry => /ücretsiz makale/.test(entry.text))?.text || '';
+  const quotaReadings = { [quotaText.replace('3', '0')]: 'registration' };
+  const provisional = await client.readPage(1, { pageBlockerReadings: quotaReadings });
+  if (!quotaText || provisional.pageGate?.type !== 'registration' || /QUOTA_ARTICLE_BODY/.test(JSON.stringify(provisional))
+      || !(provisional.pageTextsNeeded || []).some(entry => entry.text === quotaText)) {
+    throw new Error(`CDP provisional quota wall mismatch: ${JSON.stringify({ pageGate: provisional.pageGate, needed: provisional.pageTextsNeeded })}`);
+  }
+  quotaReadings[quotaText] = 'other';
+  const corrected = await client.readPage(1, { pageBlockerReadings: quotaReadings });
+  if (corrected.pageGate || !/QUOTA_ARTICLE_BODY/.test(JSON.stringify(corrected))) {
+    throw new Error(`CDP quota read as no wall stayed a wall: ${JSON.stringify({ pageGate: corrected.pageGate })}`);
+  }
+  // A counter read as no wall is read again when its number changes.
+  const counter = n => `Bu ay ${n} ücretsiz makale hakkınız kaldı.`;
+  await page.setContent(`<!doctype html><meta property="og:type" content="article">
+    <article><h1>Sayaç</h1><p>READABLE_COUNTER_BODY herkes okuyabilir.</p></article>
+    <div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff">
+      <p id="count">${counter(3)}</p><button>Kapat</button></div>`);
+  const counterReadings = {};
+  await readGateTextsLikeTheAgent(() => client.readPage(1, { pageBlockerReadings: counterReadings }), counterReadings);
+  await page.evaluate(text => { document.querySelector('#count').textContent = text; }, counter(2));
+  const changed = await client.readPage(1, { pageBlockerReadings: counterReadings });
+  if (changed.pageGate || !(changed.pageTextsNeeded || []).some(entry => /2 ücretsiz makale/.test(entry.text))) {
+    throw new Error(`CDP changed counter mismatch: ${JSON.stringify({ pageGate: changed.pageGate, needed: changed.pageTextsNeeded })}`);
   }
 });
 
@@ -4748,7 +5125,7 @@ test('set_checked: Agent.executeTool uses one trusted selector click and then be
   }
 });
 
-test('ax_resolve_rect: trusted fallback eligibility rejects interactive descendants, hidden, mutating, stateful, native, form, and download targets', async (page) => {
+test('ax_resolve_rect: trusted fallback eligibility rejects interactive descendants, hidden, stateful, native, form, and download targets by structure', async (page) => {
   await setup(page, 'trusted-click-fallback.html');
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 20000 });
   const content = String(tree?.pageContent || '');
@@ -4758,12 +5135,6 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     nestedInput: content.match(/listitem "Nested input row" \[(ref_\d+)\]/)?.[1],
     native: content.match(/button "Native button" \[(ref_\d+)\]/)?.[1],
     disclosure: content.match(/"Native disclosure" \[(ref_\d+)\]/)?.[1],
-    destructive: content.match(/listitem "Delete account" \[(ref_\d+)\]/)?.[1],
-    sendMessage: content.match(/listitem "Send message" \[(ref_\d+)\]/)?.[1],
-    orderLunch: content.match(/listitem "Order lunch" \[(ref_\d+)\]/)?.[1],
-    bookNow: content.match(/listitem "Book now" \[(ref_\d+)\]/)?.[1],
-    indirectDestructive: content.match(/listitem "Delete account indirectly" \[(ref_\d+)\]/)?.[1],
-    localizedDestructive: content.match(/listitem "Hesabı sil" \[(ref_\d+)\]/)?.[1],
     statefulRole: content.match(/treeitem "Expandable row" \[(ref_\d+)\]/)?.[1],
     statefulAttribute: content.match(/listitem "Stateful list row" \[(ref_\d+)\]/)?.[1],
     input: content.match(/textbox "Native input" \[(ref_\d+)\]/)?.[1],
@@ -4781,6 +5152,17 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     tabindexZero: content.match(/listitem "Generic row with tabindex zero wrapper" \[(ref_\d+)\]/)?.[1],
     dataAction: content.match(/listitem "Generic data action row" \[(ref_\d+)\]/)?.[1],
     properName: content.match(/listitem "Post Malone" \[(ref_\d+)\]/)?.[1],
+  };
+  // What a generic row's name means is not judged in the page: the agent
+  // reads it in any language before a second, trusted click. These rows stay
+  // eligible by structure and report their names for that reading.
+  const namedRefs = {
+    'Delete account': content.match(/listitem "Delete account" \[(ref_\d+)\]/)?.[1],
+    'Send message': content.match(/listitem "Send message" \[(ref_\d+)\]/)?.[1],
+    'Order lunch': content.match(/listitem "Order lunch" \[(ref_\d+)\]/)?.[1],
+    'Book now': content.match(/listitem "Book now" \[(ref_\d+)\]/)?.[1],
+    'Delete account indirectly': content.match(/listitem "Delete account indirectly" \[(ref_\d+)\]/)?.[1],
+    'Hesabı sil': content.match(/listitem "Hesabı sil" \[(ref_\d+)\]/)?.[1],
   };
   await page.evaluate(() => {
     document.getElementById('opacity-row').style.opacity = '0';
@@ -4800,6 +5182,13 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
       throw new Error(`${label} generic row should remain eligible for trusted fallback: ${JSON.stringify(result)}`);
     }
   }
+  for (const [label, ref] of Object.entries(namedRefs)) {
+    if (!ref) throw new Error(`missing ${label} ref in AX tree: ${content}`);
+    const result = await call(page, 'ax_resolve_rect', { ref_id: ref, forClickFallback: true });
+    if (!result?.success || result.fallbackEligible !== true || result.fallbackBlockedReason || result.name !== label) {
+      throw new Error(`${label} should be eligible by structure and report its name for the agent's reading: ${JSON.stringify(result)}`);
+    }
+  }
   for (const label of ['nestedButton', 'nestedLink', 'nestedInput']) {
     const result = await call(page, 'ax_resolve_rect', { ref_id: refs[label], forClickFallback: true });
     if (!/interactive descendant/.test(result.fallbackBlockedReason || '')) {
@@ -4810,7 +5199,7 @@ test('ax_resolve_rect: trusted fallback eligibility rejects interactive descenda
     }
   }
 
-  const ordinaryResolve = await call(page, 'ax_resolve_rect', { ref_id: refs.destructive });
+  const ordinaryResolve = await call(page, 'ax_resolve_rect', { ref_id: namedRefs['Delete account'] });
   if (
     ordinaryResolve.fallbackEligible !== undefined
     || ordinaryResolve.fallbackState !== undefined
@@ -4850,7 +5239,7 @@ test('ax_resolve_rect: an ancestor pseudo-element cannot authorize a trusted fal
   }
 });
 
-test('ax_resolve_rect: English action labels stay blocked under Turkish locale casing', async (page) => {
+test('ax_resolve_rect: action names reach the agent unchanged under Turkish locale casing', async (page) => {
   await page.addInitScript(() => {
     const original = String.prototype.toLocaleLowerCase;
     String.prototype.toLocaleLowerCase = function (...locales) {
@@ -4861,17 +5250,16 @@ test('ax_resolve_rect: English action labels stay blocked under Turkish locale c
   const tree = await call(page, 'get_accessibility_tree', { filter: 'all', maxDepth: 10, maxChars: 20000 });
   const content = String(tree?.pageContent || '');
   const refs = {
-    install: content.match(/listitem "Install app" \[(ref_\d+)\]/)?.[1],
-    invite: content.match(/listitem "Invite teammate" \[(ref_\d+)\]/)?.[1],
+    'Install app': content.match(/listitem "Install app" \[(ref_\d+)\]/)?.[1],
+    'Invite teammate': content.match(/listitem "Invite teammate" \[(ref_\d+)\]/)?.[1],
   };
   for (const [label, ref] of Object.entries(refs)) {
     if (!ref) throw new Error(`missing ${label} ref in Turkish-locale AX tree: ${content}`);
     const result = await call(page, 'ax_resolve_rect', { ref_id: ref, forClickFallback: true });
-    if (
-      result?.fallbackEligible !== false
-      || !/potentially mutating/.test(result.fallbackBlockedReason || '')
-    ) {
-      throw new Error(`${label} must remain blocked regardless of default locale casing: ${JSON.stringify(result)}`);
+    // The page no longer lower-cases names against a word list; the agent
+    // reads the exact name in any language before a second click.
+    if (result?.fallbackEligible !== true || result.name !== label) {
+      throw new Error(`${label} must reach the agent with its exact name regardless of locale casing: ${JSON.stringify(result)}`);
     }
   }
 });

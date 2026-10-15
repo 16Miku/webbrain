@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { telegramLab, telegramRaceLab } from './native-chat-fixture.mjs';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // Whole installed background -> intent planner -> Agent -> native content
 // dispatch -> completion. Only the provider is deterministic; no Agent gate,
@@ -77,6 +78,15 @@ const server = http.createServer(async (request, response) => {
     }
     let body = ''; for await (const chunk of request) body += chunk;
     const input = JSON.parse(body);
+    // What a status on the page says, read the way a model would read it.
+    // These questions carry page text only, never a tab's task.
+    const pageTextReply = fixturePageTextReply(input.messages);
+    if (pageTextReply) {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ id: 'owned-page-text', choices: [{ message: { role: 'assistant', content: pageTextReply }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 100, completion_tokens: 10 } }));
+      return;
+    }
     const authority = JSON.stringify(input.messages || []);
     const matches = [...cases.values()].filter(entry => authority.includes(entry.marker));
     assert.equal(matches.length, 1, 'Every provider request must retain exactly its own tab task authority.');
@@ -331,12 +341,31 @@ try {
       && result.chatWorkflow.pendingOutbound === false && !result.chatWorkflow.userInput));
     const sendAttempts = actualResults.filter(event => event.data.name === (structuredPath(dispatchPath) ? 'chat_send'
       : dispatchPath === 'generic_submit' ? 'set_field' : 'click_ax'));
+    // A send held back because the browser changed during it sends nothing:
+    // these paths run in tabs of one browser, and a tab that closes resizes
+    // the others, which page feedback reports. The model reads the chat again
+    // and sends once more; exactly-once delivery is checked above by the
+    // page's own replies and outgoing bubbles, not by counting attempts.
+    const heldStructuredSend = result => result?.success !== true && result?.deliveryVerified !== true
+      && ((result?.skipped === true && result.noDispatch === true && result.dispatched === false && !result.outcomeUnknown)
+        || (result?.reason === 'native_chat_submit_blocked_before_dispatch' && result.submissionDispatched === false
+          && result.submissionBlockReason === 'page_feedback_pending'));
     const feedbackSkips = dispatchPath === 'generic_submit' ? sendAttempts.filter(event => {
       const result = event.data.result;
       return result.pageFeedbackPending === true && result.noDispatch === true
         && result.dispatched === false && !result.outcomeUnknown;
-    }) : [];
-    assert.equal(feedbackSkips.length, current.feedbackRecoveries || 0);
+    }) : structuredPath(dispatchPath) ? sendAttempts.filter(event => heldStructuredSend(event.data.result)) : [];
+    if (dispatchPath === 'generic_submit') assert.equal(feedbackSkips.length, current.feedbackRecoveries || 0);
+    else assert.ok(feedbackSkips.length <= 2, 'Browser changes held back a send more than twice.');
+    // Each held send has page feedback around it: after the step before it
+    // and before the next step after it. A skip for any other reason counts.
+    for (const skip of structuredPath(dispatchPath) ? feedbackSkips : []) {
+      const updates = run.result.updates, at = updates.indexOf(skip);
+      const from = updates.slice(0, at).findLastIndex(event => event.type === 'tool_result');
+      const next = updates.findIndex((event, index) => index > at && event.type === 'tool_call');
+      assert.ok(updates.slice(from + 1, next < 0 ? updates.length : next).some(event => event.type === 'page_feedback'),
+        'A send was held back without page feedback around it: ' + JSON.stringify(skip.data.result).slice(0, 300));
+    }
     const dispatches = dispatchPath === 'structured_prefill' ? sendAttempts.filter(event => event.data.result.success === true)
       : sendAttempts.filter(event => !feedbackSkips.includes(event));
     assert.equal(dispatches.length, expectedCount);
@@ -361,15 +390,39 @@ try {
       if (structuredPath(dispatchPath)) assert.ok(dispatches.every(event => event.data.result.deliveryVerified === true));
     }
     if (dispatchPath === 'structured_prefill') {
-      assert.equal(sendAttempts.length, 7);
+      assert.equal(sendAttempts.length, 7 + feedbackSkips.length);
       assert.equal(sendAttempts[0].data.result.reason, 'composer_not_empty');
       assert.equal(sendAttempts[0].data.result.noDispatch, true);
       const drafts = actualResults.filter(event => event.data.name === 'set_field');
       assert.equal(drafts.length, 2);
       assert.ok(drafts.every(event => event.data.result.success === true && event.data.result.verified === true
         && !event.data.result.outcomeUnknown && !event.data.result.repeatBlocked));
-      assert.deepEqual(dispatches.map(event => event.data.result.chatDeliveryProgress?.id),
-        Array.from({ length: 6 }, (_, index) => `expected:${index + 1}`));
+      // Each delivered reply processes its own reply row once, in order. A
+      // send held back by page feedback leaves its draft typed; the send that
+      // submits that draft proves delivery, and, as the presubmit harness
+      // documents, the next native read may be the first receipt that
+      // processes its row. Every other send carries its own receipt.
+      const expectedIds = Array.from({ length: 6 }, (_, index) => `expected:${index + 1}`);
+      const updates = run.result.updates;
+      const receipts = dispatches.map(event => {
+        const result = event.data.result;
+        if (result.chatDeliveryProgress || !feedbackSkips.length) return result.chatDeliveryProgress;
+        const at = updates.indexOf(event);
+        assert.ok(feedbackSkips.some(skip => skip.data.result.messageKey === result.messageKey && updates.indexOf(skip) < at),
+          'Only the send that submits a held draft may leave its receipt to the next native read: '
+            + JSON.stringify(result).slice(0, 300));
+        const read = updates.find((later, index) => index > at && later.type === 'tool_result');
+        const sentId = result.chatWorkflow?.newMessages?.find(row => row.direction === 'outgoing')?.id;
+        assert.equal(read?.data?.name, 'chat_observe', 'The submitted held draft needs its own native read next.');
+        assert.ok(sentId && read.data.result?.chatDeliveryProgress?.messageId === sentId,
+          'The native read after a submitted held draft must process that draft\'s own message.');
+        return read.data.result.chatDeliveryProgress;
+      });
+      assert.deepEqual(receipts.map(receipt => receipt?.id), expectedIds);
+      assert.deepEqual(receipts.map(receipt => receipt.counts.processed), [1, 2, 3, 4, 5, 6]);
+      assert.equal(new Set(receipts.map(receipt => receipt.messageId)).size, 6);
+      assert.deepEqual(actualResults.map(event => event.data.result?.chatDeliveryProgress?.id).filter(Boolean), expectedIds,
+        'No reply row is processed twice or by any other result.');
       assert.equal(actualResults.filter(event => event.data.name === 'get_accessibility_tree').length, 1,
         'The recovered explicit empty write is independently observed before a self-verifying send.');
       assert.equal(run.events.some(event => event.type === 'tool_call' && event.data?.name === 'progress_update'), false);

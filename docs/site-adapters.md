@@ -89,6 +89,33 @@ exhaustive document-root snapshot (`filter: all`, not depth-truncated).
 Skipped required rows cannot prove success; optional (`required: false`)
 inventory rows may be skipped, and that flag is emitted only when optionality
 is explicit (`aria-required="false"`). Missing `required` stays unknown.
+The fields a form request names, and the values it gives them, are in the
+user's own words. Which inventory field each of them is gets read by a model
+in any language (`form_field_match`: the named field, a different one, or
+unclear), the decision model first, before the reconciliation and again at
+`done`. A requested value has to read back from a field read as the named
+one, and an optional row may be skipped only once every named field reads as
+a different one; a pair nobody has read yet keeps the row required.
+An upload row is proved by the page showing its file beside its own control
+after the upload: a line whose name or value is the file name, or another line
+naming the file that a model read, in any language, as saying it was uploaded
+or attached (`workflow_state`, `file_attached`). A line read as a failed or
+unfinished upload proves nothing, and neither does a line nobody has read.
+An update-metadata job and a publication job check the values saved after the
+dispatch against the requested ones. Which requested detail each saved field
+holds is read from its label or name by a model, in any language
+(`metadata_field` for the details of a video or other item, `publication_field`
+for the parts of a post, release or file change), at `done` for the fields read
+after the dispatch and before a write is recorded for the field it wrote. A
+requested value has to read back from exactly one field read as that detail; a
+label nobody has read holds no detail, so it cannot prove a value and is not
+counted as a second field for one.
+GitHub's resolve-review-threads job inventories the resolve control of each
+unresolved review thread. Which buttons resolve one is read from their labels by
+a model in any language (`review_thread_control`) before the read is recorded;
+a read whose button labels are not all read yet leaves the inventory
+incomplete, so the job's empty-inventory no-op cannot stand for a page whose
+resolve controls nobody read.
 Depth truncation is form-relevant (an omitted includable descendant). Empty
 or erroring third-party frames are omitted only when another frame already
 inventoried form controls; a lone failed cross-origin application frame stays

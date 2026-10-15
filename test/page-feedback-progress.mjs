@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { withFixtureCalculationReadings } from './calculation-fixture-readings.mjs';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 
@@ -22,8 +23,8 @@ function makeAgent(Agent, next) {
   const provider = {
     name: 'feedback progress test', model: 'test', promptTier: 'full', contextWindow: 128000,
     supportsTools: true, supportsVision: false,
-    chat: messages => messages[0]?.content?.startsWith('You classify whether one proposed terminal WebBrain Ask answer')
-      ? Promise.resolve({ content: '{"pageIndependent":false}' }) : next(messages),
+    chat: withFixtureCalculationReadings(messages => messages[0]?.content?.startsWith('You classify whether one proposed terminal WebBrain Ask answer')
+      ? Promise.resolve({ content: '{"pageIndependent":false}' }) : next(messages)),
     async *chatStream(messages) {
       const response = await next(messages);
       if (response.content) yield { type: 'text', content: response.content };
@@ -100,6 +101,7 @@ for (const build of ['chrome', 'firefox']) {
     const fields = agent._plannerCompletionGateFields(plan);
     const guard = agent._startPlanExecutionGuard(tab, 'act', { ...fields, requestKind: 'execute',
       requiresStateChange: false, requiresSubmission: false });
+    await agent._prepareCalculationReading(tab);
     agent._beginCompletionInvariant(tab);
     const args = { expression };
     assert.equal(agent._pageFeedbackCalculationComplete(tab), false, 'A plan is not a calculation receipt.');
@@ -109,10 +111,12 @@ for (const build of ['chrome', 'firefox']) {
     agent._markPlanExecutionToolCall(tab, 'calculate', result);
     agent._recordCompletionToolResult(tab, 'calculate', args, result);
     assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
-    for (const [key, value] of [['readScope', 'visible'], ['deliverables', []],
-      ['deliverables', ['Exact arithmetic result and read the page']]]) {
+    // The planner's own page reads veto the scope; its deliverable words are
+    // not read at all.
+    for (const [key, value, complete] of [['readScope', 'visible', false], ['deliverables', [], true],
+      ['deliverables', ['Exact arithmetic result and read the page'], true]]) {
       const previous = guard[key]; guard[key] = value;
-      assert.equal(agent._pageFeedbackCalculationComplete(tab), false, key);
+      assert.equal(agent._pageFeedbackCalculationComplete(tab), complete, key);
       guard[key] = previous;
       assert.equal(agent._pageFeedbackCalculationComplete(tab), true);
     }
@@ -130,13 +134,14 @@ for (const build of ['chrome', 'firefox']) {
       agent.conversationModes.set(mixedTab, 'act');
       agent._startPlanExecutionGuard(mixedTab, 'act', { ...fields, requestKind: 'execute',
         requiresStateChange: false, requiresSubmission: false });
+      await agent._prepareCalculationReading(mixedTab);
       agent._beginCompletionInvariant(mixedTab);
       agent._markPlanExecutionToolCall(mixedTab, 'calculate', result);
       agent._recordCompletionToolResult(mixedTab, 'calculate', args, result);
       assert.equal(agent._pageFeedbackCalculationComplete(mixedTab), false,
-        'Arithmetic-only planner metadata cannot override mixed genuine user instructions.');
+        'Arithmetic-only planner metadata cannot override a request read as mixed work.');
     }
-    assert.equal(providerCalls, 0, 'The classification and actual deterministic tool require no extra model request.');
+    assert.equal(providerCalls, 0, 'Only the request readings and the actual deterministic tool ran; no other model request.');
   });
 
   test(`${build}: calculate terminal retention binds the actual result to task/run/provider and excludes unfinished page work`, async () => {
@@ -146,6 +151,7 @@ for (const build of ['chrome', 'firefox']) {
     agent.conversations.set(tab, [{ role: 'system', content: 'Owned fixture system.' }, task]);
     agent.conversationModes.set(tab, 'act');
     const guard = agent._startPlanExecutionGuard(tab, 'act', { requestKind: 'execute', requiresStateChange: false, requiresSubmission: false });
+    await agent._prepareCalculationReading(tab);
     agent._beginCompletionInvariant(tab);
     const args = { expression }, result = await agent._executeToolImpl(tab, 'calculate', args);
     agent._markPlanExecutionToolCall(tab, 'calculate', result);
@@ -374,7 +380,38 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(agent._pageFeedbackRuns.size, 0);
       });
     }
-    for (const response of ['done', 'prose']) for (const change of ['human_input', 'unknown', 'navigation', 'style', 'frame', 'task_steering', 'document', 'mode_change']) {
+    // The person typing on the page while an Ask answer is written does not
+    // make the answer stale: it is delivered once, not written again.
+    for (const response of ['done', 'prose']) {
+      test(`${build}: ${streaming ? 'stream' : 'chat'} Ask ${response} is kept after the person types on the page`, async () => {
+        const tab = nextTab++, delivered = [];
+        let agent, send, requests = 0;
+        const next = async () => {
+          assert.equal(++requests, 1, 'The answer is not written again');
+          send({ kind: 'input', source: 'user' });
+          return response === 'done' ? call('answer', 'done', { summary: 'The answer' }) : { content: 'The answer' };
+        };
+        agent = makeAgent(Agent, next);
+        agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => {
+          send = bind(agent, tab); return { role: 'user', content };
+        };
+        agent.executeTool = async (_tab, name, args) => {
+          if (name === 'get_accessibility_tree') return { success: true, pageContent: 'article "Context" [ref_1]' };
+          assert.equal(name, 'done');
+          delivered.push(args.summary);
+          return { success: true, done: true, summary: args.summary };
+        };
+        const options = { detachedRequestId: 'ask-kept-run', askStreamingEnabled: true };
+        const result = streaming
+          ? await agent.processMessageStream(tab, 'Read the current question', () => {}, 'ask', options)
+          : await agent.processMessage(tab, 'Read the current question', () => {}, 'ask', [], options);
+        assert.equal(result, 'The answer');
+        assert.equal(requests, 1);
+        assert.deepEqual(delivered, response === 'done' ? ['The answer'] : []);
+        assert.equal(agent._pageFeedbackRuns.size, 0);
+      });
+    }
+    for (const response of ['done', 'prose']) for (const change of ['unknown', 'navigation', 'style', 'frame', 'task_steering', 'document', 'mode_change']) {
       test(`${build}: ${streaming ? 'stream' : 'chat'} Ask ${response} is reconsidered after ${change}`, async () => {
         const tab = nextTab++, updates = [], delivered = [];
         let agent, send, requests = 0;
@@ -649,7 +686,7 @@ for (const build of ['chrome', 'firefox']) {
   function setup(Agent, next) {
     const provider = {
       name: 'missing media regression', model: 'test', promptTier: 'full', contextWindow: 128000,
-      supportsTools: true, supportsVision: false, chat: next,
+      supportsTools: true, supportsVision: false, chat: withFixtureCalculationReadings(next),
       async *chatStream(messages) {
         const response = await next(messages);
         if (response.content) yield { type: 'text', content: response.content };

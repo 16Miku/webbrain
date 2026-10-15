@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta property="og:type" content="article">
+  <title>Bare prompt paywall fixture</title>
+  <style>
+    body { margin: 0; font: 18px/1.5 sans-serif; }
+    article { max-width: 700px; margin: 32px auto; }
+    .paywall-wrapper { padding: 24px; border: 1px solid #aaa; }
+  </style>
+</head>
+<body>
+  <article>
+    <h1>Bare prompt headline</h1>
+    <!-- The wall's text stands directly in its block, and comes again after the withheld article. -->
+    <div class="paywall-wrapper">
+      <p>VISIBLE_BARE_PREVIEW opens the story.</p>
+      Subscribe to continue reading this article
+      <p>SECRET_BARE_BETWEEN is the withheld article. It runs on about the harbour, the boats, the market hall and the council's vote on the new breakwater, the tide tables, the price of diesel, the families who have fished here for decades, the restaurants that buy the catch each morning, the plans for a new cold store by the quay, the school that teaches net mending on Saturdays, the lifeboat crew and its new engine, the ferry timetable for the winter months, and the dispute over mooring fees that the harbour board has not settled.</p>
+      <h3>Subscribe to continue reading this article</h3>
+      <p>SECRET_BARE_AFTER must not be returned either.</p>
+    </div>
+  </article>
+</body>
+</html>

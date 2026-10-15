@@ -1,8 +1,12 @@
 import { strict as assert } from 'node:assert';
+import { guardProbeWithReadings, stubPageTextReadings } from '../semantic-decision-stub.mjs';
 
 export function registerInteractionReviewRegressions({
   test, firefoxTest, setupContentHtml, call, Agent, FirefoxAgent,
 }) {
+  // The recipient guard's page check, run as the agent runs it: control names
+  // it consulted unread are read by the fixtures' model oracle first.
+  const guardCall = (page, params) => guardProbeWithReadings(next => call(page, 'probe_message_recipient_guard', next), params);
   for (const [kind, register, AgentClass] of [
     ['chrome', test, Agent],
     ['firefox', firefoxTest, FirefoxAgent],
@@ -23,7 +27,7 @@ export function registerInteractionReviewRegressions({
         }
       });
       const args = { text: 'Search', textMatch: 'exact' };
-      const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args, adapterName: 'gmail' });
+      const probe = await guardCall(page, { tool: 'click', args, adapterName: 'gmail' });
       // Only the real button is adjacent to the composer. This also verifies
       // that preflight and dispatch resolve the same control.
       assert.equal(probe.messageSend, true, JSON.stringify(probe));
@@ -41,7 +45,7 @@ export function registerInteractionReviewRegressions({
           document.addEventListener('click', event => window.fixtureClicks.push(event.target.id));
         });
         const args = { text: 'Search', textMatch: 'exact' };
-        const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args, adapterName: 'gmail' });
+        const probe = await guardCall(page, { tool: 'click', args, adapterName: 'gmail' });
         assert.equal(probe.conclusive, false, JSON.stringify({ attribute, probe }));
         const clicked = await call(page, 'click', args);
         assert.equal(clicked.success, false, JSON.stringify({ attribute, clicked }));
@@ -61,7 +65,7 @@ export function registerInteractionReviewRegressions({
         document.querySelector('#label').addEventListener('click', () => window.fixtureClicks.push('label'));
       });
       const args = { text: 'Continue', textMatch: 'exact' };
-      const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args, adapterName: 'gmail' });
+      const probe = await guardCall(page, { tool: 'click', args, adapterName: 'gmail' });
       assert.equal(probe.messageSend, null, JSON.stringify(probe));
       assert.equal(probe.conclusive, false, JSON.stringify(probe));
       assert.equal((await call(page, 'click', args)).success, true);
@@ -73,7 +77,7 @@ export function registerInteractionReviewRegressions({
         <a id="link" href="/follow">Follow</a>
         <button id="button" aria-label="Follow">★</button>`, kind);
       const args = { text: 'Follow', textMatch: 'exact' };
-      const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args, adapterName: 'gmail' });
+      const probe = await guardCall(page, { tool: 'click', args, adapterName: 'gmail' });
       assert.equal(probe.conclusive, false, JSON.stringify(probe));
       const clicked = await call(page, 'click', args);
       assert.equal(clicked.success, false, JSON.stringify(clicked));
@@ -104,12 +108,15 @@ export function registerInteractionReviewRegressions({
       });
       const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
+      // Control names are read by the fixtures' model oracle, as the agent's
+      // model reads them before the recipient guard decides.
+      stubPageTextReadings(agent);
       const ids = ['follow', 'like', 'connect', 'filters', 'apply', 'profile', 'job', 'fragment', 'script', 'email'];
       for (const route of ['/feed/', '/in/jane-doe/', '/jobs/']) {
         await page.evaluate(route => history.replaceState({}, '', route), route);
         for (const id of ids) {
           const args = { selector: '#' + id };
-          const probe = await call(page, 'probe_message_recipient_guard', { tool: 'click', args, adapterName: 'linkedin' });
+          const probe = await guardCall(page, { tool: 'click', args, adapterName: 'linkedin' });
           assert.equal(probe.messageSend, false, JSON.stringify({ route, id, probe }));
           assert.equal(probe.conclusive, true, JSON.stringify({ route, id, probe }));
           assert.equal(await agent._messageRecipientGuardBlock(1, 'click', args, page.url()), null, id);
@@ -146,7 +153,7 @@ export function registerInteractionReviewRegressions({
           });
         });
         const args = { text: 'Search', textMatch: 'exact' };
-        const probe = await call(page, 'probe_message_recipient_guard', {
+        const probe = await guardCall(page, {
           tool: 'click', args, adapterName: 'gmail',
         });
         assert.notEqual(probe.messageSend, true, JSON.stringify({ variant, probe }));
@@ -181,8 +188,11 @@ export function registerInteractionReviewRegressions({
       });
       const agent = new AgentClass({ getActive: () => ({ supportsVision: false }) });
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
+      // Control names are read by the fixtures' model oracle, as the agent's
+      // model reads them before the recipient guard decides.
+      stubPageTextReadings(agent);
       for (const args of [{ selector: '#search' }, { text: 'Search', textMatch: 'exact' }]) {
-        const probe = await call(page, 'probe_message_recipient_guard', {
+        const probe = await guardCall(page, {
           tool: 'click', args, adapterName: 'gmail',
         });
         assert.equal(probe.messageSend, false, JSON.stringify(probe));
@@ -199,7 +209,7 @@ export function registerInteractionReviewRegressions({
         input.replaceWith(textarea);
         textarea.focus();
       });
-      const searchProbe = await call(page, 'probe_message_recipient_guard', {
+      const searchProbe = await guardCall(page, {
         tool: 'click', args: { selector: '#search' }, adapterName: 'gmail',
       });
       assert.equal(searchProbe.messageSend, false, JSON.stringify(searchProbe));
@@ -212,7 +222,7 @@ export function registerInteractionReviewRegressions({
             : '<button ' + (disabled === 'disabled' ? 'disabled' : 'aria-disabled="true"') + '>Send</button>';
           document.querySelector('[role=dialog]').append(decoy);
         }, disabled);
-        const probe = await call(page, 'probe_message_recipient_guard', {
+        const probe = await guardCall(page, {
           tool: 'click', args: { selector: '#search' }, adapterName: 'gmail',
         });
         assert.equal(probe.messageSend, false, JSON.stringify({ disabled, probe }));
@@ -226,7 +236,7 @@ export function registerInteractionReviewRegressions({
         button.id = 'send';
         button.textContent = 'Send';
       });
-      const sendProbe = await call(page, 'probe_message_recipient_guard', {
+      const sendProbe = await guardCall(page, {
         tool: 'click', args: { selector: '#send' }, adapterName: 'gmail',
       });
       assert.equal(sendProbe.messageSend, true, JSON.stringify(sendProbe));
@@ -244,7 +254,7 @@ export function registerInteractionReviewRegressions({
         document.querySelector('#send').disabled = true;
         editor.focus();
       });
-      const emptyDraft = await call(page, 'probe_message_recipient_guard', {
+      const emptyDraft = await guardCall(page, {
         tool: 'observe_active_conversation', adapterName: 'gmail',
       });
       assert.equal(emptyDraft.composerAvailable, true, JSON.stringify(emptyDraft));

@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 
 // Real installed background/planner/Agent/content/completion flows. Only the
 // provider and owned web application endpoints are deterministic fixtures.
@@ -176,12 +177,23 @@ const iframeSteps = [
   { name: 'iframe_read', args: { urlFilter: 'frame-editor.fixture.invalid/editor', selector: '#receipt' } },
   { name: 'verify_form', args: { urlFilter: 'frame-editor.fixture.invalid/editor', selector: '#document-form' } },
 ];
+const pageTextQuestions = [];
 const server = http.createServer(async (request, response) => {
   let current;
   try {
     assert.equal(request.url, '/v1/chat/completions');
     let body = ''; for await (const chunk of request) body += chunk;
     const input = JSON.parse(body), authority = JSON.stringify(input.messages || []);
+    // A status the page showed is read with a question that carries only that
+    // text, not a tab's task; read it the way a model would.
+    const pageTextReply = fixturePageTextReply(input.messages);
+    if (pageTextReply) {
+      pageTextQuestions.push(input);
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ id: `owned-page-text-${pageTextQuestions.length}`,
+        choices: [{ message: { role: 'assistant', content: pageTextReply }, finish_reason: 'stop' }], usage: { prompt_tokens: 100, completion_tokens: 20 } }));
+      return;
+    }
     const matches = [...cases.entries()].filter(([, value]) => authority.includes(value.marker));
     assert.equal(matches.length, 1, 'A provider request retains exactly one owned tab task.');
     const [kind, entry] = matches[0]; current = entry; current.requests.push(input);
@@ -266,6 +278,13 @@ try {
     return route.abort('blockedbyclient');
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
+  // The worker can be reported before its extension APIs have finished
+  // loading; wait for them before wrapping them.
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const ready = await worker.evaluate(() => !!(globalThis.chrome?.tabs && globalThis.chrome?.runtime?.id)).catch(() => false);
+    if (ready) break;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
   await worker.evaluate(() => {
     globalThis.ownedMonitorCalls = [];
     const sendMessage = chrome.tabs.sendMessage.bind(chrome.tabs);

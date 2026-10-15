@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 import { createNativeActionMarker } from '../firefox-companion/session.mjs';
+import { fixturePageTextReading } from './semantic-decision-stub.mjs';
 
 const html = `<!doctype html><style>
 body { margin:0; width:900px; height:600px; }
@@ -146,6 +147,21 @@ async function modelMessage(page, action, params = {}) {
   ]), { action, params });
 }
 
+// Captures the page the way page feedback does: when the capture consulted
+// messaging control names nobody had read (a conversation's header actions),
+// the fixtures' model oracle reads them and the page is captured again.
+async function captureModelMessage(page, params = {}) {
+  const result = await modelMessage(page, 'page_monitor_capture_model', params);
+  if (result?.pageTextsUnread !== true) return result;
+  const unread = await modelMessage(page, 'take_unread_page_texts');
+  const pageReadings = {};
+  for (const { kind, text } of unread?.texts || []) {
+    const choice = fixturePageTextReading(kind, text);
+    if (choice) (pageReadings[kind] ??= {})[text] = choice;
+  }
+  return modelMessage(page, 'page_monitor_capture_model', { ...params, pageReadings });
+}
+
 function assertOpaqueModelMetadata(result) {
   const allowed = new Set(['ready', 'runToken', 'documentToken', 'snapshotToken', 'targetCount', 'revision', 'code', 'reason', 'uncertified', 'focusedTargetAvailable', 'certificationFailure', 'monitoringRelaxed']);
   if (result.certificationFailure) assert.ok(['owner_unresolved', 'identity_unobserved', 'capture_limit'].includes(result.certificationFailure),
@@ -160,7 +176,7 @@ function assertOpaqueModelMetadata(result) {
 }
 
 async function captureModel(page) {
-  const result = await modelMessage(page, 'page_monitor_capture_model');
+  const result = await captureModelMessage(page);
   assert.equal(result.ready, true, `Model capture must be supported: ${JSON.stringify(result)}`);
   assert.equal(result.runToken, 'passive-test');
   assert.ok(result.documentToken);
@@ -228,7 +244,7 @@ async function treeModelFixture(browser, build, body = modelHtml, options = {}) 
 }
 
 async function captureTreeModel(page) {
-  const result = await modelMessage(page, 'page_monitor_capture_model', { includeTree: true });
+  const result = await captureModelMessage(page, { includeTree: true });
   assert.equal(result.ready, true, `The real accessibility tree must be captured: ${JSON.stringify(result)}`);
   const { page: observation, ...metadata } = result;
   assertOpaqueModelMetadata(metadata);
@@ -838,6 +854,9 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       await t.test('the original public contact and private conversation proof are captured in the same task', async () => {
         const { context, page } = await conversationPaneFixture(browser, build);
         try {
+          // The header controls' names are read before this capture, so it is
+          // one capture task, as in a run that already observed this page.
+          await captureModelMessage(page, { includeTree: true });
           await page.evaluate(() => {
             const original = window.__generateAccessibilityTree; let queued = false;
             window.__generateAccessibilityTree = (...args) => {
@@ -959,7 +978,7 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const ambiguous = modelHtml.replace('<h2 id="recipient">Alice</h2>', '<div id="recipient">Alice</div>');
         const { context, page } = await treeModelFixture(browser, build, ambiguous);
         try {
-          const snapshot = await modelMessage(page, 'page_monitor_capture_model', { includeTree: true });
+          const snapshot = await captureModelMessage(page, { includeTree: true });
           assert.equal(snapshot.ready, true);
           const { page: observation, ...metadata } = snapshot;
           assertOpaqueModelMetadata(metadata);
@@ -1123,7 +1142,7 @@ const deepPriorityHtml = modelHtml
   .replace('<section id="composer"', `${Array.from({ length: 20 }, (_, index) => `<input class="priority-filler" readonly aria-label="Unrelated decorative entry ${index}" value="${'decorative '.repeat(12)}">`).join('')}${Array.from({ length: 2300 }, (_, index) => `<h3 class="priority-filler">Unrelated decorative row ${index} with enough text to truncate the main observation</h3>`).join('')}<section id="composer"`);
 
 async function captureDeepPriority(page, actionTarget) {
-  const result = await modelMessage(page, 'page_monitor_capture_model', { includeTree: true, ...(actionTarget ? { actionTarget } : {}) });
+  const result = await captureModelMessage(page, { includeTree: true, ...(actionTarget ? { actionTarget } : {}) });
   assert.equal(result.ready, true);
   const { page: observation, ...metadata } = result;
   assertOpaqueModelMetadata(metadata);

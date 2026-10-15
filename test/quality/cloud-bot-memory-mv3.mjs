@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
+import { fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 // Installed production Cloud controller, Agent, content scripts, monitor and
 // native CDP click. Only model responses and the authenticated owned callback
@@ -124,6 +125,15 @@ const server = http.createServer(async (request, response) => {
     if (url.pathname === '/v1/chat/completions') {
       const input = JSON.parse(raw), system = textOf(input.messages?.[0]?.content);
       current.requests++;
+      // WebBrain reads short page texts (the record page's saved notice) with
+      // fixed-choice questions that carry only those texts, not the task.
+      const fixedChoice = fixtureFixedChoiceReply(input.messages);
+      if (fixedChoice) {
+        assert.equal(JSON.stringify(input.messages).includes(current.memory.callbackToken), false);
+        response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ id: 'owned-memory-model',
+          choices: [{ message: { role: 'assistant', content: fixedChoice }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 30 } })); return;
+      }
       assert.ok(JSON.stringify(input.messages).includes(current.marker), 'The actual Agent must retain the owned task.');
       assert.equal(JSON.stringify(input.messages).includes(current.memory.callbackToken), false);
       assert.equal(JSON.stringify(input.messages).includes(current.memory.callbackUrl), false);

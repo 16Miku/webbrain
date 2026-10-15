@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
 
 // Real browser downloads and a remote form POST, through the installed Agent.
 // All bytes, accounts and endpoints belong to this loopback test.
@@ -43,8 +44,12 @@ const server=http.createServer(async(req,res)=>{
     let text='';for await(const chunk of req)text+=chunk;const input=JSON.parse(text);calls.push(input);
     const judge=String(input.messages?.[0]?.content||'').startsWith('Evaluate only the observable requirements of the genuine user task');
     const action=Array.isArray(input.tools)&&input.tools.length>0;
+    // WebBrain's fixed-choice questions, read the way a model would read this
+    // fixture: its result line says the attachment was saved.
+    const fixedChoice=fixtureFixedChoiceReply(input.messages);
     let message;
-    if(judge)message={role:'assistant',content:JSON.stringify({outcome:'uncertain',reason:'Require actual image attachment and persisted submission evidence.'})};
+    if(fixedChoice)message={role:'assistant',content:fixedChoice};
+    else if(judge)message={role:'assistant',content:JSON.stringify({outcome:'uncertain',reason:'Require actual image attachment and persisted submission evidence.'})};
     else if(!action)message={role:'assistant',content:JSON.stringify({request_kind:'execute',scope_relation:'new',deliverables:['Resolve the viewer into the actual image and submit only the exact image to the QA form'],requires_state_change:true,requires_submission:true,messaging:null,completion_requirements:{download:true},allows_planner_shaped_result:false,allows_app_state_tool_evidence:false,read_scope:'visible_page',summary:'Download the viewer, reject incompatible HTML before attachment, resolve the exact PNG, submit once and verify.',steps:[{id:'1',action:'Download the viewer; use truthful mismatch recovery to obtain PNG; upload PNG to the owned form, submit once and verify.'}],memory:{use_progress_ledger:false,progress_action:null},scheduling:null,risks:[]})};
     else {
       const ids={};

@@ -110,9 +110,11 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: explicit Continue and acknowledgment preserve the active approved plan`, async () => {
-    for (const text of ['continue', 'ok']) {
+    // The runtime marks what a short turn does (a model reads it in any
+    // language) before the planner gate sees it.
+    for (const [text, kind] of [['continue', 'continue'], ['ok', 'acknowledge'], ['devam et', 'continue'], ['teşekkürler', 'acknowledge']]) {
       const agent = await planned();
-      const captured = await gate(agent, text);
+      const captured = await gate(agent, text, '', {}, { webbrainTurnKind: kind });
       assert.ok(captured.followUp.scratchpadFacts.includes(oldPlan));
       assert.equal(agent._progressTaskAnchorText(tab), oldTask);
       assert.ok(scratch(agent).includes(notes));
@@ -737,12 +739,19 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
-  test(`${browser}: English display follows final semantic narrowing rather than obsolete model fields`, () => {
-    const plan = planner.normalizePlan(modelPlan(), { requireIntent: true, locale: 'en', latestUserTask: 'Only 3 hotel names.' });
+  test(`${browser}: English display follows the planner's own narrowing rather than its obsolete localized fields`, () => {
+    // Narrowing is the planner's reading of the request; the request's words
+    // never rewrite the plan afterwards.
+    const plan = planner.normalizePlan(modelPlan({ scope_relation: 'narrow', deliverables: ['3 hotel names'],
+      expected_items: { count: 3, item_type: 'hotel', ordered: true, required_fields: ['hotel_name'] },
+      summary: 'List 3 hotel names.' }), { requireIntent: true, locale: 'en', latestUserTask: 'Only 3 hotel names.' });
     assert.equal(plan.scope_relation, 'narrow');
     assert.equal(plan.expected_items.count, 3);
     assert.deepEqual(plan.localized, canonicalDisplay(plan));
     assert.equal(plan.localized.summary, 'List 3 hotel names.');
+    const unchanged = planner.normalizePlan(modelPlan(), { requireIntent: true, locale: 'en', latestUserTask: 'Only 3 hotel names.' });
+    assert.equal(unchanged.scope_relation, 'new');
+    assert.equal(unchanged.expected_items, null);
   });
 
   test(`${browser}: non-English localized display and ID-aligned fallback remain unchanged`, () => {

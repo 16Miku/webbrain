@@ -465,6 +465,15 @@ function getContextMenuPromptStore() {
 }
 
 const contextMenuStorage = createContextMenuStorage(getContextMenuPromptStore);
+
+// A user Stop holds the pending browser-menu prompt of the stopped tab (and of
+// its research source tab) so it cannot start on its own; the side panel lists
+// it as paused until the user runs or deletes it. Storage errors never fail Stop.
+function holdContextMenuPromptsAfterStop(...tabIds) {
+  const uniqueTabIds = [...new Set(tabIds.filter(tabId => tabId != null).map(Number))];
+  return Promise.all(uniqueTabIds.map(tabId => contextMenuStorage.hold(tabId).catch(() => null)));
+}
+
 const tabChatHandoff = createTabChatHandoffCoordinator(chrome.storage.session, {
   requestHandoff: async (tabId, { ownerId, generation }) => {
     try {
@@ -2468,6 +2477,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== 'WB_STOP_AGENT') return; // not ours
   const tabId = sender?.tab?.id;
   if (tabId != null) {
+    holdContextMenuPromptsAfterStop(tabId, agent.researchEscalationSourceTab(tabId));
     cancelDetachedRunStart(tabId);
     try { agent.abort(tabId); } catch { /* ignore */ }
     // Always clear the sender tab's page-owned indicator, even when the run
@@ -3115,9 +3125,21 @@ async function handleMessage(msg, sender) {
     if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
       throw new Error('Steering is available from the chat panel only.');
     }
-    return agent.steerMessage(Number(msg.tabId), msg.text, {
+    const result = agent.steerMessage(Number(msg.tabId), msg.text, {
       requestId: msg.requestId, messageId: msg.messageId,
     });
+    // Acknowledge only once the correction would survive a background restart.
+    if (result?.accepted) await agent.flushSteeringJournal?.(Number(msg.tabId));
+    return result;
+  }
+  if (msg.action === 'chat_steer_reclaim') {
+    // Corrections an interrupted, not resumed run accepted but never applied
+    // return to the same chat panel that alone could send them.
+    if (sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+      throw new Error('Steering is available from the chat panel only.');
+    }
+    const tabId = Number(msg.tabId);
+    return agent.reclaimUnappliedSteering(tabId, { isBusy: () => detachedRunStarts.has(tabId) });
   }
 
   // Only Settings may start OAuth or change the user's remote-memory choice.
@@ -3125,6 +3147,11 @@ async function handleMessage(msg, sender) {
   if (String(msg.action || '').startsWith('memcode_recall_')
     && sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/settings.html')) {
     return { ok: false, error: 'MemCode connection controls are available in Settings only.' };
+  }
+  // Pausing or resuming a browser-menu prompt is a chat-panel decision.
+  if (['hold_context_menu_prompt', 'resume_context_menu_prompt'].includes(msg.action)
+    && sender?.url?.split(/[?#]/)[0] !== chrome.runtime.getURL('src/ui/sidepanel.html')) {
+    return { ok: false, error: 'Paused prompts can be changed from the chat panel only.' };
   }
   const lightweightAction = [
     'get_recording_state',
@@ -4006,9 +4033,15 @@ async function handleMessage(msg, sender) {
       const tabId = msg.tabId || sender.tab?.id;
       if (tabId) {
         const sourceTabId = agent.researchEscalationSourceTab(tabId);
+        // Queue the hold before the run can unwind, so no claim slips past it.
+        // A conversation clear also stops the run but has its own prompt rules.
+        const promptHold = msg.conversationClear === true
+          ? null
+          : holdContextMenuPromptsAfterStop(tabId, sourceTabId);
         cancelDetachedRunStart(tabId);
         if (sourceTabId) cancelDetachedRunStart(sourceTabId);
         agent.abort(sourceTabId || tabId);
+        await promptHold;
       }
       return { ok: true };
     }
@@ -4043,6 +4076,9 @@ async function handleMessage(msg, sender) {
       }
       const runUiDurable = !runUiSnapshot
         || runUiPersistenceFailures.get(tabId) !== String(runUiSnapshot.requestId || '');
+      // Accepted corrections no live run owns (a restart interrupted their run).
+      const unappliedSteeringCount = activeState.running || starting
+        ? 0 : Number(await agent.unappliedSteeringCount?.(tabId)) || 0;
       return {
         ok: true,
         ...conversationState,
@@ -4056,6 +4092,7 @@ async function handleMessage(msg, sender) {
         persistenceDegradedReason: activeState.persistenceDegradedReason || (!runUiDurable ? 'run_ui' : null),
         detachedError,
         runUi: requestedRunUi,
+        unappliedSteeringCount,
       };
     }
 
@@ -4186,6 +4223,17 @@ async function handleMessage(msg, sender) {
     case 'clear_context_menu_prompt': {
       const tabId = msg.tabId || sender.tab?.id;
       return await contextMenuStorage.clear(tabId, msg.promptId);
+    }
+
+    // The panel holds a prompt it queued during a stopped run, or releases a
+    // held prompt the user chose to run. Both name the exact prompt.
+    case 'hold_context_menu_prompt':
+    case 'resume_context_menu_prompt': {
+      const tabId = msg.tabId || sender.tab?.id;
+      if (!tabId || !msg.promptId) return { ok: false, error: 'Tab and prompt IDs are required.' };
+      return msg.action === 'hold_context_menu_prompt'
+        ? await contextMenuStorage.hold(tabId, msg.promptId)
+        : await contextMenuStorage.resume(tabId, msg.promptId);
     }
 
     case 'persist_tab_chat':

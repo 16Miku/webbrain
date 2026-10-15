@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
+import { fixturePageTextReading } from './semantic-decision-stub.mjs';
 
 const area = { get: async () => ({ systemOneEnabled: false }), set: async () => {}, remove: async () => {} };
 globalThis.chrome = globalThis.browser = {
@@ -18,6 +19,9 @@ for (const build of ['chrome', 'firefox']) {
     const agent = new Agent({ getActive: () => ({ chat: async () => ({ content: '{}' }) }) });
     agent.useSiteAdapters = true;
     agent._persist = () => {};
+    // What a model read the page's status texts as saying (the product reads
+    // them before these synchronous checks).
+    agent._pageTextReading = fixturePageTextReading;
     const tabId = kind === 'draft' ? 611 : 612;
     const h = { agent, tabId, url: kind === 'draft'
       ? 'https://mail.google.com/mail/u/0/#drafts'

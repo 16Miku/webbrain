@@ -92,7 +92,14 @@ existing checks. Strict Secret Mode disables these additional calls.
 | Other provider, outsourcing disabled or unconfigured | Active LLM | Existing checks |
 
 Each judge prefers a fresh screenshot and tries AX if images
-are unavailable or inconclusive. Confident pending/failed results require
+are unavailable or inconclusive. The decision model decides when it is sure.
+When it answers but is not sure, the active LLM's second look has eight seconds
+in all, and a look that could not finish in the time left is not started, so a
+slow model cannot hold a finished task; when the decision model is off or
+unavailable, or a D1 success needs confirmation, the active LLM keeps its full
+checks. At completion the active LLM's reading of the page's status texts, when
+the decision model is not sure of them, is bounded to six seconds; a text it did
+not read proves nothing either way. Confident pending/failed results require
 recovery. Accepted fresh proof can establish generic publication evidence;
 explicit recipient, payment, download, authorization and workflow contracts
 remain required. Future votes and moderation outcomes are not certified.

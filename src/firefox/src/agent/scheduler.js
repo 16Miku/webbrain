@@ -143,6 +143,34 @@ function normalizePendingClarify(data, now = Date.now()) {
       changedFields: normalizeFields(submitConfirmation.changedFields, 8),
     };
   }
+  const recipientConfirmation = asObject(obj.recipientConfirmation);
+  if (Array.isArray(recipientConfirmation.recipients) && recipientConfirmation.recipients.length) {
+    pending.recipientConfirmation = {
+      recipients: recipientConfirmation.recipients.slice(0, 16).map((recipient) => {
+        const item = asObject(recipient);
+        return { identity: String(item.identity || '').slice(0, 240), role: ['to', 'cc', 'bcc'].includes(item.role) ? item.role : 'to' };
+      }).filter((recipient) => recipient.identity),
+      requested: Array.isArray(recipientConfirmation.requested)
+        ? recipientConfirmation.requested.slice(0, 8).map((value) => String(value).slice(0, 240)).filter(Boolean)
+        : [],
+      host: String(recipientConfirmation.host || '').slice(0, 300),
+      offerAll: recipientConfirmation.offerAll === true,
+      ...(['unnamed', 'unrequested'].includes(recipientConfirmation.reason) ? { reason: recipientConfirmation.reason } : {}),
+      ...(recipientConfirmation.message ? { message: String(recipientConfirmation.message).slice(0, 300) } : {}),
+    };
+  }
+  const mutationConfirmation = asObject(obj.mutationConfirmation);
+  if (mutationConfirmation.kind === 'delete' && (mutationConfirmation.item || mutationConfirmation.url)) {
+    pending.mutationConfirmation = {
+      kind: 'delete',
+      reason: ['not_requested', 'not_named', 'unverified'].includes(mutationConfirmation.reason)
+        ? mutationConfirmation.reason : 'unverified',
+      host: String(mutationConfirmation.host || '').slice(0, 300),
+      item: String(mutationConfirmation.item || '').slice(0, 280),
+      url: String(mutationConfirmation.url || '').slice(0, 600),
+      dialog: String(mutationConfirmation.dialog || '').slice(0, 300),
+    };
+  }
   return pending;
 }
 

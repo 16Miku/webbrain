@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
+import { stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 const area = { get: async () => ({ systemOneEnabled: false }), set: async () => {}, remove: async () => {} };
 globalThis.chrome = globalThis.browser = { storage: { local: area, session: area }, runtime: { getURL: value => `extension://test/${value}` } };
@@ -45,6 +46,12 @@ for (const [build, launcher] of [['chrome', chromium], ['firefox', firefox]]) {
       const agent = new Agent({ getActive: () => provider });
       agent.systemOneContext = () => ({ isCurrent: () => true });
       agent.recordSystemOneVerdict = () => {};
+      // A model reads what the frame's status messages say.
+      const readings = new Map([['Dokument gespeichert; Beleg 789.', 'success'], ['Ungültige Eingabe im Feld Betreff.', 'error'],
+        ['保存しました。受付番号 790。', 'success']]);
+      const asked = stubPageTextReadings(agent, (kind, item) => readings.get(item.text)
+        || (kind === 'status_message' && /saved successfully/i.test(item.text) ? 'success'
+          : kind === 'status_message' && /rejected/i.test(item.text) ? 'error' : 'other'));
       const task = 'Save this owned iframe document once and read its receipt.';
       const actionArgs = { urlFilter: 'editor.owned.invalid/form', selector: '#save', matchIndex: 0 };
       async function arm(baseline = '') {
@@ -67,12 +74,24 @@ for (const [build, launcher] of [['chrome', chromium], ['firefox', firefox]]) {
         agent._recordCompletionToolResult(1, 'iframe_read', { ...actionArgs, selector: '#receipt' }, result);
       }
       const options = { pageUrl: topUrl, pageState: { relevantFormCount: 0, successMessages: [] }, summary: 'The document was saved.' };
-      const verified = async () => agent._completionSubmissionEvidence(1, { ...options.pageState, iframeSubmissionEvidence: await agent._completionIframeSnapshot(1) }, topUrl).verifiedFinalSubmit;
+      const verified = async () => agent._completionSubmissionEvidence(1, { ...options.pageState, iframeSubmissionEvidence: await agent._completionIframeEvidence(1) }, topUrl).verifiedFinalSubmit;
       await t.test('a fresh exact-frame receipt verifies after an explicit post-action iframe read', async () => {
         await arm(); await editor().locator('#receipt').evaluate(element => { element.textContent = 'Document saved successfully; owned receipt 123.'; });
         assert.equal(await agent._completionIframeSnapshot(1), null, 'A changed status without the required explicit read is not completion.');
         await observe(); assert.equal(await verified(), true);
         assert.match((await agent._completionIframeSnapshot(1)).text, /owned receipt 123/);
+      });
+      await t.test('a receipt in any language counts only as a model reads it; an error message in the frame blocks it', async () => {
+        await arm(); await editor().locator('#receipt').evaluate(element => { element.textContent = '保存しました。受付番号 790。'; });
+        await observe(); assert.equal(await verified(), true);
+        assert.ok(asked.some(item => item.kind === 'status_message' && item.text === '保存しました。受付番号 790。'));
+        await arm(); await editor().locator('#receipt').evaluate(element => { element.textContent = 'Dokument gespeichert; Beleg 789.'; });
+        await editor().locator('form').evaluate(form => { const p = document.createElement('p'); p.id = 'frame-error'; p.setAttribute('role', 'alert'); p.textContent = 'Ungültige Eingabe im Feld Betreff.'; form.append(p); });
+        await observe(); assert.equal(await verified(), false, 'A message read as an error in the submitted frame blocks success');
+        await editor().locator('#frame-error').evaluate(element => element.remove());
+        assert.equal(await verified(), true);
+        await arm(); await editor().locator('#receipt').evaluate(element => { element.textContent = 'Wird gespeichert …'; });
+        await observe(); assert.equal(await verified(), false, 'A message read as neither success nor error proves nothing');
       });
       await t.test('pre-existing receipt and another iframe cannot prove this submission', async () => {
         await arm('Document saved successfully; old receipt.'); await observe(); assert.equal(await verified(), false);

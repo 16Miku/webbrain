@@ -1227,41 +1227,6 @@ function showSlashInvocationError(invocation) {
   showComposerToast(t('sp.slash.invalid_usage', { usage: invocation?.command?.usage || '/help' }), { duration: 5000 });
 }
 
-function normalizeScreenshotRequestText(text) {
-  return String(text || '')
-    .trim()
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\u0131/g, 'i')
-    .replace(/[.!?]+$/g, '')
-    .replace(/\s+/g, ' ');
-}
-
-function isPlainScreenshotRequest(text) {
-  const s = normalizeScreenshotRequestText(text);
-  if (!s || s.startsWith('/')) return false;
-  return /^(?:please |pls )?(?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
-    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this |current )?(?:screen ?shot|screenshot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
-    || /^(?:lutfen )?(?:screenshot|screen ?shot|ekran goruntusu)(?: (?:al|cek|goster|at))?$/.test(s)
-    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sekmenin|sayfanin|ekranin) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
-}
-
-function isPlainFullPageScreenshotRequest(text) {
-  const s = normalizeScreenshotRequestText(text);
-  if (!s || s.startsWith('/')) return false;
-  return /^(?:please |pls )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:please|pls))?$/.test(s)
-    || /^(?:please |pls |can you |could you |would you )?(?:take|capture|grab|show|get) (?:a |the |this )?(?:(?:full|whole|entire|complete) page|fullpage|long) (?:screenshot|screen ?shot)(?: (?:of|for) (?:the |this |current )?(?:page|tab|screen|window))?$/.test(s)
-    || /^(?:lutfen )?(?:tam sayfa|butun sayfa|tum sayfa|uzun) ekran goruntusu(?: (?:al|cek|goster|at))?$/.test(s)
-    || /^(?:lutfen )?(?:bu |mevcut |aktif )?(?:sayfanin|sekmenin) (?:tam|butun|tum) ekran goruntusunu (?:al|cek|goster|at)$/.test(s);
-}
-
-function normalizeScreenshotCommandText(text) {
-  if (isPlainFullPageScreenshotRequest(text)) return '/screenshot --full-page';
-  if (isPlainScreenshotRequest(text)) return '/screenshot';
-  return text;
-}
-
 const SLASH_COMMAND_OPTION_ID_PREFIX = 'slash-command-option-';
 const BUSY_SLASH_NOTICE_COOLDOWN_MS = 3000;
 let placeholderRotationIndex = 0;
@@ -1604,6 +1569,10 @@ const {
   hasQueuedForTab: hasQueuedContextMenuPromptForTab,
   consumePendingContextMenuPrompt,
   clearQueuedForTab,
+  holdQueuedForTab: holdQueuedContextMenuPromptsForTab,
+  getHeldForTab: getHeldContextMenuPromptsForTab,
+  runHeldPrompt: runHeldContextMenuPrompt,
+  deleteHeldPrompt: deleteHeldContextMenuPrompt,
 } = createContextMenuPromptHandler({
   getCurrentTabId: () => currentTabId,
   getIsProcessing: () => isProcessing || isConversationClearInProgress(),
@@ -1614,6 +1583,9 @@ const {
   sendMessage,
   sendToBackground,
   getIsDocumentVisible: () => document.visibilityState !== 'hidden',
+  onHeldPromptsChange: (tabId) => {
+    if (tabId == null || sameTabId(currentTabId, tabId)) renderQueuedComposerMessages();
+  },
 });
 // Completion notification + success celebration. Default on; togglable via Settings.
 let notifySoundEnabled = true;
@@ -2419,12 +2391,31 @@ function queueUnconsumedSteeringMessages(tabId, messages, { held = false } = {})
   if (incoming.length) setQueuedComposerMessages(tabId, [...incoming, ...queue]);
 }
 
+// A background restart can interrupt a run after it accepted a correction and
+// before applying it. A resumed run applies it itself; once no run can, the
+// background returns it here and it is held exactly like after Stop.
+async function reclaimUnappliedSteering(tabId) {
+  const numericTabId = Number(tabId);
+  if (!Number.isFinite(numericTabId) || isConversationClearInProgress(numericTabId)) return;
+  let response = null;
+  try {
+    response = await sendToBackground('chat_steer_reclaim', { tabId: numericTabId });
+  } catch { return; }
+  if (isConversationClearInProgress(numericTabId)) return;
+  const messages = (Array.isArray(response?.messages) ? response.messages : [])
+    .filter(item => !clearedConversationRunRequestIds.has(String(item?.requestId || '')));
+  queueUnconsumedSteeringMessages(numericTabId, messages, { held: true });
+}
+
 // After Stop nothing may start on its own. Held items stay visible in the
 // queue until the user edits (then sends), steers or deletes them; messages
-// queued during a later run still drain normally.
+// queued during a later run still drain normally. Browser-menu prompts queued
+// for the tab are held too, unless a conversation clear (with its own rules
+// for them) stopped the run.
 function holdQueuedComposerMessages(tabId) {
   const queue = getQueuedComposerMessages(tabId);
   if (queue.some(item => !item.held)) setQueuedComposerMessages(tabId, queue.map(item => ({ ...item, held: true })));
+  if (!isConversationClearInProgress(tabId)) holdQueuedContextMenuPromptsForTab(tabId);
 }
 
 function nextAutomaticQueuedComposerMessage(tabId) {
@@ -2497,6 +2488,10 @@ function syncComposerDeliveryState() {
     button.closest('.queued-message')?.classList.toggle('has-steer', isProcessing);
     button.disabled = !isProcessing || blocked;
   });
+  // A held browser-menu prompt is sent only by an explicit click while idle.
+  queuedMessagesEl?.querySelectorAll('.queued-message-run').forEach(button => {
+    button.disabled = isProcessing || blocked;
+  });
   const sendLabel = isProcessing
     ? (composerDeliveryMode === 'steer' ? 'sp.steer.title' : 'sp.queue.send')
     : 'sp.btn.send';
@@ -2522,12 +2517,51 @@ function queuedComposerButton(className, action, queueId, labelKey, svgPath) {
   return btn;
 }
 
+// A browser-menu or selection prompt held by Stop. It shows what the chat
+// bubble would show (never the model-only wrapper) and waits for Send or Delete.
+function heldContextMenuPromptRow(prompt, tabId) {
+  const row = document.createElement('div');
+  row.className = 'queued-message';
+  row.dataset.queueId = prompt.id;
+  row.dataset.held = 'true';
+  row.setAttribute('role', 'listitem');
+
+  const label = document.createElement('span');
+  label.className = 'queued-message-label';
+  label.textContent = t('sp.queue.held');
+
+  const text = document.createElement('span');
+  text.className = 'queued-message-text';
+  text.textContent = formatSelectionPromptForDisplay(prompt.text);
+  text.title = text.textContent;
+
+  const send = queuedComposerButton(
+    'queued-message-run',
+    'run-context-menu-prompt',
+    prompt.id,
+    'sp.btn.send',
+    '<path d="M22 2 11 13"></path><path d="M22 2 15 22 11 13 2 9z"></path>',
+  );
+  const remove = queuedComposerButton(
+    'queued-message-delete',
+    'delete-context-menu-prompt',
+    prompt.id,
+    'sp.queue.delete',
+    '<path d="M18 6L6 18"></path><path d="M6 6l12 12"></path>',
+  );
+  send.disabled = isTabProcessing(tabId) || isTabAbortRequested(tabId);
+  row.append(label, text, send, remove);
+  return row;
+}
+
 function renderQueuedComposerMessages(tabId = currentTabId) {
   if (!queuedMessagesEl) return;
   const messages = getQueuedComposerMessages(tabId);
+  // Browser-menu prompts held by Stop share the queue area.
+  const heldMenuPrompts = getHeldContextMenuPromptsForTab(tabId);
   queuedMessagesEl.replaceChildren();
-  queuedMessagesEl.classList.toggle('hidden', messages.length === 0);
-  if (!messages.length) return;
+  queuedMessagesEl.classList.toggle('hidden', messages.length === 0 && heldMenuPrompts.length === 0);
+  if (!messages.length && !heldMenuPrompts.length) return;
 
   messages.forEach((item, index) => {
     const row = document.createElement('div');
@@ -2578,6 +2612,7 @@ function renderQueuedComposerMessages(tabId = currentTabId) {
     row.append(edit, remove);
     queuedMessagesEl.appendChild(row);
   });
+  heldMenuPrompts.forEach(prompt => queuedMessagesEl.appendChild(heldContextMenuPromptRow(prompt, tabId)));
   syncComposerDeliveryState();
 }
 
@@ -2801,6 +2836,17 @@ function navigateComposerHistory(direction) {
 
 function deleteQueuedComposerMessage(tabId, queueId) {
   removeQueuedComposerMessage(tabId, queueId);
+}
+
+// Send or delete a browser-menu prompt held by Stop. If the request fails,
+// the prompt stays listed and paused.
+async function handleHeldContextMenuPromptAction(action, promptId) {
+  try {
+    if (action === 'run-context-menu-prompt') await runHeldContextMenuPrompt(promptId);
+    else await deleteHeldContextMenuPrompt(promptId);
+  } catch (error) {
+    showComposerToast(error?.message || String(error));
+  }
 }
 
 function clearQueuedComposerMessagesForTab(tabId) {
@@ -5533,6 +5579,13 @@ async function restoreActiveRunState(tabId = currentTabId) {
   if (!state) return;
   const snapshotStillActive = await applyActiveRunState(numericTabId, state);
   if (!snapshotStillActive) return;
+  if (Number(state.unappliedSteeringCount) > 0 && !state.running && !state.starting) {
+    // An interrupted run that is about to resume applies its own corrections.
+    const runUi = state.runUi && typeof state.runUi === 'object' ? state.runUi : null;
+    const resumable = !!runUi?.requestId && !isTerminalRunUiStatus(runUi.status)
+      && runUi.status !== 'awaiting_plan' && !cancelledRunRecoveryRequestIds.has(String(runUi.requestId));
+    if (!resumable) await reclaimUnappliedSteering(numericTabId);
+  }
   void adoptRestoredRunState(numericTabId, state);
 }
 
@@ -6231,7 +6284,8 @@ function rebindClarifyCards() {
 
     // Restart countdown after HTML restore when timeout metadata survived on
     // the card. Skip permission/form-submit cards (they never auto-timeout).
-    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1') return;
+    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
+      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1') return;
     const deadlineTs = Number(card.dataset.deadlineTs);
     if (!Number.isFinite(deadlineTs) || deadlineTs <= 0) return;
     const firstOption = card.dataset.firstOption
@@ -8598,7 +8652,7 @@ function isOutOfBandSlashDraft(value) {
 function syncSendButtonState() {
   if (!sendBtn) return;
   syncComposerDeliveryState();
-  const draft = normalizeScreenshotCommandText(inputEl?.value || '').trim();
+  const draft = String(inputEl?.value || '').trim();
   if (tabSwitchTransitionId != null || visibleStateRefreshPending || visibleStateRefreshInProgress) {
     sendBtn.disabled = true;
     return;
@@ -9618,7 +9672,6 @@ async function sendMessage(extraChatParams = {}) {
   if (steeringRequestsByTab.has(Number(tabId))) return false;
   const permissionSkipContext = permissionSkipCommandContextForDraft(tabId, text);
   const requestId = createRunRequestId(tabId);
-  text = normalizeScreenshotCommandText(text);
   if (isAwaitingPlanReviewForTab(tabId)) {
     await releaseOwnedContextMenuClaim({ reason: 'plan-review-pending', retryAfterMs: 1_000 });
     showComposerToast(t('sp.plan.awaiting_review'), { duration: 5000 });
@@ -11104,7 +11157,8 @@ function renderClarifyCard(data) {
   if (data.pendingReconciliation === true) card.dataset.pendingReconciliation = '1';
   card.dataset.memorySource = scheduledJobId
     ? 'scheduled_clarification'
-    : data.workflowHealing || data.pendingReconciliation === true
+    : data.workflowHealing || data.pendingReconciliation === true || data.recipientConfirmation
+      || data.mutationConfirmation
       ? ''
       : data.submitConfirmation
         ? 'form_confirmation'
@@ -11213,6 +11267,116 @@ function renderClarifyCard(data) {
       b.textContent = label;
       b.dataset.value = value;
       b.addEventListener('click', () => submitClarify(card, tabId, clarifyId, value, 'option'));
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Recipient confirmation: WebBrain asks whether a message may go to the
+  // person the open conversation shows. Fixed choices return stable values
+  // ('once'/'always'/'deny') with no free-text input, so nothing is parsed.
+  if (data.recipientConfirmation) {
+    card.dataset.recipientConfirmation = '1';
+    const confirmation = data.recipientConfirmation || {};
+    const recipients = (Array.isArray(confirmation.recipients) ? confirmation.recipients : [])
+      .map(item => ({ identity: String(item?.identity || '').slice(0, 240), role: String(item?.role || 'to').toLowerCase() }))
+      .filter(item => item.identity)
+      .slice(0, 16);
+    const recipient = recipients
+      .map(item => (item.role === 'cc' || item.role === 'bcc' ? `${item.identity} (${item.role.toUpperCase()})` : item.identity))
+      .join(', ') || String(data.question || '').slice(0, 240);
+    const requested = (Array.isArray(confirmation.requested) ? confirmation.requested : [])
+      .map(value => String(value || '').slice(0, 240)).filter(Boolean).join(', ');
+    const host = String(confirmation.host || '').slice(0, 300) || 'this site';
+    qEl.textContent = t('sp.recipient.question', { recipient });
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = confirmation.reason === 'unrequested'
+      ? t('sp.recipient.reason_unrequested', { recipient, host })
+      : confirmation.reason === 'unnamed'
+        ? t('sp.recipient.reason_unnamed', { recipient, host })
+        : requested
+          ? t('sp.recipient.reason_requested', { requested, recipient, host })
+          : t('sp.recipient.reason_open', { recipient, host });
+    card.appendChild(reasonEl);
+    // The message itself, as plain text, so the user sees what will be sent.
+    const message = String(confirmation.message || '').slice(0, 300);
+    if (message) {
+      const messageEl = document.createElement('div');
+      messageEl.className = 'clarify-subject';
+      messageEl.textContent = message;
+      card.appendChild(messageEl);
+    }
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    const choices = [
+      ['once', t('sp.recipient.send', { recipient })],
+      ...(confirmation.offerAll === true ? [['always', t('sp.recipient.send_all')]] : []),
+      ['deny', t('sp.recipient.dont_send')],
+    ];
+    for (const [value, label] of choices) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 300);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
+      optionsEl.appendChild(b);
+    }
+    card.appendChild(optionsEl);
+    content.appendChild(card);
+    scrollToBottom({ force: true });
+    return;
+  }
+
+  // Deletion confirmation: WebBrain asks whether an item may be deleted when
+  // the request's wording does not bind the deletion to it. The item is the
+  // page's own text, shown as text. Fixed choices return stable values
+  // ('once'/'deny') with no free-text input, so nothing is parsed.
+  if (data.mutationConfirmation) {
+    card.dataset.mutationConfirmation = '1';
+    const confirmation = data.mutationConfirmation || {};
+    const host = String(confirmation.host || '').slice(0, 300) || 'this site';
+    qEl.textContent = t('sp.delete.question', { host });
+    const reasonKey = { not_requested: 'sp.delete.reason_not_requested', not_named: 'sp.delete.reason_not_named' }[confirmation.reason]
+      || 'sp.delete.reason_unverified';
+    const reasonEl = document.createElement('div');
+    reasonEl.className = 'clarify-reason';
+    reasonEl.textContent = t(reasonKey);
+    card.appendChild(reasonEl);
+    const item = String(confirmation.item || '').slice(0, 280);
+    const url = String(confirmation.url || '').slice(0, 600);
+    if (item || url) {
+      const subjectEl = document.createElement('div');
+      subjectEl.className = 'clarify-subject';
+      subjectEl.textContent = [item, url].filter(Boolean).join('\n');
+      card.appendChild(subjectEl);
+    }
+    const dialog = String(confirmation.dialog || '').slice(0, 300);
+    if (dialog) {
+      const dialogEl = document.createElement('div');
+      dialogEl.className = 'clarify-reason';
+      dialogEl.textContent = t('sp.delete.site_asks', { dialog });
+      card.appendChild(dialogEl);
+    }
+    const optionsEl = document.createElement('div');
+    optionsEl.className = 'clarify-options';
+    for (const [value, label] of [['once', t('sp.delete.delete')], ['deny', t('sp.delete.dont_delete')]]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'clarify-option';
+      b.textContent = String(label).slice(0, 200);
+      b.dataset.value = value;
+      b.addEventListener('click', () => {
+        card.dataset.answerLabel = b.textContent;
+        submitClarify(card, tabId, clarifyId, value, 'option');
+      });
       optionsEl.appendChild(b);
     }
     card.appendChild(optionsEl);
@@ -11478,7 +11642,8 @@ function lockClarifyCardFromAuto(data) {
   for (const card of document.querySelectorAll('.clarify-card')) {
     if (String(card.dataset.clarifyId || '') !== clarifyId) continue;
     if (card.classList.contains('clarify-answered')) return;
-    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1') return;
+    if (card.dataset.permission === '1' || card.dataset.submitConfirmation === '1'
+      || card.dataset.recipientConfirmation === '1' || card.dataset.mutationConfirmation === '1') return;
     clearClarifyCountdown(card);
     card.classList.add('clarify-answered');
     for (const el of card.querySelectorAll('button, input')) {
@@ -11718,7 +11883,7 @@ function submitClarify(card, tabId, clarifyId, answer, source) {
     } else {
       prefix = typeof t === 'function' ? t('sp.clarify.your_answer') : 'Your answer:';
     }
-    answered.textContent = `${prefix} ${answer}`;
+    answered.textContent = `${prefix} ${card.dataset.answerLabel || answer}`;
     card.appendChild(answered);
     placeAnsweredClarifyCardInTimeline(card);
     scrollToBottom();
@@ -12010,7 +12175,7 @@ function markLastStepDone(toolName, result) {
     if (details && details.classList.contains('step-details')) {
       const resultDiv = document.createElement('div');
       resultDiv.className = 'detail-result';
-      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml(truncate(JSON.stringify(result), 1200))}`;
+      resultDiv.innerHTML = `<div class="detail-label">${escapeHtml(t('sp.step.result_label'))}</div>${escapeHtml((['auto_screenshot', 'staged_screenshot'].includes(toolName) && typeof result?.description === 'string' ? JSON.stringify(result, null, 2) : truncate(JSON.stringify(result), 1200)))}`;
       const expandAll = details.querySelector?.('.step-expand-all') || null;
       if (expandAll && typeof details.insertBefore === 'function') details.insertBefore(resultDiv, expandAll);
       else details.appendChild(resultDiv);
@@ -12106,7 +12271,7 @@ function appendVerboseToolResult(name, result) {
 
   const resultEl = document.createElement('div');
   resultEl.className = 'tool-result';
-  resultEl.textContent = truncate(JSON.stringify(result), 200);
+  resultEl.textContent = (['auto_screenshot', 'staged_screenshot'].includes(name) && typeof result?.description === 'string' ? JSON.stringify(result, null, 2) : truncate(JSON.stringify(result), 200));
   lastTool.appendChild(resultEl);
 
   if (name === 'done') {
@@ -14174,10 +14339,18 @@ async function sendRunWithReconnect(initialAction, payload, recoveryOptions = {}
   });
   const follower = { requestId, promise };
   localRunFollowers.set(tabId, follower);
+  // Without a reconnect the run's own inbox returned whatever it left
+  // unapplied. This reaction is registered first, so it runs before the
+  // awaiting code below resumes.
+  let backgroundInterrupted = true;
+  promise.then(result => {
+    backgroundInterrupted = result?.reconnected === true || result?.resumed === true;
+  }, () => {});
   try {
     return await promise;
   } finally {
     if (localRunFollowers.get(tabId) === follower) localRunFollowers.delete(tabId);
+    if (backgroundInterrupted && shouldContinueRunRecovery()) await reclaimUnappliedSteering(tabId);
   }
 }
 
@@ -14480,6 +14653,8 @@ async function abortRun(tabId = currentTabId) {
       syncSendButtonState();
       hideActivity();
       currentAssistantEl = null;
+      // A stopped run that a restart had interrupted returns its corrections.
+      if (Number(state?.unappliedSteeringCount) > 0) await reclaimUnappliedSteering(tabId);
       // Messages queued while "Stopping…" are held too; nothing runs on its own.
       holdQueuedComposerMessages(tabId);
       setTabAbortRequested(tabId, false);
@@ -14491,7 +14666,10 @@ async function abortRun(tabId = currentTabId) {
   });
 
   try {
-    await sendToBackground('abort', { tabId });
+    // Only a user Stop holds the tab's browser-menu prompt; a conversation
+    // clear stops the run under its own rules for that prompt.
+    if (isConversationClearInProgress(tabId)) await sendToBackground('abort', { tabId, conversationClear: true });
+    else await sendToBackground('abort', { tabId });
   } catch {
     // Best effort
   }
@@ -15364,6 +15542,8 @@ queuedMessagesEl?.addEventListener('click', (e) => {
     if (item) void steerComposerMessage(currentTabId, item.text, { queueId });
   } else if (action === 'delete') {
     deleteQueuedComposerMessage(currentTabId, queueId);
+  } else if (action === 'run-context-menu-prompt' || action === 'delete-context-menu-prompt') {
+    void handleHeldContextMenuPromptAction(action, queueId);
   }
 });
 

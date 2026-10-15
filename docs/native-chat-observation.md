@@ -170,8 +170,11 @@ The current WhatsApp self-chat reader uses a sanitized structural snapshot of
 the user's Web client, rather than older `.message-in`/`.message-out` selectors.
 It requires the native `you-label`, one scoped title, one native composer and
 one message panel. Message IDs are opaque and unordered. It accepts a single
-unambiguous `selectable-text` body only after an explicit `Read` status under
-`msg-meta`; pending, unknown and untranslated status labels remain unverified.
+unambiguous `selectable-text` body only after its status under `msg-meta`
+reads as delivered or read, in any language ("Read", "Okundu" or "Gelesen",
+read by a model: the `message_status` question); pending, unclear and unread
+status labels remain unverified, and an unread one goes back to the agent to
+be read before it observes again.
 Nested native emoji and links remain part of their top-level authored body;
 emoji text comes from `data-plain-text`, while unrelated image descriptions and
 separate quoted bodies cannot become exact authored text.
@@ -212,6 +215,10 @@ remain the exact original nodes throughout. Pre-existing drawers, stale drawer
 responses, same-name row recycling, selection changes and ambiguous phone fields
 cannot bind a recipient. Contact names or opaque message IDs alone cannot do so.
 
+The drawer's close control is its header's one named plain button, whatever
+language names it ("Close", "Kapat"); a header with two controls offers none,
+and the control must keep the name it had when the guarded click armed it.
+
 Contact-drawer media loaders and the Close icon can update unrelated visual
 content without changing identity. The original subtitle and phone nodes,
 their exact values and the original native conversation pins must still match.
@@ -233,7 +240,7 @@ unchanged mounted message tail; the pointer grants no send authority.
 An incoming native tail plus its exact native sender field establishes a group
 anchor. Subsequent rows without a tail need continuous agreement with that
 anchor; isolated rows, an ambiguous own-name match and absent sender evidence
-remain unknown. Outgoing verification requires explicit native delivery status,
+remain unknown. Outgoing verification requires a native status read as delivered,
 exact authored text and a new opaque ID after the entire mounted pre-send
 baseline in its original order. Every original baseline node, including the
 live tail, must remain mounted. Lexicographic ID ordering, historical same-body

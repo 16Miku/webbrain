@@ -5,6 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { chromium } from 'playwright';
+import { fixedChoiceQuestion, fixtureFixedChoiceReply } from '../semantic-decision-stub.mjs';
+
+// The questions a messaging page's own checks read its texts with.
+const MESSAGING_TEXT_KINDS = ['message_control', 'message_field', 'message_author', 'message_status'];
 
 // Whole installed MV3. Native selectors come from the privacy-safe current
 // WhatsApp contact/header/drawer/message captures; all people, phones, bodies,
@@ -169,6 +173,18 @@ const server = http.createServer(async (request, response) => {
       metrics.connectivityProbes = (metrics.connectivityProbes || 0) + 1;
       response.writeHead(200, { 'Content-Type': 'application/json' });
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'Hello.' }, finish_reason: 'stop' }] })); return;
+    }
+    if (textOf(input.messages?.[0]?.content).startsWith("Answer one fixed-choice question for a browser agent's safety check.")) {
+      // WebBrain reads some short texts with a fixed-choice question (what a
+      // final summary does, for example). This fixture's model reads only the
+      // chat's own texts (what its controls and fields do, whose a message is,
+      // what a status says), as a model would; other questions get no
+      // reading, which leaves their checks as they were.
+      metrics.fixedChoiceQuestions = (metrics.fixedChoiceQuestions || 0) + 1;
+      const content = MESSAGING_TEXT_KINDS.includes(fixedChoiceQuestion(input.messages)?.kind)
+        ? fixtureFixedChoiceReply(input.messages) : '{"choice":"","evidence":""}';
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content }, finish_reason: 'stop' }] })); return;
     }
     if (!JSON.stringify(input.messages).includes(marker)) {
       metrics.unmatchedRequest = { systemPrefix: textOf(input.messages?.[0]?.content).slice(0, 100),
@@ -403,7 +419,10 @@ const server = http.createServer(async (request, response) => {
         if (scenario === 'peer_switch') {
           // Native selection feedback may suppress the prepared send before
           // its handler is called; either boundary must retain no dispatch.
-          assert.ok(last.result?.noDispatch === true || last.result?.reason === 'chat_root_unverified', last.content);
+          // The run's one contact check is spent once the selection changed,
+          // and the observation before the send says so, final.
+          assert.ok(last.result?.noDispatch === true || last.result?.reason === 'chat_root_unverified'
+            || (last.result?.reason === 'native_whatsapp_contact_check_spent' && last.result?.retryable === false), last.content);
           name = 'done'; args = { outcome: 'partial', summary: 'The native contact changed; no reply was dispatched.' };
         }
         else { assert.notEqual(last.result?.dispatched, false, last.content); stage = 'verified'; name = 'chat_observe'; }

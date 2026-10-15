@@ -84,7 +84,7 @@ async function panel(f, options = {}) {
     }
     throw new Error(`Unexpected hydration RPC: ${action}`);
   });
-  const names = ['applyActiveRunState', 'handleAgentUpdateMessage', 'ensureCurrentRunAssistant', 'isTerminalRunUiStatus',
+  const names = ['applyActiveRunState', 'handleAgentUpdateMessage', 'ensureCurrentRunAssistant', 'isTerminalRunUiStatus', 'isFinishedRunUiStatus',
     'renderClarifyCard', 'addRunProgressReplayGapNote', 'clarificationSubmissionKey', 'invalidateUnresolvedClarifyCards',
     'restorePendingCurrentClarification', 'submitClarify', 'restoreActiveRunState', 'placeAnsweredClarifyCardInTimeline', 'workflowHealingTargetLabel',
     'syncFailureRecoveryButtons', 'bindFailureRecoveryCard', 'renderFailureRecoveryCard', 'reconcileFailureRecoveryCards'];

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
 globalThis.chrome = globalThis.browser = {
@@ -8,22 +9,10 @@ globalThis.chrome = globalThis.browser = {
 
 for (const browser of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${browser}/src/agent/agent.js`);
-  test(`${browser}: completion recognizes bounded submission acknowledgements`, () => {
-    const agent = new Agent({});
-    for (const text of ['QA submission recorded', 'Your application was accepted', 'Your request has been recorded', 'Response successfully recorded']) {
-      assert.equal(agent._completionTextSignalsSuccess(text), true, text);
-    }
-    for (const text of ['Voice note recorded', 'Recorded submissions: 42', 'Your submission will be recorded',
-      'Your submission is being recorded', 'Your submission was not recorded', 'Application rejected',
-      'Request could not be accepted', 'Done']) {
-      assert.equal(agent._completionTextSignalsSuccess(text), false, text);
-    }
-    assert.equal(agent._completionTextSignalsSuccess('Done', { allowBare: true }), true);
-  });
-
-  test(`${browser}: a fresh inline submission acknowledgement lets the still-visible form finish`, () => {
-    const agent = new Agent({});
-    const tabId = 710, url = 'https://owned.example.test/form';
+  // A submit on an inline form leaves the form on screen; a status the page
+  // showed afterwards can still prove it. What the status says is read by a
+  // model in any language, never matched against words.
+  function inlineSubmit(agent, tabId, url, status) {
     agent.conversationModes.set(tabId, 'act');
     agent._planExecutionGuards.set(tabId, { requiresSubmission: true, requiresStateChange: true });
     agent._beginCompletionInvariant(tabId);
@@ -31,14 +20,86 @@ for (const browser of ['chrome', 'firefox']) {
     agent._recordCompletionSubmitAttempt(tabId, { isSubmit: true }, 'click_ax', { ref_id: 'ref_5' },
       url, url, { success: true, dispatched: true, verified: true }, 'document-1', 'document-1');
     agent._recordCompletionToolResult(tabId, 'get_accessibility_tree', {}, {
-      success: true, pageUrl: url, pageContent: 'status "QA submission recorded" [ref_6] dom_id="result"',
+      success: true, pageUrl: url, pageContent: `form "Başvuru" [ref_2]\n status "${status}" [ref_6] dom_id="result"`,
     });
-    const pageState = { relevantFormCount: 1, visibleFormCount: 1, openDialogCount: 0, successMessages: [] };
-    const evidence = agent._completionSubmissionEvidence(tabId, pageState, url);
-    assert.equal(evidence.submit.observedAfterSubmit, true);
-    assert.equal(evidence.submit.completionSignalObserved, true, 'The explicit returned read must retain the acknowledgement');
-    assert.equal(evidence.verifiedFinalSubmit, true);
-    assert.equal(agent._completionPageWarning(tabId, 'The owned submission is recorded.', 'success', pageState, url), null);
+  }
+
+  test(`${browser}: a status observed after an inline submit counts only as a model reads it, in any language`, async () => {
+    const url = 'https://owned.example.test/form';
+    const pageState = () => ({ relevantFormCount: 1, visibleFormCount: 1, openDialogCount: 0, liveRegionMessages: [] });
+    const cases = [
+      ['Başvurunuz alındı', 'success', true],
+      ['Başvurunuz reddedildi', 'error', false],
+      ['Başvurunuz kaydediliyor…', 'other', false],
+      ['Başvurunuz alındı', null, false],
+    ];
+    for (const [index, [status, reading, verified]] of cases.entries()) {
+      const agent = new Agent({});
+      const tabId = 720 + index;
+      inlineSubmit(agent, tabId, url, status);
+      const before = pageState();
+      assert.equal(agent._completionSubmissionEvidence(tabId, before, url).verifiedFinalSubmit, false,
+        'An unread status proves nothing');
+      const asked = stubPageTextReadings(agent, (kind, item) => (kind === 'status_message' && item.text === status ? reading : null));
+      const state = pageState();
+      await agent._readCompletionStatusTexts(tabId, state);
+      assert.deepEqual(asked.map(item => [item.kind, item.text]), [['status_message', status]]);
+      assert.equal(agent._completionSubmissionEvidence(tabId, state, url).verifiedFinalSubmit, verified, `${status}: ${reading}`);
+      assert.equal(agent._completionPageWarning(tabId, 'Submitted.', 'success', state, url) === null, verified, `${status}: ${reading}`);
+    }
+  });
+
+  test(`${browser}: live messages at completion count only as a model reads them`, async () => {
+    const url = 'https://owned.example.test/form';
+    const agent = new Agent({});
+    const tabId = 730;
+    inlineSubmit(agent, tabId, url, '');
+    const live = ['Votre demande a été enregistrée.', 'Chargement…'];
+    const asked = stubPageTextReadings(agent, (kind, item) => (item.text === live[0] ? 'success' : 'other'));
+    const state = { relevantFormCount: 1, liveRegionMessages: live };
+    await agent._readCompletionStatusTexts(tabId, state);
+    assert.deepEqual(asked.map(item => item.text), live);
+    assert.deepEqual(state.successMessages, [live[0]]);
+    assert.equal(agent._completionSubmissionEvidence(tabId, state, url).verifiedFinalSubmit, true);
+    // Read once: the remembered readings answer the next completion check.
+    await agent._readCompletionStatusTexts(tabId, { relevantFormCount: 1, liveRegionMessages: live });
+    assert.equal(asked.length, live.length);
+  });
+
+  // At completion a slow active model cannot hold the finished task: its
+  // reading of status texts has a short bound, and what it did not read in
+  // time proves nothing either way.
+  test(`${browser}: status readings at completion give the active model a short time`, async () => {
+    const agent = new Agent({});
+    const tabId = 732;
+    inlineSubmit(agent, tabId, 'https://owned.example.test/form', 'Kaydedildi');
+    const seen = [];
+    agent._semanticDecisions = async (_tabId, kind, { items = [] } = {}, options = {}) => {
+      seen.push([kind, options.mainTimeoutMs]);
+      return items.map(() => ({ choice: null, evidence: '', source: 'unavailable' }));
+    };
+    await agent._readCompletionStatusTexts(tabId, { liveRegionMessages: ['Kaydedildi'] });
+    assert.deepEqual(seen, [['status_message', 6000]]);
+    // The bound reaches the request: a model that never answers is given up
+    // on, and the text stays unread.
+    const slow = new Agent({});
+    slow._jevSettings = async () => null;
+    slow._activeProvider = () => ({ model: 'slow', chat: () => new Promise(() => {}) });
+    const started = Date.now();
+    const readings = await slow._semanticDecisions(733, 'status_message', { items: [{ text: 'Kaydedildi' }] }, { mainTimeoutMs: 50 });
+    assert.ok(Date.now() - started < 5000, 'The short bound applies');
+    assert.deepEqual(readings.map(item => item.choice), [null]);
+  });
+
+  test(`${browser}: a run with nothing to prove does not read status messages`, async () => {
+    const agent = new Agent({});
+    const tabId = 731;
+    agent._planExecutionGuards.set(tabId, { requiresSubmission: false, requiresStateChange: false });
+    const asked = stubPageTextReadings(agent, () => 'success');
+    const state = { liveRegionMessages: ['Saved'] };
+    await agent._readCompletionStatusTexts(tabId, state);
+    assert.deepEqual(asked, []);
+    assert.deepEqual(state.successMessages, []);
   });
 
   test(`${browser}: a live acknowledgement still requires dispatched, observed, document-bound submission evidence`, () => {

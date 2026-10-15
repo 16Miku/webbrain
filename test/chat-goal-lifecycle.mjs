@@ -5,6 +5,7 @@ import { chromium, firefox } from 'playwright';
 import { Agent as ChromeAgent } from '../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
 import { createCompletionInvariantState } from '../src/chrome/src/agent/completion-invariant.js';
+import { stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 // Real guarded Agent sends and content dispatch, in intercepted local pages.
 // Bodies are composed for an explicit ongoing goal, rather than supplied by a
@@ -78,6 +79,8 @@ for (const [build, engine, Agent, apiName] of [
       agent._currentUrl = async () => page.url();
       agent._readChatObservation = () => call(page, 'observe_chat');
       agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
+      // The header's Call and Search names are read by the fixtures' model oracle.
+      stubPageTextReadings(agent);
       agent._persist = () => {};
       const executeImpl = agent._executeToolImpl.bind(agent);
       agent._executeToolImpl = (id, tool, args, update, context) => tool === 'set_field'

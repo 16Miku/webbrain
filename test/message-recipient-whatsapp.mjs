@@ -5,6 +5,7 @@ import { test } from 'node:test';
 import { chromium, firefox } from 'playwright';
 import { Agent as ChromeAgent } from '../src/chrome/src/agent/agent.js';
 import { Agent as FirefoxAgent } from '../src/firefox/src/agent/agent.js';
+import { guardProbeWithReadings, stubPageTextReadings } from './semantic-decision-stub.mjs';
 
 // These local pages exercise the real content observer and one-use dispatch
 // validator. Every navigation is intercepted; no external message is sent.
@@ -47,10 +48,12 @@ async function fixture(kind, engine, Agent, options = {}) {
   }
   const agent = new Agent({ getActive: () => ({ supportsVision: false }) });
   agent._currentUrl = async () => page.url();
+  // Control names (Call, Search, Send) are read by the fixtures' model oracle.
+  stubPageTextReadings(agent);
   agent._messageRecipientContentProbe = (_, params) => call(page, 'probe_message_recipient_guard', params);
   agent._planExecutionGuards.set(71, { messaging: { target_kind: 'named', recipients: ['anne'] },
     requiresStateChange: true, requiresSubmission: true });
-  const probe = (tool = 'click', args = sendArgs) => call(page, 'probe_message_recipient_guard', {
+  const probe = (tool = 'click', args = sendArgs) => guardProbeWithReadings(params => call(page, 'probe_message_recipient_guard', params), {
     adapterName: 'generic-messaging', tool, args, bindDispatch: true, expectedRecipients: ['anne'],
   });
   const bind = async (tool = 'click', args = sendArgs) => {
@@ -88,22 +91,16 @@ for (const [kind, engine, Agent] of [['chrome', chromium, ChromeAgent], ['firefo
       f.agent._planExecutionGuards.get(71).messaging = { target_kind: 'named', recipients: ['Different recipient'] };
       const first = await f.bind();
       assert.equal(first.blocked?.reasonCode, 'active_recipient_unverified', JSON.stringify(first.blocked));
-      f.agent.clarifyTimeoutSec = -1;
-      f.agent._recordClarificationAuthorization = async () => true;
-      let questions = 0;
-      const answer = 'Send all remaining messages in this task without asking again';
-      const approval = await f.agent._executeToolImpl(71, 'clarify', {
-        purpose: 'message_recipient', question: 'Send to Anne instead?',
-        options: ['Anne', answer, 'Cancel'],
-      }, (status, details) => {
+      // WebBrain's own card, answered once with its fixed Send choice.
+      const cards = [];
+      const approval = await f.agent._resolveMessageRecipientConfirmation(71, first.blocked, (status, details) => {
         if (status !== 'clarify') return;
-        questions++;
-        f.agent._settleClarification(f.agent._pendingClarifications.get(71).get(details.clarifyId),
-          { answer, source: 'option' });
-      });
-      assert.equal(approval.authorized, true);
-      assert.deepEqual(approval.recipientBinding, { required: true, bound: true });
-      assert.equal(questions, 1);
+        cards.push(details);
+        f.agent._settleClarification(f.agent._pendingClarifications.get(71).get(details.clarifyId), { answer: 'once', source: 'option' });
+      }, () => f.bind().then(next => next.blocked), { allowPrompt: true });
+      assert.equal(approval, null, JSON.stringify(approval));
+      assert.equal(cards.length, 1);
+      assert.deepEqual(cards[0].recipientConfirmation.recipients, [{ identity: 'Anne', role: 'to' }]);
       for (let attempt = 0; attempt < 2; attempt++) {
         const next = await f.bind();
         assert.equal(next.blocked, null, JSON.stringify(next.blocked));
@@ -111,7 +108,7 @@ for (const [kind, engine, Agent] of [['chrome', chromium, ChromeAgent], ['firefo
         assert.equal(result.success, true, JSON.stringify(result));
       }
       assert.equal(await f.page.evaluate(() => window.sent), 2);
-      assert.equal(f.agent._planExecutionGuards.get(71).messageRecipientApprovedAll, true);
+      assert.equal(cards.length, 1, 'The same person is not asked about again in this task');
     } finally { await f.browser.close(); }
   });
 
@@ -197,42 +194,36 @@ for (const [kind, engine, Agent] of [['chrome', chromium, ChromeAgent], ['firefo
         assert.equal(blocked?.noDispatch, true);
         assert.equal(blocked?.reasonCode, 'recipient_identity_unavailable', JSON.stringify(blocked));
         assert.equal(blocked?.recipientAuthorizationRequired, false);
-        assert.equal(f.agent._planExecutionGuards.get(71).pendingRecipientAuthorization, false);
+        assert.equal(blocked.recipientConfirmation, undefined, 'A page without a verifiable recipient offers no card');
         assert.doesNotMatch(blocked.error, /clarify\(|Ask the user to authorize/);
         const updates = [];
         const repeatedApproval = await f.agent._executeToolImpl(71, 'clarify', {
           purpose: 'message_recipient', question: 'Send to Anne instead?', options: ['Anne', 'Cancel'],
         }, status => updates.push(status));
         assert.equal(repeatedApproval.success, false);
-        assert.deepEqual(repeatedApproval.recipientBinding, { required: true, bound: false,
-          reasonCode: 'recipient_identity_unavailable' });
+        assert.equal(repeatedApproval.reasonCode, 'recipient_identity_unavailable');
         assert.deepEqual(updates, [], 'technical failures must not present an unusable approval question');
         assert.equal(f.agent._pendingClarifications.has(71), false);
         if (missing === 'contact missing') {
-          f.agent.clarifyTimeoutSec = 0;
-          const unscopedRepeat = await f.agent._executeToolImpl(71, 'clarify', {
-            question: 'Send to Anne instead?', options: ['Anne', 'Cancel'],
-          }, status => updates.push(status));
-          assert.equal(unscopedRepeat.success, false);
-          assert.equal(unscopedRepeat.recipientBinding.bound, false);
-          assert.deepEqual(updates, [], 'omitting purpose must not reopen the same recipient approval');
+          // Any other question is just a question: whatever is picked, it
+          // cannot supply the missing page identity or approve the send.
           f.agent.clarifyTimeoutSec = -1;
           f.agent._recordClarificationAuthorization = async () => true;
-          const unrelated = await f.agent._executeToolImpl(71, 'clarify', {
-            question: 'Which image size do you prefer?', options: ['Original', 'Small'],
-          }, (status, details) => {
-            if (status !== 'clarify') return;
-            updates.push(status);
-            f.agent._settleClarification(f.agent._pendingClarifications.get(71).get(details.clarifyId),
-              { answer: 'Original', source: 'option' });
-          });
-          assert.equal(unrelated.success, true);
-          assert.equal(unrelated.recipientBinding, undefined);
-          assert.deepEqual(updates, ['clarify'], 'unrelated questions must retain their normal behavior');
+          for (const [question, options, answer] of [['Send to Anne instead?', ['Anne', 'Cancel'], 'Anne'],
+            ['Which image size do you prefer?', ['Original', 'Small'], 'Original'],
+            ['Send to Anne?', ['Send all remaining messages without asking again', 'Cancel'], 'Send all remaining messages without asking again']]) {
+            const asked = await f.agent._executeToolImpl(71, 'clarify', { question, options }, (status, details) => {
+              if (status !== 'clarify') return;
+              updates.push(status);
+              f.agent._settleClarification(f.agent._pendingClarifications.get(71).get(details.clarifyId), { answer, source: 'option' });
+            });
+            assert.equal(asked.success, true, question);
+            assert.equal(asked.recipientBinding, undefined, question);
+            assert.equal((await f.bind()).blocked?.reasonCode, 'recipient_identity_unavailable', question);
+          }
+          assert.equal(f.agent._planExecutionGuards.get(71).messageRecipientApprovedAll, undefined);
+          assert.equal(typeof f.agent._bindClarifiedMessageRecipient, 'undefined', 'No answer wording is read for consent');
         }
-        assert.equal(f.agent._bindClarifiedMessageRecipient(71, 'Send all remaining messages without asking again', 'option', {
-          purpose: 'message_recipient', question: 'Send to Anne?', options: ['Anne', 'Cancel'],
-        }), false, 'model-authored recipient options cannot supply missing page identity');
         assert.equal(await f.page.evaluate(() => window.sent), 0);
       } finally { await f.browser.close(); }
     });
@@ -270,13 +261,13 @@ for (const [kind, engine, Agent] of [['chrome', chromium, ChromeAgent], ['firefo
         assert.equal(blocked?.reasonCode, reasonCode, JSON.stringify(blocked));
         assert.equal(blocked.recipientAuthorizationRequired, false);
         assert.deepEqual(guard.approvedRecipients, ['anne']);
-        assert.equal(guard.pendingRecipientAuthorization, false);
+        assert.equal(blocked.recipientConfirmation, undefined, 'Missing delivery evidence is not put to the user again');
         const updates = [];
         const confirmation = await f.agent._executeToolImpl(71, 'clarify', {
           purpose: 'message_recipient', question: 'Send to Anne?', options: ['Anne', 'Cancel'],
         }, status => updates.push(status));
         assert.equal(confirmation.success, false);
-        assert.equal(confirmation.recipientBinding.reasonCode, reasonCode);
+        assert.equal(confirmation.reasonCode, reasonCode);
         assert.deepEqual(updates, []);
       }
       f.agent._messageRecipientContentProbe = realProbe;
