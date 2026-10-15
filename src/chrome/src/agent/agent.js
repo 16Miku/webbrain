@@ -41600,7 +41600,10 @@ If the user has already named or confirmed this exact recipient, do NOT ask agai
           executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId }),
         });
       }
-      return await executeHttpSkillTool(skillTool, args, { tabId });
+      return await executeHttpSkillTool(skillTool, args, {
+        tabId,
+        onProgress: message => onUpdate?.('tool_progress', { name, message }),
+      });
     }
     const skillEndpointRedirect = this._skillEndpointToolRedirect(name, args, tabId);
     if (skillEndpointRedirect) {

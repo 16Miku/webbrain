@@ -1136,7 +1136,7 @@ async function downloadSkillFile(url, filename, waitMs = 60000) {
   return result;
 }
 
-async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
+async function executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx = {}) {
   const create = await fetchSkillJson(endpoint.href, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1160,7 +1160,27 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
     return await withSkillDownloadJobCleanup({ success: false, provider: endpoint.hostname, skillTool: tool.name || '', skillName: tool.skillName || '', jobId, error: fileEndpoint.error }, cleanupEndpoint, endpoint, tool);
   }
 
-  const deadline = Date.now() + (tool.job?.timeoutMs || 90000);
+  const startedAt = Date.now();
+  const deadline = startedAt + (tool.job?.timeoutMs || 90000);
+  let waitNoticeSent = false;
+  const notifyLongWait = data => {
+    if (waitNoticeSent) return;
+    const metadata = data?.metadata || {};
+    const duration = Number(metadata.duration);
+    const bytes = Number(metadata.filesize || metadata.filesize_approx);
+    const longVideo = Number.isFinite(duration) && duration >= 120;
+    const largeFile = Number.isFinite(bytes) && bytes >= 50 * 1024 * 1024;
+    if (!longVideo && !largeFile && Date.now() - startedAt < 30000) return;
+    waitNoticeSent = true;
+    // Only numeric metadata enters chat; provider titles and text stay untrusted.
+    const size = largeFile ? `about ${Math.ceil(bytes / (1024 * 1024))} MB`
+      : longVideo ? `about ${Math.ceil(duration / 60)} minutes long` : '';
+    const message = size
+      ? `This media is ${size}, so downloading and preparing the final file may take several minutes. I’ll keep waiting.`
+      : 'The media is still downloading or being prepared. Larger files and longer videos can take several minutes. I’ll keep waiting.';
+    try { ctx.onProgress?.(message); } catch { /* Chat updates must not interrupt delivery. */ }
+  };
+  notifyLongWait(create.data);
   const pollIntervalMs = tool.job?.pollIntervalMs || 1000;
   let lastStatus = create.data;
   while (Date.now() < deadline) {
@@ -1181,20 +1201,24 @@ async function executeHttpDownloadJobSkillTool(tool, payload, endpoint) {
         error: providerError(502, poll.data, '') || `Skill download job ${jobId} failed.`,
       }, cleanupEndpoint, endpoint, tool);
     }
+    notifyLongWait(lastStatus);
     await new Promise(r => setTimeout(r, pollIntervalMs));
   }
 
   const finalStatus = String(lastStatus?.status || '').toLowerCase();
   if (!(finalStatus === 'complete' || finalStatus === 'completed' || finalStatus === 'done' || finalStatus === 'success')) {
-    return await withSkillDownloadJobCleanup({
+    // A polling deadline does not cancel the remote job. Keep its identity for recovery.
+    return {
       success: false,
       provider: endpoint.hostname,
       skillTool: tool.name || '',
       skillName: tool.skillName || '',
       jobId,
       jobStatus: finalStatus || 'unknown',
-      error: `Skill download job timed out before completion.`,
-    }, cleanupEndpoint, endpoint, tool);
+      statusUrl: statusEndpoint.url,
+      fileUrl: fileEndpoint.url,
+      error: 'The wait limit was reached, but the remote job may still finish. Check statusUrl before starting another download.',
+    };
   }
 
   let cleanup = null;
@@ -1272,7 +1296,7 @@ export async function executeHttpSkillTool(tool, args = {}, ctx = {}) {
   }
 
   if (tool.kind === 'httpDownloadJob') {
-    return await executeHttpDownloadJobSkillTool(tool, payload, endpoint);
+    return await executeHttpDownloadJobSkillTool(tool, payload, endpoint, ctx);
   }
 
   const init = {

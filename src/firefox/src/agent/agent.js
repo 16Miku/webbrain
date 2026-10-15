@@ -37724,7 +37724,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           executeOnline: (onlineTool, onlineArgs) => executeHttpSkillTool(onlineTool, onlineArgs, { tabId }),
         });
       }
-      return await executeHttpSkillTool(skillTool, args, { tabId });
+      return await executeHttpSkillTool(skillTool, args, {
+        tabId,
+        onProgress: message => onUpdate?.('tool_progress', { name, message }),
+      });
     }
     const skillEndpointRedirect = this._skillEndpointToolRedirect(name, args, tabId);
     if (skillEndpointRedirect) {

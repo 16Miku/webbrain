@@ -586,7 +586,7 @@ function normalizeSkillTools(value, skillId) {
       fileEndpoint: normalizeEndpointTemplate(item.fileEndpoint || item.file_endpoint || item.fileUrlTemplate || item.file_url_template || jobSource.fileEndpoint || jobSource.file_endpoint || jobSource.fileUrlTemplate || jobSource.file_url_template),
       cleanupEndpoint: normalizeEndpointTemplate(item.cleanupEndpoint || item.cleanup_endpoint || item.deleteEndpoint || item.delete_endpoint || jobSource.cleanupEndpoint || jobSource.cleanup_endpoint || jobSource.deleteEndpoint || jobSource.delete_endpoint),
       pollIntervalMs: Math.max(250, Math.min(5000, Number(item.pollIntervalMs || item.poll_interval_ms || jobSource.pollIntervalMs || jobSource.poll_interval_ms || 1000) || 1000)),
-      timeoutMs: Math.max(5000, Math.min(180000, Number(item.timeoutMs || item.timeout_ms || jobSource.timeoutMs || jobSource.timeout_ms || 90000) || 90000)),
+      timeoutMs: Math.max(5000, Math.min(1200000, Number(item.timeoutMs || item.timeout_ms || jobSource.timeoutMs || jobSource.timeout_ms || 90000) || 90000)),
     };
     if (kind === 'httpDownloadJob' && (!job.statusEndpoint || !job.fileEndpoint)) continue;
     seen.add(name);
