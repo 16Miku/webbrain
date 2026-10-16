@@ -229,6 +229,9 @@ try {
         if (!ocr && !new RegExp(shape, 'i').test(answer.content)) imageFailures.push(`${color}: wrong image shape (expected ${shape})`);
         history.push(message, { role: 'assistant', content: answer.content });
       }
+      // A failed image answer already fails the run; do not spend another
+      // long prefill asking the model to repeat its incorrect earlier answer.
+      assert.deepEqual(imageFailures, [], 'Image checks failed');
       if (args.includes('--image-history')) {
         const answer = await chat('image-history', [...history, { role: 'user', content: ocr
           ? 'Repeat only the color and four-character code from the SECOND image.'
