@@ -680,7 +680,8 @@ export function cloudSafeScheduledJob(job, { strictSecretMode = false } = {}) {
     source: job.source || null,
     status: job.status,
     scheduledAt: job.scheduledAt,
-    nextRunAt: job.nextRunAt || job.scheduledAt,
+    // Same as summarizeScheduledJob: a paused job has no next run.
+    nextRunAt: job.status === 'paused' ? null : (job.nextRunAt || job.scheduledAt),
     lastOutcome: job.lastOutcome || null,
     needsUserInput: job.needsUserInput === true,
     clarificationRequired: job.clarificationRequired === true,

@@ -2,7 +2,6 @@ import { BaseLLMProvider } from './base.js';
 import { openRouterReplayIdentity, openRouterReplayItems, projectOpenRouterReplay, accumulateReasoningDetails } from './openrouter-replay.js';
 import { normalizeQwenToolResult, normalizeQwenToolStream } from './qwen-tool-calls.js';
 import { normalizeDolphinPromptedResult, normalizeDolphinPromptedStream } from './dolphin-prompted-tools.js';
-import { retryAfterMs } from './model-retry.js';
 import { fetchWithTimeout } from './fetch-timeout.js';
 import {
   baseModelNameSniffedVision,
@@ -461,9 +460,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
   }
 
   _httpError(status, body, prefix, retryAfter = null) {
-    const error = new Error(`${prefix}: ${this._formatHttpError(status, body)}`);
-    error.httpStatus = status;
-    if (status === 429) error.retryAfterMs = retryAfterMs(retryAfter);
+    const error = this._httpStatusError(`${prefix}: ${this._formatHttpError(status, body)}`, status, retryAfter);
     try {
       const parsed = JSON.parse(body || '{}');
       const providerCode = parsed?.error?.code;
@@ -933,9 +930,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       || data?.message
       || data?.error?.code
       || 'The provider reported an error while streaming.';
-    return this._chatCompletionsStreamTerminalError(
+    const providerError = data?.error && typeof data.error === 'object'
+      ? data.error
+      : { ...data, message: data?.message || String(data?.error || '') };
+    return this._withProviderError(this._chatCompletionsStreamTerminalError(
       `${this.name} Chat Completions stream error: ${detail}`,
-    );
+    ), providerError);
   }
 
   _chatCompletionsStreamTerminalError(message) {
@@ -953,7 +953,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
     }
     if (data?.status === 'failed') {
       const message = data?.error?.message || 'Responses request failed.';
-      throw new Error(message);
+      throw this._withProviderError(new Error(message), data?.error);
     }
     const output = Array.isArray(data?.output) ? data.output : [];
     const toolCalls = output
@@ -1133,7 +1133,10 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
               throw this._responsesIncompleteError(response, { stream: true });
             } else if (event.type === 'response.failed' || event.type === 'error') {
               const message = event.response?.error?.message || event.error?.message || event.message || 'Responses stream failed.';
-              const streamError = this._askStreamTerminalError(message);
+              const streamError = this._withProviderError(
+                this._askStreamTerminalError(message),
+                event.response?.error || event.error || event,
+              );
               streamError.isResponsesStreamError = true;
               throw streamError;
             }

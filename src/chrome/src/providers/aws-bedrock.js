@@ -298,7 +298,7 @@ export class AwsBedrockProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 1200, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw new Error(`${this.name} error ${res.status}: ${err || res.statusText}`);
+      throw this._httpStatusError(`${this.name} error ${res.status}: ${err || res.statusText}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     let data;

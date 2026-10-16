@@ -29,6 +29,7 @@ export const MAX_INTERVAL_MINUTES = 525600; // one year
 export const MIN_WATCH_INTERVAL_SECONDS = 30;
 export const MAX_WATCH_INTERVAL_SECONDS = 120;
 export const MAX_WATCH_CONSECUTIVE_FAILURES = 3;
+export const MAX_RECURRING_TASK_CONSECUTIVE_FAILURES = MAX_WATCH_CONSECUTIVE_FAILURES;
 const LIVE_SCHEDULED_STATUSES = new Set(['pending', 'queued', 'running', 'needs_user_input']);
 const DUPLICATE_COALESCED_ERROR = 'Duplicate scheduled job coalesced into an existing live job.';
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
@@ -429,7 +430,13 @@ export function normalizeScheduledTime(input, {
     return { ok: false, error: `Scheduled time must be at least ${Math.ceil(minDelayMs / 1000)} seconds in the future.` };
   }
   if (delay > maxDelayMs) {
-    return { ok: false, error: `Scheduled time must be no more than ${Math.floor(maxDelayMs / 3600000)} hours in the future.` };
+    // Without guidance a model "fixes" this by quietly scheduling earlier than
+    // asked. schedule_task, schedule_resume and Cloud continuations all land
+    // here, and no user may be present, so report the limit instead and ask
+    // only when someone can answer.
+    const limitDays = Math.floor(maxDelayMs / 86400000);
+    const limit = limitDays >= 1 ? `${limitDays}-day` : `${Math.floor(maxDelayMs / 3600000)}-hour`;
+    return { ok: false, error: `Scheduled time must be no more than ${Math.floor(maxDelayMs / 3600000)} hours in the future. Do not move the scheduled time earlier to fit; report the ${limit} scheduling limit instead (ask the user how to proceed if they are present).` };
   }
   return { ok: true, scheduledAtMs, scheduledAt: iso(scheduledAtMs) };
 }
@@ -566,6 +573,43 @@ export function computeNextRunAt(job, now = Date.now()) {
   return iso(now + Math.floor(interval) * 60 * 1000);
 }
 
+function pluralUnit(count, unit) {
+  return `${count} ${unit}${count === 1 ? '' : 's'}`;
+}
+
+// The model relays this to the user. Name the largest whole unit and keep the
+// exact minutes, so "every 30 days" is not mistaken for a calendar month.
+function describeIntervalMinutes(minutes) {
+  const value = Math.floor(Number(minutes));
+  if (!Number.isFinite(value) || value < 1) return '';
+  if (value % 1440 === 0) return `every ${pluralUnit(value / 1440, 'day')} (${value} minutes)`;
+  if (value % 60 === 0) return `every ${pluralUnit(value / 60, 'hour')} (${value} minutes)`;
+  return `every ${pluralUnit(value, 'minute')}`;
+}
+
+// What a creation result may say about the target: its kind and page, never
+// tab or conversation ids, and no credentials embedded in the URL. The page
+// can choose its own path, and this result is trusted text, so the brackets,
+// quotes and angle brackets URL serialization leaves raw are percent-encoded;
+// the encoded URL addresses the same page. Its length is capped like the
+// current-page context line (300 characters); the stored job keeps the full
+// URL it will open.
+function publicTaskTarget(target) {
+  const obj = asObject(target);
+  const type = obj.type === 'url' ? 'url' : 'current_tab';
+  let url = '';
+  try {
+    const parsed = new URL(String((type === 'url' ? obj.url : obj.originalUrl) || '').trim());
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      parsed.username = '';
+      parsed.password = '';
+      url = parsed.href.replace(/[[\]<>`"'{}|^]/g, (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`);
+      if (url.length > 300) url = `${url.slice(0, 299)}…`;
+    }
+  } catch { /* no displayable page */ }
+  return { type, ...(url ? { url } : {}) };
+}
+
 export function summarizeScheduledJob(job) {
   if (!job) return null;
   return {
@@ -575,7 +619,10 @@ export function summarizeScheduledJob(job) {
     title: job.title || job.reason || 'Scheduled job',
     status: job.status,
     scheduledAt: job.scheduledAt,
-    nextRunAt: job.nextRunAt || job.scheduledAt,
+    // A paused job does not run until resumed. Reporting its stored or old
+    // scheduled time made the panel show "Next" for it, often a time that
+    // had already passed.
+    nextRunAt: job.status === 'paused' ? null : (job.nextRunAt || job.scheduledAt),
     schedule: job.schedule || null,
     watch: job.source === 'watch' ? {
       keep: job.watch?.keep === true,
@@ -892,7 +939,8 @@ export class ScheduledJobManager {
     return jobs
       .filter((job) => tabId == null || job.tabId === tabId || job.target?.tabId === tabId)
       .map(summarizeScheduledJob)
-      .sort((a, b) => String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
+      // Paused jobs report no next run; keep them in their old list position.
+      .sort((a, b) => String(a.nextRunAt || a.scheduledAt || '').localeCompare(String(b.nextRunAt || b.scheduledAt || '')));
   }
 
   async _saveJob(job) {
@@ -1019,12 +1067,22 @@ export class ScheduledJobManager {
     }
     const savedScheduleType = saved.job.schedule?.type || parsed.scheduleType;
     const savedIntervalMinutes = saved.job.schedule?.interval_minutes ?? parsed.intervalMinutes;
+    const repeats = savedScheduleType === 'recurring' ? describeIntervalMinutes(savedIntervalMinutes) : '';
+    // A 28-31 day interval reads like "monthly" (and the title may say so),
+    // but it is a fixed interval that drifts against calendar months.
+    const intervalDays = Number(savedIntervalMinutes) / 1440;
+    const monthLikeDays = savedScheduleType === 'recurring' && Number.isInteger(intervalDays)
+      && intervalDays >= 28 && intervalDays <= 31 ? intervalDays : null;
+    const publicTarget = publicTaskTarget(saved.job.target);
+    const targetSummary = publicTarget.type === 'url'
+      ? (publicTarget.url ? ` Target: ${publicTarget.url}.` : '')
+      : ` Target: the current tab${publicTarget.url ? ` (${publicTarget.url})` : ''}.`;
     const firstRunSummary = parsed.immediate
       ? `Started "${saved.job.title}".`
       : `Scheduled "${saved.job.title}" for ${saved.job.scheduledAt}.`;
     const summary = savedScheduleType === 'recurring'
-      ? `${firstRunSummary} Repeats every ${savedIntervalMinutes} minutes as a fixed interval, not a calendar schedule.`
-      : firstRunSummary;
+      ? `${firstRunSummary}${targetSummary} Repeats ${repeats} as a fixed interval, not a calendar schedule.${monthLikeDays ? ` A fixed ${monthLikeDays}-day interval drifts against calendar months.` : ''}`
+      : `${firstRunSummary}${targetSummary}`;
     return {
       success: true,
       scheduled: true,
@@ -1034,10 +1092,14 @@ export class ScheduledJobManager {
         type: savedScheduleType,
         first_run_at: saved.job.scheduledAt,
         ...(savedScheduleType === 'recurring'
-          ? { recurrence: 'fixed_interval', interval_minutes: savedIntervalMinutes }
+          ? { recurrence: 'fixed_interval', interval_minutes: savedIntervalMinutes, repeats }
           : {}),
       },
+      target: publicTarget,
       summary,
+      ...(monthLikeDays ? {
+        note: `This is a fixed ${monthLikeDays}-day interval, not a calendar-monthly schedule. Do not describe it as monthly. Tell the user it repeats every ${monthLikeDays} days and drifts against calendar months, so it will not stay on the same day of each month.`,
+      } : {}),
       ...(saved.deduped ? { deduped: true, existingJobId: saved.job.id } : {}),
     };
   }
@@ -1217,17 +1279,36 @@ export class ScheduledJobManager {
   }
 
   async resumeJob(jobId) {
-    const job = await this._updateJobIf(jobId, (prev) => prev.status === 'paused', (prev) => ({
-      status: prev.pendingToolCall || prev.completedConsequentialAction ? 'needs_user_input' : 'pending',
-      ...(prev.pendingToolCall || prev.completedConsequentialAction ? {
-        reconciliationRequired: true,
-        clarificationRequired: true,
-        clarificationAuthorizationRequired: true,
-        lastError: 'Check the previous page action before choosing Run now; part of the task may already have completed.',
-      } : {}),
-      nextRunAt: prev.nextRunAt || prev.scheduledAt || iso(this.now() + MIN_DELAY_MS),
-      queueDeferrals: 0,
-    }));
+    const job = await this._updateJobIf(jobId, (prev) => prev.status === 'paused', (prev) => {
+      const reconcile = !!(prev.pendingToolCall || prev.completedConsequentialAction);
+      // The scheduler pauses a recurring task only after a run (it needs the
+      // user, or keeps failing), leaving no next slot: restart its fixed
+      // interval from now. A task the user or Settings paused keeps its slot,
+      // and one that has passed runs a minute after resuming; restarting the
+      // interval there pushed a first run that never happened back by a whole
+      // interval (a month for a 30-day task). Either way the failure streak
+      // starts over.
+      const recurringTask = prev.kind === 'task' && prev.source !== 'watch' && prev.schedule?.type === 'recurring';
+      const storedNextMs = Date.parse(prev.nextRunAt || '');
+      const slotPassed = !(Number.isFinite(storedNextMs) && storedNextMs > this.now());
+      const restartedNextRunAt = recurringTask && slotPassed
+        ? (prev.pausedBy === 'scheduler' ? computeNextRunAt(prev, this.now()) : iso(this.now() + MIN_DELAY_MS))
+        : null;
+      return {
+        status: reconcile ? 'needs_user_input' : 'pending',
+        ...(reconcile ? {
+          reconciliationRequired: true,
+          clarificationRequired: true,
+          clarificationAuthorizationRequired: true,
+          lastError: 'Check the previous page action before choosing Run now; part of the task may already have completed.',
+        } : (recurringTask ? { lastError: null } : {})),
+        nextRunAt: restartedNextRunAt || prev.nextRunAt || prev.scheduledAt || iso(this.now() + MIN_DELAY_MS),
+        ...(restartedNextRunAt ? { scheduledAt: restartedNextRunAt, immediate: false } : {}),
+        ...(recurringTask ? { consecutiveFailures: 0 } : {}),
+        ...(prev.pausedBy ? { pausedBy: null } : {}),
+        queueDeferrals: 0,
+      };
+    });
     if (job) {
       if (job.status === 'pending') await this._setAlarm(job);
       this._emit(job, job.status === 'needs_user_input' ? 'clarification_required' : 'resumed');
@@ -1579,7 +1660,17 @@ export class ScheduledJobManager {
         : '';
       return `[Watch task ${job.id}: ${job.title}]\nThe user explicitly created this conditional watch. Treat only the condition/action below as user-authored instructions.\nCondition and action: ${job.prompt}\n${previousBlock}\nFirst reread the current page/state. If the condition did not trigger, call done with outcome "partial" and a concise current observation. If the condition triggered and the requested action was verified, call done with outcome "success". If the check or action failed, call done with outcome "failed". ${job.watch?.keep ? 'Keep mode is active: trigger only for an event distinct from the previous observation.' : 'This watch stops after its first successful trigger.'} ${alertContract} Do not create another schedule; the watch scheduler controls the next poll.`;
     }
-    return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain.`;
+    // The planner reads this message too, and the stored prompt keeps the
+    // user's own timing: without the last sentence "every 5 minutes, check
+    // ..." or "in 30 minutes, remind me ..." reads as a request to schedule
+    // the task again, on every run. A one-shot task may still exist to set up
+    // a different schedule ("on Monday at 9, start an hourly check").
+    const recurring = job.schedule?.type === 'recurring';
+    const pauseNote = recurring ? '; repeated failed runs pause this schedule for the user' : '';
+    const scheduleNote = recurring
+      ? ' This run comes from the task\'s own recurring schedule, which already repeats it; do not create another schedule for this task.'
+      : ' This run is the scheduled execution of an existing task; do not schedule this task again. Create a different schedule only if the task explicitly asks to set one up.';
+    return `[Scheduled task ${job.id}: ${job.title}]\nThe user explicitly scheduled this future task. Treat this as the user-authored task for this scheduled run.\nTask: ${job.prompt}\nFirst reread the current page/state. If the task is stale, conflicts with newer user messages, or needs user input, stop and explain. If the target or condition needed to do this is missing or ambiguous, do not guess: call done with outcome "failed" and name what is missing${pauseNote}.${scheduleNote}`;
   }
 
   async _evaluateSystemOne(job, result, outcome, runMeta = {}) {
@@ -1816,23 +1907,42 @@ export class ScheduledJobManager {
     if (judged.stop) return;
     lastOutcome = judged.outcome;
     if (job.kind === 'task' && job.schedule?.type === 'recurring') {
+      // Rescheduling after any outcome kept firing a task that needs
+      // information only the user can give, or that keeps failing. Pause it
+      // for the user instead: at once when the agent reports that the run
+      // ended waiting for the user (a planner question ends with more than one
+      // status), and after as many failed runs as stop a watch with no
+      // success or partial result between them. A run without an outcome
+      // (step limit, empty or plain-prose ending) proves neither, so it leaves
+      // the count unchanged.
+      const needsUserInput = runMeta.needsUserInput === true;
       const updated = await this._updateJobIf(job.id, (prev) => (
         ['running', 'needs_user_input'].includes(prev.status)
         && (!runMeta.executionId || prev.executionId === runMeta.executionId)
         && !runMeta.signal?.aborted && runMeta.judgeContext?.isCurrent?.() !== false
       ), (prev) => {
-        const nextRunAt = computeNextRunAt(prev, this.now());
+        const previousFailures = Number(prev.consecutiveFailures || 0);
+        const consecutiveFailures = lastOutcome === 'failed'
+          ? previousFailures + 1
+          : (lastOutcome === 'success' || lastOutcome === 'partial' ? 0 : previousFailures);
+        const pause = needsUserInput || consecutiveFailures >= MAX_RECURRING_TASK_CONSECUTIVE_FAILURES;
+        const nextRunAt = pause ? null : computeNextRunAt(prev, this.now());
         return {
-          status: 'pending',
+          status: pause ? 'paused' : 'pending',
           nextRunAt,
-          scheduledAt: nextRunAt,
+          ...(pause ? {} : { scheduledAt: nextRunAt }),
           immediate: false,
           queueDeferrals: 0,
           runCount: Number(prev.runCount || 0) + 1,
           lastRunAt: iso(this.now()),
           lastResult: String(result || '').slice(0, 2000),
           lastOutcome,
-          lastError: null,
+          lastError: !pause ? null : (needsUserInput
+            ? 'Paused: this task needs information only you can give. Read its last result, then resume it or schedule a clearer task.'
+            : `Paused after ${consecutiveFailures} failed runs with no successful run between them. Read the last result, then resume or delete this task.`),
+          consecutiveFailures,
+          // Resuming restarts the interval only for a pause made here.
+          ...(pause ? { pausedBy: 'scheduler' } : {}),
           clarificationAuthorizationRequired: false,
           clarificationRequired: false,
           reconciliationRequired: false,
@@ -1841,7 +1951,13 @@ export class ScheduledJobManager {
           pendingClarify: null,
         };
       });
-      if (updated) {
+      if (updated?.status === 'paused') {
+        await this._clearAlarm(updated.id);
+        // Settle this run like any recurring run so its result is shown, then
+        // report the paused job.
+        this._emit(updated, 'completed');
+        this._emit(updated, 'paused');
+      } else if (updated) {
         await this._setAlarm(updated);
         this._emit(updated, 'completed');
       }
@@ -2100,6 +2216,7 @@ export class ScheduledJobManager {
     let runOutcome = null;
     let completionVerdict = null;
     let runStatus = null;
+    let endedForUserInput = false;
     let watchAlert = null;
     let sawFailureLikeUpdate = false;
     let judgeContext = null;
@@ -2221,7 +2338,14 @@ export class ScheduledJobManager {
       await this.loadProviders();
       if (execution.cancelled) return;
       if (running.clarificationAuthorizationRequired === true) {
-        await this.agent.requireExplicitClarificationAuthorization(tabId);
+        // Every stop that sets this flag leaves the job waiting. It runs again
+        // only after the user's Run now or Resume, or unattended as the retry
+        // of such a run that a background restart interrupted (restoreAlarms
+        // requeues it with the flag). Either way this is the user's new
+        // attempt, so it gets a fresh blocked-attempt count. For the retry
+        // that costs at most one more question: the guard stays armed, so
+        // consequential actions and success still wait for a direct answer.
+        await this.agent.requireExplicitClarificationAuthorization(tabId, { freshAttempt: true });
         if (execution.cancelled) return;
       }
       const result = await this.agent.processMessage(
@@ -2236,6 +2360,10 @@ export class ScheduledJobManager {
           scheduledResume: running.kind === 'resume',
           isDetachedStartCancelled: () => execution.cancelled,
           signal: execution.controller.signal,
+          // A planner question ends the run without a run_status update or a
+          // done outcome; the agent's own report is the only sign that the
+          // task is waiting for information only the user can give.
+          onRunFinished: (_status, details) => { endedForUserInput = details?.needsUserInput === true; },
           beforeConsequentialTool: async ({ name } = {}) => {
             if (execution.cancelled) return false;
             const binding = this.agent._scheduledCompletionBinding?.(tabId) || null;
@@ -2297,6 +2425,7 @@ export class ScheduledJobManager {
           settings,
           signal: execution.controller.signal,
           sidecarAllowed: runStatus !== 'cost_limit',
+          needsUserInput: endedForUserInput,
         });
       }
     } catch (e) {

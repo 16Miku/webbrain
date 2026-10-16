@@ -65,6 +65,52 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   can be refreshed. Replacement editors, changed form or recipient state,
   later geometry changes and human intervention still require a new decision.
   Refusals report bounded predicate names instead of private values.
+  A typing action's own single left press on its exact certified text field
+  (Chrome's trusted contenteditable fallback clicks the editor once so that the
+  browser, not a script, focuses it) is preparation of that typing too,
+  together with its release when the release's native receiver is that field
+  as well. The dispatch reply marks such a press or release
+  `typingPreparation`. It does not use up the certificate, and it makes the
+  operation keyboard-bound: from then on the field is compared with its
+  certificate without the centre hit, because the page may answer the press by
+  covering the pressed point. X draws its bold/italic bubble in a body-level
+  layer exactly there, over the middle of the empty editor, while its timeline
+  keeps updating. Every later step of a keyboard-bound operation focuses the
+  field itself, and the receiver of its native input must be the field.
+  Native keyboard input of any certified operation must name its receiver:
+  input whose receiver could not be marked (no focused node, a frame without
+  an active monitor, or a page that removed the revision fence) is refused as
+  `target_unresolved`. When the receiver has focus in a child document (a
+  page that moved focus into an iframe), the top document's monitor is asked
+  about its operation before anything is sent. Such input is the operation's
+  only when its certified target is the frame that has focus (or contains
+  it), was not an editable host when certified (an editor's text never goes
+  into a frame embedded in it), and still has the same certified semantics;
+  otherwise it is refused (`receiver_frame_changed`). Later keys of the same
+  action, such as `set_field`'s submit key,
+  stay keyboard-bound under the same focus and receiver checks. The
+  reselection before the text command keeps the certificate; when only the
+  field's geometry moved meanwhile (a layout shift, not its semantics), the
+  proof is rebased as for any certified decision. Genuine user input, a
+  changed field, owner or reply scope, a replaced editor and an inert composer
+  still stop the action before any text is sent. A press on another node, an
+  activator inside the editor, a right, double or second press, a release over
+  another node or any earlier input of the action is consequential as before.
+  A focused text field whose centre is covered by something else (the bubble
+  left by an earlier attempt) is certified `keyboardOnly`. Only keyboard input
+  (`type_ax`, `set_field`, `type_text`, `type` and `press_keys`) may use such a
+  certificate, and only while the field still has focus at the decision; a
+  click on it is refused as `target_uncovered`. (Without this certificate such
+  a field had none, and a click on it was judged by the legacy rules, which
+  cannot see that the click would land on the cover.) Chrome's fallback then
+  skips its press: `ax_prepare_field_for_trusted_type` reports whether the
+  centre hit reaches the field without crossing an activator (`pressable`),
+  whether what is there instead lies outside the field (`centreCovered`), and
+  whether the field had the focus before that preparation (`focusedBefore`).
+  Only a field that already had the focus and is covered from outside is not
+  pressed; it is typed into through the same receiver checks. Any other field
+  is pressed as before, and the monitor refuses a press whose receiver is not
+  the field itself, such as a native control inside a ProseMirror editor.
   A recent owned scroll can reconcile one native subpixel visual-viewport
   notification within 200 ms when the original target, hit, rectangle, values,
   document scroll, full-size viewport, scale and DPR remain unchanged. This
@@ -209,6 +255,27 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   native-submit restrictions remain in force.
   A target outside the snapshot's coverage returns `action_binding_unavailable`
   instead of claiming that the page changed. The old call stays undispatched.
+  This holds while the page keeps updating: a response whose only obstacle is
+  such a target is not discarded as stale (the same view would only be decided
+  again); the call returns this answer itself, later calls of its batch are
+  skipped, and it does not count toward the `page_unstable` budget. User input
+  and any other changed target still supersede the response. A selector that
+  names several elements, such as X's `[data-testid="tweetTextarea_0"]` for the
+  dialog's composer and the hidden timeline composer behind it, is reported as
+  `target_ambiguous` (`bindingFailure` in the result), with the instruction to
+  use the observed element's ref. For a selector call, the rich-text toolbar
+  preflight answers such a target the same way before it probes the target,
+  so the answer is not replaced by a probe failure. That early check answers
+  only such a target; every other outcome is left to the call's own
+  validation, which runs again before dispatch.
+  Chrome's preflight for `type_text` with a selector resolves the target
+  through the trusted CDP resolver before the call is validated, and that
+  resolver's scroll is fenced. While the page keeps updating by itself the
+  fence refuses it, so selector typing is still refused there before anything
+  is typed. The refusal says that the page changed while the target was being
+  located and to type by the observed ref with `type_ax`; it is not retryable
+  as the same call, and it no longer reports a resolver that could not attach
+  (DevTools) unless attaching actually failed.
   The next normal decision prioritizes that target and receives a fresh bounded
   AX observation of its owner together with the new private footprint. Target
   selectors and labels retain their exact strings throughout validation and

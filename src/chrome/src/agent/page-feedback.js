@@ -207,11 +207,20 @@ export function pageFeedbackPendingResult() {
     pageFeedbackPending: true, error: 'The browser changed during action preparation. Re-observe the page before acting.' };
 }
 
+// The answer of a call whose target the observed certificate cannot bind.
+function actionBindingUnavailableResult(run) {
+  return { success: false, skipped: true, dispatched: false, noDispatch: true, retryable: false,
+    errorCode: 'action_binding_unavailable',
+    ...(run.actionBindingUnavailableReason === 'target_ambiguous' ? { bindingFailure: 'target_ambiguous',
+      error: 'The selector matches more than one element on this page (for example a hidden copy of the same field behind a dialog), so it cannot be bound to the element you observed. Nothing was sent. Use the ref_id of the intended element from the current page observation instead of this selector.' }
+      : { error: 'The exact target could not be bound to the observed action context. Fresh available target/page context will be observed before the next decision; inspect it or read the exact target inventory before trying the action again.' }) };
+}
+
 function preparationVetoDiagnostics(veto) {
   const facts = {};
   if (!veto || typeof veto !== 'object') return facts;
-  if (['owner_pending_before', 'owner_pending_after', 'monitor_rejected',
-    'document_mapping_changed', 'owner_ended', 'current_owner_changed'].includes(veto.cause)) facts.cause = veto.cause;
+  if (['owner_pending_before', 'owner_pending_after', 'monitor_rejected', 'document_mapping_changed',
+    'receiver_frame_changed', 'owner_ended', 'current_owner_changed'].includes(veto.cause)) facts.cause = veto.cause;
   // Preserve diagnostics through every wrapper without copying page values.
   for (const key of [
     'ownerPendingAfter', 'monitorRejected',
@@ -249,9 +258,28 @@ export async function beforePageAgentDispatch(api, tabId, details = {}) {
     }
     details = { ...details, ...(frameId === undefined ? {} : { frameId }) };
   }
-  owner.operationFrames.get(owner.operationId)?.add(Number(details.frameId) || 0);
   const { prepareMonitor = false, ...dispatchDetails } = details;
   const operationId = dispatchDetails.operationId || owner.operationId || token();
+  // A model certificate binds a node of the top document. Keyboard input
+  // whose receiver has focus in a child document (a page that moved focus
+  // into an iframe) is that operation's input only if the top document says
+  // its certified target is the frame that has focus.
+  if (!details.release && details.kind === 'input' && Number(details.frameId) > 0 && owner.modelBound?.()) {
+    let reply = null;
+    try {
+      reply = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_receiver_frame',
+        params: { runToken: owner.runToken, operationId } }, { frameId: 0 });
+    } catch { /* No answer cannot allow it. */ }
+    if (dispatchOwners.get(tabId) !== owner) {
+      const error = new Error('Browser run ended before dispatch'); error.name = 'AbortError';
+      error.pagePreparationVeto = { cause: 'owner_ended' }; throw error;
+    }
+    if (reply?.foreignReceiverAllowed !== true) {
+      const error = new Error(pageFeedbackPendingResult().error);
+      error.code = 'page_feedback_pending'; error.pagePreparationVeto = { cause: 'receiver_frame_changed' }; throw error;
+    }
+  }
+  owner.operationFrames.get(owner.operationId)?.add(Number(details.frameId) || 0);
   const monitorParams = { ...dispatchDetails, runToken: owner.runToken, operationId };
   let acknowledgement;
   let preparationAcknowledgement;
@@ -400,6 +428,8 @@ export const pageFeedbackMethods = {
     };
     dispatchOwners.set(tabId, { runToken: run.token, operationId: '', operationFrames: new Map(),
       tool: () => run.dispatchCall?.name || '',
+      // The current call acts on a certified node of the top document.
+      modelBound: () => !!run.dispatchCall?.expectedModelSnapshot,
       pending: () => this._pageFeedbackBlocksCall(tabId, run.dispatchCall?.name, run.dispatchCall?.args),
       allowPassiveRebase: () => run.dispatchCall?.allowPassiveRebase === true,
       expectedModelSnapshot: () => run.dispatchCall?.dispatchState?.started ? undefined : run.dispatchCall?.expectedModelSnapshot,
@@ -1105,10 +1135,17 @@ export const pageFeedbackMethods = {
         && run.frames.get(id)?.id === frame.id);
   },
 
-  async _validatePageFeedbackAction(tabId, name, args, state, batchId = null) {
+  // answerOnly: an early check that only answers a target the certificate
+  // cannot bind; any other outcome is left to the call's own validation.
+  async _validatePageFeedbackAction(tabId, name, args, state, batchId = null, { answerOnly = false } = {}) {
+    // Back-compat: an earlier revision passed { answerOnly } as the 5th arg.
+    if (batchId && typeof batchId === 'object') {
+      answerOnly = !!batchId.answerOnly;
+      batchId = null;
+    }
     const run = this._pageFeedbackRuns?.get(tabId);
     const binding = state?.actionBinding;
-    if (run) { run.actionBindingUnavailable = null; run.actionContextUnverified = false; }
+    if (run) { run.actionBindingUnavailable = null; run.actionBindingUnavailableReason = null; run.actionContextUnverified = false; }
     if (!run || !binding || run.modelState !== state || !this._pageFeedbackStateCurrent(tabId, run, state)
         || (run.events.size && !isAutomaticPageFeedback([...run.events.values()]))) return false;
     try {
@@ -1127,13 +1164,18 @@ export const pageFeedbackMethods = {
         && (response.relaxed !== true || (relaxedMonitorGrantToken && this._monitoringRetryCurrent(tabId, run) === retry));
       const certificationFailure = ['owner_unresolved', 'identity_unobserved', 'capture_limit', 'identity_limit',
         'target_uncovered', 'context_uncertified'].includes(response?.certificationFailure) ? response.certificationFailure : null;
+      const unbindable = owned && ['target_uncovered', 'target_unresolved', 'target_ambiguous'].includes(response.reason);
+      if (answerOnly && !unbindable) {
+        if (valid) (run.validatedActionBindings ??= new Map()).set(`${name}:${JSON.stringify(args)}`, binding.snapshotToken);
+        return valid;
+      }
       if (owned) {
         const runId = this.currentRunId?.get(tabId);
         if (runId) trace.recordNote(runId, 0, 'page_action_validation', {
           status: valid ? 'ready' : 'blocked', monitoringRelaxed: valid && response.relaxed === true,
           ...(certificationFailure ? { certificationFailure } : {}),
           ...(response.uncertified === true ? { certificationFailure: certificationFailure || 'context_uncertified' } : {}),
-          ...(typeof response.reason === 'string' && ['target_changed', 'target_unresolved', 'target_uncovered',
+          ...(typeof response.reason === 'string' && ['target_changed', 'target_unresolved', 'target_ambiguous', 'target_uncovered',
             'focus_changed', 'intervention_changed', 'model_snapshot_invalid', 'model_snapshot_expired',
             'pending_feedback', 'target_hidden', 'target_disabled', 'target_detached', 'parent_changed', 'form_changed',
             'relaxed_grant_expired', 'relaxed_target_changed', 'target_not_actionable'].includes(response.reason) ? { predicate: response.reason } : {}),
@@ -1144,11 +1186,12 @@ export const pageFeedbackMethods = {
         run.validatedActionBindings ??= new Map();
         run.validatedActionBindings.set(`${name}:${JSON.stringify(args)}`, binding.snapshotToken);
       }
-      if (owned && ['target_uncovered', 'target_unresolved'].includes(response.reason)) {
+      if (unbindable) {
         // Preserve the original no-dispatch outcome. A bounded fresh observation
         // of this target belongs to the NEXT normal decision, never this call.
         run.actionCaptureTarget = safeAction(name, args);
         run.actionBindingUnavailable = `${name}:${JSON.stringify(args)}`;
+        run.actionBindingUnavailableReason = response.reason;
       }
       if (owned && response.uncertified === true) {
         // The original node is unchanged, but its action context was never
@@ -1161,6 +1204,18 @@ export const pageFeedbackMethods = {
       if (owned && response.uncertified === true && !run.events.size) return null;
       return valid;
     } catch { return false; }
+  },
+
+  // A typing call's own preparation probes its target before dispatch. A
+  // target the certificate cannot bind at all is answered first and
+  // precisely: a probe of an ambiguous selector could only pick one of its
+  // elements. Anything else is left to the dispatch wrapper.
+  async _pageFeedbackUnbindableResult(tabId, name, args = {}) {
+    const run = this._pageFeedbackRuns?.get(tabId);
+    if (!run || typeof args?.selector !== 'string' || !args.selector.trim() || !this.constructor.STATE_CHANGE_TOOLS?.has(name)
+        || pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage).kind !== 'bound_target') return null;
+    if (await this._validatePageFeedbackAction(tabId, name, args, run.modelState, null, { answerOnly: true }) !== false) return null;
+    return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}` ? actionBindingUnavailableResult(run) : null;
   },
 
   _pageFeedbackBlocksCall(tabId, name, args = {}) {
@@ -1379,13 +1434,26 @@ export const pageFeedbackMethods = {
           this._monitoringRetryCurrent(tabId, run) ? current.map(event => event.source === 'unknown' && event.kind === 'dom'
             ? { ...event, source: 'page' } : event) : current, options);
     };
-    let unverifiedActionContext = false;
+    let unverifiedActionContext = false, unbindableActionTarget = false;
     let retained = sameDocument && canRetain(events)
       && (!pending.length || canRetain(pending, { pending: true }));
     if (retained) for (const call of responseToolCalls) {
       const args = JSON.parse(call.function.arguments);
       if (pageFeedbackCallPolicy(call.function.name, args, state, page, events).kind === 'bound_target'
           && await this._validatePageFeedbackAction(tabId, call.function.name, args, state, call._browserBatch?.parentId) !== true) {
+        // A target the certificate cannot bind (a selector naming several
+        // elements or none, a ref the observation did not certify, a control
+        // its snapshot does not cover) gets the same answer after these page
+        // updates, and discarding the response would only show the model the
+        // same view to decide again. Keep the call: its own no-dispatch result
+        // (action_binding_unavailable) tells the model why, and the rest of
+        // its batch does not run. If a real change caused it (its element
+        // removed or added), the attached fresh observation shows that. A
+        // changed binding, an unverified action context and user input still
+        // supersede the response.
+        if (run.actionBindingUnavailable === `${call.function.name}:${JSON.stringify(args)}`) {
+          unbindableActionTarget = true; continue;
+        }
         unverifiedActionContext = run.actionContextUnverified === true;
         retained = false; break;
       }
@@ -1474,7 +1542,8 @@ export const pageFeedbackMethods = {
     if (runId) trace.recordNote(runId, 0, 'page_feedback_decision', { stage, disposition: responseToolCalls === null ? 'observed' : accepted ? 'retained' : 'superseded',
       reason: accepted && independentCompletion && (!isPassivePageFeedback(events)
         || (finalPending.length && !isPassivePageFeedback(finalPending))) ? 'page_independent_completion'
-        : honestUnverifiedContext && ['passive_dom', 'automatic_page'].includes(feedbackReason) ? 'target_context_unverified' : feedbackReason,
+        : honestUnverifiedContext && ['passive_dom', 'automatic_page'].includes(feedbackReason) ? 'target_context_unverified'
+          : accepted && unbindableActionTarget ? 'action_target_unbindable' : feedbackReason,
       context: { bindingAtRefresh: { documentMatches, currentRun, stateCurrent, sameDocument },
         feedback: { observed: feedbackEventSummary(events), pendingAtRefresh: feedbackEventSummary(pending),
           pendingAtDecision: feedbackEventSummary(finalPending) } },
@@ -1511,9 +1580,7 @@ export function installPageFeedback(Agent) {
     if (modelBound) {
       const validated = await this._validatePageFeedbackAction(tabId, name, args, modelState, batchId);
       if (validated === false) return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}`
-        ? { success: false, skipped: true, dispatched: false, noDispatch: true, retryable: false,
-          errorCode: 'action_binding_unavailable',
-          error: 'The exact target could not be bound to the observed action context. Fresh available target/page context will be observed before the next decision; inspect it or read the exact target inventory before trying the action again.' }
+        ? actionBindingUnavailableResult(run)
         : run.actionContextUnverified === true
           ? { ...pageFeedbackPendingResult(), actionContextUnverified: true, errorCode: 'action_context_unverified',
             error: 'The requested control had no verified original action context. No action was dispatched; inspect the fresh bounded target observation before choosing another action.' }

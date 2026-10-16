@@ -25,8 +25,13 @@ const text = messages => JSON.stringify(messages);
 
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
-  for (const feedback of [false, true]) {
-    test(`${build}: stream keeps the one-shot vision fallback ${feedback ? 'and adds the new page observation' : 'without page feedback'}`, async () => {
+  // OpenAI-compatible providers (Ollama, LM Studio, ...) report the HTTP
+  // status only as httpStatus; the rejection must still reach the fallback.
+  for (const [feedback, statusField] of [[false, 'status'], [true, 'status'], [false, 'httpStatus']]) {
+    const variant = statusField === 'httpStatus'
+      ? 'for an OpenAI-compatible rejection carrying only httpStatus'
+      : feedback ? 'and adds the new page observation' : 'without page feedback';
+    test(`${build}: stream keeps the one-shot vision fallback ${variant}`, async () => {
       const tab = nextTab++, requests = [], updates = [];
       let agent, send;
       const next = async messages => {
@@ -35,7 +40,7 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(hasImage(messages), true, 'fixture: the first request carries the image');
           if (feedback) send({}); // an ordinary page update while the request fails
           const error = new Error('Invalid request: image input is not supported by this model.');
-          error.status = 400;
+          error[statusField] = 400;
           throw error;
         }
         return { content: 'The capture shows the photo settings page.' };

@@ -43,7 +43,12 @@
  *      window.__wb_ax_lookup(refId) → Element | null
  *      window.__wb_ax_ref(element) → stable refId
  *      window.__wb_ax_release(refId) → void (optional cleanup)
- *      window.__wb_ax_name(element) → the same accessible name used by the tree
+ *      window.__wb_ax_name(element) → the raw accessible name, for matching
+ *      window.__wb_ax_model_name(element, name?) → the name a tool result may
+ *        show the model (the tree's; signed-in account chrome is generic)
+ *      window.__wb_ax_model_href(element, href) → the href a tool result may
+ *        show the model
+ *      window.__wb_ax_account_chrome(element) → whether it is that chrome
  */
 (() => {
   if (window.__wb_ax_installed) return;
@@ -331,6 +336,77 @@
       stack.push(...[...node.childNodes].reverse());
     }
     return null;
+  }
+
+  // ── Signed-in account chrome ─────────────────────────────────────────────
+  // Google's shared header names its avatar button after the signed-in
+  // person ("Google Account: Jane Doe (jane@…)"), repeats the name in the
+  // avatar's alt text, and carries the current page in its continue= URL.
+  // That identifies whoever uses the browser, not the page being read, so no
+  // read may hand it to the model. The control is recognized structurally,
+  // in any interface language: a link to Google's account switch or
+  // sign-out endpoints anywhere (they name only the signed-in session), and,
+  // inside Google's bar (#gb) or a page banner, a link to the account page
+  // or a button of the bar whose name holds an e-mail address. It keeps its
+  // role and ref, so the account menu can still be opened, under a generic
+  // name. Page content is the page's own text: a link to
+  // myaccount.google.com in a mail body or article keeps its name, as do
+  // everything on Google's account pages (their subject is the account) and
+  // the signed-out "Sign in" link (ServiceLogin), which names no one.
+  const ACCOUNT_CHROME_NAME = 'Google account';
+  const GOOGLE_SESSION_ENDPOINT_PATH = /^\/(?:SignOutOptions|AccountChooser|Logout)(?:\/|$)/i;
+  const GOOGLE_ACCOUNT_PAGE_HOSTS = new Set(['accounts.google.com', 'myaccount.google.com']);
+  const PAGE_CONTENT = 'main, article, [role="main"], [role="article"]';
+  const EMAIL_ADDRESS = /[^\s@<>()[\]"',;:]+@[^\s@<>()[\]"',;:]+\.[^\s@<>()[\]"',;:]+/u;
+
+  // 'session' for Google's account switch and sign-out endpoints, 'account'
+  // for the account page, else ''.
+  function googleAccountLinkKind(href) {
+    try {
+      const url = new URL(String(href || ''), location.href);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+      const host = url.hostname.toLowerCase();
+      if (host === 'accounts.google.com' && GOOGLE_SESSION_ENDPOINT_PATH.test(url.pathname)) return 'session';
+      return host === 'myaccount.google.com' ? 'account' : '';
+    } catch {
+      return '';
+    }
+  }
+
+  // The account control itself, or the one an element sits inside.
+  function accountChromeControl(el) {
+    try {
+      if (!el?.closest || GOOGLE_ACCOUNT_PAGE_HOSTS.has(String(location.hostname).toLowerCase())) return null;
+      const link = el.closest('a[href],area[href]');
+      const kind = link ? googleAccountLinkKind(link.getAttribute('href')) : '';
+      if (kind === 'session') return link;
+      // Google's bar, or a page banner outside page content (an article's
+      // or main region's own header is content).
+      if (!el.closest('#gb') && (!el.closest('[role="banner"], header') || el.closest(PAGE_CONTENT))) return null;
+      if (kind === 'account') return link;
+      const button = el.closest('#gb button, #gb [role="button"]');
+      return button && EMAIL_ADDRESS.test(getAccessibleName(button)) ? button : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The name a model may see, of the tree's own name or of a name a tool
+  // computed for the element. Unnamed nodes stay unnamed.
+  function modelAccessibleName(el, name = getAccessibleName(el)) {
+    return name && accountChromeControl(el) ? ACCOUNT_CHROME_NAME : name;
+  }
+
+  // The href a model may see: account chrome keeps only where it leads, as
+  // its query carries the continued page and account.
+  function modelHref(el, href) {
+    if (!href || !accountChromeControl(el)) return href;
+    try {
+      const url = new URL(String(href), location.href);
+      return url.protocol === 'https:' || url.protocol === 'http:' ? url.origin + url.pathname : href;
+    } catch {
+      return href;
+    }
   }
 
   // ── Accessible name (matches Claude's priority order) ───────────────────
@@ -740,7 +816,7 @@
       return {
         ref_id: getOrMintRef(el),
         role: getRole(el),
-        name: (getAccessibleName(el) || '').slice(0, 160),
+        name: (modelAccessibleName(el) || '').slice(0, 160),
         eligibility,
       };
     }
@@ -841,7 +917,7 @@
     if (window.top !== window || el.getRootNode() !== document || !isInteractive(el)) return null;
     const tag = el.tagName.toLowerCase();
     const type = String(el.type || '').toLowerCase();
-    const name = String(getAccessibleName(el) || '').slice(0, 120);
+    const name = String(modelAccessibleName(el) || '').slice(0, 120);
     const identity = [name, el.name, el.id, el.autocomplete].join(' ');
     if (['password', 'file', 'hidden'].includes(type)
         || /\b(?:password|passwd|passcode|pin|otp|token|secret|cvv|cvc|csc|ssn|iban)\b|\bcc-(?:name|given-name|additional-name|family-name|number|exp|exp-month|exp-year|csc|type)\b|api.?key|one[-_\s]?time(?:[-_\s]?code)?|verification.?code|security.?code|auth(?:entication)?.?code|credit.?card|card.?number|social.?security|(?:routing|account).?number/i.test(identity)) {
@@ -893,7 +969,7 @@
   // ── Line formatting ────────────────────────────────────────────────────
   function formatLine(el, depth, origin = null) {
     const role = getRole(el);
-    let name = getAccessibleName(el);
+    let name = modelAccessibleName(el);
     const ref = getOrMintRef(el);
     if (origin) origin.ref = ref;
     const tag = el.tagName.toLowerCase();
@@ -909,7 +985,8 @@
     // Tracking URLs can occupy an entire tree chunk before any result appears.
     // Keep the live href on the element/ref; never present a shortened URL as
     // a navigable href. The agent can click the ref and read the final URL.
-    if (href) line += formatTreeHref(href);
+    // Account chrome keeps only where it leads (modelHref).
+    if (href) line += formatTreeHref(modelHref(el, href));
     const type = el.getAttribute('type');
     if (type) line += ' type="' + type + '"';
     // A React-style form can replace a control node on every change, which
@@ -2013,7 +2090,7 @@
       } catch { continue; }
       const n = refOrdinal(key) || 0;
       const role = getRole(el);
-      const name = getAccessibleName(el) || '';
+      const name = modelAccessibleName(el) || '';
       const interactive = isInteractive(el);
       live.push({ ref: key, n, role, name, interactive });
     }
@@ -2071,6 +2148,9 @@
   window.__wb_ax_ref = getOrMintRef;
   window.__wb_ax_observed_refs = observedTreeRefs;
   window.__wb_ax_name = getAccessibleName;
+  window.__wb_ax_model_name = modelAccessibleName;
+  window.__wb_ax_model_href = modelHref;
+  window.__wb_ax_account_chrome = el => !!accountChromeControl(el);
   window.__wb_ax_role = getRole;
   window.__wb_ax_section_purpose = nativeSectionPurpose;
   window.__wb_ax_resolve_visual_target = resolveVisualTargetAtPoint;

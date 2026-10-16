@@ -124,7 +124,7 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 800, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw new Error(`${this.name} error ${res.status}: ${err || res.statusText}`);
+      throw this._httpStatusError(`${this.name} error ${res.status}: ${err || res.statusText}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     let data;
@@ -158,7 +158,7 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 800, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw new Error(`${this.name} stream error ${res.status}: ${err || res.statusText}`);
+      throw this._httpStatusError(`${this.name} stream error ${res.status}: ${err || res.statusText}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     if (!res.body?.getReader) {
@@ -221,7 +221,10 @@ export class AzureOpenAIProvider extends BaseLLMProvider {
           }
           if (json?.error) {
             const detail = json.error?.message || json.error?.code || 'The provider reported a streaming error.';
-            throw this._askStreamTerminalError(`${this.name} stream error: ${detail}`);
+            // Azure reports a rate limit after the 200 as "Rate limit is
+            // exceeded"; keep its code and 429 class so it is waited out.
+            throw this._withProviderError(this._askStreamTerminalError(`${this.name} stream error: ${detail}`),
+              typeof json.error === 'object' ? json.error : { message: String(json.error) });
           }
           if (json.usage) finalUsage = json.usage;
           const choice = json.choices?.[0];

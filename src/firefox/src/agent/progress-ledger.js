@@ -203,6 +203,25 @@ function isCanonicalProgressRow(row) {
     || (Number.isInteger(ordinal) && ordinal > 0);
 }
 
+// A planner-seeded expected slot nothing has claimed yet: no classifier
+// target, target or url is bound to it, and it is still pending.
+function isBareExpectedSlot(row) {
+  const ordinal = Number(row?.fields?.expectedOrdinal);
+  return Number.isInteger(ordinal) && ordinal > 0
+    && row?.fields?.classifierTarget !== true
+    && !row?.target
+    && !row?.url
+    && normalizeStatus(row?.status, 'pending') === 'pending';
+}
+
+function rowInSession(row, sessionId) {
+  return sanitizeText(row?.sessionId || row?.session_id || '', 120) === sessionId;
+}
+
+function sessionHasClassifierTargets(rows, sessionId) {
+  return rows.some(row => rowInSession(row, sessionId) && row?.fields?.classifierTarget === true);
+}
+
 function actionsCompatible(left, right) {
   const leftAction = sanitizeText(left?.action, 80).toLowerCase();
   const rightAction = sanitizeText(right?.action, 80).toLowerCase();
@@ -354,16 +373,24 @@ export function reconcileLedgerItems(rows = [], items = [], opts = {}) {
         && !semanticBindings.has(index)
         && !safeRows.some(row => ledgerRowKey(row) === ledgerRowKey(item) && actionsCompatible(row, item)));
     const canBindPartialBatch = source === 'model' || source === 'observe';
-    const batchFitsAvailable = newIncoming.length === availableExpected.length
-      || (canBindPartialBatch && newIncoming.length > 0 && newIncoming.length < availableExpected.length);
-    if (availableExpected.length && batchFitsAvailable) {
+    // A runtime-recorded click carries no planner identity, and a bare slot
+    // has none to agree with. With no classifier targets in the session there
+    // is nothing to check, so the click fills the lowest-ordinal slot still
+    // pending instead of becoming a row beside it. An item that already
+    // matches a row of this session never takes a fresh slot.
+    const autoFillsBareSlot = source === 'auto' && !sessionHasClassifierTargets(safeRows, sessionId);
+    const slots = autoFillsBareSlot ? availableExpected.filter(isBareExpectedSlot) : availableExpected;
+    const batchFitsAvailable = newIncoming.length === slots.length
+      || ((canBindPartialBatch || autoFillsBareSlot) && newIncoming.length > 0 && newIncoming.length < slots.length);
+    if (slots.length && batchFitsAvailable) {
       const identitiesAreUnique = progressIdentitiesAreUnique(newIncoming.map(({ item }) => item));
-      const compatible = newIncoming.every(({ item }, index) => actionsCompatible(availableExpected[index], item));
-      const identityVerified = source !== 'auto' || newIncoming.every(({ item }, index) => (
-        identityMatchScore(availableExpected[index], item) > 0
-      ));
+      const compatible = newIncoming.every(({ item }, index) => actionsCompatible(slots[index], item));
+      const identityVerified = source !== 'auto' || (autoFillsBareSlot
+        ? newIncoming.every(({ item }) => !safeRows.some(row => rowInSession(row, sessionId)
+          && actionsCompatible(row, item) && identityMatchScore(row, item) > 0))
+        : newIncoming.every(({ item }, index) => identityMatchScore(slots[index], item) > 0));
       if (identitiesAreUnique && compatible && identityVerified) {
-        newIncoming.forEach(({ index }, expectedIndex) => batchBindings.set(index, availableExpected[expectedIndex]));
+        newIncoming.forEach(({ index }, expectedIndex) => batchBindings.set(index, slots[expectedIndex]));
       }
     }
   }
@@ -495,8 +522,26 @@ export function reconcilePersistedLedgerRows(rows = []) {
       const identitiesAreUnique = progressIdentitiesAreUnique(concreteRows);
       const ordinalsAreComplete = unboundExpected.every((row, index) => Number(row.fields.expectedOrdinal) === index + 1);
       const compatible = unboundExpected.every((row, index) => actionsCompatible(row, concreteRows[index]));
-      const identityAgreement = unboundExpected.every((row, index) => identityMatchScore(row, concreteRows[index]) > 0);
-      const merged = unboundExpected.map((row, index) => mergeCanonicalProgressRows(row, concreteRows[index]));
+      // A bare slot has no identity to agree with. With no classifier targets
+      // in the session and exactly one concrete row per slot, order binds an
+      // unfinished row to it, as the live path binds a runtime click. A
+      // finished row is not bound by order: its outcome would reach the slot
+      // without the slot's own completion evidence. Slots already bound still
+      // have to agree.
+      const bareSlotsBindInOrder = !sessionHasClassifierTargets(next, sessionId);
+      const identityAgreement = unboundExpected.every((row, index) => identityMatchScore(row, concreteRows[index]) > 0
+        || (bareSlotsBindInOrder && isBareExpectedSlot(row) && !isTerminalLedgerStatus(concreteRows[index]?.status)));
+      const merged = unboundExpected.map((row, index) => {
+        const mergedRow = mergeCanonicalProgressRows(row, concreteRows[index]);
+        // A slot bound by order takes the target its row names, as a live
+        // batch binding does, so a later batch cannot claim the slot again.
+        if (mergedRow && isBareExpectedSlot(row) && !mergedRow.target && !mergedRow.url) {
+          const target = sanitizeText(String(concreteRows[index]?.label || '').replace(IDENTITY_ACTION_PREFIX_RE, ''), 180)
+            || sanitizeText(concreteRows[index]?.id, 180);
+          if (target) mergedRow.target = target;
+        }
+        return mergedRow;
+      });
       if (identitiesAreUnique && ordinalsAreComplete && compatible && identityAgreement && merged.every(Boolean)) {
         const replacementByKey = new Map(unboundExpected.map((row, index) => [ledgerRowKey(row), merged[index]]));
         const removedKeys = new Set(concreteRows.map(ledgerRowKey));

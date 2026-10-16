@@ -6,14 +6,14 @@ for (const browser of ['chrome','firefox']) {
  const limited=(hint=null)=>Object.assign(new Error('HTTP 429'),{httpStatus:429,retryAfterMs:hint});
  test(`${browser}: retry inference with growing cooldowns without replaying tools`,async()=>{
   const waits=[],notes=[],order=[];let inference=0,toolsAlreadyExecuted=1;
-  const answer=await retryModelCall(limited(),async()=>{order.push('inference');inference++;if(inference===1)throw limited();return {toolCalls:[]};},{sleep:async ms=>{order.push('wait');waits.push(ms);},onRetry:async note=>{await Promise.resolve();order.push('record');notes.push(note);}});
+  const answer=await retryModelCall(limited(),async()=>{order.push('inference');inference++;if(inference===1)throw limited();return {toolCalls:[]};},{random:()=>0,sleep:async ms=>{order.push('wait');waits.push(ms);},onRetry:async note=>{await Promise.resolve();order.push('record');notes.push(note);}});
   assert.deepEqual(answer,{toolCalls:[]});assert.deepEqual(waits,[5000,15000]);
   assert.equal(inference,2);assert.equal(toolsAlreadyExecuted,1);assert.deepEqual(notes.map(n=>n.attempt),[1,2]);
   assert.deepEqual(order,['record','wait','inference','record','wait','inference']);
  });
  test(`${browser}: persistent quota exhaustion stops after three recovery requests`,async()=>{
   let calls=0;const waits=[];
-  await assert.rejects(retryModelCall(limited(),async()=>{calls++;throw limited();},{sleep:async ms=>waits.push(ms)}),/HTTP 429/);
+  await assert.rejects(retryModelCall(limited(),async()=>{calls++;throw limited();},{random:()=>0,sleep:async ms=>waits.push(ms)}),/HTTP 429/);
   assert.equal(calls,3);assert.deepEqual(waits,[5000,15000,30000]);
  });
  test(`${browser}: cloud upstream HTTP 400 retries inference twice and preserves its code`,async()=>{
