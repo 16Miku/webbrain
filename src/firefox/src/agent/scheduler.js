@@ -2338,9 +2338,13 @@ export class ScheduledJobManager {
       await this.loadProviders();
       if (execution.cancelled) return;
       if (running.clarificationAuthorizationRequired === true) {
-        // Every stop that sets this flag leaves the job waiting, and only the
-        // user's Run now (or Resume) starts it again, so this run is the
-        // user's new attempt: a fresh blocked-attempt count, guard armed.
+        // Every stop that sets this flag leaves the job waiting. It runs again
+        // only after the user's Run now or Resume, or unattended as the retry
+        // of such a run that a background restart interrupted (restoreAlarms
+        // requeues it with the flag). Either way this is the user's new
+        // attempt, so it gets a fresh blocked-attempt count. For the retry
+        // that costs at most one more question: the guard stays armed, so
+        // consequential actions and success still wait for a direct answer.
         await this.agent.requireExplicitClarificationAuthorization(tabId, { freshAttempt: true });
         if (execution.cancelled) return;
       }

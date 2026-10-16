@@ -21693,8 +21693,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    // A scheduled task run executes an already scheduled task: its scheduling
-    // tag must not turn into a state-change requirement (see the planner).
+    // A scheduled task run executes an already scheduled task: the planner is
+    // told so, and its scheduling tag must not turn into a state-change
+    // requirement (see the planner).
     const plannerParseOptions = {
       requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true,
@@ -21707,6 +21708,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       imageGenConfigured: this.imageGenConfigured,
       tier: this._resolvePromptTier(provider),
       scheduledResume: runOptions?.scheduledResume === true,
+      scheduledTask: plannerParseOptions.scheduledTask,
       locale,
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
@@ -21933,8 +21935,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ),
     };
     const locale = runOptions?.locale || 'en';
-    // A scheduled task run executes an already scheduled task: its scheduling
-    // tag must not turn into a state-change requirement (see the planner).
+    // A scheduled task run executes an already scheduled task: the planner is
+    // told so, and its scheduling tag must not turn into a state-change
+    // requirement (see the planner).
     const plannerParseOptions = {
       requireIntent: true, locale, scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: runOptions?.scheduledRun === true && runOptions?.scheduledResume !== true,
@@ -21951,6 +21954,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       imageGenConfigured: this.imageGenConfigured,
       tier,
       scheduledResume: runOptions?.scheduledResume === true,
+      scheduledTask: plannerParseOptions.scheduledTask,
       allowApi: this.isApiMutationsAllowed(tabId),
       skillCatalog,
       locale,

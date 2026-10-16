@@ -6,7 +6,9 @@
 //   in words that are also true when the scheduler armed it;
 // - every scheduled task run, recurring or one-shot, drops the planner's
 //   schedule_task requirement and the state change that its scheduling tag
-//   forced (a scheduled resume and interactive runs keep both), so a
+//   forced (a scheduled resume and interactive runs keep both); the planner
+//   is told the run executes an existing task, and a plan whose steps only
+//   observe loses a state-change mark that only its tag explains, so a
 //   reminder run finishes with success without a mutating tool, while a
 //   plan's own submission still has to happen; a one-shot run that sets up
 //   a different schedule can still call schedule_task;
@@ -342,10 +344,58 @@ for (const { build, Agent, tools, args, research, Scheduler, planner } of builds
     assert.equal(reminder.requires_state_change, false);
     assert.equal(reminder.scheduling?.tool, 'schedule_task', 'the tag itself is kept; the run just is not required to act on it');
     // The plan's own requirements still count.
-    assert.equal(parse({ requires_state_change: true }, scheduledTask).requires_state_change, true);
     assert.equal(parse({ requires_submission: true }, scheduledTask).requires_state_change, true);
     assert.equal(parse({ completion_requirements: { download: true } }, scheduledTask).requires_state_change, true);
     assert.equal(parse({ scheduling: { tool: 'schedule_resume', hint: 'Wait.' } }, scheduledTask).requires_state_change, false);
+
+    // The planner may also mark the reminder state-changing itself. When
+    // every step declares only observing tools, the tag is all that is
+    // behind that mark, and it is dropped.
+    const observing = [
+      { id: '1', action: 'Read the page', tools: ['read_page'] },
+      { id: '2', action: 'Tell the user it is time to take the pizza out', tools: ['done'] },
+    ];
+    assert.equal(parse({ requires_state_change: true, steps: observing }, scheduledTask).requires_state_change, false);
+    assert.equal(parse({ requires_state_change: true, steps: observing }, {}).requires_state_change, true, 'interactive runs are unchanged');
+    assert.equal(parse({ requires_state_change: true, steps: observing }, { scheduledResume: true }).requires_state_change, true);
+    // Anything else keeps it: steps without declared tools prove nothing,
+    // and a mutating, network or schedule_task step is a state change of its own.
+    assert.equal(parse({ requires_state_change: true }, scheduledTask).requires_state_change, true, 'no declared tools');
+    for (const tool of ['click_ax', 'set_field', 'fetch_url', 'schedule_task', 'scratchpad_write']) {
+      const steps = [observing[0], { id: '2', action: 'Do the task', tools: [tool] }];
+      assert.equal(parse({ requires_state_change: true, steps }, scheduledTask).requires_state_change, true, tool);
+    }
+    assert.equal(parse({ requires_state_change: true, requires_submission: true, steps: observing }, scheduledTask).requires_state_change, true);
+    assert.equal(parse({ requires_state_change: true, steps: observing, completion_requirements: { download: true } }, scheduledTask).requires_state_change, true);
+    assert.equal(parse({ requires_state_change: true, steps: observing, scheduling: null }, scheduledTask).requires_state_change, true,
+      'without a scheduling tag the mark is the planner\'s own');
+  });
+
+  test(`${build}: the planner is told a scheduled task run executes an existing task, on every planner call`, async () => {
+    const RULE = /This run is the app-owned scheduled execution of an existing task\. Its schedule already exists/;
+    for (const plannerMode of ['off', 'try']) {
+      for (const [runOptions, expectsRule, expectsResumeRule] of [
+        [{ scheduledRun: true, independentRun: true, scheduledResume: false }, true, false],
+        [{ scheduledRun: true, independentRun: true, scheduledResume: true }, false, true],
+        [{}, false, false],
+      ]) {
+        const agent = plannerAgent(Agent, plannerResult('clarify', 'Which account should I check?'), plannerMode);
+        const systems = [];
+        // The first reply is unparseable, so the planner's repair call runs too.
+        agent._chatWithCostAllowance = async (_provider, messages, _options, _cost, meta) => {
+          assert.match(meta?.generationName || '', /^planner/);
+          systems.push(messages.find(message => message.role === 'system')?.content || '');
+          return { content: systems.length === 1 ? 'not json' : JSON.stringify(plannerResult('clarify', 'Which account should I check?')) };
+        };
+        await agent.processMessage(6901, 'In 30 minutes, remind me to check my account balance.', () => {}, 'act', [], runOptions);
+        const label = `${plannerMode} ${JSON.stringify(runOptions)}`;
+        assert.equal(systems.length, 2, label);
+        for (const system of systems) {
+          assert.equal(RULE.test(system), expectsRule, label);
+          assert.equal(/This run is an app-owned scheduled continuation/.test(system), expectsResumeRule, label);
+        }
+      }
+    }
   });
 
   // One scheduled one-shot run through the real scheduler, planner gate (Try
@@ -424,6 +474,24 @@ for (const { build, Agent, tools, args, research, Scheduler, planner } of builds
     assert.equal(job.lastOutcome, 'success');
     assert.deepEqual(h.jobs().map(candidate => candidate.id), [once.jobId], 'no new schedule');
     assert.match(agent.conversations.get(77).find(message => message.role === 'user')?.content || '', NEUTRAL);
+  });
+
+  test(`${build}: a scheduled reminder the planner marked state-changing still finishes with success after a read`, async () => {
+    const { h, once, guard, toolResults, job } = await scheduledRunEndToEnd({
+      prompt: 'In 30 minutes, remind me to take the pizza out.',
+      plan: { ...pizzaPlan, requires_state_change: true, steps: [
+        { id: '1', action: 'Read the page', tools: ['read_page'] },
+        { id: '2', action: 'Tell the user it is time to take the pizza out', tools: ['done'] },
+      ] },
+      script: [['read_page', {}], ['done', { summary: 'Time to take the pizza out!', outcome: 'success' }]],
+    });
+    assert.equal(guard?.requiresStateChange, false);
+    const dones = toolResults.filter(entry => entry.name === 'done');
+    assert.equal(dones.length, 1, 'the first done(success) is accepted');
+    assert.equal(dones[0].result?.outcome, 'success');
+    assert.equal(guard.successfulConsequentialToolCalls, 0);
+    assert.equal(job.lastOutcome, 'success');
+    assert.deepEqual(h.jobs().map(candidate => candidate.id), [once.jobId]);
   });
 
   test(`${build}: a scheduled reminder that skips its read is asked for a read, not a mutation`, async () => {
