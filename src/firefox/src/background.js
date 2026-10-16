@@ -3867,8 +3867,32 @@ async function handleMessage(msg, sender) {
       const editedText = String(msg.editedText || '');
       const markdownMode = msg.markdownMode === 'verbose' ? 'verbose' : 'compact';
       if (!planId) return { ok: false, error: 'planId required' };
-      const matched = agent.submitPlanResponse(tabId, planId, decision, editedText, markdownMode);
+      const requestId = String(msg.requestId || '');
       const snapshot = await getRunUiSnapshot(tabId);
+      if (requestId && (snapshot?.requestId !== requestId || runUiJournal.get(tabId) !== snapshot)) {
+        return { ok: false, matched: false };
+      }
+      const matched = agent.submitPlanResponse(tabId, planId, decision, editedText, markdownMode);
+      if (!matched && decision === 'reject' && requestId
+          && snapshot?.status === 'running'
+          && snapshot.lastPlanResolution?.planId === planId
+          && snapshot.lastPlanResolution.decision === 'approve') {
+        const activeState = agent.activeRunState(tabId);
+        if (activeState.running && (!snapshot.runId || snapshot.runId === activeState.runId)) {
+          // Cancel can cross the timeout while its response is in transit.
+          // Stop only the request that owned this approved plan.
+          const sourceTabId = agent.researchEscalationSourceTab(tabId);
+          const promptHold = holdContextMenuPromptsAfterStop(tabId, sourceTabId);
+          cancelDetachedRunStart(tabId);
+          if (sourceTabId) cancelDetachedRunStart(sourceTabId);
+          agent.abort(sourceTabId || tabId);
+          // Persist the accepted rejection before yielding so a lost reply
+          // can be recovered without confusing it with timeout approval.
+          sendAgentUpdate(tabId, requestId, 'plan_resolved', { planId, decision });
+          await promptHold;
+          return { ok: true, matched: true };
+        }
+      }
       if (matched && snapshot?.requestId) {
         sendAgentUpdate(tabId, snapshot.requestId, 'plan_resolved', { planId, decision });
       }

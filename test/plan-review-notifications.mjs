@@ -265,6 +265,53 @@ for (const item of builds) {
     assert.equal(h.audio.length, 3, 'Plan ID reuse in another request must not suppress its alert');
   });
 
+  test(`${item.build}: plan timeout resumes the journal and clears review attention`, async t => {
+    const h = deliveryHarness(item);
+    const agent = new item.Agent({ getActive: () => ({}) });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let settled = false;
+    const waiting = agent._waitForPlanReview(77, 'plan-1', { steps: [] }, 'Plan',
+      (type, data) => h.context.sendAgentUpdate(77, 'request-1', type, data))
+      .then(response => { settled = true; return response; });
+    await flush();
+
+    assert.equal(h.journal.get(77).status, 'awaiting_plan');
+    assert.equal(h.journal.get(77).pendingPlanId, 'plan-1');
+    assert.equal(h.audio.length, 1);
+    assert.equal(h.attention.length, 1);
+    const currentAudio = h.audio[0].isCurrent;
+    const currentAttention = h.attention[0].isCurrent;
+    assert.equal(currentAudio(), true);
+    assert.equal(currentAttention(), true);
+    assert.equal(vm.runInContext('planReviewAttentionByTab.has(77)', h.context), true);
+
+    t.mock.timers.tick(119_999);
+    await flush();
+    assert.equal(settled, false, 'The plan remains reviewable before the deadline');
+    assert.equal(h.journal.get(77).status, 'awaiting_plan');
+
+    t.mock.timers.tick(1);
+    await flush();
+    assert.equal(settled, true, 'The review settles at two minutes');
+    assert.deepEqual(await waiting, { action: 'approve', source: 'timeout' });
+    assert.equal(h.messages.at(-1).type, 'plan_resolved');
+    assert.deepEqual({ ...h.messages.at(-1).data }, {
+      planId: 'plan-1', decision: 'approve', source: 'timeout',
+    });
+    assert.equal(h.journal.get(77).status, 'running');
+    assert.equal(h.journal.get(77).pendingPlanId, null);
+    assert.deepEqual({ ...h.journal.get(77).lastPlanResolution }, {
+      planId: 'plan-1', decision: 'approve',
+    });
+    assert.equal(agent._pendingPlans.has(77), false);
+    assert.equal(vm.runInContext('planReviewAttentionByTab.has(77)', h.context), false);
+    assert.equal(currentAudio(), false, 'Queued audio loses ownership after auto-approval');
+    assert.equal(currentAttention(), false, 'Queued visual attention loses ownership after auto-approval');
+    assert.equal(h.stopped.at(-1).action, 'attention_flash_stop');
+    assert.equal(h.stopped.at(-1).params.attentionId, h.attention[0].attentionId);
+    assert.equal(h.audio.length, 1, 'Resolving the plan must not replay its alert');
+  });
+
   test(`${item.build}: scheduled runs use the same plan alert owner`, async () => {
     const h = deliveryHarness(item, { begin: false });
     const owner = { jobId: 'job-1', executionId: 'execution-1', mode: 'act', kind: 'resume' };
