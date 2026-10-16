@@ -24893,6 +24893,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: plannerParseOptions.scheduledTask,
       allowApi: this.isApiMutationsAllowed(tabId),
+      browserBatchEnabled: this.browserBatchEnabled !== false,
       skillCatalog,
       locale,
       authenticTaskText: followUpContext.authenticTaskText,
