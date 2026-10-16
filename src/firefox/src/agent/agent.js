@@ -26,7 +26,7 @@ import { isSessionQuotaError, serializeConversationForSession, SESSION_CONVERSAT
 import { SteeringJournal } from './steering-journal.js';
 import { formatErrorMessage } from '../error-format.js';
 import { retryModelCall, retryModelStream } from '../providers/model-retry.js';
-import { isQwenConfig } from '../providers/provider-compatibility.js';
+import { isQwenConfig, preserveToolCallSignature } from '../providers/provider-compatibility.js';
 import { aggregateMessageCompletion } from '../message-info.js';
 import { handleDoneJson } from './cloud-output.js';
 import { applyReadPageWindow, fitReadPageWindowResult, isReadPageWindowResult } from './read-page-window.js';
@@ -8223,6 +8223,7 @@ export class Agent extends LoopDetector {
         type: 'function',
         function: { name: '', arguments: '' },
       };
+      preserveToolCallSignature(existing, toolCall);
       if (toolCall.id) existing.id = toolCall.id;
       if (toolCall.type) existing.type = toolCall.type;
       if (toolCall.function?.name) existing.function.name += toolCall.function.name;
@@ -43135,6 +43136,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               if (!toolCallsAccumulator[idx]) {
                 toolCallsAccumulator[idx] = { id: '', function: { name: '', arguments: '' } };
               }
+              preserveToolCallSignature(toolCallsAccumulator[idx], tc);
               if (tc.id) toolCallsAccumulator[idx].id = tc.id;
               if (tc.function?.name) toolCallsAccumulator[idx].function.name += tc.function.name;
               if (tc.function?.arguments) toolCallsAccumulator[idx].function.arguments += tc.function.arguments;
