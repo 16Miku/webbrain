@@ -31,7 +31,8 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: direct compatibility projection and base provider share bounded app-metadata exclusions`, () => {
     const message = { role: 'user', content: 'Owned user words.', webbrainResumeTaskId: 'resume_task_owned',
       webbrainPlannerClarification: { task: 'owned' }, webbrainAppOwned: true, webbrainAppOwnedKind: 'fixture',
-      webbrainSelectionScopeRestored: true, webbrainUserAuthoredText: 'Owned original words.' };
+      webbrainSelectionScopeRestored: true, webbrainUserAuthoredText: 'Owned original words.',
+      webbrainTurnKind: 'update', webbrainTaskClarifications: [{ question: 'Which?', answer: 'Owned reply.', source: 'text' }] };
     const before = structuredClone(message), expected = [{ role: 'user', content: message.content }];
     assert.deepEqual(new BaseLLMProvider()._mapMessages([message]), expected);
     assert.deepEqual(mapProviderMessages([message]), expected);
@@ -53,7 +54,7 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(messages[0].webbrainResumeTaskId, 'resume_task_internal');
   });
 
-  test(`${build}: applied genuine steering keeps its private prior dispatch receipt locally while provider sees only correction text`, () => {
+  test(`${build}: applied genuine steering keeps its private prior dispatch receipt locally while provider sees the shared user task without private receipts`, () => {
     const agent = new Agent({}); agent._persist = () => {}; agent._traceSteeringRevision = () => {};
     const messages = [{ role: 'system', content: 'Owned system.' }, { role: 'user', content: 'Fill the owned form.' }];
     agent.conversations.set(820, messages);
@@ -67,7 +68,9 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(stored[2].webbrainSteering.messageId, 'owned-correction');
     const provider = new OpenAICompatibleProvider({ model: 'gpt-4o' });
     const body = provider._buildChatCompletionsBody(agent._modelVisibleConversationMessages(stored), {}, false);
-    assert.equal(body.messages.at(-1).content, applied.content);
+    assert.ok(body.messages.at(-1).content.startsWith(applied.content));
+    assert.ok(body.messages.at(-1).content.endsWith(agent._plannerAuthenticTaskText(stored)));
+    assert.equal(applied.content, 'Keep the result as a draft; the literal word webbrainSteering stays in my text.');
     assert.equal(Object.hasOwn(body.messages.at(-1), 'webbrainSteering'), false);
     assert.equal(JSON.stringify(body).includes('OWNED_PRIVATE_DISPATCH_RECEIPT'), false);
     assert.equal(applied.webbrainSteering.messageId, 'owned-correction');

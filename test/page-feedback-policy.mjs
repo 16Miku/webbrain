@@ -102,6 +102,32 @@ for (const build of ['chrome', 'firefox']) {
   const keep = (name, args, current = page, events = passive) =>
     canRetainPageFeedbackCalls([call(name, args)], { url: 'https://example.com/photo/1', page }, current, events);
 
+  test(`${build}: research delegation survives source-page churn through the pending decision`, () => {
+    const delegation = call('delegate_research', { authorization_token: 'approved-research', timeout_seconds: 180 });
+    const state = { url: 'https://example.com/photo/1', page };
+    for (const events of [passive,
+      [{ kind: 'dom', source: 'unknown', frameId: 0, target: 'span#counter' }],
+      [{ kind: 'navigation', source: 'unknown', frameId: 23 }],
+    ]) {
+      assert.equal(canRetainPageFeedbackCalls([delegation], state, page, events), true);
+      assert.equal(canRetainPageFeedbackCalls([delegation], state, null, events, { pending: true }), true,
+        'The approved request does not depend on the source page or a successful tree refresh');
+    }
+    assert.equal(canRetainPageFeedbackCalls([delegation, call('click', { x: 10, y: 20 })], state, page, passive), false,
+      'Retaining delegation does not retain a stale action in the same batch');
+  });
+
+  test(`${build}: research delegation retains user, navigation and viewport fences`, () => {
+    const args = { authorization_token: 'approved-research' };
+    for (const event of [
+      { kind: 'input', source: 'user', frameId: 0 },
+      { kind: 'click', source: 'user', frameId: 23 },
+      { kind: 'navigation', source: 'unknown', frameId: 0 },
+      { kind: 'resize', source: 'unknown', frameId: 0, target: 'viewport' },
+      ...['base', 'style', 'link'].map(target => ({ kind: 'dom', source: 'page', frameId: 0, target })),
+    ]) assert.equal(keep('delegate_research', args, page, [...passive, event]), false, JSON.stringify(event));
+  });
+
   for (const name of ['fetch_url', 'research_url']) {
     for (const method of [undefined, 'GET', 'HEAD', 'get', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
       const expected = method == null || ['GET', 'HEAD'].includes(method.toUpperCase())

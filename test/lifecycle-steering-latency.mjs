@@ -62,7 +62,10 @@ function makeAgent(Agent, next) {
 const run = (agent, tab, streaming, text, update, options) => streaming
   ? agent.processMessageStream(tab, text, update, 'act', options)
   : agent.processMessage(tab, text, update, 'act', [], options);
-const authored = messages => messages.filter(message => message.role === 'user' && !message.webbrainAppOwned).at(-1)?.content;
+const authored = messages => {
+  const message = messages.filter(message => message.role === 'user' && !message.webbrainAppOwned).at(-1);
+  return message?.webbrainUserAuthoredText ?? message?.content;
+};
 
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);

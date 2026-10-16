@@ -169,7 +169,12 @@ for (const build of ['chrome', 'firefox']) {
         [['c1', 'Open the docs page instead'], ['c2', 'Then read its changelog'], ['c3', 'Skip the archive']]);
       assert.deepEqual(events.slice(0, 4), ['applied:c1', 'applied:c2', 'applied:c3', 'model'],
         'Every correction is applied before the resumed run asks the model or acts');
-      assert.equal(requests[0].latest, 'Skip the archive', 'The first resumed request answers the corrected task');
+      assert.ok(requests[0].latest.startsWith('Skip the archive'), 'The first resumed request keeps the latest correction');
+      const shared = JSON.parse(requests[0].latest.slice(requests[0].latest.indexOf('{')));
+      assert.equal(shared.latest_request, 'Skip the archive');
+      assert.deepEqual(shared.updates.filter(update => update.kind === 'update').map(update => update.text_ref === 'latest_request' ? shared.latest_request : update.text),
+        ['Open the docs page instead', 'Then read its changelog', 'Skip the archive'],
+        'The execution model sees every correction in order through the shared task context');
       assert.ok(requests[0].users.includes('Open the docs page instead') && requests[0].users.includes('Then read its changelog'));
       assert.equal(updates.some(update => update.type === 'steering_queued'), false);
       await waitFor(() => savedSteering(tab).length === 3, 'the applied corrections to be saved');
