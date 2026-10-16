@@ -1,3 +1,4 @@
+import { historyRecoveryMetadata } from '../chat-history-recovery.js';
 const DB_NAME = 'webbrain_chat_history';
 const DB_VERSION = 1;
 const STORE_NAME = 'records';
@@ -57,6 +58,7 @@ function normalizeMessage(message, index) {
   return {
     role: ['user', 'assistant', 'system', 'error'].includes(message?.role) ? message.role : 'unknown',
     text: normalizeText(message?.text),
+    ...(message?.role === 'user' ? historyRecoveryMetadata(message) : {}),
     format: message?.format === 'markdown' ? 'markdown' : 'text',
     index: Number.isFinite(Number(message?.index)) ? Number(message.index) : index,
     createdAt: Number.isFinite(Number(message?.createdAt)) ? Number(message.createdAt) : null,
@@ -139,7 +141,13 @@ export async function saveChatHistoryRecord(input) {
   const existing = await promisifyReq(tx(db).objectStore(STORE_NAME).get(String(input.id))).catch(() => null);
   const record = normalizeRecord(input, existing);
   if (!record.id || record.userMessageCount < 1) return null;
-  await promisifyReq(tx(db, 'readwrite').objectStore(STORE_NAME).put(record));
+  const transaction = tx(db, 'readwrite');
+  await new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error || new Error('History save transaction failed'));
+    transaction.onabort = () => reject(transaction.error || new Error('History save transaction aborted'));
+    transaction.objectStore(STORE_NAME).put(record);
+  });
   return record;
 }
 
@@ -148,6 +156,7 @@ function sameMessageContent(left, right) {
   const rightAttachments = (Array.isArray(right.attachments) ? right.attachments : []).map(normalizeAttachment);
   return left.role === right.role
     && left.text === right.text
+    && JSON.stringify(historyRecoveryMetadata(left)) === JSON.stringify(historyRecoveryMetadata(right))
     && (left.format || 'text') === (right.format || 'text')
     && Number(left.index) === Number(right.index)
     && JSON.stringify(leftAttachments) === JSON.stringify(rightAttachments);
@@ -217,10 +226,10 @@ export async function repairChatHistoryRecordMessages(id, messages) {
 
 /**
  * List chat history records, newest first.
- * @param {Object} [params] - { limit }.
+ * @param {Object} [params] - { limit, url } (optional exact URL filter).
  * @returns {Promise<Array<Object>>} Array of history records.
  */
-export async function listChatHistoryRecords({ limit = 500 } = {}) {
+export async function listChatHistoryRecords({ limit = 500, url = null } = {}) {
   const db = await openDB();
   const index = tx(db).objectStore(STORE_NAME).index('updatedAt');
   const out = [];
@@ -229,7 +238,7 @@ export async function listChatHistoryRecords({ limit = 500 } = {}) {
     req.onsuccess = () => {
       const cursor = req.result;
       if (!cursor || out.length >= limit) return resolve();
-      out.push(cursor.value);
+      if (url === null || cursor.value.url === url) out.push(cursor.value);
       cursor.continue();
     };
     req.onerror = () => resolve();

@@ -193,6 +193,39 @@ export function observeMemoryPageInPage(args = {}) {
   const credential = sensitive(fieldFacts);
   const label = clip(safeText(element?.getAttribute?.('aria-label') || element?.innerText || element?.getAttribute?.('title') || ''), 512);
   const form = element?.form || element?.closest?.('form');
+  // Gmail saves compose edits as owner drafts. They are not delivery actions
+  // and must not reserve the email's one-send memory entry. This fact comes
+  // from the isolated DOM observer, never model arguments or quoted page text.
+  const gmailDraftField = (() => {
+    if (!element || credential || location.hostname !== 'mail.google.com'
+        || !/^\/mail\//.test(location.pathname)) return false;
+    const dialog = element.closest?.('[role="dialog"]');
+    if (!dialog) return false;
+    const visible = field => {
+      if (!field?.isConnected || field.closest?.('[aria-hidden="true"]')) return false;
+      const rect = field.getBoundingClientRect();
+      const style = getComputedStyle(field);
+      return rect.width > 0 && rect.height > 0
+        && style.display !== 'none' && style.visibility !== 'hidden';
+    };
+    const subject = dialog.querySelector('input[name="subjectbox"]');
+    const bodies = Array.from(dialog.querySelectorAll('[role="textbox"][contenteditable="true"]')).filter(field => visible(field)
+      && (field.classList.contains('Am') || field.getAttribute('aria-label') === 'Message Body'));
+    if (!visible(subject) || bodies.length !== 1 || !visible(element)) return false;
+    if (element === bodies[0]) return 'body';
+    if (element === subject) return 'subject';
+    if (element.matches('input[name="to"],input[name="cc"],input[name="bcc"]')) return 'recipient';
+    return element.matches('input[role="combobox"][autocomplete="off"]')
+      && /^(?:to|cc|bcc) recipients$/i.test(element.getAttribute('aria-label') || '') ? 'recipient' : false;
+  })();
+  const gmailSearchControl = (() => {
+    if (!element || credential || location.protocol !== 'https:' || location.hostname !== 'mail.google.com'
+        || !/^\/mail\//.test(location.pathname) || element.closest?.('[role="dialog"],.a3s,[data-message-id]')) return false;
+    const search = element.closest?.('form#aso_search_form_anchor[role="search"]');
+    if (!search || search.method.toLowerCase() !== 'get') return false;
+    const field = search.querySelector('input[name="q"][autocomplete="off"]');
+    return element === field && /^(?:Ask Gmail|Search mail)$/.test(field.getAttribute('aria-label') || '');
+  })();
   let scope = form || element;
   const draftSelector = 'textarea,[contenteditable=true],input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]):not([type=checkbox]):not([type=radio])';
   let draftFields = [];
@@ -243,6 +276,8 @@ export function observeMemoryPageInPage(args = {}) {
     identifiers,
     elementFacts: { found: !!element, tag: clip(element?.tagName || '', 30), ...fieldFacts, type, name,
       role: clip(element?.getAttribute?.('role') || '', 60), label, credential,
+      ...(gmailDraftField ? { gmailDraftField: true, gmailDraftFieldKind: gmailDraftField } : {}),
+      ...(gmailSearchControl ? { gmailSearchControl: true } : {}),
       href: clip(element?.href || element?.closest?.('a')?.href || '', 4096),
       formMethod: clip(form?.method || '', 20), formAction: clip(form?.action || '', 4096),
       draftText: clip(safeText(drafts.join('\n')), 2048), nearbyText: clip(safeText(scope?.innerText), 2048) },
@@ -323,8 +358,20 @@ export class BotMemorySession {
     this.closed = false;
   }
   rememberAttempt(attempt, observedTarget = null) {
+    const scope = this.config.context?.reconciliation;
+    const rootRunId = this.config.runId.replace(/-recovery-[23]$/, '');
+    const pinnedVerified = attempt?.status === 'verified' && scope?.version === 1
+      && /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(rootRunId)
+      && scope.runId === rootRunId && typeof scope.instructionHash === 'string' && /^[a-f0-9]{64}$/.test(scope.instructionHash)
+      && Array.isArray(scope.targets) && scope.targets.length <= 20
+      && typeof attempt.runId === 'string' && Number.isInteger(attempt.policyVersion)
+      && attempt.policyVersion > 0 && typeof attempt.actionKey === 'string' && !!attempt.actionKey
+      && typeof attempt.identity === 'string' && attempt.identity === memoryTargetIdentity(attempt.target)
+      && scope.targets.some(target => target?.attemptId === attempt.id && target.runId === attempt.runId
+        && target.policyVersion === attempt.policyVersion && target.actionKey === attempt.actionKey
+        && target.identity === attempt.identity);
     if (!attempt || typeof attempt.id !== 'string' || attempt.botId !== this.config.botId
-        || !['dispatched', 'uncertain'].includes(attempt.status)) return;
+        || (!['dispatched', 'uncertain'].includes(attempt.status) && !pinnedVerified)) return;
     const identity = memoryTargetIdentity(attempt.target);
     if (!identity || (observedTarget && identity !== memoryTargetIdentity(observedTarget))) return;
     this.knownAttempts.set(attempt.id, { attemptId: attempt.id, target: structuredClone(attempt.target),
@@ -390,6 +437,27 @@ export class BotMemorySession {
     if (await this.canBootstrapNavigation(tabId, name, args)) return { allowed: true, readOnly: true, bootstrapNavigation: true };
     const observation = await this.observation(tabId, name, args);
     if (!observation.url || !observation.targets.length) return { allowed: false, reason: 'Observe the target page before acting.' };
+    const nonSubmitting = args?.submit === false || args?.submit === undefined;
+    const singlePlainKey = name === 'press_keys' && (args?.repeat === undefined || args.repeat === 1)
+      && !['keys', 'modifiers', 'ctrlKey', 'altKey', 'metaKey', 'shiftKey'].some(key => args?.[key] !== undefined);
+    const draftEdit = nonSubmitting && (['set_field', 'type_ax', 'type_text', 'click', 'click_ax'].includes(name)
+      || (singlePlainKey && (args.key === 'Tab' || (args.key === 'Enter' && observation.elementFacts?.gmailDraftFieldKind === 'recipient'))));
+    const searchEdit = (['type_ax', 'type_text'].includes(name) && nonSubmitting)
+      || (name === 'set_field' && [undefined, false, true].includes(args?.submit))
+      || (singlePlainKey && ['Enter', 'Tab'].includes(args.key));
+    if (!consequentialSubmit && observation.elementFacts?.found === true
+        && observation.elementFacts.credential !== true
+        && ((!detectedSubmit && draftEdit && observation.elementFacts.gmailDraftField === true)
+          || (searchEdit && observation.elementFacts.gmailSearchControl === true))) {
+      let gmailCompose = false;
+      try {
+        const url = new URL(observation.url);
+        gmailCompose = url.protocol === 'https:' && url.hostname === 'mail.google.com' && /^\/mail\//.test(url.pathname);
+      } catch {}
+      if (gmailCompose) return observation.elementFacts.gmailSearchControl === true
+        ? { allowed: true, readOnly: true, searchOnly: true }
+        : { allowed: true, readOnly: true, draftOnly: true };
+    }
     if ((name === 'click' || consequentialSubmit) && observation.elementFacts?.found !== true) {
       return { allowed: false, reason: 'The action target could not be resolved. Read the page and choose an observed control.' };
     }

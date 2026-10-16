@@ -161,7 +161,20 @@ a script, by another launcher, or alongside a second new one. A menu that opens
 inside a dialog already on screen counts, and so does a menu inside a new
 wrapper that opened with it. A Mastodon post's
 menu and its confirmation are captured the same way for the native post, and
-the action bar Mastodon draws beside a detailed status belongs to that status. A
+the action bar Mastodon draws beside a detailed status belongs to that status.
+On a post of the signed-in account, the menu's entries Mastodon marks dangerous
+(Delete, Delete & re-draft; buttons since 4.4, links drawn as buttons in 4.3)
+are deletions of that post by page structure, read or not: with Mastodon's confirmation preference on, the confirmation such an
+entry's click opens belongs to the post; with it off, the entry is the deletion
+itself. Mastodon makes the rest of the page inert while its confirmation is
+open, so the native identity reads (the post, its links and text, the signed-in
+account) look through the inert mark on the siblings of that open modal root,
+and through nothing else. The signed-in account is the navigation's account
+link, or, in layouts without one, the account the app's initial state names;
+the two must agree. The confirmation's primary button counts as Mastodon's own
+commit in any layout, also below 1175 px, where Mastodon shows no composer
+beside the timeline. The probe identifies the page's records once per run,
+however many of its checks need them. A
 confirmation dialog borrows the record of the agent's own authorized click
 only when it opened after that click was checked, within 30 seconds, and holds
 that one deletion control. The probe receives nothing from the request.

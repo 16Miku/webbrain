@@ -186,6 +186,7 @@ import {
 } from '../context-menu-storage.js';
 import { firefoxHostPermissionFailure, firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
+import { historyMessagesForRecovery } from '../chat-history-recovery.js';
 import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { shouldAutoGroupTabs } from '../tab-group-preference.js';
@@ -6873,31 +6874,36 @@ export class Agent extends LoopDetector {
     };
   }
 
-  async _persistNow(tabId) {
+  async _persistNow(tabId, { snapshotForBudget = null, preserveStateOnFailure = false, storageEntries = {} } = {}) {
     if (tabId == null) return { ok: false, degraded: false, reason: 'invalid_tab' };
     const existing = this.persistTimers.get(tabId);
     if (existing) {
       clearTimeout(existing);
       this.persistTimers.delete(tabId);
     }
-    const entry = this._conversationStorageEntry(tabId);
+    const snapshot = snapshotForBudget || (maxBytes => this._conversationStorageEntry(tabId, { maxBytes }));
+    const entry = snapshot(SESSION_CONVERSATION_BUDGET_BYTES);
+    const extraEntries = retry => typeof storageEntries === 'function' ? storageEntries({ retry }) : storageEntries;
+    const failed = error => preserveStateOnFailure
+      ? { ok: false, degraded: false, reason: isSessionQuotaError(error) ? 'quota' : 'unavailable' }
+      : this._markPersistenceDegraded(tabId, isSessionQuotaError(error) ? 'quota' : 'unavailable', error);
     if (!entry) return { ok: false, degraded: false, reason: 'no_conversation' };
     try {
-      await browser.storage.session.set({ [this._convKey(tabId)]: entry });
+      await browser.storage.session.set({ ...extraEntries(false), [this._convKey(tabId)]: entry });
       this._forgetPersistedSteering(tabId, entry.messages);
       return { ok: true, degraded: entry.sessionSnapshotCompacted === true, reason: entry.sessionSnapshotCompacted ? 'sanitized' : null };
     } catch (error) {
       if (isSessionQuotaError(error)) {
-        const compactEntry = this._conversationStorageEntry(tabId, { maxBytes: SESSION_CONVERSATION_RETRY_BUDGET_BYTES });
+        const compactEntry = snapshot(SESSION_CONVERSATION_RETRY_BUDGET_BYTES);
         try {
-          await browser.storage.session.set({ [this._convKey(tabId)]: compactEntry });
+          await browser.storage.session.set({ ...extraEntries(true), [this._convKey(tabId)]: compactEntry });
           this._forgetPersistedSteering(tabId, compactEntry.messages);
           return { ok: true, degraded: true, reason: 'quota_compacted' };
         } catch (retryError) {
-          return this._markPersistenceDegraded(tabId, isSessionQuotaError(retryError) ? 'quota' : 'unavailable', retryError);
+          return failed(retryError);
         }
       }
-      return this._markPersistenceDegraded(tabId, 'unavailable', error);
+      return failed(error);
     }
   }
 
@@ -6986,6 +6992,44 @@ export class Agent extends LoopDetector {
 
   async ensureConversationId(tabId, mode = 'ask') {
     return (await this.getConversationState(tabId, mode)).conversationId;
+  }
+
+  async recoverChatHistory(tabId, record, { storageEntries = {} } = {}) {
+    await this._hydrate(tabId);
+    if (this._runningTabs.has(tabId)) throw new Error('Wait for the current response to finish.');
+    if (this._botMemorySessions.has(tabId)) throw new Error('Managed bot conversations cannot recover chat history.');
+    const messages = historyMessagesForRecovery(record, content => this._wrapUntrusted('read_page', content));
+    if (!messages.some(message => message.role === 'user')) throw new Error('No conversation to recover.');
+    // Persist the replacement independently so a failed write leaves every part
+    // of the current conversation (including workflow state and pending plans) usable.
+    const conversationId = `conv_${tabId}_${Date.now()}_${secureRandomBase36Token(12)}`;
+    const recoveredMessages = [{ role: 'system', content: this._buildSystemPrompt('ask') }, ...messages];
+    const currentEntry = this._conversationStorageEntry(tabId);
+    const snapshotForBudget = maxBytes => {
+      const serialized = serializeConversationForSession(recoveredMessages, { maxBytes });
+      return {
+        mode: 'ask', messages: serialized.messages, conversationId,
+        sessionSnapshotCompacted: serialized.compacted,
+        sessionSnapshotBytes: serialized.bytes,
+        // Paid CAPTCHA answers and dispatch receipts belong to the page document.
+        nativeCaptchaAnswer: currentEntry?.nativeCaptchaAnswer || null,
+        nativeCaptchaDispatch: currentEntry?.nativeCaptchaDispatch || null,
+      };
+    };
+    const hadPendingPersist = this.persistTimers.has(tabId);
+    const persisted = await this._persistNow(tabId, { snapshotForBudget, preserveStateOnFailure: true, storageEntries });
+    if (!persisted?.ok) {
+      if (hadPendingPersist) this._persist(tabId);
+      throw new Error('Unable to persist the recovered conversation.');
+    }
+    // Cleanup is irreversible, so run it only after the replacement is durable.
+    // Keep that snapshot in storage while installing its matching in-memory state.
+    this.clearConversation(tabId, { preserveStorage: true });
+    this.conversations.set(tabId, recoveredMessages);
+    this.conversationModes.set(tabId, 'ask');
+    this.conversationIds.set(tabId, conversationId);
+    this.hydratedTabs.add(tabId);
+    return this.getConversationState(tabId);
   }
 
   async forkConversation(sourceTabId, forkTabId) {
@@ -13509,7 +13553,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (runId) trace.recordToolCall(runId, step, {
           name: fnName, args: fnArgs, result: messageRecipientBlock, latencyMs: 0,
         });
-        onUpdate('warning', { message: 'Message send blocked until the active recipient is verified.' });
+        onUpdate('warning', {
+          message: messageRecipientBlock.reasonCode === 'message_target_unresolved'
+            ? 'The requested control could not be resolved. No action was dispatched.'
+            : 'Message send blocked until the active recipient is verified.',
+        });
         if (interruptFailedBrowserAction(toolIndex, fnName)) { navNotices.length = 0; break; }
         continue;
       }
@@ -20758,14 +20806,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _maybeRunPlannerGate(tabId, messages, enriched, onUpdate, mode, costState, runId, tabInfo = null, runOptions = {}) {
-    // Keep managed cloud behavior aligned with Chrome: unattended runs cannot
-    // wait on a side-panel plan review that has no API response channel.
+    // Cloud runs never enter interactive plan review. A fresh Cloud ACT task
+    // still needs the existing lightweight intent contract, especially exact
+    // message recipients. Prior turns and model-produced resume instructions
+    // are not new user grants. ASK/recovery remains without write authority.
     const standaloneChatRun = this._isStandaloneChatRun(runOptions);
     const plannerMode = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun
       ? this._plannerMode()
       : 'off';
     const runPlanner = plannerMode !== 'off';
-    const runIntent = this._isActionMode(mode) && runOptions?.cloudRun !== true && !standaloneChatRun;
+    const cloudIntent = this._isActionMode(mode) && runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
+      && runOptions?.apiMutationsDenied !== true;
+    const runIntent = this._isActionMode(mode) && !standaloneChatRun
+      && (runOptions?.cloudRun !== true || cloudIntent);
+    const intentMessage = cloudIntent
+      ? { role: 'user', content: this._plannerUserAuthoredText(enriched) } : enriched;
 
     // Snapshot prior turns for the planner digest BEFORE appending, then always
     // record the user's turn first so a planner failure (or a throw while
@@ -20783,7 +20838,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._messagesForSourceGroundedRun(messages, runOptions, null, sourceBoundPriorMessages)
       : null;
     const priorMessages = runIntent || runReadScopeClassifier
-      ? (sourceBoundRun
+      ? (cloudIntent ? [] : sourceBoundRun
         ? sourceBoundPlannerMessages.slice(sourceBoundPlannerMessages[0]?.role === 'system' ? 1 : 0)
         : messages.slice())
       : null;
@@ -20812,7 +20867,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return { proceed: true, requestKind: 'execute', requiresStateChange: false };
     }
-    const fastPathPlan = runOptions.steeringRevision == null
+    const fastPathPlan = !cloudIntent && runOptions.steeringRevision == null
       ? this._recommendedActionFastPathPlan(runOptions) : null;
     if (fastPathPlan) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -20842,13 +20897,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
     }
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
-    const followUpContext = { ...this._buildPlannerFollowUpContext(priorMessages),
-      authenticTaskText: this._activeTaskBinding(messages).text };
+    const followUpContext = cloudIntent ? { authenticTaskText: this._plannerUserAuthoredText(enriched) }
+      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._activeTaskBinding(messages).text };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
       gate = await this._runPlannerIntentGate(
-        tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+        tabId, intentMessage, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
       );
     } else {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -20857,7 +20912,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, plannerMode, mode, runOptions, followUpContext,
         )
         : await this._runPlannerIntentGate(
-          tabId, enriched, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
+          tabId, intentMessage, onUpdate, costState, runId, historyDigest, tabInfo, mode, runOptions, followUpContext,
         );
     }
     if (this._steeringGateSuperseded(tabId, runOptions)) return { proceed: false, steeringSuperseded: true };
@@ -21871,6 +21926,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           responseLanguagePolicy: plan.response_language,
           requiresStateChange: false,
           requiresSubmission: plan.request_kind === 'clarify' && plan.requires_submission === true,
+        };
+      }
+      if (runOptions?.cloudRun === true && runOptions?.trustedContinuation !== true
+          && runOptions?.apiMutationsDenied !== true && plan.messaging?.target_kind === 'named') {
+        // Semantic intent is necessary but cannot invent a named destination.
+        // The fresh authenticated task must itself contain each exact identity;
+        // a page title, OCR, prior turn or address suffix cannot provide it.
+        const authored = normalizeRecipientAnswer(this._plannerUserAuthoredText(enriched)).slice(0, 100000);
+        const tokenChar = /[\p{L}\p{N}@._%+-]/u;
+        const present = plan.messaging.recipients.every(recipient => {
+          const identity = normalizeRecipientIdentity(recipient.identity);
+          if (!identity) return false;
+          for (let at = authored.indexOf(identity); at >= 0; at = authored.indexOf(identity, at + 1)) {
+            const before = authored[at - 1] || '';
+            const end = at + identity.length;
+            const after = authored[end] || '';
+            const sentencePeriod = after === '.' && !tokenChar.test(authored[end + 1] || '');
+            if ((!before || !tokenChar.test(before)) && (!after || !tokenChar.test(after) || sentencePeriod)) return true;
+          }
+          return false;
+        });
+        if (!present) return {
+          proceed: false, reason: 'active_recipient_unverified', requestKind: 'clarify', plannerClarification: true,
+          requiresStateChange: false, requiresSubmission: false, messaging: null,
+          message: 'The recipient could not be verified from the current task. Name the exact recipient and retry. No page tools ran.',
         };
       }
       const messagingPin = await this._pinActiveConversationMessagingTarget(tabId, plan.messaging, tabUrl);
@@ -25596,6 +25676,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? (probe?.reasonCode === 'message_commit_without_composer'
           ? 'Message send blocked: this control commits a message (for example "Send" / "Send without a note") but no active composer or recipient could be verified. Changing click targeting methods will not help. Open the intended conversation so its composer and recipient are visible, or report that the message could not be sent.'
           : 'Message send blocked: no message composer is visible, so this send cannot be verified. Changing click targeting methods will not resolve this classification failure. Re-read the page to find a supported navigation or composer-opening control; if none is available, report the blocker instead of repeating the click.')
+        : probe?.reasonCode === 'message_target_unresolved'
+        ? 'The requested control could not be resolved in the current page or frame, so no action was dispatched. This does not establish a recipient mismatch or an attempted Send. Read fresh page evidence and use an exact visible control or fresh ref_id; do not guess hidden menu labels or repeat the same unresolved target. If the control is unavailable, report that blocker.'
         : inconclusive
         ? 'Message action blocked: WebBrain could not conclusively resolve the target control and active composer. Re-read the page and retry with an exact visible control or fresh ref_id.'
         : target
@@ -26831,8 +26913,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const modal = candidate?.closest?.('.modal-root__modal.safety-action-modal');
       if (!modal || !isRenderedNative(candidate) || !isRenderedNative(modal)
           || candidate.disabled || candidate.getAttribute('aria-disabled') === 'true') return false;
-      if (!doc.querySelector('form.compose-form textarea.autosuggest-textarea__textarea')
-          || !doc.querySelector('.navigation-bar a.account__display-name[href],.navigation-panel a.account__display-name[href]')) return false;
+      // The signed-in web app, in any layout: the navigation's account link,
+      // or the app's own state naming the signed-in account. Mastodon shows
+      // no composer beside the timeline in windows narrower than 1175 px.
+      const me = nativeInitialState()?.meta?.me;
+      if (!doc.querySelector('.navigation-bar a.account__display-name[href],.navigation-panel a.account__display-name[href]')
+          && !(typeof me === 'string' && me)) return false;
       const modals = [...doc.querySelectorAll('.modal-root__modal.safety-action-modal')].filter(isRenderedNative);
       const primary = [...modal.querySelectorAll('.safety-action-modal__actions > button.button')].filter(isRenderedNative);
       return modals.length === 1 && primary.length === 1 && primary[0] === candidate;
@@ -27132,6 +27218,75 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return true;
     };
+    // While one of Mastodon's modals is open, its ModalRoot marks every
+    // sibling of .modal-root inert: the page behind stays rendered, only out
+    // of reach. A delete confirmation's post and the signed-in account are
+    // there, so the reads that identify them look through that mark (and the
+    // pointer-events an inert polyfill adds), and through nothing else. The
+    // probe runs synchronously, so the page cannot change while it caches this.
+    let nativeModalBackgroundSet = null;
+    const nativeModalBackgrounds = () => {
+      if (nativeModalBackgroundSet) return nativeModalBackgroundSet;
+      nativeModalBackgroundSet = new Set();
+      try {
+        for (const root of doc.querySelectorAll('.modal-root')) {
+          const open = [...root.querySelectorAll('.modal-root__modal')].some(modal => {
+            const rect = modal.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          });
+          if (!open) continue;
+          for (const sibling of root.parentElement?.children || []) {
+            if (sibling !== root && sibling.matches('[inert],[aria-hidden="true"]')) nativeModalBackgroundSet.add(sibling);
+          }
+        }
+      } catch {}
+      return nativeModalBackgroundSet;
+    };
+    const nativeIdentityVisible = element => {
+      const backgrounds = nativeModalBackgrounds();
+      let behind = false;
+      for (let node = element; node && backgrounds.size && !behind; node = node.parentElement) behind = backgrounds.has(node);
+      if (!behind) return nativeResourceVisible(element);
+      try {
+        const rect = element.getBoundingClientRect();
+        if (!element.isConnected || !(rect.width > 0 && rect.height > 0)) return false;
+        for (let node = element; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (node.matches('[hidden]') || (node.matches('[inert],[aria-hidden="true"]') && !backgrounds.has(node))
+              || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
+              || Number.parseFloat(style.opacity) === 0 || style.contentVisibility === 'hidden') return false;
+        }
+        return true;
+      } catch { return false; }
+    };
+    // A Mastodon account as its profile address on this server.
+    const nativeAccountIdentity = href => {
+      try { const parsed = new URL(href, url); return parsed.origin === location.origin && !parsed.search && !parsed.hash
+        && /^\/@[a-z0-9_]+\/?$/i.test(parsed.pathname) ? `${parsed.origin}${parsed.pathname.replace(/\/$/, '').toLowerCase()}` : ''; }
+      catch { return ''; }
+    };
+    let nativeInitialStateValue;
+    const nativeInitialState = () => {
+      if (nativeInitialStateValue !== undefined) return nativeInitialStateValue;
+      nativeInitialStateValue = null;
+      try { const state = doc.querySelector('script#initial-state[type="application/json"]');
+        if (state && state.textContent.length <= 2500000) nativeInitialStateValue = JSON.parse(state.textContent);
+      } catch {}
+      return nativeInitialStateValue;
+    };
+    // The signed-in account: the navigation's account link where the layout
+    // shows one (beside the composer on wide windows; in the navigation panel
+    // since 4.4), else the app's own initial state, which every layout has.
+    // Two that disagree name no account.
+    const nativeSignedInAccount = () => {
+      const shown = [...new Set([...doc.querySelectorAll('.navigation-bar a.account__display-name[href],.navigation-panel a.account__display-name[href]')]
+        .filter(nativeIdentityVisible).map(link => nativeAccountIdentity(link.href)).filter(Boolean))];
+      const state = nativeInitialState(), me = state?.meta?.me;
+      const account = typeof me === 'string' && me && state.accounts && typeof state.accounts === 'object' ? state.accounts[me] : null;
+      const initial = typeof account?.url === 'string' ? nativeAccountIdentity(account.url) : '';
+      if (shown.length > 1 || (shown.length && initial && shown[0] !== initial)) return '';
+      return shown[0] || initial;
+    };
     // The native record an element belongs to: its own status, or for the
     // action bar Mastodon renders beside a detailed status (not inside it),
     // the one detailed status in the same wrapper.
@@ -27179,30 +27334,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
     const nativeResourceProofs = () => {
       if (args.__wbNativeResourceAdapter !== 'mastodon') return [];
-      const identity = href => {
-        try { const parsed = new URL(href, url); return parsed.origin === location.origin && !parsed.search && !parsed.hash
-          && /^\/@[a-z0-9_]+\/?$/i.test(parsed.pathname) ? `${parsed.origin}${parsed.pathname.replace(/\/$/, '').toLowerCase()}` : ''; }
-        catch { return ''; }
-      };
-      const accounts = [...new Set([...doc.querySelectorAll('.navigation-bar a.account__display-name[href],.navigation-panel a.account__display-name[href]')]
-        .filter(nativeResourceVisible).map(link => identity(link.href)).filter(Boolean))];
-      if (accounts.length !== 1) return [];
-      const records = [...doc.querySelectorAll('.status,.detailed-status')].filter(nativeResourceVisible);
+      const signedIn = nativeSignedInAccount();
+      if (!signedIn) return [];
+      const records = [...doc.querySelectorAll('.status,.detailed-status')].filter(nativeIdentityVisible);
       const proofs = [];
       for (const record of records.slice(0, 80)) {
         const own = selector => [...record.querySelectorAll(selector)].filter(node => node.closest('.status,.detailed-status') === record);
-        const links = own('a.status__relative-time[href],a.detailed-status__datetime[href]').filter(nativeResourceVisible);
-        const authors = own('a.status__display-name[href],a.detailed-status__display-name[href]').filter(nativeResourceVisible);
-        const contents = own('.status__content__text--visible').filter(nativeResourceVisible);
+        const links = own('a.status__relative-time[href],a.detailed-status__datetime[href]').filter(nativeIdentityVisible);
+        const authors = own('a.status__display-name[href],a.detailed-status__display-name[href]').filter(nativeIdentityVisible);
+        const contents = own('.status__content__text--visible').filter(nativeIdentityVisible);
         if (links.length !== 1 || authors.length !== 1 || contents.length !== 1
             || record.querySelector('textarea,[contenteditable="true"]')) continue;
         let permalink; try { permalink = new URL(links[0].href); } catch { continue; }
         const handle = permalink.pathname.match(/^\/@([a-z0-9_]+)\/\d+\/?$/i)?.[1];
-        const account = identity(authors[0].href);
+        const account = nativeAccountIdentity(authors[0].href);
         if (!handle || permalink.origin !== location.origin || permalink.search || permalink.hash
-            || account !== `${permalink.origin}/@${handle.toLowerCase()}` || account !== accounts[0]) continue;
+            || account !== `${permalink.origin}/@${handle.toLowerCase()}` || account !== signedIn) continue;
         const nodes = [record, ...record.querySelectorAll('*')];
-        const textValues = [...new Set(nodes.slice(0, 400).filter(nativeResourceVisible).flatMap(node => [node.innerText, node.textContent])
+        const textValues = [...new Set(nodes.slice(0, 400).filter(nativeIdentityVisible).flatMap(node => [node.innerText, node.textContent])
           .filter(value => typeof value === 'string' && value.length <= 25000))];
         proofs.push({ url: permalink.href, account, nativeAdapter: 'mastodon',
           taskKey: args.__wbResourceTaskKey, runToken: args.__wbResourceRunToken,
@@ -27211,7 +27360,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       return proofs;
     };
+    // The probe runs synchronously, so the page's records cannot change while
+    // it does: they are identified once per run, not again for every question
+    // the probe asks about them.
+    let resourceProofsOfRun = null;
     const resourceProofs = () => {
+      if (resourceProofsOfRun) return [...resourceProofsOfRun];
       const known = new Set(publicationResourceUrls().urls);
       const records = [...doc.querySelectorAll('article,[role="article"],[role="listitem"],[itemid]')].filter(isVisible);
       const results = [];
@@ -27234,8 +27388,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Native evidence is authoritative for a native record, including its
       // active account fence; a generic wrapper cannot bypass that fence.
       const native = nativeResourceProofs();
-      return args.__wbNativeResourceAdapter === 'mastodon'
+      resourceProofsOfRun = args.__wbNativeResourceAdapter === 'mastodon'
         ? results.filter(proof => !proof._record.matches('.status,.detailed-status')).concat(native) : results;
+      return [...resourceProofsOfRun];
     };
     const resourceProofFor = target => {
       const records = resourceProofs();
@@ -27507,6 +27662,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           && String(link.getAttribute('role') || '').toLowerCase() !== 'button'
           && !destructiveLinkQuery(link);
       })();
+      // A dangerous entry of the signed-in account's own post menu that
+      // deletes at once (Mastodon's confirmation preference is off).
+      let nativeMenuDeletion = false;
       if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName)
           && nativeResourceVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true'
           && !control.form && !control.closest('form')) {
@@ -27514,19 +27672,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const more = control.closest('.status__action-bar,.detailed-status__action-bar')
           && control.querySelector('svg.icon-ellipsis-h');
         // The "…" button opens the post's menu: a caption read as a commit or
-        // a deletion would be another control. The menu's dangerous item read
-        // as deleting the post opens Mastodon's own confirmation.
+        // a deletion would be another control.
         const dangerousCaption = commitReading(actionReading) || deletionReading(actionReading);
-        const menuDelete = control.matches('.dropdown-menu__item--dangerous > button[data-index]')
-          && actionReading === 'delete_one';
+        // Mastodon marks a post menu's destructive entries dangerous. On a post
+        // of the signed-in account, the only kind with a native proof, those
+        // are Delete and Delete & re-draft: deletions of that post by page
+        // structure, whether or not a model has read their captions yet. The
+        // entries are buttons since 4.4, and links drawn as buttons in 4.3.
+        const menuDelete = control.matches('.dropdown-menu__item--dangerous > button[data-index],'
+          + '.dropdown-menu__item--dangerous > a[role="button"][data-index]') && !!control.closest('.dropdown-menu');
         // Mastodon supports direct deletion when its confirmation preference
         // is disabled. Only its explicit enabled native setting can prove
         // that this menu entry opens a confirmation rather than committing.
-        let deleteConfirmationEnabled = false;
-        try { const state = doc.querySelector('script#initial-state[type="application/json"]');
-          if (state && state.textContent.length <= 2500000) deleteConfirmationEnabled = JSON.parse(state.textContent)?.meta?.delete_modal === true;
-        } catch {}
-        const kind = proof?.nativeAdapter === 'mastodon' && proof.complete
+        const deleteConfirmationEnabled = nativeInitialState()?.meta?.delete_modal === true;
+        const nativeProof = proof?.nativeAdapter === 'mastodon' && proof.complete;
+        nativeMenuDeletion = nativeProof && menuDelete && !deleteConfirmationEnabled;
+        const kind = nativeProof
           ? more && !dangerousCaption ? 'menu' : menuDelete && deleteConfirmationEnabled ? 'confirmation' : '' : '';
         if (kind) {
           const popupLauncherToken = rememberPopupLauncher(control, proof, kind);
@@ -27857,7 +28018,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       };
       const nativeDeletionConfirmation = nativeConfirmationCommit(control) && resourceProofFor(control)?.nativeAdapter === 'mastodon';
       if (control && ['click', 'click_ax', 'iframe_click'].includes(toolName) && !navigationOwnsActivation
-          && (deletionReading(actionReading) || nativeDeletionConfirmation)
+          && (deletionReading(actionReading) || nativeDeletionConfirmation || nativeMenuDeletion)
           && isVisible(control) && !control.disabled && control.getAttribute('aria-disabled') !== 'true') {
         const info = submitInfo(control.form || control.closest('form'), 'resource deletion activation', null, null, 'strong', control);
         const actionResource = resourceProofFor(target);
@@ -29186,7 +29347,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Clear conversation for a tab.
    */
-  clearConversation(tabId) {
+  clearConversation(tabId, { preserveStorage = false } = {}) {
     this._failureRecovery.clear(tabId);
     this._cancelClarifications(tabId, 'conversation cleared');
     this._cancelUploadPickers(tabId, 'conversation cleared');
@@ -29222,6 +29383,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const steeringDiscarded = this._steeringJournal.discard(tabId);
     const t = this.persistTimers.get(tabId);
     if (t) { clearTimeout(t); this.persistTimers.delete(tabId); }
+    if (preserveStorage) return;
     try {
       this._taskAttemptCheckpoints?.delete(tabId);
       // The record saved before an action belongs to the cleared conversation.
