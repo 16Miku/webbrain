@@ -118,24 +118,14 @@ export function buildScenarioPayload(scenario, opts = {}) {
   const strictSecretMode = opts.strictSecretMode ?? (scenario.strictSecretMode === true);
   const unprotected = !!opts.unprotected;
 
-  // FREEZE MODE: snapshot wins. Site adapters / tier are ignored — whatever
-  // was active at capture time is what we replay. Multi-turn seeds still
-  // flow through verbatim.
+  // Freeze preserves both the captured prompt and its tool surface verbatim.
   const FROZEN = getFrozenSnapshot();
-  let systemContent;
-  if (FROZEN) {
-    systemContent = FROZEN.systemContent;
-  } else {
-    assertRunnableModeTier(mode, tier);
-    systemContent = getSystemPromptForMode(browser, mode, tier);
-    if (useSiteAdapters) {
-      systemContent += `\n\n${browser.UNIVERSAL_PREAMBLE.trim()}`;
-    }
-  }
+  if (!FROZEN) assertRunnableModeTier(mode, tier);
 
   // Fixture-owned enabled/active IDs reproduce on-demand package loading. Never
   // infer activation from seed/tool text; Compact uses the production exclusion.
   let skillLoaderTool;
+  let skillsPrompt = '';
   if (!FROZEN && scenario.packagedSkillIds?.length) {
     const skills = scenario.browser === 'firefox' ? firefoxSkills : chromeSkills;
     const enabled = scenario.packagedSkillIds.map(id => {
@@ -147,7 +137,7 @@ export function buildScenarioPayload(scenario, opts = {}) {
     const context = { mode, tier, activeSkillIds: scenario.activeSkillIds || [] };
     skillLoaderTool = skills.buildSkillLoaderDefinition(enabled, context);
     const loaded = skills.buildCustomSkillsPrompt(enabled, context);
-    if (loaded) systemContent += `\n\n${loaded}`;
+    if (loaded) skillsPrompt = loaded;
   }
 
   const tools = FROZEN
@@ -159,8 +149,12 @@ export function buildScenarioPayload(scenario, opts = {}) {
       researchEscalationEnabled: opts.researchEscalationEnabled === true,
     });
 
-  if (!FROZEN && tools.some(tool => tool.function?.name === 'browser_batch')) {
-    systemContent += `\n\n${browser.SYSTEM_PROMPT_BATCHING}`;
+  let systemContent = FROZEN
+    ? FROZEN.systemContent
+    : getSystemPromptForMode(browser, mode, tier, tools);
+  if (!FROZEN) {
+    if (useSiteAdapters) systemContent += `\n\n${browser.UNIVERSAL_PREAMBLE.trim()}`;
+    if (skillsPrompt) systemContent += `\n\n${skillsPrompt}`;
   }
 
   // ABLATION: remove both layers of injection defense.

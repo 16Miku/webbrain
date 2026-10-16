@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
+import { buildPayload, BROWSERS as PAYLOAD_BROWSERS, loadFrozenBaseline, getFrozenSnapshot } from './llm/lib/build-payload.mjs';
+import { buildScenarioPayload } from './llm/lib/scenario-payload.mjs';
 
 for (const build of ['chrome', 'firefox']) {
   const { getToolsForMode, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_BATCHING } = await import(`../src/${build}/src/agent/tools.js`);
@@ -97,5 +99,50 @@ for (const build of ['chrome', 'firefox']) {
       const text = fs.readFileSync(new URL(file, directory), 'utf8');
       assert.match(text, /'tool\.browser_batch':\s*["'][^"']+["']/u, file);
     }
+  });
+
+  test(`${build}: both evaluation builders place batch guidance immediately after the base prompt`, () => {
+    const browser = PAYLOAD_BROWSERS[build];
+    const prompts = { full: SYSTEM_PROMPT_ACT, mid: SYSTEM_PROMPT_ACT_MID, compact: SYSTEM_PROMPT_ACT_COMPACT };
+    for (const mode of ['act', 'dev', 'ask']) for (const tier of Object.keys(prompts)) {
+      if (mode === 'dev' && tier === 'compact') continue;
+      const options = { tier, browser: build, profile: { enabled: true, text: 'Fixture profile.' } };
+      const payloads = [
+        buildPayload({ mode, user: 'Fill the known fields.' }, options),
+        buildScenarioPayload({ mode, browser: build, seed: [], packagedSkillIds: ['cms-wix'], activeSkillIds: ['cms-wix'] }, options),
+      ];
+      const agent = new Agent({ getActive: () => ({ promptTier: tier }) });
+      const production = agent._buildSystemPrompt(mode);
+      for (const payload of payloads) {
+        const prompt = payload.messages[0].content;
+        const hasBatch = payload.tools.some(tool => tool.function.name === 'browser_batch');
+        assert.equal(prompt.includes(SYSTEM_PROMPT_BATCHING), hasBatch);
+        if (!hasBatch) continue;
+        assert.ok(prompt.startsWith(`${prompts[tier]}\n\n${SYSTEM_PROMPT_BATCHING}`));
+        assert.ok(prompt.indexOf(SYSTEM_PROMPT_BATCHING) < prompt.indexOf(browser.UNIVERSAL_PREAMBLE.trim()));
+        assert.ok(production.indexOf(SYSTEM_PROMPT_BATCHING) < production.indexOf(browser.UNIVERSAL_PREAMBLE.trim()));
+        if (mode === 'dev') {
+          const appendix = browser.SYSTEM_PROMPT_DEV_APPENDIX.trim();
+          assert.ok(prompt.indexOf(SYSTEM_PROMPT_BATCHING) < prompt.indexOf(appendix));
+          assert.ok(production.indexOf(SYSTEM_PROMPT_BATCHING) < production.indexOf(appendix));
+        }
+        assert.equal(prompt.split(SYSTEM_PROMPT_BATCHING).length - 1, 1);
+      }
+    }
+  });
+
+  test(`${build}: prompt-order changes leave frozen prompts and tools untouched`, () => {
+    loadFrozenBaseline(new URL('./llm/freeze/baseline-2026-05-23.json', import.meta.url));
+    try {
+      const frozen = getFrozenSnapshot();
+      const options = { tier: 'compact', browser: build, profile: { enabled: true, text: 'Must not be appended.' } };
+      for (const payload of [
+        buildPayload({ mode: 'act', user: 'Fixture.' }, options),
+        buildScenarioPayload({ mode: 'act', browser: build, seed: [], packagedSkillIds: ['missing-skill-must-not-load'] }, options),
+      ]) {
+        assert.equal(payload.messages[0].content, frozen.systemContent);
+        assert.equal(payload.tools, frozen.tools);
+      }
+    } finally { loadFrozenBaseline(null); }
   });
 }

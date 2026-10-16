@@ -439,7 +439,9 @@ navigating to a known search URL followed by a read, and avoiding a batch when
 the next choice depends on unseen results. The positive cases expect batching;
 their prose rubrics distinguish safe individual calls from the preferred
 grouped emission. Both payload builders add batching guidance only when the
-selected tools advertise it; frozen payloads remain unchanged.
+  selected tools advertise it, immediately after the base Act prompt and before
+  Dev guidance, universal adapters, and loaded skills, matching production order;
+  frozen payloads remain unchanged.
 
 These cases measure next-call emission, not execution speed. Compare steps and
 wall-clock time separately using real browser traces with `browserBatchEnabled`
