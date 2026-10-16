@@ -30896,8 +30896,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Select the appropriate ACT system prompt based on the active provider.
    * Small/local models get a compact prompt to save context budget.
    */
-  _getActPrompt() {
-    const tier = this._resolvePromptTier();
+  _getActPrompt(provider = null) {
+    const tier = this._resolvePromptTier(provider);
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
     if (tier === 'mid') return SYSTEM_PROMPT_ACT_MID;
     return `${SYSTEM_PROMPT_ACT}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`;
@@ -31007,8 +31007,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? `${STANDALONE_CHAT_SYSTEM_PROMPT}\n\n${formatResponseLanguagePolicyInstruction(responseLanguagePolicy, 'en', { form: 'brief' })}`
         : STANDALONE_CHAT_SYSTEM_PROMPT;
     }
-    const tier = this._resolvePromptTier();
-    let prompt = this._isActionMode(mode) ? this._getActPrompt() : SYSTEM_PROMPT_ASK;
+    let provider = null;
+    try { provider = this._activeProvider(tabId); } catch {}
+    const tier = this._resolvePromptTier(provider);
+    let prompt = this._isActionMode(mode) ? this._getActPrompt(provider) : SYSTEM_PROMPT_ASK;
     if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
         .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);

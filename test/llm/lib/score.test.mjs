@@ -7,6 +7,8 @@
 
 import { strict as assert } from 'node:assert';
 import { matchesAntiPattern, scoreVerdict } from './score.mjs';
+import { getToolsForMode as chromeTools } from '../../../src/chrome/src/agent/tools.js';
+import { getToolsForMode as firefoxTools } from '../../../src/firefox/src/agent/tools.js';
 
 let pass = 0, fail = 0;
 const t = (name, fn) => { try { fn(); pass++; console.log(`  ✓ ${name}`); }
@@ -79,6 +81,50 @@ t('malformed and nested batches are never credited by their safe first action', 
     batch(safeFirst, { name: 'browser_batch', input: { actions: [safeFirst] } }),
   ]) assert.equal(scoreVerdict({ firstToolCall, expected: clickIdeal }).verdict, 'other');
 });
+
+for (const [browser, getTools] of [['chrome', chromeTools], ['firefox', firefoxTools]]) {
+  t(`${browser}: production-invalid later children cannot earn first-action credit`, () => {
+    for (const firstToolCall of [
+      batch(safeFirst, { name: 'execute_js', input: { code: 'return 1' } }),
+      batch(safeFirst, { name: 'set_field', input: { ref_id: 'ref_1' } }),
+      batch(safeFirst, { name: 'read_page', input: {} }, safeFirst),
+      batch(safeFirst, { name: 'click', input: { x: 10, y: 20 } }),
+      batch(safeFirst, { name: 'read_page', input: {}, extra: true }),
+      { ...batch(safeFirst), args: { actions: [safeFirst], extra: true } },
+      batch(...Array(11).fill(safeFirst)),
+    ]) {
+      assert.equal(scoreVerdict({ firstToolCall, expected: clickIdeal, browser }).verdict, 'other');
+      assert.equal(scoreVerdict({ firstToolCall, expected: { idealNextToolCall: firstToolCall }, browser }).verdict, 'other');
+    }
+  });
+
+  t(`${browser}: batch limits and advertised child tools follow the evaluated tier`, () => {
+    const seven = batch(...Array(7).fill(safeFirst));
+    assert.equal(scoreVerdict({ firstToolCall: seven, expected: clickIdeal, browser, tier: 'full' }).verdict, 'ideal');
+    assert.equal(scoreVerdict({ firstToolCall: seven, expected: clickIdeal, browser, tier: 'mid' }).verdict, 'other');
+    assert.equal(scoreVerdict({ firstToolCall: seven, expected: clickIdeal, browser, tools: getTools('act', { tier: 'mid' }) }).verdict, 'other');
+    const hover = batch(safeFirst, { name: 'hover', input: { ref_id: 'ref_1' } });
+    assert.equal(scoreVerdict({ firstToolCall: hover, expected: clickIdeal, browser, tier: 'full' }).verdict, 'ideal');
+    assert.equal(scoreVerdict({ firstToolCall: hover, expected: clickIdeal, browser, tier: 'mid' }).verdict, 'other');
+  });
+
+  t(`${browser}: absent or disabled batch surfaces cannot earn credit`, () => {
+    const firstToolCall = batch(safeFirst);
+    for (const context of [
+      { tools: [] }, { tools: getTools('act', { browserBatchEnabled: false }) },
+      { mode: 'ask' }, { tier: 'compact' },
+      { tools: getTools('act').filter(tool => tool.function.name !== 'click') },
+    ]) assert.equal(scoreVerdict({ firstToolCall, expected: clickIdeal, browser, ...context }).verdict, 'other');
+  });
+
+  t(`${browser}: stored grading surfaces and saved requests preserve live batch verdicts`, () => {
+    const firstToolCall = batch(...Array(7).fill(safeFirst));
+    const tools = getTools('act', { tier: 'mid' });
+    for (const context of [{ tools }, { gradingTools: tools }, { request: { tools } }]) {
+      assert.equal(scoreVerdict({ firstToolCall, expected: clickIdeal, browser, ...context }).verdict, 'other');
+    }
+  });
+}
 
 console.log(`\n  ${pass}/${pass + fail} grader checks passed`);
 process.exit(fail ? 1 : 0);
