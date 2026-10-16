@@ -36835,19 +36835,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * removed or renamed, so _isUntrustedTool() no longer recognizes it either.
    * That combination would launder attacker-controlled page text into the
    * trusted trim summary. Re-appending the matching close tag keeps the
-   * wrapper detectable regardless of skill registry state.
+   * wrapper detectable regardless of skill registry state. Batch results have
+   * app-owned headers and several boxes: preserve earlier boxes verbatim and
+   * close only the box intersecting the cut, without merging nonce boundaries.
    */
   _truncatePreservingUntrustedWrapper(content, limit) {
-    const openMatch = content.match(/^<untrusted_page_content\b([^>]*)>\n?/);
-    if (!openMatch) {
-      return content.slice(0, limit) + '\n[...truncated to fit context]';
+    const suffix = '\n[...truncated to fit context]';
+    const openings = /<untrusted_page_content\b([^>]*)>\n?/g;
+    const closings = /\n?<\/untrusted_page_content\b[^>]*>/g;
+    let openMatch;
+    while ((openMatch = openings.exec(content)) && openMatch.index < limit) {
+      const innerStart = openings.lastIndex;
+      closings.lastIndex = innerStart;
+      const closeMatch = closings.exec(content);
+      const closeTag = closeMatch ? closeMatch[0] : `\n</untrusted_page_content${openMatch[1]}>`;
+      const end = closeMatch ? closings.lastIndex : content.length;
+      if (closeMatch && end <= limit) {
+        openings.lastIndex = end;
+        continue;
+      }
+      // If both markers cannot fit, omit this box rather than emit a partial tag.
+      if (innerStart + closeTag.length > limit) return content.slice(0, openMatch.index) + suffix;
+      const innerEnd = Math.min(limit - closeTag.length, closeMatch?.index ?? content.length);
+      return content.slice(0, innerEnd) + suffix + closeTag;
     }
-    const closeMatch = content.match(/\n?<\/untrusted_page_content\b[^>]*>\s*$/);
-    const closeTag = closeMatch ? closeMatch[0] : `\n</untrusted_page_content${openMatch[1]}>`;
-    const openTag = openMatch[0];
-    const innerLimit = Math.max(0, limit - openTag.length - closeTag.length);
-    const inner = content.slice(openTag.length, openTag.length + innerLimit);
-    return `${openTag}${inner}\n[...truncated to fit context]${closeTag}`;
+    return content.slice(0, limit) + suffix;
   }
 
   _truncateOversizedMessages(tabId, messages) {

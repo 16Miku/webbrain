@@ -94,14 +94,21 @@ export function foldBrowserBatchMessages(messages, { repairPending = false } = {
     let end = start + 1;
     while (end < messages.length && messages[end].role !== 'assistant') end++;
     const tail = messages.slice(start + 1, end);
+    const ids = new Set(assistant.tool_calls.map(call => call.id));
     const replacements = new Map(), childIds = new Set();
     for (const parent of assistant.tool_calls) {
-      if (parent.function?.name !== 'browser_batch' || !parent.id) continue;
+      if (parent.function?.name !== 'browser_batch' || typeof parent.id !== 'string' || !parent.id.trim()
+          || parent.id.includes('::') || assistant.tool_calls.filter(call => call.id === parent.id).length !== 1) continue;
+      // A parent rejection or already folded answer is authoritative. Native
+      // sibling IDs may resemble generated IDs, but never belong to this batch.
+      if (tail.some(message => message.role === 'tool' && message.tool_call_id === parent.id)) continue;
       const actions = argsFor(parent)?.actions;
       if (!Array.isArray(actions) || !actions.length) continue;
-      const children = actions.map((_, i) => tail.find(message => message.role === 'tool' && message.tool_call_id === `${parent.id}::${i}`));
-      if (!children.some(Boolean) && (!repairPending || tail.some(message => message.role === 'tool' && message.tool_call_id === parent.id))) continue;
-      actions.forEach((_, i) => childIds.add(`${parent.id}::${i}`));
+      const generatedIds = actions.map((_, i) => `${parent.id}::${i}`);
+      const children = generatedIds.map(id => !ids.has(id)
+        ? tail.find(message => message.role === 'tool' && message.tool_call_id === id) : undefined);
+      if (!children.some(Boolean) && !repairPending) continue;
+      for (const id of generatedIds) if (!ids.has(id)) childIds.add(id);
       const states = children.map(browserBatchResultStatus);
       const ran = states.filter(state => state.ran).length;
       const reason = states.find(state => state.reason)?.reason || '';
@@ -130,7 +137,6 @@ export function foldBrowserBatchMessages(messages, { repairPending = false } = {
         });
       }
     }
-    const ids = new Set(assistant.tool_calls.map(call => call.id));
     const answer = message => message.role === 'tool' && ids.has(message.tool_call_id);
     output.push(assistant, ...folded.filter(answer), ...folded.filter(message => !answer(message)));
     start = end;

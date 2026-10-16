@@ -151,8 +151,11 @@ stripping of attacker-supplied boundary markup. Do not unwrap/re-wrap the
 aggregate: that would erase the distinct boundaries. The aggregate digest must
 use only app-owned action names, execution status and stop reason, never page
 text; the generic unwrapper reads only the first block and cannot safely digest
-a multi-result aggregate. Persistence and cancellation must preserve the same
-folded representation without exposing internal sub-call IDs to providers.
+a multi-result aggregate. Context trimming must preserve complete nonce markers
+for every retained child, including the child whose content is cut; omit a child
+if its opening and closing markers cannot both fit. Persistence and cancellation
+must preserve the same folded representation without exposing internal sub-call
+IDs to providers.
 
 ### Don't weaken the boundary for "trusted sites"
 The master switch (Settings → Permissions) disables **Layer 3 only** (the

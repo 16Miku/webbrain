@@ -64,6 +64,64 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(validateBrowserBatch(parent, { ...options, turnCalls: [parent, sibling] }).ok, false);
   });
 
+  for (const repairPending of [false, true]) {
+    test(`${build}: folding retains rejected parent and executed colliding sibling (repairPending=${repairPending})`, () => {
+      const parent = batch('batch', [field()]);
+      const sibling = call('batch::0', 'get_window_info', {});
+      const rejection = validateBrowserBatch(parent, { ...options, turnCalls: [parent, sibling] }).result;
+      const parentResult = result(parent.id, JSON.stringify(rejection));
+      const siblingResult = result(sibling.id, wrap(JSON.stringify({ success: true, width: 1200 })));
+      const messages = [assistant(parent, sibling), parentResult, siblingResult];
+      const folded = fold(messages, { repairPending });
+      assert.equal(folded, messages, 'A rejected batch must not cause any folding');
+      assert.equal(folded[1], parentResult);
+      assert.equal(folded[2], siblingResult);
+      assert.equal(JSON.parse(folded[1].content).errorCode, 'invalid_browser_batch');
+      assert.equal(fold(folded, { repairPending }), folded);
+    });
+
+    test(`${build}: native child-shaped ID stays separate while another valid batch folds (repairPending=${repairPending})`, () => {
+      const parent = batch('batch', [field()]);
+      const sibling = call('batch::0', 'get_window_info', {});
+      const valid = batch('valid', [field()]);
+      const calls = [parent, sibling, valid];
+      const rejection = result(parent.id, JSON.stringify(validateBrowserBatch(parent, { ...options, turnCalls: calls }).result));
+      const siblingResult = result(sibling.id, success);
+      const messages = [assistant(...calls), rejection, siblingResult, result('valid::0', success), image];
+      const folded = fold(messages, { repairPending });
+      assert.deepEqual(folded.slice(1, 4).map(message => message.tool_call_id), ['batch', 'batch::0', 'valid']);
+      assert.equal(folded[1], rejection);
+      assert.equal(folded[2], siblingResult);
+      assert.match(folded[3].content, /ran 1 of 1 actions/);
+      assert.equal(folded[4], image);
+      assert.equal(fold(folded, { repairPending }), folded, 'A second fold must preserve all original results');
+    });
+
+    test(`${build}: pending parent never consumes a native sibling result (repairPending=${repairPending})`, () => {
+      const sibling = call('batch::0', 'get_window_info', {});
+      const siblingResult = result(sibling.id, success);
+      const messages = [assistant(batch('batch', [field()]), sibling), siblingResult];
+      const folded = fold(messages, { repairPending });
+      assert.equal(folded.find(message => message.tool_call_id === sibling.id), siblingResult);
+      assert.equal(folded.filter(message => message.tool_call_id === sibling.id).length, 1);
+      if (repairPending) assert.match(folded.find(message => message.tool_call_id === 'batch').content, /ran 0 of 1 actions; stop: interrupted/);
+      else assert.equal(folded, messages);
+      assert.equal(fold(folded, { repairPending }), folded);
+    });
+  }
+
+  test(`${build}: rejected malformed or duplicated parent IDs cannot claim child-shaped results`, () => {
+    for (const id of ['', '  ', 42, 'parent::0', 'duplicate']) {
+      const parent = batch(id, [field()]);
+      const sibling = call(`${id}::0`, 'get_window_info', {});
+      const calls = [parent, sibling, ...(id === 'duplicate' ? [batch(id, [field()])] : [])];
+      const parentResult = result(id, JSON.stringify(validateBrowserBatch(parent, { ...options, turnCalls: calls }).result));
+      const siblingResult = result(sibling.id, success);
+      const messages = [assistant(...calls), parentResult, siblingResult];
+      for (const repairPending of [false, true]) assert.equal(fold(messages, { repairPending }), messages);
+    }
+  });
+
   test(`${build}: interrupted snapshot repairs missing native siblings without mutating live history`, () => {
     const turn = [assistant(batch(), call('native', 'get_window_info', {})), result('parent::0', success), image];
     const folded = fold(turn, { repairPending: true });

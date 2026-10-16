@@ -107,6 +107,24 @@ for (const build of ['chrome', 'firefox']) {
     for (const message of wire.messages) for (const tool of message.tool_calls || []) assert.doesNotThrow(() => JSON.parse(tool.function.arguments));
   });
 
+  test(`${build}: rejected batch collision preserves the executed native sibling through persistence and provider conversion`, async () => {
+    const h = setup([batch([field(1)]), call('batch::0', 'get_window_info', {})]);
+    await h.run();
+    assert.deepEqual(h.dispatched.map(item => item.name), ['get_window_info']);
+    const results = h.messages.filter(message => message.role === 'tool');
+    assert.deepEqual(results.map(message => message.tool_call_id), ['batch', 'batch::0']);
+    assert.equal(JSON.parse(results[0].content).errorCode, 'invalid_browser_batch');
+    assert.equal(JSON.parse(h.agent._unwrapUntrusted(results[1].content)).success, true);
+    assert.doesNotMatch(results[1].content, /not run|"skipped":true/);
+    const snapshot = h.agent._conversationStorageEntry(1);
+    assert.deepEqual(snapshot.messages.filter(message => message.role === 'tool'), results);
+    const wire = new OpenAICompatibleProvider({ apiKey: 'test', model: 'test' })._buildChatCompletionsBody(snapshot.messages);
+    assert.deepEqual(wire.messages.filter(message => message.role === 'tool').map(message => message.tool_call_id), ['batch', 'batch::0']);
+    const anthropic = new AnthropicProvider({ apiKey: 'test', model: 'claude-test' })._convertMessages(snapshot.messages);
+    const toolResults = anthropic.messages.flatMap(message => Array.isArray(message.content) ? message.content : []).filter(block => block.type === 'tool_result');
+    assert.deepEqual(toolResults.map(block => block.tool_use_id), ['batch', 'batch::0']);
+  });
+
   test(`${build}: permission denial stops the batch before any dispatch`, async () => {
     const h = setup([batch([field(1), field(2)]), call('sibling', 'get_window_info', {})]);
     h.agent.permissions.check = () => ({ allowed: false, needsPrompt: false });
@@ -261,6 +279,54 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(result, /not run/);
     assert.ok((result.match(/<untrusted_page_content id=/g) || []).length >= 1);
     h.agent._releaseRunEntry(1);
+  });
+
+  for (const trim of ['normal', 'emergency']) test(`${build}: ${trim} context trimming preserves batch child boundaries and metadata`, async () => {
+    const h = setup([batch(Array.from({ length: 3 }, () => ({ name: 'read_page', input: {} })))]);
+    h.messages.unshift({ role: 'system', content: 'System instructions.' });
+    let reads = 0;
+    h.agent.executeTool = async () => ({ success: true, text: ++reads === 1 ? 'First page.' : 'PRIVATE-PAGE '.repeat(1000) });
+    await h.run();
+    const original = h.messages.find(message => message.tool_call_id === 'batch').content;
+    const openings = content => [...content.matchAll(/<untrusted_page_content id="([^"]+)"[^>]*>/g)].map(match => match[1]);
+    assert.equal(openings(original).length, 3);
+    const digest = h.agent._digestToolResult('browser_batch', original);
+    if (trim === 'normal') assert.equal(h.agent._truncateOversizedMessages(1, h.messages), true);
+    else h.agent._emergencyTrim(h.messages);
+    const result = h.messages.find(message => message.tool_call_id === 'batch').content;
+    const retainedIds = openings(result);
+    assert.equal(retainedIds.length, 2, 'retain the first child and the truncated second child');
+    assert.deepEqual(retainedIds, openings(original).slice(0, 2), 'keep original nonces');
+    assert.deepEqual([...result.matchAll(/<\/untrusted_page_content id="([^"]+)">/g)].map(match => match[1]), retainedIds);
+    assert.ok(result.length <= 2000 + '\n[...truncated to fit context]'.length);
+    assert.equal(h.agent._hasUntrustedWrapper(result), true);
+    assert.equal(h.agent._digestToolResult('browser_batch', result), digest);
+    assertPaired(h.messages);
+  });
+
+  test(`${build}: every batch truncation cutoff keeps whole matching markers`, () => {
+    const { agent } = setup([]);
+    const blocks = [1, 2, 3].map(index => agent._wrapUntrusted('read_page', `PRIVATE-PAGE-${index} `.repeat(5)));
+    const content = `[browser_batch] header\n${blocks.join('\nnext child\n')}\ntrusted trailing note`;
+    const originalIds = [...content.matchAll(/<untrusted_page_content id="([^"]+)">/g)].map(match => match[1]);
+    for (let limit = 1; limit < content.length; limit++) {
+      const result = agent._truncatePreservingUntrustedWrapper(content, limit);
+      const retainedIds = [...result.matchAll(/<untrusted_page_content id="([^"]+)">/g)].map(match => match[1]);
+      assert.deepEqual(retainedIds, originalIds.slice(0, retainedIds.length), `original nonce order at ${limit}`);
+      const outside = result.replace(/<untrusted_page_content id="([^"]+)">[\s\S]*?<\/untrusted_page_content id="\1">/g, '');
+      assert.doesNotMatch(outside, /[<>]|PRIVATE/, `partial marker or unwrapped page bytes at ${limit}`);
+      assert.ok(result.length <= limit + '\n[...truncated to fit context]'.length, `bounded at ${limit}`);
+    }
+  });
+
+  test(`${build}: truncation still closes a legacy single wrapper and leaves plain text behavior intact`, () => {
+    const { agent } = setup([]);
+    const source = agent._wrapUntrusted('read_page', 'PRIVATE-PAGE '.repeat(1000));
+    const result = agent._truncatePreservingUntrustedWrapper(source, 2000);
+    assert.ok(result.startsWith(source.slice(0, source.indexOf('\n'))));
+    assert.ok(result.endsWith(source.slice(source.lastIndexOf('\n'))));
+    assert.equal(agent._hasUntrustedWrapper(result), true);
+    assert.equal(agent._truncatePreservingUntrustedWrapper('ordinary text', 5), 'ordin\n[...truncated to fit context]');
   });
 
   test(`${build}: one auto screenshot after several mutations, paired before supplemental image`, async () => {
