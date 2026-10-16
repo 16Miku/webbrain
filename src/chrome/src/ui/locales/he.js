@@ -479,6 +479,7 @@ export default {
   'tool.clarify': "מבקש הבהרה",
   'tool.get_window_info': "בודק חלון",
   'tool.resize_window': "משנה גודל חלון",
+  'tool.browser_batch': "הפעלת פעולות בדפדפן",
   'tool.inspect_viewport': "בודק אזור תצוגה",
   'tool.scratchpad_write': "מעדכן הערות",
   'tool.progress_update': "מעדכן התקדמות",

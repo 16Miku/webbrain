@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "Meminta penjelasan",
   'tool.get_window_info': "Memeriksa tetingkap",
   'tool.resize_window': "Mengubah saiz tetingkap",
+  'tool.browser_batch': "Menjalankan tindakan pelayar",
   'tool.inspect_viewport': "Memeriksa ruang pandang",
   'tool.scratchpad_write': "Mengemas kini nota",
   'tool.progress_update': "Mengemas kini kemajuan",

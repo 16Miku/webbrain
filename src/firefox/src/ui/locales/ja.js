@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "確認を求めています",
   'tool.get_window_info': "ウィンドウを確認中",
   'tool.resize_window': "ウィンドウサイズを変更中",
+  'tool.browser_batch': "ブラウザー操作を実行中",
   'tool.inspect_viewport': "表示領域を確認中",
   'tool.scratchpad_write': "メモを更新中",
   'tool.progress_update': "進捗を更新中",

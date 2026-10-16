@@ -294,6 +294,7 @@ const scheduler = new ScheduledJobManager({
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await imageGenConfigReady;
+    await browserBatchEnabledReady;
     await webMcpEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
@@ -642,6 +643,19 @@ async function loadImageGenConfig() {
   agent.setImageGenConfig(stored?.[IMAGE_GEN_MODEL_KEY]);
 }
 const imageGenConfigReady = loadImageGenConfig();
+
+let browserBatchSettingsRevision = 0;
+async function loadBrowserBatchEnabled() {
+  const revision = ++browserBatchSettingsRevision;
+  try {
+    const stored = await chrome.storage.local.get('browserBatchEnabled');
+    if (revision === browserBatchSettingsRevision) agent.setBrowserBatchEnabled(stored.browserBatchEnabled !== false);
+  } catch {
+    // A delayed read must never override a newer explicit kill-switch change.
+    if (revision === browserBatchSettingsRevision) agent.setBrowserBatchEnabled(false);
+  }
+}
+const browserBatchEnabledReady = loadBrowserBatchEnabled();
 
 async function loadWebMCPEnabled() {
   const stored = await chrome.storage.local.get('webMcpEnabled');
@@ -1314,6 +1328,10 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (changes[API_MUTATION_OBSERVER_KEY]) {
     const value = changes[API_MUTATION_OBSERVER_KEY].newValue;
     setApiMutationObserverEnabled(value === undefined || value === true);
+  }
+  if (areaName === 'local' && changes.browserBatchEnabled) {
+    browserBatchSettingsRevision++;
+    agent.setBrowserBatchEnabled(changes.browserBatchEnabled.newValue !== false);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -3217,7 +3235,7 @@ async function handleMessage(msg, sender) {
     // Agent toggles and prompt add-ons hydrate once at SW boot — await those
     // promises so the first chat can't race ahead of hydration, without a
     // storage round-trip on every message.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await webMcpEnabledReady;
@@ -4196,6 +4214,7 @@ async function handleMessage(msg, sender) {
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
         loadImageGenConfig(),
+        loadBrowserBatchEnabled(),
         loadWebMCPEnabled(),
         loadProfile(),
         syncAgentUserMemoryFromStorage(),
