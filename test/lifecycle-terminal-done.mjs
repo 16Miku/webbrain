@@ -132,8 +132,10 @@ for (const build of ['chrome', 'firefox']) {
         if (requests === 1) return call('read', 'get_accessibility_tree', {});
         if (requests === 2) return call('done-1', 'done', { summary: 'Original settings answer.', outcome: 'success' });
         if (requests === 3) {
-          assert.equal(messages.filter(message => message.role === 'user' && !message.webbrainAppOwned).at(-1).content,
+          const latest = messages.filter(message => message.role === 'user' && !message.webbrainAppOwned).at(-1);
+          assert.equal(latest.webbrainUserAuthoredText ?? latest.content,
             'Also mention the theme setting', 'The correction is the latest user message');
+          assert.ok(latest.content.includes('APP-OWNED CURRENT USER TASK'), 'The execution model also sees the shared task context');
           return call('reread', 'get_accessibility_tree', {});
         }
         return call('done-2', 'done', { summary: 'Corrected settings answer.', outcome: 'success' });

@@ -3,13 +3,14 @@ const { validateUploadFile, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__w
 import { captureCalculationCompletion, captureCalculationEvidence, completionReportingContext, refreshCalculationEvidence, verifyBrowserCompletion } from './completion-runtime.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
 import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
+import { incompleteCompletionBlock } from './incomplete-completion.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
 import { completionFrameSnapshot } from './completion-frame.js';
 import { completionResultSnapshot, completionResultPixelRect } from './completion-result.js';
 import { captureSemanticNavigationDocument, semanticCommitNavigationRequest, recordSemanticCommitNavigation, semanticCommitIsCurrent, canRecordSemanticCommitDispatch } from './semantic-commit-navigation.js';
 import { installPageFeedback, beforePageAgentDispatch, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from './page-feedback.js';
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
-import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
+import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { firefoxBidi } from '../bidi/client.js';
@@ -5482,9 +5483,9 @@ export class Agent extends LoopDetector {
         confirmation: record.confirmationText || '' } } : {}) }));
   }
 
-  // The latest accepted request: the last steering correction, else the task.
+  // The latest accepted request: the last steering or follow-up correction, else the task.
   _latestAcceptedRequestText(task) {
-    return task?.updates?.filter(update => update.kind === 'steering').at(-1)?.text || task?.text;
+    return task?.updates?.filter(update => update.kind === 'steering' || update.kind === 'update').at(-1)?.text || task?.text;
   }
 
   // What WebBrain's deletion card shows about the item a delete control
@@ -7780,7 +7781,9 @@ export class Agent extends LoopDetector {
    */
   async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
     const spec = semanticQuestion(kind);
-    const trusted = String(request ?? '').slice(0, 6000);
+    // Relationship decisions must read the entire latest user message. A
+    // prefix-only verdict can mistake a correction or a new task at its end.
+    const trusted = kind === 'user_turn_kind' ? String(request ?? '') : String(request ?? '').slice(0, 6000);
     const data = boundedSemanticData(page);
     const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
     this._semanticDecisionCache ??= new Map();
@@ -7795,10 +7798,14 @@ export class Agent extends LoopDetector {
     const context = this.systemOneContext(tabId);
     try {
       const settings = await this._jevSettings(tabId, provider);
-      if (settings && !this._checkAbort(tabId)) {
+      const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
+      // Keep the existing bounded fast route, but use the full-text main
+      // model directly when a relationship question cannot fit in it.
+      const decisionFits = kind !== 'user_turn_kind' || systemOneStateBytes(decisionText) <= 12000;
+      if (settings && decisionFits && !this._checkAbort(tabId)) {
         const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 2500, maxRetries: 0 }), {
           config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
-          state: { context: wrapSystemOneData(boundedSystemOneText(redactSystemOneText(JSON.stringify({ request: trusted, page: data })), 12000)) },
+          state: { context: wrapSystemOneData(boundedSystemOneText(decisionText, 12000)) },
           questions: { [kind]: semanticSystemOneQuestion(kind) },
         }, context);
         const answer = verdict.answers?.[kind];
@@ -7806,6 +7813,8 @@ export class Agent extends LoopDetector {
         this.recordSystemOneVerdict(tabId, { decision: choice ? 'semantic' : 'fallback', reason: choice ? kind : `${kind}_low_confidence`,
           model: verdict.model }, context);
         if (choice) return remember({ choice, evidence: '', source: 'decision_model' });
+      } else if (settings && !decisionFits) {
+        this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_context_budget` }, context);
       }
     } catch (error) {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
@@ -14207,7 +14216,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._interruptToolBatchForFreshTurn(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step, {
           tier: promptTier, triggeringTool: fnName, reason: toolResult.completionPageBlock ? 'completion_page_block' : 'completion_verification_failed', navNotices,
         });
-        return { action: 'continue', completionRecovery: completionNeedsRead ? 'verification' : 'release', releaseAfterVerification: true };
+        return { action: 'continue', completionRecovery: toolResult.recoverableIncomplete ? 'release' : completionNeedsRead ? 'verification' : 'release',
+          releaseAfterVerification: !toolResult.recoverableIncomplete };
       }
 
       if (toolResult && toolResult.done) {
@@ -20464,7 +20474,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _modelVisibleConversationMessages(messages) {
     if (!Array.isArray(messages)) return [];
-    return messages.filter(message => !this._isLocalConversationStatusMessage(message));
+    const visible = messages.filter(message => !this._isLocalConversationStatusMessage(message));
+    const index = this._findLatestPlannerUserTaskIndex(visible);
+    if (index < 0) return visible;
+    const authority = this._plannerAuthenticTaskText(visible);
+    if (authority === this._plannerUserAuthoredText(visible[index])) return visible;
+    // Project the same task into execution without persisting a synthetic
+    // user turn or splitting an assistant tool-call/result group. In
+    // particular, direct answers survive when their old tool pairs compact.
+    const note = `\n\n[APP-OWNED CURRENT USER TASK — assembled from genuine user messages]\n${authority}`;
+    const message = visible[index];
+    if (message.webbrainProjectedTaskContext === authority) return visible;
+    visible[index] = { ...message, webbrainUserAuthoredText: this._plannerUserAuthoredText(message),
+      webbrainProjectedTaskContext: authority, content: Array.isArray(message.content)
+      ? [...message.content, { type: 'text', text: note }]
+      : String(message.content || '') + note };
+    return visible;
   }
 
   _plannerCompletedDoneSummary(messages) {
@@ -20571,6 +20596,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return -1;
   }
 
+  // Index of the planner question that the turn at answerIndex directly
+  // answers, or -1. answerIndex may be one past the end for a turn that is
+  // not recorded yet. A planner clarification is terminal for its turn. Skip
+  // only app-owned state projected around it; any other real conversational
+  // turn breaks the binding so an old clarification cannot capture a later
+  // independent task.
+  _plannerClarificationIndexBefore(messages, answerIndex) {
+    for (let index = answerIndex - 1; index >= 1; index -= 1) {
+      const message = messages[index];
+      if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) continue;
+      if (message?.role === 'user' && this._isAgentInjectedUserMessage(message)) continue;
+      return message?.role === 'assistant' && message.webbrainPlannerClarification ? index : -1;
+    }
+    return -1;
+  }
+
   _plannerClarificationTaskBinding(messages, answerIndex) {
     if (!Array.isArray(messages) || answerIndex < 1) return null;
     const answerMessage = messages[answerIndex];
@@ -20578,17 +20619,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const answerText = this._plannerUserAuthoredText(answerMessage);
     if (!answerText) return null;
 
-    // A planner clarification is terminal for its turn. Skip only app-owned
-    // state projected around it; any other real conversational turn breaks the
-    // binding so an old clarification cannot capture a later independent task.
-    let clarificationIndex = -1;
-    for (let index = answerIndex - 1; index >= 1; index -= 1) {
-      const message = messages[index];
-      if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) continue;
-      if (message?.role === 'user' && this._isAgentInjectedUserMessage(message)) continue;
-      if (message?.role === 'assistant' && message.webbrainPlannerClarification) clarificationIndex = index;
-      break;
-    }
+    const clarificationIndex = this._plannerClarificationIndexBefore(messages, answerIndex);
     if (clarificationIndex < 0) return null;
 
     const metadata = messages[clarificationIndex].webbrainPlannerClarification || {};
@@ -20682,9 +20713,23 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!text) continue;
       const steered = this._steeringTaskBinding(messages, i);
       if (steered) return steered;
-      const clarification = this._plannerClarificationTaskBinding(messages, i);
+      const clarification = ['request', 'acknowledge'].includes(message.webbrainTurnKind)
+        ? null : this._plannerClarificationTaskBinding(messages, i);
       if (clarification) return clarification;
-      if (this._continuationTurn(message)) continue;
+      if (message.webbrainTurnKind === 'update' || this._continuationTurn(message)) {
+        const prior = this._activeTaskBinding(messages.slice(0, i));
+        if (prior.taskIndex >= 0) {
+          const pinnedIndices = [...prior.pinnedIndices, i];
+          // Preserve the execution identity for a pure continuation, but pin
+          // its words too: a classification must never erase user authority.
+          if (message.webbrainTurnKind !== 'update') return { ...prior, pinnedIndices };
+          const requestText = prior.requestText || prior.text;
+          const updates = [...(prior.updates || (prior.answers || []).map(text => ({ kind: 'clarification', text }))),
+            { kind: 'update', text }];
+          return { ...prior, index: i, clarificationIndex: -1, requestText, updates, pinnedIndices,
+            text: `User task revised by follow-up: ${JSON.stringify({ request: requestText, updates })}` };
+        }
+      }
       return { index: i, taskIndex: i, clarificationIndex: -1, text, requestText: text, answers: [], pinnedIndices: [i] };
     }
     const index = this._findOriginalTaskIndex(messages);
@@ -21033,6 +21078,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._finalizeSelectionGroundingScope(tabId, messages, submittedUserMessage);
     }
     await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
+    if (enriched.webbrainTurnKind === 'acknowledge' && runOptions.steeringRevision == null) {
+      this.plannerFollowUpSkipTabs.delete(tabId);
+      const message = 'Acknowledged.';
+      messages.push({ role: 'assistant', content: message });
+      this._persist(tabId);
+      return { proceed: false, requestKind: 'respond', reason: 'acknowledged', message,
+        requiresStateChange: false, requiresSubmission: false };
+    }
     if (!runIntent) {
       this.plannerFollowUpSkipTabs.delete(tabId);
       if (runReadScopeClassifier) {
@@ -21079,7 +21132,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     const historyDigest = this._buildPlannerHistoryDigest(priorMessages);
     const followUpContext = cloudIntent ? { authenticTaskText: this._plannerUserAuthoredText(enriched) }
-      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._activeTaskBinding(messages).text };
+      : { ...this._buildPlannerFollowUpContext(priorMessages), authenticTaskText: this._plannerAuthenticTaskText(messages, runOptions.steeringRevision != null ? null : enriched) };
     let gate;
     if (runOptions.steeringRevision == null && this._shouldSkipPlannerForShortFollowUp(tabId, priorMessages, enriched, plannerMode)) {
       this.plannerFollowUpSkipTabs.delete(tabId);
@@ -21974,6 +22027,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: plannerParseOptions.scheduledTask,
       locale,
+      authenticTaskText: followUpContext.authenticTaskText,
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
       plannerClarification: followUpContext.plannerClarification,
@@ -22245,8 +22299,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       scheduledResume: runOptions?.scheduledResume === true,
       scheduledTask: plannerParseOptions.scheduledTask,
       allowApi: this.isApiMutationsAllowed(tabId),
+      browserBatchEnabled: this.browserBatchEnabled !== false,
       skillCatalog,
       locale,
+      authenticTaskText: followUpContext.authenticTaskText,
       priorUserTask: followUpContext.priorUserTask,
       scratchpadFacts: followUpContext.scratchpadFacts,
       plannerClarification: followUpContext.plannerClarification,
@@ -30950,28 +31006,139 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return String(text || '').replace(/\s+/g, ' ').trim();
   }
 
-  // What a short user turn does while an earlier task exists: continue it,
-  // only acknowledge it, or ask for something. A model reads it in any
-  // language, once, when the turn arrives; the answer is stored on the turn so
-  // the task anchor, ledger scope and approved plan read it without words.
-  // The Continue command is a continuation by construction. Ask turns, long
-  // turns, source-bound shortcuts, scheduled resumes, first turns and turns
-  // the model cannot read with confidence are requests.
+  // Classify once while page enrichment runs. This is a routing hint, never
+  // a replacement for the latest user message. The explicit Continue control
+  // needs no model. A turn the model cannot read stays unmarked: it is
+  // planned as a fresh request unless it directly answers a planner question.
   async _markUserTurnKind(tabId, messages, turn, text, mode, runOptions = {}, { sourceBound = false } = {}) {
     this._applyUserTurnKind(turn, await this._userTurnKind(tabId, messages, text, mode, runOptions, sourceBound));
   }
 
   _applyUserTurnKind(turn, kind) {
-    if (turn && typeof turn === 'object' && (kind === 'continue' || kind === 'acknowledge')) turn.webbrainTurnKind = kind;
+    if (turn && typeof turn === 'object' && ['continue', 'update', 'acknowledge', 'request'].includes(kind)) {
+      turn.webbrainTurnKind = kind;
+    }
   }
 
   async _userTurnKind(tabId, messages, text, mode, runOptions = {}, sourceBound = false) {
     if (runOptions?.trustedContinuation === true) return 'continue';
     const value = typeof text === 'string' ? text.trim() : '';
-    if (sourceBound || !this._isActionMode(mode) || !value || value.length > 160
+    if (sourceBound || !this._isActionMode(mode) || !value
         || this._isScheduledResumeTurn(value) || this._activeTaskBinding(messages || []).index < 0) return 'request';
-    const verdict = await this._semanticDecision(tabId, 'user_turn_kind', { request: value });
-    return verdict.choice === 'continue' || verdict.choice === 'acknowledge' ? verdict.choice : 'request';
+    const reference = this._userTurnReference(messages);
+    const verdict = await this._semanticDecision(tabId, 'user_turn_kind', { request: value, page: reference });
+    // A bare acknowledgment ("thanks") stays terminal even right after a
+    // planner question: confirmations that answer it already read as `update`
+    // per the semantic choice definition, so converting `acknowledge` would
+    // resume the prior task with "thanks" as its answer.
+    return ['continue', 'update', 'acknowledge', 'request'].includes(verdict.choice) ? verdict.choice : null;
+  }
+
+  _userTurnReference(messages) {
+    const binding = this._activeTaskBinding(messages || []);
+    let lastQuestion = '';
+    let status = 'in_progress_or_paused';
+    const pending = new Map();
+    for (const message of (messages || []).slice(binding.index + 1)) {
+      if (message?.role === 'assistant') {
+        if (message.webbrainPlannerClarification) lastQuestion = String(message.content || '');
+        for (const call of message.tool_calls || []) {
+          pending.set(call.id, call.function?.name);
+          if (call.function?.name === 'clarify') {
+            try { lastQuestion = JSON.parse(call.function.arguments).question || ''; } catch {}
+          }
+        }
+        if (this._isLocalConversationStatusMessage(message)) status = 'cancelled';
+      } else if (message?.role === 'tool' && pending.get(message.tool_call_id) === 'done') {
+        try {
+          const result = JSON.parse(this._unwrapUntrusted(message.content));
+          if (result.done === true) status = result.outcome || 'ended';
+        } catch {}
+      }
+    }
+    const authority = this._plannerAuthenticTaskText(messages);
+    return { current_task: binding.requestText || binding.text,
+      task_updates: (binding.updates || []).slice(-8).map(update => update.text),
+      user_answers: (messages || []).slice(binding.taskIndex).flatMap(message =>
+        (message.webbrainTaskClarifications || []).map(reply => reply.answer)).slice(-8),
+      // The model gets bounded context; the cache also binds the complete
+      // authority so differences beyond the display budget cannot collide.
+      task_context_key: this._sha256TextSync(authority), task_status: status, last_question: lastQuestion };
+  }
+
+  // Store explicit human replies on their genuine user turn, which is pinned
+  // with the task across compaction/restart. Automatic policy defaults remain
+  // tool evidence and never become user-authored confirmations here.
+  _recordTaskClarification(tabId, question, answer, source, ownerMessage = null) {
+    if (!['user', 'text', 'option'].includes(source) || !answer) return;
+    const messages = this.conversations.get(tabId) || [];
+    const index = ownerMessage ? messages.indexOf(ownerMessage) : this._findLatestPlannerUserTaskIndex(messages);
+    if (index < 0 || messages[index]?.role !== 'user' || this._isAgentInjectedUserMessage(messages[index])) return;
+    const message = messages[index];
+    message.webbrainTaskClarifications = [...(message.webbrainTaskClarifications || []), { question, answer, source }];
+    this._persist(tabId);
+  }
+
+  _plannerAuthenticTaskText(messages, latestMessage = null) {
+    const binding = this._activeTaskBinding(messages || []);
+    const latestIndex = this._findLatestPlannerUserTaskIndex(messages || []);
+    const latest = latestMessage || messages?.[latestIndex];
+    const latestText = latest ? this._plannerUserAuthoredText(latest) : '';
+    if (!binding.text) return latestText;
+    const updates = [];
+    const storedAnswers = new Map();
+    const pinned = new Set(binding.pinnedIndices);
+    const pending = new Map();
+    const addAnswer = (question, answer, source, stored = false) => {
+      if (!['user', 'text', 'option'].includes(source) || typeof answer !== 'string' || !answer.trim()) return;
+      const key = JSON.stringify([question, answer]);
+      const copies = storedAnswers.get(key) || 0;
+      // A stored reply and its retained tool result are one answer. Consume
+      // only that duplicate copy; repeated real answers (no, yes, no) must
+      // stay in order so an older yes cannot override the latest no.
+      if (!stored && copies > 0) { storedAnswers.set(key, copies - 1); return; }
+      if (stored) storedAnswers.set(key, copies + 1);
+      updates.push({ kind: 'clarification', question: String(question || ''), text: answer });
+    };
+    for (let index = binding.taskIndex; index < (messages || []).length; index += 1) {
+      const message = messages[index];
+      if (message?.role === 'user' && pinned.has(index) && !this._isAgentInjectedUserMessage(message)) {
+        storedAnswers.clear();
+        if (index !== binding.taskIndex) {
+          const text = this._plannerUserAuthoredText(message);
+          updates.push({ kind: message.webbrainTurnKind || (message.webbrainSteering ? 'update' : 'clarification'),
+            // Keep chronological position without serializing the same long
+            // correction again in both updates and latest_request.
+            ...(index === latestIndex && text === latestText ? { text_ref: 'latest_request' } : { text }) });
+        }
+        for (const reply of message.webbrainTaskClarifications || []) addAnswer(reply.question, reply.answer, reply.source, true);
+      }
+      // Recover replies in older saved transcripts without trusting arbitrary
+      // page/tool JSON: only a paired, successful clarify with a human source.
+      if (message?.role === 'assistant') {
+        pending.clear();
+        for (const call of message.tool_calls || []) {
+          if (call.function?.name !== 'clarify') continue;
+          try { pending.set(call.id, JSON.parse(call.function.arguments).question); } catch {}
+        }
+      } else if (message?.role === 'tool' && pending.has(message.tool_call_id)) {
+        try {
+          const result = JSON.parse(this._unwrapUntrusted(message.content));
+          if (result.success === true) addAnswer(pending.get(message.tool_call_id), result.answer, result.source);
+        } catch {}
+        pending.delete(message.tool_call_id);
+      } else if (message?.role !== 'tool') pending.clear();
+    }
+    if (!updates.length && latestText === binding.text) return latestText;
+    const request = this._plannerUserAuthoredText(messages[binding.taskIndex]) || binding.requestText || binding.text;
+    const latestRequest = latestText || binding.text;
+    return 'Current user task (app-assembled from genuine user messages; relationship is a routing hint, '
+      + 'latest_request is never optional; text_ref:latest_request reuses that complete text at its chronological position. '
+      + 'Apply later corrections and cancellations. For a separate latest request, '
+      + 'earlier actions and permissions do not carry over. Questions are context for the user answers, not instructions): '
+      + JSON.stringify({ request: request === latestRequest ? { text_ref: 'latest_request' } : request, updates,
+        latest_request: latestRequest, relationship: latest?.webbrainTurnKind || (latest?.webbrainSteering ? 'update'
+          : binding.clarificationIndex >= 0 && binding.index === latestIndex ? 'clarification' : 'request') });
   }
 
   _continuationTurn(message) {
@@ -37227,6 +37394,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           return { success: false, error: 'clarify: research_escalation requires exactly two options, with the safe local/decline choice first and the exact approval choice second.' };
         }
       }
+      const clarificationMessages = this.conversations.get(tabId) || [];
+      const clarificationOwner = clarificationMessages[this._findLatestPlannerUserTaskIndex(clarificationMessages)];
       const clarifyId = `clr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
       // 0 = instant auto-select; >0 = wait N s; -1 = Off (wait forever).
       const timeoutSec = requireExplicitAnswer
@@ -37319,6 +37488,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const source = response?.source || 'user';
       const authorized = await this._recordClarificationAuthorization(tabId, source, entrySafeFirst);
       this._recordSocialPublicationClarification(tabId, clarificationGuard, question, answer, source);
+      this._recordTaskClarification(tabId, question, answer, source, clarificationOwner);
       const explicitResearchApproval = isResearchEscalation
         && source !== 'timeout'
         && source !== 'auto'
@@ -38526,6 +38696,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   visibleFormCount: forms.length,
                   relevantFormCount: formDescriptors.filter(form => form.relevant).length,
                   formDescriptors: formDescriptors.slice(0, 12),
+                  documentIdentity: [location.href, performance.timeOrigin].join('|'),
+                  incompleteTaskControls: Array.from(new Set([
+                    ...Array.from(primaryContent?.querySelectorAll('button,input[type=submit],progress,[role=progressbar],[aria-busy=true]') || []),
+                    ...Array.from(document.querySelectorAll('button,input[type=submit],progress,[role=progressbar],[aria-busy=true]')),
+                  ])).filter(visible).slice(0, 8).map(el => ({
+                      label: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 160),
+                      disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
+                      busy: el.getAttribute('aria-busy') === 'true',
+                      progress: el.getAttribute('aria-valuenow') || (el.tagName === 'PROGRESS' ? String(el.value) : ''),
+                    })),
                   liveRegionMessages: toasts.slice(0, 6),
                   // Short texts the page shows prominently, read when a site
                   // workflow needs to know whether its last step shows as done.
@@ -38591,6 +38771,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // What the page's live messages and the statuses observed after the
           // submit say, read in any language for the checks below. Success
           // messages are only ever the agent's own readings, never page data.
+          const incompleteBlock = await incompleteCompletionBlock(this, tabId, {
+            terminalOnly: Number.isFinite(executionContext?.traceStep) && executionContext.traceStep >= this.maxSteps,
+            outcome, summary: args.summary, pageState, pageUrl: pageState?.url || '',
+          });
+          if (incompleteBlock) return incompleteBlock;
           const readingStartedAt = Date.now();
           if (outcome === 'success' && pageState) await this._readCompletionFormSubmits(tabId, pageState);
           if (outcome === 'success' && pageState) await this._readCompletionStatusTexts(tabId, pageState);
@@ -43085,6 +43270,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           allowCompletionFailureTurn = false;
         } else if (batchResult.completionRecovery === 'release') {
           forceCompletionDoneTurn = false;
+          if (batchResult.releaseAfterVerification === false) {
+            // A recoverable incomplete ending reopens the task, but an action not
+            // yet observed is read before mutation tools return. A mismatch that
+            // was already observed (iframe values) is fixed with the task tools.
+            if (!this.completionInvariants.get(tabId)?.verificationDebt) forceCompletionVerificationTurn = false;
+            forceCompletionDoneAfterVerification = false;
+          }
           allowCompletionFailureTurn = false;
         }
         continue;
@@ -44272,6 +44464,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             allowCompletionFailureTurn = false;
           } else if (batchResult.completionRecovery === 'release') {
             forceCompletionDoneTurn = false;
+            if (batchResult.releaseAfterVerification === false) {
+              // A recoverable incomplete ending reopens the task, but an action not
+              // yet observed is read before mutation tools return. A mismatch that
+              // was already observed (iframe values) is fixed with the task tools.
+              if (!this.completionInvariants.get(tabId)?.verificationDebt) forceCompletionVerificationTurn = false;
+              forceCompletionDoneAfterVerification = false;
+            }
             allowCompletionFailureTurn = false;
           }
           closeTraceStep({ ok: true });

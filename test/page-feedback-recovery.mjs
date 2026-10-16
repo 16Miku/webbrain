@@ -16,13 +16,14 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(attempts.at(-1).code, 'action_context_unverified');
     assert.match(attempts.at(-1).message, /could not confirm which part of the page the control belongs to/);
     assert.match(attempts.at(-1).message, /Open or focus the intended area, then choose Retry/);
-    assert.doesNotMatch(attempts.at(-1).message, /page kept changing/);
+    assert.doesNotMatch(attempts.at(-1).message, /could not validate the next action|page kept changing/i);
     assert.deepEqual(attempts.at(-1).metadata, { stage: 'response', streak: PAGE_FEEDBACK_STOP_AT,
       toolNames: ['click_ax'], reason: 'target_context_unverified' });
     const intervention = accountFeedbackSupersession(run, { passive: false, reason: 'target_context_unverified' });
     assert.equal(intervention.stop, false); assert.equal(intervention.streak, 0);
     const drift = Array.from({ length: PAGE_FEEDBACK_STOP_AT }, () => accountFeedbackSupersession(run, { passive: true })).at(-1);
-    assert.equal(drift.code, PAGE_FEEDBACK_STOP_CODE); assert.match(drift.message, /page kept changing/);
+    assert.equal(drift.code, PAGE_FEEDBACK_STOP_CODE);
+    assert.match(drift.message, /could not validate the next action after repeated browser updates/i);
     assert.equal(feedbackSupersessionMetadata({ reason: 'https://private.invalid/body' }).reason, undefined);
   });
 
@@ -39,6 +40,8 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(attempts.at(-1).code, PAGE_FEEDBACK_STOP_CODE);
     assert.match(attempts.at(-1).message, /task is incomplete/i);
     assert.match(attempts.at(-1).message, /no stale action was dispatched/i);
+    assert.match(attempts.at(-1).message, /Choose Retry to inspect the current page and continue\./);
+    assert.doesNotMatch(attempts.at(-1).message, /page kept changing|wait for the page to settle/i);
   });
 
   test(`${browser}: changing tools or moving the race into preparation cannot evade the budget`, () => {

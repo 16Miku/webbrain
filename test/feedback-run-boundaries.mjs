@@ -89,7 +89,7 @@ for (const build of ['chrome', 'firefox']) {
       agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { send = bindMain(agent, tab); return { role: 'user', content }; };
       agent.executeTool = async (_tab, name) => name === 'get_accessibility_tree' ? { success: true, pageContent: 'button "Buy" [ref_5]' } : { success: true };
       const first = await agent.processMessage(tab, 'Click the buy button for the blue shoes', () => {}, 'act', [], { detachedRequestId: 'first-' + tab });
-      assert.match(first, /page kept changing/);
+      assert.match(first, /could not validate the next action after repeated browser updates/i);
       assert.ok(requests.slice(1).every(messages => feedbackMessages(messages).length > 0), 'Within its run, feedback reaches each decision');
       assert.deepEqual(feedbackMessages(agent.conversations.get(tab)), [], 'Run end removes its feedback from the conversation');
       secondRun = true;

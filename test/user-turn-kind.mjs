@@ -6,8 +6,8 @@ import { installModelStub } from './semantic-decision-stub.mjs';
 // only in English, through word lists. A short Act turn after an earlier task
 // is now read by a model in any language, once, when it arrives; the answer is
 // stored on the turn, so the task anchor, ledger scope and approved plan read
-// it without words. Anything the model cannot read with confidence is a new
-// request, as an unrecognised word was before.
+// it without words. Anything the model cannot read with confidence stays
+// unmarked and is a new request, as an unrecognised word was before.
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
 globalThis.chrome = globalThis.browser = { storage: { local: area, session: area }, runtime: { getURL: value => `extension://owned/${value}` } };
 const earlier = 'Follow every stargazer on this page and record each one.';
@@ -56,7 +56,7 @@ for (const build of ['chrome', 'firefox']) {
       await t.test(text, async () => {
         const f = fixture(decide);
         const turn = await f.mark(text);
-        assert.equal(turn.webbrainTurnKind, undefined, 'A request is not marked');
+        assert.equal(turn.webbrainTurnKind, 'request', 'A separate request is explicitly marked');
         f.agent.conversations.get(f.tab).push(turn);
         assert.equal(f.agent._progressTaskAnchorText(f.tab), text, 'A request becomes the new task');
       });
@@ -70,6 +70,8 @@ for (const build of ['chrome', 'firefox']) {
       const f = fixture(() => answer);
       const turn = await f.mark('devam et');
       assert.equal(turn.webbrainTurnKind, undefined, JSON.stringify(answer));
+      f.agent.conversations.get(f.tab).push(turn);
+      assert.equal(f.agent._progressTaskAnchorText(f.tab), 'devam et', 'An unread turn is a new request');
     }
     // The decision model answers first when it is enabled and sure.
     const f = fixture(() => { throw new Error('The active model is not asked'); });
@@ -83,12 +85,11 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: Continue is a continuation by construction; other turns are not read`, async () => {
     const f = fixture(() => { throw new Error('No model call is expected'); });
     assert.equal((await f.mark('Please continue from where you left off.', 'act', { trustedContinuation: true })).webbrainTurnKind, 'continue');
-    assert.equal((await f.mark('devam et', 'ask')).webbrainTurnKind, undefined, 'Ask turns are requests');
-    assert.equal((await f.mark('devam et', 'act', {}, { sourceBound: true })).webbrainTurnKind, undefined, 'Shortcuts are requests');
-    assert.equal((await f.mark('x'.repeat(161))).webbrainTurnKind, undefined, 'Long turns are requests');
-    assert.equal((await f.mark('[Scheduled resume] check the queue')).webbrainTurnKind, undefined, 'Scheduled resumes keep their own rule');
+    assert.equal((await f.mark('devam et', 'ask')).webbrainTurnKind, 'request', 'Ask turns are requests');
+    assert.equal((await f.mark('devam et', 'act', {}, { sourceBound: true })).webbrainTurnKind, 'request', 'Shortcuts are requests');
+    assert.equal((await f.mark('[Scheduled resume] check the queue')).webbrainTurnKind, 'request', 'Scheduled resumes keep their own rule');
     f.agent.conversations.set(f.tab, [{ role: 'system', content: 'system' }]);
-    assert.equal((await f.mark('devam et')).webbrainTurnKind, undefined, 'A first turn has nothing to continue');
+    assert.equal((await f.mark('devam et')).webbrainTurnKind, 'request', 'A first turn has nothing to continue');
     assert.equal(f.calls.length, 0);
   });
 

@@ -109,10 +109,10 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(state.nativeChatDeliveryEvidence, null);
   });
 
-  test(`${browser}: explicit Continue and acknowledgment preserve the active approved plan`, async () => {
+  test(`${browser}: explicit continuations preserve the active approved plan`, async () => {
     // The runtime marks what a short turn does (a model reads it in any
     // language) before the planner gate sees it.
-    for (const [text, kind] of [['continue', 'continue'], ['ok', 'acknowledge'], ['devam et', 'continue'], ['teşekkürler', 'acknowledge']]) {
+    for (const [text, kind] of [['continue', 'continue'], ['devam et', 'continue']]) {
       const agent = await planned();
       const captured = await gate(agent, text, '', {}, { webbrainTurnKind: kind });
       assert.ok(captured.followUp.scratchpadFacts.includes(oldPlan));
@@ -669,7 +669,9 @@ for (const browser of ['chrome', 'firefox']) {
       { ...verdict, reason: '' }, { ...verdict, unexpected: true }]) {
       assert.equal(planner.parsePlannerAlignmentFromContent(JSON.stringify(invalid), 'owned-snapshot'), null);
     }
-    assert.throws(() => planner.buildPlannerAlignmentMessages('x'.repeat(12001), plan(), { taskBinding: 'owned-snapshot' }), RangeError);
+    const longAuthority = 'x'.repeat(12001);
+    const longMessages = planner.buildPlannerAlignmentMessages(longAuthority, plan(), { taskBinding: 'owned-snapshot' });
+    assert.equal(JSON.parse(longMessages[1].content).current_request, longAuthority, 'The checker receives the complete authority without an artificial character cutoff.');
   });
 }
 

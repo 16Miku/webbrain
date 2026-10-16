@@ -272,12 +272,12 @@ for (const build of ['chrome', 'firefox']) {
             assert.equal(requests, 5); assert.equal(validations, 5); assert.equal(dispatched, 0);
             if (condition === 'unsupported') {
               assert.match(result, /could not confirm which part of the page the control belongs to/);
-              assert.doesNotMatch(result, /page kept changing/);
+              assert.doesNotMatch(result, /could not validate the next action|page kept changing/i);
               assert.equal(terminalStatus, 'action_context_unverified');
               assert.ok(updates.some(u => u.type === 'warning' && /could not confirm/.test(u.data.message)));
               assert.ok(modelMessages[1].some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m))));
             } else {
-              assert.match(result, /page kept changing/);
+              assert.match(result, /could not validate the next action after repeated browser updates/i);
               assert.equal(modelMessages.some(messages => messages.some(m => /ACTION CONTEXT UNVERIFIED/.test(JSON.stringify(m)))), false);
               assert.equal(captures.some(c => c.actionTarget), false);
             }
@@ -287,7 +287,7 @@ for (const build of ['chrome', 'firefox']) {
             const retryMode = condition === 'unsupported' ? 'action_monitoring_relaxed' : 'resume';
             assert.equal(offer.retryMode, retryMode);
             assert.equal(offer.message, result);
-            assert.match(result, /choose Retry/);
+            assert.match(result, /choose Retry/i);
             assert.equal(agent._pendingFailureRecoveryForUi(tab).recoveryId, offer.recoveryId);
             assert.deepEqual(agent.requestFailureRecovery(tab, offer.recoveryId, streaming ? 'retry' : 'give_up', 'owned-recovery-' + tab),
               { ok: true, continue: streaming, retryMode });
@@ -410,7 +410,7 @@ for (const build of ['chrome', 'firefox']) {
         }
         assert.deepEqual(dispatched, response === 'done' ? ['research_url', 'done'] : ['research_url']);
         assert.ok(reads >= requests, 'Every pending passive batch is still observed');
-        assert.equal(updates.some(update => update.type === 'warning' && /page kept changing/.test(update.data.message)), false);
+        assert.equal(updates.some(update => update.type === 'warning' && /could not validate the next action|page kept changing/i.test(update.data.message)), false);
         assert.equal(agent._pageFeedbackRuns.size, 0);
       });
     }
@@ -549,7 +549,7 @@ for (const build of ['chrome', 'firefox']) {
           assert.fail(`Unsafe ${name} must not reach dispatch`);
         };
         const result = await finish(agent, tab, streaming, updates, { detachedRequestId: 'progress-run', askStreamingEnabled: false });
-        assert.match(result, /Stopped because the page kept changing/);
+        assert.match(result, /could not validate the next action after repeated browser updates/i);
         assert.match(result, /task is incomplete/i);
         assert.equal(requests, 5);
         assert.equal(dispatched, 0);
@@ -558,7 +558,7 @@ for (const build of ['chrome', 'firefox']) {
           assert.ok(messages.filter(message => message.webbrainAppOwnedKind === 'page_feedback').length <= 1,
             'Counter churn must replace old observations instead of growing model context');
         }
-        assert.ok(updates.some(update => update.type === 'warning' && /Stopped because the page kept changing/.test(update.data.message)));
+        assert.ok(updates.some(update => update.type === 'warning' && /could not validate the next action after repeated browser updates/i.test(update.data.message)));
       });
     }
 
