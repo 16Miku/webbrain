@@ -202,6 +202,8 @@ const WORKFLOW_FIELD_KEYS = new Set(['alt_text', 'paid_promotion', 'recording_da
 const STAGED_SCREENSHOT_REDACTION_MAX_REGIONS = 400;
 const VISION_SUB_CALL_TIMEOUT_MS = 90_000;
 const CONTENT_ACTION_TIMEOUT_MS = 60_000;
+// Read-only CAPTCHA checks must not consume a full page-action timeout.
+const CAPTCHA_PREFLIGHT_TIMEOUT_MS = 8_000;
 const RUN_STARTUP_TIMEOUT_MS = 15_000;
 // At completion the active model reads what a page's status texts say only
 // for this long, so a slow model cannot hold a finished task; texts it did
@@ -10893,7 +10895,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _readAwsWafChallenge(tabId) {
     try {
-      const [observed] = await browser.tabs.executeScript(tabId, { frameId: 0, code: `(${observeAwsWafChallengeInPage.toString()})()` });
+      const [observed] = await browser.tabs.executeScript(tabId, { frameId: 0, runAt: 'document_start', code: `(${observeAwsWafChallengeInPage.toString()})()` });
       return typeof observed?.active === 'boolean' && observed.inspectionComplete === true
         && observed.pageUrl === await this._currentUrl(tabId) ? observed : null;
     } catch { return null; }
@@ -10913,10 +10915,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (submitted && result?.success === true && gate?.status === 'cleared') gate.continuationDispatched = true;
   }
 
-  async _observeAwsWafGate(tabId, observed = null) {
+  async _observeAwsWafGate(tabId, observed = null, abortSignal = null) {
     observed ||= await this._readAwsWafChallenge(tabId);
+    this._throwIfAborted(abortSignal);
     if (!observed) return null; // Failed inspection never retires a paid lock.
-    await this._refreshCaptchaGateDocument(tabId, observed.rootDocument);
+    await this._refreshCaptchaGateDocument(tabId, observed.rootDocument, abortSignal);
+    this._throwIfAborted(abortSignal);
     let previous = this._captchaGateStates.get(tabId);
     const answer = this._nativeCaptchaSolutions?.get(tabId);
     if (!observed.active) {
@@ -10945,12 +10949,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             && (state.responseTokenPresent === true || !oldWidgetPresent);
         } catch {}
       }
+      this._throwIfAborted(abortSignal);
       if (oldCleared) { this._retireCompletedCaptcha(tabId); previous = null; }
       else if (previous.publicGate?.solveAttempted) return previous.publicGate;
     }
     if (previous?.awsWaf && previous.status !== 'cleared') return previous.publicGate;
     if (previous?.status === 'cleared') this._retireCompletedCaptcha(tabId);
     const providers = getCaptchaProviders(await browser.storage.local.get(CAPTCHA_SETTINGS_KEYS));
+    this._throwIfAborted(abortSignal);
     const capability = describeAwsWafObservation(providers, observed);
     const attempted = answer?.family === 'aws_waf' && !answer.challengeCleared && answer.pageUrl === observed.pageUrl
       ? answer.awsAttempts || [] : [];
@@ -11192,7 +11198,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return clearedGate;
   }
 
-  async _refreshCaptchaGateDocument(tabId, rootDocument = null) {
+  async _refreshCaptchaGateDocument(tabId, rootDocument = null, abortSignal = null) {
     const gate = this._captchaGateStates.get(tabId);
     const previousRoot = gate?.rootDocument;
     if (!(previousRoot?.timeOrigin > 0)) return null;
@@ -11203,6 +11209,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (root) rootDocument = { url: root.url, timeOrigin: root.timeOrigin };
       }
       const currentUrl = await this._currentUrl(tabId);
+      this._throwIfAborted(abortSignal);
       if (!(rootDocument?.timeOrigin > 0) || rootDocument.timeOrigin === previousRoot.timeOrigin
           || this._normalizeUrl(rootDocument.url) !== this._normalizeUrl(currentUrl)
           || this._captchaGateStates.get(tabId) !== gate) return null;
@@ -11253,6 +11260,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _detectChallengeDialogBeforeMutation(tabId, options = {}) {
+    this._throwIfAborted(options.abortSignal);
     const includeStatus = options?.includeStatus === true;
     const expectedFrameId = Number.isInteger(options?.expectedFrameId)
       ? options.expectedFrameId
@@ -11266,6 +11274,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         navigationInspectionComplete = true;
       }
     } catch {}
+    this._throwIfAborted(options.abortSignal);
     if (!navigationFrames.length) {
       navigationFrames = [{ frameId: 0, parentFrameId: -1, url: '' }];
     }
@@ -11282,6 +11291,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             code,
             frameId: frame.frameId,
             matchAboutBlank: true,
+            runAt: 'document_start',
           });
           return {
             frameId: frame.frameId,
@@ -11296,6 +11306,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       );
     };
     let successfulEntries = await scan();
+    this._throwIfAborted(options.abortSignal);
     // Visible dialog titles nobody has read are read, in any language, and
     // the page scanned again with those readings.
     const unread = successfulEntries.flatMap(entry => (Array.isArray(entry.payload?.unreadTitles) ? entry.payload.unreadTitles : []));
@@ -11456,6 +11467,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _captchaMutationPreflight(tabId, toolName, toolArgs = {}, abortSignal = null) {
+    const linked = this._linkAbortSignals(abortSignal, this._runAbortSignal(tabId));
+    const runId = this.currentRunId.get(tabId);
+    let stage = 'start';
+    const started = Date.now();
+    try {
+      return await this._withContentActionDeadline(
+        signal => this._inspectCaptchaBeforeMutation(tabId, toolName, toolArgs, signal, value => { stage = value; }),
+        toolName, CAPTCHA_PREFLIGHT_TIMEOUT_MS, linked.signal,
+      );
+    } catch (error) {
+      if (error?.code === 'content_action_timeout' && runId) {
+        trace.recordNote(runId, 0, 'captcha_preflight_timeout', { stage, elapsedMs: Date.now() - started });
+      }
+      throw error;
+    } finally { linked.dispose(); }
+  }
+
+  async _inspectCaptchaBeforeMutation(tabId, toolName, toolArgs = {}, abortSignal = null, onStage = () => {}) {
     this._throwIfAborted(abortSignal);
     if (toolName === 'done' && ['failed', 'partial'].includes(normalizeDoneOutcome(toolArgs?.outcome))) return null;
     const gatedCompletion = toolName === 'done' || toolName === 'done_json';
@@ -11463,12 +11492,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || gatedCompletion
       || isNetworkMutation(toolName, toolArgs);
     if (toolName === 'solve_captcha') {
-      await this._refreshCaptchaGateDocument(tabId);
+      onStage('document_identity');
+      await this._refreshCaptchaGateDocument(tabId, null, abortSignal);
       this._throwIfAborted(abortSignal);
       return null;
     }
     if (!gatedAction || Agent.NAV_TOOLS.has(toolName)) return null;
-    const awsGate = await this._observeAwsWafGate(tabId);
+    onStage('aws_waf');
+    const awsGate = await this._observeAwsWafGate(tabId, null, abortSignal);
+    this._throwIfAborted(abortSignal);
     if (awsGate && awsGate.status !== 'cleared') return awsGate;
     const activeGate = this._captchaGateForTools(tabId, this._captchaGateStates.get(tabId));
     if (
@@ -11476,7 +11508,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && activeGate.status !== 'cleared'
       && !this._shouldRetryCaptchaManualGate(activeGate)
     ) return null;
-    const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId);
+    onStage('dialog_scan');
+    const detectedChallenge = await this._detectChallengeDialogBeforeMutation(tabId, { abortSignal });
     this._throwIfAborted(abortSignal);
     const challenge = detectedChallenge?.label
       ? detectedChallenge
@@ -11487,6 +11520,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let pageUrl = '';
     try { pageUrl = await this._currentUrl(tabId); } catch {}
     this._throwIfAborted(abortSignal);
+    onStage('challenge_observation');
     const observation = await this._observeCaptchaChallenge(
       tabId,
       'get_accessibility_tree',
@@ -11500,12 +11534,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         captchaChallengeVisibilityConfirmed: true,
       },
       {},
+      abortSignal,
     );
     this._throwIfAborted(abortSignal);
     return observation.gate;
   }
 
-  async _observeCaptchaChallenge(tabId, toolName, toolResult, toolArgs = {}) {
+  async _observeCaptchaChallenge(tabId, toolName, toolResult, toolArgs = {}, abortSignal = null) {
+    this._throwIfAborted(abortSignal);
     if (
       toolName !== 'get_accessibility_tree'
       || !toolResult
@@ -11528,7 +11564,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && !toolResult.truncated && !toolResult.hasMore && !toolResult.autoDegraded
         && (!toolArgs?.maxDepth || Number(toolArgs.maxDepth) >= 15)
         && toolArgs?.filter !== 'interactive') {
-      const awsGate = await this._observeAwsWafGate(tabId);
+      const awsGate = await this._observeAwsWafGate(tabId, null, abortSignal);
       if (awsGate) {
         toolResult.captchaGate = awsGate;
         return { gate: awsGate, loopCheck: { kind: 'none' } };
@@ -11585,7 +11621,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     if (pageUrl && this._nativeCaptchaSolutions?.get(tabId)?.pageUrl !== pageUrl) {
       try {
-        if (this._retireNativeCaptchaAnswerIfPageChanged(tabId, await this._currentUrl(tabId))) {
+        const currentUrl = await this._currentUrl(tabId);
+        this._throwIfAborted(abortSignal);
+        if (this._retireNativeCaptchaAnswerIfPageChanged(tabId, currentUrl)) {
           this._captchaGateStates.delete(tabId);
           activeGate = null;
         }
@@ -11635,8 +11673,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
           if ((rootReplaced || widgetGone)
               && this._normalizeUrl(await this._currentUrl(tabId)) === this._normalizeUrl(currentUrl)) {
+            this._throwIfAborted(abortSignal);
             navigationClearance = rootReplaced
-              ? await this._refreshCaptchaGateDocument(tabId, currentRoot)
+              ? await this._refreshCaptchaGateDocument(tabId, currentRoot, abortSignal)
               : this._clearCaptchaGateAfterPageChange(tabId, gatedPageUrl, currentUrl, toolResult);
             if (navigationClearance) toolResult.captchaGate = navigationClearance;
             if (navigationClearance) activeGate = null;
@@ -11717,12 +11756,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         );
       } else if (!frameInspection.inspectionComplete) {
         const guardedState = normalizeCaptchaGateState(activeGate);
+        this._throwIfAborted(abortSignal);
         this._captchaGateStates.set(tabId, guardedState);
         toolResult.captchaGate = guardedState.publicGate;
         return { gate: guardedState.publicGate, loopCheck: { kind: 'none' } };
       }
     }
     if (activeGate?.status === 'cleared' && activeGate.continuationDispatched && challenge) {
+      this._throwIfAborted(abortSignal);
       this._retireCompletedCaptcha(tabId);
       activeGate = null;
     }
@@ -11762,6 +11803,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         responseTokenPresent: true,
         clearedByResponseToken: true,
       };
+      this._throwIfAborted(abortSignal);
       this._captchaGateStates.set(tabId, {
         ...withoutLegacyCaptchaVerificationState(activeGate),
         status: 'cleared',
@@ -11785,6 +11827,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         activeChallengeAfterSolve: true,
         ...(challenge?.label ? { challengeDialog: { label: challenge.label } } : {}),
       };
+      this._throwIfAborted(abortSignal);
       this._captchaGateStates.set(tabId, {
         ...withoutLegacyCaptchaVerificationState(activeGate),
         status: 'manual_required',
@@ -11805,6 +11848,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         status: 'verification_pending',
         ...(challenge?.label ? { challengeDialog: { label: challenge.label } } : {}),
       };
+      this._throwIfAborted(abortSignal);
       this._captchaGateStates.set(tabId, {
         ...withoutLegacyCaptchaVerificationState(activeGate),
         status: 'verification_pending',
@@ -11826,6 +11870,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       });
       if (inspection.inspectionComplete && !inspection.challenge) {
         const clearedGate = { ...activeGate.publicGate, status: 'cleared', clearedByNativeApplication: true };
+        this._throwIfAborted(abortSignal);
         this._captchaGateStates.set(tabId, { ...activeGate, status: 'cleared', publicGate: clearedGate });
         toolResult.captchaGate = clearedGate;
         return { gate: clearedGate, loopCheck };
@@ -11845,6 +11890,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             status: 'cleared',
             clearedByManualCompletion: true,
           };
+          this._throwIfAborted(abortSignal);
           this._captchaGateStates.delete(tabId);
           toolResult.captchaGate = clearedGate;
           return { gate: clearedGate, loopCheck };
@@ -11852,6 +11898,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (activeGate && authoritativeRootRead && activeGate.status !== 'cleared') {
         const guardedState = normalizeCaptchaGateState(activeGate);
+        this._throwIfAborted(abortSignal);
         this._captchaGateStates.set(tabId, guardedState);
         toolResult.captchaGate = guardedState.publicGate;
         return { gate: guardedState.publicGate, loopCheck };
@@ -11861,6 +11908,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       if (activeGate) {
         const guardedState = normalizeCaptchaGateState(activeGate);
+        this._throwIfAborted(abortSignal);
         this._captchaGateStates.set(tabId, guardedState);
         toolResult.captchaGate = guardedState.publicGate;
         return { gate: guardedState.publicGate, loopCheck };
@@ -11878,6 +11926,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         status: 'manual_required',
         challengeDialog: { label: challenge.label },
       };
+      this._throwIfAborted(abortSignal);
       this._captchaGateStates.set(tabId, {
         ...withoutLegacyCaptchaVerificationState(existing),
         status: 'manual_required',
@@ -11892,6 +11941,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         status: 'verification_pending',
         challengeDialog: { label: challenge.label },
       };
+      this._throwIfAborted(abortSignal);
       this._captchaGateStates.set(tabId, {
         ...withoutLegacyCaptchaVerificationState(existing),
         status: 'verification_pending',
@@ -11957,6 +12007,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const captchaCandidateIdentity = selectedCorrelated
       ? captchaGateCandidateIdentity(detection?.selected)
       : null;
+    this._throwIfAborted(abortSignal);
     this._captchaGateStates.set(tabId, {
       key,
       pageUrl,
@@ -38953,7 +39004,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (!pendingNativeAnswer && !args?.provider && !args?.method && (!args?.family || args.family === 'aws_waf')) {
         const observed = await (async () => {
           const [result] = await browser.tabs.executeScript(tabId, {
-            frameId: 0, code: `(${observeAwsWafChallengeInPage.toString()})()`,
+            frameId: 0, runAt: 'document_start', code: `(${observeAwsWafChallengeInPage.toString()})()`,
           });
           return result || null;
         })().catch(() => null);

@@ -1089,9 +1089,10 @@ export const pageFeedbackMethods = {
         + 'Do not repeat an unresolved download.' };
   },
 
-  _pageFeedbackStateCurrent(tabId, run, state, url = run.url) {
+  _pageFeedbackStateCurrent(tabId, run, state, url = run.url, { rootOnly = false } = {}) {
     const calculationScope = state?.calculationResponseScope ? this._pageFeedbackCalculationResponseScope(tabId) : null;
     return !!state && state.token === run.token && state.url === url
+      && (!rootOnly || (state.frames.has(0) && !this._hasPendingSteering?.(tabId)))
       && (!state.calculationResponseScope || (calculationScope
         && state.calculationResponseScope.owner === calculationScope.owner
         && state.calculationResponseScope.runToken === calculationScope.runToken
@@ -1100,7 +1101,7 @@ export const pageFeedbackMethods = {
         && this._pageFeedbackCalculationComplete(tabId)))
       && (state.runMode === undefined || state.runMode === (this._effectiveRunMode?.(tabId, null) || null))
       && state.steeringRevision === (this._steeringRuns?.get(tabId)?.acceptedIds.size || 0)
-      && [...state.frames].every(([id, frame]) => run.frames.get(id)?.token === frame.token
+      && [...state.frames].filter(([id]) => !rootOnly || id === 0).every(([id, frame]) => run.frames.get(id)?.token === frame.token
         && run.frames.get(id)?.id === frame.id);
   },
 
@@ -1169,8 +1170,10 @@ export const pageFeedbackMethods = {
           || !this._pageFeedbackStateCurrent(tabId, run, run.dispatchCall.modelState))) return true;
     if (!run?.events.size) return false;
     const events = [...run.events.values()];
+    const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, events);
     // Automatic churn (a superset of relaxed-retry DOM) revalidates per policy.
-    if (!isAutomaticPageFeedback(events) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState)) return true;
+    if (!isAutomaticPageFeedback(events) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState, run.url,
+      { rootOnly: policy.kind === 'request' })) return true;
     // Unknown DOM is observed while an agent action is in flight. It is that
     // call's own uncertain effect only after the call sent input (typeahead
     // renders between keys). Observed during an earlier action, or during this
@@ -1179,12 +1182,12 @@ export const pageFeedbackMethods = {
       .some(({ call, afterInput }) => call && call.mutation !== false && !(call === run.dispatchCall && afterInput)))) return true;
     const policyEvents = this._monitoringRetryCurrent(tabId, run)
       ? events.map(event => event.source === 'unknown' && event.kind === 'dom' ? { ...event, source: 'page' } : event) : events;
-    const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, policyEvents);
+    const currentPolicy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, policyEvents);
     // Targets need a fresh comparison first; the content monitor then checks
     // their immutable node and action context at the actual dispatch boundary.
-    if (policy.kind === 'bound_target') return run.dispatchCall?.allowPassiveRebase !== true
+    if (currentPolicy.kind === 'bound_target') return run.dispatchCall?.allowPassiveRebase !== true
       || run.validatedActionBindings?.get(`${name}:${JSON.stringify(args)}`) !== run.modelState.actionBinding.snapshotToken;
-    return policy.kind === 'unsafe' || (policy.kind === 'target' && !run.dispatchCall?.allowPassiveRebase);
+    return currentPolicy.kind === 'unsafe' || (currentPolicy.kind === 'target' && !run.dispatchCall?.allowPassiveRebase);
   },
 
   _compactPageFeedbackMessages(messages) {
@@ -1350,8 +1353,12 @@ export const pageFeedbackMethods = {
       documentMatches = state.documentId ? documentId === state.documentId : state.frames.has(0);
     }
     const currentRun = this._pageFeedbackRuns.get(tabId) === run;
+    const concreteRequests = !!responseToolCalls?.length && responseToolCalls.every(call => {
+      try { return pageFeedbackCallPolicy(call.function?.name, JSON.parse(call.function.arguments)).kind === 'request'; }
+      catch { return false; }
+    });
     const stateCurrent = documentMatches && currentRun
-      ? this._pageFeedbackStateCurrent(tabId, run, state, url) : null;
+      ? this._pageFeedbackStateCurrent(tabId, run, state, url, { rootOnly: concreteRequests }) : null;
     const sameDocument = documentMatches && currentRun && stateCurrent;
     // A tool-free Ask answer or a strictly owned literal arithmetic-only task
     // is independent of passive churn. Task-only scope permits normal protocol
