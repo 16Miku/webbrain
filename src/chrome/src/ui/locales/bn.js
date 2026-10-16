@@ -518,6 +518,7 @@ export default {
   'tool.clarify': "স্পষ্টীকরণ চাওয়া হচ্ছে",
   'tool.get_window_info': "উইন্ডো পরীক্ষা করা হচ্ছে",
   'tool.resize_window': "উইন্ডোর আকার পরিবর্তন করা হচ্ছে",
+  'tool.browser_batch': "ব্রাউজারের কাজগুলো চলছে",
   'tool.inspect_viewport': "ভিউস্লট পরিদর্শন করা হচ্ছে",
   'tool.scratchpad_write': "নোট আপডেট করা হচ্ছে",
   'tool.progress_update': "অগ্রগতি আপডেট করা হচ্ছে",

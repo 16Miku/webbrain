@@ -518,6 +518,7 @@ export default {
   'tool.clarify': "स्पष्टीकरण माँगा जा रहा है",
   'tool.get_window_info': "विंडो जाँची जा रही है",
   'tool.resize_window': "विंडो का आकार बदला जा रहा है",
+  'tool.browser_batch': "ब्राउज़र क्रियाएँ चल रही हैं",
   'tool.inspect_viewport': "व्यूपोर्ट जाँचा जा रहा है",
   'tool.scratchpad_write': "नोट्स अपडेट किए जा रहे हैं",
   'tool.progress_update': "प्रगति अपडेट की जा रही है",

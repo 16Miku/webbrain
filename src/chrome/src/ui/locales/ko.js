@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "명확한 정보 요청 중",
   'tool.get_window_info': "창 정보 확인 중",
   'tool.resize_window': "창 크기 조정 중",
+  'tool.browser_batch': "브라우저 작업 실행 중",
   'tool.inspect_viewport': "뷰포트 검사 중",
   'tool.scratchpad_write': "메모 업데이트 중",
   'tool.progress_update': "진행 상황 업데이트 중",

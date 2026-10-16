@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "请求确认",
   'tool.get_window_info': "检查窗口",
   'tool.resize_window': "调整窗口大小",
+  'tool.browser_batch': "正在执行浏览器操作",
   'tool.inspect_viewport': "检查视口",
   'tool.scratchpad_write': "更新便签",
   'tool.progress_update': "更新进度",

@@ -518,6 +518,7 @@ export default {
   'tool.clarify': "Yêu cầu làm rõ",
   'tool.get_window_info': "Kiểm tra cửa sổ",
   'tool.resize_window': "Thay đổi kích thước cửa sổ",
+  'tool.browser_batch': "Đang thực hiện các thao tác trình duyệt",
   'tool.inspect_viewport': "Kiểm tra khung nhìn",
   'tool.scratchpad_write': "Cập nhật ghi chú",
   'tool.progress_update': "Cập nhật tiến độ",

@@ -222,6 +222,7 @@ const scheduler = new ScheduledJobManager({
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await imageGenConfigReady;
+    await browserBatchEnabledReady;
     if (providerManager.providers.size === 0) await providerManager.load();
   },
   sendUpdate: (tabId, type, data, owner) => {
@@ -529,6 +530,19 @@ async function loadImageGenConfig() {
   agent.setImageGenConfig(stored?.[IMAGE_GEN_MODEL_KEY]);
 }
 const imageGenConfigReady = loadImageGenConfig();
+
+let browserBatchSettingsRevision = 0;
+async function loadBrowserBatchEnabled() {
+  const revision = ++browserBatchSettingsRevision;
+  try {
+    const stored = await browser.storage.local.get('browserBatchEnabled');
+    if (revision === browserBatchSettingsRevision) agent.setBrowserBatchEnabled(stored.browserBatchEnabled !== false);
+  } catch {
+    // A delayed read must never override a newer explicit kill-switch change.
+    if (revision === browserBatchSettingsRevision) agent.setBrowserBatchEnabled(false);
+  }
+}
+const browserBatchEnabledReady = loadBrowserBatchEnabled();
 
 async function loadProfile() {
   const stored = await browser.storage.local.get(['profileEnabled', 'profileText']);
@@ -1173,6 +1187,10 @@ browser.storage.onChanged.addListener((changes, areaName) => {
   if (changes.webbrainCloudBridgeEnabled || changes.webbrainCloudBridgeUrl
     || changes.webbrainCloudBridgeToken || changes.webbrainCloudBridgeBrowserId) {
     cloudRunController.syncBridge().catch(() => {});
+  }
+  if (areaName === 'local' && changes.browserBatchEnabled) {
+    browserBatchSettingsRevision++;
+    agent.setBrowserBatchEnabled(changes.browserBatchEnabled.newValue !== false);
   }
   if (changes.strictSecretMode) {
     agent.strictSecretMode = changes.strictSecretMode.newValue === true;
@@ -2835,7 +2853,7 @@ async function handleMessage(msg, sender) {
     }
     // Hydrate agent toggles and prompt add-ons once at boot (not per message);
     // onChanged keeps them in sync afterward.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await screenshotRedactionReady;
@@ -3632,6 +3650,7 @@ async function handleMessage(msg, sender) {
         loadScreenshotRedaction(),
         loadStrictSecretMode(),
         loadImageGenConfig(),
+        loadBrowserBatchEnabled(),
         loadProfile(),
         syncAgentUserMemoryFromStorage(),
         loadCustomSkills(),

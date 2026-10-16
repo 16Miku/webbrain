@@ -516,6 +516,7 @@ export default {
   'tool.clarify': "درخواست شفاف‌سازی",
   'tool.get_window_info': "بررسی پنجره",
   'tool.resize_window': "تغییر اندازه پنجره",
+  'tool.browser_batch': "اجرای اقدامات مرورگر",
   'tool.inspect_viewport': "بررسی محدوده دید",
   'tool.scratchpad_write': "به‌روزرسانی یادداشت‌ها",
   'tool.progress_update': "به‌روزرسانی پیشرفت",

@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "Запрос уточнения",
   'tool.get_window_info': "Проверка окна",
   'tool.resize_window': "Изменение размера окна",
+  'tool.browser_batch': "Выполнение действий в браузере",
   'tool.inspect_viewport': "Осмотр области просмотра",
   'tool.scratchpad_write': "Обновление заметок",
   'tool.progress_update': "Обновление прогресса",

@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "Hinihingi ang paglilinaw",
   'tool.get_window_info': "Sinusuri ang window",
   'tool.resize_window': "Binabago ang laki ng window",
+  'tool.browser_batch': "Isinasagawa ang mga aksyon sa browser",
   'tool.inspect_viewport': "Sinusuri ang viewport",
   'tool.scratchpad_write': "Ina-update ang mga tala",
   'tool.progress_update': "Ina-update ang progreso",

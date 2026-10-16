@@ -517,6 +517,7 @@ export default {
   'tool.clarify': "Rückfrage stellen",
   'tool.get_window_info': "Fenster prüfen",
   'tool.resize_window': "Fenstergröße anpassen",
+  'tool.browser_batch': "Browseraktionen werden ausgeführt",
   'tool.inspect_viewport': "Sichtbereich untersuchen",
   'tool.scratchpad_write': "Notizen aktualisieren",
   'tool.progress_update': "Fortschritt aktualisieren",

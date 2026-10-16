@@ -502,6 +502,7 @@ export default {
   'tool.clarify': "Verduidelijking vragen",
   'tool.get_window_info': "Venster controleren",
   'tool.resize_window': "Venstergrootte aanpassen",
+  'tool.browser_batch': "Browseracties uitvoeren",
   'tool.inspect_viewport': "Weergavegebied inspecteren",
   'tool.scratchpad_write': "Notities bijwerken",
   'tool.progress_update': "Voortgang bijwerken",
