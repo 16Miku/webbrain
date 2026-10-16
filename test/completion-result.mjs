@@ -186,6 +186,8 @@ for (const build of ['chrome', 'firefox']) {
       assert.match(args.state[1].observation, /Please hand over the two owned QA accounts/);
       assert.doesNotMatch(args.state[1].observation, /PRIVATE_|passwords/);
       assert.match(args.state[0].approved_plan, /verify the sent message/);
+      // WebBrain Cloud already holds the request, so its own sidecar judges the same copy.
+      assert.equal(args.state[0].task, 'Send the handover request, without passwords.');
       h.body.style.background = 'sidebar animation';
       return { model: args.config.model, answers: { task_outcome: { choice: 'succeeded', probabilities: { succeeded: .99 } } } };
     };

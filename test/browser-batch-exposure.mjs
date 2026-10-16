@@ -54,6 +54,27 @@ for (const build of ['chrome', 'firefox']) {
     assert.ok(!SYSTEM_PROMPT_ACT_COMPACT.includes('browser_batch'));
   });
 
+  // A trace filled four known signup fields in four model turns: the prompts
+  // said "fill ONE field at a time" and the plan named only set_field.
+  test(`${build}: known form fields are steered into one batch wherever batching exists`, async () => {
+    const { buildPlannerSystemPrompt } = await import(`../src/${build}/src/agent/planner.js`);
+    assert.match(SYSTEM_PROMPT_BATCHING, /ONE browser_batch, one action per field \(set_field with submit:false/);
+    assert.match(SYSTEM_PROMPT_BATCHING, /BROWSER STATE page observation/, 'a fresh page observation already supplies the refs');
+    assert.match(SYSTEM_PROMPT_BATCHING, /List password fields last/, 'a password entry ends a batch for the rest of its form');
+    for (const prompt of [SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_MID]) {
+      assert.doesNotMatch(prompt, /ONE field at a time|ONE FIELD AT A TIME/);
+      assert.match(prompt, /never (?:type|concatenate) multiple values/, 'each value still gets its own field action');
+    }
+    assert.match(SYSTEM_PROMPT_ACT, /CRITICAL for the click-then-type fallback/, 'the click-each-field rule is scoped to type_text');
+    const batch = getToolsForMode('act', { tier: 'full' }).find(tool => tool.function.name === 'browser_batch');
+    assert.match(batch.function.description, /one set_field per known form field/);
+    assert.match(buildPlannerSystemPrompt({ tier: 'full', browserBatchEnabled: true }), /\["browser_batch", "set_field"\]/);
+    assert.match(buildPlannerSystemPrompt({ tier: 'mid', browserBatchEnabled: true }), /browser_batch runs several/);
+    for (const options of [{ tier: 'full' }, { tier: 'full', browserBatchEnabled: false }, { tier: 'compact', browserBatchEnabled: true }]) {
+      assert.ok(!buildPlannerSystemPrompt(options).includes('browser_batch'), JSON.stringify(options));
+    }
+  });
+
   test(`${build}: batch results are classified as untrusted while children own permissions`, () => {
     assert.equal(UNTRUSTED_CONTENT_TOOLS.has('browser_batch'), true);
     assert.equal(capabilityFor('browser_batch', {}), null);

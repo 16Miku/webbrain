@@ -38,6 +38,7 @@ export const SYSTEM_PROMPT_GENERATIVE_MEDIA = `GENERATIVE MEDIA:
 
 export const SYSTEM_PROMPT_BATCHING = `BATCHING:
 - Use browser_batch for predictable steps on the current page with targets you already observed, such as filling known fields or opening a menu and choosing a known item. A navigation followed by a page read can also share one batch.
+- Forms: once the fields' ref_ids are observed (a tree read or the latest BROWSER STATE page observation) and their values are known, fill them in ONE browser_batch, one action per field (set_field with submit:false for text fields), splitting only at its action limit, instead of spending a model turn per field. List password fields last: entering one can end the batch, and the next turn fills any field that did not run.
 - Keep steps that depend on unseen results for a later turn. Put a submit last. Use only advertised tools; observations belong at the end. Never alternate opposing actions within a batch.
 - Batches stop on failure, an uncertain outcome, navigation before another action, or a submit. Inspect the returned results and verify the outcome before acting again.`;
 
@@ -46,7 +47,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_batch',
-      description: 'Run a short sequence of predictable browser actions in order using already observed targets. Stops at the first failure or uncertain outcome, after a submit, or after navigation unless only observations remain. Put observations at the end and verify the result before acting again; each action uses its normal permissions.',
+      description: 'Run a short sequence of predictable browser actions in order using already observed targets, such as one set_field per known form field, in one call instead of one turn per action. Stops at the first failure or uncertain outcome, after a submit, or after navigation unless only observations remain. Put observations at the end and verify the result before acting again; each action uses its normal permissions.',
       parameters: {
         type: 'object',
         properties: {
@@ -2303,7 +2304,7 @@ Guidelines:
 CRITICAL — do NOT rush:
 - Outside an explicit browser_batch, do NOT chain multiple tool calls without checking results between them. After each page-changing action, or the end of an explicit batch, read the page/tree or inspect injected auto-screenshot/visual context to confirm what happened before proceeding.
 - When creating something (product, post, account, etc.), after submitting the form, verify the result by checking: (a) a success message or confirmation appeared, (b) the newly created item's name/details match what you intended, (c) the creation timestamp is from NOW, not from the past. Do NOT assume an existing item is something you just created.
-- When filling a multi-field form, fill ONE field at a time unless using an explicit browser_batch with already observed field targets. Target each field separately; never type multiple values into the same focused field.
+- When filling a multi-field form, give each field its own action on its own target; never type multiple values into the same focused field. Separate actions do not need separate turns: when browser_batch is available, send the actions for already observed fields together in one batch.
 - If the user's request contains multiple pieces of data (e.g. "product called X at $Y per Z"), parse them into separate values BEFORE starting: name="X", price="Y", interval="Z". Then fill each into its own form field.
 
 SCRATCHPAD — use this for long tasks:
@@ -2378,7 +2379,7 @@ TYPING — read this:
 - RICH-TEXT BODY EDITORS (Discourse post body, Gmail compose, Slack message, Notion, Medium): editable roots normally appear as \`textbox\` refs in the accessibility tree, including empty and \`plaintext-only\` contenteditable variants. Prefer \`set_field\` or \`type_ax\` on that ref. If a site hides the editor from the tree, use the direct fallback \`type_text({selector: "[contenteditable]:not([contenteditable=\\"false\\"])", text: "..."})\` instead of repeatedly clicking it.
 - DRAFT CHECKPOINT: before filling an external email/message/post composer, formulate the exact recipient(s), subject (when applicable), and body. If the body is more than a short one-liner, immediately save \`[pending draft]\`, the recipient, subject, and complete body with \`scratchpad_write\` before typing anything into the composer. This is an exception to the short-task/factual-only scratchpad rule. Never label the checkpoint as sent. Then fill the UI from that exact draft.
 - If \`type_text\` returns success but a follow-up page read/tree shows the field did not change, the focus was lost — re-click the field and try again.
-- CRITICAL: If you're filling multiple fields, you MUST click each field individually before typing into it. NEVER type multiple values without clicking the target field first. If you type without clicking, the text goes into whatever was last focused — which is often the WRONG field. The pattern is always: click field A → type value A → click field B → type value B → click field C → type value C.
+- CRITICAL for the click-then-type fallback: if you fill multiple fields with type_text, you MUST click each field individually before typing into it. NEVER type multiple values without clicking the target field first. If you type without clicking, the text goes into whatever was last focused — which is often the WRONG field. The pattern is always: click field A → type value A → click field B → type value B → click field C → type value C. set_field and type_ax target their ref_id directly and need no click.
 - NEVER concatenate multiple values (name + price + period) into a single type_text call. Each piece of data goes into its own field.
 - If \`type_text\` returns a warning about "same field twice in a row", STOP — you're typing into the wrong field. Click the correct field first.
 
@@ -2621,7 +2622,7 @@ TYPING:
 - DRAFT CHECKPOINT: before filling an external email/message/post composer, formulate the exact recipient(s), subject (when applicable), and body. If the body is more than a short one-liner, save the complete text as \`[pending draft]\` with scratchpad_write before typing; never label it sent until the UI verifies sending.
 - HARD RULE: after click_ax on a text field, your NEXT call MUST be type_ax/set_field on the SAME ref. Do not click_ax again or re-read the tree first.
 - Native <select>: use type_ax({ref_id,text:"exact option label"}); fallback to click_ax, then ArrowDown/ArrowUp + Enter. Custom/ARIA dropdowns (role="combobox", Stripe/Radix/React-Select): open them, use type_text({text:"filter"}) + Enter or arrows + Enter. press_keys does not support letter keys or modifiers.
-- Fill forms ONE FIELD AT A TIME: focus field A → type value A → field B → type value B. Never concatenate multiple values (name + price + period) into one type call.
+- Fill forms with one action per field (set_field per field); never concatenate multiple values (name + price + period) into one type call. With browser_batch available, send the actions for already observed fields together in one batch.
 
 CLICKING:
 - Prefer click_ax({ref_id}). Fallback click({text:"..."}) (exact, case-insensitive). On an ambiguity error, use more specific text or click({index:N}) from a get_interactive_elements call made THIS SAME TURN — indices are never stable across turns, never reuse them.

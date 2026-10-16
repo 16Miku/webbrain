@@ -134,6 +134,28 @@ requirements, recent action/read evidence, document identity and fresh redacted
 pixels (when supported) or AX to the selected judge. Page content and pixels are
 untrusted data; an agent success summary is not proof. Text is bounded by
 serialized UTF-8 bytes; screenshots use the configured capture/redaction budgets.
+Recorded actions carry only their tool names, the `ref_N` target each named
+and app-owned booleans (verified, failed, credential field), never other
+arguments or entered values. A value of four characters or more that the
+current run entered into a password input, as the entry tool's own result
+reports the field, is masked in all judge evidence text while the conversation
+still holds that entry: as typed, as the accessibility tree prints it once a
+"show password" control reveals it (normalized, trimmed and cut to 60
+characters), line by line, and escaped. Values entered into other fields,
+including fields WebBrain flags as credentials such as a one-time-code box, are
+not masked: the page shows them, and judges compare them with the request.
+Screenshots are not masked this way; a password input shows only dots. The
+active conversation model already holds the task, approved plan and candidate
+summary, so its own check receives every line of them, with addresses cut to
+origin and path, bearer tokens hidden and entered passwords masked. A decision
+provider that stays on this device (Local Kev on a loopback address, or D1), or
+Compass's managed Cloud decision route while Compass is the conversation
+provider, receives that same copy. Any other decision provider receives those
+texts with every line that names a credential removed; when that removal leaves
+it without the task or plan while the active model can judge, it is not asked.
+Page evidence is redacted the same way for every judge: each line naming a
+credential is removed, and a credential field's accessibility line keeps at
+most its role and ref.
 Local Kev uses `/v1/systemone`, requires no key by default and works offline.
 Keys stay in local storage; config exports include them in plaintext.
 
