@@ -518,6 +518,7 @@ export default {
   'tool.clarify': "Pedindo esclarecimento",
   'tool.get_window_info': "Verificando janela",
   'tool.resize_window': "Redimensionando janela",
+  'tool.browser_batch': "Executando ações do navegador",
   'tool.inspect_viewport': "Inspecionando área de visualização",
   'tool.scratchpad_write': "Atualizando notas",
   'tool.progress_update': "Atualizando progresso",

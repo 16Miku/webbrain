@@ -523,6 +523,7 @@ export default {
   'tool.clarify': "Asking for clarification",
   'tool.get_window_info': "Checking window",
   'tool.resize_window': "Resizing window",
+  'tool.browser_batch': "Running browser actions",
   'tool.inspect_viewport': "Inspecting viewport",
   'tool.scratchpad_write': "Updating notes",
   'tool.progress_update': "Updating progress",

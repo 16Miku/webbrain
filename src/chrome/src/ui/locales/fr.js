@@ -296,6 +296,7 @@ export default {
   'tool.clarify': "Demande de clarification",
   'tool.get_window_info': "Vérification de la fenêtre",
   'tool.resize_window': "Redimensionnement de la fenêtre",
+  'tool.browser_batch': "Exécution des actions du navigateur",
   'tool.inspect_viewport': "Inspection de la fenêtre d'affichage",
   'tool.scratchpad_write': "Mise à jour des notes",
   'tool.progress_update': "Mise à jour de la progression",

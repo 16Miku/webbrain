@@ -16,10 +16,11 @@ import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailur
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
-import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
+import { AGENT_TOOLS, AGENT_TOOL_NAMES, RESERVED_AGENT_TOOL_NAMES, getToolsForMode, SYSTEM_PROMPT_BATCHING, SYSTEM_PROMPT_ASK, SYSTEM_PROMPT_ACT, SYSTEM_PROMPT_ACT_COMPACT, SYSTEM_PROMPT_ACT_MID, SYSTEM_PROMPT_GENERATIVE_MEDIA, SYSTEM_PROMPT_DEV_APPENDIX, SYSTEM_PROMPT_WEBMCP_ASK, SYSTEM_PROMPT_WEBMCP_ACT } from './tools.js';
 import { rejectedCompletionRecovery } from './completion-recovery.js';
 import { FailureRecoveryRegistry, modelFailureRecovery } from './failure-recovery.js';
 import { validateToolArguments } from './tool-arguments.js';
+import { BATCH_INTERMEDIATE_RESULT_CHARS, BATCH_TRAILING_OBSERVATION_TOOLS, expandBrowserBatchCalls, foldBrowserBatchMessages, digestBrowserBatch, browserBatchResultStatus } from './browser-batch.js';
 import { calculateExpression, calculationResultInText } from './calculator.js';
 import { isLiteralCalculationTask, literalCalculationSummaryFormatMatches, isPassivePageFeedback } from './page-feedback-policy.js';
 import { chatRecoveryDisplayText, terminalRecoveryFinalText } from './chat-recovery-text.js';
@@ -747,6 +748,7 @@ const OWNED_NATIVE_CHAT_READ_REPAIR = Symbol('owned-native-chat-read-repair');
 export class Agent extends LoopDetector {
   constructor(providerManager) {
     super();
+    this.browserBatchEnabled = true;
     this.providerManager = providerManager;
     this.conversations = new Map(); // tabId -> messages[]
     // tabId -> durable selected-text boundary. Follow-up turns and Continue
@@ -8238,6 +8240,7 @@ export class Agent extends LoopDetector {
   }
 
   async _chatWithCostAllowance(provider, messages, options, costState, requestContext = null) {
+    messages = foldBrowserBatchMessages(messages, { repairPending: true });
     const linked = this._linkAbortSignals(options?.signal, this._runAbortSignal(requestContext?.tabId));
     options = { ...options, signal: linked.signal };
     try {
@@ -8353,6 +8356,7 @@ export class Agent extends LoopDetector {
   }
 
   async _chatStreamWithCostAllowance(provider, messages, options, costState, requestContext = null, onTextDelta = () => {}) {
+    messages = foldBrowserBatchMessages(messages, { repairPending: true });
     const linked = this._linkAbortSignals(options?.signal, this._runAbortSignal(requestContext?.tabId));
     options = { ...options, signal: linked.signal };
     try {
@@ -9978,7 +9982,7 @@ export class Agent extends LoopDetector {
       onUpdate('tool_result', { name: fnName, result });
       const runId = this.currentRunId.get(tabId);
       if (runId) {
-        trace.recordToolCall(runId, step, {
+        trace.recordToolCall(runId, step, { batch: tc._browserBatch,
           name: fnName,
           args: fnArgs,
           result,
@@ -13327,7 +13331,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return { gate: publicGate, loopCheck };
   }
 
-  _browserActionFreshTurnReason(tier, toolName, toolResult) {
+  _browserActionFreshTurnReason(tier, toolName, toolResult, batch = null) {
+    if (batch) {
+      // Reads and waits can also be prerequisites of the next batched action.
+      if (toolResult?.success === false || toolResult?.error || toolResult?.noProgress
+          || toolResult?.ambiguous || toolResult?.outcomeUnknown || toolResult?.stale) return 'action_failed';
+      if (toolResult?.inconclusive || toolResult?.verified === false || toolResult?.remoteStateVerified === false) return 'action_unverified';
+      if (batch.submit && batch.hasRemaining) return 'submit_boundary';
+      if (batch.navigationChanged && batch.hasRemaining
+          && (!batch.sameNext || !batch.remainingObservations)) return 'navigation_changed';
+      if (!batch.sameNext && batch.hadMutation && (tier === 'mid' || tier === 'compact')) return 'small_model_action_boundary';
+    }
     if (toolName === 'done' && toolResult?.completionPageBlock === true) {
       return 'completion_page_block';
     }
@@ -13368,9 +13382,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       || toolName === 'go_back'
       || toolName === 'go_forward'
     ) {
-      return 'navigation_changed';
+      if (!(batch?.sameNext && batch.remainingObservations)) return 'navigation_changed';
     }
-    if (tier === 'mid' || tier === 'compact') {
+    if ((tier === 'mid' || tier === 'compact') && !batch?.sameNext) {
       return 'small_model_action_boundary';
     }
     return '';
@@ -13436,9 +13450,59 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     await runOptions.handoffObserved?.();
   }
 
+  async _settleBrowserBatchNavigation(tabId) {
+    // A complete tab can start navigation after a click's handler returns. Give
+    // it a short grace period, then require quiet completion before continuing.
+    const started = Date.now();
+    const deadline = started + 3000;
+    let completeSince = null;
+    let navigationObserved = false;
+    do {
+      this._throwIfAborted(this._runAbortSignal(tabId));
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.status === 'loading') {
+        navigationObserved = true;
+        completeSince = null;
+      } else {
+        completeSince ??= Date.now();
+        if (Date.now() - started >= 500 && Date.now() - completeSince >= 200) {
+          return { settled: true, navigationObserved };
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 100));
+    } while (Date.now() < deadline);
+    return { settled: false, navigationObserved };
+  }
+
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
     const messageStart = messages.length;
+    const respondingAssistant = messages.findLast(message => message.role === 'assistant'
+      && message.tool_calls?.length === toolCalls.length
+      && message.tool_calls.every((call, index) => call.id === toolCalls[index].id && call.function?.name === toolCalls[index].function?.name));
+    const responseStart = () => {
+      let index = respondingAssistant ? messages.indexOf(respondingAssistant) : -1;
+      if (index < 0 && respondingAssistant) index = messages.findLastIndex(message => message.role === 'assistant'
+        && message.tool_calls?.length === originalCalls.length
+        && message.tool_calls.every((call, i) => call.id === originalCalls[i].id && call.function?.name === originalCalls[i].function?.name));
+      return index >= 0 ? index + 1 : messageStart;
+    };
+    const parentCalls = toolCalls.filter(call => call.function?.name === 'browser_batch');
+    const originalCalls = toolCalls;
+    const batchStarted = new Set();
+    const batchSchemas = parentCalls.length ? new Map([...allowedToolNames].map(name => [name, this._toolParametersForValidation(tabId, name, toolSchemas)])) : null;
+    toolCalls = expandBrowserBatchCalls(toolCalls, {
+      enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
+    });
+    const originalUpdate = onUpdate;
     const cancellationState = { active: null };
+    // Begin wrapper rows at their execution position, including rejected batches.
+    cancellationState.startBrowserBatch = call => {
+      const id = call._browserBatch?.parentId || (call.function?.name === 'browser_batch' ? call.id : null);
+      if (!id || batchStarted.has(id)) return;
+      batchStarted.add(id);
+      const parent = parentCalls.find(item => item.id === id);
+      originalUpdate('tool_call', { name: 'browser_batch', args: this._toolCallArgs(parent) });
+    };
     try {
       const result = await this._executeToolBatchInner(
         tabId, toolCalls, messages, onUpdate, provider, partialAssistantText,
@@ -13464,7 +13528,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       if (this._checkAbort(tabId) || error?.name === 'AbortError') {
         // Repair the whole assistant tool batch before any caller persists a
         // terminal cancellation. Earlier completed results must stay intact.
-        const answered = new Set(messages.slice(messageStart)
+        const answered = new Set(messages.slice(responseStart())
           .filter(message => message.role === 'tool').map(message => message.tool_call_id));
         const withoutAttachments = result => {
           const clean = { ...result };
@@ -13472,8 +13536,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           delete clean._attachDocument;
           return clean;
         };
-        const serialize = (name, result) => this._wrapUntrusted(
-          this._toolResultTrustName(name, result), this._limitToolResult(result),
+        const serialize = (name, result, batch) => this._wrapUntrusted(
+          batch ? 'browser_batch' : this._toolResultTrustName(name, result), this._limitToolResult(result),
         );
         const notifications = [];
         for (let index = 0; index < toolCalls.length; index++) {
@@ -13504,7 +13568,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             } : {}),
           };
           const name = call.function?.name || 'unknown_tool';
-          const message = { role: 'tool', tool_call_id: call.id, content: serialize(name, result) };
+          const message = { role: 'tool', tool_call_id: call.id, content: serialize(name, result, call._browserBatch) };
           messages.push(message);
           notifications.push({ name, args: active?.args || this._toolCallArgs(call), result, message, active });
           answered.add(call.id);
@@ -13512,7 +13576,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // Earlier results can carry supplemental image/PDF user messages.
         // All results for this assistant batch must precede those messages.
         const callIds = new Set(toolCalls.map(call => call.id));
-        const tail = messages.splice(messageStart);
+        const tail = messages.splice(responseStart());
         const isBatchResult = message => message.role === 'tool' && callIds.has(message.tool_call_id);
         messages.push(...tail.filter(isBatchResult), ...tail.filter(message => !isBatchResult(message)));
         // UI/trace failures cannot leave the transcript half-repaired.
@@ -13521,17 +13585,35 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           let result = notification.result;
           if (active?.invoked) {
             result = { ...withoutAttachments(await this._finalizeToolResultOnce(tabId, name, args, result, active.dispatchState)), cancelled: true };
-            message.content = serialize(name, result);
+            message.content = serialize(name, result, toolCalls.find(call => call.id === message.tool_call_id)?._browserBatch);
           }
           try { onUpdate('tool_result', { name, result }); } catch {}
           const runId = this.currentRunId.get(tabId);
           if (runId) {
-            try { trace.recordToolCall(runId, step, { name, args, result, latencyMs: 0 }); } catch {}
+            try { trace.recordToolCall(runId, step, { name, args, result, latencyMs: 0, batch: toolCalls.find(call => call.id === message.tool_call_id)?._browserBatch }); } catch {}
           }
         }
       }
       throw error;
     } finally {
+      // Each child owns its nonce boundary and trusted notes. Never re-wrap.
+      if (parentCalls.length) {
+        const folded = foldBrowserBatchMessages(messages, { repairPending: true });
+        if (folded !== messages) messages.splice(0, messages.length, ...folded);
+        const ids = new Set(originalCalls.map(call => call.id));
+        const tail = messages.splice(responseStart());
+        const answer = message => message.role === 'tool' && ids.has(message.tool_call_id);
+        messages.push(...tail.filter(answer), ...tail.filter(message => !answer(message)));
+        for (const parent of parentCalls) {
+          const message = messages.slice(responseStart()).find(item => item.role === 'tool' && item.tool_call_id === parent.id);
+          const summary = message?.content?.startsWith('[browser_batch]') ? message.content.split('\n')[0] : 'browser_batch rejected or interrupted';
+          const counts = summary.match(/^\[browser_batch\] ran (\d+) of (\d+) actions/);
+          const result = { success: !!counts && counts[1] === counts[2] && !summary.includes('; stop:'), summary };
+          try { originalUpdate('tool_result', { name: 'browser_batch', result }); } catch {}
+          const runId = this.currentRunId.get(tabId);
+          if (runId) { try { trace.recordToolCall(runId, step, { name: 'browser_batch', args: this._toolCallArgs(parent), result, latencyMs: 0 }); } catch {} }
+        }
+      }
       for (const call of toolCalls) {
         const pending = this._jevPendingCalls?.get(call.id);
         if (pending) { pending.session.disabled = true; pending.session.queue = []; this._jevPendingCalls.delete(call.id); }
@@ -13613,7 +13695,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
-    const promptTier = this._resolvePromptTier();
+    const promptTier = this._resolvePromptTier(provider);
     const readLimits = this._readWindowLimits();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     // Set of tools whose side effect can navigate the page. We snapshot the
@@ -13622,6 +13704,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // executing the original plan on a totally different page").
     const navNotices = []; // accumulated for injection after the loop
     const failedApiMutationLoopKeysThisBatch = new Set();
+    const navigatedBrowserBatches = new Set();
     const skipSteeredPermissionWait = toolIndex => {
       this._appendSyntheticToolResults(tabId, toolCalls, toolIndex, messages, onUpdate, step, () => ({
         success: false, skipped: true, dispatched: false, noDispatch: true,
@@ -13634,7 +13717,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // and nav notices, and breaking lets the shared post-batch path flush
     // state_change/every_step auto-screenshots from earlier calls in the batch.
     const interruptFailedBrowserAction = (toolIndex, triggeringTool) => (
-      this._isBrowserMutationTool(triggeringTool)
+      (toolCalls[toolIndex]?._browserBatch || this._isBrowserMutationTool(triggeringTool))
       && this._interruptToolBatchForFreshTurn(
         tabId,
         toolCalls,
@@ -13662,13 +13745,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       messages.push({
         role: 'tool',
         tool_call_id: tc.id,
-        content: JSON.stringify(result)
+        content: (tc._browserBatch ? this._wrapUntrusted('browser_batch', JSON.stringify(result)) : JSON.stringify(result))
           + (loopCheck.kind === 'nudge' ? `\n${loopCheck.warning}` : ''),
       });
       const runId = this.currentRunId.get(tabId);
       if (runId) {
         try {
-          await trace.recordToolCall(runId, step, { name: fnName, args: fnArgs, result, latencyMs: 0 });
+          await trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch, name: fnName, args: fnArgs, result, latencyMs: 0 });
         } catch {}
       }
       if (warning) onUpdate('warning', { message: warning });
@@ -13699,6 +13782,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { action: 'continue' };
       }
       const tc = toolCalls[toolIndex];
+      cancellationState.startBrowserBatch?.(tc);
+      if (tc._browserBatchError) {
+        // Match native invalid-call recovery without rewriting any valid parent
+        // or signed replay: malformed JSON must not poison the next request.
+        if (this._parseToolCallArgs(tc).error) this._repairRejectedToolCallHistory(messages, tc);
+        messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(tc._browserBatchError) });
+        continue;
+      }
+      const previous = toolCalls[toolIndex - 1];
+      if (previous?._browserBatch) {
+        const priorResult = messages.findLast(message => message.role === 'tool' && message.tool_call_id === previous.id);
+        if (browserBatchResultStatus(priorResult).failed && this._interruptToolBatchForFreshTurn(
+          tabId, toolCalls, toolIndex, messages, onUpdate, step,
+          { tier: promptTier, triggeringTool: previous.function.name, reason: 'action_failed', navNotices },
+        )) { navNotices.length = 0; break; }
+      }
       const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null };
       cancellationState.active = callState;
       // Abort check before each tool call.
@@ -13740,6 +13839,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (calculationBlock) {
           const recovery = await recordPreparationFailure(toolIndex, tc.function?.name || '', calculationArgs || {}, calculationBlock);
           if (recovery) return recovery;
+          if (tc._browserBatch && interruptFailedBrowserAction(toolIndex, tc.function?.name)) { navNotices.length = 0; break; }
           continue;
         }
       }
@@ -13900,7 +14000,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         const runId = this.currentRunId.get(tabId);
         if (runId) {
-          trace.recordToolCall(runId, step, {
+          trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
             name: fnName, args: fnArgs, result: captchaGateBlock, latencyMs: 0,
           });
         }
@@ -14028,7 +14128,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         });
         const runId = this.currentRunId.get(tabId);
         if (runId) {
-          trace.recordToolCall(runId, step, {
+          trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
             name: fnName, args: fnArgs, result: blockedResult, latencyMs: 0,
           });
         }
@@ -14228,7 +14328,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: this._wrapUntrusted(fnName, this._limitToolResult(workflowPreSubmitBlock)),
         });
         const runId = this.currentRunId.get(tabId);
-        if (runId) trace.recordToolCall(runId, step, {
+        if (runId) trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
           name: fnName, args: fnArgs, result: workflowPreSubmitBlock, latencyMs: 0,
         });
         if (workflowPreSubmitBlock.failureRecovery?.stage === 'publication_audit') {
@@ -14616,7 +14716,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           const runId = this.currentRunId.get(tabId);
           if (runId) {
-            trace.recordToolCall(runId, step, {
+            trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
               name: fnName, args: fnArgs, result: blockedResult, latencyMs: 0,
             });
           }
@@ -14655,7 +14755,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           const runId = this.currentRunId.get(tabId);
           if (runId) {
-            trace.recordToolCall(runId, step, {
+            trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
               name: fnName, args: fnArgs, result: limitationResult, latencyMs: 0,
             });
           }
@@ -14685,7 +14785,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           const runId = this.currentRunId.get(tabId);
           if (runId) {
-            trace.recordToolCall(runId, step, {
+            trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
               name: fnName, args: fnArgs, result: blockedResult, latencyMs: 0,
             });
           }
@@ -14723,7 +14823,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           });
           const runId = this.currentRunId.get(tabId);
           if (runId) {
-            trace.recordToolCall(runId, step, {
+            trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
               name: fnName, args: fnArgs, result: blockedResult, latencyMs: 0,
             });
           }
@@ -14813,7 +14913,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: JSON.stringify(messageRecipientBlock),
         });
         const runId = this.currentRunId.get(tabId);
-        if (runId) trace.recordToolCall(runId, step, {
+        if (runId) trace.recordToolCall(runId, step, { batch: toolCalls[toolIndex]?._browserBatch,
           name: fnName, args: fnArgs, result: messageRecipientBlock, latencyMs: 0,
         });
         onUpdate('warning', {
@@ -14922,6 +15022,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               onUpdate,
               {
                 completionBatchStartState,
+                _browserBatch: tc._browserBatch,
                 traceStep: step,
                 jevBinding: jevPending?.call.binding,
                 detectedSubmitAction,
@@ -15168,7 +15269,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && beforeUrl
         && (!toolResult?.error || toolResult?.dispatched === true)
       ) {
-        await new Promise(r => setTimeout(r, 200));
+        if (tc._browserBatch && toolCalls[toolIndex + 1]?._browserBatch?.parentId === tc._browserBatch.parentId) {
+          const settled = await this._settleBrowserBatchNavigation(tabId);
+          if (settled.navigationObserved) navigatedBrowserBatches.add(tc._browserBatch.parentId);
+          if (!settled.settled && toolResult && typeof toolResult === 'object') {
+            toolResult.inconclusive = true;
+            toolResult.verified = false;
+          }
+        } else {
+          await new Promise(r => setTimeout(r, 200));
+        }
         afterUrl = await this._currentUrl(tabId);
         const beforeFull = this._normalizeUrl(beforeUrl);
         const afterFull = this._normalizeUrl(afterUrl);
@@ -15261,7 +15371,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const recordFinalToolTrace = async result => {
         try {
           if (_runIdForTool) {
-            await trace.recordToolCall(_runIdForTool, step, {
+            await trace.recordToolCall(_runIdForTool, step, { batch: toolCalls[toolIndex]?._browserBatch,
               name: fnName, args: fnArgs, result, latencyMs: _toolLatency,
             });
           }
@@ -15579,12 +15689,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // Wrap page-derived results as untrusted DATA BEFORE appending any of
       // our own trusted notes (the loop nudge), so the nudge stays outside the
       // <untrusted_page_content> box and is read as an instruction, not data.
-      const resultTrustName = this._toolResultTrustName(fnName, toolResult);
-      const modelResultChars = fnName === 'get_accessibility_tree'
+      const resultTrustName = tc._browserBatch ? 'browser_batch' : this._toolResultTrustName(fnName, toolResult);
+      let modelResultChars = fnName === 'get_accessibility_tree'
         && readLimits.expanded
         && Number(fnArgs.maxChars) > 6000
         ? readLimits.toolResultChars
         : STANDARD_TOOL_RESULT_CHARS;
+      if (tc._browserBatch && tc._browserBatch.index < tc._browserBatch.total - 1) {
+        modelResultChars = Math.min(modelResultChars, BATCH_INTERMEDIATE_RESULT_CHARS);
+      }
       let resultContent = this._wrapUntrusted(
         resultTrustName,
         this._limitToolResult(toolResult, modelResultChars),
@@ -15830,7 +15943,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         return { action: 'recover', value: stopMessage, status: 'loop_stopped' };
       }
 
-      const freshTurnReason = this._browserActionFreshTurnReason(promptTier, fnName, toolResult);
+      if (tc._browserBatch && (toolResult?.pageUrlChanged === true || ['navigate', 'go_back', 'go_forward'].includes(fnName))) {
+        navigatedBrowserBatches.add(tc._browserBatch.parentId);
+      }
+      const sameBatch = candidate => tc._browserBatch && candidate?._browserBatch?.parentId === tc._browserBatch.parentId;
+      const remainingBatch = toolCalls.slice(toolIndex + 1).filter(sameBatch);
+      const batchContext = tc._browserBatch ? {
+        navigationChanged: navigatedBrowserBatches.has(tc._browserBatch.parentId),
+        sameNext: !!sameBatch(toolCalls[toolIndex + 1]),
+        remainingObservations: remainingBatch.every(call => BATCH_TRAILING_OBSERVATION_TOOLS.has(call.function.name)),
+        hadMutation: toolCalls.slice(0, toolIndex + 1).some(call => sameBatch(call) && this._isBrowserMutationTool(call.function.name)),
+        hasRemaining: toolIndex < toolCalls.length - 1,
+        submit: detectedSubmitAction?.isSubmit === true || this._formValidationActionLooksSubmit(fnName, fnArgs, toolResult, detectedSubmitAction),
+      } : null;
+      const freshTurnReason = this._browserActionFreshTurnReason(promptTier, fnName, toolResult, batchContext);
       if (freshTurnReason && this._interruptToolBatchForFreshTurn(
         tabId,
         toolCalls,
@@ -19103,7 +19229,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _conversationStorageEntry(tabId, options = {}) {
-    const messages = this.conversations.get(tabId);
+    const messages = foldBrowserBatchMessages(this.conversations.get(tabId), { repairPending: true });
     const chatWorkflow = this.chatSessions.get(tabId);
     if (!messages && !chatWorkflow && !this._nativeCaptchaSolutions?.has(tabId)) return null;
     const conversationId = this.conversationIds.get(tabId) || null;
@@ -24999,7 +25125,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   _deliveryRecoveryDoneTool(phase = 'delivery_recovery', responseLanguagePolicy = null, fallbackLocale = 'en', tabId = null) {
-    const base = getToolsForMode('act', {
+    const base = getToolsForMode('act', { browserBatchEnabled: this.browserBatchEnabled,
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier: 'full',
     }).find(tool => tool?.function?.name === 'done');
@@ -30771,11 +30897,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * Select the appropriate ACT system prompt based on the active provider.
    * Small/local models get a compact prompt to save context budget.
    */
-  _getActPrompt() {
-    const tier = this._resolvePromptTier();
+  _getActPrompt(provider = null) {
+    const tier = this._resolvePromptTier(provider);
     if (tier === 'compact') return SYSTEM_PROMPT_ACT_COMPACT;
     if (tier === 'mid') return SYSTEM_PROMPT_ACT_MID;
     return `${SYSTEM_PROMPT_ACT}\n\n${this.imageGenConfigured ? SYSTEM_PROMPT_GENERATIVE_MEDIA : GENERATIVE_MEDIA_SETUP_NOTE}`;
+  }
+
+  setBrowserBatchEnabled(enabled) {
+    const next = enabled !== false;
+    if (this.browserBatchEnabled === next) return;
+    this.browserBatchEnabled = next;
+    this._refreshSystemPrompts();
   }
 
   setImageGenConfig(config) {
@@ -30875,8 +31008,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         ? `${STANDALONE_CHAT_SYSTEM_PROMPT}\n\n${formatResponseLanguagePolicyInstruction(responseLanguagePolicy, 'en', { form: 'brief' })}`
         : STANDALONE_CHAT_SYSTEM_PROMPT;
     }
-    const tier = this._resolvePromptTier();
-    let prompt = this._isActionMode(mode) ? this._getActPrompt() : SYSTEM_PROMPT_ASK;
+    let provider = null;
+    try { provider = this._activeProvider(tabId); } catch {}
+    const tier = this._resolvePromptTier(provider);
+    let prompt = this._isActionMode(mode) ? this._getActPrompt(provider) : SYSTEM_PROMPT_ASK;
+    if (tier !== 'compact' && getToolsForMode(mode, { tier, browserBatchEnabled: this.browserBatchEnabled })
+        .some(tool => tool.function.name === 'browser_batch')) prompt += `\n\n${SYSTEM_PROMPT_BATCHING}`;
     const botMemory = tabId == null ? null : this._botMemorySessions.get(tabId);
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
     if (mode === 'dev') {
@@ -36722,19 +36859,31 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * removed or renamed, so _isUntrustedTool() no longer recognizes it either.
    * That combination would launder attacker-controlled page text into the
    * trusted trim summary. Re-appending the matching close tag keeps the
-   * wrapper detectable regardless of skill registry state.
+   * wrapper detectable regardless of skill registry state. Batch results have
+   * app-owned headers and several boxes: preserve earlier boxes verbatim and
+   * close only the box intersecting the cut, without merging nonce boundaries.
    */
   _truncatePreservingUntrustedWrapper(content, limit) {
-    const openMatch = content.match(/^<untrusted_page_content\b([^>]*)>\n?/);
-    if (!openMatch) {
-      return content.slice(0, limit) + '\n[...truncated to fit context]';
+    const suffix = '\n[...truncated to fit context]';
+    const openings = /<untrusted_page_content\b([^>]*)>\n?/g;
+    const closings = /\n?<\/untrusted_page_content\b[^>]*>/g;
+    let openMatch;
+    while ((openMatch = openings.exec(content)) && openMatch.index < limit) {
+      const innerStart = openings.lastIndex;
+      closings.lastIndex = innerStart;
+      const closeMatch = closings.exec(content);
+      const closeTag = closeMatch ? closeMatch[0] : `\n</untrusted_page_content${openMatch[1]}>`;
+      const end = closeMatch ? closings.lastIndex : content.length;
+      if (closeMatch && end <= limit) {
+        openings.lastIndex = end;
+        continue;
+      }
+      // If both markers cannot fit, omit this box rather than emit a partial tag.
+      if (innerStart + closeTag.length > limit) return content.slice(0, openMatch.index) + suffix;
+      const innerEnd = Math.min(limit - closeTag.length, closeMatch?.index ?? content.length);
+      return content.slice(0, innerEnd) + suffix + closeTag;
     }
-    const closeMatch = content.match(/\n?<\/untrusted_page_content\b[^>]*>\s*$/);
-    const closeTag = closeMatch ? closeMatch[0] : `\n</untrusted_page_content${openMatch[1]}>`;
-    const openTag = openMatch[0];
-    const innerLimit = Math.max(0, limit - openTag.length - closeTag.length);
-    const inner = content.slice(openTag.length, openTag.length + innerLimit);
-    return `${openTag}${inner}\n[...truncated to fit context]${closeTag}`;
+    return content.slice(0, limit) + suffix;
   }
 
   _truncateOversizedMessages(tabId, messages) {
@@ -37182,6 +37331,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * we don't recognize, fall back to a length-bounded truncate.
    */
   _digestToolResult(name, content) {
+    if (name === 'browser_batch') return digestBrowserBatch(content);
     if (!content) return '(empty)';
     const isUntrusted = this._isUntrustedTool(name) || this._hasUntrustedWrapper(content);
     // Unwrap the untrusted-content markers first so the inner JSON parses —
@@ -49105,7 +49255,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const sourceBoundAttachments = selectionOnly ? [] : attachments;
     if (sourceBoundAttachments && sourceBoundAttachments.length) {
       const attachmentToolNames = new Set(
-        getToolsForMode(mode, { tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured })
+        getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled, tier: provider.promptTier, imageGenConfigured: this.imageGenConfigured })
           .map(tool => tool?.function?.name)
           .filter(Boolean),
       );
@@ -49222,7 +49372,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const readWindow = this._readWindowLimits(provider);
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
-    let tools = getToolsForMode(mode, {
+    let tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier,
       imageGenConfigured: this.imageGenConfigured,
@@ -49509,7 +49659,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
-      tools = getToolsForMode(mode, {
+      tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
         strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
         tier,
         imageGenConfigured: this.imageGenConfigured,
@@ -50738,7 +50888,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const readWindow = this._readWindowLimits(provider);
     let skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
     const cloudRunContext = this.cloudRunContexts.get(tabId) || null;
-    let tools = getToolsForMode(mode, {
+    let tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
       strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
       tier,
       imageGenConfigured: this.imageGenConfigured,
@@ -50844,7 +50994,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
 
       skillTools = this._skillToolDefinitions(tabId, mode, tier, this._activeSkillSiteAdapter(tabId));
-      tools = getToolsForMode(mode, {
+      tools = getToolsForMode(mode, { browserBatchEnabled: this.browserBatchEnabled,
         strictSecretMode: this.strictSecretMode && this.cloudRunContexts?.get(tabId)?.privateFinalResult !== true,
         tier,
         imageGenConfigured: this.imageGenConfigured,
@@ -51003,7 +51153,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             requestedMaxTokens: streamOpts.maxTokens, recoveryAttempt: streamAttempt - 1,
             ...Agent._traceMediaCounts(prunedMessages),
           }, { messages: prunedMessages, tools: streamOpts.tools || [], runtimeMode: mode });
-          return provider.chatStream(prunedMessages, streamOpts);
+          return provider.chatStream(foldBrowserBatchMessages(prunedMessages, { repairPending: true }), streamOpts);
         }, {
           isAborted: () => this._checkAbort(tabId) || this._hasPendingSteering(tabId),
           onRetry: async ({ error, delayMs, attempt }) => {

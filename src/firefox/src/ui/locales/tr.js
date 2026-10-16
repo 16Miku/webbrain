@@ -337,6 +337,7 @@ export default {
   'tool.clarify': "Açıklama isteniyor",
   'tool.get_window_info': "Pencere kontrol ediliyor",
   'tool.resize_window': "Pencere yeniden boyutlandırılıyor",
+  'tool.browser_batch': "Tarayıcı işlemleri çalıştırılıyor",
   'tool.inspect_viewport': "Görünüm alanı inceleniyor",
   'tool.scratchpad_write': "Notlar güncelleniyor",
   'tool.progress_update': "İlerleme güncelleniyor",
