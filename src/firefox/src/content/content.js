@@ -3719,7 +3719,7 @@
 
     if (target) {
       if (actionDeadlineExpired()) return deadlineFailure();
-      window.__wbPageMonitor?.beforeLocalDispatch();
+      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target });
       dispatched = true;
       if (direction === 'down') target.scrollBy(0, amount);
       else if (direction === 'up') target.scrollBy(0, -amount);
@@ -3730,7 +3730,7 @@
 
     // Always also scroll the window in case both are needed.
     if (actionDeadlineExpired()) return deadlineFailure();
-    window.__wbPageMonitor?.beforeLocalDispatch();
+    window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: document.scrollingElement || document.documentElement });
     dispatched = true;
     if (direction === 'down') window.scrollBy(0, amount);
     else if (direction === 'up') window.scrollBy(0, -amount);
@@ -3921,7 +3921,7 @@
     if (target) {
       containerBefore = target.scrollTop;
       if (actionDeadlineExpired()) return deadlineFailure();
-      window.__wbPageMonitor?.beforeLocalDispatch();
+      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target });
       dispatched = true;
       scrollElementInstant(target, direction, amount);
       containerAfter = target.scrollTop;
@@ -3932,7 +3932,7 @@
     const shouldScrollWindow = params.alsoWindow === true || !movedContainer;
     if (shouldScrollWindow && windowCanMove) {
       if (actionDeadlineExpired()) return deadlineFailure();
-      window.__wbPageMonitor?.beforeLocalDispatch();
+      window.__wbPageMonitor?.beforeLocalDispatch({ kind: 'scroll', target: scrollingElement });
       dispatched = true;
       if (direction === 'down') window.scrollBy(0, amount);
       else if (direction === 'up') window.scrollBy(0, -amount);

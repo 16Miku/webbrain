@@ -230,7 +230,8 @@ function preparationVetoDiagnostics(veto) {
   if (new Set(['semantic_binding_changed', 'geometry_changed', 'model_snapshot_invalid', 'model_snapshot_expired',
     'focus_changed', 'pending_feedback', 'revision_changed', 'document_changed', 'document_revision_changed',
     'intervention_changed', 'target_changed', 'target_hit_changed', 'operation_expired', 'operation_missing',
-    'run_ended', 'target_unresolved', 'target_uncovered', 'current_owner_changed']).has(veto.predicate)) facts.predicate = veto.predicate;
+    'run_ended', 'target_unresolved', 'target_uncovered', 'current_owner_changed',
+    'operation_kind_changed', 'scroll_target_changed']).has(veto.predicate)) facts.predicate = veto.predicate;
   return facts;
 }
 
@@ -371,6 +372,10 @@ function safeAction(tool, args = {}) {
   // click({text}) is a target label, never typed text or a field value.
   if (['click', 'iframe_click'].includes(tool) && typeof args.text === 'string') target.textMatch = args.text;
   for (const key of ['x', 'y']) if (Number.isFinite(args[key])) target[key] = args[key];
+  if (tool === 'scroll') {
+    if (typeof args.direction === 'string') target.direction = args.direction;
+    if (typeof args.alsoWindow === 'boolean') target.alsoWindow = args.alsoWindow;
+  }
   return { tool, ...target };
 }
 
@@ -1220,6 +1225,10 @@ export const pageFeedbackMethods = {
 
   _pageFeedbackBlocksCall(tabId, name, args = {}) {
     const run = this._pageFeedbackRuns?.get(tabId);
+    if (name === 'scroll' && run?.modelState
+        && (this._hasPendingSteering?.(tabId)
+          || !this._pageFeedbackStateCurrent(tabId, run, run.modelState, run.url, { rootOnly: true })
+          || (run.dispatchCall?.name === name && run.dispatchCall.modelState !== run.modelState))) return true;
     if (run?.dispatchCall?.expectedModelSnapshot
         && (run.modelState !== run.dispatchCall.modelState
           || !this._pageFeedbackStateCurrent(tabId, run, run.dispatchCall.modelState))) return true;
@@ -1228,12 +1237,12 @@ export const pageFeedbackMethods = {
     const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, events);
     // Automatic churn (a superset of relaxed-retry DOM) revalidates per policy.
     if (!isAutomaticPageFeedback(events) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState, run.url,
-      { rootOnly: policy.kind === 'request' })) return true;
+      { rootOnly: ['request', 'scroll'].includes(policy.kind) })) return true;
     // Unknown DOM is observed while an agent action is in flight. It is that
     // call's own uncertain effect only after the call sent input (typeahead
     // renders between keys). Observed during an earlier action, or during this
     // call's preparation, it stays a fence: re-observe before new input.
-    if (!this._monitoringRetryCurrent(tabId, run) && events.some(event => (unknownAttribution.get(event) || [])
+    if (policy.kind !== 'scroll' && !this._monitoringRetryCurrent(tabId, run) && events.some(event => (unknownAttribution.get(event) || [])
       .some(({ call, afterInput }) => call && call.mutation !== false && !(call === run.dispatchCall && afterInput)))) return true;
     const policyEvents = this._monitoringRetryCurrent(tabId, run)
       ? events.map(event => event.source === 'unknown' && event.kind === 'dom' ? { ...event, source: 'page' } : event) : events;
@@ -1408,12 +1417,12 @@ export const pageFeedbackMethods = {
       documentMatches = state.documentId ? documentId === state.documentId : state.frames.has(0);
     }
     const currentRun = this._pageFeedbackRuns.get(tabId) === run;
-    const concreteRequests = !!responseToolCalls?.length && responseToolCalls.every(call => {
-      try { return pageFeedbackCallPolicy(call.function?.name, JSON.parse(call.function.arguments)).kind === 'request'; }
+    const rootScopedCalls = !!responseToolCalls?.length && responseToolCalls.every(call => {
+      try { return ['request', 'scroll'].includes(pageFeedbackCallPolicy(call.function?.name, JSON.parse(call.function.arguments)).kind); }
       catch { return false; }
     });
     const stateCurrent = documentMatches && currentRun
-      ? this._pageFeedbackStateCurrent(tabId, run, state, url, { rootOnly: concreteRequests }) : null;
+      ? this._pageFeedbackStateCurrent(tabId, run, state, url, { rootOnly: rootScopedCalls }) : null;
     const sameDocument = documentMatches && currentRun && stateCurrent;
     // A tool-free Ask answer or a strictly owned literal arithmetic-only task
     // is independent of passive churn. Task-only scope permits normal protocol
@@ -1569,10 +1578,19 @@ export function installPageFeedback(Agent) {
   const execute = Agent.prototype.executeTool;
   Agent.prototype.executeTool = async function(tabId, name, args, onUpdate, executionContext) {
     const run = this._pageFeedbackRuns?.get(tabId);
+    // Resolve the browser's last-interaction hint before monitor preparation so
+    // the background and local scroll bind the same requested pane.
+    if (name === 'scroll' && this._augmentScrollArgsWithLastInteraction) {
+      args = await this._augmentScrollArgsWithLastInteraction(tabId, args);
+    }
     const mutation = this.constructor.STATE_CHANGE_TOOLS.has(name) || ['upload_file', 'solve_captcha', 'apply_captcha_solution'].includes(name);
     // A model cannot supply the private expected binding. Even without queued
     // feedback, use the identity captured before inference for a focused download.
     const modelState = run?.modelState;
+    const scrollStateCurrent = () => this._pageFeedbackRuns?.get(tabId) === run
+      && run.modelState === modelState && !this._hasPendingSteering?.(tabId)
+      && this._pageFeedbackStateCurrent(tabId, run, modelState, run.url, { rootOnly: true });
+    if (run && modelState && name === 'scroll' && !scrollStateCurrent()) return pageFeedbackPendingResult();
     const batchId = executionContext?._browserBatch?.parentId;
     const policy = pageFeedbackCallPolicy(name, args || {}, modelState, run?.latestPage);
     if (run && policy.kind === 'media_resolve') return this._resolvePageFeedbackMedia(tabId, policy.target);
@@ -1588,8 +1606,8 @@ export function installPageFeedback(Agent) {
       modelBound = validated === true;
     }
     const targetValidated = !!run && run.validatedTargets?.get(`${name}:${JSON.stringify(args)}`) === run.revision;
-    const allowPassiveRebase = modelBound || targetValidated || (policy.kind === 'navigate'
-      && !!run && this._pageFeedbackStateCurrent(tabId, run, run.modelState));
+    const allowPassiveRebase = modelBound || targetValidated || (['navigate', 'scroll'].includes(policy.kind)
+      && !!run && this._pageFeedbackStateCurrent(tabId, run, run.modelState, run.url, { rootOnly: policy.kind === 'scroll' }));
     if (run && mutation && !modelBound && this._pageFeedbackBlocksCall(tabId, name, args)) return pageFeedbackPendingResult();
     const dispatchState = executionContext?._contentActionDispatchState || { started: false };
     executionContext = { ...executionContext, _contentActionDispatchState: dispatchState,
@@ -1627,10 +1645,12 @@ export function installPageFeedback(Agent) {
       if ((modelBound ? prepared?.ready === true && prepared.modelBindingValid === true
         && this._pageFeedbackRuns?.get(tabId) === run && run.modelState === modelState
         && this._pageFeedbackStateCurrent(tabId, run, modelState)
-        : run.revision === revision || policy.kind === 'navigate') && allowPassiveRebase) run.dispatchCall.allowPassiveRebase = true;
+        : policy.kind === 'scroll' ? scrollStateCurrent()
+          : run.revision === revision || policy.kind === 'navigate') && allowPassiveRebase) run.dispatchCall.allowPassiveRebase = true;
     }
     try {
       if (modelBound && !run.dispatchCall.allowPassiveRebase) { noDispatch = true; return pageFeedbackPendingResult(); }
+      if (run && modelState && name === 'scroll' && !scrollStateCurrent()) { noDispatch = true; return pageFeedbackPendingResult(); }
       if (run && mutation && this._pageFeedbackBlocksCall(tabId, name, args)) return pageFeedbackPendingResult();
       const observationDocument = run?.frames.get(0)?.token, observationUrl = run?.url;
       // Completion verification reads the page through this wrapper. Neither

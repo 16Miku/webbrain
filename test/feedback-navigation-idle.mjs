@@ -220,7 +220,7 @@ for (const build of ['chrome', 'firefox']) {
         const result = streaming ? await agent.processMessageStream(tab, 'Read the inbox headings', () => {}, 'act', options)
           : await agent.processMessage(tab, 'Read the inbox headings', () => {}, 'act', [], options);
         assert.doesNotMatch(result, /Stopped by user/, 'The idle gate starved the run until Stop');
-        assert.match(result, /Read the inbox|page kept changing/);
+        assert.match(result, /Read the inbox|could not validate the next action after repeated browser updates/i);
         assert.ok(Date.now() - started < 3000);
         assert.equal(dispatched.filter(name => name === 'extract_data').length, 1, 'The read proceeds through automatic churn');
       } finally { clearTimeout(stopper); clearInterval(ticker); urls.delete(tab); }

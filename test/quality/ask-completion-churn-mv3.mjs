@@ -278,7 +278,7 @@ try {
     assert.equal(current.running, false);
     if (entry.dependent) {
       assert.notEqual(delivered.run.result?.content, expected, 'Live-page answer cannot borrow conversation-only retention.');
-      assert.match(delivered.run.result?.content || '', /page kept changing|page keeps changing|incomplete/i);
+      assert.match(delivered.run.result?.content || '', /could not validate the next action after repeated browser updates/i);
       assert.equal(current.runUi?.runSucceeded, false);
       assert.ok(main.length >= 1 && main.length <= 5); assert.ok(scope.length >= 1 && scope.length <= 5);
       assert.equal(decisions.some(decision => decision.reason === 'page_independent_answer'), false);

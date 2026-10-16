@@ -1,5 +1,6 @@
 /** Tool freshness policy for passive page observations. Mirror in Firefox. */
 import { calculateExpression, calculationExpressionSpans, calculationResultInText, tokenizeCalculationExpression } from './calculator.js';
+import { BATCH_TRAILING_OBSERVATION_TOOLS, MAX_BATCH_ACTIONS } from './browser-batch.js';
 
 const FRESH_READS = new Set([
   'get_accessibility_tree', 'get_interactive_elements', 'read_page', 'read_page_source',
@@ -255,6 +256,31 @@ function axTargetContext(page, refId) {
 export function pageFeedbackCallPolicy(name, args = {}, state = {}, currentPage = null, events = []) {
   if (FRESH_READS.has(name)) return { kind: 'observe' };
   if (DETACHED_TOOLS.has(name)) return { kind: 'independent' };
+  // Scrolling explores the current document. A counter or animation changing
+  // while the model thinks does not invalidate that intent. The content monitor
+  // resolves its live pane and checks intervention, viewport and target identity
+  // again at dispatch; this does not grant any click or input action.
+  if (name === 'scroll' && (args.frameId == null || args.frameId === 0)
+      && (args.targetFrame == null || args.targetFrame === 0)
+      && !args.allFrames && !args.all && !args.urlFilter) return { kind: 'scroll' };
+  // The parent is checked before expansion. Retain only scrolling followed by
+  // ordinary observations; each child still passes the normal batch validator
+  // and its own preparation/dispatch checks. Never retain an arbitrary batch.
+  if (name === 'browser_batch' && Array.isArray(args.actions) && args.actions.length > 0
+      && args.actions.length <= MAX_BATCH_ACTIONS.full) {
+    let observed = false, scrolled = false;
+    const scrollBatch = args.actions.every(action => {
+      if (!action || typeof action !== 'object' || Array.isArray(action)
+          || Object.keys(action).some(key => !['name', 'input'].includes(key))
+          || !action.input || typeof action.input !== 'object' || Array.isArray(action.input)) return false;
+      if (BATCH_TRAILING_OBSERVATION_TOOLS.has(action.name)) { observed = true; return true; }
+      if (observed || action.name !== 'scroll'
+          || pageFeedbackCallPolicy('scroll', action.input).kind !== 'scroll') return false;
+      scrolled = true;
+      return true;
+    });
+    if (scrollBatch && scrolled) return { kind: 'scroll' };
+  }
   if (['fetch_url', 'research_url'].includes(name) && httpUrl(args.url)
       && ['GET', 'HEAD'].includes(String(args.method || 'GET').toUpperCase())
       && !args.replayRequestId && !args.apiReplayRequestId && !args.body) return { kind: 'independent' };
