@@ -117837,31 +117837,141 @@ test('WebBrain Compass subscription 402 renders as one terminal assistant prompt
   }
 });
 
-test('plan review: cancellation emits plan_resolved and timeout has an explicit terminal decision', async () => {
-  await withPlannerBrowserGlobals(async () => {
-    for (const [label, AgentClass, sourceRel] of [
-      ['chrome', AgentCh, 'src/chrome/src/agent/agent.js'],
-      ['firefox', AgentFx, 'src/firefox/src/agent/agent.js'],
-    ]) {
-      const tabId = label === 'chrome' ? 9301 : 9302;
-      const agent = new AgentClass({ getActive: () => ({}) });
-      const updates = [];
-      const waiting = agent._waitForPlanReview(
-        tabId,
-        'plan-1',
-        { steps: [] },
-        'Plan',
-        (type, data) => updates.push({ type, data }),
-      );
-      agent._cancelPendingPlans(tabId, 'Stopped by user');
-      const result = await waiting;
-      assert.equal(result.cancelled, true, `${label}: abort should cancel the pending plan`);
-      assert.deepEqual(updates.map(update => update.type), ['plan_review', 'plan_resolved'], `${label}: abort should invalidate all plan copies`);
-      assert.equal(updates.at(-1).data.decision, 'cancelled', `${label}: abort should have an explicit resolution`);
+async function withPlanReviewClock(fn) {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let now = 0;
+  let nextTimerId = 1;
+  const timers = new Map();
+  globalThis.setTimeout = (callback, delay) => {
+    const timerId = nextTimerId++;
+    timers.set(timerId, { callback, delay, deadline: now + delay });
+    return timerId;
+  };
+  globalThis.clearTimeout = timerId => timers.delete(timerId);
+  try {
+    await fn({
+      timers,
+      async advance(ms) {
+        now += ms;
+        for (const [timerId, timer] of [...timers]) {
+          if (timer.deadline > now) continue;
+          timers.delete(timerId);
+          timer.callback();
+        }
+        await Promise.resolve();
+        await Promise.resolve();
+      },
+    });
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+}
 
-      const source = fs.readFileSync(path.join(ROOT, sourceRel), 'utf8');
-      assert.match(source, /response\.reason === 'plan review timed out' \? 'timeout' : 'cancelled'/, `${label}: timeout should emit an explicit plan resolution`);
-    }
+test('plan review: unanswered plans auto-approve after two minutes and clear pending state', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    await withPlanReviewClock(async clock => {
+      for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+        const tabId = label === 'chrome' ? 9301 : 9302;
+        const agent = new AgentClass({ getActive: () => ({}) });
+        const updates = [];
+        let settled = false;
+        const waiting = agent._waitForPlanReview(
+          tabId, 'plan-1', { steps: [] }, 'Plan',
+          (type, data) => updates.push({ type, data }),
+        ).then(result => { settled = true; return result; });
+
+        assert.equal(clock.timers.size, 1, `${label}: review should arm one timeout`);
+        assert.equal([...clock.timers.values()][0].delay, 120_000, `${label}: review deadline must be two minutes`);
+        await clock.advance(119_999);
+        assert.equal(settled, false, `${label}: review should remain open before the deadline`);
+        assert.equal(agent._pendingPlans.get(tabId)?.has('plan-1'), true, `${label}: unanswered plan should stay pending`);
+
+        await clock.advance(1);
+        const result = await waiting;
+        assert.deepEqual(result, { action: 'approve', source: 'timeout' }, `${label}: timeout should approve the plan`);
+        assert.deepEqual(updates.map(update => update.type), ['plan_review', 'plan_resolved'], `${label}: timeout should resolve all visible plan copies`);
+        assert.deepEqual(updates.at(-1).data, { planId: 'plan-1', decision: 'approve', source: 'timeout' }, `${label}: timeout should resume the run as approved`);
+        assert.equal(clock.timers.size, 0, `${label}: settled timeout should be cleared`);
+        assert.equal(agent._pendingPlans.has(tabId), false, `${label}: timeout should remove the pending tab`);
+        assert.equal(agent.submitPlanResponse(tabId, 'plan-1', 'reject'), false, `${label}: expired plan should reject late responses`);
+      }
+    });
+  });
+});
+
+test('plan review: user approval, rejection and cancellation clear the auto-approval timer', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    await withPlanReviewClock(async clock => {
+      for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+        for (const action of ['approve', 'reject', 'cancel']) {
+          const tabId = label === 'chrome' ? 9303 : 9304;
+          const agent = new AgentClass({ getActive: () => ({}) });
+          const updates = [];
+          const waiting = agent._waitForPlanReview(
+            tabId, 'plan-1', { steps: [] }, 'Plan',
+            (type, data) => updates.push({ type, data }),
+          );
+          if (action === 'cancel') agent._cancelPendingPlans(tabId, 'Stopped by user');
+          else assert.equal(agent.submitPlanResponse(tabId, 'plan-1', action, '  Edited plan  ', 'verbose'), true);
+
+          const result = await waiting;
+          if (action === 'cancel') {
+            assert.deepEqual(result, { action: 'reject', cancelled: true, reason: 'Stopped by user' }, `${label}: cancellation should remain terminal`);
+            assert.deepEqual(updates.at(-1), { type: 'plan_resolved', data: { planId: 'plan-1', decision: 'cancelled' } }, `${label}: cancellation should invalidate plan cards`);
+          } else {
+            assert.deepEqual(result, { action, editedText: 'Edited plan', markdownMode: 'verbose' }, `${label}: ${action} should retain the user's response`);
+          }
+          assert.equal(clock.timers.size, 0, `${label}: ${action} should clear its timeout`);
+          assert.equal(agent._pendingPlans.has(tabId), false, `${label}: ${action} should remove the pending tab`);
+          assert.equal(agent.submitPlanResponse(tabId, 'plan-1', 'approve'), false, `${label}: ${action} should reject stale responses`);
+          const updateCount = updates.length;
+          await clock.advance(120_000);
+          assert.equal(updates.length, updateCount, `${label}: ${action} must not auto-approve later`);
+        }
+      }
+    });
+  });
+});
+
+test('planner gate: plan timeout proceeds with the approved plan pinned to scratchpad', async () => {
+  await withPlannerBrowserGlobals(async () => {
+    await withPlanReviewClock(async clock => {
+      for (const [label, AgentClass] of [['chrome', AgentCh], ['firefox', AgentFx]]) {
+        const tabId = label === 'chrome' ? 9305 : 9306;
+        const agent = new AgentClass({ getActive: () => ({}) });
+        agent.setPlanBeforeActMode('try');
+        agent.setPlanReviewSettings({ mode: 'always' });
+        agent.conversations.set(tabId, [{ role: 'system', content: 'system' }]);
+        agent._chatWithCostAllowance = async (_provider, messages) => positivePlannerAlignmentFixture(messages)
+          || { content: plannerFixtureJson() };
+        const updates = [];
+        const waiting = agent._maybeRunPlannerGate(
+          tabId, agent.conversations.get(tabId), { role: 'user', content: 'collect account links' },
+          (type, data) => updates.push({ type, data }), 'act', null, null,
+        );
+        for (let i = 0; i < 100 && !updates.some(update => update.type === 'plan_review'); i++) await Promise.resolve();
+        const review = updates.find(update => update.type === 'plan_review')?.data;
+        assert.ok(review?.planId, `${label}: planner should request review`);
+
+        await clock.advance(120_000);
+        const outcome = await waiting;
+        assert.equal(outcome.proceed, true, `${label}: review timeout should continue execution`);
+        assert.equal(outcome.requestKind, 'execute', `${label}: timeout should preserve Act execution`);
+        assert.match(outcome.approvedScratchpadText, /\[Approved plan — pinned by planner\]/, `${label}: timeout should carry the approved handoff`);
+        const messages = agent.conversations.get(tabId);
+        const idx = agent._findScratchpadIndex(messages);
+        assert.ok(idx >= 0, `${label}: timeout should pin the approved plan`);
+        const scratchpad = agent._extractScratchpadBody(messages[idx].content);
+        assert.match(scratchpad, /read_page/, `${label}: timeout should pin verbose tool details`);
+        assert.match(scratchpad, /Scratchpad: yes/, `${label}: timeout should pin the plan's memory strategy`);
+        assert.equal(updates.filter(update => update.type === 'plan_resolved').length, 1, `${label}: timeout should resolve the plan once`);
+        assert.deepEqual(updates.find(update => update.type === 'plan_resolved')?.data, { planId: review.planId, decision: 'approve', source: 'timeout' }, `${label}: timeout should resolve the live review as approved`);
+        assert.equal(agent._pendingPlans.has(tabId), false, `${label}: execution should have no pending review`);
+        assert.equal([...clock.timers.values()].some(timer => timer.delay === 120_000), false, `${label}: execution should have no review timeout`);
+      }
+    });
   });
 });
 
