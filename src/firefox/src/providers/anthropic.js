@@ -371,7 +371,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 500, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw new Error(`Anthropic error ${res.status}: ${err}`);
+      throw this._httpStatusError(`Anthropic error ${res.status}: ${err}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     let data;
@@ -458,7 +458,7 @@ export class AnthropicProvider extends BaseLLMProvider {
     if (!res.ok) {
       let err = '';
       try { err = await this._readErrorResponse(res, 500, options); } catch (error) { this._rethrowAbortedChat(error, options); }
-      throw new Error(`Anthropic stream error ${res.status}: ${err}`);
+      throw this._httpStatusError(`Anthropic stream error ${res.status}: ${err}`, res.status, res.headers?.get?.('retry-after'));
     }
 
     if (!res.body?.getReader) {
@@ -550,7 +550,9 @@ export class AnthropicProvider extends BaseLLMProvider {
           }
           if (event.type === 'error') {
             const detail = event.error?.message || event.error?.type || 'The provider reported a streaming error.';
-            throw this._askStreamTerminalError(`Anthropic stream error: ${detail}`);
+            // After the 200, Anthropic reports rate_limit_error and
+            // overloaded_error only here; keep their 429/529 class.
+            throw this._withProviderError(this._askStreamTerminalError(`Anthropic stream error: ${detail}`), event.error);
           }
           if (event.type === 'message_start') {
             updateUsage(event.message?.usage);

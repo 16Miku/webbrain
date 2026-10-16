@@ -3,7 +3,7 @@ import { buildPromptTraceProvenance } from './prompt-provenance.js';
 import { formatErrorMessage } from '../error-format.js';
 import { TRACE_FORMAT_VERSION, makeEvent } from './event-model.js';
 import { normalizeErrorCode } from './error-codes.js';
-import { normalizeRunHeader, effectiveDelegationDepth } from './run-header.js';
+import { normalizeRunHeader, effectiveDelegationDepth, generateTraceRunId } from './run-header.js';
 import { clampUtf8Value, fitUtf8Prefix, utf8ByteLength } from './utf8-budget.js';
 import {
   buildTraceRepairPlan,
@@ -16,6 +16,7 @@ import { projectTraceEventData, projectTraceRun } from './privacy.js';
 import { toolOutcome } from './tool-outcome.js';
 import { feedbackRecordingPolicy, feedbackRunsToEvict, FEEDBACK_RUN_BYTES, FEEDBACK_HISTORY_BYTES } from './feedback-policy.js';
 import { normalizeRejectedToolResponse } from '../agent/model-output-diagnostics.js';
+import { secureRandomBase36Token } from '../agent/random-token.js';
 
 /**
  * Trace recorder — writes per-run traces (LLM requests/responses, tool calls,
@@ -391,7 +392,9 @@ export async function startRun(meta = {}) {
     if (!policy.enabled) return null;
     const forced = meta.force === true || policy.feedbackOnly;
     const db = await openDB();
-    const runId = meta.runId || `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    // Base36 time + secure token: a decimal Date.now() in an uploaded id can be
+    // rewritten by Cloud payment-card redaction (see generateTraceRunId).
+    const runId = meta.runId || generateTraceRunId(Date.now(), secureRandomBase36Token(8));
     const lineage = normalizeRunHeader(meta) || {};
     // Tier is decided once per run: explicit caller override wins, otherwise
     // the opt-in setting. Never forced for local runs by default.

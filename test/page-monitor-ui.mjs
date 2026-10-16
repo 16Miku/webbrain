@@ -84,6 +84,7 @@ async function installScrollHelper(page, build) {
     _isFullyVisibleForInteraction: () => false, _isCoveredByFixedNonModalSurface: () => false,
     showAgentWorkingTarget: () => {}, _fieldMeta: () => ({}),
     _axFallbackStaticAssessment: () => ({ tag: 'button', role: 'button', name: 'Target' }),
+    _axModelName: (_el, name) => name,
   }));
 }
 

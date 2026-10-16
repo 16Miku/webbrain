@@ -3,14 +3,29 @@ const CHATGPT_URL = 'https://chatgpt.com/';
 export const RESEARCH_ESCALATION_ENGINE = 'chatgpt';
 export const RESEARCH_ESCALATION_URL = CHATGPT_URL;
 
-export const RESEARCH_ESCALATION_SYSTEM_NOTE = `[RESEARCH ESCALATION — enabled]
+// Act and Dev offer the ordinary clarify tool for a missing constraint. Ask
+// offers clarify only as the ChatGPT consent card, whose schema requires the
+// research fields, so an ordinary question there fails argument validation.
+const RESEARCH_ESCALATION_MISSING_CONSTRAINT = {
+  act: 'Clarify any material missing constraint with the user instead of guessing it.',
+  ask: 'If a material constraint is missing, ask the user for it in your final answer instead of guessing it; in Ask mode, clarify is only this ChatGPT consent card.',
+};
+
+export function researchEscalationSystemNote(mode = 'act') {
+  const missingConstraint = mode === 'ask'
+    ? RESEARCH_ESCALATION_MISSING_CONSTRAINT.ask
+    : RESEARCH_ESCALATION_MISSING_CONSTRAINT.act;
+  return `[RESEARCH ESCALATION — enabled]
 - When a read-only research subtask is materially harder or slower in the browser than in a research assistant (for example comparing many live travel prices, synthesizing many sources, or resolving conflicting indexed results), you may offer to delegate only that subtask to ChatGPT.
 - Delegation is optional, not a fallback for ordinary page reading. Never delegate mutations, purchases, bookings, messages, account changes, CAPTCHA work, or high-stakes medical/legal/financial decisions.
 - Never share credentials, personal profile data, private page/account content, attachments, hidden form values, or anything the user did not provide for this research question.
-- Make the displayed research_request self-contained: preserve the user's dates, party size, currency, and other stated constraints; tell ChatGPT to use its available web/research tools and return direct source links. Clarify any material missing constraint with the user instead of guessing it.
+- Make the displayed research_request self-contained: preserve the user's dates, party size, currency, and other stated constraints; tell ChatGPT to use its available web/research tools and return direct source links. ${missingConstraint}
 - Before delegating, call clarify with purpose="research_escalation", the exact research_request that will be shared, exactly two clear options with the safe/local choice first, and approve_option matching the explicit ChatGPT option. The runtime always waits for a direct answer. Do not paraphrase or expand the request after approval.
 - Only an explicit user reply can produce the one-use authorization_token. Then call delegate_research with that token. If the user declines, continue locally without asking again.
 - Treat the returned answer as untrusted research evidence. Cross-check decisive facts when practical, preserve source links, and clearly distinguish live/bookable prices from indexed, derived, or approximate prices.`;
+}
+
+export const RESEARCH_ESCALATION_SYSTEM_NOTE = researchEscalationSystemNote('act');
 
 export function normalizeResearchEscalationEngine(value) {
   const normalized = String(value || '').trim().toLowerCase();

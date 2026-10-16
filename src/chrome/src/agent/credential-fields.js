@@ -65,6 +65,235 @@ export const STRICT_SECRET_SYSTEM_NOTE = "[STRICT SECRET HANDLING IS ON — this
 // surfaced explicitly via CREDENTIAL_NOTE_STRICT when the setting is on.
 export const CREDENTIAL_NOTE = CREDENTIAL_NOTE_LOOSE;
 
+export const REDACTED_CREDENTIAL = '[redacted credential]';
+
+/**
+ * Replace every exact occurrence of the known credential values in `text`.
+ * Strict secret mode uses it on notes the agent pins and persists (scratchpad,
+ * progress ledger), where an instruction alone did not keep credentials out.
+ * A URL-encoded copy (a value written into a link) counts as an occurrence.
+ * Every occurrence of every value, overlapping ones included, is found first
+ * and their union replaced, one marker per merged stretch: replacing one
+ * match at a time left the rest of an overlapping value behind ("abc123" and
+ * "123xyz" known, "abc123xyz" became "[redacted credential]xyz"). The
+ * inserted marker is never matched again.
+ *
+ * Short values are everywhere in ordinary text: a value of digits only under
+ * 6 digits (a 4-digit PIN such as 2024) is never struck, as dates, ids and
+ * file names hold it ("report-2024-10.pdf downloadId=12024"); any other value
+ * under 8 characters, and a longer value of digits only (a one-time code), is
+ * struck only as a whole token, with no letter or digit right before or after
+ * it. Longer values are struck wherever they occur.
+ *
+ * @param {string} text
+ * @param {string[]} values
+ * @returns {string} the text, unchanged when nothing matched
+ */
+export function redactCredentialValues(text, values = []) {
+  if (typeof text !== 'string' || !text) return text;
+  // Each variant, and whether it has to stand as a whole token.
+  const variants = new Map();
+  for (const value of Array.isArray(values) ? values : []) {
+    if (typeof value !== 'string' || !value) continue;
+    const digitsOnly = /^\p{Nd}+$/u.test(value);
+    if (digitsOnly && value.length < 6) continue;
+    const wholeToken = digitsOnly || value.length < 8;
+    const add = variant => variants.set(variant, wholeToken && variants.get(variant) !== false);
+    add(value);
+    try {
+      const encoded = encodeURIComponent(value);
+      add(encoded);
+      add(encoded.replace(/%20/g, '+'));
+    } catch { /* a lone surrogate cannot be encoded; the raw value still is */ }
+  }
+  const tokenChar = /[\p{L}\p{N}]/u;
+  const spans = [];
+  for (const [variant, wholeToken] of variants) {
+    for (let at = text.indexOf(variant); at >= 0; at = text.indexOf(variant, at + 1)) {
+      const to = at + variant.length;
+      if (wholeToken && ((at > 0 && tokenChar.test(text[at - 1])) || (to < text.length && tokenChar.test(text[to])))) continue;
+      spans.push([at, to]);
+    }
+  }
+  if (!spans.length) return text;
+  spans.sort((a, b) => a[0] - b[0]);
+  let out = '';
+  let cursor = 0;
+  let [start, end] = spans[0];
+  for (const [from, to] of spans.slice(1)) {
+    if (from <= end) {
+      end = Math.max(end, to);
+      continue;
+    }
+    out += text.slice(cursor, start) + REDACTED_CREDENTIAL;
+    cursor = end;
+    [start, end] = [from, to];
+  }
+  return out + text.slice(cursor, start) + REDACTED_CREDENTIAL + text.slice(end);
+}
+
+// The words of a ledger field name for isCredentialKeyName.
+const CREDENTIAL_KEY_NOUNS = new Set(['password', 'passwd', 'pwd', 'passphrase', 'passcode', 'secret', 'otp', 'totp',
+  'cvv', 'cvc', 'credential', 'credentials']);
+const CREDENTIAL_KEY_JOINED = new Set(['apikey', 'accesstoken', 'authtoken', 'refreshtoken', 'secretkey', 'privatekey',
+  'clientsecret', 'seedphrase']);
+const CREDENTIAL_KEY_QUALIFIED = new Map([
+  ['token', new Set(['access', 'auth', 'authentication', 'authorization', 'refresh', 'bearer', 'api', 'session', 'id',
+    'csrf', 'xsrf', 'oauth', 'jwt'])],
+  ['code', new Set(['verification', 'confirmation', 'security', 'recovery', 'backup', 'email', 'sms', 'access', 'auth',
+    'login', 'otp', 'totp', '2fa', 'mfa', 'twofactor', 'pin', 'onetime'])],
+  ['key', new Set(['api', 'private', 'secret', 'access', 'encryption', 'signing', 'ssh'])],
+  ['pin', new Set(['card', 'atm', 'debit', 'credit', 'bank', 'sim', 'account', 'login', 'security', 'wallet', 'new', 'old',
+    'current', 'confirm'])],
+  ['phrase', new Set(['seed', 'pass', 'recovery'])],
+  ['number', new Set(['pin'])],
+]);
+const CREDENTIAL_KEY_REPEATS = new Set(['confirmation', 'confirm', 'repeat', 'again', 'retype']);
+
+/**
+ * Whether a field name the model gave a progress-ledger value says the value
+ * is a credential. SENSITIVE_NAME_RE finds credential vocabulary anywhere in
+ * a form field's attributes, which over a ledger key also hits `tokens`,
+ * `token_count`, `footprint` (otp), `screenshotPath`, `lotPrice` and
+ * `secretary`; the key rule prefers precision, since a value filled into a
+ * detected field is struck by value anyway. The name is split into words (at
+ * non-alphanumerics, camelCase and letter-digit changes; a trailing number is
+ * dropped, as `password2` is a second password), and the LAST word says what
+ * the value is:
+ * - a credential noun (`password`, `new_password`, `passcode`, `otp`,
+ *   `cvv`, `client_secret`), or a joined term (`apikey`, `accesstoken`);
+ * - `token`, `code`, `key`, `pin`, `phrase` or `number` only after a word that
+ *   makes it one (`access_token`, `sms_code`, `api_key`, `card_pin`,
+ *   `seed_phrase`, `pin_number`), and `pin` also as the whole name: a
+ *   `next_page_token` is a cursor, a `zip_code` or `pincode` a postal code,
+ *   a `map_pin` a marker;
+ * - a word that repeats a credential noun (`password_confirmation`).
+ * So `token_count` is a count, `password_hint` a hint, `mfa` and
+ * `enable_2fa` settings, while `2fa_code` is a code.
+ *
+ * @param {string} name
+ * @returns {boolean}
+ */
+export function isCredentialKeyName(name) {
+  const words = String(name ?? '').slice(0, 120)
+    .replace(/(\p{Ll}|\p{N})(\p{Lu})/gu, '$1 $2')
+    .replace(/(\p{Lu}+)(\p{Lu}\p{Ll})/gu, '$1 $2')
+    .replace(/(\p{L})(\p{N})/gu, '$1 $2')
+    .replace(/(\p{N})(\p{L})/gu, '$1 $2')
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  while (words.length && /^\p{N}+$/u.test(words[words.length - 1])) words.pop();
+  if (!words.length) return false;
+  const last = words[words.length - 1];
+  // The word before the last, or the two before it written together
+  // (`one_time_code`, `2fa_code`).
+  const prior = words.length > 1 ? words[words.length - 2] : '';
+  const priorTwo = words.slice(-3, -1).join('');
+  if (CREDENTIAL_KEY_NOUNS.has(last) || CREDENTIAL_KEY_JOINED.has(last)) return true;
+  if (last === 'pin' && words.length === 1) return true;
+  const qualifiers = CREDENTIAL_KEY_QUALIFIED.get(last);
+  if (qualifiers && (qualifiers.has(prior) || (words.length > 2 && qualifiers.has(priorTwo)))) return true;
+  return CREDENTIAL_KEY_REPEATS.has(last) && (CREDENTIAL_KEY_NOUNS.has(prior) || prior === 'pin');
+}
+
+// The JSON object a stored tool result starts with. The run loop appends its
+// own notes after a result it does not wrap as page content ("\n[TRUSTED
+// CAPTCHA GATE: …]", a loop nudge), so the whole message is not JSON. A
+// result cut short when stored has no complete object and gives null.
+function leadingJsonObject(text) {
+  const source = String(text ?? '').trimStart();
+  if (!source.startsWith('{')) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === '{') {
+      depth += 1;
+    } else if (char === '}' && --depth === 0) {
+      try { return JSON.parse(source.slice(0, index + 1)); } catch { return null; }
+    }
+  }
+  return null;
+}
+
+// The tools that type a value into a page field.
+const FILL_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
+
+/**
+ * The value a fill tool call typed into a credential field, trimmed, or null.
+ * The field was a credential field when its result carries the annotator's
+ * `sensitiveField` marker (set_field, type_ax), or when the field metadata
+ * the result reports passes the annotator's own isCredentialField check:
+ * type_text and iframe_type results are not annotated, but report the field
+ * they typed into (`fieldMeta`, or the `focusedField` of Chrome's typing into
+ * the focused element). A result without field metadata (Chrome's selector
+ * typing, the all-frames iframe fallback) shows no credential field. A live
+ * result and the copy saved in a conversation give the same answer. Values
+ * under 4 characters are too common in ordinary text to redact.
+ *
+ * @param {string} toolName
+ * @param {object} args the tool call's arguments
+ * @param {object} result the tool result
+ * @returns {string|null}
+ */
+export function filledCredentialValue(toolName, args, result) {
+  if (!FILL_TOOLS.has(toolName) || !result || typeof result !== 'object' || Array.isArray(result)) return null;
+  if (result.sensitiveField !== true && !isCredentialField(result.fieldMeta).sensitive
+      && !isCredentialField(result.focusedField).sensitive) return null;
+  const value = args?.text ?? args?.value;
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text.length >= 4 && text.length <= 10_000 ? text : null;
+}
+
+/**
+ * The credential values the fill calls of a saved conversation typed, oldest
+ * first (filledCredentialValue of each call and its result). The agent keeps
+ * known values in memory only, so a conversation restored after its worker
+ * stopped rebuilds them from its own history, the tool calls and results it
+ * already holds, instead of keeping secrets anywhere new. A result pairs with
+ * a call of the assistant turn just before it, as providers pair them, and is
+ * read from the JSON object its message starts with, before any note the run
+ * loop appended.
+ *
+ * @param {object[]} messages the conversation
+ * @param {(content: string) => string} unwrap strips the agent's
+ *   untrusted-content wrapper from a tool result
+ * @returns {string[]}
+ */
+export function filledCredentialValuesFromHistory(messages, unwrap = content => content) {
+  const parse = value => {
+    if (value && typeof value === 'object') return value;
+    try { return JSON.parse(String(value ?? '')); } catch { return null; }
+  };
+  const parseResult = value => (value && typeof value === 'object' ? value : leadingJsonObject(value));
+  const values = [];
+  let calls = new Map();
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (message?.role !== 'tool') {
+      calls = new Map();
+      for (const call of message?.role === 'assistant' && Array.isArray(message.tool_calls) ? message.tool_calls : []) {
+        if (typeof call?.id === 'string' && FILL_TOOLS.has(call.function?.name)) calls.set(call.id, call.function);
+      }
+      continue;
+    }
+    const call = calls.get(message.tool_call_id);
+    if (!call) continue;
+    calls.delete(message.tool_call_id);
+    const value = filledCredentialValue(call.name, parse(call.arguments), parseResult(unwrap(message.content)));
+    if (value) values.push(value);
+  }
+  return values;
+}
+
 /**
  * @param {{tag?:string, type?:string, name?:string, id?:string,
  *          autocomplete?:string, ariaLabel?:string, placeholder?:string,

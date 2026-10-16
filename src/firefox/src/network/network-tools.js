@@ -1484,7 +1484,21 @@ function apiReplayOptionsForFetch(rawUrl, opts = {}, ctx = {}) {
   };
 }
 
-function formatTextFetchResult({ status, contentType, finalUrl, text, replayContext = null }, opts = {}) {
+// fetch_url never opens, shows, or activates a tab: it is a background request
+// (or, for a captured API replay, a request issued inside the already-open
+// page). Without saying so in the result, models reported these reads as
+// having opened or visited the page for the user. `credentials` records
+// whether the user's cookies for that site were actually sent.
+function backgroundFetchRetrieval(cookiesSent) {
+  return {
+    retrieval: 'background_fetch',
+    visibleTabOpened: false,
+    activeTabChanged: false,
+    credentials: cookiesSent ? 'same_site_cookies' : 'none',
+  };
+}
+
+function formatTextFetchResult({ status, contentType, finalUrl, text, replayContext = null, cookiesSent = false }, opts = {}) {
   const normalizedContentType = (contentType || '').toLowerCase();
   const body = String(text ?? '');
   const success = Number(status) < 400;
@@ -1492,6 +1506,7 @@ function formatTextFetchResult({ status, contentType, finalUrl, text, replayCont
   const base = {
     success,
     ...(error ? { error } : {}),
+    ...backgroundFetchRetrieval(cookiesSent),
     status,
     contentType: normalizedContentType,
     url: finalUrl,
@@ -1703,6 +1718,8 @@ async function fetchReplayInPageContext(url, opts = {}, ctx = {}, allowLocal = f
     finalUrl,
     text: payload.text || '',
     replayContext: 'page',
+    // performPageReplay only fetches the page's own origin, credentials:'include'.
+    cookiesSent: true,
   }, opts);
 }
 
@@ -2114,13 +2131,14 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
     const success = status < 400;
     const error = success ? undefined : `Fetch returned HTTP ${status}`;
     const responseMetadata = safeFetchResponseMetadata(res.headers);
+    const retrieval = backgroundFetchRetrieval(attachCookies);
 
     if (contentType.includes('json')) {
       const text = await readFetchResponseText(res, deadline.signal);
       let pretty = text;
       try { pretty = JSON.stringify(JSON.parse(text), null, 2); } catch (e) {}
       return constrainFetchTextResult({
-        success, ...(error ? { error } : {}), status, contentType, url: finalUrl,
+        success, ...(error ? { error } : {}), ...retrieval, status, contentType, url: finalUrl,
         ...responseMetadata,
         ...fetchTextWindow(pretty, opts, 'json'),
       }, 'json');
@@ -2130,7 +2148,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
       const html = await readFetchResponseText(res, deadline.signal);
       const { title, text } = htmlToText(html);
       return constrainFetchTextResult({
-        success, ...(error ? { error } : {}), status, contentType, url: finalUrl,
+        success, ...(error ? { error } : {}), ...retrieval, status, contentType, url: finalUrl,
         title: title.slice(0, 500),
         ...responseMetadata,
         ...fetchTextWindow(text, opts, 'text'),
@@ -2145,7 +2163,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
         contentType === '') {
       const text = await readFetchResponseText(res, deadline.signal);
       return constrainFetchTextResult({
-        success, ...(error ? { error } : {}), status, contentType, url: finalUrl,
+        success, ...(error ? { error } : {}), ...retrieval, status, contentType, url: finalUrl,
         ...responseMetadata,
         ...fetchTextWindow(text, opts, 'text'),
       }, 'text');
@@ -2153,7 +2171,7 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
 
     const len = res.headers.get('content-length');
     return {
-      success, ...(error ? { error } : {}), status, contentType, url: finalUrl,
+      success, ...(error ? { error } : {}), ...retrieval, status, contentType, url: finalUrl,
       ...responseMetadata,
       note: 'Binary content not inlined. Use download_file({url}) then read_downloaded_file({downloadId}) if you need contents.',
       sizeBytes: len ? parseInt(len, 10) : null,
@@ -2165,6 +2183,20 @@ export async function fetchUrl(url, opts = {}, ctx = {}) {
     try { Promise.resolve(res?.body?.cancel()).catch(() => {}); } catch {}
   }
 }
+
+// The page renders in a real tab created with active:false (beside the source
+// tab when known). It sits in the tab strip while the page loads and is read,
+// but it is never activated, and researchUrl's finally block requests its
+// removal before this result reaches the model. State exactly that, so the
+// model neither claims it opened the page for the user nor denies a tab the
+// user saw.
+const BACKGROUND_TAB_RETRIEVAL = Object.freeze({
+  retrieval: 'background_tab',
+  backgroundTabOpened: true,
+  backgroundTabActivated: false,
+  backgroundTabCloseRequested: true,
+  activeTabChanged: false,
+});
 
 export async function researchUrl(url, opts = {}) {
   if (!url) return { success: false, error: 'url is required' };
@@ -2254,6 +2286,9 @@ export async function researchUrl(url, opts = {}) {
 
     return {
       success: true,
+      // Ahead of text/links: the agent's generic result cap chops the JSON
+      // tail, and these flags must survive it.
+      ...BACKGROUND_TAB_RETRIEVAL,
       url: result.url,
       title: result.title,
       text: (result.text || '').slice(0, FETCH_TEXT_LIMIT),
