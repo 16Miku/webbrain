@@ -369,6 +369,13 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   private footprint revalidates proceed; legacy AX targets without a footprint
   proceed only for DOM changes. Coordinates, scripts and unbound actions stay
   fenced. An automatic child-document replacement unbinds only that frame.
+- Research delegation is independent of the source page's DOM. Background updates
+  during inference, refresh or preparation retain the proposed handoff. The handler
+  still validates and consumes a one-use authorization for the exact approved
+  prompt, scoped to its tab and conversation with a five-minute expiry. A suppressed
+  proposal leaves the authorization unused, so a continuation can use it while
+  valid. User intervention, main-frame navigation and top-level viewport changes
+  still require a fresh decision; delegation keeps its state-changing accounting.
 - An agent click explains a same-document route update in its own frame within
   three seconds when no user activity followed it; full-document navigation
   keeps the exact-URL rule.
