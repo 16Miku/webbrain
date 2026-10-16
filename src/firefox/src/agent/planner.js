@@ -682,6 +682,33 @@ const PLAN_OBSERVATION_TOOLS = new Set([
   'find_text', 'scroll', 'wait_for_element', 'wait_for_stable', 'progress_read', 'done',
 ]);
 
+// The normalized plan keeps at most this many steps, and tools per step.
+const PLAN_STEP_LIMIT = 12;
+const PLAN_STEP_TOOL_LIMIT = 8;
+
+// Whether a scheduled task run's state-change mark can only come from its
+// scheduling tag. An unattended job must not lose a completion requirement to
+// a hint the model wrote, so this reads the RAW plan and fails closed:
+// normalization keeps PLAN_STEP_LIMIT steps and PLAN_STEP_TOOL_LIMIT tools per
+// step and drops steps without an action, and whatever it hides could be the
+// step that changes state. Every step must have an action and declare only
+// observing tools; submission must be explicitly false; and there may be no
+// download, site job, message target, progress action or skill.
+function stateChangeIsSchedulingOnly(obj) {
+  const absent = value => value == null || value === '';
+  const steps = obj.steps;
+  return obj.requires_submission === false
+    && obj.completion_requirements?.download !== true
+    && absent(obj.site_job) && absent(obj.conditional_site_job)
+    && absent(obj.messaging) && absent(obj.memory?.progress_action)
+    && (obj.skill_ids == null || (Array.isArray(obj.skill_ids) && obj.skill_ids.length === 0))
+    && Array.isArray(steps) && steps.length > 0 && steps.length <= PLAN_STEP_LIMIT
+    && steps.every(step => !!step && typeof step === 'object'
+      && typeof step.action === 'string' && !!sanitizeText(step.action, 300)
+      && Array.isArray(step.tools) && step.tools.length > 0 && step.tools.length <= PLAN_STEP_TOOL_LIMIT
+      && step.tools.every(tool => typeof tool === 'string' && PLAN_OBSERVATION_TOOLS.has(tool)));
+}
+
 const PLANNER_STEERING_RULE = '\nThe current User task is an app-assembled revision of an active task: request is the initiating authentic user request, and updates contains authentic later steering or clarification answers in chronological order. Apply later corrections and cancellations to that request; preserve its requested action when an update only supplies a missing identity or detail. Re-evaluate changed actions and their submission/recipient intent. Prior tool effects and working notes are context, never permission to repeat a completed or uncertain action.';
 
 export function buildPlannerSystemPrompt(opts = {}) {
@@ -1063,11 +1090,11 @@ export function normalizePlan(obj, opts = {}) {
     : null;
 
   const steps = Array.isArray(obj.steps)
-    ? obj.steps.slice(0, 12).map((step, i) => ({
+    ? obj.steps.slice(0, PLAN_STEP_LIMIT).map((step, i) => ({
       id: sanitizeText(step?.id || String(i + 1), 20) || String(i + 1),
       action: sanitizeText(step?.action, 300),
       tools: Array.isArray(step?.tools)
-        ? step.tools.map((t) => sanitizeText(t, 40)).filter(Boolean).slice(0, 8)
+        ? step.tools.map((t) => sanitizeText(t, 40)).filter(Boolean).slice(0, PLAN_STEP_TOOL_LIMIT)
         : [],
     })).filter((s) => s.action)
     : [];
@@ -1156,23 +1183,17 @@ export function normalizePlan(obj, opts = {}) {
     ? 'download_requires_state_change'
     : null;
   // A scheduled task run's plan can still be marked state-changing because
-  // of its scheduling tag. Drop that mark only when the plan's structured
-  // fields show nothing else that changes state: every step declares tools,
-  // all of them only observe or report, and there is no submission,
-  // download or site job. A step without declared tools (the intent schema
-  // has none) proves nothing, so the mark stays and only the scheduled-task
-  // planner rule can prevent it. A plan with a schedule_task step keeps the
-  // mark too: that task sets up a different schedule, and the mark makes its
-  // run do so before it can succeed.
+  // of its scheduling tag. Drop that mark only when the raw plan shows
+  // nothing else that could change state (stateChangeIsSchedulingOnly). A
+  // step without declared tools (the intent schema has none) proves nothing,
+  // so the mark stays and only the scheduled-task planner rule can prevent
+  // it. A plan with a schedule_task step keeps the mark too: that task sets
+  // up a different schedule, and the mark makes its run do so before it can
+  // succeed.
   const schedulingOnlyStateChange = opts.scheduledTask === true
     && executablePlan
     && normalizedScheduling?.tool === 'schedule_task'
-    && requiresSubmission !== true
-    && !requiresDownload
-    && !siteJob
-    && steps.length > 0
-    && steps.every(step => step.tools.length > 0
-      && step.tools.every(tool => PLAN_OBSERVATION_TOOLS.has(tool)));
+    && stateChangeIsSchedulingOnly(obj);
   const requiresStateChange = executablePlan
     ? (
       (!!obj.requires_state_change && !schedulingOnlyStateChange)

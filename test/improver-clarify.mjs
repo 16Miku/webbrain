@@ -369,6 +369,31 @@ for (const { build, Agent, tools, args, research, Scheduler, planner } of builds
     assert.equal(parse({ requires_state_change: true, steps: observing, completion_requirements: { download: true } }, scheduledTask).requires_state_change, true);
     assert.equal(parse({ requires_state_change: true, steps: observing, scheduling: null }, scheduledTask).requires_state_change, true,
       'without a scheduling tag the mark is the planner\'s own');
+
+    // An unattended job must not lose the requirement to anything the
+    // normalized plan hides: the raw plan is read, and doubt keeps the mark.
+    const marked = steps => parse({ requires_state_change: true, steps }, scheduledTask).requires_state_change;
+    const reads = count => Array.from({ length: count }, (_, i) => ({ id: String(i + 1), action: `Read part ${i + 1}`, tools: ['read_page'] }));
+    assert.equal(marked(reads(12)), false, 'twelve observing steps are all visible');
+    assert.equal(marked([...reads(12), { id: '13', action: 'Archive the newsletter', tools: ['click_ax'] }]), true,
+      'a mutating 13th step is cut from the normalized plan');
+    assert.equal(marked([...reads(12), { id: '13', action: 'Read once more', tools: ['read_page'] }]), true, 'anything cut keeps the mark');
+    const eightReads = Array.from({ length: 8 }, () => 'read_page');
+    assert.equal(marked([{ id: '1', action: 'Read the page', tools: eightReads }]), false);
+    assert.equal(marked([{ id: '1', action: 'Read, then archive', tools: [...eightReads, 'click_ax'] }]), true,
+      'a mutating 9th tool is cut from the normalized step');
+    assert.equal(marked([observing[0], { id: '2', action: '', tools: ['click_ax'] }]), true, 'a step without an action is dropped');
+    assert.equal(marked([observing[0], { id: '2', action: '   ', tools: ['read_page'] }]), true);
+    assert.equal(marked([observing[0], { id: '2', tools: ['read_page'] }]), true, 'missing action');
+    assert.equal(marked([observing[0], { id: '2', action: 'Report', tools: [' read_page'] }]), true, 'unknown tool name');
+    const keep = overrides => parse({ requires_state_change: true, steps: observing, ...overrides }, scheduledTask).requires_state_change;
+    assert.equal(keep({ requires_submission: undefined }), true, 'submission must be explicitly false');
+    assert.equal(keep({ requires_submission: null }), true);
+    assert.equal(keep({ messaging: { target_kind: 'named', recipients: [{ identity: 'Ayşe', role: 'to' }] } }), true, 'a message target');
+    assert.equal(keep({ memory: { progress_action: 'unfollow' } }), true, 'a progress action');
+    assert.equal(keep({ skill_ids: ['gmail'] }), true, 'an activated skill');
+    assert.equal(keep({ site_job: 'Not A Valid Job' }), true, 'any site job, even one normalization drops');
+    assert.equal(keep({}), false, 'the simple read-only reminder still loses the mark');
   });
 
   test(`${build}: the planner is told a scheduled task run executes an existing task, on every planner call`, async () => {
