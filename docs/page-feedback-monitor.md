@@ -103,10 +103,14 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
   click on it is refused as `target_uncovered`. (Without this certificate such
   a field had none, and a click on it was judged by the legacy rules, which
   cannot see that the click would land on the cover.) Chrome's fallback then
-  skips its press, because `ax_prepare_field_for_trusted_type` reports the
-  field as not `pressable` when its centre hit does not reach the field
-  without crossing an activator, and types into the focused field through the
-  same receiver checks.
+  skips its press: `ax_prepare_field_for_trusted_type` reports whether the
+  centre hit reaches the field without crossing an activator (`pressable`),
+  whether what is there instead lies outside the field (`centreCovered`), and
+  whether the field had the focus before that preparation (`focusedBefore`).
+  Only a field that already had the focus and is covered from outside is not
+  pressed; it is typed into through the same receiver checks. Any other field
+  is pressed as before, and the monitor refuses a press whose receiver is not
+  the field itself, such as a native control inside a ProseMirror editor.
   A recent owned scroll can reconcile one native subpixel visual-viewport
   notification within 200 ms when the original target, hit, rectangle, values,
   document scroll, full-size viewport, scale and DPR remain unchanged. This

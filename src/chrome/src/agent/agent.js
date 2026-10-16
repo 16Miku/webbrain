@@ -48227,12 +48227,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._throwIfAborted(abortSignal);
       // Child-frame rectangles are frame-relative. Focus/selection are already
       // bound to the exact editor there; do not click them as top-frame points.
-      // Nor is an editor pressed where the page covers its centre (X's
-      // formatting bubble after an earlier click): that press would reach the
-      // cover. The page monitor lets such an editor take text only when it
-      // already had keyboard focus when the model chose it.
+      // Nor is an editor pressed that already had the focus while something
+      // outside it covers its centre (X's formatting bubble after an earlier
+      // click): that press would reach the cover, and the focused editor
+      // needs none. The page monitor lets such an editor take text only when
+      // it had the focus when the model chose it. Any other editor is pressed
+      // as before, and the monitor refuses a press whose receiver is not the
+      // editor itself (a control inside it, or a cover).
+      const coveredWhileFocused = prepared.pressable === false && prepared.centreCovered === true && prepared.focusedBefore === true;
       if (frameId === 0 && prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0
-          && prepared.pressable !== false) {
+          && !coveredWhileFocused) {
         const x = prepared.rect.x + prepared.rect.w / 2;
         const y = prepared.rect.y + prepared.rect.h / 2;
         this._throwIfAborted(abortSignal);

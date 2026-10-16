@@ -10355,6 +10355,10 @@
           if (!el || !el.isConnected) return { success: false, error: `ref_id ${ref_id} is stale` };
           const typeable = el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
           if (!typeable) return { success: false, error: `ref_id ${ref_id} is not a text field` };
+          // Whether the field already had the focus before this preparation.
+          let focusedBefore = document.activeElement;
+          while (focusedBefore?.shadowRoot?.activeElement) focusedBefore = focusedBefore.shadowRoot.activeElement;
+          focusedBefore = focusedBefore === el;
           _withTypingPreparation('scroll', el, () => { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch {} });
           _withTypingPreparation('focus', el, () => { try { el.focus({ preventScroll: true }); } catch {} });
           window.__wbPageMonitor?.beforeLocalDispatch({ preparation: true, kind: 'focus', target: el });
@@ -10376,8 +10380,9 @@
             || (el.getAttribute && el.getAttribute('aria-expanded') === 'true');
           const rect = el.getBoundingClientRect();
           // Whether a press at the field's centre reaches the field or its
-          // plain contents, rather than something the page drew over it (X
-          // draws its formatting bubble where its editor was clicked).
+          // plain contents (pressable), and whether what is there instead is
+          // outside the field (centreCovered), as the formatting bubble X
+          // draws where its editor was clicked, rather than a control inside it.
           const centreX = rect.left + rect.width / 2, centreY = rect.top + rect.height / 2;
           let centreHit = document.elementFromPoint(centreX, centreY);
           for (let depth = 0; depth < 24 && centreHit?.shadowRoot; depth++) {
@@ -10385,10 +10390,10 @@
             if (!inner || inner === centreHit) break;
             centreHit = inner;
           }
-          let pressable = false;
+          let pressable = false, insideField = false, crossedActivator = false;
           for (let node = centreHit, depth = 0; node && depth < 256; node = node.parentElement || node.getRootNode?.().host, depth++) {
-            if (node === el) { pressable = true; break; }
-            if (node.matches?.('button,a[href],input,textarea,select,summary,[onclick],[tabindex],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"]')) break;
+            if (node === el) { insideField = true; pressable = !crossedActivator; break; }
+            if (node.matches?.('button,a[href],input,textarea,select,summary,[onclick],[tabindex],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"]')) crossedActivator = true;
           }
           return {
             success: true,
@@ -10397,6 +10402,8 @@
             isCombobox,
             contentEditable: !!el.isContentEditable,
             pressable,
+            centreCovered: !insideField,
+            focusedBefore,
             ...(isDraftJsEditor(el) ? { editorKind: 'draftjs' } : {}),
             selectionMode: el.isContentEditable && selectionMode === 'end' ? 'end' : 'all',
             rect: {
