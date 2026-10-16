@@ -40,6 +40,9 @@ function normalizeChallengeLabel(value) {
 
 function parseSerializedTreeLabel(line) {
   const input = String(line || '');
+  // Only the quoted name immediately after the role is a label. A nameless
+  // textbox can still contain quoted value/placeholder attributes.
+  if (!/^\s*[\w-]+\s+"/.test(input)) return '';
   const start = input.indexOf('"');
   if (start < 0) return '';
   let escaped = false;
@@ -64,9 +67,9 @@ function parseSerializedTreeLabel(line) {
 }
 
 // The titles of an accessibility tree's dialogs: each dialog's own name and
-// the names of the headings inside it. Any label in a dialog that names a
-// CAPTCHA product counts on its own; a title counts once a model read it as
-// asking to prove the person is human.
+// the names of the headings inside it. Labels outside editable contents that
+// name a CAPTCHA product count on their own; titles and static field names
+// count once a model read them as asking to prove the person is human.
 function challengeDialogEntries(pageContent) {
   const lines = String(pageContent || '').split(/\r?\n/);
   const dialogs = [];
@@ -76,7 +79,7 @@ function challengeDialogEntries(pageContent) {
     if (!dialogMatch) continue;
     const dialogIndent = dialogMatch[1].length;
     const labels = [];
-    let editable = false;
+    let editableIndent = null;
     const ownLabel = parseSerializedTreeLabel(line);
     if (ownLabel) labels.push({ label: ownLabel, title: true });
     for (let childIndex = index + 1; childIndex < lines.length; childIndex += 1) {
@@ -84,14 +87,29 @@ function challengeDialogEntries(pageContent) {
       if (!childLine.trim()) continue;
       const childIndent = childLine.match(/^\s*/)?.[0].length || 0;
       if (childIndent <= dialogIndent) break;
-      editable ||= /^\s*(?:textbox|searchbox|combobox)(?=\s|$)/i.test(childLine);
+      if (editableIndent != null && childIndent > editableIndent) continue;
+      editableIndent = null;
+      if (/^\s*(?:textbox|searchbox|combobox)(?=\s|$)/i.test(childLine)
+          || /\bcontenteditable=(?:true|"(?:true|plaintext-only)")/i.test(childLine)) {
+        // The field's name is separate from its authored value/descendants.
+        // Read its meaning rather than treating a mention of CAPTCHA as proof:
+        // an editor labelled "CAPTCHA article body" is not an answer field.
+        if (/^\s*(?:textbox|searchbox|combobox)(?=\s|$)/i.test(childLine)) {
+          const fieldLabel = parseSerializedTreeLabel(childLine);
+          if (fieldLabel) labels.push({ label: fieldLabel, title: false, field: true });
+        }
+        editableIndent = childIndent;
+        continue;
+      }
       const childLabel = parseSerializedTreeLabel(childLine);
       if (childLabel) labels.push({ label: childLabel, title: /^\s*heading(?=\s|$)/i.test(childLine) });
     }
-    // A dialog with neither a name nor a heading is titled by its first
-    // label, unless it holds an editable field whose text could change while
-    // it is being filled in.
-    if (!labels.some(entry => entry.title) && labels.length && !editable) labels[0].title = true;
+    // Authored bodies were excluded above. An answer field does not erase
+    // the independent static first-line title of an unnamed dialog.
+    if (!labels.some(entry => entry.title)) {
+      const firstStaticLabel = labels.find(entry => !entry.field);
+      if (firstStaticLabel) firstStaticLabel.title = true;
+    }
     dialogs.push(labels);
   }
   return dialogs;
@@ -101,7 +119,9 @@ export function detectChallengeDialog(pageContent, read = null) {
   const readsAsChallenge = label => typeof read === 'function'
     && read(challengeTitleText(label)) === CHALLENGE_TITLE_READING;
   for (const labels of challengeDialogEntries(pageContent)) {
-    const match = labels.find(({ label, title }) => matchesChallengeLabel(label) || (title && readsAsChallenge(label)));
+    const match = labels.find(({ label, title, field }) => field
+      ? readsAsChallenge(label)
+      : matchesChallengeLabel(label) || (title && readsAsChallenge(label)));
     if (match) {
       return {
         label: match.label,
@@ -114,17 +134,22 @@ export function detectChallengeDialog(pageContent, read = null) {
 
 // The dialog titles of an accessibility tree that a model has to read before
 // detectChallengeDialog can tell whether they ask to prove the person is
-// human: titles naming a CAPTCHA product need no reading.
+// human. Titles naming a CAPTCHA product need no reading; field names do,
+// because an editor may be labelled for an article about CAPTCHA.
 export function challengeDialogTitles(pageContent, limit = 12) {
   const titles = new Set();
   for (const labels of challengeDialogEntries(pageContent)) {
-    if (labels.some(({ label }) => matchesChallengeLabel(label))) continue;
-    for (const { label, title } of labels) {
+    if (labels.some(({ label, field }) => !field && matchesChallengeLabel(label))) continue;
+    for (const { label, title, field } of labels) {
       const text = challengeTitleText(label);
-      if (title && text) titles.add(text);
+      if ((title || field) && text) titles.add(text);
     }
   }
-  return [...titles].slice(0, limit);
+  // Keep a CAPTCHA answer name inside the bounded semantic batch even when
+  // a registration form has many ordinary named fields. This priority does
+  // not make a field name positive evidence without its human-check reading.
+  return [...titles].sort((left, right) => Number(matchesChallengeLabel(right)) - Number(matchesChallengeLabel(left)))
+    .slice(0, limit);
 }
 
 // Serialized into the page for a lightweight, read-only preflight before
@@ -191,6 +216,54 @@ export function detectChallengeDialogInPage(options = null) {
       return false;
     }
   };
+  // User-authored editor contents are data, even when they discuss CAPTCHA.
+  // Read static text nodes instead of an ancestor's aggregate innerText,
+  // which includes contenteditable drafts and their headings.
+  const editableSelector = 'input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"], [role="combobox"]';
+  const authored = element => !!element?.closest?.(editableSelector);
+  const fieldLabelElements = new Set();
+  const staticText = (element, onlyVisible = true, omitFieldLabels = true) => {
+    if (!element || authored(element)) return '';
+    // Small DOM stand-ins used by callers may expose only rendered text.
+    if (!element.childNodes) return String(element.innerText || element.textContent || '');
+    const text = [];
+    let visited = 0;
+    const renderedText = node => {
+      try {
+        const style = getComputedStyle(node.parentElement);
+        if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+        const range = (node.ownerDocument || document).createRange();
+        range.selectNodeContents(node);
+        // display:contents parents have no rectangle of their own, although
+        // their text renders normally. Measure the text instead of its parent.
+        return Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0);
+      } catch { return visible(node.parentElement); }
+    };
+    const walk = (node, depth) => {
+      if (++visited > 4000 || depth > 40) return;
+      if (node.nodeType === 3) {
+        if (!onlyVisible || renderedText(node)) text.push(node.textContent || '');
+        return;
+      }
+      if (node.nodeType !== 1 || authored(node)
+          || /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(node.tagName)) return;
+      if (omitFieldLabels && node !== element && fieldLabelElements.has(node)) return;
+      const style = getComputedStyle(node);
+      if (onlyVisible) {
+        if (style.display === 'none' || Number(style.opacity) === 0
+            || node.hidden || node.getAttribute?.('aria-hidden') === 'true') return;
+      }
+      // CSS determines rendered word boundaries. A block span separates
+      // words; an inline div or a display:contents wrapper does not.
+      const block = node.tagName === 'BR'
+        || /^(?:block|flow-root|flex|grid|list-item|table)(?:$|[- ])/.test(style.display);
+      if (block) text.push('\n');
+      for (const child of node.childNodes || []) walk(child, depth + 1);
+      if (block) text.push('\n');
+    };
+    walk(element, 0);
+    return text.join('');
+  };
   // This detector is serialized into the page, so it cannot call the exported
   // classifier below. Keep the vendor-specific routes aligned with it.
   const activeFrameVendor = (value) => {
@@ -239,7 +312,14 @@ export function detectChallengeDialogInPage(options = null) {
     ? {
         challenge,
         ...(hiddenChallenge ? { hiddenChallenge } : {}),
-        ...(!challenge && unreadTitles.length ? { unreadTitles: unreadTitles.slice(0, 12) } : {}),
+        ...(!challenge && unreadTitles.length ? {
+          // A long form's ordinary field names must not crowd a possible
+          // CAPTCHA answer name out of the bounded semantic reading batch.
+          unreadTitles: [
+            ...unreadTitles.filter(matchesChallenge),
+            ...unreadTitles.filter(title => !matchesChallenge(title)),
+          ].slice(0, 12),
+        } : {}),
         frameContext: {
           frameUrl,
           frameName,
@@ -268,37 +348,76 @@ export function detectChallengeDialogInPage(options = null) {
     }
   };
   collectDialogs(document, 0);
+  const dialogLabelledBy = (element, onlyVisible = true) => {
+    try {
+      const idRoot = (typeof element.getRootNode === 'function' && element.getRootNode()) || document;
+      return String(element.getAttribute('aria-labelledby') || '')
+        .split(/\s+/)
+        .filter(Boolean)
+        .map(id => staticText((typeof idRoot.getElementById === 'function' ? idRoot : document)
+          .getElementById(id), onlyVisible))
+        .join(' ');
+    } catch { return ''; }
+  };
+  // Names of answer fields are instructions a model must read, not proof
+  // merely because the name mentions CAPTCHA. Never inspect field values.
+  const dialogFieldLabels = (element, onlyVisible = true) => {
+    const names = [];
+    for (const field of element.querySelectorAll?.(editableSelector) || []) {
+      if (authored(field.parentElement) || (onlyVisible && !visible(field))) continue;
+      // A hidden dialog may have ordinary answer fields, but an explicitly
+      // hidden solver response cannot claim its independent static title.
+      if (!onlyVisible && (field.hidden || field.getAttribute?.('type') === 'hidden'
+          || getComputedStyle(field).display === 'none')) continue;
+      let labelledElements = [];
+      let nativeLabels = [];
+      try {
+        const idRoot = field.getRootNode?.() || document;
+        labelledElements = String(field.getAttribute?.('aria-labelledby') || '')
+          .split(/\s+/).filter(Boolean)
+          .map(id => (typeof idRoot.getElementById === 'function' ? idRoot : document).getElementById(id))
+          .filter(Boolean);
+        nativeLabels = Array.from(field.labels || []);
+      } catch {}
+      // Route associated label text through semantic field-name readings,
+      // while independent dialog titles and headings retain their own text.
+      for (const label of [...labelledElements, ...nativeLabels]) fieldLabelElements.add(label);
+      const name = titleText(field.getAttribute?.('aria-label'))
+        || titleText(labelledElements.map(label => staticText(label, false, false)).join(' '))
+        || titleText(nativeLabels.map(label => staticText(label, false, false)).join(' '));
+      if (name && !names.includes(name)) names.push(name);
+    }
+    return names;
+  };
   // A dialog's title: its accessible name, else its first heading, else its
-  // title attribute, else (when it holds no editable text that could change
-  // while it is filled in) the first line of its text.
+  // title attribute, else the first line of its static text. Answer inputs
+  // and hidden solver responses do not remove an independent static title.
   const dialogTitle = (element, labelledBy = '', onlyVisibleHeadings = true) => {
     let heading = '';
     try {
       heading = Array.from(element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || [])
-        .filter(node => !onlyVisibleHeadings || visible(node))
-        .map(node => titleText(node.textContent))
+        .filter(node => !authored(node) && (!onlyVisibleHeadings || visible(node)
+          || getComputedStyle(node).display === 'contents'))
+        .map(node => titleText(staticText(node, onlyVisibleHeadings)))
         .find(Boolean) || '';
     } catch {}
     const named = titleText(element.getAttribute?.('aria-label')) || titleText(labelledBy) || heading
       || titleText(element.getAttribute?.('title'));
     if (named) return named;
-    try {
-      const editable = Array.from(element.querySelectorAll?.('[contenteditable]') || [])
-        .some(node => String(node.getAttribute?.('contenteditable') || '').toLowerCase() !== 'false');
-      if (editable) return '';
-    } catch { return ''; }
-    return titleText(String(element.innerText || '').split(/\r?\n/).find(line => line.trim()));
+    return titleText(staticText(element, onlyVisibleHeadings).split(/\r?\n/).find(line => line.trim()));
   };
   const recordHiddenChallenge = (element) => {
     if (hiddenChallenge) return;
     try {
+      const fieldLabels = dialogFieldLabels(element, false);
       const values = [
         element.getAttribute?.('aria-label'),
+        dialogLabelledBy(element, false),
         element.getAttribute?.('title'),
-        element.innerText,
-        element.textContent,
+        staticText(element, false),
         ...Array.from(element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || [])
-          .map(heading => heading.textContent || ''),
+          .filter(heading => !authored(heading))
+          .map(heading => staticText(heading, false)),
       ];
       for (const value of values) {
         const text = String(value || '');
@@ -310,8 +429,9 @@ export function detectChallengeDialogInPage(options = null) {
           return;
         }
       }
-      const title = dialogTitle(element, '', false);
-      if (title && titleReading(title) === 'human_check') hiddenChallenge = { label: title };
+      const title = dialogTitle(element, dialogLabelledBy(element, false), false);
+      const label = [title, ...fieldLabels].find(value => value && titleReading(value) === 'human_check');
+      if (label) hiddenChallenge = { label };
     } catch {}
   };
   for (const element of dialogCandidates) {
@@ -319,23 +439,18 @@ export function detectChallengeDialogInPage(options = null) {
       recordHiddenChallenge(element);
       continue;
     }
-    let labelledBy = '';
-    try {
-      const idRoot = (typeof element.getRootNode === 'function' && element.getRootNode()) || document;
-      labelledBy = String(element.getAttribute('aria-labelledby') || '')
-        .split(/\s+/)
-        .filter(Boolean)
-        .map(id => (typeof idRoot.getElementById === 'function' ? idRoot : document)
-          .getElementById(id)?.textContent || '')
-        .join(' ');
-    } catch {}
+    // Accessible names may reference a hidden label; its text still names
+    // the visible dialog. Editor-backed references remain excluded.
+    const fieldLabels = dialogFieldLabels(element);
+    const labelledBy = dialogLabelledBy(element, false);
     let renderedHeadings = '';
     try {
       renderedHeadings = Array.from(
         element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
       )
-        .filter(visible)
-        .map(heading => heading.textContent || '')
+        .filter(heading => !authored(heading) && (visible(heading)
+          || getComputedStyle(heading).display === 'contents'))
+        .map(heading => staticText(heading))
         .join(' ');
     } catch {}
     const values = [
@@ -343,7 +458,7 @@ export function detectChallengeDialogInPage(options = null) {
       labelledBy,
       renderedHeadings,
       element.getAttribute?.('title'),
-      element.innerText,
+      staticText(element),
     ];
     for (const value of values) {
       const text = String(value || '');
@@ -358,10 +473,12 @@ export function detectChallengeDialogInPage(options = null) {
     // A title read as asking to prove the person is human is the challenge's
     // label, as the accessibility tree names the dialog.
     const title = dialogTitle(element, labelledBy);
-    if (!title) continue;
-    const titleChoice = titleReading(title);
-    if (titleChoice === 'human_check') return finish({ label: title });
-    if (!titleChoice && !unreadTitles.includes(title)) unreadTitles.push(title);
+    for (const label of [title, ...fieldLabels]) {
+      if (!label) continue;
+      const choice = titleReading(label);
+      if (choice === 'human_check') return finish({ label });
+      if (!choice && !unreadTitles.includes(label)) unreadTitles.push(label);
+    }
   }
   const activeChallengeFrame = childFrames.find(frame =>
     frame.visible === true && frame.activeChallengeVendor

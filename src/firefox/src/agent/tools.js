@@ -27,7 +27,7 @@ function withExactTableDone(tool) {
 const DONE_OUTCOME_PROPERTY = {
   type: 'string',
   enum: ['success', 'partial', 'failed'],
-  description: 'Choose success only when the user requested task is actually complete. Choose partial for useful progress that is not fully complete. Choose failed when blocked or reasonable alternatives were exhausted.',
+  description: 'Choose success only when the user requested task is actually complete. Choose partial for useful incomplete progress only when a real blocker, cancellation, or runtime limit prevents continuing. Choose failed when blocked or permitted recovery routes were exhausted. Recoverable missing source text, pending processing, or unattempted independent destinations require continued work.',
 };
 
 const DONE_REQUIRED = ['summary'];
@@ -264,7 +264,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'read_page',
-      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page only for long-form text content (articles, READMEs, documentation). While `hasMore:true`, either spread the exact returned `continuationArgs` fields into the next call as top-level arguments or pass that exact object as `continuationArgs`; it carries `offset:nextOffset`, `limit`, and extraction options such as `includeChrome`. Never wrap it again or modify it. Do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, `nextOffset`, and `continuationArgs` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. `visibleLayers` lists rendered dialogs, toolbars, and docked surfaces with viewport bounds while `text` keeps the underlying page prose. NOTE: PDF tabs auto-redirect to read_pdf because Firefox\'s built-in viewer is a privileged page that content scripts cannot scrape.',
+      description: 'Read the current page as a bounded PROSE window — title, URL, visible text, links, and forms. LEGACY read path; prefer get_accessibility_tree for UI tasks. Use read_page for prose (articles, READMEs, documentation), including complete source post text when accessibility-tree labels abbreviate it. While `hasMore:true`, either spread the exact returned `continuationArgs` fields into the next call as top-level arguments or pass that exact object as `continuationArgs`; it carries `offset:nextOffset`, `limit`, and extraction options such as `includeChrome`. Never wrap it again or modify it. Do not scroll and reread the same document prefix. RESULT SHAPE: `text`, `originalLength`, `textOffset`, `textLimit`, `returnedLength`, `textTruncated`, `hasMore`, `nextOffset`, and `continuationArgs` describe the tool-output window. `truncationReason:"tool_output_window"` is a context-window boundary, never evidence of a paywall. `accessState:"blocked_by_page_gate"` plus `accessGateEvidence:"pageGate"` is the structured access-block signal; `accessState:"no_blocking_page_gate"` means tool truncation must not be described as an access restriction. `pageGate`, when present, describes the rendered blocking surface; `textSource` identifies the article selector or bounded pre-gate/gate text; `isArticlePage` reports article markup. `visibleLayers` lists rendered dialogs, toolbars, and docked surfaces with viewport bounds while `text` keeps the underlying page prose. NOTE: PDF tabs auto-redirect to read_pdf because Firefox\'s built-in viewer is a privileged page that content scripts cannot scrape.',
       parameters: {
         type: 'object',
         properties: {
@@ -1407,7 +1407,7 @@ const DONE_TOOL_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" when you made useful progress but the request is not fully complete. Set outcome="failed" when you are blocked or have exhausted every reasonable alternative (at least 3-4 different approaches). After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: do not needlessly repeat credentials the user supplied or volunteer existing credentials discovered on a page. If WebBrain generated a new credential for this task and the user needs it to use the result, include it once in the summary. If the user explicitly asked to see an exact credential, including it is the answer and you should include it.',
+    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" for useful incomplete work only when a real blocker, cancellation, or runtime limit prevents continuing. Missing source text, pending processing, and unattempted independent destinations are recoverable; continue with permitted reads, waits, navigation, and verified actions. Set outcome="failed" when blocked or permitted recovery routes were exhausted. After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. Credentials hygiene: do not needlessly repeat credentials the user supplied or volunteer existing credentials discovered on a page. If WebBrain generated a new credential for this task and the user needs it to use the result, include it once in the summary. If the user explicitly asked to see an exact credential, including it is the answer and you should include it.',
     parameters: {
       type: 'object',
       properties: {
@@ -1423,7 +1423,7 @@ const DONE_TOOL_COMPACT_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'End this run. Use success only after verified completion, partial for useful incomplete work, and failed for a real blocker or exhausted alternatives. The summary is displayed verbatim as the final reply, so include the actual answer or result, not a statement that you explained or confirmed it. Include a credential WebBrain generated for this task when the user needs it; otherwise do not needlessly repeat or volunteer credentials.',
+    description: 'End this run. Use success only after verified completion, partial when useful work cannot continue because of a real blocker, cancellation, or runtime limit, and failed for a real blocker or exhausted recovery routes. Continue recoverable source reads, pending uploads, and independent remaining destinations with available tools. The summary is displayed verbatim as the final reply, so include the actual answer or result, not a statement that you explained or confirmed it. Include a credential WebBrain generated for this task when the user needs it; otherwise do not needlessly repeat or volunteer credentials.',
     parameters: {
       type: 'object',
       properties: {
@@ -1460,7 +1460,7 @@ const DONE_TOOL_STRICT_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" when you made useful progress but the request is not fully complete. Set outcome="failed" when you are blocked or have exhausted every reasonable alternative (at least 3-4 different approaches). After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, application-password strings, or any value the user typed into a password field — in the summary. Refer to them generically ("logged in with the provided credentials", "API key updated", "OTP submitted") even if the user explicitly asked you to display the value: in strict mode the answer is "I filled the field with the value you provided" or "the API key on this page is in the field labeled X", not the literal string. This rule applies even if the user typed the value directly into the chat.',
+    description: 'Signal that the task is finished for this run. Set outcome="success" only after the latest consequential action was followed by an explicit page/state observation that verifies the request. Set outcome="partial" for useful incomplete work only when a real blocker, cancellation, or runtime limit prevents continuing. Missing source text, pending processing, and unattempted independent destinations are recoverable; continue with permitted reads, waits, navigation, and verified actions. Set outcome="failed" when blocked or permitted recovery routes were exhausted. After any consequential action, a plain final answer cannot end the run; call done with an explicit outcome. The summary is displayed verbatim as your final reply to the user, so put the complete answer or result itself in it. Never merely say that you explained, confirmed, provided, or answered something without including the actual explanation, details, content, or answer. Do NOT call this prematurely — keep trying different strategies if the current one fails. CREDENTIALS (strict mode is ON): never include passwords, API keys, tokens, OTPs, recovery codes, application-password strings, or any value the user typed into a password field — in the summary. Refer to them generically ("logged in with the provided credentials", "API key updated", "OTP submitted") even if the user explicitly asked you to display the value: in strict mode the answer is "I filled the field with the value you provided" or "the API key on this page is in the field labeled X", not the literal string. This rule applies even if the user typed the value directly into the chat.',
     parameters: {
       type: 'object',
       properties: {
@@ -1476,7 +1476,7 @@ const DONE_TOOL_COMPACT_STRICT_WITH_OUTCOME = {
   type: 'function',
   function: {
     name: 'done',
-    description: 'End this run. Use success only after verified completion, partial for useful incomplete work, and failed for a real blocker or exhausted alternatives. The summary is displayed verbatim as the final reply, so include the actual answer or result, not a statement that you explained or confirmed it. Never include credentials or secrets in the summary.',
+    description: 'End this run. Use success only after verified completion, partial when useful work cannot continue because of a real blocker, cancellation, or runtime limit, and failed for a real blocker or exhausted recovery routes. Continue recoverable source reads, pending uploads, and independent remaining destinations with available tools. The summary is displayed verbatim as the final reply, so include the actual answer or result, not a statement that you explained or confirmed it. Never include credentials or secrets in the summary.',
     parameters: {
       type: 'object',
       properties: {
@@ -1927,6 +1927,10 @@ const PLAN_TO_EXECUTION_GUIDANCE = `PLAN TO EXECUTION:
 - The trusted runtime mode is authoritative. Never claim that the run is in Ask mode or tell the user to switch to Act when the runtime prompt says Act/Dev.
 - Do not call done with the plan, planner JSON, action-policy metadata, or a promise to act as its summary. Call a permitted non-done tool first; use clarify or stop only for a real blocker or required user input.
 - If a required form value is unavailable, leave that field untouched and call clarify. Never focus, clear, or write an empty value merely because the value is unknown.
+- Recover incomplete source text before posting: use read_page when tree labels abbreviate prose; if you already navigated away, return to the observed source URL. Save the complete exact body before switching sites.
+- While an upload/processing indicator remains active and Publish/Save is disabled, use available waits and fresh reads until processing finishes or a real failure appears. Do not repeat an upload or uncertain submission.
+- Complete and verify each authorized destination. A blocker at one destination does not cancel independent remaining work; continue only when navigation does not abandon an unresolved submission or verification challenge.
+- Do not end partial/failed merely because an early read or action was incomplete. Continue permitted recovery routes until completion, a real blocker, cancellation, or runtime limit; identify the remaining outcomes and blocker in the final summary.
 - Respect user boundaries: if the user asked only for a plan, or said to wait for approval or confirmation, return the plan or wait and do not execute.
 - Structured output can be legitimate user-requested data. Honor requested JSON or markdown formats; never treat an answer as leaked planner metadata merely because it looks like a plan or policy.`;
 
@@ -1963,6 +1967,7 @@ RULES:
 14. Recording is not supported in the Firefox build. Do not call or invent recording tools.
 15. CAPTCHA: stop and ask the user to complete verification manually. Never dismiss, close, or resubmit the challenge. Report blocked work with done({outcome:"partial"}).
 16. Before filling an external email/message/post composer, formulate the exact recipient, subject, and body. For more than a one-line body, save the complete text as \`[pending draft]\` with scratchpad_write first so it can be recovered if the UI fails; never mark it sent until verified.
+17. Recover incomplete source text with read_page or return to its observed URL. Pending uploads need available waits/reads. Complete independent authorized destinations before done; preserve unresolved submissions/challenges and stop for real blockers, cancellation, or limits.
 
 ${SENSITIVE_PAGE_DATA_GUIDANCE}
 
@@ -1971,7 +1976,7 @@ ${PLAN_TO_EXECUTION_GUIDANCE_COMPACT}
 TOOLS - use only these:
 - get_accessibility_tree: Read the page. Returns roles, names, and ref_ids. Use filter:"visible" by default.
 - inspect_viewport: Read-only visual inspection for ads, images, canvas, charts, and layout.
-- read_page: Prose fallback for articles and long-form text.
+- read_page: Prose fallback for articles or complete source post text missed by tree labels.
 - get_window_info: Read window/viewport size.
 - scroll({direction:"up"|"down"|"top"|"bottom"}): Scroll the page or active pane. Use scroll({direction:"down"}) to scroll down; do not invent scrolldown/scrollup tools.
 - extract_data: Get tables, headings, images, or links.
@@ -2344,7 +2349,7 @@ TOOLS — use only these:
 - inspect_viewport: Read-only visual inspection for ads, images, canvas, charts, and layout.
 - After inspect_viewport, act on a screenshot-derived point with click({x,y,coordinate_space:"screenshot",capture_id:"..."}); WebBrain verifies the capture and converts image pixels to CSS pixels mechanically.
 - click_ax({ref_id}) / set_checked({ref_id, checked}) / type_ax({ref_id, text}) / set_field({ref_id, text, submit}): act on nodes by ref_id. set_field is preferred for text fields; set_checked is required for native checkboxes.
-- read_page: prose fallback for long articles. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. promote_iframe({urlFilter}) navigates the current run to one child frame's standalone URL.
+- read_page: prose fallback for articles or complete source post text missed by tree labels. get_window_info: inspect browser window/viewport size. scroll, navigate({url}), go_back()/go_forward(): walk the run tab's history. promote_iframe({urlFilter}) navigates the current run to one child frame's standalone URL.
 ${BROWSER_TAB_LIMITATION}
 - get_interactive_elements: legacy indexed element list (use when the tree misses elements). click({text}) / type_text({text}) / press_keys({key}): legacy fallbacks. press_keys supports only unmodified Escape/Tab/Enter/arrows or ; (semicolon), never Ctrl/Cmd/Alt/Shift combinations or browser shortcuts.
 - extract_data: tables/headings/images/links. get_selection: read highlighted text. find_text({text}): select one literal page-text match; each call replaces the previous selection and never creates simultaneous highlights or browser Find UI. read_pdf: read a PDF.
