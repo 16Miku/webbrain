@@ -256,7 +256,7 @@ export class RichTextToolbarProbe {
       throwIfAborted();
       const preparedResults = await chrome.scripting.executeScript({
         target: { tabId, frameIds: [selected.frameId] },
-        func: (sel, index, markerAttribute, markerValue, actionDeadlineAt) => {
+        func: (sel, index, markerAttribute, markerValue, actionDeadlineAt, readValue) => {
           const deadlineExpired = () => actionDeadlineAt > 0 && Date.now() >= actionDeadlineAt;
           const deadlineFailure = () => ({ ok: false, deadlineExpired: true, dispatched: false });
           try {
@@ -269,12 +269,17 @@ export class RichTextToolbarProbe {
               el.removeAttribute(markerAttribute);
               return deadlineFailure();
             }
-            return { ok: true, prepared: true, url: location.href, dispatched: false };
+            // The text a clearing write would replace, for the preview check.
+            const currentValue = !readValue ? undefined
+              : el.isContentEditable ? String(typeof el.innerText === 'string' ? el.innerText : el.textContent || '')
+                : el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement ? String(el.value ?? '') : undefined;
+            return { ok: true, prepared: true, url: location.href, dispatched: false,
+              ...(currentValue !== undefined ? { currentValue } : {}) };
           } catch (error) {
             return { ok: false, url: location.href, dispatched: false, error: error.message };
           }
         },
-        args: [selector, selectedIndex, markerAttribute, markerValue, actionDeadlineAt],
+        args: [selector, selectedIndex, markerAttribute, markerValue, actionDeadlineAt, !!clear],
       });
       const prepared = preparedResults?.[0]?.result;
       if (prepared?.deadlineExpired) return deadlineResult(prepared);
@@ -289,6 +294,20 @@ export class RichTextToolbarProbe {
       }
       markerPrepared = true;
       throwIfAborted();
+      // A cleared field must not be refilled with only a truncated preview
+      // of its own value. The frame has no content script on this path, so
+      // the check every other clearing write runs is asked of the top
+      // frame's content script, which owns it, with the value just read. No
+      // answer leaves typing as it was, as for trusted type_text.
+      if (clear && typeof prepared.currentValue === 'string' && prepared.currentValue) {
+        const previewCheck = await Promise.resolve().then(() => chrome.tabs.sendMessage(tabId, {
+          target: 'content',
+          action: 'check_truncated_replacement',
+          params: { text: String(text ?? ''), currentValue: prepared.currentValue },
+        }, { frameId: 0 })).catch(() => null);
+        throwIfAborted();
+        if (previewCheck?.errorCode === 'truncated_value_replacement') return { ...previewCheck, frameId: selected.frameId };
+      }
       if (typeof beforeDispatch === 'function') await beforeDispatch(selected.frameId);
       throwIfAborted();
       const results = await chrome.scripting.executeScript({
@@ -566,6 +585,10 @@ export class RichTextToolbarProbe {
     // and retrying the call cannot change that. Callers use this to say so
     // instead of asking the model to re-read the page forever.
     let trustedResolverUnavailable = false;
+    // Set when the page-feedback fence refused the resolver's own scroll: the
+    // page changed (on a live page, it keeps changing); the resolver itself
+    // is available. Retrying the same selector meets the same fence.
+    let pageChangedDuringResolve = false;
     if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
       try {
         await cdpClient.attach(tabId);
@@ -577,15 +600,16 @@ export class RichTextToolbarProbe {
             ? { dispatchBinding: { backendNodeId: Number(selectorBackendNodeId), frameId: 0 } }
             : {}),
         }, 0);
-      } catch {
-        trustedResolverUnavailable = true;
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') pageChangedDuringResolve = true;
+        else trustedResolverUnavailable = true;
       }
     }
     const withResolverState = probe => {
       const bound = withDispatchBinding(probe, 0);
-      return bound && trustedResolverUnavailable
-        ? { ...bound, trustedResolverUnavailable: true }
-        : bound;
+      return bound && trustedResolverUnavailable ? { ...bound, trustedResolverUnavailable: true }
+        : bound && pageChangedDuringResolve ? { ...bound, pageChangedDuringResolve: true }
+          : bound;
     };
     try {
       const probe = await chrome.tabs.sendMessage(tabId, {

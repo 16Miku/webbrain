@@ -16,6 +16,180 @@ function currentExecutionToolCalls(agent, tabId) {
       .filter(call => call.id && !run.historyToolCallIdsBeforeRun.has(call.id)) : [];
 }
 
+const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+const CREDENTIAL_PLACEHOLDER = '[credential omitted]';
+// Text-entry tools whose result reports the field the text went into.
+const TEXT_ENTRY_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'iframe_type']);
+// Main-document field edits whose staged result the accessibility tree shows.
+const STAGED_FIELD_TOOLS = new Set(['set_field', 'type_ax', 'type_text', 'set_checked']);
+const BATCH_METADATA = '[browser_batch metadata] ';
+// The accessibility tree shows at most this many characters of a value.
+const AX_VALUE_PREFIX_CHARS = 60;
+
+function parsedObject(text) {
+  try {
+    const value = typeof text === 'string' ? JSON.parse(text) : text;
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  } catch { return null; }
+}
+
+// Unwrap only a wrapper that starts the message and closes with its own
+// nonce: page text inside an unwrapped result (a field label in a set_field
+// result) can contain wrapper markup. Trusted runtime notes may follow on
+// later lines; a result's own JSON never contains a raw newline.
+function parsedToolResult(content) {
+  if (typeof content !== 'string' || content.length > 50000) return null;
+  const wrapped = content.match(/^<untrusted_page_content id="([a-z0-9]+)"[^>\n]*>\n([\s\S]*?)\n<\/untrusted_page_content id="\1">/);
+  const text = wrapped ? wrapped[2] : content;
+  return parsedObject(text) || parsedObject(text.split('\n', 1)[0]);
+}
+
+// A folded browser_batch answer (foldBrowserBatchMessages): app-written
+// header lines, then each child's own header and result in order. A child
+// result is read only up to the close of its own nonce wrapper, and the next
+// child is looked for after it, so page bytes inside one result cannot stand
+// in for another.
+function batchChildActions(call, content) {
+  const actions = parsedObject(call.function?.arguments)?.actions;
+  const text = typeof content === 'string' && content.length <= 200000 ? content : '';
+  const lines = text.split('\n', 2);
+  const metadata = lines[1]?.startsWith(BATCH_METADATA) ? parsedObject(lines[1].slice(BATCH_METADATA.length)) : null;
+  if (!Array.isArray(actions) || !Array.isArray(metadata?.actions)) return [];
+  const results = new Map();
+  let cursor = lines[0].length + lines[1].length + 1;
+  for (let index = 0; index < metadata.actions.length; index++) {
+    const at = text.indexOf(`\nactions[${index}] `, cursor);
+    const lineEnd = at < 0 ? -1 : text.indexOf('\n', at + 1);
+    if (lineEnd < 0) break;
+    const ran = / → ran$/.test(text.slice(at + 1, lineEnd));
+    const open = text.slice(lineEnd + 1, lineEnd + 120).match(/^<untrusted_page_content id="([a-z0-9]+)"[^>\n]*>\n/);
+    if (!open) { cursor = lineEnd; continue; }
+    const close = `\n</untrusted_page_content id="${open[1]}">`;
+    const bodyStart = lineEnd + 1 + open[0].length;
+    const bodyEnd = text.indexOf(close, bodyStart);
+    if (bodyEnd < 0) break;
+    if (ran) results.set(index, parsedToolResult(text.slice(bodyStart, bodyEnd)));
+    cursor = bodyEnd + close.length;
+  }
+  // Only children the batch actually ran count as recorded actions.
+  return actions.flatMap((action, index) => metadata.actions[index]?.ran === true && TOOL_NAME.test(action?.name || '')
+    ? [{ name: action.name, args: parsedObject(action.input) || {}, result: results.get(index) || null }] : []);
+}
+
+// Each action of this execution with browser_batch children expanded, and the
+// app's own result while the conversation still retains it.
+function currentExecutionActions(agent, tabId) {
+  const calls = currentExecutionToolCalls(agent, tabId);
+  const counts = new Map();
+  for (const call of calls) counts.set(call.id, (counts.get(call.id) || 0) + 1);
+  const answers = new Map();
+  for (const message of agent.conversations.get(tabId) || []) {
+    if (message.role === 'tool' && counts.get(message.tool_call_id) === 1 && !answers.has(message.tool_call_id)) {
+      answers.set(message.tool_call_id, message.content);
+    }
+  }
+  return calls.flatMap(call => {
+    const name = call.function?.name;
+    if (!TOOL_NAME.test(name || '')) return [];
+    if (name === 'browser_batch') return batchChildActions(call, answers.get(call.id));
+    return [{ name, args: parsedObject(call.function.arguments) || {}, result: parsedToolResult(answers.get(call.id)) }];
+  });
+}
+
+// Booleans the app itself recorded about an action, plus the `ref_N` target
+// it named. No other argument: entered values can be secrets without
+// recognizable labels.
+function recordedActionFacts(action) {
+  const result = action.result;
+  return {
+    ...(/^ref_\d{1,40}$/.test(action.args?.ref_id || '') ? { ref: action.args.ref_id } : {}),
+    ...(result && typeof result.verified === 'boolean' ? { verified: result.verified } : {}),
+    ...(result?.success === false ? { failed: true } : {}),
+    ...(result?.sensitiveField === true ? { sensitive: true } : {}),
+  };
+}
+
+// Values this execution entered into password inputs, in every form evidence
+// can show them: as typed; as the accessibility tree prints one that a "show
+// password" control made visible (normalized, without control characters,
+// trimmed, cut to its first 60 characters); each line of a multi-line value,
+// since redaction and AX lines split it and an input drops the line breaks;
+// and each of those escaped inside AX or JSON text. A password input shows its
+// value only when a control reveals it, so masking it rarely costs a judge
+// anything it could compare with the request. A value entered into any other
+// field stays, even where the app flags the field as a credential ("Security
+// code", "Token amount"): the page shows it, and a judge needs it to catch a
+// mistyped value.
+function credentialValueForms(actions) {
+  const forms = new Set();
+  const axEscape = value => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const jsonEscape = value => JSON.stringify(value).slice(1, -1);
+  for (const action of actions) {
+    const value = action.args?.text;
+    // Content-script entries describe their field as fieldMeta; Chrome's CDP
+    // type_text into the focused field describes it as focusedField.
+    const password = [action.result?.fieldMeta, action.result?.focusedField]
+      .some(field => String(field?.type || '').toLowerCase() === 'password');
+    if (!TEXT_ENTRY_TOOLS.has(action.name) || !password || typeof value !== 'string') continue;
+    let printed = value.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+    try { printed = printed.normalize('NFKC'); } catch { /* keep the unnormalized form */ }
+    printed = printed.trim();
+    const whole = [value, printed, printed.slice(0, AX_VALUE_PREFIX_CHARS)];
+    for (const shown of [...whole, ...whole.flatMap(text => text.split('\n').map(line => line.trim()))]) {
+      for (const form of [shown, axEscape(shown), jsonEscape(shown), jsonEscape(axEscape(shown))]) {
+        if (form.length >= 4) forms.add(form);
+      }
+    }
+  }
+  return [...forms].sort((a, b) => b.length - a.length);
+}
+
+function maskCredentialValues(value, credentials) {
+  let text = String(value ?? '');
+  for (const credential of credentials) text = text.split(credential).join(CREDENTIAL_PLACEHOLDER);
+  return text;
+}
+
+// Line redaction first: masking a value that spells a keyword ("password")
+// would otherwise keep the rest of that line.
+function redactJudgeEvidence(value, credentials) {
+  return maskCredentialValues(redactSystemOneText(value), credentials);
+}
+
+// A credential field's AX line keeps its role and ref, so a judge can match
+// the field with its recorded entry; the rest of the line is omitted. Page
+// text in a name or attribute can add ref-like tokens, even on a line of its
+// own, but cannot remove the formatter's, and the formatter prints each ref
+// once. So a line keeps its ref only when it has exactly one and no other
+// line repeats it.
+function redactJudgeObservation(text, credentials) {
+  const lines = String(text ?? '').split('\n');
+  const seen = new Map();
+  for (const line of lines) for (const ref of line.match(/\[ref_\d{1,40}\]/g) || []) seen.set(ref, (seen.get(ref) || 0) + 1);
+  return lines.map(line => {
+    const redacted = redactJudgeEvidence(line, credentials);
+    if (redacted !== CREDENTIAL_PLACEHOLDER) return redacted;
+    const refs = line.match(/\[ref_\d{1,40}\]/g);
+    const node = refs?.length === 1 && seen.get(refs[0]) === 1 && line.match(/^( *)([a-z]{1,24}) /);
+    return node ? `${node[1]}${node[2]} ${refs[0]} ${CREDENTIAL_PLACEHOLDER}` : redacted;
+  }).join('\n');
+}
+
+// The active model already holds the user's request, the approved plan and
+// its own summary verbatim. Dropping each line that merely names a credential
+// ("fill the form with a random password") would hide the task from its
+// judge, so its copy keeps every line and masks only what every judge's copy
+// masks: addresses are cut to origin and path, and bearer tokens and values
+// entered into password inputs are hidden. Masking whatever follows a
+// credential word ("Password:", "password is") could change what the request
+// asks, so nothing is masked by guesswork. A decision sidecar that may be a
+// third party keeps line redaction.
+function maskTrustedJudgeText(value, credentials) {
+  return maskCredentialValues(String(value ?? '').replace(/https?:\/\/[^\s"<>]+/gi, raw => {
+    try { const url = new URL(raw); return `${url.origin}${url.pathname}`; } catch { return '[url]'; }
+  }).replace(/\bBearer\s+\S+/gi, CREDENTIAL_PLACEHOLDER), credentials);
+}
+
 export function completionReportingContext(agent, tabId) {
   const run = agent.completionInvariants.get(tabId);
   if (!run?.runToken) return null;
@@ -195,6 +369,29 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // pre-run IDs cannot certify that this task performed a required read.
   const calls = currentExecutionToolCalls(agent, tabId);
   const toolNames = new Map(calls.map(call => [call.id, call.function?.name]));
+  // Entered values can be secrets without recognizable labels. Action names,
+  // targets and the app's own outcome booleans supply history without sending
+  // arbitrary tool arguments to another judge. Batched actions count too.
+  const actions = currentExecutionActions(agent, tabId);
+  const recordedActions = actions.filter(action => /^(type|fill|click|navigate|set_)/.test(action.name)).slice(-8)
+    .map(action => ({ tool: action.name, ...recordedActionFacts(action) }));
+  // A password the run entered can still show up in its summary, in the
+  // request, or in a field a "show password" control made visible.
+  const credentialValues = credentialValueForms(actions);
+  const redactEvidence = value => redactJudgeEvidence(value, credentialValues);
+  // The trusted texts, as the active model and as the sidecar receive them.
+  const taskBudget = guard?.approvedPlanAnchor ? 1700 : 2500;
+  const llmTexts = { task: boundedText(maskTrustedJudgeText(task || '', credentialValues), taskBudget),
+    plan: guard?.approvedPlanAnchor ? boundedText(maskTrustedJudgeText(guard.approvedPlanAnchor, credentialValues), 800) : null,
+    summary: boundedText(maskTrustedJudgeText(summary, credentialValues), 600) };
+  // A decision route that stays on this device, or WebBrain Cloud's own route
+  // while WebBrain Cloud is also the conversation provider, keeps these texts
+  // local or already holds them, so it gets the same copy. Any other sidecar
+  // may be a third party and gets every line naming a credential removed.
+  const sidecarSharesTexts = config.local === true || (!!compass && config.provider === 'compass');
+  const sidecarTexts = sidecarSharesTexts ? llmTexts : { task: boundedText(redactEvidence(String(task || '')), taskBudget),
+    plan: guard?.approvedPlanAnchor ? boundedText(redactEvidence(guard.approvedPlanAnchor), 800) : null,
+    summary: boundedText(redactEvidence(String(summary)), 600) };
   const reads = messages.filter(m => m.role === 'tool' && /^(read_page|get_accessibility_tree|verify_form|iframe_read)$/.test(toolNames.get(m.tool_call_id) || ''));
   // The latest read of each of the four most recently read pages, so a page
   // the task depended on earlier (its rules, a source) is not crowded out by
@@ -214,7 +411,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     latestReadByPage.set(key, message);
   }
   const selectedReads = [...latestReadByPage.values()].slice(-4);
-  const history = selectedReads.map(m => ({ tool: toolNames.get(m.tool_call_id) || m.name, evidence: wrapSystemOneData(boundedText(redactSystemOneText(String(m.content)), 450)) }));
+  const history = selectedReads.map(m => ({ tool: toolNames.get(m.tool_call_id) || m.name, evidence: wrapSystemOneData(boundedText(redactEvidence(String(m.content)), 450)) }));
   // A failed HTTP read may prove absence after a deletion. Supply only the
   // actual response status and URL, never response prose or a success waiver.
   // Pre-run/orphan tool IDs remain excluded by the current-run call map.
@@ -222,17 +419,20 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     let result; try { result = JSON.parse(String(agent._unwrapUntrusted?.(m.content) ?? m.content)); } catch { return []; }
     if (!Number.isInteger(result?.status) || result.status < 100 || result.status > 599 || typeof result.url !== 'string') return [];
     return [{ tool: 'fetch_url', evidence: wrapSystemOneData(JSON.stringify({
-      url: boundedText(redactSystemOneText(result.url), 1000), status: result.status,
+      url: boundedText(redactEvidence(result.url), 1000), status: result.status,
     })) }];
   });
-  // Entered values can be secrets without recognizable labels. Action names
-  // supply history without sending arbitrary tool arguments to another judge.
-  const recordedActions = calls.filter(c => /^(type|fill|click|navigate|set_)/.test(c.function?.name || '')).slice(-8).map(c => ({ tool: c.function.name }));
   const resultSnapshot = async () => {
     try { return await agent._completionResultSnapshot?.(tabId); } catch { return null; }
   };
   const initialResult = await resultSnapshot();
-  const preferAx = !!initialResult?.scopeRef && !!initialResult?.text;
+  // Staged, unsubmitted field values read exactly from the accessibility tree
+  // (credential fields through their verified entries). A screenshot masks
+  // them, and the focused field's blinking caret makes it stale before its
+  // judgment returns, which only costs a discarded request.
+  const stagedFieldEdits = guard?.requiresSubmission === false && STAGED_FIELD_TOOLS.has(run?.lastAction?.name)
+    && agent._currentCompletionSubmitState?.(tabId)?.dispatched !== true;
+  const preferAx = (!!initialResult?.scopeRef && !!initialResult?.text) || stagedFieldEdits;
   const captures = new Map();
   const capture = async (modality, refresh = false) => {
     const before = await agent._completionDocumentStamp(tabId, true);
@@ -262,7 +462,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
       if (result?.identity === before && result.scopeRef && typeof result.text === 'string' && result.text) {
         resultScope = result.scopeRef;
         resultFingerprint = await evidenceKey([result.scopeRef, result.text, result.composerEmpty, result.truncated, result.controlFingerprint]);
-        observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.text), 4500)),
+        observation = { observation: wrapSystemOneData(boundedText(redactEvidence(result.text), 4500)),
           truncated: result.truncated === true, composerEmpty: result.composerEmpty === true };
       }
       if (refresh && cached?.resultScope && cached.resultScope !== resultScope) return null;
@@ -285,7 +485,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
           result = await agent.executeTool(tabId, 'get_accessibility_tree', { filter: 'all', maxDepth: 15, maxChars: 5500 });
         }
         if (result?.success === false || !result?.pageContent) return null;
-        observation = { observation: wrapSystemOneData(boundedText(redactSystemOneText(result.pageContent), 4500)) };
+        observation = { observation: wrapSystemOneData(boundedText(redactJudgeObservation(result.pageContent, credentialValues), 4500)) };
       }
     }
     // A bounded or scoped AX tree can omit inline confirmation outside a form.
@@ -303,10 +503,10 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
     const workflowBinding = binding ? { adapterName: binding.adapterName, revision: binding.revision,
       job: binding.job, verificationKind: binding.verificationKind, recipientBound: binding.recipientBound === true } : null;
     const info = {
-      task: boundedText(redactSystemOneText(String(task || '')), guard?.approvedPlanAnchor ? 1700 : 2500),
-      ...(guard?.approvedPlanAnchor ? { approved_plan: boundedText(redactSystemOneText(guard.approvedPlanAnchor), 800) } : {}),
+      task: sidecarTexts.task,
+      ...(sidecarTexts.plan != null ? { approved_plan: sidecarTexts.plan } : {}),
       requirements: { requiresSubmission: guard?.requiresSubmission, requiresStateChange: guard?.requiresStateChange, workflow: boundedText(guard?.siteWorkflow?.job?.id, 120) },
-      action: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({ submit: submit ? {
+      action: wrapSystemOneData(boundedText(redactEvidence(JSON.stringify({ submit: submit ? {
         dispatched: submit.dispatched, observedAfterSubmit: submit.observedAfterSubmit,
         formRef: submit.formRef,
         formValidationFailed: submit.formValidationFailed,
@@ -315,26 +515,29 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
         documentChanged: submit.documentChanged, originatingUrl: submit.originatingUrl, resultingUrl: submit.currentUrl,
         workflowBinding,
       } : null, lastAction: run?.lastAction })), 1000)),
-      recorded_reads: history, recorded_actions: recordedActions, document: boundedText(redactSystemOneText(pageUrl), 1000),
+      recorded_reads: history, recorded_actions: recordedActions, document: boundedText(redactEvidence(pageUrl), 1000),
       ...(resultScope ? { result_scope: resultScope } : {}),
       ...(resultView ? { result_view: resultView } : {}),
       ...(calculationEvidence ? { recorded_calculations: [{ tool: 'calculate',
         expression: boundedText(calculationEvidence.actualExpression, 1000), result: boundedText(calculationEvidence.result, 1000),
         ...(calculationEvidence.fraction ? { fraction: boundedText(calculationEvidence.fraction, 1000) } : {}) }] } : {}),
       resource_reads: resourceReads,
-      page_errors: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify(pageState?.validationMessages || pageState?.errorMessages || [])), 500)),
+      page_errors: wrapSystemOneData(boundedText(redactEvidence(JSON.stringify(pageState?.validationMessages || pageState?.errorMessages || [])), 500)),
       page_status_messages: wrapSystemOneData(boundedText(Array.isArray(liveStatusMessages)
-        ? liveStatusMessages.map(text => redactSystemOneText(String(text))).join('\n') : '[Live status unavailable]', 900)),
-      ...(frame ? { submitted_frame: wrapSystemOneData(boundedText(redactSystemOneText(JSON.stringify({
+        ? liveStatusMessages.map(text => redactEvidence(String(text))).join('\n') : '[Live status unavailable]', 900)),
+      ...(frame ? { submitted_frame: wrapSystemOneData(boundedText(redactEvidence(JSON.stringify({
         url: frame.url, identity: frame.identity, stamp: frame.stamp, observedAfterSubmit: frame.observedAfterSubmit,
         messages: frame.messages, text: frame.text,
       })), 5000)) } : {}),
-      candidate_summary_not_proof: wrapSystemOneData(boundedText(redactSystemOneText(String(summary)), 600)),
+      candidate_summary_not_proof: wrapSystemOneData(sidecarTexts.summary),
     };
     const state = [info, observation];
+    // The active model's own copy of the trusted texts (see maskTrustedJudgeText).
+    const llmInfo = { ...info, task: llmTexts.task, ...(llmTexts.plan != null ? { approved_plan: llmTexts.plan } : {}),
+      candidate_summary_not_proof: wrapSystemOneData(llmTexts.summary) };
     // Fingerprint the complete local read too: redaction/truncation must not
     // let a changed result reuse an earlier judgment. Raw text stays local.
-    const evidence = { identity, modality, state, ...(resultScope ? { resultScope } : {}), ...(frame ? { submittedFrameStamp: frame.stamp } : {}), key: await evidenceKey([state, resultFingerprint || null]) };
+    const evidence = { identity, modality, state, llmState: [llmInfo, observation], ...(resultScope ? { resultScope } : {}), ...(frame ? { submittedFrameStamp: frame.stamp } : {}), key: await evidenceKey([state, llmInfo, resultFingerprint || null]) };
     captures.set(modality, evidence);
     return evidence;
   };
@@ -353,7 +556,7 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   // new judgment or promote an uncertain outcome during settlement.
   if (refreshOnly) return { outcome: 'uncertain', engine: 'freshness', reason: 'evidence_changed' };
   const online = globalThis.navigator?.onLine !== false;
-  const decision = config.enabled && config.doneEnabled && (config.local || online) ? {
+  const sidecar = config.enabled && config.doneEnabled && (config.local || online) ? {
     name: config.provider, supportsVision: config.supportsVision,
     requiresIndependentSuccessConfirmation: config.requiresIndependentSuccessConfirmation === true,
     evaluate: async evidence => {
@@ -362,7 +565,11 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
         config, state: evidence.state, questions: completionQuestions(), signal, headers,
         metadata: compass ? { session_id: agent.conversationIds.get(tabId), trace: { generation_name: 'completion_verification' } } : {},
       }, context);
-      return decisionCompletionVerdict(result, config.threshold);
+      const verdict = decisionCompletionVerdict(result, config.threshold);
+      // It cannot say what a summary it read only in part does.
+      if (sidecarTexts.summary === llmTexts.summary || !verdict.summaryKind) return verdict;
+      const { summaryKind: _unread, ...rest } = verdict;
+      return rest;
     },
   } : null;
   // These switches outsource checks to the decision sidecar. The approved
@@ -370,19 +577,29 @@ async function evaluateBrowserCompletion(agent, tabId, options = {}) {
   const llm = typeof provider.chat === 'function' && (online || provider.config?.category === 'local') ? {
     name: 'llm', supportsVision: provider.supportsVision,
     evaluate: async (evidence, modality, { timeoutMs = 10000 } = {}) => {
-      const [info, observation] = evidence.state;
+      const judged = evidence.llmState || evidence.state;
+      const [info, observation] = judged;
       // Thinking providers count hidden reasoning inside their output limit.
       // Leave bounded room for it and the verdict without overriding the
       // provider's reasoning configuration or adding another model request.
       const result = await withCompletionTimeout(requestSignal => agent._chatWithCostAllowance(provider, [
         { role: 'system', content: `${COMPLETION_INSTRUCTIONS} Return only JSON {"outcome":"succeeded|pending|failed|uncertain","reason":"brief evidence-based reason","later":"asked|not_asked","summary":"result|meta_only|plan_only"}. ${LATER_OUTCOME_FIELD} ${SUMMARY_KIND_FIELD} Do not call tools or perform actions.` },
-        { role: 'user', content: modality === 'vision' ? [{ type: 'text', text: JSON.stringify(info) }, observation] : JSON.stringify(evidence.state) },
+        { role: 'user', content: modality === 'vision' ? [{ type: 'text', text: JSON.stringify(info) }, observation] : JSON.stringify(judged) },
       ], { temperature: 0, maxTokens: 4096, signal: requestSignal }, context.costState || agent._newCostRunState(), { tabId, generationName: 'completion_verification' }), signal,
       Math.max(1, Math.min(10000, Number(timeoutMs) || 10000)));
       if (result.costAllowanceMessage) throw agent._costAllowanceError(result.costAllowanceMessage);
       return { ...llmCompletionVerdict(result.content), model: provider.model };
     },
   } : null;
+  // When the sidecar's copy of the request or plan lost every line naming a
+  // credential, no verdict of its can be tied to the task: a blind one kept
+  // answering pending for a form the user said not to submit. While the
+  // active model can judge, the sidecar is neither waited on nor sent evidence.
+  const sidecarBlind = sidecarTexts.task !== llmTexts.task || sidecarTexts.plan !== llmTexts.plan;
+  const decision = sidecar && sidecarBlind && llm ? null : sidecar;
+  if (sidecar && !decision) {
+    agent.recordSystemOneVerdict(tabId, { phase: 'done_verification', engine: sidecar.name, outcome: 'uncertain', reason: 'task_redacted' }, context);
+  }
   const verdict = await verifyCompletion({ decision, llm, capture, isCurrent: current, signal, preferAx,
     onAttempt: ({ reason, ...metadata }) => agent.recordSystemOneVerdict(tabId, {
       phase: 'done_verification', ...metadata,

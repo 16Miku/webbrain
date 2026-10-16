@@ -22,6 +22,7 @@ import {
  *   - messaging?.verifyActiveRecipient: optional URL-aware pre-dispatch recipient guard
  *   - messaging?.deferActiveConversationUntilComposer: allow composer setup before pinning
  *   - messaging?.supportsRecipientSets: require exact multi-recipient set equality
+ *     (true, or url => boolean when only some routes have recipient sets)
  *   - revision?: positive workflow-contract revision for trace attribution
  *   - regions?: stable region identifiers for structured adapter discovery
  *   - jobs?: stable job identifiers covered by the optional workflow profile
@@ -16088,7 +16089,10 @@ const ADAPTERS = [
     messaging: {
       verifyActiveRecipient: true,
       deferActiveConversationUntilComposer: true,
-      supportsRecipientSets: true,
+      // Mail has To/Cc/Bcc recipient sets. Google Chat inside Gmail has none
+      // of its own: a send there is held (content.js), while a compose window
+      // open over it still reports its own rows.
+      supportsRecipientSets: url => !isGmailChatRoute(url),
     },
     notes: `
 - Composing: the "Compose" button opens a floating window. The "To" field is a contact picker — type the name and pick from the dropdown, don't just type the raw email.
@@ -18267,6 +18271,23 @@ export function isPublicComposerRoute(url) {
 }
 
 /**
+ * True for Google Chat inside Gmail: the /chat/ app, or a #chat/... view
+ * opened from mail (a direct message, space or the chat home). Gmail keeps
+ * compose= in the URL while any compose window is open, so the URL cannot
+ * say which composer sends; a compose window open over these views is told
+ * apart by its own To/Cc/Bcc rows (content.js).
+ */
+export function isGmailChatRoute(url) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === 'mail.google.com'
+      && (/^\/chat(?:\/|$)/.test(parsed.pathname) || /^#chat(?:[/?]|$)/.test(parsed.hash));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Return the machine-readable recipient-safety policy for a messaging page.
  * Unlike adapter notes, this is enforced by the runtime before dispatch.
  */
@@ -18295,13 +18316,20 @@ export function getMessageRecipientGuardPolicy(url) {
       ...(mailLike ? { supportsRecipientSets: true } : {}),
     };
   }
+  const recipientSets = adapter.messaging.supportsRecipientSets;
+  let supportsRecipientSets = false;
+  try {
+    supportsRecipientSets = typeof recipientSets === 'function' ? recipientSets(url) === true : recipientSets === true;
+  } catch {
+    supportsRecipientSets = false;
+  }
   return {
     adapterName: adapter.name,
     verifyActiveRecipient: true,
     ...(adapter.messaging.deferActiveConversationUntilComposer === true
       ? { deferActiveConversationUntilComposer: true }
       : {}),
-    ...(adapter.messaging.supportsRecipientSets === true
+    ...(supportsRecipientSets
       ? { supportsRecipientSets: true }
       : {}),
   };

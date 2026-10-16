@@ -38,6 +38,7 @@ export const SYSTEM_PROMPT_GENERATIVE_MEDIA = `GENERATIVE MEDIA:
 
 export const SYSTEM_PROMPT_BATCHING = `BATCHING:
 - Use browser_batch for predictable steps on the current page with targets you already observed, such as filling known fields or opening a menu and choosing a known item. A navigation followed by a page read can also share one batch.
+- Forms: once the fields' ref_ids are observed (a tree read or the latest BROWSER STATE page observation) and their values are known, fill them in ONE browser_batch, one action per field (set_field with submit:false for text fields), splitting only at its action limit, instead of spending a model turn per field. List password fields last: entering one can end the batch, and the next turn fills any field that did not run.
 - Keep steps that depend on unseen results for a later turn. Put a submit last. Use only advertised tools; observations belong at the end. Never alternate opposing actions within a batch.
 - Batches stop on failure, an uncertain outcome, navigation before another action, or a submit. Inspect the returned results and verify the outcome before acting again.`;
 
@@ -46,7 +47,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'browser_batch',
-      description: 'Run a short sequence of predictable browser actions in order using already observed targets. Stops at the first failure or uncertain outcome, after a submit, or after navigation unless only observations remain. Put observations at the end and verify the result before acting again; each action uses its normal permissions.',
+      description: 'Run a short sequence of predictable browser actions in order using already observed targets, such as one set_field per known form field, in one call instead of one turn per action. Stops at the first failure or uncertain outcome, after a submit, or after navigation unless only observations remain. Put observations at the end and verify the result before acting again; each action uses its normal permissions.',
       parameters: {
         type: 'object',
         properties: {
@@ -492,7 +493,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'navigate',
-      description: 'Navigate the current tab to a URL and verify that the browser commits the navigation, including same-URL reloads. NOTE: leaving a page discards unsaved form state — re-navigating to a page like GitHub\'s "New release" resets the tag, title, and any attached files. If the current page has attached files or filled fields, this is blocked and returns blockedUnsavedChanges; finish the current action first, or pass force:true to discard the changes intentionally. A native browser leave-page confirmation cannot be accepted automatically: while it is open, this returns navigationPending/confirmationPossible instead of success.',
+      description: 'Navigate the current tab to a URL and verify that the browser commits the navigation, including same-URL reloads. NOTE: leaving a page discards unsaved form state — re-navigating to a page like GitHub\'s "New release" resets the tag, title, and any attached files. If the current page has attached files or two or more filled fields, this is blocked and returns blockedUnsavedChanges; finish the current action first, or pass force:true to discard the changes intentionally. Other edits (a single field, rich-text content) are not detected, and a page\'s own leave-page warning may be answered Leave automatically, so save first when the task needs them. If a leave-page confirmation that WebBrain cannot answer stays open, this returns navigationPending/confirmationPossible instead of success and the user must answer it.',
       parameters: {
         type: 'object',
         properties: {
@@ -909,7 +910,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'fetch_url',
-      description: 'Fetch a URL directly from the background and return a bounded text/JSON window. Cookies are attached only when the URL shares the registrable domain (eTLD+1) of the active tab — same-site reads work as the signed-in user; cross-site reads are anonymous. Best for JSON APIs, RSS, plain HTML, raw text files, GitHub raw blobs, and REST endpoints. Auto-trims HTML to readable text. For large resources, use `find` for case-insensitive literal search or continue with `offset: nextOffset`; do not guess HTTP Range byte offsets. Results include `originalLength`, `nextOffset`, and `hasMore`, plus safe Content-Range metadata when the server supplies it. NOT good for SPAs that need JS rendering — use research_url. For ordinary active-tab reading use read_page or get_accessibility_tree; official CMS API discovery and content verification are permitted for a supported content task.',
+      description: 'Fetch a URL directly from the background and return a bounded text/JSON window. Cookies are attached only when the URL shares the registrable domain (eTLD+1) of the active tab — same-site reads work as the signed-in user; cross-site reads are anonymous. Best for JSON APIs, RSS, plain HTML, raw text files, GitHub raw blobs, and REST endpoints. Auto-trims HTML to readable text. For large resources, use `find` for case-insensitive literal search or continue with `offset: nextOffset`; do not guess HTTP Range byte offsets. Results include `originalLength`, `nextOffset`, and `hasMore`, plus safe Content-Range metadata when the server supplies it. NOT good for SPAs that need JS rendering — use research_url. For ordinary active-tab reading use read_page or get_accessibility_tree; official CMS API discovery and content verification are permitted for a supported content task. Background read: opens or shows no tab; active tab unchanged. To open/show a page, use navigate and confirm its URL/title.',
       parameters: {
         type: 'object',
         properties: {
@@ -930,7 +931,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'research_url',
-      description: 'Open a URL in a hidden background tab, wait for JS rendering, extract main content, close the tab. Use for SPAs and content sites. Slower (~2-5s) but handles modern web apps. Returns title, text, and outbound links.',
+      description: 'Open a URL in a background tab (it may briefly appear in the tab strip), wait for JS rendering, extract main content, close the tab. Use for SPAs and content sites. Slower (~2-5s) but handles modern web apps. Returns title, text, and outbound links. Active tab unchanged. To open/show a page, use navigate and confirm its URL/title.',
       parameters: {
         type: 'object',
         properties: {
@@ -1736,7 +1737,20 @@ function askResearchConsentTool(tool) {
 
 function ordinaryClarifyTool(tool) {
   const properties = { ...tool.function.parameters.properties };
-  delete properties.purpose;
+  // Only research_escalation depends on the opt-in setting. The recipient
+  // purposes belong to ordinary clarification, and the advertised schema is
+  // closed, so dropping `purpose` entirely made every recipient question fail
+  // argument validation whenever research escalation was off.
+  const ordinaryPurposes = (properties.purpose?.enum || []).filter(value => value !== 'research_escalation');
+  if (ordinaryPurposes.length) {
+    properties.purpose = {
+      ...properties.purpose,
+      enum: ordinaryPurposes,
+      description: 'Optional purpose of the clarification. Use message_recipient to ask the user who should receive a message, or recipient_change to switch an already-authorized recipient. Do not ask the user to confirm the recipient of a send that is already prepared, or which item on the page to delete: WebBrain confirms both with the user itself, on its own card, before sending or deleting.',
+    };
+  } else {
+    delete properties.purpose;
+  }
   delete properties.research_request;
   delete properties.approve_option;
   return {
@@ -2159,7 +2173,7 @@ Guidelines:
 CRITICAL — do NOT rush:
 - Outside an explicit browser_batch, do NOT chain multiple tool calls without checking results between them. After each page-changing action, or the end of an explicit batch, read the page/tree or inspect injected auto-screenshot/visual context to confirm what happened before proceeding.
 - When creating something (product, post, account, etc.), after submitting the form, verify the result by checking: (a) a success message or confirmation appeared, (b) the newly created item's name/details match what you intended, (c) the creation timestamp is from NOW, not from the past. Do NOT assume an existing item is something you just created.
-- When filling a multi-field form, fill ONE field at a time unless using an explicit browser_batch with already observed field targets. Target each field separately; never type multiple values into the same focused field.
+- When filling a multi-field form, give each field its own action on its own target; never type multiple values into the same focused field. Separate actions do not need separate turns: when browser_batch is available, send the actions for already observed fields together in one batch.
 - If the user's request contains multiple pieces of data (e.g. "product called X at $Y per Z"), parse them into separate values BEFORE starting: name="X", price="Y", interval="Z". Then fill each into its own form field.
 
 SCRATCHPAD — use this for long tasks:
@@ -2194,7 +2208,7 @@ UI vs API — read this carefully:
 - TWO exceptions where API mutations are allowed:
   (1) The user explicitly says "use the API" or "POST to /foo" — do what they asked once API mutation permission is enabled; an explicit request does not bypass the runtime permission gate.
   (2) The [USER OVERRIDE — API MUTATIONS ALLOWED] context note is present. It can come from /allow-api for this conversation or the user's persistent setting. When present, for WordPress posts, pages, REST-enabled custom types and their taxonomy, prefer the API first when the required fields and signed-in session are verified and Strict secret handling is off; follow the WordPress adapter/skill and reconcile uncertain writes before retrying. The nine CMSs above follow their conditional API-first rule. Other tasks retain the UI-first rule. You may also use API mutations when UI is genuinely failing/unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] showing repeated successful same-kind UI actions and matching background API requests. Without this authorization, mutating fetch_url/research_url calls are blocked. Before any destructive API call, state the URL, method, and payload in plain text in your response.
-- For READING data (looking things up, fetching a README, comparing prices, checking a status page), \`fetch_url\` and \`research_url\` are the RIGHT tool. Reading is fine.
+- For READING data (looking things up, fetching a README, comparing prices, checking a status page), \`fetch_url\` and \`research_url\` are the RIGHT tool. Reading is fine. They read in the background without showing the page, so when the user asks to open, go to, or show a page, use \`navigate\` instead.
 - Examples:
   - "Create a release on GitHub" → navigate to /releases/new, fill the form, click Publish. NOT a POST to api.github.com.
   - "Send an email" → open Gmail compose, type, click Send. NOT a POST to gmail.googleapis.com.
@@ -2216,7 +2230,7 @@ TYPING — read this:
 - RICH-TEXT BODY EDITORS (Discourse post body, Gmail compose, Slack message, Notion, Medium): editable roots normally appear as \`textbox\` refs in the accessibility tree, including empty and \`plaintext-only\` contenteditable variants. Prefer \`set_field\` or \`type_ax\` on that ref. If a site hides the editor from the tree, use the direct fallback \`type_text({selector: "[contenteditable]:not([contenteditable=\\"false\\"])", text: "..."})\` instead of repeatedly clicking it.
 - DRAFT CHECKPOINT: before filling an external email/message/post composer, formulate the exact recipient(s), subject (when applicable), and body. If the body is more than a short one-liner, immediately save \`[pending draft]\`, the recipient, subject, and complete body with \`scratchpad_write\` before typing anything into the composer. This is an exception to the short-task/factual-only scratchpad rule. Never label the checkpoint as sent. Then fill the UI from that exact draft.
 - If \`type_text\` returns success but the field doesn't visibly contain your text, focus was lost — re-click the field and try again.
-- CRITICAL: If you're filling multiple fields, you MUST click each field individually before typing into it. NEVER type multiple values without clicking the target field first. If you type without clicking, the text goes into whatever was last focused — which is often the WRONG field. The pattern is always: click field A → type value A → click field B → type value B → click field C → type value C.
+- CRITICAL for the click-then-type fallback: if you fill multiple fields with type_text, you MUST click each field individually before typing into it. NEVER type multiple values without clicking the target field first. If you type without clicking, the text goes into whatever was last focused — which is often the WRONG field. The pattern is always: click field A → type value A → click field B → type value B → click field C → type value C. set_field and type_ax target their ref_id directly and need no click.
 - NEVER concatenate multiple values (name + price + period) into a single type_text call. Each piece of data goes into its own field.
 - If \`type_text\` returns a warning about "same field twice in a row", STOP — you're typing into the wrong field. Click the correct field first.
 
@@ -2380,7 +2394,7 @@ TYPING:
 - DRAFT CHECKPOINT: before filling an external email/message/post composer, formulate the exact recipient(s), subject (when applicable), and body. If the body is more than a short one-liner, save the complete text as \`[pending draft]\` with scratchpad_write before typing; never label it sent until the UI verifies sending.
 - HARD RULE: after click_ax on a text field, your NEXT call MUST be type_ax/set_field on the SAME ref. Do not click_ax again or re-read the tree first.
 - Native <select>: use type_ax({ref_id,text:"exact option label"}); fallback to click_ax, then ArrowDown/ArrowUp + Enter. Custom/ARIA dropdowns (role="combobox", Stripe/Radix/React-Select): open them, use type_text({text:"filter"}) + Enter or arrows + Enter. press_keys does not support letter keys or modifiers.
-- Fill forms ONE FIELD AT A TIME: focus field A → type value A → field B → type value B. Never concatenate multiple values (name + price + period) into one type call.
+- Fill forms with one action per field (set_field per field); never concatenate multiple values (name + price + period) into one type call. With browser_batch available, send the actions for already observed fields together in one batch.
 
 CLICKING:
 - Prefer click_ax({ref_id}). Fallback click({text:"..."}) (exact, case-insensitive). On an ambiguity error, use more specific text or click({index:N}) from a get_interactive_elements call made THIS SAME TURN — indices are never stable across turns, never reuse them.

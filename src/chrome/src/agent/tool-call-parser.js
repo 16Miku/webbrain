@@ -328,8 +328,12 @@ function quoteBareJsonKeys(body) {
 }
 
 function toFallbackToolCalls(objects) {
+  // These ids travel to Cloud (share-request tool_calls[].id / tool_call_id,
+  // runtime terminal_tool.call_id), so the timestamp is base36: a 13-digit
+  // decimal Date.now() is Luhn-valid ~10% of the time and Cloud payment-card
+  // redaction would rewrite it. Nothing parses the id; it is an opaque key.
   return objects.map((obj, index) => ({
-    id: `fallback_call_${Date.now()}_${index}`,
+    id: `fallback_call_${Date.now().toString(36)}_${index}`,
     type: 'function',
     function: {
       name: obj.name,

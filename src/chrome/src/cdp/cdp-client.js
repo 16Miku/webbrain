@@ -951,6 +951,10 @@ export class CDPClient {
         nativeWheel: params.type === 'mouseWheel',
         navigationCandidate: params.type === 'mousePressed',
         ...(Number.isFinite(params.x) ? { x: params.x, y: params.y } : {}),
+        // The monitor recognizes a typing action's own focus press by these.
+        ...(method === 'Input.dispatchMouseEvent' ? { pointerButton: params.button, clickCount: params.clickCount } : {}),
+        // Native input always tries to mark its receiver (nativeTarget).
+        nativeInput: true,
         release,
         ...(method === 'Input.insertText' ? { eventTypes: ['beforeinput', 'input', 'change'] } : {}),
         ...(method === 'Input.dispatchMouseEvent' ? { eventTypes: params.type === 'mouseMoved'

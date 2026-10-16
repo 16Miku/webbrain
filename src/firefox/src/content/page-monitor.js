@@ -199,8 +199,11 @@
           || proof.runToken !== runToken || proof.documentToken !== documentToken
           || proof.userAt !== lastUserAt || proof.interventionRevision !== interventionRevision
           || (proof.focusRequired !== false && deepActiveElement() !== op.preparedBinding.target)) continue;
-      const before = proof.binding, after = before.relaxed
-        ? relaxedTargetBinding(before.target, before.grantToken) : actionFootprint(before.target, before.readonlyPreparation);
+      const before = proof.binding, keyboard = !before.relaxed && keyboardBoundField(op);
+      const footprint = before.relaxed
+        ? relaxedTargetBinding(before.target, before.grantToken) : actionFootprint(before.target, before.readonlyPreparation, { keyboard });
+      // A keyboard-bound proof keeps its original hit (see keyboardBoundField).
+      const after = footprint && keyboard ? { ...footprint, hit: before.hit } : footprint;
       if (!after) continue;
       if (before.relaxed) {
         const original = proof.viewport;
@@ -736,10 +739,12 @@
     // Relaxed retry bindings carry no geometry; their grant rules apply instead.
     if (op.preparedBinding?.model !== true || op.preparedBinding.relaxed || op.allowPassiveRebase !== true
         || op.modelBindingInvalid || op.layoutInvalidated || authorityChanged(op)) return;
-    const before = preparedBindingFor(op.preparedBinding);
-    const after = actionFootprint(op.preparedBinding.target, op.preparedBinding.readonlyPreparation);
-    if (samePreparationSemantics(before, after) && before.hit === after.hit) rebaseOwnedGeometry(op.preparedBinding, after,
-      phase.kind === 'selector-scroll' && (phase.scrollX !== window.scrollX || phase.scrollY !== window.scrollY));
+    const before = preparedBindingFor(op.preparedBinding), keyboard = keyboardBoundField(op);
+    const after = actionFootprint(op.preparedBinding.target, op.preparedBinding.readonlyPreparation, { keyboard });
+    if (keyboard ? sameKeyboardBinding(before, after, true) : samePreparationSemantics(before, after) && before.hit === after.hit) {
+      rebaseOwnedGeometry(op.preparedBinding, keyboard ? { ...after, hit: before.hit } : after,
+        phase.kind === 'selector-scroll' && (phase.scrollX !== window.scrollX || phase.scrollY !== window.scrollY));
+    }
   }
   function bindingPredicate(before, after) {
     if (!before || !after) return 'semantic_binding_changed';
@@ -1375,7 +1380,10 @@
     }
     return null;
   }
-  function actionFootprint(target, readonlyPreparation = null) {
+  // `keyboard` leaves out which node is on top at the target's centre; only
+  // keyboard input to the focused field is checked against such a footprint
+  // (see keyboardBoundField).
+  function actionFootprint(target, readonlyPreparation = null, { keyboard = false } = {}) {
     if (readonlyPreparation && !readonlyPreparationMatches(readonlyPreparation, target)) return null;
     const structuralFile = target instanceof Element && target.tagName === 'INPUT' && target.type === 'file';
     if (!(target instanceof Element) || target.ownerDocument !== document || !target.isConnected
@@ -1662,10 +1670,13 @@
       for (const heading of headings) if (!addNode(heading, { text: true })) return null;
     }
     const rect = structuralFile ? null : target.getBoundingClientRect();
-    const rawHit = structuralFile ? null : deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    if (!structuralFile && (!rawHit || !(target === rawHit || target.contains(rawHit) || (action.contains(target) && action.contains(rawHit))))) return null;
-    const hit = structuralFile ? null : modelHit(target, action, rawHit);
-    return { model: true, structuralFile, target, scope: owner || form || action, ancestors, nodes, hit,
+    const rawHit = structuralFile || keyboard ? null : deepElementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (!structuralFile && !keyboard && (!rawHit || !(target === rawHit || target.contains(rawHit) || (action.contains(target) && action.contains(rawHit))))) return null;
+    const hit = structuralFile || keyboard ? null : modelHit(target, action, rawHit);
+    // Whether the target was an editable host when certified; a later
+    // contenteditable/readonly flip cannot change what it was chosen as.
+    const editable = target.isContentEditable === true || /^(INPUT|TEXTAREA)$/.test(target.tagName);
+    return { model: true, structuralFile, target, scope: owner || form || action, ancestors, nodes, hit, editable,
       dialogIdentities,
       visualImages,
       ...(fileWidget ? { fileWidget } : {}),
@@ -1681,7 +1692,8 @@
   }
   function operationBinding(op, target = op?.preparedBinding?.target) {
     if (op?.preparedBinding?.relaxed) return relaxedTargetBinding(target, op.preparedBinding.grantToken);
-    return op?.preparedBinding?.model === true ? actionFootprint(target, op.preparedBinding.readonlyPreparation) : preparedBinding(target);
+    return op?.preparedBinding?.model === true ? actionFootprint(target, op.preparedBinding.readonlyPreparation,
+      { keyboard: target === op.preparedBinding.target && keyboardBoundField(op) }) : preparedBinding(target);
   }
   function inputContinuationValue(item, target) {
     if (item.node !== target) return item.value;
@@ -1758,8 +1770,11 @@
     return true;
   }
   function operationBindingMatches(op, target = op?.preparedBinding?.target) {
-    const current = operationBinding(op, target);
-    const matches = samePreparedBinding(preparedBindingFor(op?.preparedBinding), current) || inputContinuationBindingMatches(op, current);
+    let current = operationBinding(op, target);
+    const before = preparedBindingFor(op?.preparedBinding);
+    // Keyboard input to the focused field does not depend on the centre hit.
+    if (current && before && target === op?.preparedBinding?.target && keyboardBoundField(op)) current = { ...current, hit: before.hit };
+    const matches = samePreparedBinding(before, current) || inputContinuationBindingMatches(op, current);
     if (op?.preparedBinding?.relaxed && (!matches || !relaxedActionability(target, { input: kindFor(op.modelBindingTool || op.tool) === 'input' }))) {
       revokeRelaxedGrant(); return false;
     }
@@ -1817,6 +1832,7 @@
       .map(attribute => [attribute.name, attribute.value]).sort(([a], [b]) => a.localeCompare(b)),
       form.action || null, form.method || null, form.target || null, form.enctype || null]) : null;
     return { model: true, relaxed: true, grantToken, target, scope: bindingParent(target), form, formIdentity,
+      editable: target.isContentEditable === true || /^(INPUT|TEXTAREA)$/.test(target.tagName),
       clickHandler: target.onclick, submitHandler: form?.onsubmit,
       identity: JSON.stringify([fixed, content]),
       continuationIdentity: JSON.stringify([fixed, target.isContentEditable ? null : target.textContent]),
@@ -1900,8 +1916,16 @@
     if (!relaxed && pendingDOM?.source === 'user') return { reason: 'pending_feedback' };
     const target = modelTarget(params);
     if (!target) {
-      if (relaxed) { revokeRelaxedGrant(); return { reason: 'target_unresolved' }; }
-      return params.ref_id && snapshot.refs.has(params.ref_id) ? {} : { reason: 'target_unresolved' };
+      // A selector naming several elements (for example a composer and its
+      // hidden copy behind a dialog) can never bind; say so, so the model
+      // can use the observed element's ref instead.
+      let ambiguous = false;
+      if (typeof params.selector === 'string' && !params.ref_id && modelActionTools.has(params.tool)) {
+        try { const query = queryOpenTargets(params.selector); ambiguous = query.complete && query.elements.length > 1; } catch {}
+      }
+      const reason = ambiguous ? 'target_ambiguous' : 'target_unresolved';
+      if (relaxed) { revokeRelaxedGrant(); return { reason }; }
+      return !ambiguous && params.ref_id && snapshot.refs.has(params.ref_id) ? {} : { reason };
     }
     const original = snapshot.targets.get(target);
     const before = snapshot.batchInputs?.get(params.batchId)?.get(original) || original;
@@ -1926,6 +1950,15 @@
       return { binding: original, relaxed: true, certificationFailure: snapshot.captureFailures.get(target) || undefined };
     }
     if (before?.readonlyPreparation && params.tool !== 'click_ax') return {};
+    if (before?.keyboardOnly) {
+      // Only keyboard input to the still focused field may use it.
+      if (!keyboardInputTools.has(params.tool)) return { reason: 'target_uncovered', certificationFailure: 'target_uncovered' };
+      if (deepActiveElement() !== target || !textEntryField(target)) return { reason: 'focus_changed' };
+      const current = actionFootprint(target, null, { keyboard: true });
+      if (!sameKeyboardBinding(preparedBindingFor(before), current, true)) return { reason: bindingPredicate(preparedBindingFor(before), current) || 'semantic_binding_changed' };
+      if (preparedBindingFor(before).context !== current.context) rebaseOwnedGeometry(before, current);
+      return { binding: before };
+    }
     if (before) {
       const reason = modelDecisionPredicate(before, actionFootprint(target, before.readonlyPreparation));
       return reason ? { reason } : { binding: before };
@@ -2200,7 +2233,14 @@
         if (binding) relaxedTargets.set(node, binding);
       }
       const limitReached = targets.size >= MODEL_TARGET_LIMIT;
-      const footprint = !limitReached ? actionFootprint(node, node === readonlyPreparation?.target ? readonlyPreparation : null) : null;
+      let footprint = !limitReached ? actionFootprint(node, node === readonlyPreparation?.target ? readonlyPreparation : null) : null;
+      // The focused text field may be covered at its centre by something that
+      // does not take focus, such as the formatting bubble X draws where its
+      // editor was clicked. It stays certified for keyboard input only.
+      if (!footprint && !limitReached && node === deepActiveElement() && textEntryField(node)) {
+        footprint = actionFootprint(node, null, { keyboard: true });
+        if (footprint) footprint.keyboardOnly = true;
+      }
       if (footprint && !observedFootprint(footprint)) { captureFailures.set(node, 'identity_unobserved'); return; }
       if (!footprint && page && !publicNodes.has(node)) return;
       if (footprint) targets.set(node, footprint);
@@ -2358,6 +2398,81 @@
     }
     return !params.element || (params.element instanceof Element && params.element.isConnected && params.element.ownerDocument === document);
   }
+  const textEntryInputTypes = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number']);
+  function textEntryField(el) {
+    if (!(el instanceof Element) || !el.isConnected || el.disabled === true || el.readOnly === true
+        || el.closest('fieldset[disabled]') || ['aria-disabled', 'aria-readonly'].some(name => el.getAttribute(name) === 'true')) return false;
+    if (el.tagName === 'TEXTAREA') return true;
+    if (el.tagName === 'INPUT') return textEntryInputTypes.has(el.type);
+    return el.isContentEditable === true;
+  }
+  // A certified typing action may press its own text field once, so that the
+  // browser rather than a script focuses it, with trusted events (Chrome's
+  // contenteditable fallback does so). Only one single left press whose
+  // native receiver is exactly the certified field, before any other input of
+  // the action, and its own release on that field qualify. Like hover or
+  // scroll preparation it does not use up the certificate: what the page does
+  // in reply is judged by the field's footprint, genuine user input still
+  // stops the action, and the text needs its own dispatch.
+  function typingFocusPhase(op, params) {
+    if (!active || !op || op.finished || params.kind !== 'click' || params.fenceOnly === true
+        || op.preparedBinding?.model !== true || op.preparedBinding.relaxed || op.allowPassiveRebase !== true
+        || op.modelBindingInvalid || op.layoutInvalidated || op.coordinateSensitive
+        || !keyboardTypingTools.has(op.modelBindingTool || op.tool)) return false;
+    const field = op.preparedBinding.target;
+    // Both halves of the press must reach the field itself. A page that draws
+    // over the point on mousedown receives the mouseup, so that release is
+    // the action's input to the page, not its preparation.
+    const receiverIsField = typeof params.nativeTarget === 'string' && !!params.nativeTarget
+      && resolveTarget({ nativeTarget: params.nativeTarget }) === field && textEntryField(field);
+    if (params.release === true) {
+      return op.typingFocusPress === true && op.typingPreparationOnly === true && !op.consequentialInputPending
+        && params.x === op.x && params.y === op.y && receiverIsField;
+    }
+    // One press: a second press of the same action is consequential.
+    if (op.consequentialInputPending || op.typingFocusPressed === true || params.pointerPreparationOnly === true
+        || params.pointerButton !== 'left' || params.clickCount !== 1) return false;
+    return receiverIsField;
+  }
+  // That press has not used the certificate. Reselecting the same field for
+  // the text command still carries it (see beginContentAction).
+  function ownedTypingFocus(op) {
+    return op?.dispatched === true && !op.finished && op.typingFocusPress === true && op.typingPreparationOnly === true
+      && !op.consequentialInputPending && op.preparedBinding?.model === true && !op.preparedBinding.relaxed;
+  }
+  // After that press, the action's remaining steps (restoring the selection,
+  // the text command) are keyboard input to its field. Which node is on top
+  // at the field's centre no longer matters to them: a page may draw a
+  // formatting bubble right where the press landed, as X does. Every other
+  // part of the field's footprint (field, owner, labels, values, visibility,
+  // geometry, URL) must hold. Each step focuses the field itself, and the text
+  // command still requires the focused node to be that field.
+  const keyboardTypingTools = new Set(['type_ax', 'set_field', 'type_text', 'type']);
+  // press_keys never presses a field, but its keys go to the focused one: a
+  // field certified for keyboard use only (keyboardOnly) serves it as well.
+  const keyboardInputTools = new Set([...keyboardTypingTools, 'press_keys']);
+  function keyboardBoundField(op) {
+    const field = op?.preparedBinding?.target;
+    return op?.keyboardBound === true && op.preparedBinding?.model === true && !op.preparedBinding.relaxed
+      && keyboardInputTools.has(op.modelBindingTool || op.tool) && textEntryField(field);
+  }
+  function sameKeyboardBinding(before, after, ownedGeometry = false) {
+    if (!before?.model || !after?.model || before.relaxed || after.relaxed || before.target !== after.target) return false;
+    return samePreparedBinding(before, { ...after, hit: before.hit,
+      ...(ownedGeometry ? { context: withOriginalGeometry(before, after) } : {}) });
+  }
+  // modelDecisionPredicate for a keyboard-bound field: the field and every
+  // semantic part of its footprint must hold, its centre hit is not compared.
+  // When only geometry moved, the proof is rebased (keeping its original
+  // hit), and exact checks apply from here on.
+  function keyboardDecisionPredicate(binding, after) {
+    const before = preparedBindingFor(binding);
+    if (!sameKeyboardBinding(before, after, true)) {
+      return (before && after && bindingPredicate(before, { ...after, hit: before.hit })) || 'semantic_binding_changed';
+    }
+    if (before.context !== after.context) rebaseOwnedGeometry(binding, { ...after, hit: before.hit });
+    return '';
+  }
   function preparedBindingChanged(op, { allowFocusRebind = false } = {}) {
     if (op?.scrollIntent) return authorityChanged(op) || !scrollPreparationMatches(op);
     if (op?.allowPassiveRebase === true && op.preparedBinding?.model === true && op.focusBound
@@ -2385,6 +2500,13 @@
         && !relaxedActionability(op.preparedBinding.target, { hit: true, input: params.kind === 'input', point })) {
       revokeRelaxedGrant(); return point ? 'target_hit_changed' : 'target_not_actionable';
     }
+    // Native keyboard input always tries to mark its receiver. Input whose
+    // receiver could not be marked (no focused node, a frame without an
+    // active monitor, or a page that removed the revision fence) is not shown
+    // to reach a certified target, and a keyboard-bound field is no longer
+    // checked at its centre either.
+    if (params.nativeInput === true && params.kind === 'input' && params.release !== true && !params.nativeTarget
+        && op?.preparedBinding?.model === true) return 'target_unresolved';
     if (!params.nativeTarget || op?.preparedBinding?.model !== true) return '';
     // Resolve the actual transport marker alone; a stale marker cannot fall
     // back to the requested selector or ref and borrow its certificate.
@@ -3304,6 +3426,8 @@
       preparedTargetSignature: operationTarget ? signature(operationTarget) : undefined, kinds: new Set(),
       scrollIntent,
       preparedBinding: proofRequired ? certified : !scrollIntent && allowPassiveRebase && operationTarget ? preparedBinding(operationTarget) : null,
+      // A field certified for keyboard input only (see captureTarget).
+      keyboardBound: inherited ? previous.keyboardBound === true : certified?.keyboardOnly === true,
       preparedInterventionRevision: interventionRevision, preparedUncertainRevision: uncertainRevision, localSynthetic: false,
       preparedPageContext: JSON.stringify([location.href, document.baseURI, currentViewport(), window.scrollX, window.scrollY]),
       coordinateSensitive, coordinateTarget, coordinateHit, coordinateTargetAtPoint,
@@ -3336,6 +3460,15 @@
       || (op.dispatched && !op.finished && op.pointerPreparationOnly !== true && op.selectorPreparationOnly !== true && op.typingPreparationOnly !== true);
     op.selectorPreparationOnly = selectorPreparationOnly === true;
     op.typingPreparationOnly = typingPreparationOnly === true && !consequentialInputPending;
+    // Only page_monitor_dispatch derives this from the actual press itself.
+    op.typingFocusPress = op.typingPreparationOnly && params.kind === 'click';
+    if (op.typingFocusPress) {
+      op.keyboardBound = true;
+      if (!params.release) op.typingFocusPressed = true;
+    }
+    // Any other press of the action, or a release that did not reach the
+    // field, ends its keyboard binding.
+    else if (params.kind === 'click' && !params.fenceOnly && params.pointerPreparationOnly !== true) op.keyboardBound = false;
     const movementEvents = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'pointermove', 'mousemove'];
     op.pointerPreparationOnly = !consequentialInputPending && params.pointerPreparationOnly === true
       && !params.fenceOnly && !params.release && params.kind === 'click' && params.navigationCandidate === false
@@ -3440,6 +3573,8 @@
     'hover', 'drag_drop', 'patch_element', 'revert_patch', 'highlight_element', 'execute_js',
     'ax_prepare_field_for_trusted_type', 'ax_resolve_two_rects', 'ax_resolve_rect']);
   function beginContentAction(action, params = {}) {
+    // The steps of a typing action that follow its own focus press.
+    const afterFocusPress = ['ax_prepare_field_for_trusted_type', 'ax_paste_draft'].includes(action);
     // Internal DraftJS paste is the same ref-bound input operation as type_ax.
     // Keep its focus and synchronous editor changes inside the normal input owner.
     if (action === 'ax_paste_draft') action = 'type_ax';
@@ -3451,15 +3586,33 @@
       || (kindFor(action) === 'input' ? deepActiveElement() : null);
     const bindingTool = action === 'ax_prepare_field_for_trusted_type' && params.expectedModelSnapshot
       && currentRelaxedGrant(params.relaxedMonitorGrantToken) ? 'set_field' : action;
-    const approved = [...operations.values()].reverse().find(op => op.allowPassiveRebase === true && !op.dispatched
-      && op.until >= Date.now()
-      && (action === 'scroll' && op.scrollIntent ? !op.finished
-        && ['ref_id', 'selector', 'x', 'y'].every(key => op.scrollIntent.request[key] === params[key])
-        && op.scrollIntent.direction === (params.direction || 'down')
-        && op.scrollIntent.alsoWindow === (params.alsoWindow === true)
-        : lastUserAt <= op.userAt && op.preparedBinding?.target === target && (op.preparedBinding.relaxed ? currentRelaxedGrant(op.preparedBinding.grantToken) && operationBindingMatches(op, target)
-        : !authorityChanged(op) && (op.preparedBinding.model === true
-          ? !modelDecisionPredicate(op.preparedBinding, operationBinding(op, target)) : operationBindingMatches(op, target)))));
+    // A typing action's own focus press leaves its certificate with the
+    // steps that follow it on that field: reselecting it for the text
+    // command, or DraftJS's paste. They are keyboard-bound (see
+    // keyboardBoundField), so the node on top at its centre does not matter.
+    const approved = [...operations.values()].reverse().find(op => {
+      // Preserve the original scroll recipient and intervention boundary for
+      // the content handler's local preparation, independently of typing.
+      if (action === 'scroll' && op.scrollIntent) {
+        return op.allowPassiveRebase === true && !op.dispatched && !op.finished && op.until >= Date.now()
+          && ['ref_id', 'selector', 'x', 'y'].every(key => op.scrollIntent.request[key] === params[key])
+          && op.scrollIntent.direction === (params.direction || 'down')
+          && op.scrollIntent.alsoWindow === (params.alsoWindow === true);
+      }
+      const focusPressed = op.dispatched && afterFocusPress && ownedTypingFocus(op);
+      if (op.allowPassiveRebase !== true || (op.dispatched && !focusPressed) || op.preparedBinding?.target !== target
+          || !(op.until >= Date.now()) || lastUserAt > op.userAt) return false;
+      if (op.preparedBinding.relaxed) return currentRelaxedGrant(op.preparedBinding.grantToken) && operationBindingMatches(op, target);
+      if (authorityChanged(op)) return false;
+      if (op.preparedBinding.model !== true) return operationBindingMatches(op, target);
+      // A keyboard-bound field's input steps are compared without its centre
+      // hit (see keyboardBoundField); anything else as a model decision.
+      if (kindFor(action) === 'input' && keyboardBoundField(op)) {
+        return !keyboardDecisionPredicate(op.preparedBinding, operationBinding(op, target));
+      }
+      if (focusPressed) return false;
+      return !modelDecisionPredicate(op.preparedBinding, actionFootprint(target, op.preparedBinding.readonlyPreparation));
+    });
     prepare({ selector: params.selector, ref_id: params.ref_id, x: params.x, y: params.y,
       ...(action === 'scroll' ? { direction: params.direction, alsoWindow: params.alsoWindow } : {}),
       textMatch: action === 'click' ? params.text : undefined, tool: bindingTool, operationId, runToken,
@@ -3488,6 +3641,8 @@
       local.focusBound = approved.focusBound;
       local.modelBindingInvalid = false;
       local.allowPassiveRebase = true;
+      local.keyboardBound = approved.keyboardBound === true && kindFor(action) === 'input'
+        && (approved.dispatched !== true || ownedTypingFocus(approved));
     }
     const installed = localOperation = { operationId, kind: kindFor(action), userAt: lastUserAt, revision,
       navigationCandidate: ['click', 'click_ax', 'set_checked'].includes(action),
@@ -3571,19 +3726,23 @@
     try {
       const result = callback();
       flushPendingMutations(op); sampleFormControls(target);
-      const after = before.relaxed ? relaxedTargetBinding(target, before.grantToken) : actionFootprint(target, before.readonlyPreparation);
+      const keyboard = !before.relaxed && keyboardBoundField(op);
+      const after = before.relaxed ? relaxedTargetBinding(target, before.grantToken)
+        : actionFootprint(target, before.readonlyPreparation, { keyboard });
       const changedAuthority = !active || runToken !== preparedRun || lastUserAt !== preparedUserAt
         || (before.relaxed ? !currentRelaxedGrant(before.grantToken) : interventionRevision !== preparedIntervention || interventionUnreported);
       const changedFocus = kind === 'focus' && deepActiveElement() !== target;
-      if (changedAuthority || changedFocus || !samePreparationSemantics(before, after)) {
+      const sameSemantics = samePreparationSemantics(before, after) || (keyboard && sameKeyboardBinding(before, after, true));
+      if (changedAuthority || changedFocus || !sameSemantics) {
         const error = new Error('Browser changed during action preparation. Re-observe before acting.');
         error.code = 'page_feedback_pending'; error.dispatched = localOperation?.started === true;
-        error.pagePreparationVeto = { predicate: changedAuthority ? 'intervention_changed' : changedFocus ? 'focus_changed' : bindingPredicate(before, after) || 'semantic_binding_changed' };
+        error.pagePreparationVeto = { predicate: changedAuthority ? 'intervention_changed' : changedFocus ? 'focus_changed'
+          : bindingPredicate(before, keyboard && after ? { ...after, hit: before.hit } : after) || 'semantic_binding_changed' };
         throw error;
       }
       // Keep the observation's exact semantic/private values immutable. Only a
       // derived geometry proof for this original node is shared with its owner.
-      ownedPreparationBindings.set(op.preparedBinding, { binding: after, runToken, documentToken,
+      ownedPreparationBindings.set(op.preparedBinding, { binding: keyboard ? { ...after, hit: before.hit } : after, runToken, documentToken,
         userAt: lastUserAt, interventionRevision,
         ...(before.relaxed ? { viewport: preparationViewport } : {}),
         scrollPreparationUntil: kind === 'scroll' && (previousScrollX !== window.scrollX || previousScrollY !== window.scrollY)
@@ -3706,12 +3865,34 @@
         void lastFeedbackDelivery.then(() => respond({ ready: false, pageFeedbackPending: true, preparationVeto }));
         return true;
       }
-      dispatch(params); publishRevision();
-      respond({ ready: true, ...(active && params.runToken === runToken ? { guard: {
+      // A typing action's own focus press (and its release) is preparation;
+      // the reply says so, for diagnostics.
+      const typingPreparation = typingFocusPhase(prepared, params);
+      dispatch(params, false, typingPreparation); publishRevision();
+      respond({ ready: true, ...(typingPreparation ? { typingPreparation: true } : {}), ...(active && params.runToken === runToken ? { guard: {
         documentToken, revision, operationId: params.operationId, runToken,
         navigationCandidate: params.navigationCandidate !== false,
         ...(operations.get(params.operationId)?.nativeSecret ? { nativeSecret: operations.get(params.operationId).nativeSecret } : {}),
       } } : {}) });
+    }
+    else if (msg.action === 'page_monitor_receiver_frame') {
+      // Keyboard input of this document's certified operation is about to
+      // reach a child document. That is its input only when the certified
+      // target is the frame that has focus here (or contains it), was not an
+      // editable host when certified (an editor's text never goes into a
+      // frame embedded in it), and its certificate still holds. An unknown
+      // operation cannot be shown to allow it.
+      const params = msg.params || {};
+      const current = active && params.runToken === runToken;
+      const op = current ? operations.get(params.operationId) : null;
+      const binding = op?.preparedBinding, target = binding?.target, frame = deepActiveElement();
+      const before = preparedBindingFor(binding), after = target instanceof Element ? operationBinding(op, target) : null;
+      const allowed = current && binding?.model === true && binding.editable !== true && target instanceof Element
+        && target.isConnected && frame instanceof Element && /^(IFRAME|FRAME)$/.test(frame.tagName)
+        && (target === frame || target.contains(frame))
+        // Only its geometry may have moved, as for any certified decision.
+        && (before?.relaxed ? sameRelaxedBinding(before, after) : samePreparationSemantics(before, after));
+      respond({ ready: current, foreignReceiverAllowed: allowed === true });
     }
     else if (msg.action === 'page_monitor_finish') {
       const params = msg.params || {};

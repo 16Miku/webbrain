@@ -589,13 +589,13 @@ return { found, loop: state.video?.loop === true, intervalSet: Boolean(state.tim
     addUnique(actions, {
       id: 'summarize-page',
       label: 'Summarize this page',
-      prompt: 'Use read_page first for the current long-form page. Summarize it in 5-8 concise bullet points and include any action items.',
+      prompt: 'Use read_page first for the current long-form page. While read_page returns hasMore:true, call it again with its exact continuationArgs until hasMore is false. Then summarize the page in 5-8 concise bullet points and include any action items. If you stop reading early, say which part of the page the summary covers.',
       runOptions: firstToolRunOptions(
         'summarize-page',
         'read_page',
         { includeChrome: false },
         'Read the long-form page before summarizing it.',
-        ['Call read_page with includeChrome:false.', 'Summarize the returned article/page text in 5-8 concise bullets.'],
+        ['Call read_page with includeChrome:false.', 'While read_page returns hasMore:true, call it again with the exact returned continuationArgs until hasMore is false.', 'Summarize the text read in 5-8 concise bullets; if you stopped before hasMore:false, say which part of the page it covers.'],
       ),
     });
   }
@@ -621,7 +621,7 @@ return { found, loop: state.video?.loop === true, intervalSet: Boolean(state.tim
       id: 'explain-page',
       label: 'Explain this page',
       prompt: explainUsesArticleRead
-        ? 'Use read_page first for the current long-form page. Explain what this page is about and what I can do next.'
+        ? 'Use read_page first for the current long-form page. If read_page returns hasMore:true, continue with its exact continuationArgs as needed. Explain what this page is about and what I can do next, and say if you read only part of it.'
         : 'Use get_accessibility_tree with filter:"visible" first for the current page. Explain what this page is about and what I can do next.',
       runOptions: explainUsesArticleRead
         ? firstToolRunOptions(
@@ -629,7 +629,7 @@ return { found, loop: state.video?.loop === true, intervalSet: Boolean(state.tim
           'read_page',
           { includeChrome: false },
           'Read the long-form page before explaining it.',
-          ['Call read_page with includeChrome:false.', 'Explain the page from the returned page text.'],
+          ['Call read_page with includeChrome:false.', 'If read_page returns hasMore:true, continue with the exact returned continuationArgs as needed.', 'Explain the page from the text read; say if it covers only part of the page.'],
         )
         : firstToolRunOptions(
           'explain-page',

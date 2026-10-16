@@ -176,6 +176,7 @@ export function classifyCompletionForm({
   editable = [],
   submits = [],
   submitReadings = {},
+  fieldReadings = {},
 } = {}) {
   const fields = Array.isArray(editable) ? editable : [];
   const submitControls = Array.isArray(submits) ? submits : [];
@@ -188,28 +189,59 @@ export function classifyCompletionForm({
     value: String(field?.value || '').trim(),
     required: field?.required === true,
     focused: field?.focused === true,
+    // The field's own aria-label or placeholder: page text, only ever read.
+    label: String(field?.label || '').replace(/\s+/g, ' ').trim().slice(0, 120),
   }));
   const normalizedSubmits = submitControls.map(control => ({
     label: String(control?.label || '').trim(),
+    type: String(control?.type || '').trim().toLowerCase(),
   }));
 
   const semanticSearchField = field => field.type === 'search' || field.role === 'searchbox';
   const conventionalSearchField = field => /^(q|query|search|filter)$/i.test(field.name);
+  const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
+  // A lone empty text field with no name or role says nothing in markup about
+  // what it is for: a sidebar search box (Mastodon's has only a localized
+  // placeholder and an icon) looks exactly like a task form's only field. It
+  // can leave the form only through a model's reading below, never by
+  // structure alone. A value in it is a typed draft, so that form stays.
+  const unmarkedSearchField = !!(onlyField
+    && onlyField.tag === 'input'
+    && (onlyField.type === '' || onlyField.type === 'text')
+    && !onlyField.role
+    && !onlyField.name
+    && !onlyField.value);
   // Preserve the previous per-field semantic-or-conventional behavior so a
   // search input plus a named filter control remains utility UI. Task evidence
   // gates the whole shortcut: semantic markup alone must not hide an assignee
   // picker, dialog, POST form, or non-search submission. A retained value is
   // normal search-results state and is not task evidence by itself.
-  const searchFieldsOnly = normalizedFields.length > 0
+  const markedSearchFieldsOnly = normalizedFields.length > 0
     && normalizedFields.every(field => semanticSearchField(field) || conventionalSearchField(field));
+  const searchFieldsOnly = markedSearchFieldsOnly || unmarkedSearchField;
   // What a submit control's caption means is read by a model in any language
   // (the agent's control_effect readings, `submitReadings` by label): only
   // controls read as showing, filtering or searching ("view") leave a
   // search form a search form. An unread caption is no evidence, so it keeps
   // the form relevant here; `searchCandidate` tells the agent to read it.
-  const readings = submitReadings && typeof submitReadings === 'object' ? submitReadings : {};
-  const readingOf = control => (Object.prototype.hasOwnProperty.call(readings, control.label) ? readings[control.label] : null);
-  const searchSubmitsOnly = normalizedSubmits.every(control => readingOf(control) === 'view');
+  // When no control has a caption (icon-only buttons), the lone field's own
+  // label or placeholder is what says what the form is for. It is read with
+  // its own question (field_purpose, `fieldReadings` by label), because
+  // control_effect calls a control that only opens an editor "view" and so
+  // passes "Write a comment…" as harmless: only a field read as searching or
+  // filtering the site ("search") leaves the form a search form. Marked
+  // search fields with no control need no reading; an unmarked field always
+  // does.
+  const readsField = !normalizedSubmits.some(control => control.label)
+    && (normalizedSubmits.length > 0 || unmarkedSearchField);
+  const readings = readsField ? fieldReadings : submitReadings;
+  const searchReading = readsField ? 'search' : 'view';
+  const readingOf = text => (text && readings && typeof readings === 'object'
+    && Object.prototype.hasOwnProperty.call(readings, text) ? readings[text] : null);
+  const purposeTexts = readsField
+    ? [onlyField?.label || '']
+    : normalizedSubmits.map(control => control.label);
+  const searchSubmitsOnly = purposeTexts.every(text => readingOf(text) === searchReading);
   const searchStructureHasTaskEvidence = !!(
     insideDialog
     || normalizedMethod !== 'get'
@@ -224,18 +256,24 @@ export function classifyCompletionForm({
   // Primary content alone is not task evidence: result pages commonly place
   // genuine search/filter forms there.
   const safeSearchOnly = searchFieldsOnly && !searchHasTaskEvidence;
-  const hasSemanticSearchField = normalizedFields.some(semanticSearchField);
+  const searchReason = normalizedFields.some(semanticSearchField)
+    ? 'semantic_search'
+    : markedSearchFieldsOnly ? 'conventional_search' : 'unmarked_search';
   const searchCandidate = searchFieldsOnly && !searchStructureHasTaskEvidence && !searchSubmitsOnly
-    && normalizedSubmits.every(control => readingOf(control) === null || readingOf(control) === 'view');
+    && purposeTexts.every(text => readingOf(text) === null || readingOf(text) === searchReading);
 
-  const onlyField = normalizedFields.length === 1 ? normalizedFields[0] : null;
+  // A type=button or type=reset control without a caption cannot send its
+  // form natively and names nothing, like the icon that clears or focuses a
+  // sidebar search box. Any other control may send the form.
+  const sendingControls = normalizedSubmits.filter(control => control.label
+    || (control.type !== 'button' && control.type !== 'reset'));
   const passiveUtilityShell = !!(
     onlyField
     && outsidePrimaryContent
     && !insideDialog
     && normalizedMethod === 'get'
     && Number(hiddenNamedCount || 0) === 0
-    && normalizedSubmits.length === 0
+    && sendingControls.length === 0
     && onlyField.tag === 'input'
     && (onlyField.type === '' || onlyField.type === 'text' || onlyField.type === 'search')
     && !onlyField.name
@@ -247,12 +285,10 @@ export function classifyCompletionForm({
   const utilityReason = utilityRegion
     ? 'utility_region'
     : safeSearchOnly
-      ? hasSemanticSearchField
-        ? 'semantic_search'
-        : 'conventional_search'
-        : passiveUtilityShell
-          ? 'passive_utility_shell'
-          : null;
+      ? searchReason
+      : passiveUtilityShell
+        ? 'passive_utility_shell'
+        : null;
   const utility = utilityReason !== null;
   return {
     label: String(label || '').trim().slice(0, 80),
@@ -263,9 +299,12 @@ export function classifyCompletionForm({
     submitCount: normalizedSubmits.length,
     ...(searchCandidate && !utility ? {
       searchCandidate: true,
-      searchUtilityReason: hasSemanticSearchField ? 'semantic_search' : 'conventional_search',
+      searchUtilityReason: searchReason,
       // Every submit's caption, so the agent can tell when one has none to read.
       submitLabels: normalizedSubmits.map(control => control.label.slice(0, 120)).slice(0, 4),
+      // Read instead of the captions, with field_purpose, when no submit
+      // control has one.
+      ...(readsField && onlyField?.label ? { fieldLabel: onlyField.label } : {}),
     } : {}),
   };
 }
