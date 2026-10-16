@@ -6,6 +6,8 @@ This changelog was generated from the repository Git history and release tags. V
 
 ## [Unreleased]
 
+## [40.8.0] - 2026-10-16
+
 ### Added
 - `browser_batch` runs predictable browser actions in order in one model round trip on Chrome and Firefox. Mid allows up to 6 actions and Full up to 10; Dev inherits its provider tier. Each action keeps its normal permission and verification checks, and failures or submits stop the remaining work for a fresh turn. A final page read can follow navigation. Ask and Compact keep their existing tool surface; an internal `browserBatchEnabled` switch disables batching.
 
