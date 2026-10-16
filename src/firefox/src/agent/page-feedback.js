@@ -1564,7 +1564,7 @@ export function installPageFeedback(Agent) {
       if (run && terminal) terminalStreak = run.passiveSupersessionStreak;
       const result = await execute.call(this, tabId, name, args, onUpdate, executionContext);
       noDispatch = result?.noDispatch === true || result?.dispatched === false;
-      commitBrowserBatchInput = !!batchId && modelBound && ['set_field', 'type_ax'].includes(name)
+      commitBrowserBatchInput = !!batchId && modelBound && ['set_field', 'type_ax', 'type_text'].includes(name)
         && result?.success === true && result.verified === true && !noDispatch && !result.error
         && !result.outcomeUnknown && !result.mutationMayHaveOccurred && !args?.submit
         && this._pageFeedbackRuns?.get(tabId) === run && run.modelState === modelState

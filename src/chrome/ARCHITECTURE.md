@@ -422,7 +422,7 @@ between actions of the same batch. Navigation-prone actions use the existing
 bounded settling helpers before the next action.
 
 The page monitor can derive same-batch continuation evidence after verified
-native input/textarea edits by `set_field` or `type_ax`. It updates only the
+native input/textarea edits by `set_field`, `type_ax`, or `type_text`. It updates only the
 completed control's value while retaining original nodes, labels, ancestors,
 form/recipient bindings, collateral values and human authority. Other batches
 and top-level siblings cannot borrow this evidence. Select/contenteditable and

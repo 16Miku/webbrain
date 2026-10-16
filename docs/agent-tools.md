@@ -160,7 +160,7 @@ Navigation also stops unless only trailing observations remain. Mid's usual
 single-action boundary is suspended inside a batch but still applies after it.
 Coordinate clicks after an earlier mutation are rejected during validation.
 
-Verified `set_field`/`type_ax` edits to native input and textarea controls can
+Verified `set_field`/`type_ax`/`type_text` edits to native input and textarea controls can
 continue within the same batch using updated evidence for those exact values.
 Element identities, labels, surrounding form/recipient bindings, other control
 values and user-interaction checks remain fixed. A sibling call or another

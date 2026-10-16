@@ -10,6 +10,7 @@ This changelog was generated from the repository Git history and release tags. V
 - `browser_batch` runs predictable browser actions in order in one model round trip on Chrome and Firefox. Mid allows up to 6 actions and Full up to 10; Dev inherits its provider tier. Each action keeps its normal permission and verification checks, and failures or submits stop the remaining work for a fresh turn. A final page read can follow navigation. Ask and Compact keep their existing tool surface; an internal `browserBatchEnabled` switch disables batching.
 
 ### Fixed
+- Verified `type_text` writes now carry their exact clear/append value into the same batch's original field certificates, allowing later known fields to run without accepting unrelated page changes.
 - Evaluation payloads place batch guidance immediately after the base Act prompt, matching production ordering before Dev guidance, site adapters, and loaded skills while preserving frozen snapshots.
 - Build batch guidance from the current tab's run provider, and grade proposed batches only after the complete wrapper and all child arguments pass production validation against the evaluated tool surface.
 - Browser batches use the run's selected provider tier for action limits and continuation rules, and wait briefly for delayed navigation before deciding whether another child can run. Navigation that remains unsettled stops the remaining actions for verification.

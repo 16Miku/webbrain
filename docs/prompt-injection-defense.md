@@ -137,8 +137,8 @@ fresh submit checks, before dispatch. Validate the whole batch before running
 the first action; neither allowlist membership nor a valid earlier action
 authorizes a later malformed or unavailable tool.
 
-The page monitor permits a narrow continuation after verified `set_field` or
-`type_ax` input into a native input/textarea: only the completed control's value
+The page monitor permits a narrow continuation after verified `set_field`,
+`type_ax`, or `type_text` input into a native input/textarea: only the completed control's value
 evidence changes, bound to the original snapshot and the same parent batch.
 Node identities, labels, ancestors, form/recipient identity, all other values
 and human-interaction authority remain checked. Other batches and top-level

@@ -5,7 +5,7 @@ import { chromium, firefox } from 'playwright';
 
 const RUN = 'batch-feedback-run';
 const html = `<!doctype html><main><h1>Account details</h1><form aria-label="Account details">
-<label>Name <input id="name"></label><label>Email <input id="email"></label>
+<label>Name <input id="name" value="Existing "></label><label>Email <input id="email"></label>
 <label>Note <textarea id="note"></textarea></label><button type="button">Save details</button>
 </form></main><aside id="counter">0</aside><button id="human">Human control</button>`;
 
@@ -51,16 +51,16 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
     const validate = (page, selector = '#email', batchId = 'parent') => page.evaluate(({ selector, batchId }) => send('page_monitor_validate_model', {
       tool: 'set_field', selector, snapshotToken: snapshot.snapshotToken, batchId,
     }), { selector, batchId });
-    const write = (page, { seal = true, selector = '#name', text = 'Ada', mutation = null } = {}) => page.evaluate(async ({ seal, selector, text, mutation }) => {
-      const params = { tool: 'set_field', selector, operationId: `op-${selector}`, batchId: 'parent',
+    const write = (page, { seal = true, selector = '#name', text = 'Ada', mutation = null, tool = 'set_field', clear = true } = {}) => page.evaluate(async ({ seal, selector, text, mutation, tool, clear }) => {
+      const params = { tool, selector, operationId: `op-${selector}`, batchId: 'parent',
         expectedModelSnapshot: snapshot.snapshotToken, allowPassiveRebase: true };
       const preparation = await send('page_monitor_prepare', params);
-      const action = preparation.modelBindingValid ? await send('type', { selector, text, clear: true }) : null;
+      const action = preparation.modelBindingValid ? await send('type', { selector, text, clear }) : null;
       if (mutation) (0, eval)(`(${mutation})`)();
       const finish = await send('page_monitor_finish', { operationId: params.operationId, batchId: 'parent',
-        commitBrowserBatchInput: seal, batchInputText: text, batchInputClear: true });
+        commitBrowserBatchInput: seal, batchInputText: text, batchInputClear: clear });
       return { preparation, action, finish, value: document.querySelector(selector).value };
-    }, { seal, selector, text, mutation: mutation?.toString() || null });
+    }, { seal, selector, text, mutation: mutation?.toString() || null, tool, clear });
     try {
       await t.test('two owned field writes retain the original next field and sibling top-level calls stay fenced', async () => {
         const { page, context } = await fixture();
@@ -82,6 +82,21 @@ for (const [build, engine] of [['chrome', chromium], ['firefox', firefox]]) {
         const { page, context } = await fixture();
         try { await write(page, { seal: false }); assert.equal((await validate(page)).ready, false); }
         finally { await context.close(); }
+      });
+      for (const clear of [true, false]) await t.test(`selector type_text ${clear ? 'replacement' : 'append'} retains only its own verified field value`, async () => {
+        const { page, context } = await fixture();
+        try {
+          const first = await write(page, { tool: 'type_text', clear });
+          assert.equal(first.preparation.modelBindingValid, true, JSON.stringify(first));
+          assert.equal(first.action?.success, true, JSON.stringify(first));
+          assert.equal(first.value, clear ? 'Ada' : 'Existing Ada');
+          assert.equal(first.finish.batchInputSealed, true, JSON.stringify(first));
+          assert.equal((await validate(page)).ready, true);
+          assert.equal((await validate(page, '#email', 'another-batch')).ready, false);
+          const second = await write(page, { tool: 'type_text', selector: '#email', text: 'ada@example.test', clear: true });
+          assert.equal(second.finish.batchInputSealed, true, JSON.stringify(second));
+          assert.equal((await validate(page, '#note')).ready, true);
+        } finally { await context.close(); }
       });
       for (const [name, mutation] of [
         ['collateral value', () => { document.querySelector('#note').value = 'Unseen collateral value'; }],

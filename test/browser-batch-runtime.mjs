@@ -31,6 +31,7 @@ for (const build of ['chrome', 'firefox']) {
   const { getToolsForMode } = await import(`../src/${build}/src/agent/tools.js`);
   const { AnthropicProvider } = await import(`../src/${build}/src/providers/anthropic.js`);
   const { OpenAICompatibleProvider } = await import(`../src/${build}/src/providers/openai.js`);
+  const { installPageFeedback } = await import(`../src/${build}/src/agent/page-feedback.js`);
   function setup(calls, tier = 'full') {
     const provider = { name: 'test', model: 'test', promptTier: tier, contextWindow: 128000, supportsVision: false };
     const agent = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
@@ -89,6 +90,52 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(h.messages.at(-1).content, /ran 3 of 3/);
     assert.equal(h.updates.filter(event => event.type === 'tool_call' && event.data.name === 'browser_batch').length, 1);
     assert.equal(h.updates.filter(event => event.type === 'tool_result' && event.data.name === 'browser_batch').length, 1);
+  });
+
+  test(`${build}: only verified batched type_text dispatches hand off exact clear semantics`, async () => {
+    for (const scenario of [
+      { clear: true, result: { success: true, verified: true }, seal: true },
+      { clear: false, result: { success: true, verified: true }, seal: true },
+      { result: { success: true, verified: true }, seal: true },
+      { clear: true, result: { success: true, verified: false }, seal: false },
+      { clear: true, result: { success: true, verified: true, noDispatch: true }, seal: false },
+      { clear: true, result: { success: true, verified: true, outcomeUnknown: true }, seal: false },
+      { clear: true, result: { success: true, verified: true }, seal: false, native: true },
+    ]) {
+      class FixtureAgent {
+        static STATE_CHANGE_TOOLS = new Set(['type_text']);
+        isRunning() { return true; }
+        _checkAbort() { return false; }
+        async executeTool() { return scenario.result; }
+      }
+      installPageFeedback(FixtureAgent);
+      const agent = new FixtureAgent();
+      const originalMessage = api.tabs.sendMessage;
+      let finish;
+      api.tabs.sendMessage = async (_tab, message) => {
+        if (message.action === 'page_monitor_prepare') return { ready: true, modelBindingValid: true };
+        if (message.action === 'page_monitor_finish') finish = message.params;
+        return {};
+      };
+      try {
+        await agent._beginPageFeedbackRun(1993, 'interactive');
+        agent._pageFeedbackRuns.get(1993).modelState = { actionBinding: { snapshotToken: 'original-snapshot' } };
+        agent._validatePageFeedbackAction = async () => true;
+        agent._pageFeedbackStateCurrent = () => true;
+        agent._pageFeedbackBlocksCall = () => false;
+        await agent.executeTool(1993, 'type_text', { selector: '#name', text: 'Ada', clear: scenario.clear }, () => {},
+          scenario.native ? {} : { _browserBatch: { parentId: 'parent' } });
+        assert.equal(finish?.commitBrowserBatchInput === true, scenario.seal, JSON.stringify(scenario));
+        if (scenario.seal) {
+          assert.equal(finish.batchId, 'parent');
+          assert.equal(finish.batchInputText, 'Ada');
+          assert.equal(finish.batchInputClear, scenario.clear === true);
+        }
+      } finally {
+        agent._finishPageFeedbackRun(1993);
+        api.tabs.sendMessage = originalMessage;
+      }
+    }
   });
 
   for (const scenario of [
