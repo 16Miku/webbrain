@@ -13,8 +13,18 @@ export const WEBGPU_LFM25_VL_3B_MODEL_ID = 'LiquidAI/LFM2.5-VL-3B-ONNX';
 export const WEBGPU_NANBEIGE42_3B_MODEL_ID = 'Michionlion/Nanbeige4.2-3B-ONNX-WebGPU';
 export const WEBGPU_MINICPM5_2B_MODEL_ID = 'RASMUS/MiniCPM5-2B-ONNX';
 export const WEBGPU_COMPASS_TINY_V2_MODEL_ID = 'webbrain-one/webbrain-compass-tiny-v2.1';
+export const WEBGPU_BONSAI2_2B_MODEL_ID = 'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU';
+export const WEBGPU_BONSAI2_4B_MODEL_ID = 'Mike0021/Ternary-Bonsai-2-4B-text-ONNX';
+export const WEBGPU_BONSAI2_VL_2B_MODEL_ID = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
+export const WEBGPU_BONSAI2_VL_4B_MODEL_ID = 'webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision';
 export const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 export const WEBGPU_DTYPE = 'q4f16';
+export const WEBGPU_BONSAI2_DTYPE = 'q2f16';
+export const WEBGPU_BONSAI2_VL_DTYPE = Object.freeze({
+  embed_tokens: 'q2f16',
+  vision_encoder: 'fp16',
+  decoder_model_merged: 'q2f16',
+});
 export const WEBGPU_BONSAI27_DTYPE = 'q1';
 export const WEBGPU_RUNTIME_ONNX = 'onnx';
 export const WEBGPU_RUNTIME_ONNX_VL = 'onnx-vl';
@@ -119,6 +129,48 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
     supportsVision: false,
   }),
   Object.freeze({
+    id: WEBGPU_BONSAI2_2B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX,
+    label: 'Ternary Bonsai 2 2B',
+    size: '787 MB',
+    dtype: WEBGPU_BONSAI2_DTYPE,
+    dtypeLabel: WEBGPU_BONSAI2_DTYPE,
+    // Bound the native 262k context for browser GPU memory. Full-attention
+    // KV slots cost about 12 KB/token at 2B and 32 KB/token at 4B in FP16.
+    contextWindow: 16384,
+    supportsVision: false,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI2_4B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX,
+    label: 'Ternary Bonsai 2 4B',
+    size: '1.50 GB',
+    dtype: WEBGPU_BONSAI2_DTYPE,
+    dtypeLabel: WEBGPU_BONSAI2_DTYPE,
+    contextWindow: 16384,
+    supportsVision: false,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI2_VL_2B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX_VL,
+    label: 'Ternary Bonsai 2 2B Vision',
+    size: '1.45 GB',
+    dtype: WEBGPU_BONSAI2_VL_DTYPE,
+    dtypeLabel: 'Q2/FP16',
+    contextWindow: 16384,
+    supportsVision: true,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX_VL,
+    label: 'Ternary Bonsai 2 4B Vision',
+    size: '2.15 GB',
+    dtype: WEBGPU_BONSAI2_VL_DTYPE,
+    dtypeLabel: 'Q2/FP16',
+    contextWindow: 16384,
+    supportsVision: true,
+  }),
+  Object.freeze({
     id: WEBGPU_BONSAI27_MODEL_ID,
     runtime: WEBGPU_RUNTIME_BITGPU,
     label: 'Basic text model',
@@ -129,6 +181,15 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
     supportsVision: false,
   }),
 ]);
+// Keep legacy presets loadable without offering them for new selections.
+// Both Chrome pickers use this order; Firefox has no offscreen chat runtime.
+export const WEBGPU_SELECTABLE_MODEL_PRESETS = Object.freeze([
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_BONSAI2_2B_MODEL_ID,
+  WEBGPU_BONSAI2_4B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_2B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+].map(id => WEBGPU_MODEL_PRESETS.find(preset => preset.id === id)));
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
@@ -215,6 +276,12 @@ export function webgpuModelPreset(modelId) {
 
 export function isShippedWebgpuPreset(modelId) {
   return webgpuModelPreset(modelId) != null;
+}
+
+export function isSelectableWebgpuPreset(modelId) {
+  if (!String(modelId || '').trim()) return false;
+  const preset = webgpuModelPreset(modelId);
+  return !!preset && WEBGPU_SELECTABLE_MODEL_PRESETS.includes(preset);
 }
 
 export function webgpuModelRuntime(modelId) {

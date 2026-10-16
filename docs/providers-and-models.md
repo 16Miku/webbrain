@@ -273,7 +273,7 @@ class BaseLLMProvider {
 | `gpt4all`            | `openai`       | local    | (loaded model)                                                     | Yes (default on)                |
 | `local_openai_proxy` | `openai`       | local    | (required)                                                         | Off / manual toggle             |
 | `unsloth`            | `openai`       | local    | (required)                                                         | Off / manual toggle             |
-| `webgpu` (Chromium)  | `webgpu`       | local    | Compass Tiny v2.1 (only preset); experimental custom HF ONNX repos | No                              |
+| `webgpu` (Chromium)  | `webgpu`       | local    | Compass Tiny v2.1; Ternary Bonsai 2 2B / 4B, text or vision         | Bonsai Vision presets only      |
 | `azure_openai`       | `azure_openai` | cloud    | (deployment)                                                       | Manual toggle                   |
 | `aws_bedrock`        | `aws_bedrock`  | cloud    | (model id)                                                         | No                              |
 | `openai`             | `openai`       | cloud    | `gpt-5.6-terra`                                                    | Model-name regex                |
@@ -417,8 +417,21 @@ duplicate request.
 
 ### Local Providers
 
-On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider. Its
-Apocalypse text picker offers a single shipped preset:
+On Chromium, **WebGPU (In-browser)** is an endpoint-free local provider.
+Settings and Apocalypse Mode offer the same five presets, in this order:
+
+| Model | Download | Images | Browser context |
+| --- | --- | --- | --- |
+| [Compass Tiny v2.1](https://huggingface.co/webbrain-one/webbrain-compass-tiny-v2.1) (default) | 1.87 GB, Q4/FP16 | No | 32k |
+| [Ternary Bonsai 2 2B](https://huggingface.co/danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU) | 787 MB, Q2/FP16 | No | 16k |
+| [Ternary Bonsai 2 4B](https://huggingface.co/Mike0021/Ternary-Bonsai-2-4B-text-ONNX) | 1.50 GB, Q2/FP16 | No | 16k |
+| [Ternary Bonsai 2 2B Vision](https://huggingface.co/webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision) | 1.45 GB, Q2/FP16 | Yes | 16k |
+| [Ternary Bonsai 2 4B Vision](https://huggingface.co/webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision) | 2.15 GB, Q2/FP16 | Yes | 16k |
+
+Download sizes are approximate and exclude GPU working memory. Bonsai's native
+context is larger; the browser defaults limit cache growth. Each model has its
+own download and readiness state. Changing models preserves already downloaded
+files, and switching back can reuse them.
 
 - [`webbrain-one/webbrain-compass-tiny-v2.1`](https://huggingface.co/webbrain-one/webbrain-compass-tiny-v2.1)
   (`q4f16`, about 1.87 GB across two external-data shards), WebBrain's Compass
@@ -427,24 +440,55 @@ Apocalypse text picker offers a single shipped preset:
   Runtime Web GPU worker, and emits MiniCPM5 XML-style tool calls
   (`<function name="..."><param name="...">...</param></function>`, CDATA-wrapped
   when values contain `<`, `&`, or newlines), which the local fallback parser
-  accepts. Enabling Apocalypse Mode starts this download automatically.
+  accepts. Enabling Apocalypse Mode downloads the selected preset; Compass is
+  the default for a new installation.
+
+Bonsai uses the packaged Qwen3.5 runtime and Q2 weight storage with FP16
+activations. Its text presets reject image attachments. The Vision variants
+retain Prism ML's original image tower and add its processor and image graph
+to the ternary language export. They accept screenshots directly as the main
+provider and also work for text-only turns. They do not enable or replace the
+separate 450M assistive vision fallback. Browser image processing is bounded to
+approximately one megapixel per image. Build sources, tensor mapping checks,
+and the hardware browser verification command are documented in
+[`scripts/models/bonsai/README.md`](../scripts/models/bonsai/README.md).
+
+To verify the published text presets through the packaged production worker,
+run these commands from the repository root with its Playwright Chromium
+installed:
+
+```powershell
+node scripts/check-bonsai-webgpu.mjs --model danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU --profile .build/bonsai/text-2b-profile --output .build/bonsai/text-2b-result.json
+node scripts/check-bonsai-webgpu.mjs --model Mike0021/Ternary-Bonsai-2-4B-text-ONNX --profile .build/bonsai/text-4b-profile --output .build/bonsai/text-4b-result.json
+```
+
+These commands download model files, run text and tool-call/result checks on
+hardware WebGPU, and save JSON evidence. `--probe-only` checks the adapter and
+packaged runtime without downloading weights. `--offline` repeats inference
+using an existing profile and port (default 8769), requiring cached readiness
+and rejecting Hugging Face fetches. Vision builds also require `--vision`;
+the build README gives exact commands for local export folders, image history,
+cache refresh after rebuilding, and recording browser evidence. The separate
+`node test/quality/webgpu-presets-mv3.mjs` check exercises the installed extension's
+five model choices and saved settings with mocked cache readiness; it does not
+establish model inference quality.
 
 Custom Hugging Face repositories have not been tested and are likely not to
 work. They must be compatible with Transformers.js text generation, provide a
 `q4f16` ONNX variant, and use a chat template that accepts `tools`; WebBrain
 validates the template after loading and rejects incompatible repositories.
 
-The provider is text-only and defaults to the Compact prompt tier with a
-32k context window. Budget roughly 4 GB of GPU headroom (about 1.87 GB of
+The provider defaults to the Compact prompt tier. For Compass, budget roughly
+4 GB of GPU headroom (about 1.87 GB of
 weights plus KV cache that grows with context length); on constrained GPUs,
 lower the context window on the WebGPU card in Settings → Providers (16384 is
 a safe fallback) and retry with a short prompt. Each repository is cached
 separately in Chrome.
-After downloading Compass in Apocalypse Mode, the WebGPU card in
+After downloading a preset in Apocalypse Mode, the WebGPU card in
 **Settings -> Providers** can be configured, tested, and selected as the normal
 chat provider. The nuclear standalone-chat control remains available as a
 per-run override that does not change the global selection. Once its files are
-cached, Compass works without Apocalypse Mode enabled.
+cached, the selected model works without Apocalypse Mode enabled.
 **Test Connection** checks only the packaged runtime and hardware WebGPU
 adapter, so it does not trigger a model download. There is no API key, base
 URL, localhost server, or OpenAI-compatible endpoint. Firefox does not expose

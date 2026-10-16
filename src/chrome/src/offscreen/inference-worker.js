@@ -7,6 +7,8 @@
  * request/response messages to it.
  */
 
+import { BONSAI2_TOKENIZER_CONFIG } from '../../vendor/bonsai2/tokenizer-config.js';
+
 let libraryPromise = null;
 let libraryVersion = null;
 let workerConfig = null;
@@ -33,6 +35,30 @@ const WEBGPU_LFM25_VL_3B_MODEL_ID = 'LiquidAI/LFM2.5-VL-3B-ONNX';
 const WEBGPU_NANBEIGE42_3B_MODEL_ID = 'Michionlion/Nanbeige4.2-3B-ONNX-WebGPU';
 const WEBGPU_MINICPM5_2B_MODEL_ID = 'RASMUS/MiniCPM5-2B-ONNX';
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
+const WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS = new Set([
+  'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU',
+  'danyalmalik/Ternary-Bonsai-2-4B-ONNX-WebGPU',
+]);
+const WEBGPU_BONSAI2_VISION_MODEL_IDS = new Set([
+  'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
+  'webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision',
+]);
+const WEBGPU_BONSAI2_MODEL_IDS = new Set([
+  ...WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS,
+  ...WEBGPU_BONSAI2_VISION_MODEL_IDS,
+  'Mike0021/Ternary-Bonsai-2-4B-text-ONNX',
+]);
+// The Qwen3.5 generation_config sidecar omitted by Danyal's split exports.
+// Per-request decoding still controls do_sample and the output token budget.
+const BONSAI2_GENERATION_CONFIG = {
+  bos_token_id: 248044,
+  eos_token_id: [248046, 248044],
+  pad_token_id: 248044,
+  do_sample: true,
+  temperature: 0.6,
+  top_k: 20,
+  top_p: 0.95,
+};
 const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048;
 const WEBGPU_LFM25_TEXT_MODEL_IDS = new Set([
   WEBGPU_LFM25_MODEL_ID,
@@ -61,6 +87,7 @@ const WEBGPU_LONG_OUTPUT_MODEL_IDS = new Set([
   ...WEBGPU_LFM25_TEXT_MODEL_IDS,
   WEBGPU_NANBEIGE42_3B_MODEL_ID,
   WEBGPU_MINICPM5_2B_MODEL_ID,
+  ...WEBGPU_BONSAI2_MODEL_IDS,
 ]);
 // Publisher-recommended decoding for the shipped reasoning presets. Custom
 // repositories keep Transformers.js greedy defaults.
@@ -146,6 +173,88 @@ function assertOnnxTextModel(modelId) {
 
 function isLfm25VlModel(modelId) {
   return WEBGPU_LFM25_VL_MODEL_IDS.has(String(modelId || '').trim());
+}
+
+function isMultimodalTextModel(modelId) {
+  return isLfm25VlModel(modelId) || WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId);
+}
+
+export function bonsai2CompatibilityMetadata(input) {
+  // Supply missing sidecars from packaged metadata without borrowing a tokenizer
+  // from another remote model or changing any unrecognized repository.
+  try {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input?.url);
+    const match = /^\/([^/]+\/[^/]+)\/resolve\/[^/]+\/(tokenizer_config|generation_config)\.json$/.exec(url.pathname);
+    if (url.origin !== 'https://huggingface.co' || !WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(match?.[1])) return null;
+    return match[2] === 'tokenizer_config' ? BONSAI2_TOKENIZER_CONFIG : BONSAI2_GENERATION_CONFIG;
+  } catch {
+    return null;
+  }
+}
+
+function packagedMetadataResponse(metadata, head = false) {
+  const body = JSON.stringify(metadata);
+  return new Response(head ? null : body, {
+    headers: { 'content-type': 'application/json', 'content-length': String(new TextEncoder().encode(body).length) },
+  });
+}
+
+async function cacheBonsai2CompatibilityMetadata(modelId) {
+  if (!WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(modelId) || typeof caches === 'undefined') return;
+  const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+  for (const file of ['tokenizer_config.json', 'generation_config.json']) {
+    const url = `https://huggingface.co/${modelId}/resolve/main/${file}`;
+    if (!await cache.match(url)) await cache.put(url, packagedMetadataResponse(bonsai2CompatibilityMetadata(url)));
+  }
+}
+
+export function normalizeBonsai2Config(config) {
+  return {
+    ...config,
+    // The source export omits generation_config.json. Its base-model EOS is
+    // only <|endoftext|>; chat must also stop at <|im_end|> or it generates
+    // subsequent assistant turns after an otherwise complete answer.
+    text_config: {
+      ...config.text_config,
+      eos_token_id: [248046, 248044],
+      pad_token_id: 248044,
+    },
+    // Danyal's metadata still describes the original Qwen q4/fp16 shards;
+    // both Bonsai q2f16 components have exactly one external data file.
+    'transformers.js_config': {
+      ...(config['transformers.js_config'] || {}),
+      use_external_data_format: {
+        'embed_tokens_q2f16.onnx': 1,
+        'decoder_model_merged_q2f16.onnx': 1,
+      },
+      kv_cache_dtype: { q2f16: 'float16' },
+    },
+  };
+}
+
+export function applyBonsai2RotaryCompatibility(modelId, model) {
+  if ((!WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(modelId) && !WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId))
+      || typeof model?._get_text_only_rope_index !== 'function') return;
+  const original = model._get_text_only_rope_index;
+  model._get_text_only_rope_index = function (inputIds, attentionMask) {
+    const [positions, deltas] = original.call(this, inputIds, attentionMask);
+    if (attentionMask) {
+      // Transformers.js 4.2 adds the prompt length to the pure-text MRoPE
+      // delta instead of subtracting it. Cached decoding then jumps from
+      // position N-1 to 3N. Recompute the delta from the actual positions;
+      // image prompts use a separate, correct method and remain untouched.
+      const [batchSize, sequenceLength] = attentionMask.dims;
+      for (let batch = 0; batch < batchSize; batch++) {
+        let maximum = -1n;
+        const offset = batch * sequenceLength;
+        for (let i = 0; i < sequenceLength; i++) {
+          if (positions.data[offset + i] > maximum) maximum = positions.data[offset + i];
+        }
+        deltas.data[batch] = maximum + 1n - BigInt(sequenceLength);
+      }
+    }
+    return [positions, deltas];
+  };
 }
 
 function lfm25VlProcessorOptions(modelId) {
@@ -237,6 +346,8 @@ async function markVisionModelReady(modelId) {
 }
 
 async function controlledFetch(input, init = {}) {
+  const metadata = bonsai2CompatibilityMetadata(input);
+  if (metadata) return packagedMetadataResponse(metadata, init.method === 'HEAD');
   if (!nativeFetch) throw new Error('Fetch is unavailable in the WebGPU worker.');
   if (textDownloadAbortController && fetchTargetsActiveTextModel(input)) {
     return nativeFetch(input, { ...init, signal: textDownloadAbortController.signal });
@@ -453,17 +564,32 @@ function noteWebgpuExecutionSuccess() {
   webgpuExecutionFailureStreak = 0;
 }
 
+export function perFileProgressEvents(event) {
+  if (event?.status !== 'progress_total') return [event];
+  // Transformers.js emits an aggregate snapshot immediately before the same
+  // file's progress event. Account for its known files, never for its model
+  // total as an additional file (which doubles every downloaded byte).
+  return Object.entries(event?.files || {}).map(([file, progress]) => ({
+    status: 'progress', file,
+    loaded: Number(progress?.loaded || 0),
+    total: Number(progress?.total || 0),
+  }));
+}
+
 function postProgress(modelId, event) {
+  const fileEvents = perFileProgressEvents(event);
   if (modelId === activeTextDownloadModelId && !textDownloadCancelMode) {
-    const file = String(event?.file || event?.name || '');
-    if (file) {
+    const file = String(event?.file || (event?.status === 'progress_total' ? textDownloadState.file : event?.name) || '');
+    for (const fileEvent of fileEvents) {
+      const file = String(fileEvent?.file || '');
+      if (!file) continue;
       const previous = textDownloadFiles.get(file) || { loaded: 0, total: 0, status: '' };
-      const total = Number(event?.total || previous.total || 0);
-      const loaded = event?.status === 'done' && total > 0
+      const total = Number(fileEvent?.total || previous.total || 0);
+      const loaded = fileEvent?.status === 'done' && total > 0
         ? total
-        : Number(event?.loaded ?? previous.loaded ?? 0);
+        : Number(fileEvent?.loaded ?? previous.loaded ?? 0);
       textDownloadFiles.set(file, {
-        status: event?.status || previous.status,
+        status: fileEvent?.status || previous.status,
         loaded: Math.max(0, loaded),
         total: Math.max(0, total),
       });
@@ -487,15 +613,17 @@ function postProgress(modelId, event) {
     };
     postTextDownloadState({ force: event?.status === 'done' });
   }
-  self.postMessage({
-    type: 'progress',
-    modelId,
-    status: event?.status || '',
-    file: event?.file || event?.name || '',
-    loaded: Number(event?.loaded || 0),
-    total: Number(event?.total || 0),
-    progress: Number(event?.progress || 0),
-  });
+  for (const fileEvent of fileEvents) {
+    self.postMessage({
+      type: 'progress',
+      modelId,
+      status: fileEvent?.status || '',
+      file: fileEvent?.file || '',
+      loaded: Number(fileEvent?.loaded || 0),
+      total: Number(fileEvent?.total || 0),
+      progress: Number(fileEvent?.progress || 0),
+    });
+  }
 }
 
 async function disposeRuntime(runtime) {
@@ -599,7 +727,9 @@ async function getVisionRuntime(modelId, dtype, device, {
     await disposeVisionRuntime();
     const progress_callback = event => postProgress(modelId, event);
     const config = await legacyLfm25VlConfig(library, modelId, progress_callback, localFilesOnly);
-    const processorOptions = lfm25VlProcessorOptions(modelId);
+    const processorOptions = WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
+      ? { image_processor_config_file: 'processor_config.json', chat_template_file: 'chat_template.jinja' }
+      : lfm25VlProcessorOptions(modelId);
     const previousAllowLocalModels = library.env?.allowLocalModels;
     if (localFilesOnly && library.env) library.env.allowLocalModels = true;
     let processorResult;
@@ -646,6 +776,12 @@ async function getVisionRuntime(modelId, dtype, device, {
     }
     const processor = processorResult.value;
     const model = modelResult.value;
+    applyBonsai2RotaryCompatibility(modelId, model);
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId) && processor.image_processor) {
+      // Bound the visual token count for browser screenshots. Upstream Qwen's
+      // 16M-pixel ceiling is intended for server GPUs and can exhaust WebGPU.
+      processor.image_processor.max_pixels = 1024 * 1024;
+    }
     bindWebGpuDeviceDiagnostics(library);
     visionRuntime = { library, processor, model };
     visionRuntimeKey = key;
@@ -778,9 +914,19 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
     if (localFilesOnly && library.env) library.env.allowLocalModels = true;
     let pipeline;
     try {
+      // Seed omitted metadata before local_files_only loading, including older
+      // browser caches created before these compatibility sidecars were added.
+      await cacheBonsai2CompatibilityMetadata(modelId);
+      const config = WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(modelId)
+        ? normalizeBonsai2Config(await library.AutoConfig.from_pretrained(modelId, {
+          local_files_only: localFilesOnly,
+          progress_callback: event => postProgress(modelId, event),
+        }))
+        : null;
       pipeline = await library.pipeline('text-generation', modelId, {
         device,
         dtype,
+        ...(config ? { config } : {}),
         ...(WEBGPU_TEXT_MODEL_FILE_NAMES.has(modelId)
           ? { model_file_name: WEBGPU_TEXT_MODEL_FILE_NAMES.get(modelId) }
           : {}),
@@ -802,6 +948,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
       if (localFilesOnly && library.env) library.env.allowLocalModels = previousAllowLocalModels;
     }
     bindWebGpuDeviceDiagnostics(library);
+    applyBonsai2RotaryCompatibility(modelId, pipeline.model);
     textRuntime = {
       library,
       pipeline,
@@ -825,7 +972,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
 }
 
 async function getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
-  if (isLfm25VlModel(modelId)) {
+  if (isMultimodalTextModel(modelId)) {
     return getVisionRuntime(modelId, dtype, device, {
       localFilesOnly,
       owner: 'text',
@@ -836,8 +983,8 @@ async function getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly
 }
 
 async function disposeDownloadedTextRuntime(modelId = '') {
-  if (!modelId || isLfm25VlModel(modelId)) await disposeVisionRuntime('text');
-  if (!modelId || !isLfm25VlModel(modelId)) await disposeTextRuntime();
+  if (!modelId || isMultimodalTextModel(modelId)) await disposeVisionRuntime('text');
+  if (!modelId || !isMultimodalTextModel(modelId)) await disposeTextRuntime();
 }
 
 function chatTemplateText(value) {
@@ -853,7 +1000,7 @@ export function tokenizerSupportsTools(tokenizer) {
 }
 
 function assertToolCapableTextRuntime(runtime, modelId) {
-  if (tokenizerSupportsTools(runtime?.tokenizer)) return;
+  if (tokenizerSupportsTools(runtime?.tokenizer ?? runtime?.processor?.tokenizer)) return;
   throw new Error(`${modelId} is not compatible with WebBrain: custom repositories must provide a chat template that accepts tools.`);
 }
 
@@ -1134,6 +1281,40 @@ export function prepareMultimodalMessages(messages) {
   return { messages: prepared, imageUrls };
 }
 
+export async function processMultimodalInputs(runtime, modelId, images, prompt) {
+  // Qwen's processor takes (text, images), while LFM takes (images, text).
+  // Keep this distinction at the runtime boundary so screenshot messages and
+  // their untrusted-content framing stay identical throughout the agent.
+  if (!WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+    return runtime.processor(images, prompt, { add_special_tokens: false });
+  }
+  if (!Array.isArray(images) || images.length < 2) {
+    return runtime.processor(prompt, images, { add_special_tokens: false });
+  }
+  // The bundled Qwen image processor treats a batch as video frames. Screenshot
+  // history consists of independent images, potentially with different shapes.
+  // Process each separately, then join patches and one grid row per image.
+  const marker = '<|image_pad|>';
+  const chunks = prompt.split(marker);
+  if (chunks.length !== images.length + 1) {
+    throw new Error('The screenshot count does not match the image placeholders in the prompt.');
+  }
+  const imageInputs = [];
+  for (const image of images) imageInputs.push(await runtime.processor.image_processor(image));
+  const mergeArea = runtime.processor.image_processor.config.merge_size ** 2;
+  let expanded = chunks[0];
+  for (let i = 0; i < imageInputs.length; i++) {
+    const grid = imageInputs[i].image_grid_thw.tolist()[0];
+    const tokens = Number(grid.reduce((product, dimension) => product * dimension, 1n)) / mergeArea;
+    expanded += marker.repeat(tokens) + chunks[i + 1];
+  }
+  return {
+    ...runtime.processor.tokenizer(expanded, { add_special_tokens: false }),
+    pixel_values: runtime.library.cat(imageInputs.map(input => input.pixel_values), 0),
+    image_grid_thw: runtime.library.cat(imageInputs.map(input => input.image_grid_thw), 0),
+  };
+}
+
 function createVisionProbeImage(RawImage) {
   if (!RawImage) throw new Error('The packaged runtime does not expose RawImage.');
   // LFM2.5-VL-450M is much more dependable at coarse visual classification
@@ -1188,15 +1369,16 @@ async function runVision(payload, requestId) {
     });
     const { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
     if (imageUrls.length !== 1) {
-      throw new Error(`LFM2.5-VL requires exactly one screenshot; received ${imageUrls.length}.`);
+      throw new Error(`${modelId} requires exactly one screenshot; received ${imageUrls.length}.`);
     }
     const prompt = runtime.processor.apply_chat_template(messages, {
       add_generation_prompt: true,
+      ...(WEBGPU_BONSAI2_MODEL_IDS.has(modelId) ? { enable_thinking: false } : {}),
     });
     const image = payload?.options?.visionProbe === true
       ? createVisionProbeImage(runtime.library.RawImage)
       : await runtime.library.load_image(imageUrls[0]);
-    const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
+    const inputs = await processMultimodalInputs(runtime, modelId, image, prompt);
     const requestedTokens = Number(payload?.options?.maxTokens);
     const maxNewTokens = Number.isFinite(requestedTokens)
       ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
@@ -1327,7 +1509,7 @@ function addLegacyVlTools(messages, tools) {
 
 async function runMultimodalText(payload) {
   const modelId = assertOnnxTextModel(payload?.modelId);
-  if (!isLfm25VlModel(modelId)) {
+  if (!isMultimodalTextModel(modelId)) {
     throw new Error(`${modelId} is not a shipped WebGPU multimodal model.`);
   }
   const device = payload?.device || 'webgpu';
@@ -1344,19 +1526,19 @@ async function runMultimodalText(payload) {
     owner: 'text',
     readiness: 'text',
   });
+  if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   let { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
   if (modelId === WEBGPU_LFM25_VL_16B_MODEL_ID) messages = addLegacyVlTools(messages, tools);
   const prompt = runtime.processor.apply_chat_template(messages, {
     add_generation_prompt: true,
     tools: tools.length ? tools : undefined,
+    ...(WEBGPU_BONSAI2_MODEL_IDS.has(modelId) ? { enable_thinking: false } : {}),
   });
   let inputs;
   if (imageUrls.length) {
     const images = await Promise.all(imageUrls.map(url => runtime.library.load_image(url)));
-    inputs = await runtime.processor(images.length === 1 ? images[0] : images, prompt, {
-      add_special_tokens: false,
-    });
+    inputs = await processMultimodalInputs(runtime, modelId, images.length === 1 ? images[0] : images, prompt);
   } else {
     inputs = runtime.processor.tokenizer(prompt, { add_special_tokens: false });
   }

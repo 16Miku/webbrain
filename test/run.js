@@ -1037,9 +1037,16 @@ const {
   WEBGPU_NANBEIGE42_3B_MODEL_ID,
   WEBGPU_MINICPM5_2B_MODEL_ID,
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_BONSAI2_2B_MODEL_ID,
+  WEBGPU_BONSAI2_4B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_2B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+  WEBGPU_BONSAI2_DTYPE,
+  WEBGPU_BONSAI2_VL_DTYPE,
   WEBGPU_BONSAI27_MODEL_ID,
   WEBGPU_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
+  WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_DTYPE,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_CONSENT_VERSION,
@@ -1051,6 +1058,7 @@ const {
   WEBGPU_VISION_READY_MARKER_VERSION,
   normalizeWebgpuModelId,
   isShippedWebgpuPreset,
+  isSelectableWebgpuPreset,
   webgpuModelDtype,
   webgpuModelPreset,
   webgpuVisionReadyMarkerUrl,
@@ -37920,10 +37928,10 @@ test('Apocalypse Mode keeps summary stats in its header and optional Wikipedia i
         'chrome: Emergency Box must render locked until basic setup is ready');
       assert.match(pageScript, /function updateEmergencyBoxGate\(readinessKind\)[\s\S]*?const locked = readinessKind !== 'ready'/,
         'chrome: Emergency Box is not gated by aggregate readiness');
-      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\?\.contextWindow/, 'chrome: Apocalypse Mode does not configure the selected WebGPU download');
+      assert.match(pageScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?config: preserveConfig \? \{\} : \{ model, dtype \}/, 'chrome: Apocalypse Mode must configure the selected download without replacing saved context settings');
       assert.match(pageHtml, /data-webgpu-text-preset/, 'chrome: the local text model picker is missing');
       assert.match(pageHtml, /value="webbrain-one\/webbrain-compass-tiny-v2\.1"/, 'chrome: the Compass Tiny v2.1 preset is missing');
-      assert.doesNotMatch(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: only Compass Tiny v2.1 should be offered');
+      assert.doesNotMatch(pageHtml, /value="prism-ml\/Bonsai-27B-gguf"/, 'chrome: the legacy 27B model should not be offered');
       assert.doesNotMatch(pageScript, /testWebgpuTextModel|providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/,
         'chrome: the removed local text Test action is still wired');
       assert.match(pageScript, /testWebgpuVisionModel[\s\S]*?providerCommand\('test_vision_provider'\)/,
@@ -65310,6 +65318,159 @@ test('failed sensitive field-tool readbacks are annotated and redacted', () => {
 
 console.log('\nprovider categorization');
 
+test('Bonsai WebGPU presets preserve ordered selection and model-specific image capabilities', async () => {
+  const expectedIds = [WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_BONSAI2_2B_MODEL_ID, WEBGPU_BONSAI2_4B_MODEL_ID,
+    WEBGPU_BONSAI2_VL_2B_MODEL_ID, WEBGPU_BONSAI2_VL_4B_MODEL_ID];
+  assert.deepEqual(WEBGPU_SELECTABLE_MODEL_PRESETS.map(preset => preset.id), expectedIds);
+  const html = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.html'), 'utf8');
+  assert.deepEqual([...html.matchAll(/<input[^>]+value="([^"]+)"[^>]*data-webgpu-text-preset/g)].map(match => match[1]), expectedIds,
+    'the Apocalypse radio choices must stay in the same order as the Settings suggestions');
+  assert.equal(isSelectableWebgpuPreset(''), false);
+  assert.equal(isSelectableWebgpuPreset(WEBGPU_BONSAI27_MODEL_ID), false);
+  assert.equal(isShippedWebgpuPreset(WEBGPU_BONSAI27_MODEL_ID), true, 'saved legacy presets must remain loadable');
+
+  const manager = new ProviderManagerCh();
+  manager.save = async () => {};
+  manager.providers.set('webgpu', new WebGPUProvider(manager._defaultConfigs().webgpu));
+  const messages = [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,AA==' } }] }];
+  for (const preset of WEBGPU_SELECTABLE_MODEL_PRESETS) {
+    await manager.updateProvider('webgpu', { model: preset.id });
+    const provider = manager.providers.get('webgpu');
+    assert.equal(manager.getAll().webgpu.contextWindow, preset.contextWindow);
+    assert.deepEqual(manager.getAll().webgpu.dtype, preset.dtype);
+    assert.equal(provider.supportsVision, preset.supportsVision);
+    assert.equal(provider.config.supportsVision, preset.supportsVision);
+    assert.equal(provider.requiresToolTemplate, false);
+    const sent = [];
+    provider._dispatch = async message => {
+      sent.push(message);
+      return message.type === 'webgpu-download-status'
+        ? { ready: true }
+        : { ok: true, content: 'Local answer.', toolCalls: null };
+    };
+    if (preset.supportsVision) {
+      await provider.chat(messages, { maxTokens: 32 });
+      assert.equal(sent.at(-1).runtime, 'onnx-vl');
+      assert.deepEqual(sent.at(-1).dtype, WEBGPU_BONSAI2_VL_DTYPE);
+      assert.deepEqual(sent.at(-1).messages, messages);
+    } else {
+      await assert.rejects(provider.chat(messages), /text-only/);
+      assert.equal(sent.length, 0, 'text-only rejection must happen before downloading or dispatching image data');
+      if (preset.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID) assert.equal(provider.dtype, WEBGPU_BONSAI2_DTYPE);
+    }
+  }
+  await manager.updateProvider('webgpu', { model: WEBGPU_COMPASS_TINY_V2_MODEL_ID });
+  assert.equal(manager.getAll().webgpu.contextWindow, 32768);
+  assert.equal(manager.getAll().webgpu.dtype, WEBGPU_DTYPE);
+  assert.equal(manager.getAll().webgpu.supportsVision, false, 'switching back from vision must clear image capability');
+  await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI2_VL_4B_MODEL_ID, contextWindow: 4096, promptTier: 'mid' });
+  await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI2_VL_4B_MODEL_ID });
+  assert.equal(manager.getAll().webgpu.contextWindow, 4096, 'saving the same preset must preserve a lowered context budget');
+  assert.equal(manager.getAll().webgpu.promptTier, 'mid');
+});
+
+test('Apocalypse hydrates every selectable Bonsai preset and inspects sibling cache state without changing selection', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const functions = source.slice(source.indexOf('async function refreshWebgpuDownloadStatus('), source.indexOf('async function onWebgpuTextPresetChange('));
+  for (const preset of WEBGPU_SELECTABLE_MODEL_PRESETS) {
+    const queried = [];
+    const recorded = [];
+    let selectedId = WEBGPU_COMPASS_TINY_V2_MODEL_ID;
+    const context = vm.createContext({
+      WEBGPU_SELECTABLE_MODEL_PRESETS, webgpuModelPreset, isSelectableWebgpuPreset,
+      supportsWebgpuVision: true, webgpuDownloadStatusRequest: 0,
+      webgpuPresetChangePending: false, fixedWebgpuProviderConfigured: false, fixedWebgpuProviderMarkedReady: false,
+      CSS: { escape: value => value },
+      selectedWebgpuModelId: () => selectedId,
+      document: { querySelector: () => ({ set checked(value) { if (value) selectedId = preset.id; } }) },
+      providerCommand: async (action, query) => {
+        assert.equal(action, 'get_webgpu_download_status');
+        const modelId = query?.model || preset.id;
+        queried.push(modelId);
+        if (query) assert.deepEqual(query.dtype, webgpuModelPreset(modelId).dtype);
+        return { modelId, status: 'not-downloaded', ready: false };
+      },
+      ensureFixedWebgpuProvider: async () => { throw new Error('Unexpected model change'); },
+      updateWebgpuTextPresetUi() {}, updateOverallModelsReadiness() {},
+      recordWebgpuTextState: state => recorded.push(state),
+      setWebgpuDownloadState: state => { assert.equal(state.status, 'not-downloaded'); },
+    });
+    vm.runInContext(functions, context);
+    await vm.runInContext('refreshWebgpuDownloadStatus({ probeSibling: true })', context);
+    assert.equal(selectedId, preset.id, 'opening Apocalypse must preserve the selected Bonsai variant');
+    assert.equal(queried.length, 5);
+    assert.deepEqual(new Set(queried), new Set(WEBGPU_SELECTABLE_MODEL_PRESETS.map(option => option.id)));
+    assert.equal(recorded.length, 4);
+  }
+});
+
+test('Apocalypse ignores stale preset status while saving and retains the selected model after a failed download', async () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/apocalypse-mode.js'), 'utf8');
+  const functions = source.slice(source.indexOf('async function ensureFixedWebgpuProvider('), source.indexOf('async function runWebgpuDownloadAction('));
+  const target = WEBGPU_BONSAI2_VL_4B_MODEL_ID;
+  let selected = WEBGPU_COMPASS_TINY_V2_MODEL_ID;
+  let saved = selected;
+  let releaseOldStatus;
+  let releaseSave;
+  let statusCount = 0;
+  const commands = [];
+  const radios = WEBGPU_SELECTABLE_MODEL_PRESETS.map(preset => ({
+    value: preset.id, disabled: false,
+    set checked(value) { if (value) selected = preset.id; },
+  }));
+  const context = vm.createContext({
+    WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_DTYPE, WEBGPU_SELECTABLE_MODEL_PRESETS,
+    webgpuModelPreset, webgpuModelDtype, isSelectableWebgpuPreset,
+    supportsWebgpuVision: true, webgpuDownloadStatusRequest: 0,
+    webgpuPresetChangePending: false,
+    fixedWebgpuProviderConfigured: false, fixedWebgpuProviderMarkedReady: false,
+    webgpuDownloadState: { modelId: selected, dtype: WEBGPU_DTYPE, status: 'not-downloaded', ready: false },
+    selectedWebgpuModelId: () => selected,
+    selectedWebgpuPreset: () => webgpuModelPreset(selected),
+    CSS: { escape: value => value },
+    document: {
+      querySelectorAll: () => radios,
+      querySelector: selector => radios.find(radio => selector.includes(radio.value)),
+    },
+    updateWebgpuTextPresetUi() {}, updateWebgpuDownloadPanel() {}, updateOverallModelsReadiness() {}, recordWebgpuTextState() {},
+    setWebgpuDownloadState: state => { context.webgpuDownloadState = state; },
+    providerCommand: async (action, payload = {}) => {
+      commands.push({ action, payload: structuredClone(payload) });
+      if (action === 'update_provider') {
+        await new Promise(resolve => { releaseSave = resolve; });
+        saved = payload.config.model || saved;
+        return { ok: true };
+      }
+      assert.equal(action, 'get_webgpu_download_status', 'selection must not start a model download');
+      statusCount += 1;
+      if (statusCount === 1) return new Promise(resolve => { releaseOldStatus = resolve; });
+      return { modelId: payload.model || saved, dtype: webgpuModelPreset(payload.model || saved).dtype,
+        status: 'error', ready: false, error: 'Download failed.' };
+    },
+  });
+  vm.runInContext(functions, context);
+  const staleRefresh = context.refreshWebgpuDownloadStatus();
+  selected = target;
+  const selection = context.onWebgpuTextPresetChange();
+  assert.equal(radios.every(radio => radio.disabled), true);
+  releaseOldStatus({ modelId: WEBGPU_COMPASS_TINY_V2_MODEL_ID, status: 'ready', ready: true });
+  await staleRefresh;
+  await context.refreshWebgpuDownloadStatus();
+  assert.equal(statusCount, 1, 'polling must wait for the selected preset to finish saving');
+  assert.equal(selected, target, 'an older ready response must not restore Compass');
+  releaseSave();
+  await selection;
+  assert.equal(saved, target);
+  assert.equal(selected, target);
+  assert.equal(context.webgpuDownloadState.status, 'error');
+  assert.equal(context.webgpuDownloadState.ready, false);
+  assert.deepEqual(context.webgpuDownloadState.dtype, WEBGPU_BONSAI2_VL_DTYPE);
+  assert.equal(radios.some(radio => radio.disabled), false, 'failed downloads must leave model selection available');
+  assert.equal(commands.filter(command => command.action === 'update_provider').length, 1);
+  assert.deepEqual(commands.find(command => command.action === 'update_provider').payload.config,
+    { model: target, dtype: WEBGPU_BONSAI2_VL_DTYPE });
+});
+
 test('Chrome exposes separate endpoint-free WebGPU text and vision providers', async () => {
   const previousChrome = globalThis.chrome;
   const sentMessages = [];
@@ -65397,6 +65558,10 @@ test('Chrome exposes separate endpoint-free WebGPU text and vision providers', a
       { id: WEBGPU_NANBEIGE42_3B_MODEL_ID, label: 'Nanbeige4.2-3B', runtime: 'onnx', contextWindow: 4096, supportsVision: false },
       { id: WEBGPU_MINICPM5_2B_MODEL_ID, label: 'MiniCPM5-2B', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
       { id: WEBGPU_COMPASS_TINY_V2_MODEL_ID, label: 'Compass Tiny v2.1', runtime: 'onnx', contextWindow: 32768, supportsVision: false },
+      { id: WEBGPU_BONSAI2_2B_MODEL_ID, label: 'Ternary Bonsai 2 2B', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
+      { id: WEBGPU_BONSAI2_4B_MODEL_ID, label: 'Ternary Bonsai 2 4B', runtime: 'onnx', contextWindow: 16384, supportsVision: false },
+      { id: WEBGPU_BONSAI2_VL_2B_MODEL_ID, label: 'Ternary Bonsai 2 2B Vision', runtime: 'onnx-vl', contextWindow: 16384, supportsVision: true },
+      { id: WEBGPU_BONSAI2_VL_4B_MODEL_ID, label: 'Ternary Bonsai 2 4B Vision', runtime: 'onnx-vl', contextWindow: 16384, supportsVision: true },
       { id: WEBGPU_BONSAI27_MODEL_ID, label: 'Basic text model', runtime: 'bitgpu', contextWindow: 4096, supportsVision: false },
     ]);
     assert.equal(new WebGPUProvider({ model: WEBGPU_BONSAI27_MODEL_ID }).dtype, 'q1');
@@ -66141,6 +66306,16 @@ test('Apocalypse text download fixes the Compass preset and avoids duplicate sta
       'webgpu-download-status',
     ], 'an in-progress Compass download must not be queued twice');
 
+    await manager.updateProvider('webgpu', { model: WEBGPU_BONSAI2_VL_4B_MODEL_ID, contextWindow: 8192, promptTier: 'mid' });
+    downloadState = { modelId: WEBGPU_BONSAI2_VL_4B_MODEL_ID, dtype: WEBGPU_BONSAI2_VL_DTYPE, status: 'ready', ready: true };
+    sentMessages.length = 0;
+    const cachedBonsai = await manager.enableAndStartWebgpuTextDownload();
+    assert.equal(cachedBonsai.ready, true);
+    assert.equal(cachedBonsai.started, false);
+    assert.equal(manager.getAll().webgpu.contextWindow, 8192, 'enabling Apocalypse must preserve a saved Bonsai context budget');
+    assert.equal(manager.getAll().webgpu.promptTier, 'mid');
+    assert.deepEqual(sentMessages.map(message => message.type), ['webgpu-probe', 'webgpu-download-status']);
+
     sentMessages.length = 0;
     hasWebGPU = false;
     downloadState = {
@@ -66229,8 +66404,9 @@ test('Apocalypse controls retain Settings transfers while the preset stays on Co
       const radio = { value: WEBGPU_COMPASS_TINY_V2_MODEL_ID, checked: true };
       const context = vm.createContext({
         WEBGPU_COMPASS_TINY_V2_MODEL_ID, WEBGPU_DTYPE, webgpuModelPreset, webgpuModelDtype, isShippedWebgpuPreset,
+        isSelectableWebgpuPreset, WEBGPU_SELECTABLE_MODEL_PRESETS,
         supportsWebgpuVision: true, fixedWebgpuProviderConfigured: false, fixedWebgpuProviderMarkedReady: false,
-        webgpuPresetHydrated: false, webgpuDownloadStatusRequest: 0, webgpuDownloadState: { status: 'checking' },
+        webgpuPresetChangePending: false, webgpuDownloadStatusRequest: 0, webgpuDownloadState: { status: 'checking' },
         snapshot: { enabled: false }, elements: {}, CSS: { escape: value => value },
         t: key => key, confirm: () => true,
         document: {
@@ -66241,7 +66417,7 @@ test('Apocalypse controls retain Settings transfers while the preset stays on Co
         providerCommand: async (action, payload = {}) => {
           commands.push({ action, payload: structuredClone(payload) });
           if (action === 'update_provider') {
-            configuredModel = payload.config.model;
+            configuredModel = payload.config.model || configuredModel;
             return { ok: true };
           }
           if (action === 'get_webgpu_download_status') {
@@ -66343,6 +66519,7 @@ test('Apocalypse enable keeps a selected Bonsai preset and does not auto-downloa
       ...manager._defaultConfigs().webgpu,
       model: WEBGPU_BONSAI27_MODEL_ID,
       dtype: 'q1',
+      contextWindow: 4096,
       configured: false,
     }));
     const result = await manager.enableAndStartWebgpuTextDownload();
@@ -66427,8 +66604,8 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     assert.doesNotMatch(apocalypseHtml, new RegExp(retiredId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       `${retiredId} should no longer be offered in the Apocalypse WebGPU picker`);
   }
-  assert.equal((apocalypseHtml.match(/class="webgpu-capability"/g) || []).length, 0,
-    'only the text-only Compass preset is offered, so no multimodal badge should remain');
+  assert.equal((apocalypseHtml.match(/<span>Ternary Bonsai 2 [24]B Vision<\/span>/g) || []).length, 2,
+    'the two image-capable Bonsai options must identify their vision support');
   assert.match(worker, /decoder_model_merged:\s*'q4'/);
   assert.match(worker, /const blocks = \[\.\.\.imageBlocks, \.\.\.textBlocks\]/);
   assert.match(worker, /createVisionProbeImage\(runtime\.library\.RawImage\)/);
@@ -66740,7 +66917,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
     settingsScript.indexOf('    webgpu: {'),
     settingsScript.indexOf('    azure_openai: {'),
   );
-  assert.match(webgpuSettingsBlock, /WEBGPU_MODEL_PRESETS/);
+  assert.match(webgpuSettingsBlock, /WEBGPU_SELECTABLE_MODEL_PRESETS/);
   assert.match(webgpuSettingsBlock, /CONTEXT_WINDOW_FIELD/);
   assert.match(webgpuSettingsBlock, /PROMPT_TIER_FIELD/);
   assert.match(apocalypseHtml, /data-i18n="ap\.models\.text\.title"/);
@@ -66761,11 +66938,11 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.doesNotMatch(apocalypseHtml, />Basic text model<\/span>/);
   assert.doesNotMatch(apocalypseHtml, /· LFM2\.5 2\.6B/);
   assert.doesNotMatch(apocalypseHtml, /· Bonsai 27B/);
-  assert.match(emergencyCopy, /Runs LFM2\.5 2\.6B on your GPU/);
+  assert.match(emergencyCopy, /Runs \{model\} on your GPU/);
   assert.match(emergencyCopy, /'ap\.webgpu\.rag\.pro': 'Runs Bonsai 27B on your GPU/);
   assert.match(apocalypseScript, /function onWebgpuTextPresetChange/);
   assert.match(apocalypseScript, /webgpuModelPreset/);
-  assert.match(apocalypseScript, /webgpuPresetHydrated/);
+  assert.match(apocalypseScript, /webgpuPresetChangePending/);
   assert.match(apocalypseScript, /normalized\.modelId !== selectedWebgpuModelId\(\)/);
   assert.match(apocalypseScript, /function anyOtherWebgpuTextBusy/);
   assert.match(background, /getWebgpuDownloadStatus\(msg\)/,
@@ -66779,7 +66956,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.doesNotMatch(apocalypseScript, /normalizeWebgpuModelId|set_active_provider/);
   assert.doesNotMatch(apocalypseScript, /providerCommand\('test_provider', \{ providerId: 'webgpu' \}\)/);
   assert.match(apocalypseScript, /providerCommand\('test_vision_provider'\)/);
-  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?model,[\s\S]*?contextWindow: preset\?\.contextWindow [\s\S]*?promptTier: 'compact'/);
+  assert.match(apocalypseScript, /update_provider[\s\S]*?providerId: 'webgpu'[\s\S]*?config: preserveConfig \? \{\} : \{ model, dtype \}/);
   assert.doesNotMatch(profileSync, /webgpuVisionEnabled/, 'Chrome-only vision selection must not profile-sync to Firefox');
   assert.doesNotMatch(profileSync, /webgpuVisionAutoSelected/, 'automatic local-vision provenance must not profile-sync to Firefox');
   assert.match(englishLocale, /Selecting “Use local fallback” checks WebGPU, records your consent,[\s\S]*Tasks report its status and never wait for it; keep Chrome open/);
@@ -66830,7 +67007,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
   assert.match(bonsaiWorker, /if \(queuedTextDownload === request\) queuedTextDownload = null/,
     'a completed download request must not clear a newer queued resume for the same model');
-  assert.match(apocalypseScript, /if \(!preset \|\| preset\.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID\)[\s\S]*?setWebgpuDownloadState\(state, \{ syncActiveTransfer: true \}\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
+  assert.match(apocalypseScript, /if \(!isSelectableWebgpuPreset\(preset\?\.id\)\)[\s\S]*?setWebgpuDownloadState\(state, \{ syncActiveTransfer: true \}\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,
     'Apocalypse Mode must replace a persisted custom WebGPU model with the checked shipped preset');
   const resumeHelpersStart = bonsaiWorker.indexOf('function parseContentRange');
   const resumeHelpersEnd = bonsaiWorker.indexOf('\n\nasync function fetchGgufForStorage', resumeHelpersStart);
@@ -67370,6 +67547,260 @@ test('Vision Model removal deletes only its cache entries', async () => {
     else globalThis.self = previousSelf;
     if (previousCaches === undefined) delete globalThis.caches;
     else globalThis.caches = previousCaches;
+  }
+});
+
+test('Bonsai 2 worker keeps native rotary positions continuous for text and images', async () => {
+  const previousSelf = globalThis.self;
+  const ortSymbol = Symbol.for('onnxruntime');
+  const previousOrt = globalThis[ortSymbol];
+  try {
+    globalThis.self = {addEventListener() {}, postMessage() {}};
+    globalThis[ortSymbol] = await import(pathToFileURL(path.join(ROOT, 'src/chrome/vendor/transformers/onnxruntime-common/index.js')).href);
+    const {applyBonsai2RotaryCompatibility} = await import(`${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?bonsai2-rope-test`);
+    const {Qwen3_5ForConditionalGeneration,Tensor} = await import(pathToFileURL(path.join(ROOT, 'src/chrome/vendor/transformers/transformers.web.js')).href);
+    const makeModel = () => Object.assign(Object.create(Qwen3_5ForConditionalGeneration.prototype), {
+      config:{image_token_id:248056,vision_start_token_id:248053,vision_config:{spatial_merge_size:2}},
+      sessions:{decoder_model_merged:{inputNames:['position_ids']}},
+    });
+    const ids = new Tensor('int64',[1n,2n,3n],[1,3]);
+    const mask = new Tensor('int64',[1n,1n,1n],[1,3]);
+    for (const modelId of [
+      'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU',
+      'danyalmalik/Ternary-Bonsai-2-4B-ONNX-WebGPU',
+      'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
+      'webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision',
+    ]) {
+      const model = makeModel();
+      applyBonsai2RotaryCompatibility(modelId,model);
+      const prefill = model.prepare_inputs_for_generation(null,{input_ids:ids,attention_mask:mask},{});
+      assert.deepEqual(prefill.position_ids.tolist(),Array.from({length:3},()=>[[0n,1n,2n]]));
+      assert.deepEqual(prefill.rope_deltas.tolist(),[[0n]],'pure text must have no MRoPE offset');
+      const next = model.prepare_inputs_for_generation(null,{
+        input_ids:new Tensor('int64',[4n],[1,1]),
+        attention_mask:new Tensor('int64',[1n,1n,1n,1n],[1,4]),
+        rope_deltas:prefill.rope_deltas,past_key_values:{get_seq_length:()=>3},
+      },{});
+      assert.deepEqual(next.position_ids.tolist(),Array.from({length:3},()=>[[3n]]),'cached decoding must continue at position 3, not 9');
+      const [,paddedDeltas] = model.get_rope_index(new Tensor('int64',[0n,2n,3n],[1,3]),null,null,new Tensor('int64',[0n,1n,1n],[1,3]));
+      assert.deepEqual(paddedDeltas.tolist(),[[-1n]],'padding must not advance the next token position');
+      const [imagePositions,imageDeltas] = model.get_rope_index(
+        new Tensor('int64',[248053n,248056n,248056n,248056n,248056n,248054n],[1,6]),
+        new Tensor('int64',[1n,4n,4n],[1,3]),null,new Tensor('int64',[1n,1n,1n,1n,1n,1n],[1,6]),
+      );
+      assert.deepEqual(imagePositions.tolist(),[[[0n,1n,1n,1n,1n,3n]],[[0n,1n,1n,2n,2n,3n]],[[0n,1n,2n,1n,2n,3n]]]);
+      assert.deepEqual(imageDeltas.tolist(),[[-2n]],'image rotary compression must remain intact');
+    }
+    for(const modelId of ['custom/qwen3.5','Mike0021/Ternary-Bonsai-2-4B-text-ONNX']) {
+      const model=makeModel(),original=model._get_text_only_rope_index;
+      applyBonsai2RotaryCompatibility(modelId,model);
+      assert.equal(model._get_text_only_rope_index,original,'unrelated runtime classes must remain unchanged');
+    }
+  } finally {
+    if(previousSelf === undefined) delete globalThis.self; else globalThis.self=previousSelf;
+    if(previousOrt === undefined) delete globalThis[ortSymbol]; else globalThis[ortSymbol]=previousOrt;
+  }
+});
+
+test('Bonsai 2 worker loads split text exports and preserves Qwen vision/tool contracts', async () => {
+  const previousSelf = globalThis.self;
+  const previousCapture = globalThis.__bonsai2Capture;
+  const previousFetch = globalThis.fetch;
+  const previousCaches = globalThis.caches;
+  let listener;
+  const posted = [];
+  const cacheEntries = new Map();
+  let networkRequests = 0;
+  try {
+    globalThis.fetch = async () => { networkRequests++; throw new Error('Unexpected network request'); };
+    const cache = {
+      match: async url => cacheEntries.get(typeof url === 'string' ? url : url.url)?.clone(),
+      put: async (url, response) => { cacheEntries.set(url, response.clone()); },
+      keys: async () => [...cacheEntries.keys()].map(url => ({url})),
+      delete: async url => cacheEntries.delete(typeof url === 'string' ? url : url.url),
+    };
+    globalThis.caches = {open:async () => cache, keys:async () => ['transformers-cache']};
+    globalThis.self = {
+      addEventListener: (type, callback) => { if (type === 'message') listener = callback; },
+      postMessage: value => posted.push(value),
+    };
+    const worker = await import(`${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?bonsai2-test`);
+    const textModel = 'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU';
+    const visionModel = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
+    const metadata = worker.bonsai2CompatibilityMetadata(`https://huggingface.co/${textModel}/resolve/main/tokenizer_config.json`);
+    assert.equal(metadata.eos_token, '<|im_end|>');
+    assert.equal(worker.tokenizerSupportsTools({ chat_template: metadata.chat_template }), true);
+    assert.equal(worker.bonsai2CompatibilityMetadata(`https://example.com/${textModel}/resolve/main/tokenizer_config.json`), null);
+    assert.equal(worker.bonsai2CompatibilityMetadata('https://huggingface.co/custom/model/resolve/main/tokenizer_config.json'), null);
+    assert.equal(worker.bonsai2CompatibilityMetadata(`https://huggingface.co/${textModel}/resolve/main/tokenizer.json`), null);
+    const generationUrl = `https://huggingface.co/${textModel}/resolve/main/generation_config.json`;
+    assert.deepEqual(worker.bonsai2CompatibilityMetadata(generationUrl).eos_token_id, [248046,248044]);
+    assert.equal(worker.bonsai2CompatibilityMetadata('https://huggingface.co/custom/model/resolve/main/generation_config.json'), null);
+    const { PreTrainedTokenizer, PreTrainedModel } = await import(pathToFileURL(path.join(ROOT, 'src/chrome/vendor/transformers/transformers.web.js')).href);
+    const tokenizer = new PreTrainedTokenizer({
+      model: {type:'BPE',vocab:{a:0},merges:[]}, decoder:{type:'ByteLevel'},
+      post_processor:null,pre_tokenizer:null,normalizer:null,added_tokens:[],
+    }, metadata);
+    const wrappedPage = '<untrusted_page_content id="abc">Page text</untrusted_page_content>';
+    const rendered = tokenizer.apply_chat_template(worker.prepareTextMessages([
+      {role:'user',content:'Read the page.'},
+      {role:'assistant',tool_calls:[{type:'function',function:{name:'read_page',arguments:'{}'}}]},
+      {role:'tool',content:wrappedPage},
+    ]), {tokenize:false,add_generation_prompt:true,enable_thinking:false,
+      tools:[{type:'function',function:{name:'read_page',parameters:{type:'object',properties:{}}}}]});
+    assert.ok(rendered.includes(wrappedPage), 'the real template must retain the complete untrusted boundary');
+    assert.ok(rendered.includes('<function=read_page>'), 'the real template must replay normalized tool calls');
+    assert.match(rendered, /<think>\s*<\/think>\s*$/, 'thinking must be closed in the generation prefix');
+    const imageShapes = [[1,4,6], [1,6,8]];
+    const imageProcessor = Object.assign(async image => ({
+      pixel_values: {dims:[image.rows * image.columns,3]},
+      image_grid_thw: {tolist:() => [[1n,BigInt(image.rows),BigInt(image.columns)]]},
+    }), {config:{merge_size:2}});
+    const cat = (tensors, axis) => {
+      assert.equal(axis, 0);
+      return tensors[0].tolist
+        ? {tolist:() => tensors.flatMap(tensor => tensor.tolist())}
+        : {dims:[tensors.reduce((total, tensor) => total + tensor.dims[0], 0),3]};
+    };
+    const batchInputs = await worker.processMultimodalInputs({
+      library:{cat}, processor:{image_processor:imageProcessor, tokenizer:prompt => ({prompt})},
+    }, visionModel, [{rows:4,columns:6},{rows:6,columns:8}], 'First <|image_pad|> then <|image_pad|> compare.');
+    assert.deepEqual(batchInputs.image_grid_thw.tolist(), imageShapes.map(grid => grid.map(BigInt)), 'each screenshot needs its own image grid');
+    assert.deepEqual(batchInputs.pixel_values.dims, [72,3], 'different screenshot shapes must concatenate along the patch axis');
+    assert.equal(batchInputs.prompt, `First ${'<|image_pad|>'.repeat(6)} then ${'<|image_pad|>'.repeat(12)} compare.`);
+    const sourceConfig = {
+      model_type: 'qwen3_5', architectures: ['Qwen3_5ForConditionalGeneration'],
+      text_config: { hidden_size: 2048 },
+      'transformers.js_config': { use_external_data_format: { 'decoder_model_merged_q4f16.onnx': 2 } },
+    };
+    const module = `
+      export const env = { version: 'test', backends: { onnx: { wasm: {} } } };
+      const capture = globalThis.__bonsai2Capture;
+      export const AutoConfig = { from_pretrained: async () => (${JSON.stringify(sourceConfig)}) };
+      export async function pipeline(task, modelId, options) {
+        capture.textLoads.push({modelId, options});
+        options.progress_callback({status:'progress_total',name:modelId,loaded:150,total:300,progress:50,
+          files:{'config.json':{loaded:100,total:100},'onnx/model.onnx_data':{loaded:50,total:200}}});
+        options.progress_callback({status:'progress',name:modelId,file:'onnx/model.onnx_data',loaded:50,total:200,progress:25});
+        options.progress_callback({status:'progress_total',name:modelId,loaded:300,total:300,progress:100,
+          files:{'config.json':{loaded:100,total:100},'onnx/model.onnx_data':{loaded:200,total:200}}});
+        options.progress_callback({status:'progress',name:modelId,file:'onnx/model.onnx_data',loaded:200,total:200,progress:100});
+        options.progress_callback({status:'done',name:modelId,file:'onnx/model.onnx_data'});
+        const root = 'https://huggingface.co/' + modelId + '/resolve/main/';
+        const metadataResponse = options.local_files_only
+          ? await (await caches.open('transformers-cache')).match(root + 'tokenizer_config.json')
+          : await env.fetch(root + 'tokenizer_config.json');
+        const metadata = await metadataResponse.json();
+        const generationResponse = options.local_files_only
+          ? await (await caches.open('transformers-cache')).match(root + 'generation_config.json')
+          : await env.fetch(root + 'generation_config.json');
+        capture.generationMetadata = await generationResponse.json();
+        const fn = async (messages, generation) => {
+          capture.generation = generation;
+          capture.messages = messages;
+          return [{generated_text: [{role:'assistant', content:'Text answer'}]}];
+        };
+        fn.tokenizer = { chat_template: metadata.chat_template };
+        fn.model = {};
+        fn.dispose = async () => {};
+        return fn;
+      }
+      export const AutoProcessor = { from_pretrained: async (modelId, options) => {
+        capture.processorOptions = options;
+        const processor = async (prompt, images) => {
+          if (typeof prompt !== 'string') throw new Error('Qwen requires text before images');
+          capture.imageInputs = {prompt, images};
+          return {input_ids:{dims:[1,3]}};
+        };
+        processor.image_processor = {max_pixels:16777216};
+        processor.tokenizer = Object.assign(() => ({input_ids:{dims:[1,3]}}), {chat_template:'{% if tools %}{{ tools }}{% endif %}'});
+        processor.apply_chat_template = (messages, options) => {
+          capture.template = {messages, options};
+          return 'Rendered Qwen prompt';
+        };
+        processor.batch_decode = () => ['Vision answer'];
+        capture.processor = processor;
+        return processor;
+      }};
+      export const AutoModelForImageTextToText = { from_pretrained: async (modelId, options) => {
+        capture.visionLoads.push({modelId, options});
+        return {generate: async (inputs) => {
+          capture.visionGeneration = inputs;
+          return {slice: () => ({})};
+        }, dispose: async () => {}};
+      }};
+      export const load_image = async url => ({url});
+    `;
+    globalThis.__bonsai2Capture = { textLoads: [], visionLoads: [] };
+    const capture = globalThis.__bonsai2Capture;
+    let id = 0;
+    const dispatch = async (type, payload = {}) => {
+      const requestId = ++id;
+      await listener({data:{id:requestId, type, payload}});
+      const response = posted.find(value => value.id === requestId);
+      assert.equal(response?.ok, true, response?.error || `No response to ${type}`);
+      return response;
+    };
+    await dispatch('init', {transformersUrl:`data:text/javascript,${encodeURIComponent(module)}`});
+    const tools = [{type:'function', function:{name:'read_page', parameters:{type:'object',properties:{}}}}];
+    const textPayload = {modelId:textModel, dtype:'q2f16', requireTools:true,
+      messages:[{role:'user',content:'<untrusted_page_content id="abc">Page text</untrusted_page_content>'}],
+      options:{tools,maxTokens:1024}};
+    const textDownload = await dispatch('download-text', textPayload);
+    assert.equal(textDownload.loaded, 300, 'aggregate and file events must count downloaded bytes once');
+    assert.equal(textDownload.total, 300, 'aggregate model totals must not be stored as another file');
+    const visionProgressEvents = posted.filter(value => value.type === 'progress');
+    assert.equal(visionProgressEvents.some(event => event.status === 'progress_total' || event.file === textModel), false,
+      'the vision host must receive only normalized file progress, avoiding the same double count');
+    const visionFiles = new Map();
+    for (const event of visionProgressEvents) if (event.total > 0) visionFiles.set(event.file, event);
+    assert.equal([...visionFiles.values()].reduce((total, item) => total + item.total, 0), 300);
+    assert.equal(capture.visionLoads.length, 0, 'text-only download must not load a missing vision graph');
+    assert.deepEqual(capture.textLoads[0].options.config['transformers.js_config'].use_external_data_format, {
+      'embed_tokens_q2f16.onnx':1, 'decoder_model_merged_q2f16.onnx':1,
+    });
+    assert.deepEqual(capture.textLoads[0].options.config['transformers.js_config'].kv_cache_dtype, {q2f16:'float16'});
+    assert.deepEqual(capture.textLoads[0].options.config.text_config.eos_token_id, [248046,248044], 'both chat turn end and end-of-text must stop generation');
+    assert.equal(capture.textLoads[0].options.config.text_config.pad_token_id, 248044);
+    const modelForStopping = {config:capture.textLoads[0].options.config, generation_config:{}};
+    const generationConfig = PreTrainedModel.prototype._prepare_generation_config.call(modelForStopping, null, {});
+    const stopping = PreTrainedModel.prototype._get_stopping_criteria.call(modelForStopping, generationConfig);
+    assert.deepEqual(stopping([[43n,248046n]], []), [true], 'the real generation runtime must stop at the chat end token');
+    assert.deepEqual(stopping([[43n,248044n]], []), [true], 'end-of-text must also terminate');
+    assert.deepEqual(stopping([[43n,248045n]], []), [false], 'ordinary non-EOS tokens must not terminate');
+    cacheEntries.delete(generationUrl); // Upgrade a cache created before the metadata fix.
+    await dispatch('dispose-text');
+    const textResult = await dispatch('text-chat', textPayload);
+    assert.equal(textResult.content, 'Text answer');
+    assert.equal(capture.textLoads.at(-1).options.local_files_only, true);
+    assert.deepEqual(capture.generationMetadata.eos_token_id, [248046,248044]);
+    assert.ok(cacheEntries.has(generationUrl), 'missing sidecars must be restored even during cached offline loading');
+    assert.deepEqual(capture.generation.tokenizer_encode_kwargs, {enable_thinking:false});
+    assert.equal(capture.generation.max_new_tokens, 1024);
+    assert.deepEqual(capture.messages, textPayload.messages, 'page-content boundary must survive prompt preparation');
+    const visionPayload = {...textPayload, modelId:visionModel,
+      dtype:{embed_tokens:'q2f16',decoder_model_merged:'q2f16',vision_encoder:'fp16'},
+      messages:[{role:'user',content:[{type:'image_url',image_url:{url:'data:image/png;base64,AA=='}},{type:'text',text:'Describe.'}]}]};
+    await dispatch('download-text', visionPayload);
+    assert.equal(capture.visionLoads.length, 1);
+    assert.equal(capture.processorOptions.image_processor_config_file, 'processor_config.json');
+    assert.equal(capture.processorOptions.chat_template_file, 'chat_template.jinja');
+    assert.equal(capture.processor.image_processor.max_pixels, 1048576);
+    const visionResult = await dispatch('multimodal-text-chat', visionPayload);
+    assert.equal(visionResult.content, 'Vision answer');
+    assert.deepEqual(capture.template.options.tools, tools);
+    assert.equal(capture.template.options.enable_thinking, false);
+    assert.equal(capture.imageInputs.images.url, 'data:image/png;base64,AA==');
+    assert.equal(capture.imageInputs.prompt, 'Rendered Qwen prompt');
+    await dispatch('stop-text-download', visionPayload);
+    assert.equal((await dispatch('text-download-status', visionPayload)).ready, false);
+    assert.equal((await dispatch('text-download-status', textPayload)).ready, true, 'removing vision must preserve text readiness');
+    assert.equal(networkRequests, 0, 'packaged sidecars must never attempt a remote fetch');
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self; else globalThis.self = previousSelf;
+    if (previousCapture === undefined) delete globalThis.__bonsai2Capture; else globalThis.__bonsai2Capture = previousCapture;
+    if (previousFetch === undefined) delete globalThis.fetch; else globalThis.fetch = previousFetch;
+    if (previousCaches === undefined) delete globalThis.caches; else globalThis.caches = previousCaches;
   }
 });
 

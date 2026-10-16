@@ -72,6 +72,7 @@ import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
+  WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
@@ -3287,8 +3288,8 @@ function renderProviders() {
           labelKey: 'st.provider.field.model',
           type: 'text',
           placeholder: 'owner/repository',
-          suggestions: [WEBGPU_COMPASS_TINY_V2_MODEL_ID],
-          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.filter(option => option.id === WEBGPU_COMPASS_TINY_V2_MODEL_ID).map(option => [
+          suggestions: WEBGPU_SELECTABLE_MODEL_PRESETS.map(option => option.id),
+          suggestionLabels: Object.fromEntries(WEBGPU_SELECTABLE_MODEL_PRESETS.map(option => [
             option.id,
             `${option.label} — ${option.id}${option.supportsVision ? ` — ${t('st.provider.field.supports_vision')}` : ''}`,
           ])),
