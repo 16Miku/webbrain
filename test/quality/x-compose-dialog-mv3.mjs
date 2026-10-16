@@ -24,6 +24,9 @@ import { fixturePageTextReply } from '../semantic-decision-stub.mjs';
 //   iframe_focus_steal: the page moves focus from the editor into an iframe's
 //     input each time the editor gets it. WebBrain's text must never be typed
 //     into that iframe; nothing is posted.
+//   iframe_focus_steal_quiet: the same on a page without the bubble and
+//     without timeline updates, where the code before this fix typed the
+//     post into the iframe.
 // As in the trace's screenshot, the bubble is drawn over the point that was
 // clicked, which for WebBrain's focus click is the middle of the editor.
 const out = path.resolve(process.env.WEBBRAIN_QUALITY_ARTIFACTS
@@ -52,6 +55,7 @@ const cases = [
   { name: 'retry_under_bubble', first: 'type_ax', body: singleLine, bubbleFirst: true },
   { name: 'bubble_on_mousedown', first: 'type_ax', body: singleLine, bubbleOnMouseDown: true, retryWrite: true },
   { name: 'iframe_focus_steal', first: 'type_ax', body: singleLine, stealFocus: true },
+  { name: 'iframe_focus_steal_quiet', first: 'type_ax', body: singleLine, stealFocus: true, quiet: true },
 ].filter(item => !process.env.WEBBRAIN_QUALITY_X_CASE || item.name === process.env.WEBBRAIN_QUALITY_X_CASE);
 assert.ok(cases.length, 'Select an existing owned X compose case.');
 const textOf = value => typeof value === 'string' ? value : Array.isArray(value)
@@ -249,13 +253,13 @@ function App(){
 }
 ReactDOM.flushSync(()=>root.render(React.createElement(App)));
 // The live timeline behind the dialog keeps updating while it is open.
-window.qaFeed=setInterval(()=>{if(document.getElementById('compose'))qaChurnFeed();},80);
+window.qaFeed=setInterval(()=>{if(document.getElementById('compose')&&!window.qaQuiet)qaChurnFeed();},80);
 // A real click in the dialog's editor makes the page draw its bold/italic
 // bubble in a body-level layer over the clicked point as the button is
 // released (in the trace, before WebBrain reselected the editor).
 document.addEventListener('mouseup',event=>{
   const editor=event.target.closest?.('#compose [data-testid="tweetTextarea_0"]');
-  if(!event.isTrusted||!editor||window.qaBubbleOnMouseDown)return;
+  if(!event.isTrusted||!editor||window.qaBubbleOnMouseDown||window.qaQuiet)return;
   qaShowBubble({x:event.clientX,y:event.clientY});
 });
 // A page that draws it already as the button goes down.
@@ -393,6 +397,8 @@ try {
       await page.waitForTimeout(300);
     }
     if (specification.bubbleOnMouseDown) await page.evaluate(() => { window.qaBubbleOnMouseDown = true; });
+    // No bubble and no timeline updates: a page where nothing covers the editor.
+    if (specification.quiet) await page.evaluate(() => { window.qaQuiet = true; });
     const body = specification.body;
     const editorRect = await page.evaluate(() => {
       const rect = document.querySelector('#compose [data-testid="tweetTextarea_0"]').getBoundingClientRect();
