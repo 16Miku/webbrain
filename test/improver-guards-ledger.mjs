@@ -95,14 +95,14 @@ function allowRealBatch(agent) {
   });
 }
 
-// One click_ax call through the real _executeToolBatch, in a claimed run;
-// resolves to { value } or { error }.
-async function realBatch(agent, tabId, step) {
-  const call = { id: `real_${step}`, function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: `ref_${step}` }) } };
+// One call (a click_ax by default) through the real _executeToolBatch, in a
+// claimed run; resolves to { value } or { error }.
+async function realBatch(agent, tabId, step, name = 'click_ax', args = { ref_id: `ref_${step}` }) {
+  const call = { id: `real_${step}`, function: { name, arguments: JSON.stringify(args) } };
   await agent._claimRunEntry(tabId, 'interactive');
   try {
     return await agent._executeToolBatch(tabId, [call], [{ role: 'assistant', tool_calls: [call] }], () => {},
-      agent._activeProvider(tabId), null, new Set(['click_ax']), step, {}).then(value => ({ value }), error => ({ error }));
+      agent._activeProvider(tabId), null, new Set([name]), step, {}).then(value => ({ value }), error => ({ error }));
   } finally {
     agent._releaseRunEntry(tabId);
   }
@@ -522,6 +522,86 @@ for (const build of BUILDS) {
 
       agent._beginCompletionInvariant(tabId);
       assert.equal(agent._progressUpdate(tabId, { items: [{ id: 'alice', status: 'acted' }] }, { sessionId }).success, true);
+    });
+  });
+
+  test(`${build}: an interrupted app-owned chat read repair is not the model's dispatch`, async () => {
+    await withSessionStorage(async () => {
+      const tabId = 102;
+      const agent = makeAgent(Agent, tabId, 'Reply to the latest message.');
+      allowRealBatch(agent);
+      // The native chat owner scope is tied to the provider object, which a
+      // real run keeps stable.
+      const provider = agent._activeProvider(tabId);
+      agent._activeProvider = () => provider;
+      agent._beginCompletionInvariant(tabId);
+      agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, blocked); // the model's own blocked click
+      const before = { sent: 0, unsent: { name: 'click_ax' }, fence: null };
+      const repaired = { success: true, dispatched: true, _nativeWhatsappReadRepair: true };
+      // The recipient guard marks a click as the app's own read repair.
+      agent._messageRecipientGuardBlock = async (tab, _name, _args, _url, context) => {
+        context.nativeWhatsappReadRepairOwner = agent._nativeChatOwnerScope(tab);
+        assert.ok(context.nativeWhatsappReadRepairOwner, 'no native chat owner in this fixture');
+        return null;
+      };
+      agent.executeTool = async () => ({ ...repaired });
+      assert.ok((await realBatch(agent, tabId, 1)).value, 'the repair did not complete');
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), before, 'the normal path counted the repair');
+      // An error after the repair returned, before its bookkeeping: the same exemption.
+      agent._captureCompletionSemanticNavigation = async () => { throw new Error('Capture failed.'); };
+      assert.equal((await realBatch(agent, tabId, 2)).error?.message, 'Capture failed.');
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), before, 'an interrupted repair counted as sent');
+      delete agent._captureCompletionSemanticNavigation;
+      delete agent._messageRecipientGuardBlock;
+
+      // Stop during the batch the app runs as its own repair clears the owner
+      // scope; the batch is still the app's, whatever the click returned, and
+      // so it is when the batch ends normally.
+      const failed = { success: false, error: 'The pane closed.' };
+      for (const [step, returned, stop] of [[3, repaired, true], [4, failed, true], [5, failed, false]]) {
+        await agent._claimRunEntry(tabId, 'interactive');
+        try {
+          const owner = agent._nativeChatOwnerScope(tabId);
+          agent.chatSessions.set(tabId, { threadKey: 'thread-1' });
+          agent._captureOwnedNativeChatReadAuthority = () => ({ threadKey: 'thread-1', isCurrent: () => true });
+          agent._ownedNativeChatReadRepairs.set(tabId, { pending: { scope: { owner } },
+            controller: { isCurrent: () => true, run: (_record, dispatch) => dispatch('click_ax', { ref_id: `ref_${step}` }) } });
+          agent.executeTool = async () => { if (stop) agent.abort(tabId); return { ...returned }; };
+          const failure = await agent._runOwnedNativeChatReadRepair(tabId, [], () => {}, agent._activeProvider(tabId),
+            new Set(['click_ax']), step, {}, null).then(() => null, error => error);
+          assert.equal(failure?.name, stop ? 'AbortError' : undefined, `step ${step}: the owned repair ended unexpectedly`);
+        } finally {
+          agent._releaseRunEntry(tabId);
+        }
+        assert.deepEqual(agent.progressActionDispatches.get(tabId), before, `step ${step}: a stopped owned repair counted`);
+      }
+    });
+  });
+
+  test(`${build}: an interrupted skill download is judged as a download, like the normal path`, async () => {
+    await withSessionStorage(async () => {
+      const tabId = 103;
+      const agent = makeAgent(Agent, tabId, 'Save the monthly report.');
+      allowRealBatch(agent);
+      agent._activeSkillToolForName = (_tab, name) => (name === 'save_report' ? { name, requiresDownloadPermission: true,
+        parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } : null);
+      agent._beginCompletionInvariant(tabId);
+      const record = () => agent.progressActionDispatches.get(tabId) || { sent: 0, unsent: null, fence: null };
+      const save = step => realBatch(agent, tabId, step, 'save_report', { url: 'https://example.test/report.pdf' });
+      // The normal path counts it as a download action.
+      agent.executeTool = async () => ({ success: true, downloadId: 7 });
+      assert.ok((await save(1)).value);
+      assert.deepEqual(record(), { sent: 1, unsent: null, fence: null });
+      // Stop as it returns, and Stop with no result, count it the same way.
+      agent.executeTool = async () => { agent.abort(tabId); return { success: true, downloadId: 8 }; };
+      assert.equal((await save(2)).error?.name, 'AbortError');
+      assert.deepEqual(record(), { sent: 2, unsent: null, fence: null }, 'a stopped download was not noted');
+      agent.executeTool = async (_tab, _name, _args, _update, context) => {
+        agent.abort(tabId);
+        throw context._contentActionAbortSignal.reason;
+      };
+      assert.equal((await save(3)).error?.name, 'AbortError');
+      assert.deepEqual(record(), { sent: 3, unsent: null, fence: null }, 'a download stopped in flight was not noted');
     });
   });
 

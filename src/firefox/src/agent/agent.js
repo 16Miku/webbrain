@@ -1430,7 +1430,27 @@ export class Agent extends LoopDetector {
     }
   }
 
-  _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null, messageRecipientContext = null } = {}) {
+  // The args the completion records judge a call by: a skill tool that needs
+  // download permission is a download action. Shared with the interrupted
+  // path in _executeToolBatch, so both judge a call the same way.
+  _completionToolArgs(tabId, name, args) {
+    return this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission
+      ? { ...(args || {}), __completionDownloadAction: true }
+      : args;
+  }
+
+  // A successful click_ax the app sent itself to read a native chat, while its
+  // ownership still holds: not the model's action. Shared like the above.
+  _isOwnedNativeChatReadRepair(tabId, name, args, result, messageRecipientContext) {
+    return name === 'click_ax' && result?.success === true && !result.outcomeUnknown
+      && result.noDispatch !== true && ((result._nativeWhatsappReadRepair === true
+        && !!messageRecipientContext?.nativeWhatsappReadRepairOwner
+        && messageRecipientContext.nativeWhatsappReadRepairOwner === this._nativeChatOwnerScope(tabId))
+        || (result._nativeTelegramReadRepair === true
+          && this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext)));
+  }
+
+  _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null, messageRecipientContext = null, ownedReadRepairBatch = false } = {}) {
     const state = this.completionInvariants.get(tabId);
     if (!state) return null;
     const terminalGuard = this._planExecutionGuards.get(tabId);
@@ -1445,9 +1465,7 @@ export class Agent extends LoopDetector {
       const candidates = social.contract.actions.filter(a => a.platform === platform && eligible.includes(a.id));
       if (candidates.length === 1) social.outcomes[candidates[0].id] = { status: 'failed', cause: 'unavailable' };
     }
-    const completionArgs = this._activeSkillToolForName(tabId, name)?.requiresDownloadPermission
-      ? { ...(args || {}), __completionDownloadAction: true }
-      : args;
+    const completionArgs = this._completionToolArgs(tabId, name, args);
     const workflowInventory = this._rememberWorkflowInventoryObservation(tabId, name, args, result);
     if (workflowInventory && result && typeof result === 'object') result.workflowInventory = workflowInventory;
     const workflowReleaseAssetObservation = this._rememberWorkflowReleaseAssetObservation(
@@ -1470,17 +1488,13 @@ export class Agent extends LoopDetector {
             ? { nativeOpaqueBaseline: messageRecipientContext.genericChatPending.nativeOpaqueBaseline } : {}) }
       : (structuredChatBinding && structuredChatBinding.threadKey === String(args.thread_key || args.threadKey || '')
         && structuredChatBinding.body === this._workflowMessageBody(args.text) ? structuredChatBinding : null);
-    const nativeChatReadRepair = name === 'click_ax' && result?.success === true && !result.outcomeUnknown
-      && result.noDispatch !== true && ((result._nativeWhatsappReadRepair === true
-        && !!messageRecipientContext?.nativeWhatsappReadRepairOwner
-        && messageRecipientContext.nativeWhatsappReadRepairOwner === this._nativeChatOwnerScope(tabId))
-        || (result._nativeTelegramReadRepair === true
-          && this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext)));
+    const nativeChatReadRepair = this._isOwnedNativeChatReadRepair(tabId, name, args, result, messageRecipientContext);
     const next = recordCompletionToolResult(state, name, completionArgs, result, { chatDeliveryBinding, nativeChatReadRepair });
     this.completionInvariants.set(tabId, next);
     // The completion state does not count an app-owned read repair as an
-    // action either: the model did not send it.
-    if (!nativeChatReadRepair) this._noteProgressActionDispatch(tabId, name, completionArgs, result);
+    // action either: the model did not send it. Nor does the dispatch record
+    // count any call of the batch the app runs as its own repair.
+    if (!nativeChatReadRepair && !ownedReadRepairBatch) this._noteProgressActionDispatch(tabId, name, completionArgs, result);
     this._rememberPageFeedbackCalculation(tabId, name, args, result, next);
     if (verifiedResumedDone && this._planExecutionGuards.get(tabId) === terminalGuard
         && next.sequence === state.sequence + 1 && !next.hadAction && !next.lastAction && !next.verificationDebt) {
@@ -12188,8 +12202,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // normal path judges it (a stale ref or a skipped click was not sent);
       // without one, a call that may have been sent counts as sent, so it can
       // back an "acted" row, and only a provably unsent one is held against one.
-      if (interrupted?.name && !interrupted.dispatchNoted) {
-        this._noteProgressActionDispatch(tabId, interrupted.name, interrupted.args || {}, interruptedRaw,
+      // The args and the read-repair exemption are the normal path's too; Stop
+      // clears the owner scope that exemption checks, so the app's own repair
+      // batch is also recognized by its run option.
+      if (interrupted?.name && !interrupted.dispatchNoted && runOptions[OWNED_NATIVE_CHAT_READ_REPAIR] !== true
+          && !this._isOwnedNativeChatReadRepair(tabId, interrupted.name, interrupted.args || {}, interruptedRaw,
+            interrupted.messageRecipientContext)) {
+        this._noteProgressActionDispatch(tabId, interrupted.name,
+          this._completionToolArgs(tabId, interrupted.name, interrupted.args || {}), interruptedRaw,
           interruptedRaw ? undefined : !interruptedUnsent);
       }
       if (this._checkAbort(tabId) || error?.name === 'AbortError') {
@@ -13494,6 +13514,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       callState.args = fnArgs;
       callState.name = fnName;
       callState.detected = detectedSubmitAction;
+      callState.messageRecipientContext = messageRecipientExecutionContext;
       onUpdate('tool_call', {
         name: fnName,
         args: fnArgs,
@@ -13754,7 +13775,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         fnName,
         fnArgs,
         toolResult,
-        { detectedSubmit: detectedSubmitAction, messageRecipientContext: messageRecipientExecutionContext },
+        { detectedSubmit: detectedSubmitAction, messageRecipientContext: messageRecipientExecutionContext,
+          ownedReadRepairBatch: runOptions[OWNED_NATIVE_CHAT_READ_REPAIR] === true },
       );
       // That also noted the call in the dispatch record; see the catch in
       // _executeToolBatch for a call interrupted before this point.
