@@ -1,4 +1,5 @@
 import { BaseLLMProvider } from './base.js';
+import { openRouterReplayIdentity, openRouterReplayItems, projectOpenRouterReplay, accumulateReasoningDetails } from './openrouter-replay.js';
 import { normalizeQwenToolResult, normalizeQwenToolStream } from './qwen-tool-calls.js';
 import { normalizeDolphinPromptedResult, normalizeDolphinPromptedStream } from './dolphin-prompted-tools.js';
 import { retryAfterMs } from './model-retry.js';
@@ -19,6 +20,7 @@ import {
   supportsOpenAIAskStreaming,
   applyOpenRouterRoutingVariant,
   openRouterMuseToolOptions,
+  mandatoryReasoningOptions,
 } from './provider-compatibility.js';
 import { normalizeRuntimeTraceConfig } from '../trace/runtime-config.js';
 import { RESEARCH_DATA_COLLECTION } from '../trace/research-consent.js';
@@ -56,6 +58,15 @@ function sseDataPayload(line) {
  * Provider for OpenAI-compatible APIs (ChatGPT, OpenRouter, any OpenAI-compatible endpoint).
  */
 export class OpenAICompatibleProvider extends BaseLLMProvider {
+  _reasoningReplayIdentity() {
+    return openRouterReplayIdentity({ ...this.config, baseUrl: this.baseUrl, model: this.model });
+  }
+
+  _chatMessages(messages, options = {}) {
+    const mapped = super._chatMessages(messages, options);
+    return projectOpenRouterReplay(mapped, messages, { ...this.config, baseUrl: this.baseUrl, model: this.model });
+  }
+
   get name() {
     return this.config.providerName || 'openai';
   }
@@ -616,6 +627,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
    * compatibility presets, and safe extraBody merge.
    */
   _buildChatCompletionsBody(messages, options = {}, stream = false) {
+    options = mandatoryReasoningOptions({ ...this.config, baseUrl: this.baseUrl, model: this.model }, options);
     options = qwenToolOptions({ ...this.config, baseUrl: this.baseUrl, model: this.config.model || '' }, options);
     options = openRouterMuseToolOptions({ ...this.config, baseUrl: this.baseUrl, model: this.model }, options);
     if (this.requiresPromptedTools) {
@@ -1173,6 +1185,9 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       throw new Error(`${this.name} returned invalid JSON in chat response.`);
     }
     const message = this._chatCompletionMessage(data);
+    const replayItems = openRouterReplayItems(
+      { ...this.config, baseUrl: this.baseUrl, model: this.model }, message?.reasoning_details, message?.tool_calls,
+    );
 
     const result = normalizeQwenToolResult(
       { ...this.config, baseUrl: this.baseUrl, model: this.config.model || '' },
@@ -1181,6 +1196,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
         content: message?.content || '',
         reasoningContent: message?.reasoning_content || message?.reasoning || '',
         toolCalls: message?.tool_calls || null,
+        ...(replayItems ? { responseItems: replayItems } : {}),
         usage: data.usage || null,
         finishReason: String(data?.choices?.[0]?.finish_reason || ''),
         raw: data,
@@ -1254,6 +1270,13 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       let finalUsage = null;
       let sawTerminalFinish = false;
       let terminalFinishReason = '';
+      const keepReasoningReplay = this._reasoningReplayIdentity() !== null;
+      const reasoningDetails = [];
+      const replayCalls = new Map();
+      const replayItems = () => openRouterReplayItems(
+        { ...this.config, baseUrl: this.baseUrl, model: this.model }, reasoningDetails,
+        [...replayCalls.entries()].sort(([a], [b]) => a - b).map(([, call]) => call),
+      );
 
       while (true) {
         let chunk;
@@ -1282,6 +1305,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
               type: 'done',
               content: '',
               ...(terminalFinishReason ? { finishReason: terminalFinishReason } : {}),
+              ...(replayItems() ? { responseItems: replayItems() } : {}),
             };
             return;
           }
@@ -1324,6 +1348,12 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
             terminalFinishReason = String(finishReason);
           }
           const delta = choice?.delta;
+          if (keepReasoningReplay) {
+            accumulateReasoningDetails(reasoningDetails, delta?.reasoning_details);
+            for (const call of delta?.tool_calls || []) {
+              if (call.id) replayCalls.set(call.index ?? 0, { id: call.id });
+            }
+          }
           const reasoningDelta = delta?.reasoning_content || delta?.reasoning;
           if (typeof reasoningDelta === 'string' && reasoningDelta) {
             yield { type: 'reasoning', content: reasoningDelta };
@@ -1338,7 +1368,7 @@ export class OpenAICompatibleProvider extends BaseLLMProvider {
       }
       if (finalUsage) yield { type: 'usage', usage: finalUsage };
       if (sawTerminalFinish) {
-        yield { type: 'done', content: '', finishReason: terminalFinishReason };
+        yield { type: 'done', content: '', finishReason: terminalFinishReason, ...(replayItems() ? { responseItems: replayItems() } : {}) };
         return;
       }
       if (this._supportsInteractiveAskStreaming()) {
