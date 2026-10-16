@@ -14,6 +14,18 @@ const call = (id, name, input) => ({ id, type: 'function', function: { name, arg
 const field = n => ({ name: 'set_field', input: { ref_id: `ref_${n}`, text: `value ${n}` } });
 const batch = (actions, id = 'batch') => call(id, 'browser_batch', { actions });
 
+async function withClock(t, operation) {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 });
+  let done = false;
+  const pending = operation().finally(() => { done = true; });
+  for (let elapsed = 0; elapsed < 10000 && !done; elapsed += 100) {
+    await new Promise(setImmediate);
+    t.mock.timers.tick(100);
+  }
+  assert.equal(done, true, 'fixture must finish within the bounded settling window');
+  return pending;
+}
+
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const { getToolsForMode } = await import(`../src/${build}/src/agent/tools.js`);
@@ -77,6 +89,63 @@ for (const build of ['chrome', 'firefox']) {
     assert.match(h.messages.at(-1).content, /ran 3 of 3/);
     assert.equal(h.updates.filter(event => event.type === 'tool_call' && event.data.name === 'browser_batch').length, 1);
     assert.equal(h.updates.filter(event => event.type === 'tool_result' && event.data.name === 'browser_batch').length, 1);
+  });
+
+  for (const scenario of [
+    { tier: 'full', active: 'mid', count: 7, dispatched: 7 },
+    { tier: 'mid', active: 'full', count: 7, dispatched: 0 },
+    { tier: 'mid', active: 'full', count: 2, dispatched: 2, sibling: true },
+    { tier: 'full', active: 'mid', count: 2, dispatched: 3, sibling: true },
+  ]) test(`${build}: ${scenario.tier} run uses its own tier with ${scenario.active} active (${scenario.count} actions${scenario.sibling ? ' and sibling' : ''})`, async () => {
+    const calls = [batch(Array.from({ length: scenario.count }, (_, index) => field(index)))];
+    if (scenario.sibling) calls.push(call('sibling', 'get_window_info', {}));
+    const h = setup(calls, scenario.tier);
+    h.agent.providerManager.getActive = () => ({ ...h.provider, promptTier: scenario.active });
+    await h.run();
+    assert.equal(h.dispatched.length, scenario.dispatched);
+    assertPaired(h.messages);
+    if (!scenario.dispatched) assert.match(h.messages.at(-1).content, /invalid_browser_batch/);
+    else if (scenario.sibling && scenario.tier === 'mid') {
+      assert.equal(JSON.parse(h.messages.at(-1).content).reason, 'small_model_action_boundary');
+    }
+  });
+
+  for (const scenario of ['mutation', 'observation', 'reload', 'timeout']) test(`${build}: delayed navigation ${scenario} settles before a fresh batch decision`, async t => {
+    const next = scenario === 'observation' ? { name: 'read_page', input: {} } : field(2);
+    const h = setup([batch([{ name: 'click_ax', input: { ref_id: 'ref_1' } }, next]), call('sibling', 'get_window_info', {})]);
+    const originalGet = api.tabs.get;
+    t.after(() => { api.tabs.get = originalGet; });
+    let dispatchedAt = null;
+    let nextAt = null;
+    const elapsed = () => dispatchedAt === null ? -1 : Date.now() - dispatchedAt;
+    const loading = () => elapsed() >= 300 && (scenario === 'timeout' || elapsed() < 600);
+    const url = () => elapsed() >= 300 && scenario !== 'reload' ? 'https://example.com/next' : 'https://example.com/';
+    api.tabs.get = async id => ({ id, url: url(), status: loading() ? 'loading' : 'complete' });
+    h.agent._currentUrl = async () => url();
+    h.agent.executeTool = async (_tab, name, args) => {
+      h.dispatched.push({ name, args });
+      if (dispatchedAt === null) dispatchedAt = Date.now();
+      else nextAt = elapsed();
+      return { success: true, verified: true };
+    };
+    await withClock(t, h.run);
+    assertPaired(h.messages);
+    assert.deepEqual(h.dispatched.map(item => item.name), scenario === 'observation' ? ['click_ax', 'read_page'] : ['click_ax']);
+    if (scenario === 'observation') assert.ok(nextAt >= 800, 'observation waits for navigation and quiet completion');
+    assert.equal(JSON.parse(h.messages.find(message => message.tool_call_id === 'sibling').content).reason,
+      scenario === 'timeout' ? 'action_unverified' : 'navigation_changed');
+  });
+
+  test(`${build}: a complete tab gets a bounded delayed-navigation grace period`, async t => {
+    const { agent } = setup([]);
+    let result;
+    let finishedAt;
+    await withClock(t, async () => {
+      result = await agent._settleBrowserBatchNavigation(1);
+      finishedAt = Date.now();
+    });
+    assert.deepEqual(result, { settled: true, navigationObserved: false });
+    assert.ok(finishedAt >= 500 && finishedAt <= 700);
   });
 
   test(`${build}: malformed later input prevents every dispatch`, async () => {

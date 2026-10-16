@@ -11981,7 +11981,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           || toolResult?.ambiguous || toolResult?.outcomeUnknown || toolResult?.stale) return 'action_failed';
       if (toolResult?.inconclusive || toolResult?.verified === false || toolResult?.remoteStateVerified === false) return 'action_unverified';
       if (batch.submit && batch.hasRemaining) return 'submit_boundary';
-      if (!batch.sameNext && batch.navigationChanged && batch.hasRemaining) return 'navigation_changed';
+      if (batch.navigationChanged && batch.hasRemaining
+          && (!batch.sameNext || !batch.remainingObservations)) return 'navigation_changed';
       if (!batch.sameNext && batch.hadMutation && (tier === 'mid' || tier === 'compact')) return 'small_model_action_boundary';
     }
     if (toolName === 'done' && toolResult?.completionPageBlock === true) {
@@ -12098,14 +12099,27 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _settleBrowserBatchNavigation(tabId) {
-    // Click-like actions may start loading just after their dispatch returns.
-    const deadline = Date.now() + 3000;
+    // A complete tab can start navigation after a click's handler returns. Give
+    // it a short grace period, then require quiet completion before continuing.
+    const started = Date.now();
+    const deadline = started + 3000;
+    let completeSince = null;
+    let navigationObserved = false;
     do {
       this._throwIfAborted(this._runAbortSignal(tabId));
       const tab = await browser.tabs.get(tabId);
-      if (tab.status !== 'loading') return;
+      if (tab.status === 'loading') {
+        navigationObserved = true;
+        completeSince = null;
+      } else {
+        completeSince ??= Date.now();
+        if (Date.now() - started >= 500 && Date.now() - completeSince >= 200) {
+          return { settled: true, navigationObserved };
+        }
+      }
       await new Promise(resolve => setTimeout(resolve, 100));
     } while (Date.now() < deadline);
+    return { settled: false, navigationObserved };
   }
 
   async _executeToolBatch(tabId, toolCalls, messages, onUpdate, provider, partialAssistantText = null, allowedToolNames = AGENT_TOOL_NAMES, step = null, runOptions = {}, toolSchemas = null) {
@@ -12125,7 +12139,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const batchStarted = new Set();
     const batchSchemas = parentCalls.length ? new Map([...allowedToolNames].map(name => [name, this._toolParametersForValidation(tabId, name, toolSchemas)])) : null;
     toolCalls = expandBrowserBatchCalls(toolCalls, {
-      enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(), allowedToolNames, toolSchemas: batchSchemas,
+      enabled: this.browserBatchEnabled !== false, tier: this._resolvePromptTier(provider), allowedToolNames, toolSchemas: batchSchemas,
     });
     const originalUpdate = onUpdate;
     const cancellationState = { active: null };
@@ -12329,7 +12343,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const apiMutationsDeniedForRun = runOptions.apiMutationsDenied === true;
     const apiMutationsAllowedForRun = () =>
       !apiMutationsDeniedForRun && this.isApiMutationsAllowed(tabId);
-    const promptTier = this._resolvePromptTier();
+    const promptTier = this._resolvePromptTier(provider);
     const readLimits = this._readWindowLimits();
     const completionBatchStartState = this.completionInvariants.get(tabId) || null;
     const navNotices = [];
@@ -12428,8 +12442,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           { tier: promptTier, triggeringTool: previous.function.name, reason: 'action_failed', navNotices },
         )) { navNotices.length = 0; break; }
       }
-      if (tc._browserBatch && previous?._browserBatch?.parentId === tc._browserBatch.parentId
-          && Agent.NAV_PRONE_TOOLS.has(previous.function.name)) await this._settleBrowserBatchNavigation(tabId);
       const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null };
       cancellationState.active = callState;
       if (this._checkAbort(tabId)) {
@@ -13809,7 +13821,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         && beforeUrl
         && (!toolResult?.error || toolResult?.dispatched === true)
       ) {
-        await new Promise(r => setTimeout(r, 200));
+        if (tc._browserBatch && toolCalls[toolIndex + 1]?._browserBatch?.parentId === tc._browserBatch.parentId) {
+          const settled = await this._settleBrowserBatchNavigation(tabId);
+          if (settled.navigationObserved) navigatedBrowserBatches.add(tc._browserBatch.parentId);
+          if (!settled.settled && toolResult && typeof toolResult === 'object') {
+            toolResult.inconclusive = true;
+            toolResult.verified = false;
+          }
+        } else {
+          await new Promise(r => setTimeout(r, 200));
+        }
         afterUrl = await this._currentUrl(tabId);
         const beforeFull = this._normalizeUrl(beforeUrl);
         const afterFull = this._normalizeUrl(afterUrl);
