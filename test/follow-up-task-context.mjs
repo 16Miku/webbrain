@@ -277,6 +277,45 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._plannerAuthenticTaskText(messages), 'Instead explain this article.');
   });
 
+  // An unavailable reading must not turn the answer into a new task, and "ok"
+  // to the planner's own question must not end the turn as an acknowledgment.
+  for (const reading of [null, 'acknowledge']) {
+    test(`${build}: a reply to the planner question answers it when the reading is ${reading || 'unavailable'}`, async () => {
+      const { agent, messages } = fixture();
+      const question = 'Which email should I use?';
+      messages.push({ role: 'assistant', content: question, webbrainPlannerClarification: {
+        taskText: root, taskKey: agent._progressTaskKeyForText(root), requiresSubmission: true } });
+      const answer = reading ? 'ok, the one already filled in' : 'use owner@example.test';
+      const calls = installModelStub(agent, { decide: (_kind, { request, page }) => {
+        assert.equal(page.last_question, question);
+        return reading ? { choice: reading, evidence: request } : null;
+      } });
+      const turn = user(answer);
+      await agent._markUserTurnKind(tab, messages, turn, answer, 'act');
+      assert.equal(calls.length, 1);
+      assert.equal(turn.webbrainTurnKind, reading ? 'update' : undefined);
+      const view = [...messages, turn];
+      const binding = agent._activeTaskBinding(view);
+      assert.equal(binding.taskIndex, 1);
+      assert.equal(binding.clarificationIndex, 2);
+      const task = agent._plannerAuthenticTaskText(view);
+      const parsed = JSON.parse(task.slice(task.indexOf('{')));
+      assert.equal(parsed.request, root);
+      assert.equal(parsed.latest_request, answer);
+      assert.equal(parsed.relationship, reading ? 'update' : 'clarification');
+      let planned = null;
+      agent._runPlannerGate = async (_tab, _enriched, _update, _cost, _run, _history, _info, _plannerMode, _mode, _options, follow) => {
+        planned = follow.authenticTaskText;
+        return { proceed: true, requestKind: 'execute', requiresStateChange: true };
+      };
+      const result = await agent._maybeRunPlannerGate(tab, messages, turn, () => {}, 'act', {}, null,
+        { tabUrl: 'https://owned.test/form', tabTitle: 'Form' });
+      assert.equal(result.proceed, true, JSON.stringify(result));
+      assert.equal(planned, task, 'The planner receives the answer with the task it clarifies.');
+      assert.equal(agent._progressTaskAnchorText(tab), binding.text);
+    });
+  }
+
   test(`${build}: corrections keep task history while later no-send overrides earlier send intent`, async () => {
     const { agent, messages } = fixture();
     const calls = installModelStub(agent, { decide: (_kind, { request, page }) => {
@@ -368,7 +407,7 @@ for (const build of ['chrome', 'firefox']) {
     const turn = user(latest);
     await agent._markUserTurnKind(tab, messages, turn, turn.content, 'act');
     messages.push(turn);
-    assert.equal(turn.webbrainTurnKind, 'request');
+    assert.equal(turn.webbrainTurnKind, undefined, 'An unread turn stays unmarked.');
     assert.equal(agent._plannerAuthenticTaskText(messages), latest);
     delete turn.webbrainTurnKind;
     assert.equal(agent._plannerAuthenticTaskText(messages), latest);

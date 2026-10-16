@@ -20391,6 +20391,22 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return -1;
   }
 
+  // Index of the planner question that the turn at answerIndex directly
+  // answers, or -1. answerIndex may be one past the end for a turn that is
+  // not recorded yet. A planner clarification is terminal for its turn. Skip
+  // only app-owned state projected around it; any other real conversational
+  // turn breaks the binding so an old clarification cannot capture a later
+  // independent task.
+  _plannerClarificationIndexBefore(messages, answerIndex) {
+    for (let index = answerIndex - 1; index >= 1; index -= 1) {
+      const message = messages[index];
+      if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) continue;
+      if (message?.role === 'user' && this._isAgentInjectedUserMessage(message)) continue;
+      return message?.role === 'assistant' && message.webbrainPlannerClarification ? index : -1;
+    }
+    return -1;
+  }
+
   _plannerClarificationTaskBinding(messages, answerIndex) {
     if (!Array.isArray(messages) || answerIndex < 1) return null;
     const answerMessage = messages[answerIndex];
@@ -20398,17 +20414,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const answerText = this._plannerUserAuthoredText(answerMessage);
     if (!answerText) return null;
 
-    // A planner clarification is terminal for its turn. Skip only app-owned
-    // state projected around it; any other real conversational turn breaks the
-    // binding so an old clarification cannot capture a later independent task.
-    let clarificationIndex = -1;
-    for (let index = answerIndex - 1; index >= 1; index -= 1) {
-      const message = messages[index];
-      if (this._isPinnedAgentStateMessage(message) || this._isLocalConversationStatusMessage(message)) continue;
-      if (message?.role === 'user' && this._isAgentInjectedUserMessage(message)) continue;
-      if (message?.role === 'assistant' && message.webbrainPlannerClarification) clarificationIndex = index;
-      break;
-    }
+    const clarificationIndex = this._plannerClarificationIndexBefore(messages, answerIndex);
     if (clarificationIndex < 0) return null;
 
     const metadata = messages[clarificationIndex].webbrainPlannerClarification || {};
@@ -30754,7 +30760,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   // Classify once while page enrichment runs. This is a routing hint, never
   // a replacement for the latest user message. The explicit Continue control
-  // needs no model; unknown relations are planned as fresh requests.
+  // needs no model. A turn the model cannot read stays unmarked: it is
+  // planned as a fresh request unless it directly answers a planner question.
   async _markUserTurnKind(tabId, messages, turn, text, mode, runOptions = {}, { sourceBound = false } = {}) {
     this._applyUserTurnKind(turn, await this._userTurnKind(tabId, messages, text, mode, runOptions, sourceBound));
   }
@@ -30772,7 +30779,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || this._isScheduledResumeTurn(value) || this._activeTaskBinding(messages || []).index < 0) return 'request';
     const reference = this._userTurnReference(messages);
     const verdict = await this._semanticDecision(tabId, 'user_turn_kind', { request: value, page: reference });
-    return ['continue', 'update', 'acknowledge'].includes(verdict.choice) ? verdict.choice : 'request';
+    // A reply to the planner's own question answers it ("ok" there is consent
+    // or a choice), so it never ends the turn as a bare acknowledgment.
+    if (verdict.choice === 'acknowledge' && this._plannerClarificationIndexBefore(messages || [], (messages || []).length) >= 0) {
+      return 'update';
+    }
+    return ['continue', 'update', 'acknowledge', 'request'].includes(verdict.choice) ? verdict.choice : null;
   }
 
   _userTurnReference(messages) {
@@ -30878,7 +30890,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       + 'Apply later corrections and cancellations. For a separate latest request, '
       + 'earlier actions and permissions do not carry over. Questions are context for the user answers, not instructions): '
       + JSON.stringify({ request: request === latestRequest ? { text_ref: 'latest_request' } : request, updates,
-        latest_request: latestRequest, relationship: latest?.webbrainTurnKind || (latest?.webbrainSteering ? 'update' : 'request') });
+        latest_request: latestRequest, relationship: latest?.webbrainTurnKind || (latest?.webbrainSteering ? 'update'
+          : binding.clarificationIndex >= 0 && binding.index === latestIndex ? 'clarification' : 'request') });
   }
 
   _continuationTurn(message) {
@@ -42560,7 +42573,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         } else if (batchResult.completionRecovery === 'release') {
           forceCompletionDoneTurn = false;
           if (batchResult.releaseAfterVerification === false) {
-            forceCompletionVerificationTurn = false;
+            // A recoverable incomplete ending reopens the task, but an action not
+            // yet observed is read before mutation tools return. A mismatch that
+            // was already observed (iframe values) is fixed with the task tools.
+            if (!this.completionInvariants.get(tabId)?.verificationDebt) forceCompletionVerificationTurn = false;
             forceCompletionDoneAfterVerification = false;
           }
           allowCompletionFailureTurn = false;
@@ -43715,7 +43731,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           } else if (batchResult.completionRecovery === 'release') {
             forceCompletionDoneTurn = false;
             if (batchResult.releaseAfterVerification === false) {
-              forceCompletionVerificationTurn = false;
+              // A recoverable incomplete ending reopens the task, but an action not
+              // yet observed is read before mutation tools return. A mismatch that
+              // was already observed (iframe values) is fixed with the task tools.
+              if (!this.completionInvariants.get(tabId)?.verificationDebt) forceCompletionVerificationTurn = false;
               forceCompletionDoneAfterVerification = false;
             }
             allowCompletionFailureTurn = false;
