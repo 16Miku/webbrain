@@ -208,7 +208,7 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: automatic iframe churn has a finite retry budget for dependent answers`, async () => {
     const f = fixture(Agent, { streaming: false, response: 'done', change: 'dependent-continuous', dependent: true });
     try {
-      assert.match(await f.run(), /page kept changing/i);
+      assert.match(await f.run(), /could not validate the next action after repeated browser updates/i);
       assert.deepEqual(f.dispatched, []);
       assert.deepEqual(f.counts(), { mainCalls: 5, scopeCalls: 2 });
       assert.ok(f.updates.some(update => update.type === 'error' && update.data.code === 'page_unstable'));
@@ -239,7 +239,7 @@ for (const build of ['chrome', 'firefox']) {
   test(`${build}: a foreign live monitor cannot grant an independent answer proof`, async () => {
     const f = fixture(Agent, { streaming: false, response: 'done', change: 'foreign-monitor' });
     try {
-      assert.match(await f.run(), /page kept changing/i);
+      assert.match(await f.run(), /could not validate the next action after repeated browser updates/i);
       assert.deepEqual(f.dispatched, []);
       assert.deepEqual(f.counts(), { mainCalls: 5, scopeCalls: 0 });
     } finally { f.clean(); }

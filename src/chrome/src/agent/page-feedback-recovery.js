@@ -5,8 +5,8 @@ export const PAGE_FEEDBACK_NUDGE_AT = 2;
 export const PAGE_FEEDBACK_STOP_AT = 5;
 export const PAGE_FEEDBACK_STOP_CODE = 'page_unstable';
 
-const STOP_MESSAGE = 'Stopped because the page kept changing before the next action could be safely dispatched. '
-  + 'The task is incomplete; no stale action was dispatched. Wait for the page to settle, then choose Retry.';
+const STOP_MESSAGE = 'WebBrain could not validate the next action after repeated browser updates. '
+  + 'The task is incomplete; no stale action was dispatched. Choose Retry to inspect the current page and continue.';
 const NUDGE_MESSAGE = '[PAGE KEEPS CHANGING: Browser updates repeatedly prevented the next action from being dispatched. '
   + 'Use the fresh observation to choose an action whose intended target can be verified. '
   + 'Do not repeat stale targets or coordinates.]';
