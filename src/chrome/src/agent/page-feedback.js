@@ -284,6 +284,7 @@ export async function beforePageAgentDispatch(api, tabId, details = {}) {
   let acknowledgement;
   let preparationAcknowledgement;
   const expectedModelSnapshot = owner.expectedModelSnapshot?.();
+  const batchId = owner.batchId?.();
   const relaxedMonitorGrantToken = owner.relaxedMonitorGrantToken?.();
   try {
     if (!details.release && details.fenceOnly && prepareMonitor) {
@@ -291,6 +292,7 @@ export async function beforePageAgentDispatch(api, tabId, details = {}) {
         params: { ...monitorParams, tool: dispatchDetails.tool || dispatchDetails.kind,
           allowPassiveRebase: owner.allowPassiveRebase?.() === true,
           ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}),
+          ...(batchId ? { batchId } : {}),
           ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}) } }, { frameId: Number(details.frameId) || 0 });
     }
     acknowledgement = await api.tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_dispatch',
@@ -431,6 +433,7 @@ export const pageFeedbackMethods = {
       pending: () => this._pageFeedbackBlocksCall(tabId, run.dispatchCall?.name, run.dispatchCall?.args),
       allowPassiveRebase: () => run.dispatchCall?.allowPassiveRebase === true,
       expectedModelSnapshot: () => run.dispatchCall?.dispatchState?.started ? undefined : run.dispatchCall?.expectedModelSnapshot,
+      batchId: () => run.dispatchCall?.batchId,
       relaxedMonitorGrantToken: () => this._monitoringRetryCurrent(tabId, run)?.grantToken,
       clearNavigation: () => { run.navigation = null; run.sameDocumentNavigation = null; },
       frameForDocument: documentToken => [...run.frames].find(([, frame]) => frame.token === documentToken)?.[0],
@@ -1116,9 +1119,10 @@ export const pageFeedbackMethods = {
         + 'Do not repeat an unresolved download.' };
   },
 
-  _pageFeedbackStateCurrent(tabId, run, state, url = run.url) {
+  _pageFeedbackStateCurrent(tabId, run, state, url = run.url, { rootOnly = false } = {}) {
     const calculationScope = state?.calculationResponseScope ? this._pageFeedbackCalculationResponseScope(tabId) : null;
     return !!state && state.token === run.token && state.url === url
+      && (!rootOnly || (state.frames.has(0) && !this._hasPendingSteering?.(tabId)))
       && (!state.calculationResponseScope || (calculationScope
         && state.calculationResponseScope.owner === calculationScope.owner
         && state.calculationResponseScope.runToken === calculationScope.runToken
@@ -1127,13 +1131,18 @@ export const pageFeedbackMethods = {
         && this._pageFeedbackCalculationComplete(tabId)))
       && (state.runMode === undefined || state.runMode === (this._effectiveRunMode?.(tabId, null) || null))
       && state.steeringRevision === (this._steeringRuns?.get(tabId)?.acceptedIds.size || 0)
-      && [...state.frames].every(([id, frame]) => run.frames.get(id)?.token === frame.token
+      && [...state.frames].filter(([id]) => !rootOnly || id === 0).every(([id, frame]) => run.frames.get(id)?.token === frame.token
         && run.frames.get(id)?.id === frame.id);
   },
 
   // answerOnly: an early check that only answers a target the certificate
   // cannot bind; any other outcome is left to the call's own validation.
-  async _validatePageFeedbackAction(tabId, name, args, state, { answerOnly = false } = {}) {
+  async _validatePageFeedbackAction(tabId, name, args, state, batchId = null, { answerOnly = false } = {}) {
+    // Back-compat: an earlier revision passed { answerOnly } as the 5th arg.
+    if (batchId && typeof batchId === 'object') {
+      answerOnly = !!batchId.answerOnly;
+      batchId = null;
+    }
     const run = this._pageFeedbackRuns?.get(tabId);
     const binding = state?.actionBinding;
     if (run) { run.actionBindingUnavailable = null; run.actionBindingUnavailableReason = null; run.actionContextUnverified = false; }
@@ -1144,6 +1153,7 @@ export const pageFeedbackMethods = {
       const relaxedMonitorGrantToken = retry && retry.grantToken === binding.relaxedMonitorGrantToken ? retry.grantToken : null;
       const response = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_validate_model',
         params: { ...safeAction(name, args), runToken: run.token, snapshotToken: binding.snapshotToken,
+          ...(batchId ? { batchId } : {}),
           ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}) } }, { frameId: 0 });
       const owned = response?.runToken === binding.runToken
         && response.documentToken === binding.documentToken && response.snapshotToken === binding.snapshotToken
@@ -1204,7 +1214,7 @@ export const pageFeedbackMethods = {
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run || typeof args?.selector !== 'string' || !args.selector.trim() || !this.constructor.STATE_CHANGE_TOOLS?.has(name)
         || pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage).kind !== 'bound_target') return null;
-    if (await this._validatePageFeedbackAction(tabId, name, args, run.modelState, { answerOnly: true }) !== false) return null;
+    if (await this._validatePageFeedbackAction(tabId, name, args, run.modelState, null, { answerOnly: true }) !== false) return null;
     return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}` ? actionBindingUnavailableResult(run) : null;
   },
 
@@ -1215,8 +1225,10 @@ export const pageFeedbackMethods = {
           || !this._pageFeedbackStateCurrent(tabId, run, run.dispatchCall.modelState))) return true;
     if (!run?.events.size) return false;
     const events = [...run.events.values()];
+    const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, events);
     // Automatic churn (a superset of relaxed-retry DOM) revalidates per policy.
-    if (!isAutomaticPageFeedback(events) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState)) return true;
+    if (!isAutomaticPageFeedback(events) || !this._pageFeedbackStateCurrent(tabId, run, run.modelState, run.url,
+      { rootOnly: policy.kind === 'request' })) return true;
     // Unknown DOM is observed while an agent action is in flight. It is that
     // call's own uncertain effect only after the call sent input (typeahead
     // renders between keys). Observed during an earlier action, or during this
@@ -1225,12 +1237,12 @@ export const pageFeedbackMethods = {
       .some(({ call, afterInput }) => call && call.mutation !== false && !(call === run.dispatchCall && afterInput)))) return true;
     const policyEvents = this._monitoringRetryCurrent(tabId, run)
       ? events.map(event => event.source === 'unknown' && event.kind === 'dom' ? { ...event, source: 'page' } : event) : events;
-    const policy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, policyEvents);
+    const currentPolicy = pageFeedbackCallPolicy(name, args, run.modelState, run.latestPage, policyEvents);
     // Targets need a fresh comparison first; the content monitor then checks
     // their immutable node and action context at the actual dispatch boundary.
-    if (policy.kind === 'bound_target') return run.dispatchCall?.allowPassiveRebase !== true
+    if (currentPolicy.kind === 'bound_target') return run.dispatchCall?.allowPassiveRebase !== true
       || run.validatedActionBindings?.get(`${name}:${JSON.stringify(args)}`) !== run.modelState.actionBinding.snapshotToken;
-    return policy.kind === 'unsafe' || (policy.kind === 'target' && !run.dispatchCall?.allowPassiveRebase);
+    return currentPolicy.kind === 'unsafe' || (currentPolicy.kind === 'target' && !run.dispatchCall?.allowPassiveRebase);
   },
 
   _compactPageFeedbackMessages(messages) {
@@ -1396,8 +1408,12 @@ export const pageFeedbackMethods = {
       documentMatches = state.documentId ? documentId === state.documentId : state.frames.has(0);
     }
     const currentRun = this._pageFeedbackRuns.get(tabId) === run;
+    const concreteRequests = !!responseToolCalls?.length && responseToolCalls.every(call => {
+      try { return pageFeedbackCallPolicy(call.function?.name, JSON.parse(call.function.arguments)).kind === 'request'; }
+      catch { return false; }
+    });
     const stateCurrent = documentMatches && currentRun
-      ? this._pageFeedbackStateCurrent(tabId, run, state, url) : null;
+      ? this._pageFeedbackStateCurrent(tabId, run, state, url, { rootOnly: concreteRequests }) : null;
     const sameDocument = documentMatches && currentRun && stateCurrent;
     // A tool-free Ask answer or a strictly owned literal arithmetic-only task
     // is independent of passive churn. Task-only scope permits normal protocol
@@ -1424,7 +1440,7 @@ export const pageFeedbackMethods = {
     if (retained) for (const call of responseToolCalls) {
       const args = JSON.parse(call.function.arguments);
       if (pageFeedbackCallPolicy(call.function.name, args, state, page, events).kind === 'bound_target'
-          && await this._validatePageFeedbackAction(tabId, call.function.name, args, state) !== true) {
+          && await this._validatePageFeedbackAction(tabId, call.function.name, args, state, call._browserBatch?.parentId) !== true) {
         // A target the certificate cannot bind (a selector naming several
         // elements or none, a ref the observation did not certify, a control
         // its snapshot does not cover) gets the same answer after these page
@@ -1557,11 +1573,12 @@ export function installPageFeedback(Agent) {
     // A model cannot supply the private expected binding. Even without queued
     // feedback, use the identity captured before inference for a focused download.
     const modelState = run?.modelState;
+    const batchId = executionContext?._browserBatch?.parentId;
     const policy = pageFeedbackCallPolicy(name, args || {}, modelState, run?.latestPage);
     if (run && policy.kind === 'media_resolve') return this._resolvePageFeedbackMedia(tabId, policy.target);
     let modelBound = !!run && mutation && policy.kind === 'bound_target';
     if (modelBound) {
-      const validated = await this._validatePageFeedbackAction(tabId, name, args, modelState);
+      const validated = await this._validatePageFeedbackAction(tabId, name, args, modelState, batchId);
       if (validated === false) return run.actionBindingUnavailable === `${name}:${JSON.stringify(args)}`
         ? actionBindingUnavailableResult(run)
         : run.actionContextUnverified === true
@@ -1588,9 +1605,10 @@ export function installPageFeedback(Agent) {
     const terminal = TERMINAL_TOOLS.has(name) && !executionContext.pageFeedbackRead;
     let terminalStreak;
     let noDispatch = false;
+    let commitBrowserBatchInput = false;
     const expectedModelSnapshot = modelBound ? modelState.actionBinding.snapshotToken : undefined;
     const relaxedMonitorGrantToken = expectedModelSnapshot && this._monitoringRetryCurrent(tabId, run)?.grantToken;
-    if (run) run.dispatchCall = { name, args, allowPassiveRebase: false, dispatchState, expectedModelSnapshot, modelState, mutation,
+    if (run) run.dispatchCall = { name, args, allowPassiveRebase: false, dispatchState, expectedModelSnapshot, modelState, mutation, batchId,
       ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}) };
     if (run && mutation && owner) {
       owner.operationId = operationId;
@@ -1600,6 +1618,7 @@ export function installPageFeedback(Agent) {
       try {
         prepared = await apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_prepare',
           params: { ...safeAction(name, args), runToken: run.token, operationId, allowPassiveRebase: allowPassiveRebase === true,
+            ...(batchId ? { batchId } : {}),
             ...(relaxedMonitorGrantToken ? { relaxedMonitorGrantToken } : {}),
             ...(expectedModelSnapshot ? { expectedModelSnapshot } : {}) } }, { frameId: 0 });
       } catch {}
@@ -1619,6 +1638,11 @@ export function installPageFeedback(Agent) {
       if (run && terminal) terminalStreak = run.passiveSupersessionStreak;
       const result = await execute.call(this, tabId, name, args, onUpdate, executionContext);
       noDispatch = result?.noDispatch === true || result?.dispatched === false;
+      commitBrowserBatchInput = !!batchId && modelBound && ['set_field', 'type_ax', 'type_text'].includes(name)
+        && result?.success === true && result.verified === true && !noDispatch && !result.error
+        && !result.outcomeUnknown && !result.mutationMayHaveOccurred && !args?.submit
+        && this._pageFeedbackRuns?.get(tabId) === run && run.modelState === modelState
+        && this._pageFeedbackStateCurrent(tabId, run, modelState);
       if (run && !executionContext.pageFeedbackRead && name === 'get_interactive_elements' && Array.isArray(result)
           && this._pageFeedbackRuns?.get(tabId) === run && observationDocument
           && run.frames.get(0)?.token === observationDocument && run.url === observationUrl) {
@@ -1671,7 +1695,9 @@ export function installPageFeedback(Agent) {
         const frames = owner.operationFrames.get(operationId) || new Set([0]);
         owner.operationFrames.delete(operationId);
         await Promise.allSettled([...frames].map(async frameId => apiFor().tabs.sendMessage(tabId, {
-          target: 'content', action: 'page_monitor_finish', params: { runToken: run.token, operationId },
+          target: 'content', action: 'page_monitor_finish', params: { runToken: run.token, operationId,
+            ...(commitBrowserBatchInput && frameId === 0 ? { batchId, commitBrowserBatchInput: true,
+              batchInputText: args.text, batchInputClear: name === 'set_field' ? args.clear !== false : args.clear === true } : {}) },
         }, { frameId })));
       }
     }
