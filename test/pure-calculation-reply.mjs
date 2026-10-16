@@ -206,7 +206,7 @@ for (const build of ['chrome', 'firefox']) {
         assert.ok(requestsSeen.every(request => request.toolNames.includes('done')));
         assert.equal(updates.filter(e => e.type === 'steering_applied').length, 1);
         assert.deepEqual(updates.filter(e => e.type === 'tool_call').map(e => e.data.name), ['calculate', 'done']);
-        assert.equal(updates.some(e => e.type === 'warning' && /page kept changing/.test(e.data.message)), false);
+        assert.equal(updates.some(e => e.type === 'warning' && /could not validate the next action|page kept changing/i.test(e.data.message)), false);
         assert.equal(updates.filter(e => e.type === 'tool_result' && e.data.name === 'done').at(-1)?.data.result.outcome, 'success');
       } finally { release(); documents.delete(tab); }
     });
@@ -256,7 +256,7 @@ for (const build of ['chrome', 'firefox']) {
           assert.equal(requests, 4); assert.equal(calculations, 1);
           assert.deepEqual(seen, [{ nudged: false, calculated: false }, { nudged: true, calculated: false }, { nudged: true, calculated: true }]);
           assert.deepEqual(updates.filter(e => e.type === 'tool_call').map(e => e.data.name), ['calculate', 'done']);
-          assert.equal(updates.some(e => e.type === 'warning' && /page kept changing/.test(e.data.message)), false);
+          assert.equal(updates.some(e => e.type === 'warning' && /could not validate the next action|page kept changing/i.test(e.data.message)), false);
         } finally { release(); documents.delete(tab); }
       });
     }
@@ -332,7 +332,7 @@ for (const build of ['chrome', 'firefox']) {
         assert.equal(calculations, 1); assert.equal(requests, 3);
         assert.deepEqual(updates.filter(e => e.type === 'tool_call').map(e => e.data.name), ['calculate']);
         assert.equal(updates.some(e => e.type === 'tool_result' && e.data.name === 'done'), false);
-        assert.doesNotMatch(result, /page kept changing/);
+        assert.doesNotMatch(result, /could not validate the next action|page kept changing/i);
         // The chat answer is plain language; the guard's diagnostic stays in traces.
         assert.match(result, /couldn't verify the requested result, so I stopped\. Nothing was changed, submitted, or sent\./);
         assert.doesNotMatch(result, /\[|\]|recovery attempt|task tools/);

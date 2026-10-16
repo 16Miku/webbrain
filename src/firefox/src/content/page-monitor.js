@@ -2300,6 +2300,104 @@
   function ownedPreparationPhase(op) {
     return op?.pointerPreparationOnly === true || op?.typingPreparationOnly === true || op?.selectorPreparationOnly === true;
   }
+  // Scrolling is a relative view operation. Feed contents and uncertain DOM
+  // attribution are not its authority: the current document, human ownership
+  // and requested scroll pane are. Keep this proof separate from certificates
+  // for clicks and input, which must still bind the observed page semantics.
+  function scrollPaneFor(origin) {
+    const documentScrollable = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0,
+      document.scrollingElement?.scrollHeight || 0) > window.innerHeight + 10;
+    const skipOrigin = /^(INPUT|TEXTAREA|SELECT)$/.test(origin?.tagName || '') || origin?.isContentEditable;
+    for (let node = skipOrigin ? bindingParent(origin) : origin; node && node !== document.body && node !== document.documentElement; node = bindingParent(node)) {
+      const style = getComputedStyle(node);
+      if (node.scrollHeight > node.clientHeight + 10 && (/^(auto|scroll|overlay)$/.test(style.overflowY)
+          || (!documentScrollable && style.overflowY === 'hidden'))) return node;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+  // Match smartScrollPage's last resort when neither the origin's ancestors
+  // nor the window can move. Capture that recipient before dispatch rather
+  // than granting arbitrary containers permission to borrow the origin.
+  function scrollFallbackPane(origin, direction) {
+    const documentHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0,
+      document.scrollingElement?.scrollHeight || 0);
+    const allowHidden = documentHeight <= window.innerHeight + 10;
+    const canMove = (position, maximum) => direction === 'down' || direction === 'bottom' ? position < maximum - 1
+      : direction === 'up' || direction === 'top' ? position > 1 : false;
+    const scrollable = node => {
+      if (!node || node === document.body || node === document.documentElement
+          || node.scrollHeight <= node.clientHeight + 10) return false;
+      const overflow = getComputedStyle(node).overflowY;
+      return (/^(auto|scroll|overlay)$/.test(overflow) || (allowHidden && overflow === 'hidden'))
+        && canMove(node.scrollTop, Math.max(0, node.scrollHeight - node.clientHeight));
+    };
+    const skipOrigin = /^(INPUT|TEXTAREA|SELECT)$/.test(origin?.tagName || '') || origin?.isContentEditable;
+    for (let node = skipOrigin ? origin.parentElement : origin; node && node !== document.body && node !== document.documentElement; node = node.parentElement) {
+      if (scrollable(node)) return null;
+    }
+    if (canMove(window.scrollY, Math.max(0, documentHeight - window.innerHeight))) return null;
+    let best = null, bestArea = 0;
+    for (const node of document.querySelectorAll('div, section, main, article, aside, [role="main"], [role="dialog"], [role="region"], [role="listbox"], [role="menu"]')) {
+      if (!scrollable(node)) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.width < 1 || rect.height < 1 || rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth) continue;
+      const area = rect.width * rect.height;
+      if (area > bestArea) { best = node; bestArea = area; }
+    }
+    return bestArea > window.innerWidth * window.innerHeight * 0.15 ? best : null;
+  }
+  function scrollPaneRectMatches(pane, before) {
+    const current = rectFor(pane);
+    return !!current && !!before && ['x', 'y', 'width', 'height'].every(key => Math.abs(current[key] - before[key]) <= 2);
+  }
+  function scrollPreparationBinding(params, target) {
+    // A resolved ref wins over coordinates in the actual scroll handler.
+    // Keep the supplied fallback fields only for matching the local request.
+    const ref = params.ref_id && resolveTarget({ ref_id: params.ref_id }) === target ? params.ref_id : null;
+    const point = !ref && Number.isFinite(params.x) && Number.isFinite(params.y) ? { x: params.x, y: params.y } : null;
+    const explicit = !!(params.ref_id || params.selector || point);
+    const pane = target ? scrollPaneFor(target) : null;
+    const direction = params.direction || 'down';
+    const fallbackPane = explicit && target ? scrollFallbackPane(target, direction) : null;
+    const ancestors = new Set();
+    for (let node = target; node; node = bindingParent(node)) ancestors.add(node);
+    ancestors.add(document.scrollingElement || document.documentElement);
+    return { root: document.documentElement, context: JSON.stringify([location.href, document.baseURI, currentViewport()]),
+      request: { ref_id: params.ref_id, selector: params.selector, x: params.x, y: params.y },
+      target, ref, explicit, point, pane, paneRect: rectFor(pane), ancestors,
+      direction, alsoWindow: params.alsoWindow === true, fallbackPane, fallbackRect: rectFor(fallbackPane),
+      invalid: explicit && (!(target instanceof Element) || !target.isConnected || target.ownerDocument !== document) };
+  }
+  function scrollPreparationMatches(op, params = {}) {
+    const binding = op?.scrollIntent;
+    if (!binding || binding.invalid || op.tool !== 'scroll' || (params.kind && params.kind !== 'scroll')
+        || document.documentElement !== binding.root
+        || binding.context !== JSON.stringify([location.href, document.baseURI, currentViewport()])) return false;
+    if (binding.explicit) {
+      if ((binding.ref || op.selector) && (!binding.target?.isConnected || binding.target.ownerDocument !== document)) return false;
+      if (binding.ref && resolveTarget({ ref_id: binding.ref }) !== binding.target) return false;
+      if ((binding.ref || op.selector) && binding.pane && binding.pane !== document.scrollingElement
+          && binding.pane !== document.documentElement && !binding.pane.contains(binding.target)) return false;
+      if (op.selector) {
+        const query = queryOpenTargets(op.selector);
+        if (!query.complete || query.elements.length !== 1 || query.elements[0] !== binding.target) return false;
+      }
+      if (binding.point) {
+        const hit = deepElementFromPoint(binding.point.x, binding.point.y);
+        if (!hit || scrollPaneFor(hit) !== binding.pane || !binding.pane?.isConnected) return false;
+        // Recycled rows within the same pane are fine. Moving or replacing the
+        // pane under an already prepared coordinate is a different recipient.
+        if (!op.dispatched && binding.pane !== document.scrollingElement && binding.pane !== document.documentElement) {
+          if (!scrollPaneRectMatches(binding.pane, binding.paneRect)) return false;
+        }
+      }
+      if (binding.fallbackPane && (!binding.fallbackPane.isConnected
+          || (!op.dispatched && scrollFallbackPane(binding.target, binding.direction) !== binding.fallbackPane)
+          || !scrollPaneRectMatches(binding.fallbackPane, binding.fallbackRect))) return false;
+      if (params.element && !binding.ancestors.has(params.element) && params.element !== binding.fallbackPane) return false;
+    }
+    return !params.element || (params.element instanceof Element && params.element.isConnected && params.element.ownerDocument === document);
+  }
   const textEntryInputTypes = new Set(['text', 'search', 'email', 'url', 'tel', 'password', 'number']);
   function textEntryField(el) {
     if (!(el instanceof Element) || !el.isConnected || el.disabled === true || el.readOnly === true
@@ -2376,6 +2474,7 @@
     return '';
   }
   function preparedBindingChanged(op, { allowFocusRebind = false } = {}) {
+    if (op?.scrollIntent) return authorityChanged(op) || !scrollPreparationMatches(op);
     if (op?.allowPassiveRebase === true && op.preparedBinding?.model === true && op.focusBound
         && !allowFocusRebind && deepActiveElement() !== op.focusTarget) return true;
     return op?.allowPassiveRebase === true && !!op.preparedBinding
@@ -2383,6 +2482,8 @@
       && !operationBindingMatches(op);
   }
   function nativeReceiverPredicate(op, params) {
+    if (op?.scrollIntent && params.kind && params.kind !== 'scroll') return 'operation_kind_changed';
+    if (op?.scrollIntent && !scrollPreparationMatches(op, params)) return 'scroll_target_changed';
     if (op?.preparedBinding?.relaxed && (params.ref_id || params.selector || params.textMatch)
         && resolveTarget(params) !== op.preparedBinding.target) {
       revokeRelaxedGrant(); return 'target_changed';
@@ -2420,11 +2521,18 @@
   // the previous fence on every uncertain (non-passive) observation.
   function authorityChanged(op) {
     if (!op || lastUserAt > op.userAt) return true;
-    return op.preparedBinding?.model === true
+    return op.scrollIntent || op.preparedBinding?.model === true
       ? op.preparedInterventionRevision !== interventionRevision || interventionUnreported > 0 || pendingDOM?.source === 'user'
       : op.preparedUncertainRevision !== uncertainRevision || uncertainUnreported > 0 || (!!pendingDOM && pendingDOM.source !== 'page');
   }
   function rebasePassivePreparation(op, params = {}) {
+    if (op?.scrollIntent) {
+      if (!active || op.allowPassiveRebase !== true || op.until < Date.now() || authorityChanged(op)
+          || (params.documentToken && params.documentToken !== documentToken) || !scrollPreparationMatches(op, params)) return false;
+      if (domTimer) flushPendingDOM();
+      op.preparedRevision = revision;
+      return true;
+    }
     const relaxed = op?.preparedBinding?.relaxed === true && currentRelaxedGrant(op.preparedBinding.grantToken);
     const continuingInput = op?.dispatched && op.kind === 'input' && op.preparedBinding?.model === true;
     const continuingPreparation = op?.dispatched && ownedPreparationPhase(op) && op.preparedBinding?.model === true;
@@ -3287,7 +3395,9 @@
     const target = resolveTarget(params);
     const focusEligible = kindFor(params.tool) === 'input' || modelFocusTools.has(params.tool);
     const focusTarget = target || (focusEligible ? deepActiveElement() : null);
-    const coordinateSensitive = Number.isFinite(params.x) && Number.isFinite(params.y);
+    const scrollIntent = params.tool === 'scroll' && params.allowPassiveRebase === true && !expected && !inherited
+      ? scrollPreparationBinding(params, target) : null;
+    const coordinateSensitive = !scrollIntent && Number.isFinite(params.x) && Number.isFinite(params.y);
     const coordinateHit = coordinateSensitive ? document.elementFromPoint(params.x, params.y) : null;
     const coordinateTarget = coordinateSensitive ? target || coordinateHit : null;
     const coordinateTargetAtPoint = !target || !coordinateHit || target === coordinateHit || target.contains?.(coordinateHit);
@@ -3314,7 +3424,8 @@
       modelBindingInvalid: proofRequired && !certified,
       modelBindingReason: proofRequired && !certified ? bindingResult?.reason || 'semantic_binding_changed' : '',
       preparedTargetSignature: operationTarget ? signature(operationTarget) : undefined, kinds: new Set(),
-      preparedBinding: proofRequired ? certified : allowPassiveRebase && operationTarget ? preparedBinding(operationTarget) : null,
+      scrollIntent,
+      preparedBinding: proofRequired ? certified : !scrollIntent && allowPassiveRebase && operationTarget ? preparedBinding(operationTarget) : null,
       // A field certified for keyboard input only (see captureTarget).
       keyboardBound: inherited ? previous.keyboardBound === true : certified?.keyboardOnly === true,
       preparedInterventionRevision: interventionRevision, preparedUncertainRevision: uncertainRevision, localSynthetic: false,
@@ -3395,7 +3506,7 @@
     const receiverPredicate = nativeReceiverPredicate(op, params);
     if (!active || !op || op.modelBindingInvalid || layoutChanged || bindingChanged || (!rebased && (domTimer || unreported))
         || receiverPredicate
-        || (params.element && op.target !== params.element)
+        || (params.element && !op.scrollIntent && op.target !== params.element)
         || lastUserAt > op.userAt
         || (Number.isFinite(op.preparedRevision) && op.preparedRevision !== revision)) {
       const error = new Error('Browser changed during action preparation. Re-observe before acting.');
@@ -3480,6 +3591,14 @@
     // command, or DraftJS's paste. They are keyboard-bound (see
     // keyboardBoundField), so the node on top at its centre does not matter.
     const approved = [...operations.values()].reverse().find(op => {
+      // Preserve the original scroll recipient and intervention boundary for
+      // the content handler's local preparation, independently of typing.
+      if (action === 'scroll' && op.scrollIntent) {
+        return op.allowPassiveRebase === true && !op.dispatched && !op.finished && op.until >= Date.now()
+          && ['ref_id', 'selector', 'x', 'y'].every(key => op.scrollIntent.request[key] === params[key])
+          && op.scrollIntent.direction === (params.direction || 'down')
+          && op.scrollIntent.alsoWindow === (params.alsoWindow === true);
+      }
       const focusPressed = op.dispatched && afterFocusPress && ownedTypingFocus(op);
       if (op.allowPassiveRebase !== true || (op.dispatched && !focusPressed) || op.preparedBinding?.target !== target
           || !(op.until >= Date.now()) || lastUserAt > op.userAt) return false;
@@ -3495,6 +3614,7 @@
       return !modelDecisionPredicate(op.preparedBinding, actionFootprint(target, op.preparedBinding.readonlyPreparation));
     });
     prepare({ selector: params.selector, ref_id: params.ref_id, x: params.x, y: params.y,
+      ...(action === 'scroll' ? { direction: params.direction, alsoWindow: params.alsoWindow } : {}),
       textMatch: action === 'click' ? params.text : undefined, tool: bindingTool, operationId, runToken,
       ...(params.expectedModelSnapshot !== undefined || approved?.expectedModelSnapshot !== undefined
         ? { expectedModelSnapshot: params.expectedModelSnapshot ?? approved.expectedModelSnapshot } : {}),
@@ -3506,6 +3626,12 @@
     // Content-script dispatch is synthetic. It can produce trusted focus,
     // scroll and execCommand input, never trusted keys or pointer presses.
     if (local) local.localSynthetic = true;
+    if (local && approved?.scrollIntent) {
+      local.scrollIntent = approved.scrollIntent;
+      local.userAt = approved.userAt;
+      local.preparedInterventionRevision = approved.preparedInterventionRevision;
+      local.allowPassiveRebase = true;
+    }
     if (local && approved?.preparedBinding?.model === true) {
       local.preparedBinding = approved.preparedBinding;
       local.modelBindingTool = approved.modelBindingTool || approved.tool;
@@ -3549,7 +3675,7 @@
     const layoutChanged = coordinatePreparationShifted(operation);
     const bindingChanged = preparedBindingChanged(operation);
     const rebased = !layoutChanged && rebasePassivePreparation(operation, { element: target });
-    const receiverPredicate = !preparation ? nativeReceiverPredicate(operation, { kind: kind || localOperation.kind }) : '';
+    const receiverPredicate = !preparation ? nativeReceiverPredicate(operation, { kind: kind || localOperation.kind, element: target }) : '';
     if (rebased) localOperation.revision = operation.preparedRevision;
     if (operation?.modelBindingInvalid || layoutChanged || bindingChanged || receiverPredicate || (!rebased && (domTimer || unreported)) || lastUserAt > localOperation.userAt || revision !== localOperation.revision) {
       const error = new Error('Browser changed during action preparation. Re-observe before acting.');

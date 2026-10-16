@@ -17,20 +17,25 @@ const api = {
     sendMessage: async (id, message) => {
       const page = pages.get(id) || {};
       if (message.action === 'page_monitor_capture_model') {
-        return { ready: true, runToken: message.params.runToken, documentToken: 'main-token', snapshotToken: 'snapshot-' + (++snapshots),
-          targetCount: 2, focusedTargetAvailable: false, page: { success: true, url: PAGE_URL, pageContent: TREE } };
+        return { ready: true, runToken: message.params.runToken, documentToken: page.documentToken ?? 'main-token', snapshotToken: 'snapshot-' + (++snapshots),
+          targetCount: 2, focusedTargetAvailable: false, page: { success: true, url: PAGE_URL, pageContent: page.tree ?? TREE } };
       }
       if (message.action === 'page_monitor_validate_model') {
         (page.validations ??= []).push(message.params.snapshotToken);
         const changed = page.targetChanged === true;
         return { ready: !changed, ...(changed ? { reason: 'target_changed' } : {}), runToken: message.params.runToken,
-          documentToken: 'main-token', snapshotToken: message.params.snapshotToken };
+          documentToken: page.documentToken ?? 'main-token', snapshotToken: message.params.snapshotToken };
       }
-      if (message.action === 'page_monitor_prepare') return { ready: true, modelBindingValid: true };
+      if (message.action === 'page_monitor_prepare') {
+        (page.preparations ??= []).push(message.params);
+        page.onPrepare?.(message.params);
+        return { ready: true, modelBindingValid: true };
+      }
       return { ready: true };
     },
   },
-  webNavigation: { getAllFrames: async () => [{ frameId: 0, parentFrameId: -1, documentId: 'main-document', url: PAGE_URL },
+  webNavigation: { getAllFrames: async ({ tabId }) => [{ frameId: 0, parentFrameId: -1,
+    documentId: pages.get(tabId)?.documentId ?? 'main-document', url: PAGE_URL },
     { frameId: 1, parentFrameId: 0, documentId: 'ad-document', url: 'https://ads.example/slot' }] },
   scripting: { executeScript: async () => [{ result: null }] },
 };
@@ -77,7 +82,9 @@ function bindFrames(agent, tab) {
     return value => assert.equal(agent.observePageFeedback(from, { ...state, seq: ++seq, revision: seq,
       kind: 'dom', source: 'page', target: 'span#price', ...value }).accepted, true);
   };
-  return { main: make(0, 'main-document', 'main-token', PAGE_URL), child: make(1, 'ad-document', 'ad-token', 'https://ads.example/slot') };
+  const page = pages.get(tab) || {};
+  return { main: make(0, page.documentId ?? 'main-document', page.documentToken ?? 'main-token', PAGE_URL),
+    child: make(1, 'ad-document', 'ad-token', 'https://ads.example/slot') };
 }
 
 const call = (id, name, args) => ({ toolCalls: [{ id, function: { name, arguments: JSON.stringify(args) } }] });
@@ -95,6 +102,7 @@ const AUTOMATIC = {
 for (const build of ['chrome', 'firefox']) {
   const { Agent } = await import(`../src/${build}/src/agent/agent.js`);
   const policy = await import(`../src/${build}/src/agent/page-feedback-policy.js`);
+  const { beforePageAgentDispatch } = await import(`../src/${build}/src/agent/page-feedback.js`);
 
   test(`${build}: automatic classifier separates page churn from intervention and unknown navigation`, () => {
     const automatic = [
@@ -164,6 +172,259 @@ for (const build of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${build}: scroll intent survives automatic text changes without granting mixed batches or intervention a bypass`, () => {
+    const page = { success: true, pageContent: TREE };
+    const state = { url: PAGE_URL, page };
+    const changed = { ...page, pageContent: TREE + '\n status "Updated moments ago" [ref_clock]' };
+    const automatic = [
+      { kind: 'dom', source: 'page', frameId: 0, target: 'span#clock' },
+      { kind: 'dom', source: 'unknown', frameId: 0, target: 'div#feed' },
+    ];
+    const retains = (name, args, events = automatic) => policy.canRetainPageFeedbackCalls(
+      [{ function: { name, arguments: JSON.stringify(args) } }], state, changed, events);
+    const inputs = [{ direction: 'down', amount: 600 }, { direction: 'bottom', ref_id: 'ref_main' },
+      { direction: 'down', x: 320, y: 500 }];
+    for (const input of inputs) {
+      assert.equal(policy.pageFeedbackCallPolicy('scroll', input, state, changed, automatic).kind, 'scroll');
+      assert.equal(retains('scroll', input), true, 'Unrelated fresh AX text must not invalidate scrolling');
+      assert.equal(retains('scroll', input, [{ kind: 'dom', source: 'page', frameId: 0, target: 'span#clock' }]), true);
+      for (const event of [{ kind: 'scroll', source: 'user', frameId: 0, target: 'html' },
+        { kind: 'navigation', source: 'unknown', frameId: 0 }]) {
+        assert.equal(retains('scroll', input, [...automatic, event]), false);
+      }
+    }
+    const batch = { actions: inputs.map(input => ({ name: 'scroll', input })) };
+    assert.equal(policy.pageFeedbackCallPolicy('browser_batch', batch, state, changed, automatic).kind, 'scroll');
+    assert.equal(retains('browser_batch', batch), true, 'Scroll-only batches use the same freshness policy');
+    for (const action of [{ name: 'click', input: { x: 320, y: 500 } },
+      { name: 'execute_js', input: { code: 'save()' } }]) {
+      assert.equal(retains('browser_batch', { actions: [...batch.actions, action] }), false,
+        'Adding a fenced action must not inherit scroll retention');
+    }
+    for (const input of [{ direction: 'down', frameId: 2 }, { direction: 'down', targetFrame: 2 },
+      { direction: 'down', allFrames: true }]) assert.equal(retains('scroll', input), false,
+      'Only the current top document has this scroll policy');
+    assert.equal(retains('browser_batch', { actions: [] }), false);
+    assert.equal(retains('browser_batch', { actions: [{ name: 'browser_batch', input: batch }] }), false);
+  });
+
+  for (const streaming of [false, true]) {
+    for (const scenario of [
+      { name: 'viewport scroll', input: { direction: 'down', amount: 600 } },
+      { name: 'pane ref scroll', input: { direction: 'bottom', ref_id: 'ref_main' } },
+      { name: 'batched coordinate scroll', input: { direction: 'down', x: 320, y: 500 }, batch: true },
+    ]) {
+      test(`${build}: ${streaming ? 'stream' : 'chat'} ${scenario.name} executes once through continuous DOM and AX text updates`, async () => {
+        const tab = nextTab++, dispatched = [], updates = [];
+        let agent, frames, requests = 0, terminal = null;
+        pages.set(tab, {});
+        agent = makeAgent(Agent, async () => {
+          requests++;
+          assert.ok(requests <= 2, 'Automatic changes must not regenerate the same scroll or completed answer');
+          pages.get(tab).tree = TREE + `\n status "Refresh ${requests}" [ref_clock]`;
+          // Each model call overlaps real main-document updates, including
+          // unattributed effects. The fresh AX tree changes as well.
+          frames.main({ kind: 'dom', source: 'page', target: 'span#clock' });
+          frames.main({ kind: 'dom', source: 'unknown', target: 'div#feed' });
+          AUTOMATIC.child_navigation(agent, tab, frames);
+          if (requests > 1) return call('finished', 'done', { summary: 'Scrolled down', outcome: 'success' });
+          return scenario.batch
+            ? call('scroll-batch', 'browser_batch', { actions: [{ name: 'scroll', input: scenario.input }] })
+            : call('scroll-once', 'scroll', scenario.input);
+        });
+        agent.maxSteps = 7;
+        agent._endTraceRun = async (_tab, _run, status) => { terminal = status; };
+        agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { frames = bindFrames(agent, tab); return { role: 'user', content }; };
+        pages.get(tab).onPrepare = params => {
+          if (params.tool === 'scroll') frames.main({ kind: 'dom', source: 'unknown', target: 'div#during-prepare' });
+        };
+        agent._executeToolWithLifecycle = async (_tab, tool, args, _update, context) => {
+          if (tool === 'get_accessibility_tree') return { success: true, pageContent: pages.get(tab).tree ?? TREE };
+          if (tool === 'scroll') {
+            frames.main({ kind: 'dom', source: 'unknown', target: 'div#before-scroll' });
+            await beforePageAgentDispatch(api, tab, { kind: 'scroll', fenceOnly: true });
+            context._contentActionDispatchState.started = true;
+          }
+          dispatched.push({ tool, args });
+          return tool === 'done' ? { done: true, success: true, summary: args.summary, outcome: args.outcome }
+            : { success: true, dispatched: true, moved: true, movedWindow: true, scrollY: 600 };
+        };
+        try {
+          const options = { detachedRequestId: 'scroll-churn-' + tab, askStreamingEnabled: false };
+          const update = (type, data) => updates.push({ type, data });
+          const result = streaming ? await agent.processMessageStream(tab, 'Scroll down', update, 'act', options)
+            : await agent.processMessage(tab, 'Scroll down', update, 'act', [], options);
+          assert.equal(result, 'Scrolled down');
+          assert.equal(requests, 2);
+          assert.deepEqual(dispatched.map(item => item.tool), ['scroll', 'done']);
+          assert.deepEqual(dispatched[0].args, scenario.input, 'Keep the original pane/coordinate intent');
+          const prepared = pages.get(tab).preparations.filter(item => item.tool === 'scroll');
+          assert.equal(prepared.length, 1, 'There is one scroll preparation and dispatch');
+          assert.equal(prepared[0].allowPassiveRebase, true, 'The content dispatch fence can rebase automatic changes');
+          if (scenario.batch) {
+            const result = updates.find(event => event.type === 'tool_result' && event.data.name === 'browser_batch');
+            assert.equal(result?.data.result.success, true);
+            assert.equal(result.data.result.summary, '[browser_batch] ran 1 of 1 actions');
+          }
+          assert.notEqual(terminal, 'page_unstable');
+          assert.equal(agent._pageFeedbackRuns.size, 0);
+        } finally { pages.delete(tab); }
+      });
+    }
+  }
+
+  for (const streaming of [false, true]) {
+    for (const intervention of ['user_scroll', 'main_document_replacement']) {
+      test(`${build}: ${streaming ? 'stream' : 'chat'} ${intervention} still supersedes stale scroll intent`, async () => {
+        const tab = nextTab++, dispatched = [];
+        let agent, frames, requests = 0;
+        pages.set(tab, {});
+        agent = makeAgent(Agent, async () => {
+          requests++;
+          if (requests === 1) {
+            if (intervention === 'user_scroll') frames.main({ kind: 'scroll', source: 'user', target: 'html', viewport: { x: 0, y: 600 } });
+            else {
+              Object.assign(pages.get(tab), { documentId: 'main-document-next', documentToken: 'main-token-next' });
+              agent.observePageNavigation({ tabId: tab, frameId: 0, parentFrameId: -1,
+                documentId: 'main-document-next', url: PAGE_URL, transitionType: 'reload', transitionQualifiers: [] }, 'committed');
+              // The replacement content script joins the run before the
+              // refreshed observation and next model decision.
+              frames = bindFrames(agent, tab);
+            }
+            return call('stale-scroll', 'scroll', { direction: 'down', amount: 111 });
+          }
+          if (requests === 2) return call('fresh-scroll', 'scroll', { direction: 'down', amount: 222 });
+          assert.equal(requests, 3);
+          return call('finished', 'done', { summary: 'Scrolled from the fresh page', outcome: 'success' });
+        });
+        agent.maxSteps = 7;
+        agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { frames = bindFrames(agent, tab); return { role: 'user', content }; };
+        agent._executeToolWithLifecycle = async (_tab, tool, args) => {
+          if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+          dispatched.push({ tool, args });
+          return tool === 'done' ? { done: true, success: true, summary: args.summary, outcome: args.outcome }
+            : { success: true, dispatched: true, moved: true, movedWindow: true, scrollY: 222 };
+        };
+        try {
+          const options = { detachedRequestId: 'scroll-intervention-' + tab, askStreamingEnabled: false };
+          const result = streaming ? await agent.processMessageStream(tab, 'Scroll down', () => {}, 'act', options)
+            : await agent.processMessage(tab, 'Scroll down', () => {}, 'act', [], options);
+          assert.equal(result, 'Scrolled from the fresh page');
+          assert.equal(requests, 3, 'The model must reconsider scrolling after intervention or document replacement');
+          assert.deepEqual(dispatched.map(item => item.tool), ['scroll', 'done']);
+          assert.equal(dispatched[0].args.amount, 222, 'The pre-intervention scroll is never dispatched');
+        } finally { pages.delete(tab); }
+      });
+    }
+  }
+
+  test(`${build}: a deterministic scroll without model state dispatches on a quiet page`, async () => {
+    const tab = nextTab++, agent = makeAgent(Agent, async () => assert.fail('No inference'));
+    const dispatched = [];
+    const input = { direction: 'down', amount: 600 };
+    pages.set(tab, {});
+    await agent._claimRunEntry(tab, 'interactive');
+    try {
+      bindFrames(agent, tab);
+      const run = agent._pageFeedbackRuns.get(tab);
+      assert.equal(run.modelState, undefined, 'Saved workflow replay has no pre-inference observation');
+      assert.equal(run.events.size, 0);
+      agent._executeToolWithLifecycle = async (_tab, tool, args) => {
+        assert.equal(tool, 'scroll');
+        await beforePageAgentDispatch(api, tab, { kind: 'scroll', fenceOnly: true });
+        dispatched.push({ tool, args });
+        return { success: true, dispatched: true, moved: true, movedWindow: true };
+      };
+      const result = await agent.executeTool(tab, 'scroll', input);
+      assert.equal(result.success, true);
+      assert.equal(result.dispatched, true);
+      assert.notEqual(result.pageFeedbackPending, true);
+      assert.deepEqual(dispatched, [{ tool: 'scroll', args: input }]);
+      assert.equal(run.modelState, undefined);
+    } finally { pages.delete(tab); agent._releaseRunEntry(tab); }
+  });
+
+  for (const change of ['steering_revision', 'run_mode']) {
+    for (const phase of ['preparation', 'dispatch_boundary']) {
+      test(`${build}: ${change} during scroll ${phase} fences dispatch even without page events`, async () => {
+        const tab = nextTab++, agent = makeAgent(Agent, async () => assert.fail('No inference'));
+        let handlerCalls = 0;
+        pages.set(tab, {});
+        await agent._claimRunEntry(tab, 'interactive');
+        try {
+          agent._runModeOverrides.set(tab, 'act');
+          const steering = { acceptedIds: new Set(), messages: [] };
+          agent._steeringRuns.set(tab, steering);
+          bindFrames(agent, tab);
+          const messages = [{ role: 'system', content: '' }, { role: 'user', content: 'Scroll down' }];
+          agent.conversations.set(tab, messages);
+          await agent._capturePageFeedbackModelState(tab, messages);
+          const run = agent._pageFeedbackRuns.get(tab);
+          const changeAuthority = () => {
+            assert.equal(run.events.size, 0, 'The regression requires an empty page-feedback queue');
+            if (change === 'steering_revision') steering.acceptedIds.add('accepted-correction');
+            else agent._runModeOverrides.set(tab, 'ask');
+          };
+          pages.get(tab).onPrepare = params => {
+            if (params.tool === 'scroll' && phase === 'preparation') changeAuthority();
+          };
+          agent._executeToolWithLifecycle = async (_tab, tool) => {
+            if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+            assert.equal(tool, 'scroll');
+            handlerCalls++;
+            assert.equal(phase, 'dispatch_boundary', 'A change during preparation rejects before the scroll handler');
+            changeAuthority();
+            await assert.rejects(beforePageAgentDispatch(api, tab, { kind: 'scroll', fenceOnly: true }),
+              error => error?.code === 'page_feedback_pending', 'The owner fence checks authority before its empty-queue return');
+            return { success: false, noDispatch: true, dispatched: false, pageFeedbackPending: true };
+          };
+          const result = await agent.executeTool(tab, 'scroll', { direction: 'down', amount: 600 });
+          assert.equal(result.noDispatch, true);
+          assert.equal(result.pageFeedbackPending, true);
+          assert.equal(handlerCalls, phase === 'preparation' ? 0 : 1);
+          assert.equal(run.events.size, 0);
+          assert.equal(pages.get(tab).preparations.filter(item => item.tool === 'scroll').length, 1);
+        } finally {
+          pages.delete(tab);
+          agent._steeringRuns.delete(tab);
+          agent._runModeOverrides.delete(tab);
+          agent._releaseRunEntry(tab);
+        }
+      });
+    }
+  }
+
+  if (build === 'chrome') {
+    test('chrome: the initial scroll preparation uses the same last-interaction pane as dispatch', async () => {
+      const tab = nextTab++, agent = makeAgent(Agent, async () => assert.fail('No inference'));
+      const dispatched = [];
+      pages.set(tab, {});
+      await agent._claimRunEntry(tab, 'interactive');
+      try {
+        bindFrames(agent, tab);
+        const messages = [{ role: 'system', content: '' }, { role: 'user', content: 'Scroll down in this pane' }];
+        agent.conversations.set(tab, messages);
+        await agent._capturePageFeedbackModelState(tab, messages);
+        agent._lastInteractionRect.set(tab, { x: 300, y: 400, w: 40, h: 80, ts: Date.now(), url: PAGE_URL });
+        pages.get(tab).onPrepare = params => {
+          if (params.tool === 'scroll') assert.deepEqual({ x: params.x, y: params.y }, { x: 320, y: 440 },
+            'The first content-monitor preparation must already target the last-interaction pane');
+        };
+        agent._executeToolWithLifecycle = async (_tab, tool, args) => {
+          if (tool === 'get_accessibility_tree') return { success: true, pageContent: TREE };
+          assert.equal(tool, 'scroll');
+          dispatched.push(args);
+          return { success: true, dispatched: true, moved: true, movedContainer: true };
+        };
+        assert.equal((await agent.executeTool(tab, 'scroll', { direction: 'down', amount: 600 })).success, true);
+        assert.deepEqual(dispatched, [{ direction: 'down', amount: 600, x: 320, y: 440, origin: 'last_interaction' }]);
+        const prepared = pages.get(tab).preparations.filter(item => item.tool === 'scroll');
+        assert.equal(prepared.length, 1);
+        assert.equal(prepared[0].allowPassiveRebase, true);
+      } finally { pages.delete(tab); agent._releaseRunEntry(tab); }
+    });
+  }
+
   for (const [name, emit] of Object.entries(AUTOMATIC)) {
     test(`${build}: a bound action revalidates through ${name} and dispatches on the first decision`, async () => {
       const tab = nextTab++, updates = [], dispatched = [];
@@ -217,7 +478,8 @@ for (const build of ['chrome', 'firefox']) {
         const update = (type, data) => updates.push({ type, data });
         const result = streaming ? await agent.processMessageStream(tab, 'Add the blue shoes', update, 'act', options)
           : await agent.processMessage(tab, 'Add the blue shoes', update, 'act', [], options);
-        assert.match(result, /page kept changing/);
+        assert.match(result, /could not validate the next action/);
+        assert.doesNotMatch(result, /page kept changing/, 'A recovery message must describe failed validation rather than claim visible change');
         assert.equal(terminal, 'page_unstable');
         assert.equal(requests, 5);
         assert.deepEqual(dispatched, [], 'A changed bound target is never dispatched');

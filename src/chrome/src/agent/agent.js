@@ -47508,9 +47508,6 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ) ? await this._currentUrl(tabId) : '';
     if (name === 'click') throwIfEarlyCdpAborted();
 
-    if (name === 'scroll') {
-      args = await this._augmentScrollArgsWithLastInteraction(tabId, args);
-    }
     const contentActionDeadlineMs = this._contentActionDeadlineMs(name, args);
     const contentActionStartedAt = Date.now();
     const remainingContentActionDeadlineMs = () => Math.max(
