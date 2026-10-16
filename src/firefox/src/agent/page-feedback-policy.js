@@ -11,6 +11,9 @@ const FRESH_READS = new Set([
 const DETACHED_TOOLS = new Set([
   'calculate', 'list_downloads', 'read_downloaded_file', 'scratchpad_write', 'progress_read',
   'progress_update', 'recall_memcode', 'clarify', 'generate_image', 'schedule_task', 'schedule_resume', 'resize_window',
+  // The handler validates a one-use token and sends its exact approved prompt,
+  // independently of the source page's DOM.
+  'delegate_research',
 ]);
 const AX_ACTIONS = new Set(['click_ax', 'type_ax', 'set_field', 'set_checked']);
 // The arithmetic in a request is found by its structure: the one span the
