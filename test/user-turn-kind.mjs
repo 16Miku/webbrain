@@ -6,8 +6,8 @@ import { installModelStub } from './semantic-decision-stub.mjs';
 // only in English, through word lists. A short Act turn after an earlier task
 // is now read by a model in any language, once, when it arrives; the answer is
 // stored on the turn, so the task anchor, ledger scope and approved plan read
-// it without words. Anything the model cannot read with confidence is a new
-// request, as an unrecognised word was before.
+// it without words. Anything the model cannot read with confidence stays
+// unmarked and is a new request, as an unrecognised word was before.
 const area = { get: async () => ({}), set: async () => {}, remove: async () => {} };
 globalThis.chrome = globalThis.browser = { storage: { local: area, session: area }, runtime: { getURL: value => `extension://owned/${value}` } };
 const earlier = 'Follow every stargazer on this page and record each one.';
@@ -69,7 +69,9 @@ for (const build of ['chrome', 'firefox']) {
       { choice: 'resume', evidence: 'devam et' }, null]) {
       const f = fixture(() => answer);
       const turn = await f.mark('devam et');
-      assert.equal(turn.webbrainTurnKind, 'request', JSON.stringify(answer));
+      assert.equal(turn.webbrainTurnKind, undefined, JSON.stringify(answer));
+      f.agent.conversations.get(f.tab).push(turn);
+      assert.equal(f.agent._progressTaskAnchorText(f.tab), 'devam et', 'An unread turn is a new request');
     }
     // The decision model answers first when it is enabled and sure.
     const f = fixture(() => { throw new Error('The active model is not asked'); });

@@ -227,4 +227,137 @@ for (const build of ['chrome', 'firefox']) {
       } finally { api.tabs.executeScript = previousExecute; if (cdp) Object.assign(cdp, previousCdp); }
     });
   }
+
+  // A full run of the real agent loop over an owned page. `script(names,
+  // request)` plays the model; `execute(name, args)` stands in for the browser.
+  async function runOwnedTask({ streaming, task, url, pageState, judge, script, execute }) {
+    const tab = nextTab++;
+    const next = async (messages, options) => {
+      const fixed = fixtureFixedChoiceReply(messages, { incomplete_task: judge, done_summary: 'result' });
+      if (fixed !== null) return { content: fixed };
+      if (String(messages[0]?.content).startsWith('Evaluate only the observable requirements')) {
+        return { content: '{"outcome":"succeeded","reason":"Fresh owned confirmation observed."}' };
+      }
+      return script(options.tools?.map(tool => tool.function.name) || []);
+    };
+    const provider = { model: 'owned', name: 'Owned', promptTier: 'full', supportsTools: true, supportsVision: false,
+      contextWindow: 128000, config: { category: 'local' }, chat: next,
+      async *chatStream(messages, options) { const result = await next(messages, options);
+        if (result.content) yield { type: 'text', content: result.content };
+        if (result.toolCalls) yield { type: 'tool_call', content: result.toolCalls.map((entry, index) => ({ ...entry, index })) };
+        yield { type: 'done' }; } };
+    const agent = new Agent({ getActive: () => provider, getProvider: () => provider, getVisionProvider: async () => null });
+    Object.assign(agent, {
+      _hydrate: async () => {}, _persist: () => {}, _persistNow: async () => ({ ok: true }), _persistSubmittedTurn: async () => {},
+      _startTraceRun: async () => null, _endTraceRun: async () => {}, _beginReadCompleteness: async () => null,
+      _manageContext: async () => {}, _checkCostAllowance: async () => null, _recordCostUsage: async () => null,
+      _currentUrl: async () => url, _getTabUrlTitle: async () => ({ tabUrl: url, tabTitle: 'Owned task' }),
+      _maybeEmitAskModeHandoff: async () => {}, _maybeReinjectAdapter: async () => {}, _ensureProgressSessionForCurrentTask: async () => {},
+      _enrichUserMessageWithCurrentPage: async (_tab, _messages, content) => ({ role: 'user', content }),
+      _plannerMode: () => 'off',
+      _runPlannerIntentGate: async () => ({ proceed: true, requestKind: 'execute', requiresStateChange: true,
+        requiresSubmission: false, siteWorkflowUrl: url }),
+      _skipPermissionGate: true, _ensureGateSetting: async () => true, _adoptLiveSocialPublishWorkflow: async () => false,
+      _isFormValidationCandidate: () => false, _preflightRichTextToolbarTarget: async () => ({ block: null }),
+      _auditRichTextToolbarTarget: async () => {}, _shouldAutoScreenshot: () => false, _pageFeedbackIdleMs: 0,
+      _completionDocumentStamp: async () => `${url}|1000`, _captureViewportProbe: async () => ({ url, title: 'Owned task' }),
+    });
+    for (const name of ['_chromeProtectedPageFailure', '_captchaMutationPreflight', '_workflowPreSubmitDispatchBlock',
+      '_messageRecipientGuardBlock', '_detectLikelySubmitAction', '_socialPublicationPreSubmitBlock']) agent[name] = async () => null;
+    agent.maxSteps = 12;
+    agent._executeToolWithLifecycle = async (_tab, name, args) => (name === 'done'
+      ? agent._executeToolImpl(tab, name, args) : execute(name, args));
+    const state = () => ({ url, title: 'Owned task', documentIdentity: `${url}|1000`, openDialogCount: 0,
+      relevantFormCount: 0, liveRegionMessages: [], ...pageState() });
+    const previousExecute = api.tabs.executeScript;
+    const previousCdp = cdp && Object.fromEntries(['attach', 'sendCommand', 'evaluate'].map(name => [name, cdp[name]]));
+    api.tabs.executeScript = async () => [state()];
+    if (cdp) { cdp.attach = async () => {}; cdp.sendCommand = async () => ({});
+      cdp.evaluate = async () => ({ result: { value: state() } }); }
+    try {
+      return streaming ? await agent.processMessageStream(tab, task, () => {}, 'act')
+        : await agent.processMessage(tab, task, () => {}, 'act');
+    } finally { api.tabs.executeScript = previousExecute; if (cdp) Object.assign(cdp, previousCdp); }
+  }
+
+  for (const streaming of [false, true]) {
+    // The failure-only turn of an unverifiable action must not become a way
+    // back to mutation tools: a recoverable ending keeps the verification turn
+    // until the dispatched action is observed.
+    test(`${build}: ${streaming ? 'stream' : 'chat'} keeps an unverified action read-only after a recoverable incomplete ending`, async () => {
+      const actions = [];
+      let pageText = 'Saving...\nSubmit', requests = 0, judgments = 0, reads = 0;
+      const result = await runOwnedTask({ streaming, task: 'Submit the owned form.', url: 'https://owned.example.test/form',
+        pageState: () => ({ workflowPageText: pageText, incompleteTaskControls: [{ label: 'Submit',
+          disabled: pageText.startsWith('Saving'), busy: pageText.startsWith('Saving') }] }),
+        judge: () => { judgments++; return 'wait_then_check'; },
+        script: names => {
+          requests++;
+          if (requests === 1) return call('submit', 'click_ax', { ref_id: 'ref_submit' });
+          if (requests === 2) return call('early', 'done', { outcome: 'success', summary: 'Submitted.' });
+          if (requests === 3) { assert.equal(names.includes('click_ax'), false); return call('read-failed', 'get_accessibility_tree', {}); }
+          if (requests === 4) { assert.ok(names.includes('done')); assert.equal(names.includes('click_ax'), false);
+            return call('give-up', 'done', { outcome: 'partial', summary: 'Could not verify the submission.' }); }
+          if (requests === 5) {
+            assert.equal(names.includes('click_ax'), false, `The unverified action reopened mutation tools: ${names.join(', ')}`);
+            assert.ok(names.includes('get_accessibility_tree'));
+            return call('read', 'get_accessibility_tree', {});
+          }
+          assert.equal(requests, 6, 'Observation ends the verification turn.');
+          assert.ok(names.includes('click_ax'), 'Observation clears the debt and restores the task tools.');
+          return call('complete', 'done', { outcome: 'success', summary: 'Owned operation complete.' });
+        },
+        execute: name => {
+          actions.push(name);
+          if (name === 'click_ax') return { success: true, dispatched: true, verified: false };
+          assert.equal(name, 'get_accessibility_tree');
+          // The first observation fails, so the dispatched action stays unverified.
+          if (++reads === 1) return { success: false, error: 'Owned read failure' };
+          pageText = 'Owned operation complete';
+          return { success: true, pageContent: pageText, pageUrl: 'https://owned.example.test/form' };
+        },
+      });
+      assert.equal(result, 'Owned operation complete.');
+      assert.equal(judgments, 1);
+      assert.equal(actions.filter(name => name === 'click_ax').length, 1, 'The action is never repeated.');
+      assert.equal(requests, 6);
+    });
+
+    // An observed mismatch is different: verify_form already read the iframe
+    // field, and only iframe_type can correct it, so the redirect returns the
+    // task tools.
+    test(`${build}: ${streaming ? 'stream' : 'chat'} corrects an observed iframe value mismatch after a recoverable incomplete ending`, async () => {
+      const actions = [], field = { selector: '#email', urlFilter: 'owned-frame.test', text: 'owner@example.test', clear: true };
+      let requests = 0, judgments = 0, corrected = false, matched = false;
+      const result = await runOwnedTask({ streaming, task: 'Fill the owned email field.', url: 'https://owned.example.test/form',
+        pageState: () => ({ workflowPageText: 'Email: wrong@example.test', incompleteTaskControls: [] }),
+        judge: () => { judgments++; return 'continue_now'; },
+        script: names => {
+          requests++;
+          if (requests === 1) return call('type', 'iframe_type', field);
+          if (requests === 2) return call('early', 'done', { outcome: 'success', summary: 'Filled.' });
+          const taskTools = names.includes('iframe_type');
+          if (taskTools && judgments && !corrected) { corrected = true; return call('fix', 'iframe_type', field); }
+          if (taskTools && matched) return call('complete', 'done', { outcome: 'success', summary: 'Email field verified.' });
+          if (!taskTools && names.includes('done')) {
+            return call('give-up', 'done', { outcome: 'partial', summary: 'The email field shows a different value.' });
+          }
+          return call(`verify-${requests}`, 'verify_form', { urlFilter: 'owned-frame.test' });
+        },
+        execute: name => {
+          actions.push(name);
+          if (name === 'iframe_type') return { success: true, value: 'owner@example.test', frameId: 3, matchIndex: 0 };
+          if (name === 'verify_form') {
+            matched = corrected;
+            return { success: true, scope: 'iframe', urlFilter: 'owned-frame.test', targetChecks: [{ matched: true,
+              valueMatchesExpected: corrected, selector: '#email', frameId: 3, matchIndex: 0, scope: 'owned-frame.test' }] };
+          }
+          return { success: true, pageContent: 'Email: owner@example.test', pageUrl: 'https://owned.example.test/form' };
+        },
+      });
+      assert.equal(result, 'Email field verified.');
+      assert.equal(judgments, 1);
+      assert.equal(corrected, true, 'The redirect offered iframe_type to correct the observed mismatch.');
+    });
+  }
 }
