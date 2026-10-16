@@ -7935,46 +7935,14 @@
         }
         return null;
       };
-      // Google Chat inside Gmail is a chat: on a Chat route, a composer in
-      // the page's main region, in no compose window and not Gmail's mail
-      // body, is identified by its own conversation header, as any chat is.
-      const gmailChatRoute = gmailRecipientMode && (() => {
-        try {
-          return location.hostname === 'mail.google.com'
-            && (/^\/chat(?:\/|$)/.test(String(location.pathname || ''))
-              || /^#chat(?:[/?]|$)/.test(String(location.hash || '')));
-        } catch { return false; }
-      })();
-      // Between an element and the Chat's main region: a scrolling area (or,
-      // with `lists`, a log, list or feed), where the conversation's history
-      // and the threads inside it live.
-      const gmailInChatHistory = (el, main, lists = true) => {
-        for (let node = el?.parentElement; node && node !== main; node = node.parentElement) {
-          if (lists && node.matches?.('[role="log"],[role="list"],[role="feed"]')) return true;
-          try {
-            const style = getComputedStyle(node);
-            if (/^(auto|scroll|overlay)$/.test(String(style.overflowY || style.overflow || '').toLowerCase())
-                && Number(node.scrollHeight) > Number(node.clientHeight) + 1) return true;
-          } catch {}
-        }
-        return false;
-      };
-      // A composer inside that history, such as a thread's reply box in the
-      // scrolling message list, is not the Chat's own composer.
-      const gmailChatMainOf = (editor, ownWindow = gmailComposeWindowOf(editor)) => {
-        if (!gmailChatRoute || !editor || ownWindow || editor.getAttribute?.('g_editable') === 'true'
-            || editor.closest?.('[role="dialog"]')) return null;
-        const main = editor.closest?.('main,[role="main"]') || null;
-        return main && !gmailInChatHistory(editor, main) ? main : null;
-      };
       // The composer a control (a Send, an attachment input) belongs to: the
       // one message editor in the control's nearest ancestor holding any,
-      // when the control lies inside that editor's own compose window or
-      // Chat region. Its message, not the page's lowest editor, is what the
-      // control sends. A click into an editor only focuses it; a page control
-      // that merely shares a distant ancestor with one editor (a toolbar's
-      // Archive) is no message's; and none, or more than one editor there,
-      // leaves the pairing to the page's layout.
+      // when the control lies inside that editor's own compose window. Its
+      // message, not the page's lowest editor, is what the control sends. A
+      // click into an editor only focuses it; a page control that merely
+      // shares a distant ancestor with one editor (a toolbar's Archive) is
+      // no message's; and none, or more than one editor there, leaves the
+      // pairing to the page's layout.
       const gmailControlComposer = control => {
         if (!gmailRecipientMode || !control || editable(control)) return null;
         for (let node = control; node && node !== document.documentElement; node = node.parentElement) {
@@ -7983,9 +7951,7 @@
           if (!inside.length) continue;
           const owners = inside.filter(editor => !inside.some(other => other !== editor && other.contains?.(editor)));
           if (owners.length !== 1) return null;
-          const ownWindow = gmailComposeWindowOf(owners[0]);
-          const scope = ownWindow || gmailChatMainOf(owners[0], ownWindow);
-          return scope?.contains?.(control) ? owners[0] : null;
+          return gmailComposeWindowOf(owners[0])?.contains?.(control) ? owners[0] : null;
         }
         return null;
       };
@@ -8262,9 +8228,6 @@
       const addStrongIdentity = (el) => {
         if (!visible(el) || editable(el) || el.closest?.('input,textarea,[contenteditable="true"]')) return;
         if (!inConversationHeaderBand(el) || independentScrollableRegion(el, composer)) return;
-        // In a Gmail Chat, nothing inside a scrolling area below its main
-        // region (its history, a thread) names the conversation.
-        if (gmailChatMain && gmailInChatHistory(el, gmailChatMain, false)) return;
         const text = compact(
           el.getAttribute?.('aria-label')
           || el.getAttribute?.('title')
@@ -8293,8 +8256,6 @@
       const gmailForeignSend = !!gmailSendOwner && composerCandidates.some(editor => gmailSendOwner.contains(editor)
         && !gmailEditorScope.contains?.(editor) && otherMessageEditor(editor, composer));
       const gmailMailSend = !!gmailComposeWindow && !gmailForeignSend;
-      const gmailChatMain = gmailForeignSend ? null : gmailChatMainOf(composer, gmailComposeWindow);
-      const gmailChatComposer = !!gmailChatMain;
       // Gmail's recipient sets come from that window alone, on any route.
       const recipientSets = gmailRecipientMode ? gmailMailSend : params.supportsRecipientSets === true;
       const nativeTelegramComposer = /^(?:web|webk|weba|webz|k)\.telegram\.org$/i.test(location.hostname)
@@ -8476,11 +8437,14 @@
             }
           }
         }
-      } else if (gmailRecipientMode && !gmailChatComposer) {
+      } else if (gmailRecipientMode) {
         // Any other Gmail send identifies no one: a Send the page's layout
-        // pairs with another message's composer, or, outside Google Chat, a
-        // composer in no mail compose window (an inline reply whose chips
-        // name no row). Nothing on the page then says where it goes.
+        // pairs with another message's composer, a composer in no mail
+        // compose window (an inline reply whose chips name no row), or a
+        // Google Chat composer. Nothing on the page then says where it goes:
+        // what names a Chat cannot be told by structure from what its
+        // messages, threads and pinned items show, and no address in them is
+        // its recipient.
       } else if (twitterConversation) {
         const headers = Array.from(document.querySelectorAll('[data-testid="dm-conversation-username"]'))
           .filter(el => visible(el) && inConversationHeaderBand(el) && !independentScrollableRegion(el, composer));
@@ -8521,7 +8485,7 @@
           }
         }
       } else {
-        for (const el of (gmailChatMain || document).querySelectorAll(
+        for (const el of document.querySelectorAll(
           '[aria-selected="true"],[aria-current]:not([aria-current="false"])'
         )) {
           // Search results and navigation rows can also be selected/current, so
@@ -8531,14 +8495,14 @@
           if (strongIdentities.length >= 8) break;
         }
 
-        for (const el of (gmailChatMain || document).querySelectorAll(
+        for (const el of document.querySelectorAll(
           'h1,h2,h3,h4,[role="heading"]'
         )) {
           addStrongIdentity(el);
           if (strongIdentities.length >= 8) break;
         }
-        if (!strongIdentities.length && (gmailChatComposer || (params.adapterName === 'generic-messaging'
-            && params.supportsRecipientSets !== true))) {
+        if (!strongIdentities.length && params.adapterName === 'generic-messaging'
+            && params.supportsRecipientSets !== true) {
           // Some conversation headers expose the contact name as a button
           // rather than a heading, or (help desks, CRMs) only the contact's
           // address as a mailto link or address chip. A shared local

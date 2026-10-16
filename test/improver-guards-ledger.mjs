@@ -552,6 +552,32 @@ for (const build of BUILDS) {
       assert.equal((await realBatch(agent, tabId, 2)).error?.message, 'Capture failed.');
       assert.deepEqual(agent.progressActionDispatches.get(tabId), before, 'an interrupted repair counted as sent');
       delete agent._captureCompletionSemanticNavigation;
+      // Stop as the repair returns ends the run's ownership; the call is still
+      // the repair its guard owned for the run.
+      agent.executeTool = async () => { agent.abort(tabId); return { ...repaired }; };
+      assert.equal((await realBatch(agent, tabId, 6)).error?.name, 'AbortError');
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), before, 'a stopped repair counted as sent');
+      // So is a Telegram read repair, which its guard binds to the clicked ref.
+      agent._messageRecipientGuardBlock = async (tab, _name, args, _url, context) => {
+        context.nativeTelegramReadRepairOwner = agent._nativeChatOwnerScope(tab);
+        context.nativeTelegramReadRepairRef = args.ref_id;
+        context.nativeTelegramReadRepairBinding = { token: 'tg-repair-8' };
+        assert.ok(context.nativeTelegramReadRepairOwner, 'no native chat owner in this fixture');
+        return null;
+      };
+      agent.executeTool = async () => {
+        agent.abort(tabId);
+        return { success: true, dispatched: true, _nativeTelegramReadRepair: true };
+      };
+      assert.equal((await realBatch(agent, tabId, 8)).error?.name, 'AbortError');
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), before, 'a stopped Telegram repair counted as sent');
+      // A model's click with no repair marked by its guard still counts.
+      agent._messageRecipientGuardBlock = async () => null;
+      assert.equal((await realBatch(agent, tabId, 7)).error?.name, 'AbortError');
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 1, unsent: null, fence: null },
+        'a stopped click of the model was not noted');
+      agent.progressActionDispatches.set(tabId, { ...before });
+      agent.executeTool = async () => ({ ...repaired });
       delete agent._messageRecipientGuardBlock;
 
       // Stop during the batch the app runs as its own repair clears the owner

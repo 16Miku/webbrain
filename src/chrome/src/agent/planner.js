@@ -1129,7 +1129,7 @@ export function normalizePlan(obj, opts = {}) {
   const risks = riskEntries.map(entry => entry.text);
   const localizedInput = obj.localized && typeof obj.localized === 'object' ? obj.localized : {};
   const providedLocalizedSteps = Array.isArray(localizedInput.steps)
-    ? localizedInput.steps.slice(0, 12).map((step, i) => ({
+    ? localizedInput.steps.slice(0, PLAN_STEP_LIMIT).map((step, i) => ({
       id: sanitizeText(step?.id || String(i + 1), 20) || String(i + 1),
       action: sanitizeText(step?.action, 300),
     })).filter((step) => step.action)

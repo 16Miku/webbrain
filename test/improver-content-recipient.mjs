@@ -78,9 +78,10 @@ const gmailChat = ({ rows = '', raise = 0, chatFile = false, appFile = false, ch
   ${rows ? `<div role="dialog" aria-label="New Message"><form onsubmit="return false">${rows}
     <div id="mail-body" contenteditable="true" role="textbox" aria-label="Message Body" style="min-height:32px">${draft}</div>
     <button id="mail-send" type="button" aria-label="Send">Send</button></form></div>` : ''}</div>`;
-// A Gmail Chat space whose history scrolls, with a thread's reply box inside
-// it: a heading in that history names a person, not the space.
-const gmailChatThread = header => `<!doctype html><style>body{margin:0;font:16px sans-serif}
+// A Gmail Chat space whose history scrolls (or, `short`, is too short to
+// scroll yet), with a thread's reply box inside it: a heading in that history
+// names a person, not the space.
+const gmailChatThread = (header, { short = false } = {}) => `<!doctype html><style>body{margin:0;font:16px sans-serif}
   #chat{position:absolute;left:0;top:0;width:900px;height:780px}#chat>header{height:60px}
   #messages{height:600px;overflow:auto}.t{display:block;width:500px;min-height:32px}footer{display:flex;gap:10px}</style>
   <main id="chat" role="main"><header>${header}</header>
@@ -88,9 +89,18 @@ const gmailChatThread = header => `<!doctype html><style>body{margin:0;font:16px
       <div style="height:150px"></div>
       <div class="thread"><div class="t" contenteditable="true" role="textbox" aria-label="Type a message">The Q3 numbers</div>
         <button id="send" type="button" aria-label="Send">Send</button></div>
-      <div style="height:600px"></div></section>
+      ${short ? '' : '<div style="height:600px"></div>'}</section>
     <footer><div class="t" contenteditable="true" role="textbox" aria-label="Type a message"></div>
       <button id="main-send" type="button" aria-label="Send">Send</button></footer></main>`;
+// A Gmail Chat whose main region holds `top` above a short history, which
+// may itself hold a heading naming someone else; `footer` adds to the
+// composer's own area.
+const gmailChatTop = (top, { history = '<div>Bob: see you</div>', footer = '' } = {}) => `<!doctype html>
+  <style>body{margin:0;font:16px sans-serif}#chat{position:absolute;left:0;top:0;width:900px;height:780px}
+  #messages{height:520px;overflow:auto}#body{display:block;width:500px;min-height:32px}footer{display:flex;gap:10px}</style>
+  <main id="chat" role="main">${top}<section id="messages">${history}</section>
+    <footer>${footer}<div id="body" contenteditable="true" role="textbox" aria-label="Type a message">The Q3 numbers</div>
+      <button id="send" type="button" aria-label="Send">Send</button></footer></main>`;
 const gmailCompose = rows => `<!doctype html><style>body{margin:0;font:16px sans-serif}[role=dialog]{width:800px}
   #body{display:block;width:700px;min-height:60px}</style>
   <main role="main"><h2>Inbox</h2></main>
@@ -305,37 +315,42 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
     } finally { await f.browser.close(); }
   });
 
-  // A Gmail Chat is identified by the person in its own header, as any
-  // chat is, and an address in its history still counts for nothing.
-  test(`${build}: a Gmail Chat send binds to the person in its header, and asks before anyone else`, async () => {
-    const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients: ['Bob'], html: gmailChat() });
-    try {
-      const { blocked, context } = await f.bind();
-      assert.equal(blocked, null, JSON.stringify(blocked));
-      assert.ok(context.messageRecipientDispatchBinding?.token);
-      const result = await call(f.page, 'click', { ...sendArgs, ...context });
-      assert.equal(result.success, true, JSON.stringify(result));
-      assert.equal(await f.page.evaluate(() => window.sent), 1);
-    } finally { await f.browser.close(); }
-    const other = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients: ['Ada'], html: gmailChat() });
-    try {
-      const { blocked, context } = await other.bind();
-      assert.equal(blocked?.reasonCode, 'active_recipient_unverified', JSON.stringify(blocked));
-      assert.deepEqual(blocked.recipientConfirmation?.recipients, [{ identity: 'Bob', role: 'to' }], JSON.stringify(blocked));
-      assert.equal(context.messageRecipientDispatchBinding, undefined);
-      assert.equal(await other.page.evaluate(() => window.sent), 0);
-    } finally { await other.browser.close(); }
-  });
+  // Nothing on a Gmail Chat page tells the Chat's name by structure from
+  // what its messages, threads and pinned items show, so a Chat send is held,
+  // whoever it names, and no card offers anyone in its place.
+  const HELD_CHATS = [
+    ['a header heading', gmailChat()],
+    ['a plain header and a heading in a short history', gmailChatTop('<header><div>Bob</div></header>',
+      { history: '<div role="heading" aria-level="3">Ada</div><div>Ada: can you send me the numbers?</div>' })],
+    ['a plain header and a pinned heading', gmailChatTop('<header><div>Bob</div></header>'
+      + '<div class="pinned"><div role="heading" aria-level="3">Ada</div></div>')],
+    ['a heading before the header', gmailChatTop('<div><h3>Ada</h3></div><header><h2>Bob</h2></header>')],
+  ];
+  for (const [kind, html] of HELD_CHATS) {
+    test(`${build}: a Gmail Chat send is held, never bound to a name on the page (${kind})`, async () => {
+      for (const recipients of [['Bob'], ['Ada']]) {
+        const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients, html });
+        try {
+          const { blocked, context } = await f.bind();
+          assert.equal(blocked?.reasonCode, 'recipient_identity_unavailable', `${recipients}: ${JSON.stringify(blocked)}`);
+          assert.equal(blocked.recipientConfirmation, undefined, JSON.stringify(blocked));
+          assert.equal(context.messageRecipientDispatchBinding, undefined);
+          assert.equal(await f.page.evaluate(() => window.sent), 0);
+        } finally { await f.browser.close(); }
+      }
+    });
+  }
 
   // A Chat send never takes the recipients of a compose window open beside
   // it: not when the layout pairs its Send with the window's body, not when
   // its own composer is the lowest editor, and not when the URL carries the
   // compose= Gmail keeps while any compose window is open.
-  for (const [rows, recipients] of [
-    [TO_ADA, ['ada@example.test']],
-    [TO_ADA + CC_CEM, [{ identity: 'ada@example.test', role: 'to' }, { identity: 'cem@example.test', role: 'cc' }]],
+  for (const [kind, rows, recipients] of [
+    ['To', TO_ADA, ['ada@example.test']],
+    ['To and Cc', TO_ADA + CC_CEM, [{ identity: 'ada@example.test', role: 'to' }, { identity: 'cem@example.test', role: 'cc' }]],
+    ['typed To', TO_FIELD('ada@example.test'), ['ada@example.test']],
   ]) {
-    test(`${build}: a Gmail Chat send never goes to the ${recipients.length === 1 ? 'To' : 'To and Cc'} of a compose window open beside it`, async () => {
+    test(`${build}: a Gmail Chat send never goes to the ${kind} of a compose window open beside it`, async () => {
       for (const url of ['https://mail.google.com/mail/u/0/#chat/space/AAAA', 'https://mail.google.com/mail/u/0/#chat/space/AAAA?compose=new']) {
         for (const raise of [0, 150]) {
           const variant = `${url.slice(url.indexOf('#'))}, compose window ${raise ? 'raised' : 'docked'}`;
@@ -343,9 +358,8 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
           try {
             const { blocked, context } = await f.bind();
             assert.equal(blocked?.success, false, `${variant}: ${JSON.stringify(blocked)}`);
+            assert.equal(blocked.recipientConfirmation, undefined, `${variant}: ${JSON.stringify(blocked)}`);
             assert.equal(context.messageRecipientDispatchBinding, undefined, variant);
-            // A card may name the chat's own person, never the window's.
-            for (const item of blocked.recipientConfirmation?.recipients || []) assert.equal(item.identity, 'Bob', variant);
             assert.equal(await f.page.evaluate(() => window.sent), 0, variant);
           } finally { await f.browser.close(); }
         }
@@ -354,8 +368,8 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
   }
 
   // Each Send sends its own message, whichever editor is the page's lowest:
-  // the compose window's Send goes to its own To row, the Chat's Send to the
-  // chat's person and never to the window's recipients.
+  // the compose window's Send goes to its own To row, and the Chat's Send is
+  // held, never sent to the window's recipients.
   for (const raise of [0, 150]) {
     test(`${build}: beside an open compose window (${raise ? 'raised' : 'docked'}) each Send binds to its own message`, async () => {
       const url = 'https://mail.google.com/mail/u/0/#chat/dm/abc?compose=new';
@@ -368,7 +382,7 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
         });
         const chat = await f.bind();
         assert.equal(chat.blocked?.success, false, JSON.stringify(chat.blocked));
-        assert.deepEqual(chat.blocked.recipientConfirmation?.recipients, [{ identity: 'Bob', role: 'to' }], JSON.stringify(chat.blocked));
+        assert.equal(chat.blocked.recipientConfirmation, undefined, JSON.stringify(chat.blocked));
         assert.equal(chat.context.messageRecipientDispatchBinding, undefined);
         const mailContext = {};
         const mailBlocked = await f.agent._messageRecipientGuardBlock(71, 'click', mailSend, url, mailContext);
@@ -377,49 +391,106 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
         assert.equal(result.success, true, JSON.stringify(result));
         assert.equal(await f.page.evaluate(() => [window.sent, window.mailSent]).then(String), '0,1');
       } finally { await f.browser.close(); }
-      const bob = await fixture(build, Agent, { url, recipients: ['Bob'], html: gmailChat({ rows: TO_ADA, raise }) });
-      try {
-        const { blocked, context } = await bob.bind();
-        assert.equal(blocked, null, JSON.stringify(blocked));
-        const result = await call(bob.page, 'click', { ...sendArgs, ...context });
-        assert.equal(result.success, true, JSON.stringify(result));
-        assert.equal(await bob.page.evaluate(() => window.sent), 1);
-      } finally { await bob.browser.close(); }
     });
   }
 
   // A model's reading of a label never makes a Chat composer something
-  // other than a message's editor, even when the label names a person.
+  // other than a message's editor, even when the label names a person, so
+  // the window's To is never the Chat's.
   for (const raise of [0, 150]) {
-    test(`${build}: a Gmail Chat composer labelled with a contact's name stays the Chat's own (${raise ? 'raised' : 'docked'} compose window)`, async () => {
+    test(`${build}: a Gmail Chat composer labelled with a contact's name stays a message's editor (${raise ? 'raised' : 'docked'} compose window)`, async () => {
       const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients: ['ada@example.test'],
         html: gmailChat({ rows: TO_ADA, raise, chatLabel: 'Reply to Bob' }) });
       try {
         const { blocked, context } = await f.bind();
         assert.equal(blocked?.success, false, JSON.stringify(blocked));
-        assert.deepEqual(blocked.recipientConfirmation?.recipients, [{ identity: 'Bob', role: 'to' }], JSON.stringify(blocked));
+        assert.equal(blocked.recipientConfirmation, undefined, JSON.stringify(blocked));
         assert.equal(context.messageRecipientDispatchBinding, undefined);
         assert.equal(await f.page.evaluate(() => window.sent), 0);
       } finally { await f.browser.close(); }
     });
   }
 
-  // A thread's reply box inside the scrolling history is not the Chat's own
-  // composer, and a heading in that history never names its recipient.
+  // A thread's reply box inside the history, scrolling or too short to
+  // scroll yet, sends to no one the history names.
   for (const [kind, header] of [['in a plain block', '<div>Team space</div>'], ['as a heading', '<h2>Team space</h2>']]) {
-    test(`${build}: a Gmail Chat thread reply never takes its recipient from the history (space name ${kind})`, async () => {
-      for (const recipients of [['Ada'], ['Team space']]) {
-        const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/space/AAA', recipients, html: gmailChatThread(header) });
-        try {
-          const { blocked, context } = await f.bind();
-          assert.equal(blocked?.success, false, `${recipients}: ${JSON.stringify(blocked)}`);
-          for (const item of blocked.recipientConfirmation?.recipients || []) assert.notEqual(item.identity, 'Ada', JSON.stringify(blocked));
-          assert.equal(context.messageRecipientDispatchBinding, undefined);
-          assert.equal(await f.page.evaluate(() => window.sent), 0);
-        } finally { await f.browser.close(); }
-      }
-    });
+    for (const short of [false, true]) {
+      test(`${build}: a Gmail Chat thread reply never takes its recipient from the history (space name ${kind}${short ? ', short history' : ''})`, async () => {
+        for (const recipients of [['Ada'], ['Team space']]) {
+          const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/space/AAA', recipients,
+            html: gmailChatThread(header, { short }) });
+          try {
+            const { blocked, context } = await f.bind();
+            assert.equal(blocked?.success, false, `${recipients}: ${JSON.stringify(blocked)}`);
+            assert.equal(blocked.recipientConfirmation, undefined, JSON.stringify(blocked));
+            assert.equal(context.messageRecipientDispatchBinding, undefined);
+            assert.equal(await f.page.evaluate(() => window.sent), 0);
+          } finally { await f.browser.close(); }
+        }
+      });
+    }
   }
+
+  // A chip beside a Chat's composer under a label naming someone ("Replying
+  // to Ada") is no To row: the Chat is not a mail compose to Ada.
+  test(`${build}: a labelled chip beside a Gmail Chat composer does not make it a mail compose`, async () => {
+    const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients: ['ada@example.test'],
+      html: gmailChatTop('<header><h2>Bob</h2></header>',
+        { footer: '<div aria-label="Replying to Ada"><span data-hovercard-id="ada@example.test">Ada</span></div>' }) });
+    try {
+      const { blocked, context } = await f.bind();
+      assert.equal(blocked?.success, false, JSON.stringify(blocked));
+      assert.equal(blocked.recipientConfirmation, undefined, JSON.stringify(blocked));
+      assert.equal(context.messageRecipientDispatchBinding, undefined);
+      assert.equal(await f.page.evaluate(() => window.sent), 0);
+    } finally { await f.browser.close(); }
+  });
+
+  // In a Chat's history, a chip beside a control labelled with a person
+  // ("Reply to Ada") is in no To row: only an input's label marks one.
+  test(`${build}: a chip beside a labelled control in a Gmail Chat's history is no recipient`, async () => {
+    const html = `<!doctype html><style>body{margin:0;font:16px sans-serif}
+      [role=dialog]{position:absolute;right:20px;bottom:0;width:420px}#body{display:block;width:360px;min-height:32px}
+      footer{display:flex;gap:10px}</style>
+      <main role="main"><h2>Inbox</h2></main>
+      <div role="dialog" aria-label="Bob"><header><h2>Bob</h2></header>
+        <div class="msg"><span data-hovercard-id="ada@example.test">Ada</span>: see the numbers
+          <button type="button" aria-label="Reply to Ada">Reply</button></div>
+        <footer><div id="body" contenteditable="true" role="textbox" aria-label="Type a message">The Q3 numbers</div>
+          <button id="send" type="button" aria-label="Send">Send</button></footer></div>`;
+    const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#inbox', recipients: ['ada@example.test'], html });
+    try {
+      const { blocked, context } = await f.bind();
+      assert.equal(blocked?.success, false, JSON.stringify(blocked));
+      assert.equal(blocked.recipientConfirmation, undefined, JSON.stringify(blocked));
+      assert.equal(context.messageRecipientDispatchBinding, undefined);
+      assert.equal(await f.page.evaluate(() => window.sent), 0);
+    } finally { await f.browser.close(); }
+  });
+
+  // Only a single-line input's label can read as a To row: an editor
+  // labelled with a person ("Note to Ada") never makes a Chat's window a
+  // mail compose window whose To is that person.
+  test(`${build}: an editor labelled with a person never marks a Gmail Chat window as a mail compose`, async () => {
+    const html = `<!doctype html><style>body{margin:0;font:16px sans-serif}
+      [role=dialog]{position:absolute;right:20px;bottom:0;width:420px}#body{display:block;width:360px;min-height:32px}
+      .note{display:block;width:360px;min-height:24px}footer{display:flex;gap:10px}</style>
+      <main role="main"><h2>Inbox</h2></main>
+      <div role="dialog" aria-label="Bob"><header><h2>Bob</h2></header>
+        <div aria-label="Replying to Ada"><span data-hovercard-id="ada@example.test">Ada</span></div>
+        <div class="note" contenteditable="true" role="textbox" aria-label="Note to Ada"></div>
+        <div class="msg">Bob: see you tomorrow</div>
+        <footer><div id="body" contenteditable="true" role="textbox" aria-label="Type a message">The Q3 numbers</div>
+          <button id="send" type="button" aria-label="Send">Send</button></footer></div>`;
+    const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#inbox', recipients: ['ada@example.test'], html });
+    try {
+      const { blocked, context } = await f.bind();
+      assert.equal(blocked?.success, false, JSON.stringify(blocked));
+      for (const item of blocked.recipientConfirmation?.recipients || []) assert.notEqual(item.identity, 'ada@example.test');
+      assert.equal(context.messageRecipientDispatchBinding, undefined);
+      assert.equal(await f.page.evaluate(() => window.sent), 0);
+    } finally { await f.browser.close(); }
+  });
 
   // A click into an editor only focuses it, and a page control far from
   // any message is no message's Send.
@@ -444,9 +515,9 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
     } finally { await f.browser.close(); }
   });
 
-  // An attachment goes with the message its file input belongs to: the
-  // Chat's input to the chat's person, an input no one message owns to no
-  // one, and neither to a compose window's recipients beside it.
+  // An attachment goes with the message its file input belongs to: neither
+  // the Chat's input nor one no message owns goes to a compose window's
+  // recipients beside it, and nothing names the Chat's person.
   test(`${build}: a file attached in a Gmail Chat never goes to a compose window's recipients`, async () => {
     const recipients = [{ identity: 'ada@example.test', role: 'to' }, { identity: 'cem@example.test', role: 'cc' }];
     const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients,
@@ -456,7 +527,8 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
         uploadSourceKey: 'download:1', expectedRecipients: recipients });
       const chatUpload = await upload('#chat-file');
       assert.equal(chatUpload.recipientSets, undefined, JSON.stringify(chatUpload));
-      assert.deepEqual(chatUpload.strongRecipientCandidates, [{ identity: 'Bob', role: 'to' }], JSON.stringify(chatUpload));
+      assert.deepEqual(chatUpload.strongRecipientCandidates || [], [], JSON.stringify(chatUpload));
+      assert.equal(chatUpload.messageRecipientDispatchBinding, undefined);
       const appUpload = await upload('#app-file');
       assert.equal(appUpload.recipientSets, undefined, JSON.stringify(appUpload));
       assert.deepEqual(appUpload.strongRecipientCandidates || [], [], JSON.stringify(appUpload));

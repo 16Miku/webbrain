@@ -16088,8 +16088,9 @@ const ADAPTERS = [
     messaging: {
       verifyActiveRecipient: true,
       deferActiveConversationUntilComposer: true,
-      // Mail has To/Cc/Bcc recipient sets. Google Chat inside Gmail sends to
-      // the one open conversation, so its routes bind a single recipient.
+      // Mail has To/Cc/Bcc recipient sets. Google Chat inside Gmail has none
+      // of its own: a send there is held (content.js), while a compose window
+      // open over it still reports its own rows.
       supportsRecipientSets: url => !isGmailChatRoute(url),
     },
     notes: `

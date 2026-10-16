@@ -1853,14 +1853,17 @@ export class Agent extends LoopDetector {
   }
 
   // A successful click_ax the app sent itself to read a native chat, while its
-  // ownership still holds: not the model's action. Shared like the above.
-  _isOwnedNativeChatReadRepair(tabId, name, args, result, messageRecipientContext) {
+  // ownership still holds: not the model's action. Shared like the above. A
+  // call cut short by Stop or an error (`interrupted`) is judged by the
+  // ownership its guard gave it, since Stop ends the run's ownership before
+  // the interrupted path reads it.
+  _isOwnedNativeChatReadRepair(tabId, name, args, result, messageRecipientContext, { interrupted = false } = {}) {
     return name === 'click_ax' && result?.success === true && !result.outcomeUnknown
       && result.noDispatch !== true && ((result._nativeWhatsappReadRepair === true
         && !!messageRecipientContext?.nativeWhatsappReadRepairOwner
-        && messageRecipientContext.nativeWhatsappReadRepairOwner === this._nativeChatOwnerScope(tabId))
+        && (interrupted || messageRecipientContext.nativeWhatsappReadRepairOwner === this._nativeChatOwnerScope(tabId)))
         || (result._nativeTelegramReadRepair === true
-          && this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext)));
+          && this._nativeTelegramReadPreparationCurrent(tabId, args, messageRecipientContext, { interrupted })));
   }
 
   _recordCompletionToolResult(tabId, name, args, result, { detectedSubmit = null, messageRecipientContext = null, ownedReadRepairBatch = false } = {}) {
@@ -13632,11 +13635,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // without one, a call that may have been sent counts as sent, so it can
       // back an "acted" row, and only a provably unsent one is held against one.
       // The args and the read-repair exemption are the normal path's too; Stop
-      // clears the owner scope that exemption checks, so the app's own repair
-      // batch is also recognized by its run option.
+      // clears the owner scope that exemption checks, so a repair is judged by
+      // the ownership its guard gave the call, and the app's own repair batch
+      // is recognized by its run option.
       if (interrupted?.name && !interrupted.dispatchNoted && runOptions[OWNED_NATIVE_CHAT_READ_REPAIR] !== true
           && !this._isOwnedNativeChatReadRepair(tabId, interrupted.name, interrupted.args || {}, interruptedRaw,
-            interrupted.messageRecipientContext)) {
+            interrupted.messageRecipientContext, { interrupted: true })) {
         this._noteProgressActionDispatch(tabId, interrupted.name,
           this._completionToolArgs(tabId, interrupted.name, interrupted.args || {}), interruptedRaw,
           interruptedRaw ? undefined : !interruptedUnsent);
@@ -26631,9 +26635,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       String(provider.model || provider.config?.model || ''), authority.taskSha256, authority.resumeTaskId, authority.providerSha256]);
   }
 
-  _nativeTelegramReadPreparationCurrent(tabId, args, context) {
+  _nativeTelegramReadPreparationCurrent(tabId, args, context, { interrupted = false } = {}) {
     return !!context?.nativeTelegramReadRepairOwner
-      && context.nativeTelegramReadRepairOwner === this._nativeChatOwnerScope(tabId)
+      && (interrupted || context.nativeTelegramReadRepairOwner === this._nativeChatOwnerScope(tabId))
       && typeof args?.ref_id === 'string' && args.ref_id === context.nativeTelegramReadRepairRef
       && typeof context.nativeTelegramReadRepairBinding?.token === 'string'
       && context.nativeTelegramReadRepairBinding.token.length > 0
@@ -42305,7 +42309,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 || (workflowMessageKind === 'message_draft'
                   ? (this._workflowDraftAuthorizedTarget(executionGuard)?.recipients || [])
                   : []),
-              // Google Chat inside Gmail has one recipient, not mail's sets.
+              // Google Chat routes in Gmail have no recipient set of their own;
+              // a compose window open there reports its rows itself.
               supportsRecipientSets: executionGuard.siteWorkflow.adapterName === 'gmail'
                 && !isGmailChatRoute(probe?.url || ''),
             });
