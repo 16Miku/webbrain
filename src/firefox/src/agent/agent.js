@@ -30779,11 +30779,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || this._isScheduledResumeTurn(value) || this._activeTaskBinding(messages || []).index < 0) return 'request';
     const reference = this._userTurnReference(messages);
     const verdict = await this._semanticDecision(tabId, 'user_turn_kind', { request: value, page: reference });
-    // A reply to the planner's own question answers it ("ok" there is consent
-    // or a choice), so it never ends the turn as a bare acknowledgment.
-    if (verdict.choice === 'acknowledge' && this._plannerClarificationIndexBefore(messages || [], (messages || []).length) >= 0) {
-      return 'update';
-    }
+    // A bare acknowledgment ("thanks") stays terminal even right after a
+    // planner question: confirmations that answer it already read as `update`
+    // per the semantic choice definition, so converting `acknowledge` would
+    // resume the prior task with "thanks" as its answer.
     return ['continue', 'update', 'acknowledge', 'request'].includes(verdict.choice) ? verdict.choice : null;
   }
 
