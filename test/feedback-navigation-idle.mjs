@@ -277,6 +277,25 @@ for (const build of ['chrome', 'firefox']) {
     } finally { api.tabs.sendMessage = previous; urls.delete(tab); agent._releaseRunEntry(tab); }
   });
 
+  test(`${build}: Stop during a pending traversal reading rejects instead of returning an ordinary result`, async () => {
+    const agent = makeAgent(Agent), tab = nextTab++, previous = api.tabs.sendMessage;
+    api.tabs.sendMessage = async (id, message, options) => message.action === 'page_monitor_traversal'
+      ? new Promise(() => {})
+      : previous(id, message, options);
+    try {
+      await agent._claimRunEntry(tab, 'interactive');
+      const send = bindMain(agent, tab);
+      send({ kind: 'activity', source: 'agent', operation: 'click' });
+      send({ kind: 'click', source: 'user', target: 'button#menu' });
+      navigate(agent, tab, 0, 'history', 'https://app.example/pending', { transitionQualifiers: ['forward_back'] });
+      agent._pageFeedbackIdleMs = 0;
+      const waiting = agent._applyPendingPageFeedback(tab, [], () => {});
+      await new Promise(resolve => setTimeout(resolve, 20));
+      agent.abort(tab);
+      await assert.rejects(waiting, { name: 'AbortError' });
+    } finally { api.tabs.sendMessage = previous; agent._releaseRunEntry(tab); }
+  });
+
   test(`${build}: a traversal reading cannot outlive its run or hold Stop`, async () => {
     const agent = makeAgent(Agent), tab = nextTab++, previous = api.tabs.sendMessage;
     let answer;

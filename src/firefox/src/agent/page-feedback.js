@@ -1548,7 +1548,8 @@ export const pageFeedbackMethods = {
     if (!run || this._checkAbort(tabId)) return false;
     // A Back/Forward reading still pending can withdraw an observation (a
     // page's own Back after an agent click); only what remains is applied.
-    try { await this._pageFeedbackTraversalSettled(run, this._runAbortSignal(tabId)); } catch { return false; }
+    // Stop must propagate; only a non-abort settlement failure is skipped here.
+    try { await this._pageFeedbackTraversalSettled(run, this._runAbortSignal(tabId)); } catch (error) { this._throwIfAborted(this._runAbortSignal(tabId)); return false; }
     if (this._pageFeedbackRuns?.get(tabId) !== run || this._checkAbort(tabId) || !run.events.size) return false;
     const events = [...run.events.values()], batchRevision = run.revision;
     const state = run.modelState || { token: run.token, url: run.latestPage?.url || run.url,
