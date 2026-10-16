@@ -15680,6 +15680,18 @@ function isMastodonAppPath(hostname, path) {
     && /^\/(?:home|deck|web|notifications|explore|public|public\/local|settings|lists|publish|start|get-started|get-started\/profile|getting-started)(?:\/|$)/i.test(path);
 }
 
+// The web app's other columns (Favourites, Bookmarks, ...) are the same
+// Mastodon app as Home: its adapter notes, publication receipts and native
+// post handling follow a task there too, for example a reply started from
+// Favourites. isMastodonUrl keeps its narrower list for the page observers
+// (isMastodonPageUrl) and the finance-site exclusion.
+function isMastodonAdapterUrl(url) {
+  if (isMastodonUrl(url)) return true;
+  const u = new URL(url);
+  return /^https?:$/.test(u.protocol) && isLikelyMastodonHost(u.hostname)
+    && /^\/(?:favourites|bookmarks|conversations|followed_tags|pinned|directory|follow_requests|mutes|blocks|domain_blocks|search|tags)(?:\/|$)/i.test(safeDecodePath(u.pathname));
+}
+
 function isMastodonLocalProfilePath(hostname, path) {
   return isLikelyMastodonHost(hostname) && /^\/@[A-Za-z0-9_]+\/?$/.test(path);
 }
@@ -17932,7 +17944,7 @@ const ADAPTERS = [
     // known sites (for example TikTok) preserve their own guidance.
     name: 'mastodon',
     category: 'general',
-    matches: isMastodonUrl,
+    matches: isMastodonAdapterUrl,
     fullPageCapture: { infiniteScroll: isMastodonInfiniteScrollUrl },
     notes: `
 - For public media downloads, call an enabled \`download_public_media\` skill first with the exact status permalink (/@<user>/<id> or /users/<user>/statuses/<id>); on a timeline/profile, identify the visible post and its link first. FreeSkillz supports public Mastodon media across instances without browser cookies. Never send followers-only/direct posts; use \`download_social_media\` only if the skill is unavailable or fails.
@@ -17941,7 +17953,9 @@ const ADAPTERS = [
 - After submitting the home domain, expect a redirect to the user's own instance with a remote URL like \`https://mastoturk.org/@user@remote.example\`; wait_for_stable there. For account/profile follow flows, click Follow; for status or authorize_interaction flows, complete the requested action on the home-instance page (reply, boost, favorite, or follow).
 - Do NOT manually synthesize the home-instance URL before this handoff. The home instance may need the remote-profile lookup/redirect to recognize the account.
 - Label variants by version/language: "Sign in to continue", "Continue on your server", "Authorize interaction", "Proceed to follow"; Turkish: Takip et=Follow, sunucu/domain=server domain.
-- If the user's Mastodon home domain is not already known from the conversation or account UI, clarify once before entering anything.`,
+- If the user's Mastodon home domain is not already known from the conversation or account UI, clarify once before entering anything.
+- Liked (favourited) posts are listed at /favourites. To reply, click that post's Reply button ("Yanıtla" in Turkish; the composer's submit has the same label). The composer opens with the thread's @mentions prefilled (narrow layouts open it at /publish): start your text with them exactly once instead of clearing them.
+- After a reply posts, the composer empties and narrow layouts go back to the previous column; Favourites does not show your reply. Verify it under the replied-to post: open its timestamp link (the post's permalink) and find your reply below it. If a submit's outcome is uncertain, check there before any retry; never post the same reply twice. With several posts to reply to, finish and verify one, then move to the next.`,
   },
   ...CMS_ADAPTERS,
 ];

@@ -323,6 +323,13 @@ async function sendTrustedCdpInput(send, { beforeSend = null, onSent = null } = 
   }
 }
 
+// The address without its fragment: a hash-only change is not a new route.
+function urlWithoutFragment(url) {
+  const value = String(url || '');
+  const hash = value.indexOf('#');
+  return hash < 0 ? value : value.slice(0, hash);
+}
+
 const EARLY_CDP_ACTION_TOOLS = new Set(['click', 'type_text', 'press_keys', 'hover', 'drag_drop', 'upload_file']);
 const DONE_OUTCOMES = new Set(['success', 'partial', 'failed']);
 const LOCAL_CANCELLATION_ASSISTANT_RE = /^\[?Stopped by user(?: before (?:the run started|executing requested tool calls))?\.?\]?$/;
@@ -18486,15 +18493,33 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _dispatchInitialTrustedNativeButton(tabId, args, prepared, contentArgs, messageOptions,
     baseline, abortSignal, dispatchState, timing, run, dispatchCall, assertNotAborted) {
+    const ownerChanged = () => {
+      const error = new Error('The current task or browser owner changed before trusted button input.');
+      error.code = 'page_feedback_pending';
+      error.pagePreparationVeto = { cause: 'current_owner_changed', predicate: 'current_owner_changed' };
+      return error;
+    };
     const assertCurrent = () => {
       assertNotAborted();
       if (this._pageFeedbackRuns?.get(tabId) !== run || run.dispatchCall !== dispatchCall
           || this._hasPendingSteering(tabId) || this._checkAbort(tabId)
-          || !this._pageFeedbackStateCurrent(tabId, run, dispatchCall.modelState)) {
-        const error = new Error('The current task or browser owner changed before trusted button input.');
-        error.code = 'page_feedback_pending';
-        error.pagePreparationVeto = { cause: 'current_owner_changed', predicate: 'current_owner_changed' }; throw error;
-      }
+          || !this._pageFeedbackStateCurrent(tabId, run, dispatchCall.modelState)) throw ownerChanged();
+    };
+    // Only after both input acknowledgements: this press's own same-document
+    // route update (an SPA pushState, or the page's own history.back() after
+    // a submit) is its effect, not a new owner. The page-feedback run
+    // attributes such updates to the agent and records them as agentRoute; a
+    // Back/Forward update is read for page-initiated attribution first. Every
+    // other change of run, call, steering, Stop, mode or document still
+    // interrupts, and before input the route may not change at all.
+    const ownRoute = () => this._pageFeedbackAgentRouteCurrent(tabId, run, baseline.startedAt);
+    const assertObservedOwner = async () => {
+      await this._pageFeedbackTraversalSettled(run, this._runAbortSignal?.(tabId));
+      assertNotAborted();
+      const state = dispatchCall.modelState;
+      if (this._pageFeedbackRuns?.get(tabId) !== run || run.dispatchCall !== dispatchCall
+          || this._hasPendingSteering(tabId) || this._checkAbort(tabId)
+          || !this._pageFeedbackStateCurrent(tabId, run, state, ownRoute() ? state?.url : run.url)) throw ownerChanged();
     };
     const key = `${prepared.documentToken}|${args.ref_id}`;
     baseline.preparedActive = prepared.preparedActive || '';
@@ -18615,17 +18640,17 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       preparationStage = 'observation';
       // End only this acknowledged input operation before observing its asynchronous effect.
       // Queued feedback and the one-shot input lock remain unchanged.
-      assertCurrent();
+      await assertObservedOwner();
       if (!await finishInput()) {
         const error = new Error('The acknowledged native input operation is no longer current.');
         error.code = 'page_feedback_pending';
         error.pagePreparationVeto = { predicate: 'operation_expired' }; throw error;
       }
-      assertCurrent();
+      await assertObservedOwner();
       // Both input acknowledgements are complete. Continue bounded observation
       // of this exact target while its own mutation settles; never send input.
-      const assertObservationCurrent = () => {
-        assertCurrent();
+      const assertObservationCurrent = async () => {
+        await assertObservedOwner();
         // Once input is acknowledged, this phase only reads. Focus restoration,
         // layout changes and DOM updates are possible effects of the click, not
         // permission to dispatch again. Actual intervention still stops proof.
@@ -18637,9 +18662,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       };
       const observeTrustedTarget = async () => {
-        assertObservationCurrent();
+        await assertObservationCurrent();
         const target = await this._resolveClickAxFallbackTarget(tabId, args.ref_id, abortSignal, { observeOnly: true });
-        assertObservationCurrent();
+        await assertObservationCurrent();
         if (target?.success !== true || target.tag !== 'button' || target.ref_id !== args.ref_id
             || target.documentToken !== prepared.documentToken || target.refScopeUrl !== prepared.refScopeUrl) return null;
         return (!!prepared.buttonStrongState && !!target.fallbackStrongState
@@ -18651,7 +18676,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const observed = await this._observeClickAxTimed(tabId, baseline,
         { allowDelayed: !targetStateChanged, firstDelayMs: 250, pollMs: 150, maxMs: 1000,
           observeTrustedTarget }, timing, 'trustedObservationMs');
-      assertObservationCurrent();
+      await assertObservationCurrent();
       if (timing) Object.assign(timing.nativeButtonObservation, {
         afterSnapshotAvailable: typeof observed?.snapshot === 'string' && observed.snapshot.length > 0,
         observable: observed?.observable === true, proved: observed?.proved === true, safetyVeto: observed?.safetyVeto === true,
@@ -18659,7 +18684,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         tabSetChanged: observed?.safetyReasons?.includes('tab_set') === true,
         downloadObserved: observed?.safetyReasons?.includes('download') === true,
       });
-      const verifiedLocalEffect = targetStateChanged || observed.proved === true;
+      // The route this press produced is proof even though its button left
+      // with the previous route, which makes the target itself unobservable.
+      // A fragment-only change (a scrollspy hash, say) is tolerated, not proof,
+      // and so is a route reached by Back/Forward: any frame's script can go
+      // back in the tab's history, not only this button's page.
+      const routeChanged = this._pageFeedbackAgentRouteCurrent(tabId, run, baseline.startedAt, { proof: true })
+        && urlWithoutFragment(run.url) !== urlWithoutFragment(dispatchCall.modelState?.url);
+      const verifiedLocalEffect = targetStateChanged || observed.proved === true || routeChanged;
+      const observedEffects = [...new Set([...(targetStateChanged ? ['target_state'] : []),
+        ...(observed.proofReasons || []), ...(routeChanged ? ['url'] : [])])];
       assertNotAborted();
       // Press and release were acknowledged. A new explicit action certificate
       // may follow, even if its page effect is unverified. This proves delivery,
@@ -18671,7 +18705,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         trusted: true, verified: verifiedLocalEffect,
         nativeInputAcknowledged: true, observationInterrupted: false,
         effectVerificationPending: !verifiedLocalEffect,
-        ...(verifiedLocalEffect ? { observedEffects: targetStateChanged ? ['target_state', ...observed.proofReasons] : observed.proofReasons }
+        ...(verifiedLocalEffect ? { observedEffects }
           : { inconclusive: true, retryable: false,
             warning: 'The click was delivered. Its effect needs a fresh observation before completion or another action.' }),
         ...(observed.snapshot ? { _clickAxAfterSnapshot: observed.snapshot } : {}) };
@@ -18699,7 +18733,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         // A failed read cannot erase completed input delivery. Preserve the
         // pending lock while the ordinary execution loop obtains fresh proof.
         try {
-          assertCurrent();
+          await assertObservedOwner();
           if (run.lastUserAt === clickUserAt
               && ![...run.events.values()].some(event => event.source === 'user')) {
             return { success: true, method: 'cdp-native-button', initialTrustedNativeButton: true,
