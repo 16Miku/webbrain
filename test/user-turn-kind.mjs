@@ -85,7 +85,6 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal((await f.mark('Please continue from where you left off.', 'act', { trustedContinuation: true })).webbrainTurnKind, 'continue');
     assert.equal((await f.mark('devam et', 'ask')).webbrainTurnKind, 'request', 'Ask turns are requests');
     assert.equal((await f.mark('devam et', 'act', {}, { sourceBound: true })).webbrainTurnKind, 'request', 'Shortcuts are requests');
-    assert.equal((await f.mark('x'.repeat(6001))).webbrainTurnKind, 'request', 'Long turns are requests');
     assert.equal((await f.mark('[Scheduled resume] check the queue')).webbrainTurnKind, 'request', 'Scheduled resumes keep their own rule');
     f.agent.conversations.set(f.tab, [{ role: 'system', content: 'system' }]);
     assert.equal((await f.mark('devam et')).webbrainTurnKind, 'request', 'A first turn has nothing to continue');

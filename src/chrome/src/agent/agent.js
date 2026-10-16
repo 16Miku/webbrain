@@ -11,7 +11,7 @@ import { completionResultSnapshot, completionResultPixelRect } from './completio
 import { captureSemanticNavigationDocument, semanticCommitNavigationRequest, recordSemanticCommitNavigation, semanticCommitIsCurrent, canRecordSemanticCommitDispatch } from './semantic-commit-navigation.js';
 import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputCompletion, hasPageAgentDispatchOwner, pageFeedbackPendingResult } from './page-feedback.js';
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
-import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText } from './systemone-evidence.js';
+import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
@@ -7863,7 +7863,9 @@ export class Agent extends LoopDetector {
    */
   async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
     const spec = semanticQuestion(kind);
-    const trusted = String(request ?? '').slice(0, 6000);
+    // Relationship decisions must read the entire latest user message. A
+    // prefix-only verdict can mistake a correction or a new task at its end.
+    const trusted = kind === 'user_turn_kind' ? String(request ?? '') : String(request ?? '').slice(0, 6000);
     const data = boundedSemanticData(page);
     const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
     this._semanticDecisionCache ??= new Map();
@@ -7878,10 +7880,14 @@ export class Agent extends LoopDetector {
     const context = this.systemOneContext(tabId);
     try {
       const settings = await this._jevSettings(tabId, provider);
-      if (settings && !this._checkAbort(tabId)) {
+      const decisionText = redactSystemOneText(JSON.stringify({ request: trusted, page: data }));
+      // Keep the existing bounded fast route, but use the full-text main
+      // model directly when a relationship question cannot fit in it.
+      const decisionFits = kind !== 'user_turn_kind' || systemOneStateBytes(decisionText) <= 12000;
+      if (settings && decisionFits && !this._checkAbort(tabId)) {
         const verdict = await this.evaluateSystemOne(tabId, createSystemOneJudge({ timeoutMs: 2500, maxRetries: 0 }), {
           config: settings.decisionConfig, apiKey: settings.typesafeApiKey, signal: runSignal,
-          state: { context: wrapSystemOneData(boundedSystemOneText(redactSystemOneText(JSON.stringify({ request: trusted, page: data })), 12000)) },
+          state: { context: wrapSystemOneData(boundedSystemOneText(decisionText, 12000)) },
           questions: { [kind]: semanticSystemOneQuestion(kind) },
         }, context);
         const answer = verdict.answers?.[kind];
@@ -7889,6 +7895,8 @@ export class Agent extends LoopDetector {
         this.recordSystemOneVerdict(tabId, { decision: choice ? 'semantic' : 'fallback', reason: choice ? kind : `${kind}_low_confidence`,
           model: verdict.model }, context);
         if (choice) return remember({ choice, evidence: '', source: 'decision_model' });
+      } else if (settings && !decisionFits) {
+        this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_context_budget` }, context);
       }
     } catch (error) {
       if (this._isCostAllowanceError(error) || this._checkAbort(tabId)) throw error;
@@ -33479,7 +33487,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   async _userTurnKind(tabId, messages, text, mode, runOptions = {}, sourceBound = false) {
     if (runOptions?.trustedContinuation === true) return 'continue';
     const value = typeof text === 'string' ? text.trim() : '';
-    if (sourceBound || !this._isActionMode(mode) || !value || value.length > 6000
+    if (sourceBound || !this._isActionMode(mode) || !value
         || this._isScheduledResumeTurn(value) || this._activeTaskBinding(messages || []).index < 0) return 'request';
     const reference = this._userTurnReference(messages);
     const verdict = await this._semanticDecision(tabId, 'user_turn_kind', { request: value, page: reference });

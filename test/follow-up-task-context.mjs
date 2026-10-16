@@ -304,6 +304,64 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(agent._progressTaskAnchorText(tab), root);
   });
 
+  for (const [length, character, fast] of [[6001, 'x', true], [14000, 'x', false], [4500, '界', false], [6001, '"', false]]) {
+    test(`${build}: ${length}-character ${character} corrections retain the original task after full-text classification`, async () => {
+      const { agent, messages, provider } = fixture();
+      agent._recordTaskClarification(tab, 'Which bot?', 'Chat with @emrebot', 'option');
+      const earlier = 'Use a short greeting, then keep talking.';
+      messages.push(user(earlier, 'update'));
+      const tail = ' END-OF-LONG-CORRECTION: keep this same task.';
+      const correction = character.repeat(length - tail.length) + tail;
+      const calls = installModelStub(agent, { provider, decide: (_kind, { request }) => {
+        assert.equal(request, correction, 'Fallback must read the entire message, including the final instruction.');
+        return { choice: 'update', evidence: tail.trim() };
+      } });
+      let decisions = 0;
+      agent._jevSettings = async () => ({ decisionConfig: { enabled: true, local: true } });
+      agent.evaluateSystemOne = async (_tab, _judge, input) => {
+        decisions++;
+        assert.ok(JSON.stringify(input.state).includes(tail), 'Fast decision must also see the final instruction.');
+        return { model: 'owned-decider', answers: { user_turn_kind: { type: 'choice', choice: 'update', confidence: .97,
+          probabilities: { continue: .01, update: .97, acknowledge: .01, request: .01 } } } };
+      };
+      const turn = user(correction);
+      await agent._markUserTurnKind(tab, messages, turn, correction, 'act');
+      assert.equal(turn.webbrainTurnKind, 'update');
+      assert.equal(decisions, fast ? 1 : 0, 'Oversized decision payloads go directly to the full-text LLM fallback.');
+      assert.equal(calls.length, fast ? 0 : 1);
+      messages.push(turn);
+      assert.equal(agent._activeTaskBinding(messages).taskIndex, 1);
+      const task = agent._plannerAuthenticTaskText(messages);
+      for (const text of [root, earlier, 'Chat with @emrebot']) assert.ok(task.includes(text));
+      assert.equal(JSON.parse(task.slice(task.indexOf('{'))).latest_request, correction);
+      const checked = JSON.parse(buildPlannerAlignmentMessages(task, chatPlan(), { taskBinding: 'long-related-task' }).at(-1).content);
+      assert.equal(checked.current_request, task);
+    });
+  }
+
+  test(`${build}: long separate requests and cache entries keep their distinguishing suffix`, async () => {
+    const { agent, messages, provider } = fixture();
+    const prefix = 'x'.repeat(14000);
+    const suffixes = [' Keep working on this same dialog.', ' Instead start a separate task: summarize the article.'];
+    let decisions = 0;
+    agent._jevSettings = async () => ({ decisionConfig: { enabled: true, local: true } });
+    agent.evaluateSystemOne = async () => { decisions++; throw new Error('A truncated decision is not permitted'); };
+    const calls = installModelStub(agent, { provider, decide: (_kind, { request }) => {
+      assert.ok(suffixes.some(suffix => request.endsWith(suffix)));
+      return { choice: request.endsWith(suffixes[0]) ? 'update' : 'request', evidence: request.slice(prefix.length).trim() };
+    } });
+    for (const [index, suffix] of suffixes.entries()) {
+      const text = prefix + suffix, turn = user(text);
+      await agent._markUserTurnKind(tab, messages, turn, text, 'act');
+      assert.equal(turn.webbrainTurnKind, index === 0 ? 'update' : 'request');
+      const view = [...messages, turn];
+      assert.equal(agent._activeTaskBinding(view).taskIndex, index === 0 ? 1 : messages.length);
+      if (index === 1) assert.equal(agent._plannerAuthenticTaskText(view), text);
+    }
+    assert.equal(calls.length, 2, 'Messages sharing a long prefix must not reuse the other suffix verdict.');
+    assert.equal(decisions, 0);
+  });
+
   test(`${build}: legacy turns and classification failure preserve the entire latest request`, async () => {
     const { agent, messages } = fixture();
     installModelStub(agent, { decide: () => null });
