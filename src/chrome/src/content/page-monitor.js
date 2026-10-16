@@ -21,6 +21,8 @@
   const MODEL_SCAN_LIMIT = 2048;
   const MODEL_PUBLIC_MAX = 12000;
   const MODEL_EVIDENCE_MAX = 2000;
+  // The background asks about a traversal right after its route update.
+  const TRAVERSAL_READING_MS = 1000;
   const agentLayoutHistory = [];
   const nativeTargets = new Set();
   // Weak references keep disconnected fields from outliving the DOM until their batch is sampled.
@@ -40,6 +42,7 @@
   // frame resize). Legacy bindings without a private footprint keep this fence.
   let uncertainRevision = 0, uncertainUnreported = 0;
   let interventionDiagnostic = '';
+  let lastTraversal = null, startedTraversal = null;
   let lastViewport = '';
   let agentResize = null;
   let lastFeedbackDelivery = Promise.resolve();
@@ -3353,7 +3356,7 @@
     revokeRelaxedGrant();
     active = false; runToken = ''; activePointers.clear(); pointerHeld = false; composing = false;
     clearTimeout(agentResize?.timer); agentResize = null;
-    lastUserAt = 0; lastViewport = ''; userTurn = null; lastUserTarget = null; matchedEvents = new WeakMap(); controlIterator = null; preparedOperationCursor = 0;
+    lastUserAt = 0; lastViewport = ''; lastTraversal = null; startedTraversal = null; userTurn = null; lastUserTarget = null; matchedEvents = new WeakMap(); controlIterator = null; preparedOperationCursor = 0;
     document.documentElement?.removeAttribute(fenceAttribute);
     for (const el of nativeTargets) {
       el.removeAttribute?.('data-webbrain-native-action');
@@ -3827,6 +3830,19 @@
         ...(result.certificationFailure ? { certificationFailure: result.certificationFailure } : {}),
         ...(result.reason ? { reason: result.reason } : {}), runToken, documentToken, snapshotToken: params.snapshotToken });
     }
+    else if (msg.action === 'page_monitor_traversal') {
+      // Value-free: the background names the URL it already observed; only
+      // whether page script started this document's latest traversal there
+      // leaves the page. A reading answers once, while fresh, so a later
+      // Back the page kept from this listener cannot reuse it.
+      const params = msg.params || {};
+      const current = active && params.runToken === runToken;
+      const traversal = current && typeof params.url === 'string' && lastTraversal?.url === params.url ? lastTraversal : null;
+      if (traversal) lastTraversal = null;
+      respond({ ready: current, runToken: current ? runToken : '', documentToken,
+        pageInitiated: traversalReadable && !!traversal && traversal.pageInitiated === true
+          && Date.now() - traversal.at <= TRAVERSAL_READING_MS });
+    }
     else if (msg.action === 'page_monitor_prepare') { respond({ ready: true, ...prepare(msg.params || {}) }); }
     else if (msg.action === 'page_monitor_resize_begin') { respond({ ready: beginAgentResize(msg.params || {}) }); }
     else if (msg.action === 'page_monitor_resize_finish') {
@@ -3916,11 +3932,44 @@
     }
   };
   api.runtime.onMessage.addListener(onMessage);
+  // Browser Back/Forward and the page's own history.back() both reach the
+  // background as forward_back route updates. Only the trusted Navigation API
+  // event tells them apart: userInitiated is true for browser UI. A page can
+  // stop listeners registered after its own, so only a monitor that started
+  // at document start, before the root had any element and so before any page
+  // script, may certify a page-initiated traversal; a re-injected monitor never
+  // does, even while the document is still loading. A traversal counts once it
+  // changed the current entry. Any other navigate, a cancelled or failed one,
+  // and Stop clear what was started.
+  const traversalReadable = document.readyState === 'loading' && !document.documentElement?.firstElementChild;
+  const onNavigate = event => {
+    if (!event.isTrusted) return;
+    startedTraversal = null;
+    if (!active || event.navigationType !== 'traverse' || event.defaultPrevented) return;
+    startedTraversal = { at: Date.now(), url: String(event.destination?.url || ''),
+      pageInitiated: event.userInitiated === false && event.destination?.sameDocument === true };
+  };
+  const onNavigateError = event => { if (event.isTrusted) startedTraversal = null; };
+  const onCurrentEntryChange = event => {
+    if (!event.isTrusted) return;
+    const started = startedTraversal; startedTraversal = null;
+    if (!active || event.navigationType !== 'traverse') return;
+    const url = String(navigationApi.currentEntry?.url || '');
+    lastTraversal = started && started.url === url && Date.now() - started.at <= TRAVERSAL_READING_MS
+      ? { ...started, at: Date.now() } : null;
+  };
+  const navigationApi = typeof window.navigation?.addEventListener === 'function' ? window.navigation : null;
+  navigationApi?.addEventListener('navigate', onNavigate, true);
+  navigationApi?.addEventListener('navigateerror', onNavigateError, true);
+  navigationApi?.addEventListener('currententrychange', onCurrentEntryChange, true);
   window.__wbPageMonitor = { beginContentAction, beforeLocalDispatch, withLocalPreparation, withLocalDispatch, captureLocalInputObservation, dispatch: params => dispatch(params), activatePreparedDispatch, withPreparedDispatch, registerDecoration, isReadonlyPreparationDecoration, currentIdentityPreparationCapture,
     get active() { return active; },
     get disposed() { return disposed; },
     dispose() {
       disposed = true; requestGeneration++; stop(); api.runtime.onMessage.removeListener?.(onMessage);
+      navigationApi?.removeEventListener('navigate', onNavigate, true);
+      navigationApi?.removeEventListener('navigateerror', onNavigateError, true);
+      navigationApi?.removeEventListener('currententrychange', onCurrentEntryChange, true);
       window.removeEventListener('pageshow', onPageShow);
     } };
   void requestState();
