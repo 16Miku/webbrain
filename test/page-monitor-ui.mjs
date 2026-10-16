@@ -143,7 +143,7 @@ test('Chrome AX preparation attributes actual scrolling without claiming field i
 test('Chrome controlled-field trusted typing survives its focus-created formatting toolbar', async () => {
   const savedChrome = globalThis.chrome, savedBrowser = globalThis.browser, tab = 919;
   const savedCdpAttach = cdpClient.attach, savedCdpSend = cdpClient.sendCommand;
-  let changeToolbarAfterFocus = false;
+  let changeToolbarAfterFocus = false, changeComposerAfterFocus = false;
   class FieldHost {
     static STATE_CHANGE_TOOLS = new Set(['set_field']);
     isRunning() { return true; }
@@ -196,6 +196,11 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
         changeToolbarAfterFocus = false;
         await page.waitForTimeout(30);
         await page.evaluate(() => document.getElementById('formatting-toolbar').setAttribute('aria-label', 'Text formatting open'));
+      }
+      if (changeComposerAfterFocus && method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
+        changeComposerAfterFocus = false;
+        await page.waitForTimeout(30);
+        await page.evaluate(() => document.getElementById('ref_compose_dialog').setAttribute('aria-label', 'Reply to another account'));
       }
       return result;
     })().then(callback, error => {
@@ -270,34 +275,51 @@ test('Chrome controlled-field trusted typing survives its focus-created formatti
     assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'A verified post');
     assert.equal(commands.filter(item => item.method === 'Input.insertText').length, 1);
 
+    // The page's own reaction outside the composer (its formatting toolbar)
+    // after WebBrain's own focus click is not a reason to stop typing.
     await page.waitForTimeout(250);
     host._pageFeedbackRuns.get(tab).events.clear();
     await host._capturePageFeedbackModelState(tab, []);
     commands.length = 0; preparations.length = 0; changeToolbarAfterFocus = true;
-    const interrupted = await host.executeTool(tab, 'set_field',
+    const toolbarChanged = await host.executeTool(tab, 'set_field',
       { ref_id: editorRef, text: 'The next verified post', clear: true });
+    assert.equal(toolbarChanged.success, true, JSON.stringify({ toolbarChanged, preparations }));
+    assert.equal(await page.locator('#formatting-toolbar').getAttribute('aria-label'), 'Text formatting open');
+    assert.deepEqual(preparations.map(item => item.success), [true, true]);
+    assert.equal(commands.filter(item => item.method === 'Input.insertText').length, 1);
+    assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'The next verified post');
+
+    // A change to the composer itself between the focus click and the
+    // selection still stops text dispatch.
+    await page.waitForTimeout(250);
+    host._pageFeedbackRuns.get(tab).events.clear();
+    await host._capturePageFeedbackModelState(tab, []);
+    commands.length = 0; preparations.length = 0; changeComposerAfterFocus = true;
+    const interrupted = await host.executeTool(tab, 'set_field',
+      { ref_id: editorRef, text: 'The final verified post', clear: true });
     assert.equal(interrupted.success, false);
     assert.match(interrupted.error, /could not reselect it.*Browser changed during action preparation/);
     assert.equal(preparations.length, 2);
     assert.equal(preparations[0].success, true);
     assert.equal(preparations[1].success, false);
     assert.equal(commands.some(item => item.method === 'Input.insertText'), false,
-      'A toolbar change between trusted focus and selection must stop text dispatch');
+      'A composer change between trusted focus and selection must stop text dispatch');
     assert.equal(interrupted.dispatched, true, 'The trusted focus click remains a real dispatched interaction');
     assert.equal(interrupted.textUnchanged, true, 'Before/after real SHA-256 readback proves the editor unchanged');
     assert.equal(interrupted.mutationMayHaveOccurred, false);
     assert.equal(interrupted.repeatBlocked, false);
     assert.equal(interrupted.recoveryRequired, 'fresh_tree');
     assert.equal(host._uncertainTextMutations?.get(tab)?.size || 0, 0);
-    assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'A verified post');
+    assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'The next verified post');
 
     await page.waitForTimeout(250);
     host._pageFeedbackRuns.get(tab).events.clear();
     await host._capturePageFeedbackModelState(tab, []);
+    commands.length = 0;
     const retried = await host.executeTool(tab, 'set_field',
-      { ref_id: editorRef, text: 'The next verified post', clear: true });
+      { ref_id: editorRef, text: 'The final verified post', clear: true });
     assert.equal(retried.success, true, JSON.stringify(retried));
-    assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'The next verified post');
+    assert.equal(await page.locator('#ref_trusted_editor').innerText(), 'The final verified post');
     assert.equal(commands.filter(item => item.method === 'Input.insertText').length, 1);
   } finally {
     cdpClient.attach = savedCdpAttach; cdpClient.sendCommand = savedCdpSend;

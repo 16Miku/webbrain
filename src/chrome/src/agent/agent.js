@@ -9385,6 +9385,14 @@ export class Agent extends LoopDetector {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) {
       return { block: null, shot: null };
     }
+    // The trusted selector resolver scrolls its target into view, and the
+    // page-feedback fence refuses that scroll while the page is changing.
+    const pageChangedSelectorMessage = 'The page changed while WebBrain was locating this selector\'s target, so nothing was typed. '
+      + 'On a page that keeps updating, typing by selector is refused the same way each time: type into the field with type_ax and its ref_id from get_accessibility_tree instead.';
+    // A target the observed certificate cannot bind (such as a selector that
+    // names several elements) gets that answer before any probe of it.
+    const unbindable = await this._pageFeedbackUnbindableResult?.(tabId, toolName, args);
+    if (unbindable) return { block: unbindable, shot: null };
     const selectorBackedType = toolName === 'type_text'
       && typeof args?.selector === 'string'
       && !!args.selector.trim();
@@ -9398,13 +9406,14 @@ export class Agent extends LoopDetector {
       : await this._probeRichTextToolbarRetryTarget(tabId, toolName, args, { mapAnnotation: true });
     if (!probe?.resolved) {
       const ambiguousIframeTarget = toolName === 'iframe_type' && probe?.ambiguous === true;
+      const pageChanged = selectorBackedType && probe?.pageChangedDuringResolve === true;
       return ambiguousIframeTarget || (toolName === 'iframe_type' && recoveryPending) || selectorBackedType || focusedType
         ? {
             block: {
               success: false,
               dispatched: false,
               noDispatch: true,
-              retryable: true,
+              ...(pageChanged ? {} : { retryable: true }),
               ...(ambiguousIframeTarget ? {
                 ambiguous: true,
                 matchCount: probe.matchCount,
@@ -9417,7 +9426,8 @@ export class Agent extends LoopDetector {
                   : 'Could not resolve one matching iframe target for the rich-text toolbar safety preflight. Re-read the iframe and retry with a specific urlFilter and selector.'
                 : focusedType
                   ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
-                  : 'Could not resolve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
+                  : pageChanged ? pageChangedSelectorMessage
+                    : 'Could not resolve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
             },
             shot: null,
           }
@@ -9438,14 +9448,17 @@ export class Agent extends LoopDetector {
       // Without the trusted resolver the same call fails the same way every
       // time, so do not invite a retry that cannot succeed.
       const resolverUnavailable = selectorBackedType && probe.trustedResolverUnavailable === true;
+      const pageChanged = selectorBackedType && !resolverUnavailable && probe.pageChangedDuringResolve === true;
       return {
         block: {
           success: false,
           dispatched: false,
           noDispatch: true,
-          ...(resolverUnavailable ? {} : { retryable: true }),
+          ...(resolverUnavailable || pageChanged ? {} : { retryable: true }),
           error: resolverUnavailable
             ? 'The trusted selector resolver could not attach to this tab, so selector typing cannot preserve its target. This usually means DevTools is open on the page. Use click_ax with a ref_id from get_accessibility_tree followed by type_ax instead; repeating this call will fail the same way.'
+            : pageChanged
+              ? pageChangedSelectorMessage
             : focusedType
               ? 'Could not preserve the focused target for the rich-text toolbar safety preflight. Focus the intended field again and retry.'
               : 'Could not preserve the selector target for the rich-text toolbar safety preflight. Re-read the page and retry.',
@@ -48214,7 +48227,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._throwIfAborted(abortSignal);
       // Child-frame rectangles are frame-relative. Focus/selection are already
       // bound to the exact editor there; do not click them as top-frame points.
-      if (frameId === 0 && prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0) {
+      // Nor is an editor pressed where the page covers its centre (X's
+      // formatting bubble after an earlier click): that press would reach the
+      // cover. The page monitor lets such an editor take text only when it
+      // already had keyboard focus when the model chose it.
+      if (frameId === 0 && prepared.contentEditable && prepared.rect?.w > 0 && prepared.rect?.h > 0
+          && prepared.pressable !== false) {
         const x = prepared.rect.x + prepared.rect.w / 2;
         const y = prepared.rect.y + prepared.rect.h / 2;
         this._throwIfAborted(abortSignal);

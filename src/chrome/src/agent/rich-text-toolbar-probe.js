@@ -585,6 +585,10 @@ export class RichTextToolbarProbe {
     // and retrying the call cannot change that. Callers use this to say so
     // instead of asking the model to re-read the page forever.
     let trustedResolverUnavailable = false;
+    // Set when the page-feedback fence refused the resolver's own scroll: the
+    // page changed (on a live page, it keeps changing); the resolver itself
+    // is available. Retrying the same selector meets the same fence.
+    let pageChangedDuringResolve = false;
     if (toolName === 'type_text' && typeof args?.selector === 'string' && args.selector.trim()) {
       try {
         await cdpClient.attach(tabId);
@@ -596,15 +600,16 @@ export class RichTextToolbarProbe {
             ? { dispatchBinding: { backendNodeId: Number(selectorBackendNodeId), frameId: 0 } }
             : {}),
         }, 0);
-      } catch {
-        trustedResolverUnavailable = true;
+      } catch (error) {
+        if (error?.code === 'page_feedback_pending') pageChangedDuringResolve = true;
+        else trustedResolverUnavailable = true;
       }
     }
     const withResolverState = probe => {
       const bound = withDispatchBinding(probe, 0);
-      return bound && trustedResolverUnavailable
-        ? { ...bound, trustedResolverUnavailable: true }
-        : bound;
+      return bound && trustedResolverUnavailable ? { ...bound, trustedResolverUnavailable: true }
+        : bound && pageChangedDuringResolve ? { ...bound, pageChangedDuringResolve: true }
+          : bound;
     };
     try {
       const probe = await chrome.tabs.sendMessage(tabId, {

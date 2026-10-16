@@ -9121,6 +9121,10 @@ export class Agent extends LoopDetector {
     if (!['set_field', 'type_ax', 'type_text', 'iframe_type'].includes(toolName)) {
       return { block: null, shot: null };
     }
+    // A target the observed certificate cannot bind (such as a selector that
+    // names several elements) gets that answer before any probe of it.
+    const unbindable = await this._pageFeedbackUnbindableResult?.(tabId, toolName, args);
+    if (unbindable) return { block: unbindable, shot: null };
     const selectorBackedType = toolName === 'type_text'
       && typeof args?.selector === 'string'
       && !!args.selector.trim();

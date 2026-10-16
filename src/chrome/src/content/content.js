@@ -10375,12 +10375,28 @@
             || !!(el.getAttribute && el.getAttribute('aria-autocomplete'))
             || (el.getAttribute && el.getAttribute('aria-expanded') === 'true');
           const rect = el.getBoundingClientRect();
+          // Whether a press at the field's centre reaches the field or its
+          // plain contents, rather than something the page drew over it (X
+          // draws its formatting bubble where its editor was clicked).
+          const centreX = rect.left + rect.width / 2, centreY = rect.top + rect.height / 2;
+          let centreHit = document.elementFromPoint(centreX, centreY);
+          for (let depth = 0; depth < 24 && centreHit?.shadowRoot; depth++) {
+            const inner = centreHit.shadowRoot.elementFromPoint?.(centreX, centreY);
+            if (!inner || inner === centreHit) break;
+            centreHit = inner;
+          }
+          let pressable = false;
+          for (let node = centreHit, depth = 0; node && depth < 256; node = node.parentElement || node.getRootNode?.().host, depth++) {
+            if (node === el) { pressable = true; break; }
+            if (node.matches?.('button,a[href],input,textarea,select,summary,[onclick],[tabindex],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],[role="menuitem"]')) break;
+          }
           return {
             success: true,
             ref_id,
             fieldMeta: _fieldMeta(el),
             isCombobox,
             contentEditable: !!el.isContentEditable,
+            pressable,
             ...(isDraftJsEditor(el) ? { editorKind: 'draftjs' } : {}),
             selectionMode: el.isContentEditable && selectionMode === 'end' ? 'end' : 'all',
             rect: {
