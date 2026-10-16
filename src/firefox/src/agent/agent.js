@@ -17331,7 +17331,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async _waitForPlanReview(tabId, planId, plan, markdown, onUpdate, verboseMarkdown = '') {
-    const PLAN_REVIEW_TIMEOUT_MS = 10 * 60 * 1000;
+    const PLAN_REVIEW_TIMEOUT_MS = 2 * 60 * 1000;
     const tabPending = this._pendingPlans.get(tabId) || new Map();
     this._pendingPlans.set(tabId, tabPending);
     const responsePromise = new Promise((resolve) => {
@@ -17340,9 +17340,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let timeoutId = null;
     const timeoutPromise = new Promise((resolve) => {
       timeoutId = setTimeout(() => resolve({
-        action: 'reject',
-        cancelled: true,
-        reason: 'plan review timed out',
+        action: 'approve',
+        source: 'timeout',
       }), PLAN_REVIEW_TIMEOUT_MS);
     });
     if (typeof onUpdate === 'function') {
@@ -17352,19 +17351,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     }
     try {
       const response = await Promise.race([responsePromise, timeoutPromise]);
-      if (response?.cancelled && typeof onUpdate === 'function') {
+      if ((response?.cancelled || response?.source === 'timeout') && typeof onUpdate === 'function') {
         try {
           onUpdate('plan_resolved', {
             planId,
-            decision: response.reason === 'plan review timed out' ? 'timeout' : 'cancelled',
+            decision: response.cancelled ? 'cancelled' : 'approve',
+            ...(response.source === 'timeout' ? { source: 'timeout' } : {}),
           });
         } catch {}
       }
       return response;
     } finally {
-      // Cancel the 10-minute timer once the race settles so a fast approval
-      // doesn't leave an armed timer (and its captured resolve/plan closure)
-      // alive for up to 10 minutes.
+      // Clear the auto-approval timer when a manual decision or cancellation
+      // settles first so it cannot resolve a stale review later.
       if (timeoutId != null) clearTimeout(timeoutId);
       tabPending.delete(planId);
       if (!tabPending.size) this._pendingPlans.delete(tabId);

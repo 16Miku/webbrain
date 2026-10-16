@@ -347,13 +347,13 @@ export async function sendPlanResponseWithReconnect({
   }
   const planId = String(payload?.planId || '');
   if (!planId) throw new Error('Plan response recovery requires a planId.');
-  const expectedRequestId = String(requestId || '');
+  const expectedRequestId = String(requestId || payload?.requestId || '');
   let lastConnectionError = null;
   let reconnected = false;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     try {
-      const response = await send(payload);
+      const response = await send({ ...payload, requestId: expectedRequestId });
       if (response?.matched) return { ...response, reconnected };
     } catch (error) {
       if (!isConnectionError?.(error)) throw error;
@@ -379,10 +379,17 @@ export async function sendPlanResponseWithReconnect({
       continue;
     }
 
-    const resolution = matchingPlanResolution(state, planId);
+    const sameRequest = !expectedRequestId
+      || requestMatches(state?.runUi?.requestId, expectedRequestId);
+    const resolution = sameRequest ? matchingPlanResolution(state, planId) : null;
     if (resolution) {
       reconnected = true;
       onStatus({ phase: 'reconnected', planId, state });
+      // Timeout approval is not an acknowledgement of Cancel. Retry its
+      // request-scoped rejection so the background can stop the active run.
+      if (expectedRequestId && payload?.decision === 'reject'
+          && resolution.decision === 'approve'
+          && state?.running === true && state.runUi.status === 'running') continue;
       return {
         ok: true,
         matched: String(resolution.decision || '') === String(payload?.decision || ''),
@@ -391,8 +398,6 @@ export async function sendPlanResponseWithReconnect({
       };
     }
 
-    const sameRequest = !expectedRequestId
-      || requestMatches(state?.runUi?.requestId, expectedRequestId);
     const samePendingPlan = requestMatches(state?.pendingPlan?.planId, planId);
     if (samePendingPlan && sameRequest) {
       reconnected = true;

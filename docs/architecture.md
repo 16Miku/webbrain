@@ -371,7 +371,7 @@ reference identifies the same form; saved HTML readback needs no AX reference.
 Failure diagnostics name
 the missing verification step and preserve whether submission already occurred.
 
-If the planner returns valid JSON, the side panel receives `agent_update: plan_review` and renders an editable review card. Approval pins the approved plan into the scratchpad so it survives context compaction. Rejection, timeout, or user abort stops the run before any browser tools execute. In Try mode, invalid JSON after one repair degrades only that turn to the Ask prompt and read-only tool catalog; Strict mode still stops before tools. Scheduled runs can set `autoApprovePlanReview` and pin the plan without showing the card.
+If the planner returns valid JSON and needs review, the side panel receives `agent_update: plan_review` and renders an editable review card. Approval pins the approved plan into the scratchpad so it survives context compaction. If no decision arrives within two minutes, the original plan is automatically approved and execution continues; the runtime emits `plan_resolved` with `decision: 'approve'` and `source: 'timeout'` to clear the pending review and its notifications. Rejection or user abort stops the run before any browser tools execute. A Cancel delayed past approval stops the matching active request and plan; its rejected resolution is journaled so reconnect can recover a lost acknowledgement without stopping a newer request. In Try mode, invalid JSON after one repair degrades only that turn to the Ask prompt and read-only tool catalog; Strict mode still stops before tools. Scheduled runs can set `autoApprovePlanReview` and pin the plan without showing the card.
 
 ### Step 5: Main Agent Loop
 ```

@@ -13,7 +13,7 @@
     "test:quality:relaxed-monitoring-retry": "node test/quality/relaxed-monitoring-retry-mv3.mjs",
     "test:captcha:ui": "node test/captcha-settings-ui.mjs && node test/captcha-application-ui.mjs && node --test test/captcha-draft-content.mjs test/captcha-challenge-surfaces.mjs",
     "test:captcha:bridge:ui": "node test/captcha-callback-bridge-ui.mjs",
-    "test:plan-notifications": "node --test test/plan-review-notifications.mjs test/attention-flash-markers.mjs",
+    "test:plan-notifications": "node --test test/plan-review-notifications.mjs test/attention-flash-markers.mjs test/plan-review-cancellation.mjs",
     "test:billing-notice": "node test/billing-payment-notice.mjs",
     "test:provider-limits": "node test/provider-model-limits.mjs",
     "test:frontier:live": "node scripts/check-frontier-models.mjs",
