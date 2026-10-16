@@ -52,7 +52,8 @@ async function withSessionStorage(fn) {
   globalThis.chrome = globalThis.browser = {
     storage: { session: area, local: area },
     runtime: { getURL: value => value, sendMessage: async () => ({}) },
-    tabs: { get: async id => ({ id, url: 'https://example.test/' }) },
+    tabs: { get: async id => ({ id, url: 'https://example.test/' }), sendMessage: async () => ({}) },
+    scripting: { executeScript: async () => [{ result: null }] },
   };
   try {
     return await fn(store);
@@ -70,6 +71,41 @@ async function restart(Agent, tabId) {
   agent._persist = () => {};
   await agent._hydrate(tabId);
   return agent;
+}
+
+// What agent-lifecycle.mjs stubs to run a real tool batch without a page:
+// the page preflights, the permission prompt and screenshots.
+function allowRealBatch(agent) {
+  Object.assign(agent, {
+    _persistNow: async () => ({ ok: true }),
+    _currentUrl: async () => 'https://example.test/',
+    _skipPermissionGate: true,
+    _ensureGateSetting: async () => true,
+    _chromeProtectedPageFailure: async () => null,
+    _captchaMutationPreflight: async () => null,
+    _adoptLiveSocialPublishWorkflow: async () => false,
+    _workflowPreSubmitDispatchBlock: async () => null,
+    _messageRecipientGuardBlock: async () => null,
+    _detectLikelySubmitAction: async () => null,
+    _isFormValidationCandidate: () => false,
+    _preflightRichTextToolbarTarget: async () => ({ block: null }),
+    _socialPublicationPreSubmitBlock: async () => null,
+    _auditRichTextToolbarTarget: async () => {},
+    _shouldAutoScreenshot: () => false,
+  });
+}
+
+// One click_ax call through the real _executeToolBatch, in a claimed run;
+// resolves to { value } or { error }.
+async function realBatch(agent, tabId, step) {
+  const call = { id: `real_${step}`, function: { name: 'click_ax', arguments: JSON.stringify({ ref_id: `ref_${step}` }) } };
+  await agent._claimRunEntry(tabId, 'interactive');
+  try {
+    return await agent._executeToolBatch(tabId, [call], [{ role: 'assistant', tool_calls: [call] }], () => {},
+      agent._activeProvider(tabId), null, new Set(['click_ax']), step, {}).then(value => ({ value }), error => ({ error }));
+  } finally {
+    agent._releaseRunEntry(tabId);
+  }
 }
 
 // One tool batch whose first call reached `active` (the batch's record of the
@@ -424,6 +460,82 @@ for (const build of BUILDS) {
       assert.equal(refused.success, false);
       assert.match(refused.error, /Check the page first and record what it shows/);
       assert.doesNotMatch(refused.error, /retry the action/i);
+    });
+  });
+
+  test(`${build}: the real batch path notes an interrupted call once, judged by what it returned`, async () => {
+    await withSessionStorage(async () => {
+      const tabId = 100;
+      const sessionId = `${build}-real-batch`;
+      const agent = makeAgent(Agent, tabId, 'Follow alice.');
+      allowRealBatch(agent);
+      seedRows(agent, tabId, sessionId, ['alice']);
+      agent._beginCompletionInvariant(tabId);
+      const record = () => agent.progressActionDispatches.get(tabId) || { sent: 0, unsent: null, fence: null };
+      const stop = () => { agent.abort(tabId); throw agent._runAbortSignal(tabId).reason; };
+      const stale = { success: false, fallbackAttempted: false, error: 'Stale ref.' };
+      let step = 0;
+      const expectNoted = (before, wasSent, label) => assert.deepEqual(record(), wasSent
+        ? { sent: before + 1, unsent: null, fence: null } : { sent: before, unsent: { name: 'click_ax' }, fence: null }, label);
+
+      // Stop or an error after the call's own bookkeeping: counted once.
+      for (const [label, interrupt] of [['Stop', stop], ['an error', () => { throw new Error('Observer failed.'); }]]) {
+        agent.executeTool = async () => ({ ...sent });
+        agent._autoRecordProgressAction = async () => interrupt();
+        const before = record().sent;
+        assert.ok((await realBatch(agent, tabId, ++step)).error, `${label}: the batch was not interrupted`);
+        expectNoted(before, true, `${label} after the bookkeeping counted the call twice`);
+      }
+      delete agent._autoRecordProgressAction;
+
+      // Stop as the call returns, before its bookkeeping: judged by what it returned.
+      for (const [label, returned, wasSent] of [
+        ['a dispatched click', sent, true],
+        ['a stale ref', stale, false],
+        ['a skipped click', { success: false, skipped: true, error: 'Skipped.' }, false],
+        ['a denied click', { success: false, denied: true, error: 'Denied.' }, false],
+      ]) {
+        agent.executeTool = async () => { agent.abort(tabId); return { ...returned }; };
+        const before = record().sent;
+        assert.equal((await realBatch(agent, tabId, ++step)).error?.name, 'AbortError', label);
+        expectNoted(before, wasSent, `Stop before the bookkeeping of ${label}`);
+      }
+
+      // An error before the bookkeeping is judged the same way.
+      agent._captureCompletionSemanticNavigation = async () => { throw new Error('Capture failed.'); };
+      for (const [label, returned, wasSent] of [['a dispatched click', sent, true], ['a stale ref', stale, false]]) {
+        agent.executeTool = async () => ({ ...returned });
+        const before = record().sent;
+        assert.equal((await realBatch(agent, tabId, ++step)).error?.message, 'Capture failed.', label);
+        expectNoted(before, wasSent, `an error before the bookkeeping of ${label}`);
+      }
+      delete agent._captureCompletionSemanticNavigation;
+
+      // Stop while the call is in flight leaves no result: it may have been sent.
+      agent.executeTool = async (_tab, _name, _args, _update, context) => {
+        agent.abort(tabId);
+        throw context._contentActionAbortSignal.reason;
+      };
+      const before = record().sent;
+      assert.equal((await realBatch(agent, tabId, ++step)).error?.name, 'AbortError');
+      expectNoted(before, true, 'Stop with no result');
+
+      agent._beginCompletionInvariant(tabId);
+      assert.equal(agent._progressUpdate(tabId, { items: [{ id: 'alice', status: 'acted' }] }, { sessionId }).success, true);
+    });
+  });
+
+  test(`${build}: an interrupted upload that returned without dispatching is noted as unsent`, async () => {
+    await withSessionStorage(async () => {
+      const tabId = 101;
+      const agent = makeAgent(Agent, tabId, 'Upload the report.');
+      agent._beginCompletionInvariant(tabId);
+      agent._recordCompletionToolResult(tabId, 'click_ax', { ref_id: 'ref_1' }, sent);
+      // The same predicate as the normal path: an upload_file failure that
+      // never set dispatched did not reach the page.
+      await interruptBatch(agent, tabId, { name: 'upload_file', args: { selector: '#file', filePath: '/tmp/report.pdf' }, invoked: true,
+        result: { success: false, error: 'The file could not be read.' }, dispatchState: { started: false } }, { stop: true });
+      assert.deepEqual(agent.progressActionDispatches.get(tabId), { sent: 1, unsent: { name: 'upload_file' }, fence: null });
     });
   });
 

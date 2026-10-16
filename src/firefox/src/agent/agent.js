@@ -12184,11 +12184,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         }
       }
       // So does the progress ledger's dispatch record, unless the call's own
-      // bookkeeping got that far: a call that may have been sent counts as
-      // sent, so it can back an "acted" row, and only a provably unsent one
-      // can be held against a row.
+      // bookkeeping got that far. A result the call returned is judged as the
+      // normal path judges it (a stale ref or a skipped click was not sent);
+      // without one, a call that may have been sent counts as sent, so it can
+      // back an "acted" row, and only a provably unsent one is held against one.
       if (interrupted?.name && !interrupted.dispatchNoted) {
-        this._noteProgressActionDispatch(tabId, interrupted.name, interrupted.args || {}, interruptedRaw, !interruptedUnsent);
+        this._noteProgressActionDispatch(tabId, interrupted.name, interrupted.args || {}, interruptedRaw,
+          interruptedRaw ? undefined : !interruptedUnsent);
       }
       if (this._checkAbort(tabId) || error?.name === 'AbortError') {
         // Repair the whole assistant tool batch before any caller persists a
