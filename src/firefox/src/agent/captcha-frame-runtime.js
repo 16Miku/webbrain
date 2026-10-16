@@ -711,17 +711,86 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
     ? matcherOptions.challengeReadings : {};
   const titleText = value => String(value || '').replace(/\s+/g, ' ').trim().slice(0, 200)
     .replace(/[\ud800-\udbff]$/, '').trim();
+  // Keep this editor exclusion aligned with captcha-gate.js. The detector is
+  // serialized into the page, where imported helpers are unavailable.
+  const editableSelector = 'input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="searchbox"], [role="combobox"]';
+  const authored = element => !!element?.closest?.(editableSelector);
+  const fieldLabelElements = new Set();
+  const staticText = (element, onlyVisible = true, omitFieldLabels = true) => {
+    if (!element || authored(element)) return '';
+    if (!element.childNodes) return String(element.innerText || element.textContent || '');
+    const text = [];
+    let visited = 0;
+    const renderedText = node => {
+      try {
+        const style = pageWindow.getComputedStyle(node.parentElement);
+        if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+        const range = (node.ownerDocument || pageDocument).createRange();
+        range.selectNodeContents(node);
+        return Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0);
+      } catch { return visibleElement(node.parentElement); }
+    };
+    const walk = (node, depth) => {
+      if (++visited > 4000 || depth > 40) return;
+      if (node.nodeType === 3) {
+        if (!onlyVisible || renderedText(node)) text.push(node.textContent || '');
+        return;
+      }
+      if (node.nodeType !== 1 || authored(node)
+          || /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(node.tagName)) return;
+      if (omitFieldLabels && node !== element && fieldLabelElements.has(node)) return;
+      const style = pageWindow?.getComputedStyle?.(node);
+      if (onlyVisible) {
+        if (style?.display === 'none' || (style && Number(style.opacity) === 0)
+            || node.hidden || node.getAttribute?.('aria-hidden') === 'true') return;
+      }
+      // CSS determines rendered word boundaries. A block span separates
+      // words; an inline div or a display:contents wrapper does not.
+      const block = node.tagName === 'BR'
+        || /^(?:block|flow-root|flex|grid|list-item|table)(?:$|[- ])/.test(style?.display || '');
+      if (block) text.push('\n');
+      for (const child of node.childNodes || []) walk(child, depth + 1);
+      if (block) text.push('\n');
+    };
+    walk(element, 0);
+    return text.join('');
+  };
+  // Keep field-name readings aligned with mutation preflight. A CAPTCHA
+  // mention in a field name requires a human-check reading; values do not.
+  const dialogFieldLabels = element => {
+    const names = [];
+    for (const field of element.querySelectorAll?.(editableSelector) || []) {
+      if (authored(field.parentElement) || !visibleElement(field)) continue;
+      let labelledElements = [];
+      let nativeLabels = [];
+      try {
+        const idRoot = field.getRootNode?.() || pageDocument;
+        labelledElements = String(field.getAttribute?.('aria-labelledby') || '')
+          .split(/\s+/).filter(Boolean)
+          .map(id => (typeof idRoot.getElementById === 'function' ? idRoot : pageDocument).getElementById?.(id))
+          .filter(Boolean);
+        nativeLabels = Array.from(field.labels || []);
+      } catch (_) {}
+      for (const label of [...labelledElements, ...nativeLabels]) fieldLabelElements.add(label);
+      const name = titleText(field.getAttribute?.('aria-label'))
+        || titleText(labelledElements.map(label => staticText(label, false, false)).join(' '))
+        || titleText(nativeLabels.map(label => staticText(label, false, false)).join(' '));
+      if (name && !names.includes(name)) names.push(name);
+    }
+    return names;
+  };
   const challengeDialogs = Array.from(
     pageDocument.querySelectorAll('dialog, [role="dialog"], [role="alertdialog"]')
   ).filter((element) => {
     if (!challengeDialogRe) return false;
     if (!visibleElement(element)) return false;
+    const fieldLabels = dialogFieldLabels(element);
     let labelledBy = '';
     try {
       labelledBy = String(element.getAttribute?.('aria-labelledby') || '')
         .split(/\s+/)
         .filter(Boolean)
-        .map(id => pageDocument.getElementById?.(id)?.textContent || '')
+        .map(id => staticText(pageDocument.getElementById?.(id), false))
         .join(' ');
     } catch (_) {}
     let headings = [];
@@ -729,28 +798,26 @@ export function detectCaptchaCandidatesInPage(scope = null, matcherOptions = nul
       headings = Array.from(
         element.querySelectorAll?.('h1, h2, h3, [role="heading"]') || []
       )
-        .filter(visibleElement)
-        .map(heading => heading.textContent || '');
+        .filter(heading => !authored(heading) && (visibleElement(heading)
+          || pageWindow?.getComputedStyle?.(heading)?.display === 'contents'))
+        .map(heading => staticText(heading));
     } catch (_) {}
     if ([
       element.getAttribute?.('aria-label'),
       labelledBy,
       headings.join(' '),
       element.getAttribute?.('title'),
-      element.innerText,
+      staticText(element),
     ].some(value => challengeDialogRe.test(String(value || '')))) return true;
     let title = titleText(element.getAttribute?.('aria-label')) || titleText(labelledBy)
       || headings.map(titleText).find(Boolean) || titleText(element.getAttribute?.('title'));
     if (!title) {
-      let editable = true;
-      try {
-        editable = Array.from(element.querySelectorAll?.('[contenteditable]') || [])
-          .some(node => String(node.getAttribute?.('contenteditable') || '').toLowerCase() !== 'false');
-      } catch (_) {}
-      if (!editable) title = titleText(String(element.innerText || '').split(/\r?\n/).find(line => line.trim()));
+      // staticText already excludes authored bodies and response values.
+      title = titleText(staticText(element).split(/\r?\n/).find(line => line.trim()));
     }
-    return !!title && Object.prototype.hasOwnProperty.call(givenTitleReadings, title)
-      && givenTitleReadings[title] === 'human_check';
+    return [title, ...fieldLabels].some(label => !!label
+      && Object.prototype.hasOwnProperty.call(givenTitleReadings, label)
+      && givenTitleReadings[label] === 'human_check');
   });
   const elementInChallengeDialog = (element) => {
     if (!element) return false;

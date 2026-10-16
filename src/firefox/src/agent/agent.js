@@ -3,6 +3,7 @@ const { validateUploadFile, source: FILE_UPLOAD_POLICY_SOURCE } = globalThis.__w
 import { captureCalculationCompletion, captureCalculationEvidence, completionReportingContext, refreshCalculationEvidence, verifyBrowserCompletion } from './completion-runtime.js';
 import { DECISION_SETTINGS_KEYS, resolveDecisionConfig } from './decision-config.js';
 import { completionStopError, withCompletionTimeout } from './completion-verifier.js';
+import { incompleteCompletionBlock } from './incomplete-completion.js';
 import { COMPLETION_DOCUMENT_STAMP_SCRIPT, COMPLETION_DOCUMENT_IDENTITY_SCRIPT } from './completion-document.js';
 import { completionFrameSnapshot } from './completion-frame.js';
 import { completionResultSnapshot, completionResultPixelRect } from './completion-result.js';
@@ -14042,7 +14043,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         this._interruptToolBatchForFreshTurn(tabId, toolCalls, toolIndex + 1, messages, onUpdate, step, {
           tier: promptTier, triggeringTool: fnName, reason: toolResult.completionPageBlock ? 'completion_page_block' : 'completion_verification_failed', navNotices,
         });
-        return { action: 'continue', completionRecovery: completionNeedsRead ? 'verification' : 'release', releaseAfterVerification: true };
+        return { action: 'continue', completionRecovery: toolResult.recoverableIncomplete ? 'release' : completionNeedsRead ? 'verification' : 'release',
+          releaseAfterVerification: !toolResult.recoverableIncomplete };
       }
 
       if (toolResult && toolResult.done) {
@@ -38197,6 +38199,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                   visibleFormCount: forms.length,
                   relevantFormCount: formDescriptors.filter(form => form.relevant).length,
                   formDescriptors: formDescriptors.slice(0, 12),
+                  documentIdentity: [location.href, performance.timeOrigin].join('|'),
+                  incompleteTaskControls: Array.from(new Set([
+                    ...Array.from(primaryContent?.querySelectorAll('button,input[type=submit],progress,[role=progressbar],[aria-busy=true]') || []),
+                    ...Array.from(document.querySelectorAll('button,input[type=submit],progress,[role=progressbar],[aria-busy=true]')),
+                  ])).filter(visible).slice(0, 8).map(el => ({
+                      label: (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 160),
+                      disabled: el.disabled === true || el.getAttribute('aria-disabled') === 'true',
+                      busy: el.getAttribute('aria-busy') === 'true',
+                      progress: el.getAttribute('aria-valuenow') || (el.tagName === 'PROGRESS' ? String(el.value) : ''),
+                    })),
                   liveRegionMessages: toasts.slice(0, 6),
                   // Short texts the page shows prominently, read when a site
                   // workflow needs to know whether its last step shows as done.
@@ -38262,6 +38274,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           // What the page's live messages and the statuses observed after the
           // submit say, read in any language for the checks below. Success
           // messages are only ever the agent's own readings, never page data.
+          const incompleteBlock = await incompleteCompletionBlock(this, tabId, {
+            terminalOnly: Number.isFinite(executionContext?.traceStep) && executionContext.traceStep >= this.maxSteps,
+            outcome, summary: args.summary, pageState, pageUrl: pageState?.url || '',
+          });
+          if (incompleteBlock) return incompleteBlock;
           const readingStartedAt = Date.now();
           if (outcome === 'success' && pageState) await this._readCompletionFormSubmits(tabId, pageState);
           if (outcome === 'success' && pageState) await this._readCompletionStatusTexts(tabId, pageState);
@@ -42542,6 +42559,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           allowCompletionFailureTurn = false;
         } else if (batchResult.completionRecovery === 'release') {
           forceCompletionDoneTurn = false;
+          if (batchResult.releaseAfterVerification === false) {
+            forceCompletionVerificationTurn = false;
+            forceCompletionDoneAfterVerification = false;
+          }
           allowCompletionFailureTurn = false;
         }
         continue;
@@ -43693,6 +43714,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             allowCompletionFailureTurn = false;
           } else if (batchResult.completionRecovery === 'release') {
             forceCompletionDoneTurn = false;
+            if (batchResult.releaseAfterVerification === false) {
+              forceCompletionVerificationTurn = false;
+              forceCompletionDoneAfterVerification = false;
+            }
             allowCompletionFailureTurn = false;
           }
           closeTraceStep({ ok: true });
