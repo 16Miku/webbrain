@@ -1311,6 +1311,10 @@
   function nativeFileWidget(target) {
     if (!(target instanceof HTMLInputElement) || target.type !== 'file' || target.disabled
         || target.closest('fieldset[disabled]')) return null;
+    const targetStyle = getComputedStyle(target), targetRect = target.getBoundingClientRect();
+    const hiddenTarget = targetStyle.display === 'none' || ['hidden', 'collapse'].includes(targetStyle.visibility)
+      || Number(targetStyle.opacity) === 0 || targetStyle.contentVisibility === 'hidden'
+      || (targetRect.width <= 1 && targetRect.height <= 1);
     // A transport-only wrapper may hide the input itself. Its visible widget
     // must still identify one exact file slot and one rendered activation
     // purpose; a hidden form, composer or arbitrary collection is not a widget.
@@ -1343,9 +1347,17 @@
         hiddenTransport ||= style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)
           || Number(style.opacity) === 0 || style.contentVisibility === 'hidden';
       }
-      // Existing visible section/form ownership remains authoritative. This
-      // proof is only for an otherwise hidden, transport-only ancestor chain.
-      if (hiddenTransport) return { owner, activator, transport };
+      // Pages also hide the native input itself (often a clipped 1px slot),
+      // including after consuming an earlier attachment. The same exclusive
+      // slot/activator proof survives within its original native form only
+      // when its complete visible destination context is bound below.
+      // Formless slots still need the native section's observed purpose;
+      // an arbitrary Upload button is not enough.
+      const sameForm = target.form && owner.closest('form') === target.form
+        && ('form' in activator ? activator.form : activator.closest('form')) === target.form;
+      if (hiddenTransport || (hiddenTarget && sameForm)) return {
+        owner, activator, transport, contextForm: hiddenTransport ? null : target.form,
+      };
     }
     return null;
   }
@@ -1460,11 +1472,15 @@
       if (mainOwner) owner = mainOwner.main;
     }
     let unstructuredOwner = false;
+    let fileContextForm = null;
     let meaningfulOwner = !!conversation || !!readonlyPreparation;
     if (!owner && form && [...form.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"],'+modelEntityIdentitySelector)]
       .some(node => node.closest('form,[role="form"]') === form && !node.closest(entityOwnerSelector)
         && !node.closest('aside,nav,[role="navigation"],[role="complementary"]'))) owner = form;
-    if (!owner && fileWidget) { owner = fileWidget.owner; meaningfulOwner = true; }
+    if (!owner && fileWidget) {
+      owner = fileWidget.owner; meaningfulOwner = true;
+      fileContextForm = fileWidget.contextForm;
+    }
     if (!owner) {
       // A tiny toolbar is not a composer owner. Find the bounded container
       // that includes its editor and action, with a heading outside the form
@@ -1660,6 +1676,19 @@
       else if (nativeFileSection) meaningfulOwner = dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
       else meaningfulOwner ||= (headingFreeDialog || headingFreeNamedScope)
         && dialogTextIsCovered(owner, boundTextNodes, addNode, dialogIdentities, form, null, visualImages) && !uncoveredLabel;
+    }
+    if (fileContextForm) {
+      // Native form membership alone does not identify the upload recipient:
+      // pages can render it as plain text beside the dropzone. Bind and expose
+      // that complete context, including controls such as native options that
+      // form.elements omits, before admitting this directly hidden slot.
+      if (!addNode(fileContextForm, { directText: true })) return null;
+      for (const control of fileContextForm.querySelectorAll(modelControlSelector)) {
+        if (control.closest('form,[role="form"]') !== fileContextForm
+            || !addNode(control, { text: true, control: true })) return null;
+      }
+      if (!dialogTextIsCovered(fileContextForm, boundTextNodes, addNode, dialogIdentities, form, null, visualImages)
+          || uncoveredLabel) return null;
     }
     // An arbitrary container/toolbar with no entity anchor cannot establish
     // the recipient or item. Such targets retain strict legacy dispatch only.

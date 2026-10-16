@@ -235,4 +235,126 @@ for (const build of ['chrome', 'firefox']) {
       } finally { api.tabs.sendMessage = oldSend; documents.delete(tab); }
     });
   }
+
+  for (const reason of ['target_ambiguous', 'target_unresolved', 'target_uncovered']) {
+    test(`${build}: upload ${reason} preserves its source and requires usable file-input discovery`, async () => {
+      const tab = nextTab++, messagesSeen = [], validations = [];
+      const selector = reason === 'target_ambiguous' ? 'input[type="file"]' : 'input[name="guessed-upload"]';
+      const uploadTree = 'heading "New release" [ref_heading]\nbutton "Attach release binaries" [ref_binary]\n'
+        + 'button "Publish release" [ref_publish] type="button"';
+      const inventory = [
+        { tag: 'input', type: 'file', id: 'fc-release-body', selector: '#fc-release-body', text: 'Attach Markdown files' },
+        { tag: 'input', type: 'file', id: 'releases-upload', selector: '#releases-upload', text: 'Attach release binaries' },
+      ];
+      const source = { downloadId: 71 };
+      const oldSend = api.tabs.sendMessage;
+      let agent, send, requests = 0, captures = 0, inventories = 0, attachments = 0, publications = 0;
+      api.tabs.sendMessage = async (_id, message) => {
+        if (message.action === 'page_monitor_capture_model') {
+          return { ready: true, runToken: message.params.runToken, documentToken: 'content-1',
+            snapshotToken: 'upload-' + ++captures, targetCount: 4, focusedTargetAvailable: false,
+            page: { success: true, url: PAGE_URL, pageContent: uploadTree } };
+        }
+        if (message.action === 'page_monitor_validate_model') {
+          validations.push(message.params);
+          return { ready: message.params.selector !== selector,
+            ...(message.params.selector === selector ? { reason } : {}),
+            runToken: message.params.runToken, documentToken: 'content-1', snapshotToken: message.params.snapshotToken };
+        }
+        if (message.action === 'page_monitor_prepare') return { ready: true, modelBindingValid: true };
+        if (message.action === 'get_interactive_elements_cdp') { inventories++; return inventory; }
+        return { ready: true };
+      };
+      const next = async messages => {
+        messagesSeen.push(structuredClone(messages));
+        requests++;
+        assert.ok(requests <= 4, 'Upload recovery must reach a new exact-target decision.');
+        // Passive page activity must not swallow the upload's own refusal.
+        send({});
+        if (requests === 1) return calls(['bad-upload', 'upload_file', { selector, ...source }],
+          ['premature-publication', 'click_ax', { ref_id: 'ref_publish' }]);
+        if (requests === 2) {
+          assert.equal(agent._uploadSelectorRecoveryRequired.has(tab), reason === 'target_ambiguous');
+          if (reason === 'target_ambiguous') {
+            // Even a now-unique selector cannot bypass the original resolver's
+            // inspection requirement when ambiguity was found by preflight.
+            const directRetry = await pageFeedbackExecute.call(agent, tab, 'upload_file',
+              { selector: '#releases-upload', ...source }, () => {});
+            assert.equal(directRetry.recoveryRequired, 'get_interactive_elements', JSON.stringify(directRetry));
+            assert.equal(directRetry.noDispatch, true);
+          }
+          return calls(['inspect-files', 'get_interactive_elements', {}]);
+        }
+        if (requests === 3) return calls(['exact-upload', 'upload_file', { selector: '#releases-upload', ...source }]);
+        return calls(['finished', 'done', { summary: 'The intended attachment was selected.', outcome: 'partial' }]);
+      };
+      agent = makeAgent(Agent, next);
+      agent._enrichUserMessageWithCurrentPage = async (_tab, _messages, content) => { send = bind(agent, tab); return { role: 'user', content }; };
+      agent.executeTool = async function(id, name, args, onUpdate, context) {
+        if (name === 'get_accessibility_tree') return { success: true, pageContent: uploadTree };
+        if (name === 'done') return { done: true, success: true, summary: args.summary, outcome: args.outcome };
+        if (name === 'get_interactive_elements' || (name === 'upload_file' && args.selector === selector)) {
+          return pageFeedbackExecute.call(this, id, name, args, onUpdate, context);
+        }
+        if (name === 'click_ax') { publications++; return { success: true, dispatched: true }; }
+        assert.equal(name, 'upload_file');
+        assert.equal(args.selector, '#releases-upload');
+        assert.deepEqual(args, { selector: '#releases-upload', ...source });
+        assert.equal(this._uploadSelectorRecoveryRequired.has(id), false);
+        assert.equal(inventories, 1);
+        attachments++;
+        return { success: true, dispatched: true, verified: true };
+      };
+      try {
+        await agent.processMessage(tab, 'Attach the existing downloaded ZIP to the release binary slot.', () => {}, 'act', [],
+          { detachedRequestId: 'upload-target-' + tab, askStreamingEnabled: false });
+        assert.equal(requests, 4);
+        const answers = toolResults(messagesSeen[1]).map(parse);
+        const answer = answers.find(item => item?.errorCode === 'action_binding_unavailable');
+        assert.ok(answer, JSON.stringify(answers));
+        assert.equal(answer.bindingFailure, reason);
+        assert.equal(answer.noDispatch, true);
+        assert.equal(answer.dispatched, false);
+        assert.equal(answer.retryable, false);
+        assert.equal(answer.recoveryRequired, 'get_interactive_elements');
+        assert.match(answer.error, /get_interactive_elements.*exact selector.*same attachmentId, downloadId, or filePath/);
+        assert.doesNotMatch(answer.error, /ref_id/);
+        assert.ok(answers.some(item => item?.skippedBecause === 'fresh_turn_required'));
+        assert.equal(publications, 0);
+        assert.equal(attachments, 1);
+        assert.ok(validations.some(params => params.selector === selector));
+        assert.equal(agent._pageFeedbackRuns.size, 0);
+      } finally { api.tabs.sendMessage = oldSend; documents.delete(tab); }
+    });
+  }
+
+  test(`${build}: late upload ambiguity cannot impose recovery on a changed run, document or user decision`, async () => {
+    const oldSend = api.tabs.sendMessage;
+    try {
+      for (const changed of ['run', 'document', 'user']) {
+        const tab = nextTab++, agent = makeAgent(Agent, async () => ({ content: '' }));
+        const frame = { token: 'content-1', id: 'document-1' };
+        const run = { token: 'owned-run', url: PAGE_URL, events: new Map(), frames: new Map([[0, frame]]) };
+        run.modelState = { token: run.token, url: run.url, frames: new Map([[0, { ...frame }]]), steeringRevision: 0,
+          actionBinding: { runToken: run.token, documentToken: frame.token, snapshotToken: 'owned-snapshot' } };
+        agent._pageFeedbackRuns = new Map([[tab, run]]);
+        let queried = false;
+        api.tabs.sendMessage = async (_id, message) => {
+          assert.equal(message.action, 'page_monitor_validate_model');
+          queried = true;
+          if (changed === 'run') agent._pageFeedbackRuns.set(tab, { ...run, token: 'replacement-run' });
+          else if (changed === 'document') run.frames.set(0, { token: 'replacement-document', id: 'document-2' });
+          else run.events.set('human', { kind: 'click', source: 'user', frameId: 0 });
+          return { ready: false, reason: 'target_ambiguous', runToken: run.token,
+            documentToken: frame.token, snapshotToken: message.params.snapshotToken };
+        };
+        const result = await agent._validatePageFeedbackAction(tab, 'upload_file',
+          { selector: 'input[type=file]', downloadId: 71 }, run.modelState);
+        assert.equal(queried, true, changed);
+        assert.equal(result, false, changed);
+        assert.equal(agent._uploadSelectorRecoveryRequired.has(tab), false, changed);
+        agent._pageFeedbackRuns.delete(tab);
+      }
+    } finally { api.tabs.sendMessage = oldSend; }
+  });
 }

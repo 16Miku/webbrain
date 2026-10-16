@@ -17,3 +17,30 @@ for(const [slot,id] of [['markdown','fc-release-body'],['binary','releases-uploa
  if(slot==='binary')document.getElementById('binary-status').textContent='Binary staged: '+[...event.target.files].map(file=>file.name).join(', ');
 });document.getElementById('binary-button').onclick=()=>{chooserClicks++;document.getElementById('releases-upload').click();};
 document.getElementById('release-form').onsubmit=event=>event.preventDefault();</script>`;
+
+// A page may replace its hidden transport wrapper with a directly clipped
+// native slot after consuming the first attachment. Asset editors live next
+// to the exclusive dropzone and remain part of the same release form.
+export function stageSequentialReleaseUploads(hiding = 'clipped') {
+  document.querySelectorAll('h1,h2').forEach(node => node.remove());
+  const decoration = document.createElement('div'); decoration.hidden = true;
+  decoration.innerHTML = '<span></span>'.repeat(300);
+  const widget = document.getElementById('binary-widget');
+  widget.after(decoration);
+  const input = document.getElementById('releases-upload');
+  input.addEventListener('change', () => {
+    for (const file of input.files) {
+      const row = document.createElement('div'); row.className = 'staged-asset';
+      const name = document.createElement('input');
+      name.setAttribute('aria-label', 'Change this file’s name'); name.value = file.name;
+      const remove = document.createElement('button');
+      remove.type = 'button'; remove.textContent = 'Remove attached binary';
+      row.append(name, remove); widget.before(row);
+    }
+    if (input.parentElement !== widget) input.parentElement.replaceWith(input);
+    input.style.cssText = hiding === 'opacity'
+      ? 'position:absolute;width:12px;height:12px;opacity:0;overflow:hidden'
+      : 'position:absolute;width:1px;height:1px;clip-path:inset(50%);overflow:hidden';
+    input.value = '';
+  });
+}
