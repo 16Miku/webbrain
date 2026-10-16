@@ -446,6 +446,35 @@ Steer or grant authorization. Enter and Alt+Enter retain their existing behavior
 - An agent click explains a same-document route update in its own frame within
   three seconds when no user activity followed it; full-document navigation
   keeps the exact-URL rule.
+- A same-document Back/Forward update (Chrome's `forward_back`, which a page's
+  own `history.back()` also carries, with its destination entry's original
+  transition type) first counts as user input. In Chrome, the frame's monitor,
+  listening from document start, then says value-free whether the trusted
+  Navigation API traversal to that exact URL was page-initiated
+  (`userInitiated` false); a reading answers once, and only within a second of
+  its traversal. A monitor injected later, even while the document is still
+  loading, never certifies one. Confirmed within 500 ms, with no physical input
+  or user-attributed update since, the user attribution is withdrawn: inside
+  the click's three-second window the traversal is that click's effect;
+  otherwise it is attributed like any page route update (the user's within two
+  seconds of their input or during a held gesture, else unattributed). An
+  update that follows while the reading is pending (a state restore) is not
+  near-user because of it, and when the reading keeps the user attribution,
+  nothing credited to the click meanwhile stands. Browser UI, a missing,
+  consumed or late reading, browsers without the Navigation API, and Firefox
+  (whose own Back/Forward reporting is unverified) keep it the user's. Stop
+  does not wait for a reading; feedback being applied does, so it never
+  delivers an emptied update. A `page_traversal_attribution` trace note
+  records the outcome.
+- After both input acknowledgements, a trusted native button's observation
+  accepts a route update attributed to its own dispatch operation at or after
+  the press (Mastodon's Reply pushes /publish; its composer goes back after
+  posting). A new path or query the page pushed is a verified `url` effect. A
+  hash-only change, and any route reached by Back/Forward (another frame's
+  script can go back too), are tolerated without counting as proof: the press
+  is delivered and awaits a fresh observation. Before input any route change
+  still refuses, and the new route still invalidates the model state bound for
+  the next decision.
 - A run's app-owned observations, captures and recovery nudges are removed
   when it ends, so the next request observes the current page instead. Stop
   interrupts page capture and the refresh read.

@@ -11,6 +11,11 @@ const EVENT_LIMIT = 32;
 const PAGE_GESTURE_LEASE_MS = 15000;
 // SPA route updates follow their activating click within this window.
 const AGENT_SAME_DOCUMENT_NAVIGATION_MS = 3000;
+// A page route update this soon after physical input is the user's.
+const USER_NAVIGATION_PROXIMITY_MS = 2000;
+// How long a same-document Back/Forward update waits for its frame monitor's
+// page-initiated reading before the user attribution simply stands.
+const PAGE_TRAVERSAL_ATTRIBUTION_MS = 500;
 const FEEDBACK_MESSAGE_KINDS = new Set(['page_feedback', 'page_feedback_capture', 'page_action_observation', 'page_feedback_recovery']);
 const TERMINAL_TOOLS = new Set(['done', 'done_json']);
 const dispatchOwners = new Map();
@@ -41,6 +46,22 @@ function automaticAnswerFeedback(events) {
   return !!relevant.length && relevant.every(event => ['page', 'unknown'].includes(event.source)
     && (event.kind === 'dom' || (event.kind === 'navigation' && event.frameId > 0)
       || (event.kind === 'activity' && event.source === 'page')));
+}
+
+// Firefox (147+) has the Navigation API too, but whether Gecko reports its
+// own Back/Forward buttons as userInitiated is unverified, so Firefox keeps
+// the browser-UI attribution of every Back/Forward update.
+function pageTraversalReadable() {
+  try { return typeof apiFor()?.runtime?.getBrowserInfo !== 'function'; } catch { return false; }
+}
+
+// Resolves with the reply, or null on rejection or after `ms`.
+function settleWithin(promise, ms) {
+  return new Promise(resolve => {
+    const timer = setTimeout(() => resolve(null), ms);
+    Promise.resolve(promise).then(value => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(null); });
+  });
 }
 
 // Busy renderers can stall browser messaging indefinitely; Stop must not wait.
@@ -623,6 +644,7 @@ export const pageFeedbackMethods = {
       clearGestureLease(run, frameId);
       // A replaced document cannot inherit a click's same-document route marker.
       if (frameId === 0 || run.sameDocumentNavigation?.frameId === frameId) run.sameDocumentNavigation = null;
+      if (frameId === 0) run.agentRoute = null;
       run.documents.set(frameId, { id: details.documentId || '', url: details.url || '',
         parentFrameId: Number.isSafeInteger(details.parentFrameId) ? details.parentFrameId : undefined });
       if (frameId === 0) {
@@ -635,6 +657,9 @@ export const pageFeedbackMethods = {
     const qualifiers = details.transitionQualifiers || [];
     const explicit = ['typed', 'auto_bookmark', 'generated', 'keyword', 'keyword_generated'].includes(details.transitionType)
       || qualifiers.includes('from_address_bar');
+    // Any frame's script, not only this document's, can move the tab's joint
+    // history: a route reached by Back/Forward is never a press's own proof.
+    if (frameId === 0 && qualifiers.includes('forward_back')) run.traversedAt = Date.now();
     const navigation = run.navigation;
     const redirect = qualifiers.some(q => /redirect$/.test(q));
     const firstRedirect = type === 'committed' && !navigation?.redirectChain && redirect
@@ -656,28 +681,152 @@ export const pageFeedbackMethods = {
           redirectChain: true, documentId: details.documentId };
       } else run.navigation = null;
     }
-    if (agentNavigation) return;
+    if (agentNavigation) {
+      if (frameId === 0 && type !== 'committed') run.agentRoute = { at: Date.now(), url: run.url, operationId: navigation.operationId || '' };
+      return;
+    }
     // A route update after the agent's own click in the same frame, before any
     // user activity, is that action's effect. The URL change still invalidates
-    // bound model state through the URL check.
-    const sameDocument = run.sameDocumentNavigation;
+    // bound model state through the URL check; agentRoute lets that action's
+    // own in-flight observation recognise the route it produced. A Back/Forward
+    // update whose attribution is still being read (below) is not yet user
+    // activity for the updates that follow it in any frame, such as a state
+    // restore or an embed the re-render inserts.
+    const sameDocument = run.sameDocumentNavigation, reading = run.traversalAttribution;
+    const userAt = reading && run.lastUserAt === reading.at ? reading.previousUserAt : run.lastUserAt;
     if (['history', 'fragment'].includes(type) && !explicit && !qualifiers.includes('forward_back')
         && sameDocument?.frameId === frameId && Date.now() - sameDocument.at < AGENT_SAME_DOCUMENT_NAVIGATION_MS
-        && run.lastUserAt <= sameDocument.userAt) return;
-    const source = explicit || (!run.navigation && (Date.now() - run.lastUserAt < 2000 || qualifiers.includes('forward_back'))) ? 'user' : 'unknown';
+        && userAt <= sameDocument.userAt) {
+      if (frameId === 0) run.agentRoute = { at: Date.now(), url: run.url, operationId: sameDocument.operationId || '' };
+      return;
+    }
+    if (frameId === 0) run.agentRoute = null;
+    const source = explicit || (!run.navigation && (Date.now() - userAt < USER_NAVIGATION_PROXIMITY_MS
+      || qualifiers.includes('forward_back'))) ? 'user' : 'unknown';
+    const now = Date.now(), previousUserAt = run.lastUserAt, previousActivityAt = run.lastActivityAt;
     // Browser-UI navigation is itself user input. Proximity attribution must not
     // renew lastUserAt, or periodic page navigations would chain forever.
-    if (explicit || qualifiers.includes('forward_back')) run.lastUserAt = Date.now();
+    if (explicit || qualifiers.includes('forward_back')) run.lastUserAt = now;
     // Child-frame and same-document updates without user attribution are page
     // observations. They must not keep the user idle gate closed indefinitely.
-    if (source === 'user' || (frameId === 0 && type === 'committed')) run.lastActivityAt = Date.now();
+    if (source === 'user' || (frameId === 0 && type === 'committed')) run.lastActivityAt = now;
     // An automatic child-document replacement is page churn, like that frame's
     // DOM updates: model state keeps binding the main document and authority.
     if (source !== 'user' && frameId > 0 && type === 'committed') {
       run.modelState?.frames?.delete(frameId); run.capturingModelState?.frames?.delete(frameId);
     }
+    const key = `${frameId}:navigation:`, coalesced = run.events.has(key);
     this._queuePageFeedback(details.tabId, { kind: 'navigation', source, frameId,
       before: clean(before, 2000), after: clean(details.url, 2000), navigationType: type });
+    // A page's own history.back() (Mastodon leaves /publish this way after a
+    // post) arrives as forward_back too, with its destination entry's original
+    // transition type ("typed" for a page first opened by address). Ask the
+    // frame's monitor whether page script started this exact traversal; until
+    // it answers, the browser-UI attribution above stands.
+    if (['history', 'fragment'].includes(type) && source === 'user' && qualifiers.includes('forward_back')
+        && !coalesced && run.frames.has(frameId) && run.events.get(key) && pageTraversalReadable()) {
+      this._beginPageTraversalAttribution(details.tabId, run, { frameId, url: details.url || '', at: now,
+        previousUserAt, previousActivityAt, item: run.events.get(key), sameDocument });
+    }
+  },
+
+  // Browser Back/Forward and a page script's own traversal share the
+  // forward_back qualifier. Only the frame's monitor can tell them apart, from
+  // the trusted Navigation API event (userInitiated is true for browser UI).
+  // A confirmed page-initiated traversal with nothing else observed since
+  // withdraws the conservative user attribution: within the agent click's
+  // same-document window it is that click's effect, like a pushState route
+  // (tolerated, but never proof: another frame can start a Back too);
+  // otherwise it is attributed like any page route update. No reply, a
+  // timeout, Firefox, a browser without the Navigation API, or any later
+  // activity keeps 'user'.
+  _beginPageTraversalAttribution(tabId, run, pending) {
+    pending.original = pending.item;
+    run.traversalAttribution = pending;
+    pending.settled = (async () => {
+      let reply = null;
+      try {
+        reply = await settleWithin(apiFor().tabs.sendMessage(tabId, { target: 'content', action: 'page_monitor_traversal',
+          params: { runToken: run.token, url: pending.url } }, { frameId: pending.frameId }), PAGE_TRAVERSAL_ATTRIBUTION_MS);
+      } catch { /* An unreachable monitor keeps the conservative attribution. */ }
+      if (run.traversalAttribution === pending) run.traversalAttribution = null;
+      let kept = { outcome: 'user', reason: 'changed' };
+      try { kept = this._applyPageTraversalAttribution(tabId, run, pending, reply); } catch { /* Keep 'user'. */ }
+      try {
+        if (kept.outcome !== 'click_effect' && this._pageFeedbackRuns?.get(tabId) === run) {
+          // What the click was credited with while this reading was pending
+          // followed the traversal instead: no route of it is the click's,
+          // and the queued update ends where those updates left the frame.
+          if (run.agentRoute && run.agentRoute.at >= pending.at) run.agentRoute = null;
+          const item = run.events.get(`${pending.frameId}:navigation:`);
+          if (pending.frameId === 0 && item && item === pending.item) item.after = clean(run.url, 2000);
+        }
+      } catch { /* The kept attribution stands. */ }
+      // Metadata only: which attribution a traversal finally kept, and why.
+      const runId = this._pageFeedbackRuns?.get(tabId) === run ? this.currentRunId?.get(tabId) : null;
+      if (runId) {
+        try { trace.recordNote(runId, 0, 'page_traversal_attribution', kept)?.catch?.(() => {}); } catch { /* Diagnostics only. */ }
+      }
+    })();
+    return pending.settled;
+  },
+
+  _applyPageTraversalAttribution(tabId, run, pending, reply) {
+    const key = `${pending.frameId}:navigation:`;
+    if (this._pageFeedbackRuns?.get(tabId) !== run || this._checkAbort?.(tabId)) return { outcome: 'user', reason: 'changed' };
+    if (reply?.ready !== true || reply.runToken !== run.token
+        || reply.documentToken !== run.frames.get(pending.frameId)?.token) return { outcome: 'user', reason: 'no_reading' };
+    if (reply.pageInitiated !== true) return { outcome: 'user', reason: 'not_page_initiated' };
+    // This traversal's own observation is still queued (or only merged with
+    // page-attributed updates), and no physical input or other user-attributed
+    // observation arrived since.
+    if (pending.superseded || run.events.get(key) !== pending.item || run.lastUserAt !== pending.at
+        || [...run.events.values()].some(event => event !== pending.item && event.source === 'user')) {
+      return { outcome: 'user', reason: 'changed' };
+    }
+    // Page script's traversal is not physical input: it never renews the user time.
+    run.lastUserAt = pending.previousUserAt;
+    const restoreActivity = () => { if (run.lastActivityAt === pending.at) run.lastActivityAt = pending.previousActivityAt; };
+    const marker = pending.sameDocument;
+    if (pending.item === pending.original && marker && marker === run.sameDocumentNavigation
+        && marker.frameId === pending.frameId && pending.at - marker.at < AGENT_SAME_DOCUMENT_NAVIGATION_MS
+        && pending.previousUserAt <= marker.userAt) {
+      restoreActivity();
+      run.events.delete(key);
+      // A later agent-attributed route (a state restore) stays the current one.
+      if (pending.frameId === 0 && !(run.agentRoute && run.agentRoute.at >= pending.at)) {
+        run.agentRoute = { at: pending.at, url: pending.url, operationId: marker.operationId || '' };
+      }
+      return { outcome: 'click_effect', reason: 'page_initiated' };
+    }
+    // Otherwise it is an ordinary page route update, attributed like a
+    // pushState: the user's right after their own input or during a held
+    // gesture (a press the page answers by going back), else the page's.
+    if (pending.at - pending.previousUserAt < USER_NAVIGATION_PROXIMITY_MS || run.gestures.size) {
+      return { outcome: 'user', reason: 'recent_input' };
+    }
+    restoreActivity();
+    pending.item.source = 'unknown';
+    return { outcome: 'page', reason: 'page_initiated' };
+  },
+
+  // The current main-frame route is the result of a same-document update this
+  // run attributed to the action in flight (its dispatch operation), at or
+  // after `since`. As proof of that action's effect, the route must also not
+  // have been reached through Back/Forward since then.
+  _pageFeedbackAgentRouteCurrent(tabId, run, since = 0, { proof = false } = {}) {
+    const operationId = dispatchOwners.get(tabId)?.operationId || '';
+    return !!run?.agentRoute && !!run.url && run.agentRoute.url === run.url && run.agentRoute.at >= since
+      && !!operationId && run.agentRoute.operationId === operationId
+      && (!proof || !(run.traversedAt >= since));
+  },
+
+  // Bounded: each pending traversal attribution settles within its timeout.
+  // Stop does not wait for it.
+  async _pageFeedbackTraversalSettled(run, signal = null) {
+    for (let attempt = 0; attempt < 3 && run?.traversalAttribution; attempt++) {
+      await untilAborted(run.traversalAttribution.settled, signal);
+    }
   },
 
   _queuePageFeedback(tabId, item) {
@@ -687,12 +836,20 @@ export const pageFeedbackMethods = {
     run.revision++;
     const key = `${item.frameId}:${item.kind}:${item.target || ''}`;
     const previous = run.events.get(key);
+    const reportedSource = item.source;
     // Coalescing keeps the strongest attribution: a later page or unknown
     // report for the same key cannot downgrade user or unknown evidence.
     if (previous && feedbackSeverity(previous.source) > feedbackSeverity(item.source)) item.source = previous.source;
     // Preserve the starting URL across redirect/history bursts.
     const stored = { ...item, ...(previous?.before ? { before: previous.before } : {}) };
     run.events.set(key, stored);
+    // A traversal still being read follows its observation through merges
+    // with page-attributed updates; a user-attributed one settles it as 'user'.
+    const reading = run.traversalAttribution;
+    if (reading && previous && previous === reading.item) {
+      if (reportedSource === 'user') reading.superseded = true;
+      else reading.item = stored;
+    }
     if (stored.kind === 'dom' && stored.source === 'unknown') {
       // Coalescing keeps every in-flight context seen for this key; overflow
       // is treated as foreign attribution.
@@ -1389,6 +1546,11 @@ export const pageFeedbackMethods = {
     await this._waitForPageFeedbackIdle(tabId, { automaticAskReply, askReply });
     const run = this._pageFeedbackRuns?.get(tabId);
     if (!run || this._checkAbort(tabId)) return false;
+    // A Back/Forward reading still pending can withdraw an observation (a
+    // page's own Back after an agent click); only what remains is applied.
+    // Stop must propagate; only a non-abort settlement failure is skipped here.
+    try { await this._pageFeedbackTraversalSettled(run, this._runAbortSignal(tabId)); } catch (error) { this._throwIfAborted(this._runAbortSignal(tabId)); return false; }
+    if (this._pageFeedbackRuns?.get(tabId) !== run || this._checkAbort(tabId) || !run.events.size) return false;
     const events = [...run.events.values()], batchRevision = run.revision;
     const state = run.modelState || { token: run.token, url: run.latestPage?.url || run.url,
       page: run.latestPage, frames: new Map(), steeringRevision: this._steeringRuns?.get(tabId)?.acceptedIds.size || 0 };
