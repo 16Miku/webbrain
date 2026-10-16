@@ -6970,8 +6970,176 @@
           nonMessagingTarget: true, reasonCode: 'non_messaging_target', identityCandidates: [],
         };
       }
+      // ── Gmail: the message a composer, a Send or an attachment belongs to ──
+      const gmailRecipientMode = params.adapterName === 'gmail';
+      // The To, Cc or Bcc row an element names. A compose window, its
+      // chips and its typed addresses below use it.
+      const roleFromAttribute = (attribute, value) => {
+        const text = compact(value, 120).toLowerCase();
+        if (!text) return '';
+        // A row's or field's label names its role in the user's language,
+        // read by a model; the app's own names below do not.
+        if (attribute === 'aria-label') {
+          const role = _pageReading('message_field', compact(value, 120));
+          return ['to', 'cc', 'bcc'].includes(role) ? role : '';
+        }
+        if (attribute === 'name') {
+          return /^(?:to|cc|bcc)$/.test(text) ? text : '';
+        }
+        const tokens = text.split(/[^a-z]+/).filter(Boolean);
+        if (tokens.includes('bcc')) return 'bcc';
+        if (tokens.includes('cc')) return 'cc';
+        if (tokens.length === 1 && tokens[0] === 'to') return 'to';
+        return '';
+      };
+      const recipientRole = (el, root = null) => {
+        let current = el;
+        for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
+          for (const attribute of ['data-recipient-type', 'data-type', 'name', 'aria-label']) {
+            const role = roleFromAttribute(attribute, current.getAttribute?.(attribute));
+            if (role) return role;
+          }
+          if (root && current === root) break;
+          try {
+            const descendantRoles = new Set();
+            for (const marker of current.querySelectorAll?.(
+              'input[name="to"],input[name="cc"],input[name="bcc"],[aria-label]'
+            ) || []) {
+              const role = roleFromAttribute('name', marker.getAttribute?.('name'))
+                || roleFromAttribute('aria-label', marker.getAttribute?.('aria-label'));
+              if (role) descendantRoles.add(role);
+            }
+            // A nearest row containing one role marker can classify its
+            // chips. A shared ancestor containing multiple rows cannot.
+            if (descendantRoles.size === 1) return [...descendantRoles][0];
+          } catch {}
+        }
+        return '';
+      };
+      const collectGmailRecipients = (root, editor = composer) => {
+        const collected = new Map();
+        if (!root?.querySelectorAll) return collected;
+        for (const el of root.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
+          if (!visible(el) || editable(el)) continue;
+          if (el === editor || editor?.contains?.(el)) continue;
+          const email = [
+            el.getAttribute?.('email'),
+            el.getAttribute?.('data-email'),
+            el.getAttribute?.('data-hovercard-id'),
+          ].map(value => compact(value, 240)).find(value => /@/.test(value)) || '';
+          if (!email) continue;
+          const aliases = new Map();
+          const addAlias = (val) => {
+            const alias = compact(val, 240);
+            const normalized = normalizedIdentity(alias);
+            if (alias && normalized && !aliases.has(normalized)) aliases.set(normalized, alias);
+            const angleMatch = alias.match(/^([^<@]+)<[^>]+>$/);
+            if (angleMatch) {
+              const nameOnly = compact(angleMatch[1], 240);
+              const normName = normalizedIdentity(nameOnly);
+              if (nameOnly && normName && !aliases.has(normName)) aliases.set(normName, nameOnly);
+            }
+          };
+          for (const value of [
+            email,
+            el.getAttribute?.('name'),
+            el.getAttribute?.('aria-label'),
+            el.getAttribute?.('title'),
+            el.innerText,
+            el.textContent,
+          ]) {
+            addAlias(value);
+          }
+          const key = normalizedIdentity(email);
+          if (!key) continue;
+          const role = recipientRole(el, root);
+          if (!role) continue;
+          const recipientKey = `${role}:${key}`;
+          const prior = collected.get(recipientKey) || { identity: email, role, aliases: new Map() };
+          for (const [normalized, alias] of aliases) prior.aliases.set(normalized, alias);
+          collected.set(recipientKey, prior);
+        }
+        return collected;
+      };
+      // A message's header field (To, Cc, Bcc or subject) belongs to its
+      // compose window and is never a message's body: Gmail's own field
+      // names, or a label a model reads as one of those fields.
+      const gmailHeaderField = el => {
+        if (el?.matches?.('[name="to"],[name="cc"],[name="bcc"],[name="subjectbox"]')) return true;
+        const label = compact(el?.getAttribute?.('aria-label'), 120);
+        return !!label && ['to', 'cc', 'bcc', 'subject'].includes(_pageReading('message_field', label));
+      };
+      // Another message's editor than `editor`: not nested with it, not a
+      // search or navigation field and not a message's header field.
+      const otherMessageEditor = (other, editor) => other !== editor && !editor?.contains?.(other)
+        && !other.contains?.(editor) && !verifiedNavigationEditable(other) && !gmailHeaderField(other);
+      // What marks a container as holding a message's recipients: Gmail's
+      // own row names, a chip in a To/Cc/Bcc row, or a field read as one of
+      // those rows, typed into or not.
+      const gmailRecipientMarkers = (root, editor) => !!root && (
+        !!root.querySelector?.('[name="to"],[name="cc"],[name="bcc"]')
+        || collectGmailRecipients(root, editor).size > 0
+        || Array.from(root.querySelectorAll?.('input, textarea, [contenteditable="true"], [contenteditable=""]') || [])
+          .slice(0, 40).some(input => visible(input) && input !== editor && !editor?.contains?.(input)
+            && !!(roleFromAttribute('name', input.getAttribute?.('name'))
+              || roleFromAttribute('aria-label', input.getAttribute?.('aria-label')))));
+      // In Gmail a send has recipients only from its composer's own mail
+      // compose window: a popup or full-screen compose is the editor's
+      // dialog (else its form), marked by recipient rows, a subject or
+      // Gmail's own compose body; an inline thread reply, which has neither,
+      // is the nearest ancestor with recipient rows that stays inside the
+      // page's main region and holds no visible window or other message
+      // editor. A dialog or form without them (a chat) is none.
+      const gmailComposeWindowOf = editor => {
+        if (!gmailRecipientMode || !editor) return null;
+        const explicit = editor.closest?.('[role="dialog"]') || editor.closest?.('form') || null;
+        if (explicit) {
+          return gmailRecipientMarkers(explicit, editor) || !!explicit.querySelector?.('input[name="subjectbox"]')
+            || editor.getAttribute?.('g_editable') === 'true' ? explicit : null;
+        }
+        let current = editor.parentElement;
+        for (let depth = 0; current && depth < 16; depth += 1, current = current.parentElement) {
+          if (current === document.body || current === document.documentElement
+              || current.matches?.('main,[role="main"]')
+              || Array.from(current.querySelectorAll?.('[role="dialog"]') || []).some(visible)
+              || composerCandidates.some(other => current.contains?.(other) && otherMessageEditor(other, editor))) break;
+          if (gmailRecipientMarkers(current, editor)) return current;
+        }
+        return null;
+      };
+      // Google Chat inside Gmail is a chat: on a Chat route, a composer in
+      // the page's main region, in no compose window and not Gmail's mail
+      // body, is identified by its own conversation header, as any chat is.
+      const gmailChatRoute = gmailRecipientMode && (() => {
+        try {
+          return location.hostname === 'mail.google.com'
+            && (/^\/chat(?:\/|$)/.test(String(location.pathname || ''))
+              || /^#chat(?:[/?]|$)/.test(String(location.hash || '')));
+        } catch { return false; }
+      })();
+      const gmailChatMainOf = (editor, ownWindow = gmailComposeWindowOf(editor)) => gmailChatRoute && editor && !ownWindow
+        && editor.getAttribute?.('g_editable') !== 'true' && !editor.closest?.('[role="dialog"]')
+        ? editor.closest?.('main,[role="main"]') || null : null;
+      // The composer a control (a Send, an attachment input) belongs to: the
+      // one message editor in the control's nearest ancestor holding any,
+      // when that editor is a Gmail compose or Chat composer. Its message,
+      // not the page's lowest editor, is what the control sends. None, or
+      // more than one there, leaves the pairing to the page's layout.
+      const gmailControlComposer = control => {
+        if (!gmailRecipientMode || !control) return null;
+        for (let node = control; node && node !== document.documentElement; node = node.parentElement) {
+          const inside = composerCandidates.filter(editor => node.contains?.(editor)
+            && !verifiedNavigationEditable(editor) && !gmailHeaderField(editor));
+          if (!inside.length) continue;
+          const owners = inside.filter(editor => !inside.some(other => other !== editor && other.contains?.(editor)));
+          return owners.length === 1 && (gmailComposeWindowOf(owners[0]) || gmailChatMainOf(owners[0]))
+            ? owners[0] : null;
+        }
+        return null;
+      };
       if (tool === 'upload_file') {
-        composer = layoutComposer;
+        // In Gmail the attachment input's own message decides its composer.
+        composer = gmailControlComposer(target) || layoutComposer;
         const uploadOwner = _messageRecipientUploadOwner(target, composer);
         const linkedInPrivateComposer = params.adapterName !== 'linkedin'
           || (/^\/messaging(?:\/|$)/.test(location.pathname)
@@ -7071,7 +7239,9 @@
             identityCandidates: [],
           };
         }
-        composer = layoutComposer;
+        // In Gmail the Send's own message decides its composer; elsewhere,
+        // and where no one message owns it, the page's layout pairs them.
+        composer = gmailControlComposer(control) || layoutComposer;
         if (!composer) {
           const actionLabel = compact(
             control.getAttribute?.('aria-label')
@@ -7202,7 +7372,6 @@
       const observedRecipientCandidates = [];
       let conversationRecipientEvidence = null;
       let nativeChatMessageBaseline = null;
-      const gmailRecipientMode = params.adapterName === 'gmail';
       const inConversationHeaderBand = (el) => {
         if (headerBandBottom <= 0) return false;
         const rect = el.getBoundingClientRect();
@@ -7226,159 +7395,23 @@
       };
 
       let gmailComposeRoot = null;
-      // ── Gmail: the message a composer and its Send belong to ─────────────
-      // The To, Cc or Bcc row an element names. The compose window, its
-      // chips and its typed addresses below use it.
-      const roleFromAttribute = (attribute, value) => {
-        const text = compact(value, 120).toLowerCase();
-        if (!text) return '';
-        // A row's or field's label names its role in the user's language,
-        // read by a model; the app's own names below do not.
-        if (attribute === 'aria-label') {
-          const role = _pageReading('message_field', compact(value, 120));
-          return ['to', 'cc', 'bcc'].includes(role) ? role : '';
-        }
-        if (attribute === 'name') {
-          return /^(?:to|cc|bcc)$/.test(text) ? text : '';
-        }
-        const tokens = text.split(/[^a-z]+/).filter(Boolean);
-        if (tokens.includes('bcc')) return 'bcc';
-        if (tokens.includes('cc')) return 'cc';
-        if (tokens.length === 1 && tokens[0] === 'to') return 'to';
-        return '';
-      };
-      const recipientRole = (el, root = null) => {
-        let current = el;
-        for (let depth = 0; current && depth < 7; depth++, current = current.parentElement) {
-          for (const attribute of ['data-recipient-type', 'data-type', 'name', 'aria-label']) {
-            const role = roleFromAttribute(attribute, current.getAttribute?.(attribute));
-            if (role) return role;
-          }
-          if (root && current === root) break;
-          try {
-            const descendantRoles = new Set();
-            for (const marker of current.querySelectorAll?.(
-              'input[name="to"],input[name="cc"],input[name="bcc"],[aria-label]'
-            ) || []) {
-              const role = roleFromAttribute('name', marker.getAttribute?.('name'))
-                || roleFromAttribute('aria-label', marker.getAttribute?.('aria-label'));
-              if (role) descendantRoles.add(role);
-            }
-            // A nearest row containing one role marker can classify its
-            // chips. A shared ancestor containing multiple rows cannot.
-            if (descendantRoles.size === 1) return [...descendantRoles][0];
-          } catch {}
-        }
-        return '';
-      };
-      const collectGmailRecipients = (root) => {
-        const collected = new Map();
-        if (!root?.querySelectorAll) return collected;
-        for (const el of root.querySelectorAll('[email],[data-hovercard-id],[data-email]')) {
-          if (!visible(el) || editable(el)) continue;
-          if (el === composer || composer.contains?.(el)) continue;
-          const email = [
-            el.getAttribute?.('email'),
-            el.getAttribute?.('data-email'),
-            el.getAttribute?.('data-hovercard-id'),
-          ].map(value => compact(value, 240)).find(value => /@/.test(value)) || '';
-          if (!email) continue;
-          const aliases = new Map();
-          const addAlias = (val) => {
-            const alias = compact(val, 240);
-            const normalized = normalizedIdentity(alias);
-            if (alias && normalized && !aliases.has(normalized)) aliases.set(normalized, alias);
-            const angleMatch = alias.match(/^([^<@]+)<[^>]+>$/);
-            if (angleMatch) {
-              const nameOnly = compact(angleMatch[1], 240);
-              const normName = normalizedIdentity(nameOnly);
-              if (nameOnly && normName && !aliases.has(normName)) aliases.set(normName, nameOnly);
-            }
-          };
-          for (const value of [
-            email,
-            el.getAttribute?.('name'),
-            el.getAttribute?.('aria-label'),
-            el.getAttribute?.('title'),
-            el.innerText,
-            el.textContent,
-          ]) {
-            addAlias(value);
-          }
-          const key = normalizedIdentity(email);
-          if (!key) continue;
-          const role = recipientRole(el, root);
-          if (!role) continue;
-          const recipientKey = `${role}:${key}`;
-          const prior = collected.get(recipientKey) || { identity: email, role, aliases: new Map() };
-          for (const [normalized, alias] of aliases) prior.aliases.set(normalized, alias);
-          collected.set(recipientKey, prior);
-        }
-        return collected;
-      };
-      // Another message's editor: not this composer, not nested with it,
-      // not a search or navigation field and not a To/Cc/Bcc row's field.
-      const otherMessageEditor = editor => editor !== composer && !composer.contains?.(editor)
-        && !editor.contains?.(composer) && !verifiedNavigationEditable(editor)
-        && !editor.matches?.('[name="to"],[name="cc"],[name="bcc"]');
-      // In Gmail a send has recipients only from its composer's own mail
-      // compose window: a popup or full-screen compose is the composer's
-      // dialog (else its form), and an inline thread reply, which has
-      // neither, the nearest ancestor with To/Cc/Bcc chips that stays inside
-      // the page's main region and holds no other window or message editor.
-      // Gmail's own field names, its compose body, a chip in a row or a
-      // field read as a row mark that window; one without them (a chat) is
-      // none.
-      const gmailComposeWindow = (() => {
-        if (!gmailRecipientMode) return null;
-        const recipientRows = root => !!root && (
-          !!root.querySelector?.('[name="to"],[name="cc"],[name="bcc"],input[name="subjectbox"]')
-          || composer.getAttribute?.('g_editable') === 'true'
-          || collectGmailRecipients(root).size > 0
-          || Array.from(root.querySelectorAll?.('input, textarea, [contenteditable="true"], [contenteditable=""]') || [])
-            .slice(0, 40).some(input => visible(input) && input !== composer && !composer.contains?.(input)
-              && !!(roleFromAttribute('name', input.getAttribute?.('name'))
-                || roleFromAttribute('aria-label', input.getAttribute?.('aria-label')))));
-        const explicit = composer.closest?.('[role="dialog"]') || composer.closest?.('form') || null;
-        if (explicit) return recipientRows(explicit) ? explicit : null;
-        let current = composer.parentElement;
-        for (let depth = 0; current && depth < 16; depth += 1, current = current.parentElement) {
-          if (current === document.body || current === document.documentElement
-              || current.matches?.('main,[role="main"]') || current.querySelector?.('[role="dialog"]')
-              || composerCandidates.some(editor => current.contains?.(editor) && otherMessageEditor(editor))) break;
-          if (collectGmailRecipients(current).size > 0) return current;
-        }
-        return null;
-      })();
-      // The control that sends must be this composer's own: the two share an
+      // The composer's own Gmail compose window, and whether what sends (a
+      // Send, an attachment input) is that composer's own: the two share an
       // owner holding no message editor beyond this composer's own window.
-      // A Send the page's layout pairs with another message's composer (a
-      // Chat's Send beside a compose window's body, or the reverse) belongs
-      // to that other message.
+      // A control the page's layout pairs with another message's composer
+      // belongs to that other message.
+      const gmailComposeWindow = gmailComposeWindowOf(composer);
       let gmailSendOwner = null;
-      if (gmailRecipientMode && (tool === 'click' || tool === 'click_ax') && dispatchTarget
-          && dispatchTarget !== composer && !composer.contains?.(dispatchTarget)) {
+      if (gmailRecipientMode && dispatchTarget && dispatchTarget !== composer && !composer.contains?.(dispatchTarget)) {
         for (let node = composer.parentElement; node; node = node.parentElement) {
           if (node.contains?.(dispatchTarget)) { gmailSendOwner = node; break; }
         }
       }
       const gmailEditorScope = composer.closest?.('[role="dialog"]') || gmailComposeWindow || composer;
       const gmailForeignSend = !!gmailSendOwner && composerCandidates.some(editor => gmailSendOwner.contains(editor)
-        && !gmailEditorScope.contains?.(editor) && otherMessageEditor(editor));
+        && !gmailEditorScope.contains?.(editor) && otherMessageEditor(editor, composer));
       const gmailMailSend = !!gmailComposeWindow && !gmailForeignSend;
-      // Google Chat inside Gmail is a chat: on a Chat route, a composer in
-      // the page's main region and in no compose window is identified by its
-      // own conversation header, as any chat is (below).
-      const gmailChatRoute = gmailRecipientMode && (() => {
-        try {
-          return location.hostname === 'mail.google.com'
-            && (/^\/chat(?:\/|$)/.test(String(location.pathname || ''))
-              || /^#chat(?:[/?]|$)/.test(String(location.hash || '')));
-        } catch { return false; }
-      })();
-      const gmailChatMain = gmailChatRoute && !gmailComposeWindow && !gmailForeignSend
-        && composer.getAttribute?.('g_editable') !== 'true' && !composer.closest?.('[role="dialog"]')
-        ? composer.closest?.('main,[role="main"]') || null : null;
+      const gmailChatMain = gmailForeignSend ? null : gmailChatMainOf(composer, gmailComposeWindow);
       const gmailChatComposer = !!gmailChatMain;
       // Gmail's recipient sets come from that window alone, on any route.
       const recipientSets = gmailRecipientMode ? gmailMailSend : params.supportsRecipientSets === true;
