@@ -66,18 +66,31 @@ const TO_ADA = '<div name="to"><span email="ada@example.test">Ada</span></div>';
 const CC_CEM = '<div name="cc"><span email="cem@example.test">Cem</span></div>';
 const BCC_DEE = '<div name="bcc"><span email="dee@example.test">Dee</span></div>';
 const TO_FIELD = value => `<input id="to-input" role="combobox" aria-label="To recipients" value="${value}">`;
-const gmailChat = ({ rows = '', raise = 0, chatFile = false, appFile = false } = {}) => `<!doctype html><style>body{margin:0;font:16px sans-serif}
+const gmailChat = ({ rows = '', raise = 0, chatFile = false, appFile = false, chatLabel = 'Type a message', draft = 'Draft' } = {}) => `<!doctype html><style>body{margin:0;font:16px sans-serif}
   #chat{position:absolute;left:0;top:0;width:640px;height:780px}#chat>header{height:70px}
   #messages{height:580px;overflow:auto}footer{display:flex;gap:15px;align-items:center}
   #body{width:500px;min-height:32px}button{min-height:28px}[role=dialog]{position:absolute;left:660px;bottom:${raise}px;width:560px}</style>
   <div id="app"><main id="chat" role="main"><header><h2>Bob</h2></header>
     <section id="messages"><div class="msg">Bob: please also write to <a href="mailto:carol@example.com">carol@example.com</a></div></section>
-    <footer><div id="body" contenteditable="true" role="textbox" aria-label="Type a message">Hi Bob</div>
+    <footer><div id="body" contenteditable="true" role="textbox" aria-label="${chatLabel}">Hi Bob</div>
       ${chatFile ? '<input id="chat-file" type="file">' : ''}<button id="send" type="button" aria-label="Send">Send</button></footer></main>
   ${appFile ? '<input id="app-file" type="file">' : ''}
   ${rows ? `<div role="dialog" aria-label="New Message"><form onsubmit="return false">${rows}
-    <div contenteditable="true" role="textbox" aria-label="Message Body">Draft</div>
+    <div id="mail-body" contenteditable="true" role="textbox" aria-label="Message Body" style="min-height:32px">${draft}</div>
     <button id="mail-send" type="button" aria-label="Send">Send</button></form></div>` : ''}</div>`;
+// A Gmail Chat space whose history scrolls, with a thread's reply box inside
+// it: a heading in that history names a person, not the space.
+const gmailChatThread = header => `<!doctype html><style>body{margin:0;font:16px sans-serif}
+  #chat{position:absolute;left:0;top:0;width:900px;height:780px}#chat>header{height:60px}
+  #messages{height:600px;overflow:auto}.t{display:block;width:500px;min-height:32px}footer{display:flex;gap:10px}</style>
+  <main id="chat" role="main"><header>${header}</header>
+    <section id="messages"><div role="heading" aria-level="3">Ada</div><div>Ada: can you send me the numbers?</div>
+      <div style="height:150px"></div>
+      <div class="thread"><div class="t" contenteditable="true" role="textbox" aria-label="Type a message">The Q3 numbers</div>
+        <button id="send" type="button" aria-label="Send">Send</button></div>
+      <div style="height:600px"></div></section>
+    <footer><div class="t" contenteditable="true" role="textbox" aria-label="Type a message"></div>
+      <button id="main-send" type="button" aria-label="Send">Send</button></footer></main>`;
 const gmailCompose = rows => `<!doctype html><style>body{margin:0;font:16px sans-serif}[role=dialog]{width:800px}
   #body{display:block;width:700px;min-height:60px}</style>
   <main role="main"><h2>Inbox</h2></main>
@@ -375,6 +388,62 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
     });
   }
 
+  // A model's reading of a label never makes a Chat composer something
+  // other than a message's editor, even when the label names a person.
+  for (const raise of [0, 150]) {
+    test(`${build}: a Gmail Chat composer labelled with a contact's name stays the Chat's own (${raise ? 'raised' : 'docked'} compose window)`, async () => {
+      const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/dm/abc', recipients: ['ada@example.test'],
+        html: gmailChat({ rows: TO_ADA, raise, chatLabel: 'Reply to Bob' }) });
+      try {
+        const { blocked, context } = await f.bind();
+        assert.equal(blocked?.success, false, JSON.stringify(blocked));
+        assert.deepEqual(blocked.recipientConfirmation?.recipients, [{ identity: 'Bob', role: 'to' }], JSON.stringify(blocked));
+        assert.equal(context.messageRecipientDispatchBinding, undefined);
+        assert.equal(await f.page.evaluate(() => window.sent), 0);
+      } finally { await f.browser.close(); }
+    });
+  }
+
+  // A thread's reply box inside the scrolling history is not the Chat's own
+  // composer, and a heading in that history never names its recipient.
+  for (const [kind, header] of [['in a plain block', '<div>Team space</div>'], ['as a heading', '<h2>Team space</h2>']]) {
+    test(`${build}: a Gmail Chat thread reply never takes its recipient from the history (space name ${kind})`, async () => {
+      for (const recipients of [['Ada'], ['Team space']]) {
+        const f = await fixture(build, Agent, { url: 'https://mail.google.com/mail/u/0/#chat/space/AAA', recipients, html: gmailChatThread(header) });
+        try {
+          const { blocked, context } = await f.bind();
+          assert.equal(blocked?.success, false, `${recipients}: ${JSON.stringify(blocked)}`);
+          for (const item of blocked.recipientConfirmation?.recipients || []) assert.notEqual(item.identity, 'Ada', JSON.stringify(blocked));
+          assert.equal(context.messageRecipientDispatchBinding, undefined);
+          assert.equal(await f.page.evaluate(() => window.sent), 0);
+        } finally { await f.browser.close(); }
+      }
+    });
+  }
+
+  // A click into an editor only focuses it, and a page control far from
+  // any message is no message's Send.
+  test(`${build}: clicks into a Gmail editor or on a page control are not sends`, async () => {
+    const url = 'https://mail.google.com/mail/u/0/#chat/dm/abc';
+    for (const [raise, selector] of [[150, '#mail-body'], [0, '#body']]) {
+      const f = await fixture(build, Agent, { url, recipients: ['ada@example.test'], html: gmailChat({ rows: TO_ADA, raise, draft: '' }) });
+      try {
+        assert.equal(await f.agent._messageRecipientGuardBlock(71, 'click', { selector }, url, {}), null, `${selector}, raise ${raise}`);
+      } finally { await f.browser.close(); }
+    }
+    const html = `<!doctype html><style>body{margin:0;font:16px sans-serif}main{position:absolute;left:0;top:0;width:1200px;height:780px}
+      .toolbar{position:absolute;left:900px;top:10px}.reply{position:absolute;left:0;top:80px}#body{display:block;width:560px;min-height:40px}</style>
+      <main role="main"><div class="toolbar"><button id="archive" type="button" aria-label="Archive">Archive</button></div>
+        <h2>Invoice</h2><div class="reply"><div class="rows">${TO_ADA}</div>
+          <div id="body" g_editable="true" contenteditable="true" role="textbox" aria-label="Message Body">Thanks Ada</div>
+          <div><button id="send" type="button" aria-label="Send">Send</button></div></div></main>`;
+    const inbox = 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+    const f = await fixture(build, Agent, { url: inbox, recipients: ['ada@example.test'], html });
+    try {
+      assert.equal(await f.agent._messageRecipientGuardBlock(71, 'click', { selector: '#archive' }, inbox, {}), null);
+    } finally { await f.browser.close(); }
+  });
+
   // An attachment goes with the message its file input belongs to: the
   // Chat's input to the chat's person, an input no one message owns to no
   // one, and neither to a compose window's recipients beside it.
@@ -460,6 +529,28 @@ for (const [build, Agent] of [['chrome', ChromeAgent], ['firefox', FirefoxAgent]
       } finally { await f.browser.close(); }
     });
   }
+
+  // Two replies open in one thread: each Send goes with its own reply.
+  test(`${build}: two Gmail inline replies each bind their own To`, async () => {
+    const html = `<!doctype html><style>body{margin:0;font:16px sans-serif}main{position:absolute;left:0;top:0;width:1200px;height:780px}
+      .r1{position:absolute;left:0;top:300px}.r2{position:absolute;left:0;top:560px}.b{display:block;width:560px;min-height:40px}</style>
+      <main role="main"><h2>Thread</h2>
+        <div class="r1"><div class="rows">${TO_ADA}</div><div class="b" g_editable="true" contenteditable="true" role="textbox" aria-label="Message Body">To Ada</div>
+          <div><button id="send" type="button" aria-label="Send">Send</button></div></div>
+        <div class="r2"><div class="rows">${CC_CEM.replace('name="cc"', 'name="to"')}</div><div class="b" g_editable="true" contenteditable="true" role="textbox" aria-label="Message Body">To Cem</div>
+          <div><button id="send2" type="button" aria-label="Send">Send</button></div></div></main>`;
+    const url = 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+    const f = await fixture(build, Agent, { url, recipients: ['ada@example.test'], html });
+    try {
+      const second = await f.agent._messageRecipientGuardBlock(71, 'click', { selector: '#send2' }, url, {});
+      assert.deepEqual(second?.recipientConfirmation?.recipients, [{ identity: 'cem@example.test', role: 'to' }], JSON.stringify(second));
+      const { blocked, context } = await f.bind();
+      assert.equal(blocked, null, JSON.stringify(blocked));
+      const result = await call(f.page, 'click', { ...sendArgs, ...context });
+      assert.equal(result.success, true, JSON.stringify(result));
+      assert.equal(await f.page.evaluate(() => window.sent), 1);
+    } finally { await f.browser.close(); }
+  });
 
   test(`${build}: a Gmail popup compose with a typed To address binds with the To field focused`, async () => {
     const html = `<!doctype html><style>body{margin:0;font:16px sans-serif}[role=dialog]{position:absolute;right:20px;bottom:0;width:560px}
