@@ -157,6 +157,14 @@ if its opening and closing markers cannot both fit. Persistence and cancellation
 must preserve the same folded representation without exposing internal sub-call
 IDs to providers.
 
+Completion verification reads a folded batch without unwrapping it: the
+app-written metadata line says which children ran, each child's result is read
+only between its own opening marker and the closing marker with the same nonce,
+and the next child is looked for only after that close, so page text inside one
+result cannot stand in for another. From each result it keeps only app-owned
+booleans (verified, failed, credential field) beside the child's tool name and
+`ref_N` target, never result text.
+
 ### Don't weaken the boundary for "trusted sites"
 The master switch (Settings → Permissions) disables **Layer 3 only** (the
 prompts). Layers 1, 2, and 4 stay on always — they cost nothing and are what
