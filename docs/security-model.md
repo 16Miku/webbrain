@@ -115,6 +115,33 @@ When enabled (Settings → "Strict secret handling"), the agent:
 - After filling a sensitive field, `CREDENTIAL_NOTE_STRICT` is injected into the tool result
 
 Those three are prompt-level, so they hold only as far as the model complies.
+In every run, a value the agent filled into a field detected as sensitive
+(`set_field` or `type_ax`, and `type_text` or `iframe_type` when the page
+reports the field it typed into) is held in memory for the conversation and
+struck by exact match (also URL-encoded) from what the model writes to its
+scratchpad and progress ledger, which are pinned into later requests and saved
+with the conversation. Short values are everywhere in ordinary text, so a value
+of digits only shorter than six digits (a 4-digit PIN) is never struck, and any
+other value under eight characters, or a longer one of digits only (a one-time
+code), is struck only as a whole token, not inside a longer word or number.
+The values are never stored on their own: a conversation restored after the
+browser stopped the extension's worker rebuilds them from its own fill calls
+and their results (also when the run loop appended a note to a result). A value
+that becomes known after the model already wrote it down (a password it
+generated, then typed) is also struck from the model's own text in the existing
+scratchpad and from its ledger rows' labels, reasons and fields; the app's
+`[auto]` scratchpad lines and a row's `target`, `url` and `href`, which the
+runtime may have written, are left as they are. A restored conversation gets
+this scrub before the model's next note, once its run has said whether it may
+keep credentials. Overlapping values are struck as one stretch. A ledger value
+under a field name that says it holds a credential is replaced too: names
+ending in a credential word (`password`, `password_confirmation`, `passcode`,
+`otp`, `cvv`, `client_secret`), or in `token`, `code`, `key` or `pin` after a
+word that makes it one (`access_token`, `sms_code`, `api_key`, `card_pin`, or
+`pin` alone), but not `token_count`, `next_page_token`, `zip_code`, `pincode`,
+`map_pin` or `secretary`. Row ids stay as written, since they are the rows'
+identity. A Cloud run whose final answer is delivered privately keeps its
+notes.
 Cloud runs add a redaction layer underneath that does not:
 
 - Tool results are cut down to success and HTTP status, tool arguments to the few scalar fields a caller needs to score the run, and streamed or final model prose is replaced outright
@@ -125,9 +152,15 @@ Cloud runs add a redaction layer underneath that does not:
 **Where it stops.** A secret the model only ever *reads* out of ordinary page
 text — a one-time code in the body of an inbox message, say — is never seen in a
 form the redactor can recognize. If the model then repeats it in a clarification
-or a final answer, only the prompt-level rules above stand in the way. Strict
-mode raises the cost of a leak considerably; it is not a guarantee that survives
-a model that ignores its instructions.
+or a final answer, only the prompt-level rules above stand in the way. The
+same holds for the scratchpad and progress ledger: a secret the user only typed
+into chat, or that was never filled into a detected field (Chrome's selector
+form of `type_text` reports no field details), is not known to the redactor, a
+ledger row id is kept even when it holds one, and the model's original
+tool-call arguments stay in the conversation until they are summarized away.
+Strict mode raises the cost of a leak
+considerably; it is not a guarantee that survives a model that ignores its
+instructions.
 
 When disabled (the default — this is a personal-computer tool, not a third-party deployment):
 
@@ -184,7 +217,7 @@ The primary threat: a malicious page crafts content that, when read by the agent
 | **Universal preamble** | Every system prompt includes guidance on cookie banners and paywalls — two common injection vectors that look like benign page content. |
 | **Loop detection** | Three independent detectors stop the agent if it's repeating the same action or oscillating. Repeated click loops may include an exact same-tab XHR/fetch URL+method hint so the agent can switch to `fetch_url` instead of clicking forever. Limits damage from a persistently injected prompt. |
 | **Finance adapters** | Adapters with `category: 'finance'` inject extra confirmation guidance and a warning banner. |
-| **Strict secret handling** | Instructs the model not to quote credentials, and in cloud runs strikes every credential it typed, sent, or read from a labelled field out of what gets published. A secret it only saw in page prose still depends on the instruction. |
+| **Strict secret handling** | Instructs the model not to quote credentials, strikes credentials it filled into sensitive fields from its scratchpad and progress ledger, and in cloud runs strikes every credential it typed, sent, or read from a labelled field out of what gets published. A secret it only saw in page prose still depends on the instruction. |
 | **Local network blocking** | Local-network access is off by default. When access is off, URLs written with private or loopback IP literals and localhost names are blocked. DNS resolution is not checked, so other hostnames may still reach local addresses. Cloud-metadata IP literals (169.254.169.254) and listed metadata or `*.internal`/`*.local` hostnames stay blocked even when local-network access is enabled. |
 
 ### What is NOT defended

@@ -77,7 +77,7 @@ const RECOVERY_STAGES = new Set([
 const RECOVERY_RETRY_MODES = new Set(['resume', 'publication_without_audit', 'publication_audit_bypass', 'action_monitoring_relaxed']);
 const CERTIFICATION_FAILURES = new Set(['owner_unresolved', 'identity_unobserved', 'capture_limit', 'identity_limit',
   'target_uncovered', 'context_uncertified']);
-const ACTION_PREDICATES = new Set(['target_changed', 'target_unresolved', 'target_uncovered', 'focus_changed',
+const ACTION_PREDICATES = new Set(['target_changed', 'target_unresolved', 'target_ambiguous', 'target_uncovered', 'focus_changed',
   'intervention_changed', 'model_snapshot_invalid', 'model_snapshot_expired', 'pending_feedback',
   'target_hidden', 'target_disabled', 'target_detached', 'parent_changed', 'form_changed',
   'relaxed_grant_expired', 'relaxed_target_changed', 'target_not_actionable']);

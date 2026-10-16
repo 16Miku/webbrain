@@ -492,7 +492,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'navigate',
-      description: 'Navigate the current tab to a URL and verify that the browser commits the navigation, including same-URL reloads. NOTE: leaving a page discards unsaved form state — re-navigating to a page like GitHub\'s "New release" resets the tag, title, and any attached files. If the current page has attached files or filled fields, this is blocked and returns blockedUnsavedChanges; finish the current action first, or pass force:true to discard the changes intentionally. A native browser leave-page confirmation cannot be accepted automatically: while it is open, this returns navigationPending/confirmationPossible instead of success.',
+      description: 'Navigate the current tab to a URL and verify that the browser commits the navigation, including same-URL reloads. NOTE: leaving a page discards unsaved form state — re-navigating to a page like GitHub\'s "New release" resets the tag, title, and any attached files. If the current page has attached files or two or more filled fields, this is blocked and returns blockedUnsavedChanges; finish the current action first, or pass force:true to discard the changes intentionally. Other edits (a single field, rich-text content) are not detected, and a page\'s own leave-page warning may be answered Leave automatically, so save first when the task needs them. If a leave-page confirmation that WebBrain cannot answer stays open, this returns navigationPending/confirmationPossible instead of success and the user must answer it.',
       parameters: {
         type: 'object',
         properties: {
@@ -909,7 +909,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'fetch_url',
-      description: 'Fetch a URL directly from the background and return a bounded text/JSON window. Cookies are attached only when the URL shares the registrable domain (eTLD+1) of the active tab — same-site reads work as the signed-in user; cross-site reads are anonymous. Best for JSON APIs, RSS, plain HTML, raw text files, GitHub raw blobs, and REST endpoints. Auto-trims HTML to readable text. For large resources, use `find` for case-insensitive literal search or continue with `offset: nextOffset`; do not guess HTTP Range byte offsets. Results include `originalLength`, `nextOffset`, and `hasMore`, plus safe Content-Range metadata when the server supplies it. NOT good for SPAs that need JS rendering — use research_url. For ordinary active-tab reading use read_page or get_accessibility_tree; official CMS API discovery and content verification are permitted for a supported content task.',
+      description: 'Fetch a URL directly from the background and return a bounded text/JSON window. Cookies are attached only when the URL shares the registrable domain (eTLD+1) of the active tab — same-site reads work as the signed-in user; cross-site reads are anonymous. Best for JSON APIs, RSS, plain HTML, raw text files, GitHub raw blobs, and REST endpoints. Auto-trims HTML to readable text. For large resources, use `find` for case-insensitive literal search or continue with `offset: nextOffset`; do not guess HTTP Range byte offsets. Results include `originalLength`, `nextOffset`, and `hasMore`, plus safe Content-Range metadata when the server supplies it. NOT good for SPAs that need JS rendering — use research_url. For ordinary active-tab reading use read_page or get_accessibility_tree; official CMS API discovery and content verification are permitted for a supported content task. Background read: opens or shows no tab; active tab unchanged. To open/show a page, use navigate and confirm its URL/title.',
       parameters: {
         type: 'object',
         properties: {
@@ -930,7 +930,7 @@ export const AGENT_TOOLS = [
     type: 'function',
     function: {
       name: 'research_url',
-      description: 'Open a URL in a hidden background tab, wait for JS rendering, extract main content, close the tab. Use for SPAs and content sites. Slower (~2-5s) but handles modern web apps. Returns title, text, and outbound links.',
+      description: 'Open a URL in a background tab (it may briefly appear in the tab strip), wait for JS rendering, extract main content, close the tab. Use for SPAs and content sites. Slower (~2-5s) but handles modern web apps. Returns title, text, and outbound links. Active tab unchanged. To open/show a page, use navigate and confirm its URL/title.',
       parameters: {
         type: 'object',
         properties: {
@@ -1736,7 +1736,20 @@ function askResearchConsentTool(tool) {
 
 function ordinaryClarifyTool(tool) {
   const properties = { ...tool.function.parameters.properties };
-  delete properties.purpose;
+  // Only research_escalation depends on the opt-in setting. The recipient
+  // purposes belong to ordinary clarification, and the advertised schema is
+  // closed, so dropping `purpose` entirely made every recipient question fail
+  // argument validation whenever research escalation was off.
+  const ordinaryPurposes = (properties.purpose?.enum || []).filter(value => value !== 'research_escalation');
+  if (ordinaryPurposes.length) {
+    properties.purpose = {
+      ...properties.purpose,
+      enum: ordinaryPurposes,
+      description: 'Optional purpose of the clarification. Use message_recipient to ask the user who should receive a message, or recipient_change to switch an already-authorized recipient. Do not ask the user to confirm the recipient of a send that is already prepared, or which item on the page to delete: WebBrain confirms both with the user itself, on its own card, before sending or deleting.',
+    };
+  } else {
+    delete properties.purpose;
+  }
   delete properties.research_request;
   delete properties.approve_option;
   return {
@@ -2194,7 +2207,7 @@ UI vs API — read this carefully:
 - TWO exceptions where API mutations are allowed:
   (1) The user explicitly says "use the API" or "POST to /foo" — do what they asked once API mutation permission is enabled; an explicit request does not bypass the runtime permission gate.
   (2) The [USER OVERRIDE — API MUTATIONS ALLOWED] context note is present. It can come from /allow-api for this conversation or the user's persistent setting. When present, for WordPress posts, pages, REST-enabled custom types and their taxonomy, prefer the API first when the required fields and signed-in session are verified and Strict secret handling is off; follow the WordPress adapter/skill and reconcile uncertain writes before retrying. The nine CMSs above follow their conditional API-first rule. Other tasks retain the UI-first rule. You may also use API mutations when UI is genuinely failing/unworkable, or when WebBrain reports a [BULK API MUTATION PATTERN] showing repeated successful same-kind UI actions and matching background API requests. Without this authorization, mutating fetch_url/research_url calls are blocked. Before any destructive API call, state the URL, method, and payload in plain text in your response.
-- For READING data (looking things up, fetching a README, comparing prices, checking a status page), \`fetch_url\` and \`research_url\` are the RIGHT tool. Reading is fine.
+- For READING data (looking things up, fetching a README, comparing prices, checking a status page), \`fetch_url\` and \`research_url\` are the RIGHT tool. Reading is fine. They read in the background without showing the page, so when the user asks to open, go to, or show a page, use \`navigate\` instead.
 - Examples:
   - "Create a release on GitHub" → navigate to /releases/new, fill the form, click Publish. NOT a POST to api.github.com.
   - "Send an email" → open Gmail compose, type, click Send. NOT a POST to gmail.googleapis.com.

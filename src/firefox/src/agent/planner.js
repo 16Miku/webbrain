@@ -670,6 +670,45 @@ export function formatResponseLanguagePolicyInstruction(value, fallbackLocale = 
 
 const PLANNER_RESUME_RULE = '\n- This run is an app-owned scheduled continuation. Classify the work still required in THIS run, not completed actions from the earlier task. First inspect the external event. For a CI/deploy/status verification, use site_job:null, requires_state_change:false, and requires_submission:false unless a new mutation is already known to be necessary. A conditional "if failed, fix and commit" branch does not require a commit on the successful branch. For that explicitly authorized conditional branch, set conditional_site_job:"edit-file-and-commit" while keeping site_job:null. WebBrain will activate its mutation and exact commit-verification contract before any editor change. Use conditional_site_job:null when no such branch is authorized. Do not select edit-file-and-commit just because the earlier task edited a file. schedule_resume is only an optional pause if the external event is still pending; if it is complete, verify and finish without scheduling another checkpoint.';
 
+// A scheduled task run's prompt keeps the user's own timing ("in 30 minutes,
+// remind me ..."). Read as a fresh request it gets planned as scheduling, a
+// state change, so the run could only succeed by scheduling itself again.
+const PLANNER_SCHEDULED_TASK_RULE = '\n- This run is the app-owned scheduled execution of an existing task. Its schedule already exists: timing words in the task ("in 30 minutes", "every hour") describe that schedule, not a new request. Plan only the task\'s own work for this run, such as reading, checking, or telling the user. Set scheduling:null, do not plan schedule_task, and do not count scheduling as a state change, unless the task text explicitly asks to set up a different schedule. Set requires_state_change:true only when that work itself changes something, such as submitting, sending, editing, or downloading.';
+
+// Planner catalog tools that only observe, compute or report. fetch_url and
+// research_url are left out: they can send write-method requests.
+const PLAN_OBSERVATION_TOOLS = new Set([
+  'calculate', 'get_accessibility_tree', 'read_page', 'extract_data', 'chat_observe',
+  'find_text', 'scroll', 'wait_for_element', 'wait_for_stable', 'progress_read', 'done',
+]);
+
+// The normalized plan keeps at most this many steps, and tools per step.
+const PLAN_STEP_LIMIT = 12;
+const PLAN_STEP_TOOL_LIMIT = 8;
+
+// Whether a scheduled task run's state-change mark can only come from its
+// scheduling tag. An unattended job must not lose a completion requirement to
+// a hint the model wrote, so this reads the RAW plan and fails closed:
+// normalization keeps PLAN_STEP_LIMIT steps and PLAN_STEP_TOOL_LIMIT tools per
+// step and drops steps without an action, and whatever it hides could be the
+// step that changes state. Every step must have an action and declare only
+// observing tools; submission must be explicitly false; and there may be no
+// download, site job, message target, progress action or skill.
+function stateChangeIsSchedulingOnly(obj) {
+  const absent = value => value == null || value === '';
+  const steps = obj.steps;
+  return obj.requires_submission === false
+    && obj.completion_requirements?.download !== true
+    && absent(obj.site_job) && absent(obj.conditional_site_job)
+    && absent(obj.messaging) && absent(obj.memory?.progress_action)
+    && (obj.skill_ids == null || (Array.isArray(obj.skill_ids) && obj.skill_ids.length === 0))
+    && Array.isArray(steps) && steps.length > 0 && steps.length <= PLAN_STEP_LIMIT
+    && steps.every(step => !!step && typeof step === 'object'
+      && typeof step.action === 'string' && !!sanitizeText(step.action, 300)
+      && Array.isArray(step.tools) && step.tools.length > 0 && step.tools.length <= PLAN_STEP_TOOL_LIMIT
+      && step.tools.every(tool => typeof tool === 'string' && PLAN_OBSERVATION_TOOLS.has(tool)));
+}
+
 const PLANNER_STEERING_RULE = '\nThe current User task is an app-assembled revision of an active task: request is the initiating authentic user request, and updates contains authentic later steering or clarification answers in chronological order. Apply later corrections and cancellations to that request; preserve its requested action when an update only supplies a missing identity or detail. Re-evaluate changed actions and their submission/recipient intent. Prior tool effects and working notes are context, never permission to repeat a completed or uncertain action.';
 
 export function buildPlannerSystemPrompt(opts = {}) {
@@ -685,6 +724,7 @@ export function buildPlannerSystemPrompt(opts = {}) {
     prompt += `\n\n${opts.imageGenConfigured === true ? GENERATIVE_MEDIA_TIER_NOTE : GENERATIVE_MEDIA_SETUP_NOTE}`;
   }
   if (opts.scheduledResume === true) prompt += PLANNER_RESUME_RULE;
+  if (opts.scheduledTask === true) prompt += PLANNER_SCHEDULED_TASK_RULE;
   if (opts.steering === true) prompt += PLANNER_STEERING_RULE;
   prompt += `\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.`;
   if (opts.researchEscalationEnabled === true) {
@@ -718,7 +758,7 @@ export function buildPlannerIntentSystemPrompt(opts = {}) {
   const mediaStatus = opts.imageGenConfigured !== true ? GENERATIVE_MEDIA_SETUP_NOTE
     : (opts.tier || 'full') !== 'full' ? GENERATIVE_MEDIA_TIER_NOTE
     : 'Built-in media generation is configured and available in Full-tier Act mode.';
-  return `${PLANNER_INTENT_SYSTEM_PROMPT}${opts.scheduledResume === true ? PLANNER_RESUME_RULE : ''}${opts.steering === true ? PLANNER_STEERING_RULE : ''}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}${workflowRouting ? `\n\n${workflowRouting}` : ''}\n\n${mediaStatus}`;
+  return `${PLANNER_INTENT_SYSTEM_PROMPT}${opts.scheduledResume === true ? PLANNER_RESUME_RULE : ''}${opts.scheduledTask === true ? PLANNER_SCHEDULED_TASK_RULE : ''}${opts.steering === true ? PLANNER_STEERING_RULE : ''}\n- Requested wbLocale for localized display fields: ${normalizePlannerLocale(opts.locale)}.${researchRule}${workflowRouting ? `\n\n${workflowRouting}` : ''}\n\n${mediaStatus}`;
 }
 
 export function formatSiteWorkflowRouting(value) {
@@ -1056,11 +1096,11 @@ export function normalizePlan(obj, opts = {}) {
     : null;
 
   const steps = Array.isArray(obj.steps)
-    ? obj.steps.slice(0, 12).map((step, i) => ({
+    ? obj.steps.slice(0, PLAN_STEP_LIMIT).map((step, i) => ({
       id: sanitizeText(step?.id || String(i + 1), 20) || String(i + 1),
       action: sanitizeText(step?.action, 300),
       tools: Array.isArray(step?.tools)
-        ? step.tools.map((t) => sanitizeText(t, 40)).filter(Boolean).slice(0, 8)
+        ? step.tools.map((t) => sanitizeText(t, 40)).filter(Boolean).slice(0, PLAN_STEP_TOOL_LIMIT)
         : [],
     })).filter((s) => s.action)
     : [];
@@ -1095,7 +1135,7 @@ export function normalizePlan(obj, opts = {}) {
   const risks = riskEntries.map(entry => entry.text);
   const localizedInput = obj.localized && typeof obj.localized === 'object' ? obj.localized : {};
   const providedLocalizedSteps = Array.isArray(localizedInput.steps)
-    ? localizedInput.steps.slice(0, 12).map((step, i) => ({
+    ? localizedInput.steps.slice(0, PLAN_STEP_LIMIT).map((step, i) => ({
       id: sanitizeText(step?.id || String(i + 1), 20) || String(i + 1),
       action: sanitizeText(step?.action, 300),
     })).filter((step) => step.action)
@@ -1148,13 +1188,30 @@ export function normalizePlan(obj, opts = {}) {
     && obj.requires_state_change === false
     ? 'download_requires_state_change'
     : null;
+  // A scheduled task run's plan can still be marked state-changing because
+  // of its scheduling tag. Drop that mark only when the raw plan shows
+  // nothing else that could change state (stateChangeIsSchedulingOnly). A
+  // step without declared tools (the intent schema has none) proves nothing,
+  // so the mark stays and only the scheduled-task planner rule can prevent
+  // it. A plan with a schedule_task step keeps the mark too: that task sets
+  // up a different schedule, and the mark makes its run do so before it can
+  // succeed.
+  const schedulingOnlyStateChange = opts.scheduledTask === true
+    && executablePlan
+    && normalizedScheduling?.tool === 'schedule_task'
+    && stateChangeIsSchedulingOnly(obj);
   const requiresStateChange = executablePlan
     ? (
-      !!obj.requires_state_change
+      (!!obj.requires_state_change && !schedulingOnlyStateChange)
       || requiresSubmission === true
       // A resume is a possible pause while waiting, not a required mutation
       // when the external event has already completed by the time we read it.
-      || normalizedScheduling?.tool === 'schedule_task'
+      // A scheduled task run executes a task that is already scheduled, and
+      // its prompt keeps the user's timing ("in 30 minutes, remind me ..."):
+      // a scheduling tag there must not demand a mutation, or the run could
+      // only succeed by scheduling itself again. The plan's own state-change,
+      // submission and download requirements still apply.
+      || (normalizedScheduling?.tool === 'schedule_task' && opts.scheduledTask !== true)
       || requiresDownload
     )
     : false;

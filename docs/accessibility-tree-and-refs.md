@@ -185,6 +185,8 @@ Atomically focuses + (optionally clears) + types + (optionally submits). The one
 
 **Combobox-aware submit**: when `submit:true`, the tool detects if the field is a combobox/autocomplete (role=combobox, aria-autocomplete, aria-controls pointing at a listbox, or a visible listbox on the page). If so, dispatches `ArrowDown` → `Enter` with small delays to commit the highlighted option. Otherwise falls back to `form.requestSubmit()` or a plain `Enter` key press.
 
+**Truncated-preview refusal**: a tree line shows only the start of a long field value, so a replacing write copied from it would delete the rest. `set_field`, `type_ax` and `type_text` with `clear` refuse, before anything is typed, a text that ends in `...`, `…` or one of the runtime's own cut markers (such as `[...truncated]`) when the text before that ending (at least 20 characters) starts the field's current value and at least 10 more characters follow it there. A text the value itself continues, ending included, is not a preview. The result is `{success:false, noDispatch:true, errorCode:'truncated_value_replacement', currentValueLength, recoveryRequired:'read_full_value'}`: read the full value first (`read_page` lists form values), or add text with `clear:false`; to shorten the field to exactly that text, clear it with an empty text, then add it. The markers are `TRUNCATED_PREVIEW_MARKERS` in content.js, which `test/improver-content-truncated-replacement.mjs` keeps equal to the markers the runtime appends to model-visible text.
+
 ---
 
 ## Overlay Hoisting
@@ -209,6 +211,15 @@ When building the tree, open dialogs, listboxes, menus, and `[aria-expanded=true
 10. `innerText` fallback for buttons, links, summary
 11. Preceding sibling text (unlabeled form fields pattern: "Every 1 month(s)" → the preceding text is the label)
 12. Direct text fallback
+
+### Signed-in account chrome
+
+Google's bar names whoever uses the browser: the account button's label holds the account's name and address, the avatar's alt text the name, and its link the current page in `continue=`. Its model-facing name and link are generic instead: it is `Google account`, its link keeps only origin and path, and it keeps its role and ref, so the account menu still opens. It is recognized structurally, in any interface language (`accountChromeControl`):
+
+- a link to `accounts.google.com/SignOutOptions`, `/AccountChooser` or `/Logout`, anywhere;
+- inside Google's bar (`#gb`) or a page banner outside `main`/`article`: a link to `myaccount.google.com`, or a `#gb` button whose name holds an e-mail address.
+
+Page content keeps its names: a `myaccount.google.com` link in a mail or an article, everything on `accounts.google.com` and `myaccount.google.com` (their subject is the account), and the signed-out "Sign in" link (`ServiceLogin`). The tree exports `__wb_ax_model_name(el, name?)` and `__wb_ax_model_href(el, href)`; content.js runs the control names and links its results echo through them (click and element results, link lists, hover and drag targets, scroll origins, a covering overlay's text). The agent builds the screenshot's element list beside the content scripts (no list without the tree), and Chrome's CDP `click({text})` marks each element it reports with a per-call attribute so its name is resolved for that element, then removes the mark. Matching and change detection keep the raw name, so another account still counts as a change. Not covered: the screenshot image and the page title (Gmail's title includes the address).
 
 ---
 

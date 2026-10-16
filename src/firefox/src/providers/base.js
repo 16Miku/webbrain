@@ -1,6 +1,7 @@
 import { getRequestTimeoutMs } from './fetch-timeout.js';
 import { inferContextWindow, resolveMaxOutputTokens } from './context-windows.js';
 import { createResponseReader, readResponseText, responseAbortError } from '../network/response-body.js';
+import { isRateLimitClass, rateLimitStatusOf, retryAfterMs } from './model-retry.js';
 import {
   addConfiguredMaxTokens,
   mapProviderMessages,
@@ -84,6 +85,27 @@ export class BaseLLMProvider {
     return error;
   }
 
+  // model-retry recognizes a rate limit, and the provider's Retry-After
+  // cooldown, only through these fields; a bare Error is never retried as one.
+  _httpStatusError(message, status, retryAfter = null) {
+    const error = new Error(message);
+    error.httpStatus = status;
+    if (isRateLimitClass(error)) error.retryAfterMs = retryAfterMs(retryAfter);
+    return error;
+  }
+
+  // Once a provider has committed HTTP 200 (OpenRouter does so as soon as an
+  // upstream accepts the request), a later 429 or Cloud upstream failure
+  // arrives only as an error object in the stream or body. Keep its code and
+  // rate-limit class so it is retried like the HTTP response would be.
+  _withProviderError(error, providerError) {
+    const code = providerError?.code;
+    if (typeof code === 'string' && code) error.code = code;
+    const status = rateLimitStatusOf(providerError);
+    if (status) error.httpStatus = status;
+    return error;
+  }
+
   _messagesContainImage(messages) {
     return messages.some((msg) => Array.isArray(msg?.content) && msg.content.some((block) => {
       return block && (block.type === 'image_url' || block.type === 'image');
@@ -92,7 +114,7 @@ export class BaseLLMProvider {
 
   _chatCompletionMessage(payload, label = this.name) {
     const apiError = openAiCompatiblePayloadError(payload);
-    if (apiError) throw new Error(`${label} error: ${apiError}`);
+    if (apiError) throw this._withProviderError(new Error(`${label} error: ${apiError}`), payload.error);
     const message = payload?.choices?.[0]?.message;
     if (!message || typeof message !== 'object') {
       throw new Error(`${label} returned no completion choice.`);
