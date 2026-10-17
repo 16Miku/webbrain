@@ -1112,3 +1112,20 @@ test('round-23: popups keep focus inside; reminder mounts via event; backups car
   assert.match(imp, /\[BACKGROUNDS_BACKUP_KEY\]: backgrounds/);
   assert.match(imp, /await clearAllBackgrounds\(\)[\s\S]*await addBackground\(record\)/);
 });
+
+test('round-24: filters follow the background, backups record an empty gallery, deletions reload the picture', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const rend = read('features/background/hooks/useBackgroundRenderer.js');
+  assert.match(rend, /useBackgroundFilters\(backgroundData\)[\s\S]*\[backgroundData\]/);
+  assert.match(rend, /useBackgroundOverlayFilters\(backgroundData\)/);
+  assert.match(rend, /element\.style\.backgroundImage = ''/);
+  const bg = read('features/background/Background.jsx');
+  assert.match(bg, /useBackgroundFilters\(backgroundData\)/);
+  assert.match(bg, /useBackgroundOverlayFilters\(backgroundData\)/);
+  const exp = read('utils/settings/export.js');
+  assert.match(exp, /await getBackgroundCount\(\)/);
+  assert.match(exp, /if \(backgrounds\.length === count\)/);
+  assert.doesNotMatch(exp, /if \(backgrounds\.length > 0\)/);
+  const custom = read('features/background/options/Custom.jsx');
+  assert.equal((custom.match(/EventBus\.emit\('refresh', 'backgroundrefresh'\)/g) || []).length, 2);
+});

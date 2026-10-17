@@ -112,6 +112,9 @@ export function useBackgroundRenderer(backgroundData) {
         }, TRANSITION_DURATION + 100);
       } else if (backgroundData.style) {
         element.setAttribute('style', backgroundData.style);
+      } else {
+        // Nothing to show (e.g. the last upload was deleted): drop the previous picture.
+        element.style.backgroundImage = '';
       }
     };
 
@@ -139,13 +142,17 @@ export function useBackgroundRenderer(backgroundData) {
 /**
  * Hook to get computed filter styles (legacy - for video backgrounds)
  */
-export function useBackgroundFilters() {
-  return useMemo(() => ({ WebkitFilter: getBackgroundFilterStyle() }), []);
+export function useBackgroundFilters(backgroundData) {
+  // Effect settings can change while another kind of background is showing, so read them
+  // again whenever the background does (a video mounted later must not get stale values).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => ({ WebkitFilter: getBackgroundFilterStyle() }), [backgroundData]);
 }
 
 /**
  * Hook to get computed overlay filter styles
  */
-export function useBackgroundOverlayFilters() {
-  return useMemo(() => getBackgroundOverlayStyle(), []);
+export function useBackgroundOverlayFilters(backgroundData) {
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => getBackgroundOverlayStyle(), [backgroundData]);
 }

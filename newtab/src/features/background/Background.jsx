@@ -15,8 +15,8 @@ import './scss/index.scss';
 export default function Background() {
   const { backgroundData, updateBackground, resetBackground } = useBackgroundState();
   const { refreshBackground } = useBackgroundLoader(updateBackground, resetBackground);
-  const filterStyle = useBackgroundFilters();
-  const overlayFilterStyle = useBackgroundOverlayFilters();
+  const filterStyle = useBackgroundFilters(backgroundData);
+  const overlayFilterStyle = useBackgroundOverlayFilters(backgroundData);
 
   useBackgroundRenderer(backgroundData);
   useBackgroundEvents(backgroundData, refreshBackground);

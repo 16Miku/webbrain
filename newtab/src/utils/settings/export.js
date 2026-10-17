@@ -1,6 +1,6 @@
 import { saveFile } from 'utils/saveFile';
 import variables from 'config/variables';
-import { getAllBackgroundsWithMetadata } from 'utils/customBackgroundDB';
+import { getAllBackgroundsWithMetadata, getBackgroundCount } from 'utils/customBackgroundDB';
 
 // Reserved key in the backup file for the uploaded images / videos, which live in IndexedDB
 // (localStorage only keeps their count), so a backup without it would silently lose them.
@@ -17,9 +17,13 @@ export async function exportSettings() {
   });
 
   try {
-    const backgrounds = await getAllBackgroundsWithMetadata();
-    if (backgrounds.length > 0) {
-      // ids are assigned again on import
+    // getBackgroundCount() rejects on failure, whereas getAllBackgroundsWithMetadata() turns
+    // a failure into []; an unreadable store must not be written to the backup as "empty".
+    const count = await getBackgroundCount();
+    const backgrounds = count > 0 ? await getAllBackgroundsWithMetadata() : [];
+    if (backgrounds.length === count) {
+      // Written even when empty: importing such a backup then clears the target profile's
+      // uploads, restoring the backed-up state. ids are assigned again on import.
       settings[BACKGROUNDS_BACKUP_KEY] = backgrounds.map(({ id: _id, ...rest }) => rest);
     }
   } catch (error) {

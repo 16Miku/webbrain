@@ -291,7 +291,8 @@ const CustomSettings = memo(() => {
 
       syncBackgroundCount(backgrounds);
 
-      EventBus.emit('refresh', 'background');
+      // custom -> custom does not count as a type change, so ask for a reload of the picture itself
+      EventBus.emit('refresh', 'backgroundrefresh');
     } catch (error) {
       console.error('Error modifying background:', error);
       toast(variables.getMessage('toasts.error'));
@@ -314,7 +315,8 @@ const CustomSettings = memo(() => {
 
       syncBackgroundCount(backgrounds);
 
-      EventBus.emit('refresh', 'background');
+      // custom -> custom does not count as a type change, so ask for a reload of the picture itself
+      EventBus.emit('refresh', 'backgroundrefresh');
       toast(variables.getMessage('toasts.deleted'));
     } catch (error) {
       console.error('Error batch deleting:', error);
