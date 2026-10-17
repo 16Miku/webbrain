@@ -13078,6 +13078,19 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     return calculationResultInText(summary, result, fraction);
   }
 
+  // A plain final accepted in a literal-arithmetic task before any
+  // calculator attempt (the plan guard gives its notes first): WebBrain knows
+  // its answer was not computed. As for a premature done(success), it ends
+  // as partial with that caveat (pure-calculation-done-checks).
+  _notePrematureCalculationFinal(tabId) {
+    const policy = this._pureCalculationToolPolicy(tabId);
+    if (!policy || policy.stale || policy.attempted || !policy.names.includes('calculate')) return;
+    if (this._guardOutcome('pure-calculation-done-checks', { decided: true, tabId }) !== 'advise') return;
+    const state = this._guardRunState(tabId);
+    state.caveats.set('pure-calculation-done-checks', 'The result was not computed with the calculator.');
+    (state.outcomeDowngrades ||= new Set()).add('pure-calculation-done-checks');
+  }
+
   _pureCalculationToolBlock(tabId, name, args, expectedScope) {
     const policy = this._pureCalculationToolPolicy(tabId, expectedScope);
     if (!policy) return null;
@@ -45020,6 +45033,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       finalResponse = result.costAllowanceMessage
         ? `${repairedFinalContent}\n\n${result.costAllowanceMessage}`
         : repairedFinalContent;
+      this._notePrematureCalculationFinal(tabId);
       finalResponse = this._withCompletionCaveat(tabId, finalResponse);
       messages.push(this._withResponseItems({ role: 'assistant', content: finalResponse }, result.responseItems, result.reasoningContent, provider));
       onUpdate('text', { content: finalResponse });
@@ -46233,6 +46247,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           onUpdate('text_delta', { content: `\n\n${costStopMessage}` });
           fullText = `${fullText}\n\n${costStopMessage}`;
         }
+        this._notePrematureCalculationFinal(tabId);
         const caveatedFullText = this._withCompletionCaveat(tabId, fullText);
         if (caveatedFullText !== fullText) {
           fullText = caveatedFullText;
