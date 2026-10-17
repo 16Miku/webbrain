@@ -5776,6 +5776,7 @@ export class Agent extends LoopDetector {
   _releaseRunEntry(tabId) {
     this._settleUnverifiedStepScope(tabId);
     this._cancelSocialPublicationBackground(tabId);
+    this._predispatchTimings?.delete(tabId);
     const feedbackRun = this._pageFeedbackRuns?.get(tabId);
     if (feedbackRun?.monitoringRetry && !feedbackRun.monitoringRetry.started) {
       this._restoreFailureRecoveryStart(tabId, feedbackRun.monitoringRetry.requestId, feedbackRun.onUpdate, feedbackRun.monitoringRetry);
@@ -9146,6 +9147,10 @@ export class Agent extends LoopDetector {
     const add = (stage, ms) => {
       if (Number.isFinite(ms) && ms >= 0) stages[stage] = (stages[stage] || 0) + ms;
     };
+    // The tab's open record goes once the call has its note or none is due.
+    const discard = () => {
+      if (this._predispatchTimings?.get(tabId) === stages) this._predispatchTimings.delete(tabId);
+    };
     return {
       lap: stage => { const now = Date.now(); add(stage, now - last); last = now; },
       add,
@@ -9154,9 +9159,10 @@ export class Agent extends LoopDetector {
       emit: (step, extra = {}) => {
         if (emitted) return;
         emitted = true;
-        if (this._predispatchTimings?.get(tabId) === stages) this._predispatchTimings.delete(tabId);
+        discard();
         this._recordPredispatchTiming(tabId, step, { ...stages, totalMs: Date.now() - startedAt, ...extra });
       },
+      discard,
       get emitted() { return emitted; },
     };
   }
@@ -9182,7 +9188,9 @@ export class Agent extends LoopDetector {
     if (predispatch.emitted) return;
     let consequential = false;
     try { consequential = !!pending.consequential(); } catch {}
-    if (!consequential) return;
+    // A read or other call that changes nothing gets no note; its open
+    // record for the tab goes with it.
+    if (!consequential) { predispatch.discard(); return; }
     predispatch.lap('stoppedMs');
     predispatch.emit(pending.step, { tool: pending.tool,
       outcome: callState.dispatchState?.started === true ? 'dispatched' : 'not_dispatched' });
@@ -14362,7 +14370,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || await timedCheck('workflowDispatchMs', () => this._workflowPreSubmitDispatchBlock(
           tabId, fnName, fnArgs, detectedSubmitAction, provider, callState.guardAdvisories,
         ));
-      // From here the permission capabilities and the submit probe decide.
+      // From here the permission capabilities and the submit probe decide:
+      // missingResponseOutcomeUnknown (above) holds when the call needs a
+      // permission capability or is a state-changing tool, so navigation,
+      // typing, uploads and deletions stay consequential; the probe adds a
+      // submit or a publication control that needs neither.
       predispatchConsequential = () => missingResponseOutcomeUnknown
         || detectedSubmitAction?.isSubmit === true || detectedSubmitAction?.publicationControl === true;
       let workflowPreSubmitBlock = await runWorkflowPreSubmitChecks();
@@ -33664,6 +33676,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._verifiedTextReplacements.delete(tabId);
     // Task-scoped like the proofs it sits beside; it never guarded anything.
     this._unverifiedTextWrites?.delete(tabId);
+    this._predispatchTimings?.delete(tabId);
     this.progressPageScopes.delete(tabId);
     this.progressSessions.delete(tabId);
     this.progressExpectedItems.delete(tabId);

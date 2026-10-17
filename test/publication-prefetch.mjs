@@ -1224,6 +1224,58 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(JSON.stringify(projected).includes('PRIVATE'), false);
     assert(Object.values(projected.extra).every(value => typeof value === 'number' || ['click_ax', 'dispatched'].includes(value)));
   });
+
+  test(`${browser}: navigation and typing record predispatch_timing too, and a read leaves no timing record behind`, async () => {
+    const run = async (name, args) => {
+      const provider = { model: 'fake-checker', chat: async () => ({ content: '{}' }) };
+      const agent = new Agent({ getActive: () => provider });
+      const tabId = 812;
+      agent._persist = () => {};
+      agent._currentUrl = async () => 'https://example.com/search';
+      agent.conversations.set(tabId, [{ role: 'system', content: 'system' }, { role: 'user', content: 'Search the site for hello' }]);
+      agent._startPlanExecutionGuard(tabId, 'act', { requestKind: 'execute', requiresStateChange: true });
+      agent.currentRunId.set(tabId, 'timing-run');
+      agent._skipPermissionGate = true;
+      agent._ensureGateSetting = async () => true;
+      agent._recordProgressObservation = async () => null;
+      agent._autoRecordProgressAction = () => null;
+      agent._progressWarningForAction = () => '';
+      agent._captureFormValidationState = async () => [];
+      agent._waitForFormValidationFailure = async () => null;
+      agent._readCompletionResult = async () => null;
+      agent._messageRecipientGuardBlock = async () => null;
+      agent._captchaMutationPreflight = async () => null;
+      agent._detectLikelySubmitAction = async () => ({ isSubmit: false });
+      const dispatched = [];
+      agent.executeTool = async (_tabId, tool) => { dispatched.push(tool); return { success: true, dispatched: true }; };
+      const notes = [];
+      agent._recordPredispatchTiming = (_tabId, step, timing) => notes.push({ step, timing });
+      await agent._executeToolBatch(tabId, [{ id: 'call', function: { name, arguments: JSON.stringify(args) } }],
+        [], () => {}, provider, '', new Set([name]), 7);
+      return { agent, tabId, dispatched, notes };
+    };
+    // None of these is a submit; the permission capability each needs makes
+    // it consequential.
+    for (const [name, args] of [['navigate', { url: 'https://example.com/next' }],
+      ['type_text', { selector: '#q', text: 'hello' }], ['set_field', { ref_id: 'ref_3', text: 'hello' }]]) {
+      const { agent, tabId, dispatched, notes } = await run(name, args);
+      assert.deepEqual(dispatched, [name], name);
+      assert.equal(notes.length, 1, `${name}: its timing is recorded`);
+      assert.equal(notes[0].timing.tool, name);
+      assert.equal(notes[0].timing.outcome, 'dispatched');
+      assert.equal(agent._predispatchTimings?.has(tabId) || false, false, `${name}: no record is left open`);
+    }
+    // A read gets no note, and its record for the tab goes when its batch ends.
+    const read = await run('get_accessibility_tree', {});
+    assert.deepEqual(read.dispatched, ['get_accessibility_tree']);
+    assert.equal(read.notes.length, 0);
+    assert.equal(read.agent._predispatchTimings?.has(read.tabId) || false, false, 'the read left its timing record behind');
+    // The end of a run drops whatever record is still open.
+    read.agent._predispatchTimer(read.tabId);
+    assert.equal(read.agent._predispatchTimings.has(read.tabId), true);
+    read.agent._releaseRunEntry(read.tabId);
+    assert.equal(read.agent._predispatchTimings.has(read.tabId), false, 'the end of the run dropped the open record');
+  });
 }
 
 // The prefetch probe, in a real page: it must find the composer's own Post
