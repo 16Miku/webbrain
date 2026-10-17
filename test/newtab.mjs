@@ -2617,3 +2617,52 @@ test('round-78: Act handoffs use the panel eligibility check; file inputs are cl
   const upload = readFileSync(nt('components/Form/Settings/FileUpload/FileUpload.jsx'), 'utf8');
   assert.match(upload, /const files = Array\.from\(e\.target\.files\);[\s\S]*e\.target\.value = '';\s*if \(files\.length === 0\) return;/);
 });
+
+test('round-80: a new background replaces the photo metadata; custom CSS and font are inserted as text', async (t) => {
+  let esbuild;
+  try {
+    esbuild = await import(pathToFileURL(path.join(root, 'newtab/node_modules/esbuild/lib/main.js')).href);
+  } catch {
+    return t.skip('newtab dependencies are not installed');
+  }
+  const out = await esbuild.build({
+    entryPoints: [nt('features/background/hooks/useBackgroundState.js')],
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'node',
+    plugins: [
+      {
+        name: 'fake-react',
+        setup(build) {
+          build.onResolve({ filter: /^react$/ }, () => ({ path: 'react', namespace: 'fake' }));
+          build.onLoad({ filter: /.*/, namespace: 'fake' }, () => ({
+            contents: `
+              let state;
+              export const useState = (init) => { if (state === undefined) state = init; return [state, (v) => { state = typeof v === 'function' ? v(state) : v; }]; };
+              export const useCallback = (fn) => fn;
+              export const current = () => state;
+            `,
+            loader: 'js',
+          }));
+        },
+      },
+    ],
+  });
+  const code = `data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`;
+  const { useBackgroundState } = await import(code);
+  const hook = useBackgroundState();
+  hook.resetBackground();
+  hook.updateBackground({ url: 'a.jpg', photoInfo: { offline: true, credit: 'Someone' } });
+  // The reset's `hidden: true` must not survive into the new background.
+  const refreshed = useBackgroundState().backgroundData;
+  assert.deepEqual(refreshed.photoInfo, { offline: true, credit: 'Someone' });
+  // An update without metadata keeps the current metadata.
+  hook.updateBackground({ video: true });
+  assert.deepEqual(useBackgroundState().backgroundData.photoInfo, { offline: true, credit: 'Someone' });
+
+  const load = readFileSync(nt('utils/settings/load.js'), 'utf8');
+  assert.doesNotMatch(load, /insertAdjacentHTML/);
+  assert.match(load, /customStyle\.textContent = css;/);
+  assert.match(load, /fontStyle\.textContent = /);
+});

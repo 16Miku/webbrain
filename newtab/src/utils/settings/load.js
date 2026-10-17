@@ -76,25 +76,28 @@ export function loadSettings(hotreload) {
 
   const css = localStorage.getItem('customcss');
   if (css) {
-    document.head.insertAdjacentHTML('beforeend', '<style id="customcss">' + css + '</style>');
+    // Text, never markup: a literal "</style>" inside the CSS (valid in a CSS
+    // string, or planted by an imported backup) must not end the element.
+    const customStyle = document.createElement('style');
+    customStyle.id = 'customcss';
+    customStyle.textContent = css;
+    document.head.appendChild(customStyle);
   }
 
   const font = localStorage.getItem('font');
   if (font) {
     // Only fonts already installed on the system: the new tab never loads
     // remote fonts (upstream's "Google font" option has been removed).
-    document.head.insertAdjacentHTML(
-      'beforeend',
-      `
-        <style id='customfont'>
-          * {
-            font-family: '${font}', 'Lexend Deca', 'Inter', sans-serif !important;
-            font-weight: ${localStorage.getItem('fontweight')};
-            font-style: ${localStorage.getItem('fontstyle')};
-          }
-        </style>
-      `,
-    );
+    const fontStyle = document.createElement('style');
+    fontStyle.id = 'customfont';
+    fontStyle.textContent = `
+      * {
+        font-family: '${font}', 'Lexend Deca', 'Inter', sans-serif !important;
+        font-weight: ${localStorage.getItem('fontweight')};
+        font-style: ${localStorage.getItem('fontstyle')};
+      }
+    `;
+    document.head.appendChild(fontStyle);
   }
 
   // If the extension got updated and the new app links default settings

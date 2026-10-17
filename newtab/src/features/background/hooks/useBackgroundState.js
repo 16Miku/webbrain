@@ -22,10 +22,9 @@ export function useBackgroundState() {
     setBackgroundData((prev) => ({
       ...prev,
       ...newData,
-      photoInfo: {
-        ...prev.photoInfo,
-        ...(newData.photoInfo || {}),
-      },
+      // A new background brings its own metadata: replace, never merge, so
+      // flags such as `hidden` from the previous one cannot leak into it.
+      photoInfo: newData.photoInfo ? { ...newData.photoInfo } : prev.photoInfo,
     }));
   }, []);
 
