@@ -122,11 +122,13 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(imported.decisionProvider, 'webgpu_d1'); assert.equal(config.resolveDecisionConfig(imported).enabled, false);
   });
   test(`${build}: hardware guards reject software and inadequate buffers, not other capable GPUs`, () => {
-    const adapter = { info: { description: 'Some capable GPU', isFallbackAdapter: false }, limits: { maxBufferSize: 268435456, maxStorageBufferBindingSize: 268435456 } };
+    // The WebGPU default limits (128 MiB) now hold the FP16 embedding.
+    const adapter = { info: { description: 'Some capable GPU', isFallbackAdapter: false }, limits: { maxBufferSize: 134217728, maxStorageBufferBindingSize: 134217728 } };
     assert.doesNotThrow(() => pin.assertD1Adapter(adapter));
     assert.throws(() => pin.assertD1Adapter({ ...adapter, info: { description: 'SwiftShader' } }), /software/);
     assert.throws(() => pin.assertD1Adapter({ ...adapter, limits: { maxBufferSize: 64 } }), /buffer/);
-    assert.throws(() => pin.assertD1Adapter({ ...adapter, limits: { ...adapter.limits, maxStorageBufferBindingSize: 134217728 } }), /storage-binding/);
+    assert.throws(() => pin.assertD1Adapter({ ...adapter, limits: { ...adapter.limits, maxStorageBufferBindingSize: 67108864 } }), /storage-binding/);
+    assert.equal(pin.D1_MODEL_ID, 'webbrain-one/d1-browser-decision-fp16');
   });
   test(`${build}: media remains inline data and separate from state, remote network media is rejected`, () => {
     const url = 'data:image/png;base64,YQ==';

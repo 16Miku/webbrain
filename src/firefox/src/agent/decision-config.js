@@ -49,7 +49,7 @@ export function resolveDecisionConfig(stored = {}, compass = null) {
 }
 
 export async function listDecisionModels(config, fetchImpl = globalThis.fetch, signal) {
-  if (config.provider === 'webgpu_d1') return [{ id: D1_MODEL_ID, name: 'D1 FP32 (experimental, on-device)', supportsVision: true, inputRate: 0, outputRate: 0 }];
+  if (config.provider === 'webgpu_d1') return [{ id: D1_MODEL_ID, name: 'D1 FP16 (experimental, on-device)', supportsVision: true, inputRate: 0, outputRate: 0 }];
   return withCompletionTimeout(requestSignal => discoverDecisionModels(config, fetchImpl, requestSignal), signal, 5000);
 }
 
