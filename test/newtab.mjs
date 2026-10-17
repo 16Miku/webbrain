@@ -1007,7 +1007,6 @@ test('round-17: maximise and effect controls handle video backgrounds; dismissin
   const read = (f) => readFileSync(nt(f), 'utf8');
   const max = read('features/navbar/components/Maximise.jsx');
   assert.match(max, /getElementById\('backgroundVideo'\)/);
-  assert.match(max, /if \(!video && !element\) return;/);
   assert.match(max, /if \(widgets\) widgets\.style\.display = 'none'/);
   const fx = read('features/background/options/sections/EffectsSettings.jsx');
   assert.equal((fx.match(/element="#backgroundImage, #backgroundVideo"/g) || []).length, 4);
@@ -1031,4 +1030,21 @@ test('first run does not reload forever when storage is only in memory', () => {
   assert.match(app, /import \{ rawStorage \} from 'lib\/storage-namespace'/);
   assert.match(app, /if \(rawStorage\) \{\s*window\.location\.reload\(\);\s*\} else \{[\s\S]*onDefaultsApplied/);
   assert.match(app, /key=\{setupKey\}/);
+});
+
+test('round-18b: maximise toggles the overlay effects, message list changes refresh the widget, birthday is a local date', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const max = read('features/navbar/components/Maximise.jsx');
+  assert.match(max, /getElementById\('backgroundFilterOverlay'\)/);
+  assert.doesNotMatch(max, /setAttribute\(/, 'no longer overwrites the image element style attribute');
+  const msg = read('features/message/Message.jsx');
+  assert.match(msg, /messages\.includes\(current\)/);
+  assert.match(read('features/message/options/MessageOptions.jsx'), /EventBus\.emit\('refresh', 'message'\)/);
+  const greet = read('features/greeting/options/GreetingOptions.jsx');
+  assert.match(greet, /new Date\(year, month - 1, day\)/);
+  assert.doesNotMatch(greet, /toISOString/);
+  // the parse really lands on the same calendar day west of UTC
+  const parse = (value) => { const [y, m, d] = value.split('-').map(Number); return new Date(y, m - 1, d); };
+  const d = parse('2026-10-17');
+  assert.deepEqual([d.getFullYear(), d.getMonth(), d.getDate()], [2026, 9, 17]);
 });

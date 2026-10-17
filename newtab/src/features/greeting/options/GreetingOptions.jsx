@@ -17,6 +17,15 @@ import defaultEvents from '../events.json';
 
 import { MdEventNote, MdAdd, MdCancel, MdRefresh } from 'react-icons/md';
 
+// "YYYY-MM-DD" from <input type=date> is a calendar date, not an instant: new Date(string)
+// would read it as UTC midnight and, west of UTC, land on the previous local day.
+const parseDateInput = (value) => {
+  const [year, month, day] = String(value).split('-').map(Number);
+  return year && month && day ? new Date(year, month - 1, day) : new Date();
+};
+const toDateInputValue = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
 const GreetingOptions = ({ currentSubSection, onSubSectionChange, sectionName }) => {
   const [customEvents, setCustomEvents] = useState(
     JSON.parse(localStorage.getItem('customEvents')) || [],
@@ -36,7 +45,7 @@ const GreetingOptions = ({ currentSubSection, onSubSectionChange, sectionName })
   );
 
   const changeDate = (e) => {
-    const newDate = e.target.value ? new Date(e.target.value) : new Date();
+    const newDate = e.target.value ? parseDateInput(e.target.value) : new Date();
     localStorage.setItem('birthday', newDate);
     setBirthday(newDate);
   };
@@ -149,7 +158,7 @@ const GreetingOptions = ({ currentSubSection, onSubSectionChange, sectionName })
             <input
               type="date"
               onChange={changeDate}
-              value={birthday.toISOString().substring(0, 10)}
+              value={toDateInputValue(birthday)}
               required
             />
           </div>

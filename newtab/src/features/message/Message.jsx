@@ -2,6 +2,15 @@ import { useState, useEffect, useRef } from 'react';
 import EventBus from 'utils/eventbus';
 import './message.scss';
 
+const readMessages = () => {
+  try {
+    const list = JSON.parse(localStorage.getItem('messages'));
+    return Array.isArray(list) ? list.filter((item) => typeof item === 'string' && item !== '') : [];
+  } catch {
+    return [];
+  }
+};
+
 const Message = () => {
   const [messageText, setMessageText] = useState('');
   const [display, setDisplay] = useState('none');
@@ -11,14 +20,21 @@ const Message = () => {
   useEffect(() => {
     const handleRefresh = (data) => {
       if (data === 'message') {
+        // The list may have changed (entry removed): keep the shown text only if it is still
+        // there, otherwise pick another one or show nothing.
+        const messages = readMessages();
+        setMessageText((current) => {
+          if (messages.includes(current)) return current;
+          return messages.length > 0 ? messages[Math.floor(Math.random() * messages.length)] : '';
+        });
         const messageSetting = localStorage.getItem('message');
         const zoomMessage = localStorage.getItem('zoomMessage');
-        setDisplay(messageSetting === 'false' ? 'none' : 'block');
+        setDisplay(messageSetting === 'false' || messages.length === 0 ? 'none' : 'block');
         setFontSize(`${1 * Number((zoomMessage || 100) / 100)}em`);
       }
     };
 
-    const messages = JSON.parse(localStorage.getItem('messages')) || [];
+    const messages = readMessages();
     if (messages.length > 0) {
       setMessageText(messages[Math.floor(Math.random() * messages.length)]);
       setDisplay('block');

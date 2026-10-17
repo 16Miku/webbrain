@@ -29,6 +29,8 @@ const MessageOptions = () => {
 
     setMessages(updatedMessages);
     localStorage.setItem('messages', JSON.stringify(updatedMessages));
+    // So the widget drops a removed entry it may be showing.
+    EventBus.emit('refresh', 'message');
   };
 
   const message = (e, text, index) => {

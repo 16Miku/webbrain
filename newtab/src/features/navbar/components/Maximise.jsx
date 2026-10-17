@@ -5,52 +5,33 @@ import { useT } from 'contexts';
 import { MdCropFree } from 'react-icons/md';
 
 import { Tooltip } from 'components/Elements';
+import {
+  getBackgroundFilterStyle,
+  getBackgroundOverlayStyle,
+} from 'features/background/api/backgroundFilters';
 
 const Maximise = memo(({ fontSize }) => {
   const t = useT();
   const [hidden, setHidden] = useState(false);
 
-  const setAttribute = useCallback((blur, brightness, filter) => {
-    // don't attempt to modify the background if it isn't an image
-    const backgroundType = localStorage.getItem('backgroundType');
-    if (
-      backgroundType === 'colour' ||
-      backgroundType === 'random_colour' ||
-      backgroundType === 'random_gradient'
-    ) {
-      return;
-    }
-
-    // A custom video background has no #backgroundImage; it takes the same filter on the <video>.
+  // Maximise shows the background without its effects; restoring puts them back.
+  // Image effects live on #backgroundFilterOverlay (see useBackgroundEvents) and a video
+  // takes the filter on the <video> itself, so those are the elements to clear / restore.
+  const setEffects = useCallback((on) => {
     const video = document.getElementById('backgroundVideo');
-    const element = document.getElementById('backgroundImage');
-    if (!video && !element) return;
-
-    let backgroundFilter;
-    if (filter === true) {
-      const filterData = localStorage.getItem('backgroundFilter');
-      if (filterData !== 'none') {
-        backgroundFilter = filterData;
-      }
-    }
-
-    const filterValue = `blur(${blur}px) brightness(${brightness}%) ${
-      backgroundFilter
-        ? backgroundFilter + '(' + localStorage.getItem('backgroundFilterAmount') + '%)'
-        : ''
-    }`;
-
     if (video) {
-      video.style.webkitFilter = filterValue;
-      return;
+      video.style.webkitFilter = on ? getBackgroundFilterStyle() : 'blur(0px) brightness(100%)';
     }
 
-    element.setAttribute(
-      'style',
-      `background-image: url(${element.style.backgroundImage
-        .replace('url("', '')
-        .replace('")', '')}); -webkit-filter: ${filterValue};`,
-    );
+    const overlay = document.getElementById('backgroundFilterOverlay');
+    if (overlay) {
+      const style = on
+        ? getBackgroundOverlayStyle()
+        : { backdropFilter: '', WebkitBackdropFilter: '', backgroundColor: '' };
+      overlay.style.backdropFilter = style.backdropFilter;
+      overlay.style.webkitBackdropFilter = style.WebkitBackdropFilter;
+      overlay.style.backgroundColor = style.backgroundColor;
+    }
   }, []);
 
   const maximise = useCallback(() => {
@@ -60,15 +41,15 @@ const Maximise = memo(({ fontSize }) => {
     if (!hidden) {
       if (widgets) widgets.style.display = 'none';
       setHidden(true);
-      setAttribute(0, 100);
+      setEffects(false);
       variables.stats.postEvent('feature', 'Background maximise');
     } else {
       if (widgets) widgets.style.display = 'flex';
       setHidden(false);
-      setAttribute(localStorage.getItem('blur'), localStorage.getItem('brightness'), true);
+      setEffects(true);
       variables.stats.postEvent('feature', 'Background unmaximise');
     }
-  }, [hidden, setAttribute]);
+  }, [hidden, setEffects]);
 
   return (
     <Tooltip
