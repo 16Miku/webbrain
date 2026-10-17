@@ -75,19 +75,27 @@ Do all of these on the exact files you will publish.
    worker on hardware WebGPU:
 
    ```bash
-   node scripts/check-webgpu-long-prompts.mjs --model <owner/repo> --vision \
+   node scripts/check-webgpu-long-prompts.mjs --model <owner/repo> \
      --profile <cached profile> --offline --lengths 1000,4000,8000 --slices 0,512
    ```
+
+   The model's production path and dtype come from the provider presets.
+   Serve an unpublished export with `--local-repo <owner/repo>=<dir>`, which
+   clears that model's cached copy first.
 
    It prints wall time and seconds per 1k prompt tokens for each prompt. It
    rejects software WebGPU adapters, and it fails when a text prompt of 4k or
    more tokens takes longer than `--max-seconds-per-1k` (default 10). A
    CPU fallback costs 100 seconds or more per 1k tokens.
-   - With `--vision`, it also compares each sliced answer with the first
-     `--slices` value. It fails if they diverge within the first eight words,
-     which is what a broken cache handoff does. A later divergence is reported
-     but expected (see "Sliced prefill" below).
-   - Without `--vision`, each prompt runs once, for timing only.
+   - For the multimodal (`onnx-vl`) presets it also runs an image prompt and
+     compares each sliced answer with the first `--slices` value. It fails if
+     they diverge within the first eight words, which is what a broken cache
+     handoff does. A later divergence is reported but expected (see "Sliced
+     prefill" below).
+   - Text models run each prompt once, for timing only.
+   - The worker's multimodal chat accepts only the shipped `onnx-vl` presets,
+     so a new vision model needs a preset (and worker support) before this
+     check can run it.
 
    Seconds per 1k tokens should stay roughly flat, around a second on a
    desktop GPU. Reference for rewritten Bonsai 2 2B Vision on an RTX 5090

@@ -3,34 +3,41 @@
 // The short prompts in check-bonsai-webgpu.mjs cannot reveal prefill problems
 // (a CPU-fallback recurrence or full-sequence logits only show up with
 // thousands of prompt tokens). This runs real text of several lengths (and,
-// with --vision, a long prompt that includes an image) through
+// for vision presets, a long prompt that includes an image) through
 // src/chrome/src/offscreen/inference-worker.js and reports wall time per
-// prompt and seconds per 1k prompt tokens. It fails when a text prompt of at
-// least 4k tokens is slower than --max-seconds-per-1k (default 10; a CPU
-// fallback costs 100 or more), or when the answer with a sliced prefill differs
-// from the first --slices value within its first --min-common-words words
-// (default 8). A broken cache handoff loses the prompt and diverges at once,
-// while FP16 rounding differences between slice sizes can change a near-tied
-// token later in a long greedy answer; the common prefix is reported either
-// way. Prefill slicing applies only to the vision path (Bonsai 2 Vision), so
-// without --vision each prompt runs once, for timing only: some text presets
-// sample, and their answers are not comparable. Software (fallback) WebGPU
-// adapters are rejected. See docs/webgpu-models.md.
+// prompt and seconds per 1k prompt tokens. Software (fallback) WebGPU adapters
+// are rejected. See docs/webgpu-models.md.
 //
 //   node scripts/check-webgpu-long-prompts.mjs --model webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
-//     --vision --profile .build/bonsai/chunked-2b-profile --offline --lengths 1000,4000,8000 --slices 0,512
+//     --profile .build/bonsai/chunked-2b-profile --offline --lengths 1000,4000,8000 --slices 0,512
 //
-// Shipped presets use their production path and dtype from
-// src/chrome/src/providers/webgpu.js: `onnx-vl` presets run multimodal chat,
-// and other ONNX presets run text chat with their preset dtype (q4f16 by
-// default, as for custom repositories). --vision forces multimodal chat and
-// --dtype (a name or a JSON object) overrides the dtype. The `bitgpu` runtime
-// does not use this worker and is rejected.
+// It fails when:
+// - a text prompt of at least 4k tokens is slower than --max-seconds-per-1k
+//   (default 10; a CPU fallback costs 100 or more);
+// - for vision presets, the answer with a sliced prefill differs from the first
+//   --slices value within its first --min-common-words words (default 8). A
+//   broken cache handoff loses the prompt and diverges at once, while FP16
+//   rounding differences between slice sizes can change a near-tied token later
+//   in a long greedy answer; the common prefix is reported either way;
+// - the run aborts (busy port, failed launch or probe, worker error, timeout).
+//
+// The model's production path and dtype come from
+// src/chrome/src/providers/webgpu.js. Shipped `onnx-vl` presets run multimodal
+// chat, which the worker accepts only for them; prefill slicing applies to the
+// Bonsai 2 Vision presets. Other ONNX presets and custom repositories run text
+// chat with their preset dtype (q4f16 by default) once per prompt, for timing
+// only: the text path does not slice and some text presets sample. --vision is
+// accepted only for onnx-vl presets, --dtype (a name or a JSON object)
+// overrides the dtype, and the `bitgpu` runtime is rejected because it does
+// not use this worker.
 //
 // Options mirror check-bonsai-webgpu.mjs: --local-repo owner/repo=dir serves
-// unpublished files, --offline requires a cached model and blocks Hugging Face,
-// --adapter-luid high,low (decimal) selects a Windows GPU, and --timeout-ms
-// sets the per-operation deadline (default 30 minutes).
+// unpublished files and clears the tested model's cached files first, so a
+// rebuilt export is not masked by an earlier copy; --clear-model-cache does
+// the same for a published model; --offline requires a cached model and
+// blocks Hugging Face; --adapter-luid high,low (decimal) selects a Windows
+// GPU; and --timeout-ms sets the deadline for worker start-up and each
+// operation (default 30 minutes).
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
@@ -48,9 +55,17 @@ const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 
 const model = option('--model', 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision');
 const runtime = webgpuModelRuntime(model);
 assert(runtime !== WEBGPU_RUNTIME_BITGPU, `${model} uses the ${runtime} runtime, which this ONNX worker check does not cover`);
-// As in production, onnx-vl presets always use the multimodal path.
-const vision = args.includes('--vision') || runtime === WEBGPU_RUNTIME_ONNX_VL;
+// As in production, onnx-vl presets always use the multimodal path. The
+// worker's multimodal chat accepts only those shipped presets, so --vision
+// cannot select it for another repository.
+assert(!args.includes('--vision') || runtime === WEBGPU_RUNTIME_ONNX_VL,
+  `${model} is not a shipped onnx-vl preset; the worker's multimodal chat only runs those`);
+const vision = runtime === WEBGPU_RUNTIME_ONNX_VL;
 const offline = args.includes('--offline');
+// A rebuilt local export reuses the model ID, and the worker keeps an already
+// cached copy, so serving the model from --local-repo clears its cache first.
+const clearModelCacheRequested = args.includes('--clear-model-cache');
+assert(!(clearModelCacheRequested && offline), '--clear-model-cache cannot be used with --offline');
 const parseDtype = value => { try { return JSON.parse(value); } catch { return value; } };
 const dtype = option('--dtype', null) ? parseDtype(option('--dtype')) : webgpuModelDtype(model);
 const lengths = option('--lengths', '1000,4000,8000').split(',').map(Number);
@@ -130,11 +145,12 @@ try {
   const page = await context.newPage();
   page.on('console', message => { if (message.type() === 'error') console.log(`[browser:error] ${message.text().slice(0, 300)}`); });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
-  await page.evaluate(() => new Promise((ready, failed) => {
+  await page.evaluate(timeout => new Promise((ready, failed) => {
     const pending = new Map(); let id = 0;
+    const startTimer = setTimeout(() => failed(new Error('Timeout: worker start')), timeout);
     const worker = new Worker('/worker.mjs', { type: 'module' });
     worker.onmessage = ({ data }) => {
-      if (data.type === 'harness-ready') ready();
+      if (data.type === 'harness-ready') { clearTimeout(startTimer); ready(); }
       else if (data.id && pending.has(data.id)) {
         const { resolve, reject, timer } = pending.get(data.id);
         clearTimeout(timer); pending.delete(data.id);
@@ -142,6 +158,7 @@ try {
       }
     };
     worker.onerror = event => {
+      clearTimeout(startTimer);
       failed(new Error(event.message));
       for (const { reject, timer } of pending.values()) { clearTimeout(timer); reject(new Error(event.message)); }
       pending.clear();
@@ -152,7 +169,7 @@ try {
       pending.set(requestId, { resolve, reject, timer });
       worker.postMessage({ id: requestId, type, payload });
     });
-  }));
+  }), timeout);
   const origin = new URL(page.url()).origin;
   const call = (type, payload = {}) => page.evaluate(({ type, payload, timeout }) => window.workerCall(type, payload, timeout), { type, payload, timeout });
   await call('init', {
@@ -167,6 +184,8 @@ try {
     const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
     return { vendor: adapter?.info.vendor, architecture: adapter?.info.architecture };
   });
+  result.clearedModelCache = !offline && (clearModelCacheRequested || Object.hasOwn(localRepos, model));
+  if (result.clearedModelCache) await call('stop-text-download', { modelId: model, dtype });
   const download = await call(offline ? 'text-download-status' : 'download-text', { modelId: model, dtype, device: 'webgpu' });
   assert(download.ready, `${model} is not ready: ${JSON.stringify(download)}`);
   const corpus = await fs.readFile(path.join(root, 'CHANGELOG.md'), 'utf8');
