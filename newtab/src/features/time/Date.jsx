@@ -45,7 +45,9 @@ const DateWidget = () => {
 
     if (localStorage.getItem('weeknumber') === 'true') {
       getWeekNumber(date);
-    } else if (weekNumber !== null) {
+    } else {
+      // Unconditional: the refresh handler keeps the closure from the first render, where
+      // weekNumber was still null, so a "!== null" check would never clear it.
       setWeekNumber(null);
     }
 

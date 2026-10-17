@@ -18,4 +18,8 @@ export function importSettings(e, initial = false) {
   if (!initial) {
     variables.stats.postEvent('tab', 'Settings imported');
   }
+
+  // Widgets, theme and the settings controls hold the old values in state; a reload (after
+  // the toast has had a moment to show) is what applies the imported ones.
+  setTimeout(() => window.location.reload(), 1200);
 }

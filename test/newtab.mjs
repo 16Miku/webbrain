@@ -1048,3 +1048,14 @@ test('round-18b: maximise toggles the overlay effects, message list changes refr
   const d = parse('2026-10-17');
   assert.deepEqual([d.getFullYear(), d.getMonth(), d.getDate()], [2026, 9, 17]);
 });
+
+test('round-19: import applies by reloading; multiline messages split on real newlines; week number clears', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('utils/settings/import.js'), /setTimeout\(\(\) => window\.location\.reload\(\), 1200\)/);
+  const msg = read('features/message/Message.jsx');
+  assert.match(msg, /split\(\/\\r\?\\n\/\)/);
+  assert.doesNotMatch(msg, /split\('\\\\n'\)/);
+  const date = read('features/time/Date.jsx');
+  assert.doesNotMatch(date, /weekNumber !== null/);
+  assert.equal('a\nb\r\nc'.split(/\r?\n/).length, 3);
+});

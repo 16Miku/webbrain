@@ -48,7 +48,7 @@ const Message = () => {
 
   return (
     <h2 className="message" ref={message} style={{ display, fontSize }}>
-      {messageText.split('\\n').map((item) => (
+      {messageText.split(/\r?\n/).map((item) => (
         <span key={item}>
           {item}
           <br />
