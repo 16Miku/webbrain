@@ -109,7 +109,10 @@ def build_bundle(source, output, manifest, args):
             shutil.copy2(source / path, target)
 
     scratch = output / "onnx" / ".rewrite.onnx"
-    report = rewrite_file(source / GRAPH, scratch, chunk=args.chunk)
+    context = read_json(source / "config.json").get("text_config", {}).get("max_position_embeddings")
+    if not context:
+        raise ValueError("config.json has no text_config.max_position_embeddings to size the prefix scan")
+    report = rewrite_file(source / GRAPH, scratch, chunk=args.chunk, context_tokens=int(context))
     if args.graph:
         if digest(args.graph) != report["output_sha256"]:
             # Protobuf serializers may order bytes differently; require identical graphs.

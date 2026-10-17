@@ -236,7 +236,8 @@ def build(size, workspace, offline=False, skip_inference=False):
     # Replace the token-sequential GatedDeltaNet Scan with the chunked prefill
     # graph. Only the small graph file changes; the weights stay hardlinked.
     language_graph = rewrite_file(text / "onnx" / "decoder_model_merged_q2f16.onnx",
-                                  output / "onnx" / "decoder_model_merged_q2f16.onnx")
+                                  output / "onnx" / "decoder_model_merged_q2f16.onnx",
+                                  context_tokens=config["text_config"]["max_position_embeddings"])
     print(f"{size}: rewrote {language_graph['gdn_layers_rewritten']} GatedDeltaNet prefill scans", flush=True)
     shutil.copy2(text / "tokenizer.json", output / "tokenizer.json")
     for filename in ("tokenizer_config.json", "preprocessor_config.json", "processor_config.json",

@@ -412,11 +412,30 @@ def slice_last_logits(model: onnx.ModelProto) -> str:
     return hidden
 
 
-def rewrite_file(source: Path, output: Path, chunk: int = 128, max_steps: int = 12, always_steps: int = 1,
-                 head_dim: int = 128, last_logits: bool = True) -> dict:
-    """Rewrite `source` into `output`; the external data file name is unchanged."""
-    if chunk < 2 or chunk & (chunk - 1):
-        raise ValueError("chunk must be a power of two")
+# Qwen3.5 / Bonsai 2 text_config.max_position_embeddings.
+DEFAULT_CONTEXT_TOKENS = 262144
+
+
+def prefix_scan_steps(chunk: int, context_tokens: int) -> int:
+    """Fewest Hillis-Steele steps whose (2**steps - 1) chunks cover the context."""
+    steps = 1
+    while ((1 << steps) - 1) * chunk < context_tokens:
+        steps += 1
+    return steps
+
+
+def rewrite_file(source: Path, output: Path, chunk: int = 128, context_tokens: int = DEFAULT_CONTEXT_TOKENS,
+                 always_steps: int = 1, head_dim: int = 128, last_logits: bool = True) -> dict:
+    """Rewrite `source` into `output`; the external data file name is unchanged.
+
+    The prefix scan is sized for the full model context, so every prompt the
+    model accepts propagates its recurrent state correctly.
+    """
+    if not 16 <= chunk <= 1024 or chunk & (chunk - 1):
+        raise ValueError("chunk must be a power of two between 16 and 1024")
+    if context_tokens < 1:
+        raise ValueError("context_tokens must be positive")
+    max_steps = prefix_scan_steps(chunk, context_tokens)
     source_sha = hashlib.sha256(source.read_bytes()).hexdigest()
     model = onnx.load(source, load_external_data=False)
     replaced = rewrite_gdn(model, chunk, max_steps, always_steps, head_dim)
@@ -439,6 +458,7 @@ def rewrite_file(source: Path, output: Path, chunk: int = 128, max_steps: int = 
         "output_bytes": output.stat().st_size,
         "gdn_layers_rewritten": replaced,
         "chunk_tokens": chunk,
+        "context_tokens": context_tokens,
         "prefix_scan_steps": max_steps,
         "max_prompt_tokens": ((1 << max_steps) - 1) * chunk,
         "logits": "last position only" if last_logits else "every position",
@@ -450,12 +470,13 @@ def main():
     parser.add_argument("input", type=Path, help="decoder_model_merged_q2f16.onnx (external data stays alongside)")
     parser.add_argument("output", type=Path)
     parser.add_argument("--chunk", type=int, default=128)
-    parser.add_argument("--max-steps", type=int, default=12, help="prefix-scan steps; supports (2**steps - 1) chunks")
+    parser.add_argument("--context-tokens", type=int, default=DEFAULT_CONTEXT_TOKENS,
+                        help="longest prompt the prefix scan must cover (model context)")
     parser.add_argument("--always-steps", type=int, default=1, help="leading steps emitted without an If guard")
     parser.add_argument("--head-dim", type=int, default=128)
     parser.add_argument("--keep-all-logits", action="store_true")
     args = parser.parse_args()
-    report = rewrite_file(args.input, args.output, args.chunk, args.max_steps, args.always_steps,
+    report = rewrite_file(args.input, args.output, args.chunk, args.context_tokens, args.always_steps,
                           args.head_dim, not args.keep_all_logits)
     print(json.dumps(report, indent=2))
 

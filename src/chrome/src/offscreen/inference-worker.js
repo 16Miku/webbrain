@@ -62,6 +62,8 @@ const BONSAI2_DECODER_GRAPH_SHA256 = new Map([
 // worker lifetime, after which the working cached graph is used.
 const BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS = 15_000;
 const checkedBonsai2DecoderGraphs = new Set();
+// Cache-only loads remember a stale graph so inference does not re-hash it.
+const staleBonsai2DecoderGraphs = new Set();
 // The Qwen3.5 generation_config sidecar omitted by Danyal's split exports.
 // Per-request decoding still controls do_sample and the output token budget.
 const BONSAI2_GENERATION_CONFIG = {
@@ -240,6 +242,7 @@ export async function refreshBonsai2DecoderGraph(modelId, {
   timeoutMs = BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS,
 } = {}) {
   if (!expected || checkedBonsai2DecoderGraphs.has(modelId)) return 'skipped';
+  if (!allowNetwork && staleBonsai2DecoderGraphs.has(modelId)) return 'stale';
   if (typeof caches === 'undefined' || !globalThis.crypto?.subtle) return 'unavailable';
   const url = `https://huggingface.co/${modelId}/resolve/main/${BONSAI2_DECODER_GRAPH_FILE}`;
   let cache;
@@ -259,7 +262,11 @@ export async function refreshBonsai2DecoderGraph(modelId, {
     return 'unavailable';
   }
   // Cache-only loads (inference) never download; an explicit download replaces it.
-  if (!allowNetwork) return 'stale';
+  if (!allowNetwork) {
+    staleBonsai2DecoderGraphs.add(modelId);
+    console.info(`[webgpu] ${modelId}: the cached decoder graph predates parallel prefill; download the model again to update it.`);
+    return 'stale';
+  }
   const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
   if (!fetcher) return 'unavailable';
   // Known offline (Apocalypse Mode): load the cached graph now and retry on a
@@ -276,6 +283,7 @@ export async function refreshBonsai2DecoderGraph(modelId, {
     await cache.put(url, new Response(bytes, {
       headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
     }));
+    staleBonsai2DecoderGraphs.delete(modelId);
     return 'updated';
   } catch {
     return 'unavailable';
@@ -772,6 +780,13 @@ async function getVisionRuntime(modelId, dtype, device, {
   // A device loss flagged between turns leaves both resident sessions poisoned;
   // dispose them before the cached gate so we never hand out a dead session.
   await disposeWebgpuRuntimesIfDirty();
+  // Before any resident-session shortcut: download flows replace a stale
+  // decoder graph (and drop the session built from it); cache-only loads
+  // only notice it.
+  if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+    const graph = await refreshBonsai2DecoderGraph(modelId, { allowNetwork: !localFilesOnly });
+    if (graph === 'updated' && visionRuntimeKey.startsWith(`vision|${modelId}|`)) await disposeVisionRuntime();
+  }
   if (visionRuntime && visionRuntimeKey === key) {
     visionRuntimeOwner = owner;
     return visionRuntime;
@@ -793,10 +808,6 @@ async function getVisionRuntime(modelId, dtype, device, {
       const error = new Error(`${modelId} is not cached locally.`);
       error.code = readiness === 'text' ? 'text_model_not_downloaded' : 'vision_model_not_downloaded';
       throw error;
-    }
-    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
-        && await refreshBonsai2DecoderGraph(modelId, { allowNetwork: !localFilesOnly }) === 'stale') {
-      console.info(`[webgpu] ${modelId}: the cached decoder graph predates parallel prefill; download the model again to update it.`);
     }
     const library = await loadLibrary();
     const { AutoModelForImageTextToText, AutoProcessor } = library;

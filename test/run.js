@@ -67572,6 +67572,9 @@ test('Bonsai 2 Vision worker replaces only a stale cached decoder graph', async 
     }
     assert.match(workerSource, /refreshBonsai2DecoderGraph\(modelId, \{ allowNetwork: !localFilesOnly \}\)/,
       'runtime loads may download the graph only outside cache-only inference');
+    const visionLoader = workerSource.slice(workerSource.indexOf('async function getVisionRuntime('));
+    assert.ok(visionLoader.indexOf('refreshBonsai2DecoderGraph(') < visionLoader.indexOf('if (visionRuntime && visionRuntimeKey === key)'),
+      'download flows must refresh the graph before reusing a resident session');
     assert.match(workerSource, /refreshBonsai2DecoderGraph\(modelId, \{ allowNetwork: true \}\) === 'updated'\s*&& visionRuntimeKey\.startsWith\(`vision\|\$\{modelId\}\|`\)\) \{[^}]*await disposeVisionRuntime\(\);/,
       'an explicit update must drop the resident session built from the replaced graph');
 
@@ -67582,6 +67585,8 @@ test('Bonsai 2 Vision worker replaces only a stale cached decoder graph', async 
     const worker = await import(`${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?bonsai2-graph-refresh`);
     assert.equal(await worker.refreshBonsai2DecoderGraph(model, { expected: sha('chunked graph') }), 'stale',
       'cache-only (inference) loads detect a stale graph without downloading');
+    assert.equal(await worker.refreshBonsai2DecoderGraph(model, { expected: sha('chunked graph') }), 'stale',
+      'repeated cache-only loads keep the stale verdict');
     assert.deepEqual(fetched, [], 'inference must never reach the network');
     assert.equal(entries.get(graphUrl), 'scan graph');
     assert.equal(await worker.refreshBonsai2DecoderGraph(model, { allowNetwork: true, expected: sha('chunked graph') }), 'updated');
