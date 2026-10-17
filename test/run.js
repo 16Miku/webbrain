@@ -52993,9 +52993,83 @@ test('a PDF viewer selection leaves a side panel that is already showing in its 
     assert.equal(JSON.stringify(queued[0].options), '{"panelOpened":true}', 'and told the panel was already opened');
     assert.equal(queued[0].tab.id, 7);
     const viewer = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/pdf-handler.js'), 'utf8');
-    assert.match(viewer, /windowId = \(await api\.windows\?\.getCurrent\?\.\(\)\)\?\.id \?\? null;[\s\S]*?submitFields: \{[\s\S]*?\.\.\.\(Number\.isInteger\(windowId\) \? \{ windowId \} : \{\}\),/,
-      'the PDF viewer must report the window it is in');
+    assert.match(viewer, /const submitFields = \{\s*tabId: streamInfo\.tabId,\s*originalUrl: String\(streamInfo\.originalUrl \|\| ''\),\s*\};\s*await trackViewerWindow\(\{ api, target: window, fields: submitFields \}\)\.refresh\(\);[\s\S]*?submitFields,\s*allowNestedFrame: true,/,
+      'the PDF viewer must report the window it is in, and keep that current');
+    const shortcut = fs.readFileSync(path.join(ROOT, 'src/chrome/src/content/selection-shortcut.js'), 'utf8');
+    assert.match(shortcut, /const currentSubmitFields = \(\) => shortcutConfig\?\.submitFields[\s\S]*?\? \{ \.\.\.shortcutConfig\.submitFields \}/,
+      'the selection script must read the viewer\'s fields when it sends, not once at load');
+    assert.match(shortcut, /const request = \{\s*\.\.\.currentSubmitFields\(\),\s*type: SUBMIT_MESSAGE,/);
+    assert.equal(fs.readFileSync(path.join(ROOT, 'src/firefox/src/content/selection-shortcut.js'), 'utf8'), shortcut,
+      'the selection script stays identical in both builds');
   }
+});
+
+test('the PDF viewer follows its tab into another window before a selection is sent', async () => {
+  const { trackViewerWindow } = await import(pathToFileURL(path.join(ROOT, 'src/chrome/src/ui/pdf-viewer-window.js')).href);
+  let liveWindowId = 5;
+  const lookups = [];
+  const gates = [];
+  const attachListeners = [];
+  const domListeners = [];
+  const api = {
+    windows: {
+      getCurrent: () => {
+        lookups.push(liveWindowId);
+        const answer = liveWindowId;
+        const gate = gates.shift();
+        return gate ? gate.then(() => ({ id: answer })) : Promise.resolve({ id: answer });
+      },
+    },
+    tabs: { onAttached: { addListener: callback => attachListeners.push(callback) } },
+  };
+  const target = { addEventListener: (type, callback, capture) => domListeners.push({ type, callback, capture }) };
+  const fields = { tabId: 73 };
+  const tracker = trackViewerWindow({ api, target, fields });
+  await tracker.refresh();
+  assert.equal(fields.windowId, 5, 'the window the viewer starts in');
+
+  // A tab dragged into another window is found when it is attached.
+  liveWindowId = 9;
+  attachListeners[0](73, { newWindowId: 9 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fields.windowId, 9, 'attaching the tab to another window updates the id');
+
+  // Window focus and the start of a pointer gesture refresh it too.
+  liveWindowId = 12;
+  domListeners.find(item => item.type === 'focus').callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fields.windowId, 12, 'gaining focus updates the id');
+  liveWindowId = 15;
+  const pointer = domListeners.find(item => item.type === 'pointerdown');
+  assert.equal(pointer.capture, true, 'the pointer refresh runs before anything on the page can stop the event');
+  pointer.callback();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(fields.windowId, 15, 'the start of a selection gesture updates the id');
+
+  // A slow, older answer must not overwrite a newer one.
+  let releaseOld;
+  gates.push(new Promise(resolve => { releaseOld = resolve; }));
+  liveWindowId = 20;
+  const older = tracker.refresh();
+  liveWindowId = 21;
+  await tracker.refresh();
+  assert.equal(fields.windowId, 21);
+  releaseOld();
+  await older;
+  assert.equal(fields.windowId, 21, 'an older lookup that finishes late is ignored');
+
+  // A failed or unusable lookup keeps the last confirmed id.
+  api.windows.getCurrent = async () => { throw new Error('windows unavailable'); };
+  await tracker.refresh();
+  assert.equal(fields.windowId, 21);
+  api.windows.getCurrent = async () => ({ id: null });
+  await tracker.refresh();
+  assert.equal(fields.windowId, 21);
+
+  // Nothing to track without the windows API; the viewer still works.
+  const bare = { tabId: 1 };
+  await trackViewerWindow({ api: {}, target: { addEventListener() {} }, fields: bare }).refresh();
+  assert.deepEqual(bare, { tabId: 1 });
 });
 
 test('WebGPU provider drops a request whose caller aborts while the offscreen document is starting', async () => {

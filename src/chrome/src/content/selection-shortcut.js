@@ -24,7 +24,9 @@
     && shortcutConfig.submitMessage.trim()
     ? shortcutConfig.submitMessage.trim()
     : 'WB_SELECTION_SHORTCUT_SUBMIT';
-  const SUBMIT_FIELDS = shortcutConfig?.submitFields
+  // Read when a request is sent, not once at load: the PDF viewer keeps its window id
+  // current while its tab moves between windows.
+  const currentSubmitFields = () => shortcutConfig?.submitFields
     && typeof shortcutConfig.submitFields === 'object'
     && !Array.isArray(shortcutConfig.submitFields)
     ? { ...shortcutConfig.submitFields }
@@ -1146,7 +1148,7 @@
     if (action === 'custom' && !String(customQuestion || '').trim()) return;
     if (action === 'translate' && !isSupportedTranslationLanguage(language)) return;
     const request = {
-      ...SUBMIT_FIELDS,
+      ...currentSubmitFields(),
       type: SUBMIT_MESSAGE,
       action,
       selectionText: snapshot.text,

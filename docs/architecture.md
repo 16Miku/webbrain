@@ -562,6 +562,9 @@ action arriving while it is still opening does not open it a second time.
 A panel the browser carries to another window (the tab dragged out) keeps its document; the window scope
 notices on its next live `windows.getCurrent()` lookup and the reporter (`setWindowId()`) names the new
 window, so the background does not treat the old window as occupied and the new one as empty.
+The PDF viewer does the same for the window id it sends with a selection: `pdf-viewer-window.js`
+re-reads `windows.getCurrent()` when its tab is attached, when the window gains focus and at the start
+of every pointer gesture, and the selection script reads those fields when it sends, not once at load.
 A selection made in the bundled PDF viewer, whose message carries only a tab id, brings the
 window too (Chrome's `sender.tab` for that tab, else the window the viewer reported from
 `windows.getCurrent()`), so the same check applies there; that path opens the panel once in the

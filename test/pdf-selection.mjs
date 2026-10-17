@@ -333,13 +333,16 @@ async function testPdfSelectionCarriesItsTabScope() {
       document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
     });
     await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().shortcutVisible);
+    // The viewer's tab is dragged into another window after the page loaded; the viewer
+    // keeps its fields current, and the selection must carry the window it is in now.
+    await page.evaluate(() => { window.__webbrainSelectionShortcutConfig.submitFields.windowId = 8; });
     await page.evaluate(() => window.__webbrainSelectionShortcut.submitPreset('summarize'));
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
     const message = await page.evaluate(() => window.__selectionMessages[0]);
     assert.equal(message.type, 'WB_PDF_SELECTION_SHORTCUT_SUBMIT');
     assert.equal(message.tabId, 73);
     assert.equal(message.originalUrl, 'https://papers.example.test/reading.pdf');
-    assert.equal(message.windowId, 5, 'the viewer\'s window travels with the selection');
+    assert.equal(message.windowId, 8, 'the window the viewer is in when the selection is sent travels with it');
     assert.equal(message.action, 'summarize');
     assert.match(message.selectionText, /Selectable text rendered by the PDF text layer/);
   } finally {
