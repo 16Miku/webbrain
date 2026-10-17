@@ -800,3 +800,39 @@ test('the background settings header has a Hide/Show toggle', () => {
   const src = readFileSync(nt('features/background/options/BackgroundOptions.jsx'), 'utf8');
   assert.match(src, /setting="background"[\s\S]{0,120}visibilityToggle=\{true\}/);
 });
+
+for (const browserName of ['chrome', 'firefox']) {
+  test(`${browserName}: Act can bootstrap navigation away from WebBrain's own new tab page`, async () => {
+    const { BotMemorySession } = await import(
+      pathToFileURL(path.join(root, 'src', browserName, 'src/agent/bot-memory.js')).href
+    );
+    const base = browserName === 'chrome' ? 'chrome-extension://abc123/' : 'moz-extension://uuid-1/';
+    const api = { runtime: { getURL: (p) => base + p } };
+    const prev = { chrome: globalThis.chrome, browser: globalThis.browser };
+    globalThis.chrome = api;
+    globalThis.browser = api;
+    try {
+      const check = (url) => {
+        const s = Object.create(BotMemorySession.prototype);
+        s.getTab = async () => ({ url });
+        return s.canBootstrapNavigation(1, 'navigate', { url: 'https://example.com/' });
+      };
+      assert.equal(await check(`${base}newtab/index.html`), true);
+      assert.equal(await check(`${base}newtab/index.html?x=1#y`), true);
+      assert.equal(await check(`${base}src/ui/history.html`), false); // other extension pages: no
+      assert.equal(await check('chrome-extension://evil/newtab/index.html'), browserName === 'chrome' ? false : false);
+      assert.equal(await check('https://example.com/newtab/index.html'), false);
+    } finally {
+      globalThis.chrome = prev.chrome;
+      globalThis.browser = prev.browser;
+      if (prev.chrome === undefined) delete globalThis.chrome;
+      if (prev.browser === undefined) delete globalThis.browser;
+    }
+  });
+}
+
+test('chrome agent treats the extension new tab page as a browser new tab', () => {
+  const src = readFileSync(path.join(root, 'src/chrome/src/agent/agent.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function isBrowserNewTabUrl'), src.indexOf('function isBrowserNewTabUrl') + 700);
+  assert.match(fn, /runtime\.getURL\('newtab\/index\.html'\)/);
+});
