@@ -114,9 +114,13 @@ export function createNewtabHandoff({
     // Only the first attempt after start() gets the startup allowance.
     const allowance = startupAllowanceMs;
     startupAllowanceMs = 0;
+    // The shared composer belongs to whichever tab is active now. If the user switches
+    // tabs while storage is being read or written, this tab's task must not be applied
+    // to the other tab's composer; the switch's own consume() picks up the right one.
+    const sameTab = () => Number(getCurrentTabId()) === Number(tabId);
     try {
       const stored = (await storage.get(key))?.[key];
-      if (stored == null) return false;
+      if (stored == null || !sameTab()) return false;
       const handoff = normalizeNewtabHandoff(stored, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
       if (!handoff) {
         await storage.remove(key);
@@ -126,6 +130,12 @@ export function createNewtabHandoff({
 
       handled.add(handoff.id);
       await storage.remove(key);
+      if (!sameTab()) {
+        // Switched during the removal: put the record back for when this tab is shown again.
+        handled.delete(handoff.id);
+        try { await storage.set?.({ [key]: stored }); } catch { /* best effort */ }
+        return false;
+      }
 
       const input = getInputEl();
       // Never overwrite what is already in the composer. The task goes below it,

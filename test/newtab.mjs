@@ -323,6 +323,42 @@ for (const browser of ['chrome', 'firefox']) {
     }
     return { handoff, store, log, input, state, listeners };
   }
+  for (const switchAt of ['read', 'remove']) {
+    test(`${browser}: a tab switch during the ${switchAt} neither applies nor loses the old tab's task`, async () => {
+      const key3 = newtabHandoffKey(3);
+      const record = { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 };
+      const store = { [key3]: record };
+      const state = { tabId: 3 };
+      const input = { value: '', dispatchEvent() {}, focus() {} };
+      const sent = [];
+      const handoff = createNewtabHandoff({
+        storage: {
+          get: async (k) => { const r = k in store ? { [k]: store[k] } : {}; if (switchAt === 'read' && !state.done) { state.tabId = 4; state.done = true; } return r; },
+          remove: async (k) => { delete store[k]; if (switchAt === 'remove' && !state.done) { state.tabId = 4; state.done = true; } },
+          set: async (o) => Object.assign(store, o),
+        },
+        getCurrentTabId: () => state.tabId,
+        getIsProcessing: () => false,
+        getIsBlocked: () => false,
+        getIsDocumentVisible: () => true,
+        doc: { addEventListener() {} },
+        setMode() {},
+        getInputEl: () => input,
+        autoResizeInput() {},
+        sendMessage: async () => { sent.push(input.value); },
+        now: () => 100_000,
+      });
+      await handoff.start();
+      assert.deepEqual(sent, [], 'nothing was sent into the other tab');
+      assert.equal(input.value, '', "the other tab's composer was not touched");
+      assert.equal(store[key3]?.id, 'r1', "the old tab's record is still waiting");
+      // back on tab 3 the task is applied
+      state.tabId = 3;
+      await handoff.consume();
+      assert.deepEqual(sent, ['for tab three']);
+    });
+  }
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -959,4 +995,10 @@ test('Show on a background that was off at load mounts it without a reload', () 
   assert.match(app, /EventBus\.off\('refresh', handleRefresh\)/);
   const opts = readFileSync(nt('features/background/options/BackgroundOptions.jsx'), 'utf8');
   assert.doesNotMatch(opts, /element="#backgroundImage"/);
+});
+
+test('the new tab only publishes its tab after pending-record adoption finished', () => {
+  const src = readFileSync(nt('features/agent/handoff.js'), 'utf8');
+  const fn = src.slice(src.indexOf('export async function primeCurrentTab'), src.indexOf('export function buildHandoff'));
+  assert.ok(fn.indexOf('await adoptPendingHandoff') < fn.indexOf('currentTab = tab'));
 });

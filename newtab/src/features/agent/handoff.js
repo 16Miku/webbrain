@@ -28,14 +28,18 @@ const extApi = () => {
 // has to be known before the user submits.
 let currentTab = null;
 export async function primeCurrentTab() {
+  let tab = null;
   try {
-    currentTab = (await extApi()?.tabs?.getCurrent?.()) ?? null;
+    tab = (await extApi()?.tabs?.getCurrent?.()) ?? null;
   } catch {
-    currentTab = null;
+    tab = null;
   }
   // A reload empties the in-memory lock while an earlier task may still be waiting for a
   // cold panel, so pick it up again from storage; otherwise the next submit would replace it.
-  if (currentTab?.id != null) await adoptPendingHandoff(extApi(), currentTab.id);
+  // The tab is published only afterwards, so no submit can run in between (submitTask
+  // rejects while there is no tab).
+  if (tab?.id != null) await adoptPendingHandoff(extApi(), tab.id);
+  currentTab = tab;
   return currentTab;
 }
 
