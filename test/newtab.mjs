@@ -1811,3 +1811,9 @@ test('round-54: a remote picture that fails to load is retried as a video; the c
     assert.ok(hold <= mod.NEWTAB_HANDOFF_MAX_AGE_MS / 2, `${b}: hold ${hold} ms must be well under ${mod.NEWTAB_HANDOFF_MAX_AGE_MS}`);
   }
 });
+
+test('round-55: the video fallback also runs when the fade transition is off', () => {
+  const src = readFileSync(nt('features/background/hooks/useBackgroundRenderer.js'), 'utf8');
+  const skipBranch = src.slice(src.indexOf('if (!hasTransition || prefersReducedMotion)'), src.indexOf('// Create or get overlay element'));
+  assert.match(skipBranch, /onRemoteImageFailedRef\.current\?\.\(backgroundData\.url\)/);
+});

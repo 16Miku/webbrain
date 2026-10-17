@@ -36,6 +36,20 @@ export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
         const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
         if (!hasTransition || prefersReducedMotion) {
+          // Same probe as the fading path: a remote address that is not a picture may be a video.
+          if (/^https?:/i.test(backgroundData.url)) {
+            const probe = new Image();
+            probe.src = backgroundData.url;
+            const probed = await new Promise((resolve) => {
+              probe.onload = () => resolve(true);
+              probe.onerror = () => resolve(false);
+            });
+            if (cancelled) return;
+            if (!probed) {
+              onRemoteImageFailedRef.current?.(backgroundData.url);
+              return;
+            }
+          }
           element.style.background = `url(${backgroundData.url})`;
           document.querySelector('.photoInformation')?.style.setProperty('display', 'flex');
           return;
