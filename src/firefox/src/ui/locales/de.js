@@ -110,6 +110,7 @@ export default {
   'install.mock.tab': 'Tab',
   'install.mock.screen': 'Bildschirm',
   'install.cta.title': 'Bereit, wenn Sie es sind.',
+  'install.scroll_hint': 'Weitere Funktionen unten',
   'sp.status.disconnected': 'Getrennt',
   'sp.status.connected': 'Verbunden ({model})',
   'sp.status.error': 'Fehler: {msg}',

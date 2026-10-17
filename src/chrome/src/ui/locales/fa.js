@@ -108,6 +108,7 @@ export default {
   'install.mock.tab': 'زبانه',
   'install.mock.screen': 'صفحه‌نمایش',
   'install.cta.title': 'هر وقت آماده بودید.',
+  'install.scroll_hint': 'امکانات بیشتر در پایین',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "قطع شد",

@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'タブ',
   'install.mock.screen': '画面',
   'install.cta.title': '準備ができたら、どうぞ。',
+  'install.scroll_hint': '下にさらに機能があります',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

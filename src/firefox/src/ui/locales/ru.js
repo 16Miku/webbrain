@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'Вкладка',
   'install.mock.screen': 'Экран',
   'install.cta.title': 'Начнём, когда будете готовы.',
+  'install.scroll_hint': 'Больше возможностей ниже',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} из {total}',

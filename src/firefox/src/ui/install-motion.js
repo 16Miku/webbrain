@@ -139,3 +139,60 @@ export function initializeShowcaseAutoplay({
   }
   return stop;
 }
+
+/**
+ * The hero looks complete in a laptop-sized window, so nothing says the page
+ * continues. A floating pill points down until the visitor finds the rest on
+ * their own: it never appears if the next section is already in view, and it
+ * goes for good once they scroll or click it. Returns a function that retires
+ * it early.
+ */
+export function initializeScrollCue({
+  documentLike = globalThis.document,
+  windowLike = globalThis.window,
+  delayMs = 1400,
+  scrolledPx = 120,
+} = {}) {
+  const cue = documentLike?.querySelector?.('[data-scroll-cue]');
+  const target = documentLike?.querySelector?.('.more-head');
+  const Observer = windowLike?.IntersectionObserver;
+  // Without the observer there is no way to tell when the cue stops being useful,
+  // so leave it hidden rather than let it sit over the content.
+  if (!cue || !target || typeof Observer !== 'function') return () => {};
+
+  let finished = false;
+  let revealTimer = null;
+  const nextFrame = windowLike.requestAnimationFrame?.bind(windowLike) || ((fn) => fn());
+
+  const observer = new Observer((entries) => {
+    if (entries.some((entry) => entry.isIntersecting)) dismiss();
+  }, { rootMargin: '0px 0px -12% 0px' });
+
+  function dismiss() {
+    if (finished) return;
+    finished = true;
+    windowLike.clearTimeout?.(revealTimer);
+    observer.disconnect();
+    windowLike.removeEventListener?.('scroll', onScroll);
+    cue.removeEventListener?.('click', dismiss);
+    cue.classList.remove('is-visible');
+    // Leave the layout and the tab order once the fade has finished.
+    windowLike.setTimeout(() => { cue.hidden = true; }, 400);
+  }
+  function onScroll() {
+    if ((windowLike.scrollY || 0) > scrolledPx) dismiss();
+  }
+
+  windowLike.addEventListener?.('scroll', onScroll, { passive: true });
+  cue.addEventListener('click', dismiss);
+  observer.observe(target);
+  revealTimer = windowLike.setTimeout(() => {
+    if (finished) return;
+    // A reload can restore a scroll position that is already past the hero.
+    if ((windowLike.scrollY || 0) > scrolledPx) { dismiss(); return; }
+    cue.hidden = false;
+    // Next frame, so the fade-in transition actually runs.
+    nextFrame(() => { if (!finished) cue.classList.add('is-visible'); });
+  }, delayMs);
+  return dismiss;
+}

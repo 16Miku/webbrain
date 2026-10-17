@@ -1407,6 +1407,121 @@
   translate: 0 0;
 }
 
+/* ───────────────────────── scroll cue ───────────────────────── */
+
+/* The hero looks complete on a laptop-sized window, so a floating pill says the
+   page continues. install-motion.js shows it after a beat and retires it for
+   good once the visitor scrolls or clicks. */
+
+html {
+  scroll-padding-top: 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+.scroll-cue {
+  position: fixed;
+  z-index: 30;
+  bottom: max(20px, env(safe-area-inset-bottom));
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 9px 8px 20px;
+  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 84%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4);
+  backdrop-filter: blur(16px) saturate(1.4);
+  box-shadow:
+    0 12px 36px color-mix(in srgb, var(--accent) 32%, transparent),
+    0 2px 8px color-mix(in srgb, #0a0d1f 24%, transparent);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 0;
+  translate: -50% 14px;
+  pointer-events: none;
+  transition:
+    opacity 360ms ease,
+    translate 360ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    border-color 160ms ease,
+    background-color 160ms ease;
+}
+
+.scroll-cue[hidden] {
+  display: none;
+}
+
+.scroll-cue.is-visible {
+  opacity: 1;
+  translate: -50% 0;
+  pointer-events: auto;
+}
+
+.scroll-cue:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--surface-strong) 94%, transparent);
+}
+
+.scroll-cue:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.scroll-cue-arrow {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: var(--accent);
+}
+
+.scroll-cue-arrow svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.scroll-cue.is-visible .scroll-cue-arrow svg {
+  animation: cue-bob 1.6s ease-in-out 600ms infinite;
+}
+
+@keyframes cue-bob {
+  0%,
+  100% {
+    translate: 0 -2px;
+  }
+
+  50% {
+    translate: 0 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scroll-cue {
+    transition: none;
+  }
+
+  .scroll-cue.is-visible .scroll-cue-arrow svg {
+    animation: none;
+  }
+}
+
 /* ───────────────────────── responsive ───────────────────────── */
 
 @media (max-width: 1080px) {

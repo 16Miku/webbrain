@@ -69,7 +69,7 @@
       </aside>
     </section>
 
-    <section class="more" aria-labelledby="more-title">
+    <section class="more" id="more" aria-labelledby="more-title">
       <div class="more-head" data-reveal>
         <p class="eyebrow" data-i18n="install.more.eyebrow">Also built in</p>
         <h2 id="more-title" class="more-title" data-i18n="install.more.title">Plenty more under the hood.</h2>
@@ -280,6 +280,13 @@
       </div>
     </section>
   </main>
+
+  <a class="scroll-cue" href="#more" data-scroll-cue hidden>
+    <span data-i18n="install.scroll_hint">More features below</span>
+    <span class="scroll-cue-arrow" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg>
+    </span>
+  </a>
 
   <script type="module" src="install.js"></script>
 </body>

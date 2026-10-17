@@ -124,6 +124,7 @@ export default {
   'install.mock.tab': 'לשונית',
   'install.mock.screen': 'מסך',
   'install.cta.title': 'מוכנים כשתהיו מוכנים.',
+  'install.scroll_hint': 'עוד תכונות למטה',
   "sp.status.disconnected": "לא מחובר",
   "sp.status.connected": "מחובר ({model})",
   "sp.status.error": "שגיאה: {msg}",

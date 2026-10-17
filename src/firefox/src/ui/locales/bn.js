@@ -108,6 +108,7 @@ export default {
   'install.mock.tab': 'ট্যাব',
   'install.mock.screen': 'স্ক্রিন',
   'install.cta.title': 'আপনি তৈরি হলেই শুরু করুন।',
+  'install.scroll_hint': 'নিচে আরও ফিচার',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "সংযোগ বিচ্ছিন্ন",

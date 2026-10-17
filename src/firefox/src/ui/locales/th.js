@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'แท็บ',
   'install.mock.screen': 'หน้าจอ',
   'install.cta.title': 'พร้อมเมื่อคุณพร้อม',
+  'install.scroll_hint': 'ฟีเจอร์เพิ่มเติมด้านล่าง',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} จาก {total}',

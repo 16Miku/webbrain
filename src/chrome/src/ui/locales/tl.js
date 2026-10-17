@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'Tab',
   'install.mock.screen': 'Screen',
   'install.cta.title': 'Handa kapag handa ka na.',
+  'install.scroll_hint': 'Mas maraming feature sa ibaba',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sa {total}',

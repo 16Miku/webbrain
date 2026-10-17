@@ -108,6 +108,7 @@ export default {
   'install.mock.tab': 'Tab',
   'install.mock.screen': 'Screen',
   'install.cta.title': 'Ready when you are.',
+  'install.scroll_hint': 'More features below',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': 'Disconnected',

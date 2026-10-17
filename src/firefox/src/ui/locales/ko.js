@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': '탭',
   'install.mock.screen': '화면',
   'install.cta.title': '준비되면 시작하세요.',
+  'install.scroll_hint': '아래에 더 많은 기능',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

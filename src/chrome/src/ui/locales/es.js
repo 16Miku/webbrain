@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'Pestaña',
   'install.mock.screen': 'Pantalla',
   'install.cta.title': 'Cuando quieras.',
+  'install.scroll_hint': 'Más funciones abajo',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} de {total}',

@@ -108,6 +108,7 @@ export default {
   'install.mock.tab': 'Aba',
   'install.mock.screen': 'Tela',
   'install.cta.title': 'Pronto quando você estiver.',
+  'install.scroll_hint': 'Mais recursos abaixo',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "Desconectado",

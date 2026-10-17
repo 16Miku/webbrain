@@ -138,6 +138,7 @@ kbd {
 
 .install-hero {
   flex: 1;
+  min-height: calc(100svh - 89px);
   padding: clamp(54px, 8vh, 92px) 0 70px;
   display: grid;
   grid-template-columns: minmax(280px, 0.72fr) minmax(540px, 1.45fr);

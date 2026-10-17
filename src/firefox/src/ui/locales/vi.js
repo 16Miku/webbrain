@@ -108,6 +108,7 @@ export default {
   'install.mock.tab': 'Tab',
   'install.mock.screen': 'Màn hình',
   'install.cta.title': 'Sẵn sàng khi bạn sẵn sàng.',
+  'install.scroll_hint': 'Thêm tính năng bên dưới',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "Đã ngắt kết nối",

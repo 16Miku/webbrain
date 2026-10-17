@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'Onglet',
   'install.mock.screen': 'Écran',
   'install.cta.title': 'Prêt quand vous l’êtes.',
+  'install.scroll_hint': 'Plus de fonctionnalités ci-dessous',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} sur {total}',

@@ -108,6 +108,7 @@ export default {
   'install.mock.tab': 'टैब',
   'install.mock.screen': 'स्क्रीन',
   'install.cta.title': 'जब आप तैयार हों।',
+  'install.scroll_hint': 'नीचे और सुविधाएँ',
 
   // --- Sidepanel ---------------------------------------------------------
   'sp.status.disconnected': "विच्छेदित",

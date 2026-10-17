@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': '标签页',
   'install.mock.screen': '屏幕',
   'install.cta.title': '准备好就开始。',
+  'install.scroll_hint': '下方还有更多功能',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

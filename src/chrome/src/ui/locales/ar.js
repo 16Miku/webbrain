@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'علامة تبويب',
   'install.mock.screen': 'الشاشة',
   'install.cta.title': 'جاهز متى كنت جاهزًا.',
+  'install.scroll_hint': 'المزيد من الميزات أدناه',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} من {total}',

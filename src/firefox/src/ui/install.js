@@ -2,6 +2,7 @@ import { applyDOMTranslations, t } from './i18n.js';
 import {
   initializeCardSpotlight,
   initializeScenePlayback,
+  initializeScrollCue,
   initializeShowcaseAutoplay,
   startRecordingClock,
 } from './install-motion.js';
@@ -143,6 +144,7 @@ function initializeMotion() {
   try {
     initializeShowcaseAutoplay({ select: (feature) => selectInstallFeature(feature) });
     initializeScenePlayback();
+    initializeScrollCue();
     initializeCardSpotlight();
     startRecordingClock();
   } catch (error) {

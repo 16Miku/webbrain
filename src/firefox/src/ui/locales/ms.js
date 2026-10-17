@@ -164,6 +164,7 @@ export default {
   'install.mock.tab': 'Tab',
   'install.mock.screen': 'Skrin',
   'install.cta.title': 'Sedia apabila anda sedia.',
+  'install.scroll_hint': 'Lebih banyak ciri di bawah',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} daripada {total}',

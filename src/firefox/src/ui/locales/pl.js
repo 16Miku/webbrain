@@ -110,6 +110,7 @@ export default {
   'install.mock.tab': 'Karta',
   'install.mock.screen': 'Ekran',
   'install.cta.title': 'Gotowe, kiedy ty.',
+  'install.scroll_hint': 'Więcej funkcji poniżej',
   'sp.status.disconnected': 'Rozłączono',
   'sp.status.connected': 'Połączono ({model})',
   'sp.status.error': 'Błąd: {msg}',

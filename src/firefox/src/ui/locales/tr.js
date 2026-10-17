@@ -200,6 +200,7 @@ export default {
   'install.mock.tab': 'Sekme',
   'install.mock.screen': 'Ekran',
   'install.cta.title': 'Hazır olduğunda başla.',
+  'install.scroll_hint': 'Aşağıda daha fazla özellik',
 
   // --- Onboarding --------------------------------------------------------
   'ob.step': '{current} / {total}',

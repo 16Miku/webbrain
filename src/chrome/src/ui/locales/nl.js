@@ -110,6 +110,7 @@ export default {
   'install.mock.tab': 'Tabblad',
   'install.mock.screen': 'Scherm',
   'install.cta.title': 'Klaar wanneer jij dat bent.',
+  'install.scroll_hint': 'Meer functies hieronder',
   'sp.status.disconnected': 'Niet verbonden',
   'sp.status.connected': 'Verbonden ({model})',
   'sp.status.error': 'Fout: {msg}',
