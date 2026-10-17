@@ -357,6 +357,8 @@ export function createContextMenuPromptHandler({
     let rejectedClaim = null;
     try {
       accepted = await sendMessage({
+        // Automatic mode selection never routes these prompts out of Ask.
+        ...(getAgentMode() === 'auto' ? { __mode: 'ask' } : {}),
         contextMenuClear: clearPayload,
         contextMenuClaim: {
           promptId: payload.id,

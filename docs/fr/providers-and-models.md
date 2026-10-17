@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | local | (modèle chargé) | Métadonnées auto / surcharge |
 | `gpt4all` | `openai` | local | (modèle chargé) | Oui (activé par défaut) |
 | `local_openai_proxy` | `openai` | local | (requis) | Désactivée / bascule manuelle |
-| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 (préréglage unique) ; dépôt HF ONNX personnalisé expérimental | Non |
+| `webgpu` (Chromium) | `webgpu` | local | Compass Tiny v2.1 ; Ternary Bonsai 2 2B Vision ; dépôt HF ONNX personnalisé expérimental | Préréglage Bonsai Vision uniquement |
 | `azure_openai` | `azure_openai` | cloud | (déploiement) | Bascule manuelle |
 | `aws_bedrock` | `aws_bedrock` | cloud | (ID de modèle) | Non |
 | `openai` | `openai` | cloud | `gpt-5.6-terra` | Regex nom de modèle |
@@ -118,12 +118,23 @@ Entrées volontairement exclues : `github-models` (retrait de GitHub Models le
 ### Fournisseurs Locaux
 
 Sur Chromium, **WebGPU (dans le navigateur)** est un fournisseur local sans
-point de terminaison. Le sélecteur Apocalypse propose un préréglage embarqué
-unique : **Compass Tiny v2.1** (`q4f16`, environ 1,87 Go) via Transformers.js /
-ONNX, téléchargé à l’activation d’Apocalypse. Une fois en cache, Compass
-fonctionne sans qu’Apocalypse soit activé. Le fournisseur est texte seul, avec
-une fenêtre de contexte de 32k par défaut ; sur les GPU limités, réduisez-la
-dans Settings → Providers si nécessaire. Firefox n’expose pas cette carte.
+point de terminaison. Settings et le sélecteur Apocalypse proposent deux
+préréglages : **Compass Tiny v2.1** (par défaut, `q4f16`, environ 1,87 Go,
+texte seul, contexte de 32k) et **Ternary Bonsai 2 2B Vision** (environ
+1,45 Go, accepte les images, contexte de 16k), via Transformers.js / ONNX.
+Settings accepte aussi un dépôt Hugging Face personnalisé. Les autres
+préréglages Bonsai 2 sont livrés mais masqués des sélecteurs pour l’instant.
+Le modèle choisi est téléchargé à l’activation d’Apocalypse ; une fois en
+cache, il fonctionne sans qu’Apocalypse soit activé. Sur les GPU limités,
+réduisez la fenêtre de contexte dans Settings → Providers si nécessaire.
+Firefox n’expose pas cette carte.
+
+Les modèles dans le navigateur répondent seulement aux questions. Dans le
+panneau latéral, chaque tour Ask fait un seul appel sans outils : WebBrain lit
+d’abord la page actuelle, la sélection, un onglet PDF et toute page liée dans
+la question, puis envoie ce texte avec un prompt court (tiny Ask, voir
+`docs/webgpu-models.md`). Les modes Act et Dev sont refusés pour ce
+fournisseur ; choisissez-en un autre pour les actions dans le navigateur.
 
 Neuf fournisseurs à terminaison locale sont activés par défaut. Les moteurs de
 modèles n'exigent pas de clé sauf si le serveur utilise l'authentification ; la
@@ -224,7 +235,7 @@ Le mode Ask ignore le niveau du fournisseur et reste en lecture seule. Le mode A
 | Fournisseur | Mécanisme |
 |---|---|
 | Compatible OpenAI | Regex sur le nom du modèle (`gpt-4o`, `gpt-5`, `claude-3`, `claude-sonnet-4`, `gemini-2.0-flash`, etc.) |
-| DeepSeek | La famille `deepseek-flash` (y compris les alias retirés `deepseek-v4-flash`) est multimodale ; `deepseek-v4-pro` et les identifiants de la génération V3 sont textuels |
+| DeepSeek | La famille `deepseek-flash` (y compris les alias retirés `deepseek-v4-flash` et les instantanés datés des routeurs comme `deepseek-v4.1-flash-1017`) est multimodale ; `deepseek-v4-pro` et les identifiants de la génération V3 sont textuels |
 | Anthropic | Patterns `claude-(3\|sonnet-4\|opus-4)` |
 | Ollama | `POST /api/show` `capabilities`, avec replis historiques `projector_info` / `.vision.` |
 | llama.cpp | `GET /props` → `modalities.vision`, avec Automatique / Forcer / Désactivé |
@@ -250,12 +261,15 @@ Lorsque le fournisseur actif est Anthropic, l'agent convertit les messages au fo
 
 ### DeepSeek
 
-Le modèle livré est `deepseek-flash` (DeepSeek-V4.1-Flash). Les identifiants retirés
-`deepseek-v4-flash` et `deepseek-v4-flash-vision-exp` sont toujours servis par le même
-modèle et facturés comme Flash : ils conservent donc le support complet (contexte 1M,
-sortie 384K, entrée d'images). Tous les autres identifiants DeepSeek — y compris
-`deepseek-v4-pro`, retiré — restent sur un profil prudent (contexte 64K, sortie 8K,
-texte uniquement) au lieu d'hériter de capacités qu'ils n'ont peut-être pas.
+Le modèle livré est `deepseek-flash` (DeepSeek-V4.1-Flash, actualisé le 17 octobre
+2026 vers l'instantané `-1017`, sans changement d'API ni de tarif). Les identifiants
+retirés `deepseek-v4-flash` et `deepseek-v4-flash-vision-exp` sont toujours servis par
+le même modèle et facturés comme Flash, et les instantanés datés des routeurs tels que
+`deepseek/deepseek-v4.1-flash-1017` (OpenRouter) y renvoient également : ils conservent
+donc le support complet (contexte 1M, sortie 384K, entrée d'images). Tous les autres
+identifiants DeepSeek — y compris `deepseek-v4-pro`, retiré — restent sur un profil
+prudent (contexte 64K, sortie 8K, texte uniquement) au lieu d'hériter de capacités
+qu'ils n'ont peut-être pas.
 
 | Aspect | Comportement |
 |---|---|

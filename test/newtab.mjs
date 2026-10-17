@@ -1171,7 +1171,7 @@ for (const browser of ['chrome', 'firefox']) {
     const h = await harness({ record: rec() });
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.log.mode, 'ask');
-    assert.deepEqual(h.log.sent, [undefined]);
+    assert.deepEqual(h.log.sent, [{ __mode: 'ask' }]);
     assert.equal(h.log.value, 'summarise');
     assert.equal(KEY in h.store, false);
     assert.equal(await h.handoff.consume(), false);
@@ -1182,12 +1182,12 @@ for (const browser of ['chrome', 'firefox']) {
     const h = await harness({ record: rec({ mode: 'act', text: 'book a table' }) });
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.log.mode, 'act');
-    assert.equal(h.log.sent.length, 1);
+    assert.deepEqual(h.log.sent, [{ __mode: 'act' }], 'the mode chosen in the box is pinned, not left to automatic selection');
     assert.equal(h.log.value, 'book a table', 'the composer held the task when it was sent');
     const ask = await harness({ record: rec({ mode: 'ask', text: 'what is this' }) });
     await ask.handoff.consume();
     assert.equal(ask.log.mode, 'ask');
-    assert.equal(ask.log.sent.length, 1);
+    assert.deepEqual(ask.log.sent, [{ __mode: 'ask' }]);
     assert.equal(ask.log.value, 'what is this');
   });
 
@@ -1212,7 +1212,7 @@ for (const browser of ['chrome', 'firefox']) {
   test(`${browser}: Ask during an active run is queued behind it, not dropped`, async () => {
     const h = await harness({ processing: true, record: rec() });
     assert.equal(await h.handoff.consume(), true);
-    assert.deepEqual(h.log.sent, [{ __deliveryMode: 'queue' }]);
+    assert.deepEqual(h.log.sent, [{ __deliveryMode: 'queue', __mode: 'ask' }]);
     assert.equal(h.log.value, 'summarise');
     assert.equal(KEY in h.store, false);
   });
@@ -1245,7 +1245,7 @@ for (const browser of ['chrome', 'firefox']) {
     // Startup took 45 s: the record is now 46 s old, beyond the normal 30 s window.
     h.state.time = 145_000;
     assert.equal(await h.handoff.start(), true);
-    assert.deepEqual(h.log.sent, [undefined]);
+    assert.deepEqual(h.log.sent, [{ __mode: 'ask' }]);
     assert.equal(KEY in h.store, false);
   });
 

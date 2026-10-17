@@ -3,10 +3,10 @@
 This directory packages the JavaScript and WASM runtime used by two local
 WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
 
-- **Apocalypse Mode / Settings -> local WebGPU chat** downloads Compass Tiny
-  v2.1 (`webbrain-one/webbrain-compass-tiny-v2.1`, ~1.87 GB), the sole text
-  preset exposed in the UI, used by the standalone-chat nuclear control and
-  selectable as a normal chat provider. The underlying runtime also supports
+- **Apocalypse Mode / Settings -> local WebGPU chat** offers Compass Tiny
+  v2.1 (`webbrain-one/webbrain-compass-tiny-v2.1`, ~1.87 GB) and Ternary Bonsai 2
+  2B / 4B in text and vision variants, used by the standalone-chat nuclear
+  control and selectable as a normal chat provider. The underlying runtime also supports
   LFM2.5 and Nanbeige exports. An opt-in Bonsai 27B preset uses a separate
   vendored bitgpu worker, not this Transformers.js runtime; see
   `src/chrome/vendor/bitgpu/README.webbrain.md`.
@@ -16,9 +16,9 @@ WebGPU paths in Chrome and by offline RAG's CPU/WASM semantic reranker:
   `Xenova/multilingual-e5-small` q8 model in a separate CPU/WASM worker. Model
   weights remain optional and are never bundled or downloaded by a question.
 
-Model weights are not bundled. Transformers.js downloads the WebGPU model on
-first use and stores it in the browser cache. The exposed UI text preset is
-Compass Tiny v2.1 (~1.87 GB), with underlying runtime support for LFM2.5
+Model weights are not bundled. Explicit download controls fetch the selected
+WebGPU model and store it in the browser cache; inference only uses cached
+models. The default preset is Compass Tiny v2.1 (~1.87 GB), with underlying runtime support for LFM2.5
 (2.6B, 1.2B Instruct, 1.2B Thinking, VL 1.6B, VL 3B) and Nanbeige4.2-3B.
 Compass Tiny v2.1 is available through the nuclear control in standalone chat
 and can also be configured, downloaded, and selected directly in Settings ->
@@ -28,6 +28,32 @@ thinking out of visible answers. Current LFM2.5-VL layouts use:
 - `embed_tokens`: FP16
 - `vision_encoder`: FP16
 - `decoder_model_merged`: Q4
+
+Ternary Bonsai 2 uses Q2/FP16 language graphs, the existing Qwen3.5 hybrid
+attention runtime, and (for the Vision presets) an FP16 vision encoder. Its
+reproducible export is in `scripts/models/bonsai/`. Danyalmalik's 2B/4B split ports
+omit tokenizer and generation sidecars; the worker seeds the licensed, packaged
+Qwen3.5 metadata from `vendor/bonsai2/` for those exact repositories. It also
+corrects their external-data declarations, chat stop tokens, and Q2 cache
+precision. The 4B text preset uses Mike0021's
+single causal graph with its own complete metadata. The Vision presets use
+`webbrain-one/Ternary-Bonsai-2-{2B,4B}-ONNX-WebGPU-Vision`, the Qwen processor's
+text-first image API, and a bounded image resolution.
+
+The Vision presets prefill long prompts in 512-token slices that carry the
+recurrent, convolution and KV cache, then let `generate()` continue from that
+cache. A single pass over a multi-thousand-token prompt can occupy a GPU shared
+with the display (Apple silicon, a display-attached card) for seconds; slices
+bound each pass at the cost of roughly one extra decoder run per slice. Greedy
+answers match the single-pass path. `chrome.storage.local` key
+`webgpuPrefillSliceTokens` overrides the slice size (64–8192 tokens; `0`
+disables slicing).
+
+For the split Bonsai text and Vision models, the worker corrects Transformers.js
+4.2's text-only rotary cache offset; image turns keep the native three-axis
+positions. Independent screenshots are processed separately before concatenating
+their patches and grids, because the bundled image processor treats an image
+array as video frames. These adaptations are scoped to the named Bonsai models.
 
 `Michionlion/Nanbeige4.2-3B-ONNX-WebGPU` needs no bundle patch, but it does
 need two things from this runtime. It publishes one WebGPU-fused graph named

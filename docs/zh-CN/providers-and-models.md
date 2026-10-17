@@ -46,7 +46,7 @@ class BaseLLMProvider {
 | `localai` | `openai` | 本地 | （已加载模型） | 自动元数据 / 覆盖 |
 | `gpt4all` | `openai` | 本地 | （已加载模型） | 是（默认开启） |
 | `local_openai_proxy` | `openai` | 本地 | （必填） | 默认关闭 / 手动开关 |
-| `webgpu`（Chromium） | `webgpu` | 本地 | Compass Tiny v2.1（唯一预设）；实验性自定义 HF ONNX 仓库 | 否 |
+| `webgpu`（Chromium） | `webgpu` | 本地 | Compass Tiny v2.1；Ternary Bonsai 2 2B Vision；实验性自定义 HF ONNX 仓库 | 仅 Bonsai Vision 预设 |
 | `azure_openai` | `azure_openai` | 云端 | （部署） | 手动开关 |
 | `aws_bedrock` | `aws_bedrock` | 云端 | （模型 ID） | 否 |
 | `openai` | `openai` | 云端 | `gpt-5.6-terra` | 模型名正则 |
@@ -111,7 +111,9 @@ WebBrain 会直接记录；若服务省略用量，则记录基于字符数的�
 
 ### 本地提供商
 
-在 Chromium 上，**WebGPU（浏览器内）** 是无端点的本地提供商。末日模式文本选择器仅提供一个内置预设：**Compass Tiny v2.1**（`q4f16`，约 1.87 GB），走 Transformers.js / ONNX，启用末日模式时会自动开始下载。缓存完成后，即使未启用末日模式，Compass 也可正常使用。该提供商仅支持文本，默认上下文窗口为 32k；在显存受限的 GPU 上，可在 Settings → Providers 中将其调低。Firefox 不提供该卡片。
+在 Chromium 上，**WebGPU（浏览器内）** 是无端点的本地提供商。Settings 和末日模式选择器提供两个预设：**Compass Tiny v2.1**（默认，`q4f16`，约 1.87 GB，仅文本，32k 上下文）和 **Ternary Bonsai 2 2B Vision**（约 1.45 GB，支持图片，16k 上下文），走 Transformers.js / ONNX；Settings 还接受自定义 Hugging Face 仓库。其他 Bonsai 2 预设随扩展提供，但暂时不在选择器中显示。启用末日模式时会自动下载所选模型；缓存完成后，即使未启用末日模式也可正常使用。在显存受限的 GPU 上，可在 Settings → Providers 中调低上下文窗口。Firefox 不提供该卡片。
+
+浏览器内模型只回答问题。在侧边栏中，每个 Ask 回合只进行一次不带工具的调用：WebBrain 先读取当前页面、选中文本、PDF 标签页以及问题中链接的页面，再把这些文本和一个简短提示一起发送（tiny Ask，见 `docs/webgpu-models.md`）。该提供商不支持 Act 和 Dev 模式；如需在浏览器中执行操作，请选择其他提供商。
 
 九个本地端点提供商默认启用。模型运行时无需 API 密钥（除非服务器启用了认证）；
 通用代理卡片必须填写客户端密钥：
@@ -201,7 +203,7 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 | 提供商 | 机制 |
 |---|---|
 | OpenAI 兼容 | 根据模型名称进行正则匹配（`gpt-4o`、`gpt-5`、`claude-3`、`claude-sonnet-4`、`gemini-2.0-flash` 等） |
-| DeepSeek | `deepseek-flash` 系列（含已退役的 `deepseek-v4-flash` 别名）支持多模态；`deepseek-v4-pro` 与 V3 时代标识为纯文本 |
+| DeepSeek | `deepseek-flash` 系列（含已退役的 `deepseek-v4-flash` 别名及路由器日期快照，如 `deepseek-v4.1-flash-1017`）支持多模态；`deepseek-v4-pro` 与 V3 时代标识为纯文本 |
 | Anthropic | `claude-(3\|sonnet-4\|opus-4)` 模式 |
 | Ollama | `POST /api/show` 的 `capabilities`，并兼容旧版 `projector_info` / `.vision.` 元数据 |
 | llama.cpp | `GET /props` → `modalities.vision`，支持自动 / 强制开启 / 关闭 |
@@ -225,8 +227,10 @@ Ask 模式忽略提供商层级，保持只读。Act 模式使用所选层级的
 
 ### DeepSeek
 
-出厂模型是 `deepseek-flash`（DeepSeek-V4.1-Flash）。已退役的 `deepseek-v4-flash` 与
-`deepseek-v4-flash-vision-exp` 仍由同一模型承接并按 Flash 计费，因此保留完整支持
+出厂模型是 `deepseek-flash`（DeepSeek-V4.1-Flash，2026 年 10 月 17 日更新为 `-1017`
+快照，API 与价格不变）。已退役的 `deepseek-v4-flash` 与 `deepseek-v4-flash-vision-exp`
+仍由同一模型承接并按 Flash 计费；OpenRouter 等路由发布的日期快照
+（`deepseek/deepseek-v4.1-flash-1017`）同样指向该模型，因此保留完整支持
 （1M 上下文、384K 输出、图片输入）。其他 DeepSeek 标识（包括已退役的
 `deepseek-v4-pro`）保持保守配置（64K 上下文、8K 输出、纯文本），不会继承它未必具备
 的更大容量。

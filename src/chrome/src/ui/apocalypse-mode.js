@@ -23,10 +23,12 @@ import { createOfflineRagReadinessController } from './offline-rag-readiness.js'
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_DTYPE,
+  WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   isShippedWebgpuPreset,
+  isSelectableWebgpuPreset,
   webgpuModelDtype,
   webgpuModelPreset,
 } from '../providers/webgpu.js';
@@ -60,6 +62,11 @@ const elements = Object.fromEntries([
   'emergency-box-callout', 'emergency-gate-reason', 'emergency-box-link',
   'offline-answer-engine', 'offline-rag-readiness', 'rag-components',
 ].map(id => [id, document.getElementById(id)]));
+// The markup lists every picker preset; drop the ones not offered yet before
+// any selection or listener code sees them.
+for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
+  if (!isSelectableWebgpuPreset(input.value)) input.closest('.webgpu-text-preset')?.remove();
+}
 if (elements['vision-model-card']) elements['vision-model-card'].hidden = !supportsWebgpuVision;
 if (elements['webgpu-provider-card']) elements['webgpu-provider-card'].hidden = !supportsWebgpuVision;
 if (elements['basic-wikipedia-card']) elements['basic-wikipedia-card'].hidden = !supportsWebgpuVision;
@@ -82,7 +89,7 @@ let visionDownloadState = null;
 let visionFallbackExplicitlyEnabled = false;
 let fixedWebgpuProviderConfigured = false;
 let fixedWebgpuProviderMarkedReady = false;
-let webgpuPresetHydrated = false;
+let webgpuPresetChangePending = false;
 let visionTestRunning = false;
 let webgpuDownloadStatusRequest = 0;
 let webgpuDownloadState = {
@@ -430,7 +437,8 @@ function updateWebgpuTextPresetUi() {
   const copy = document.querySelector('[data-webgpu-text-copy]');
   if (copy) {
     copy.dataset.i18n = 'ap.webgpu.rag';
-    copy.textContent = t('ap.webgpu.rag');
+    copy.dataset.i18nParams = JSON.stringify({ model: preset.label });
+    copy.textContent = t('ap.webgpu.rag', { model: preset.label });
   }
   for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) {
     input.checked = input.value === (preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID);
@@ -454,8 +462,8 @@ function anyOtherWebgpuTextPaused() {
 }
 
 function webgpuDownloadActionState() {
-  // The Compass preset remains selected, but controls must follow a retained
-  // Settings transfer, including when Compass itself is already cached.
+  // Controls follow a retained Settings transfer even when the selected
+  // preset is already cached.
   const transfers = [webgpuDownloadState, ...otherWebgpuTextStates()]
     .filter(state => WEBGPU_TEXT_BUSY_STATUSES.has(state.status));
   return transfers.find(state => state.status !== 'paused') || transfers[0] || webgpuDownloadState;
@@ -528,7 +536,7 @@ async function runVisionDownloadAction(action) {
   }
 }
 
-async function ensureFixedWebgpuProvider({ markConfigured = false, force = false } = {}) {
+async function ensureFixedWebgpuProvider({ markConfigured = false, force = false, preserveConfig = false } = {}) {
   const preset = selectedWebgpuPreset();
   const model = preset?.id || WEBGPU_COMPASS_TINY_V2_MODEL_ID;
   const dtype = preset?.dtype || webgpuModelDtype(model, WEBGPU_DTYPE);
@@ -538,12 +546,9 @@ async function ensureFixedWebgpuProvider({ markConfigured = false, force = false
   }
   await providerCommand('update_provider', {
     providerId: 'webgpu',
-    config: {
-      model,
-      dtype,
-      contextWindow: preset?.contextWindow || 32768,
-      promptTier: 'compact',
-    },
+    // A readiness check must not replace a saved context budget or prompt tier.
+    // The manager applies the new preset's context default when its model changes.
+    config: preserveConfig ? {} : { model, dtype },
     markConfigured,
   });
   fixedWebgpuProviderConfigured = true;
@@ -551,51 +556,65 @@ async function ensureFixedWebgpuProvider({ markConfigured = false, force = false
 }
 
 async function refreshWebgpuDownloadStatus({ probeSibling = false } = {}) {
-  if (!supportsWebgpuVision) return;
+  if (!supportsWebgpuVision || webgpuPresetChangePending) return;
   const requestId = ++webgpuDownloadStatusRequest;
   try {
     let state = await providerCommand('get_webgpu_download_status');
     if (requestId !== webgpuDownloadStatusRequest) return;
     let preset = webgpuModelPreset(state?.modelId);
-    if (!preset || preset.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID) {
-      // Only Compass Tiny v2.1 is offered. Retain an active transfer in the
-      // aggregate tracker, then switch the provider to Compass before
-      // rendering its controls.
+    if (!isSelectableWebgpuPreset(preset?.id)) {
+      // Retain any legacy/custom transfer in the aggregate tracker before
+      // switching the provider to a model offered by this picker.
       setWebgpuDownloadState(state, { syncActiveTransfer: true });
       await ensureFixedWebgpuProvider({ force: true });
       if (requestId !== webgpuDownloadStatusRequest) return;
       state = await providerCommand('get_webgpu_download_status');
       if (requestId !== webgpuDownloadStatusRequest) return;
       preset = webgpuModelPreset(state?.modelId);
-      if (!preset) throw new Error('Unable to select a shipped WebGPU text preset.');
+      if (!isSelectableWebgpuPreset(preset?.id)) throw new Error('Unable to select a shipped WebGPU chat preset.');
     }
     if (preset) {
       const selectedId = selectedWebgpuModelId();
-      if (!webgpuPresetHydrated || selectedId === preset.id) {
-        const input = document.querySelector(`[data-webgpu-text-preset][value="${CSS.escape(preset.id)}"]`);
-        if (input) input.checked = true;
-        webgpuPresetHydrated = true;
+      if (selectedId !== preset.id) {
+        fixedWebgpuProviderConfigured = false;
+        fixedWebgpuProviderMarkedReady = false;
       }
+      const input = document.querySelector(`[data-webgpu-text-preset][value="${CSS.escape(preset.id)}"]`);
+      if (input) input.checked = true;
     }
     updateWebgpuTextPresetUi();
     setWebgpuDownloadState(state, { syncActiveTransfer: true });
     if (probeSibling) await refreshSiblingWebgpuTextStatus(state?.modelId, requestId);
     if (requestId !== webgpuDownloadStatusRequest) return;
-    if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true });
+    if (state?.ready === true) await ensureFixedWebgpuProvider({ markConfigured: true, preserveConfig: true });
   } catch (error) {
-    if (requestId === webgpuDownloadStatusRequest) setWebgpuDownloadState({ status: 'error', error: error.message });
+    if (requestId === webgpuDownloadStatusRequest) setWebgpuDownloadState({
+      ...webgpuDownloadState, status: 'error', ready: false, error: error.message,
+    });
   }
 }
 
 async function refreshSiblingWebgpuTextStatus(currentModelId, requestId = webgpuDownloadStatusRequest) {
-  // Only Compass Tiny v2.1 is offered, so there are no unselected shipped
-  // text models to probe.
-  return;
+  await Promise.all(WEBGPU_SELECTABLE_MODEL_PRESETS
+    .filter(preset => preset.id !== currentModelId)
+    .map(async (preset) => {
+      try {
+        const state = await providerCommand('get_webgpu_download_status', { model: preset.id, dtype: preset.dtype });
+        if (requestId !== webgpuDownloadStatusRequest) return;
+        recordWebgpuTextState(state);
+      } catch {
+        // A failed sibling probe must not hide controls for the selected model.
+      }
+    }));
+  if (requestId === webgpuDownloadStatusRequest) updateOverallModelsReadiness();
 }
 
 async function onWebgpuTextPresetChange() {
+  if (webgpuPresetChangePending) return;
+  webgpuPresetChangePending = true;
+  ++webgpuDownloadStatusRequest;
+  for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) input.disabled = true;
   recordWebgpuTextState(webgpuDownloadState);
-  webgpuPresetHydrated = true;
   fixedWebgpuProviderConfigured = false;
   fixedWebgpuProviderMarkedReady = false;
   updateWebgpuTextPresetUi();
@@ -611,9 +630,13 @@ async function onWebgpuTextPresetChange() {
   updateOverallModelsReadiness();
   try {
     await ensureFixedWebgpuProvider();
+    webgpuPresetChangePending = false;
     await refreshWebgpuDownloadStatus({ probeSibling: true });
   } catch (error) {
-    setWebgpuDownloadState({ status: 'error', error: error.message });
+    setWebgpuDownloadState({ ...webgpuDownloadState, status: 'error', ready: false, error: error.message });
+  } finally {
+    webgpuPresetChangePending = false;
+    for (const input of document.querySelectorAll('[data-webgpu-text-preset]')) input.disabled = false;
   }
 }
 

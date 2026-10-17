@@ -14,6 +14,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -198,6 +199,12 @@ import { resolveSavedDownload } from '../download-result.js';
 import { executeChromeWebStoreSkillTool, isTrustedChromeWebStoreSkillTool } from '../chrome-web-store-release.js';
 import { chromeProtectedPageFailure, chromeProtectedPageForUrl, isChromeProtectedPageDomTool } from '../chrome-protected-pages.js';
 import { shouldAutoGroupTabs } from '../tab-group-preference.js';
+import {
+  TINY_ASK_ACT_BLOCKED_MESSAGE, TINY_ASK_COMPACT_LINKED_MAX_CHARS, TINY_ASK_COMPACT_PAGE_MAX_CHARS,
+  TINY_ASK_COMPACT_SELECTION_MAX_CHARS, TINY_ASK_READ_MAX_CHARS, TINY_ASK_READ_WINDOW_CHARS, TINY_ASK_SYSTEM_PROMPT,
+  tinyAskLinkedUrl, tinyAskPageContext, tinyAskPageReadable, tinyAskRuntimeLine,
+} from './tiny-ask.js';
+import { webgpuModelDisplayName } from '../providers/webgpu.js';
 
 const DEFAULT_CLOUD_COST_ALLOWANCE_USD = 10;
 // Shown when a per-minute token limit of unknown size gets its one retry on a
@@ -911,9 +918,19 @@ export class Agent extends LoopDetector {
     this._progressSessionCounter = 0;
     this.conversationModes = new Map(); // tabId -> 'ask' | 'act' | 'dev'
     this._runModeOverrides = new Map(); // tabId -> effective mode for the active run only
+    // Automatic mode selection (auto-mode.js): routed Ask turns that may hand
+    // themselves to Act/Dev, turns whose mode is not chosen yet, and accepted
+    // hand-offs that the caller restarts once.
+    this._autoModeEscalationTabs = new Set();
+    this._autoModeRoutePendingTabs = new Set();
+    this._pendingModeEscalations = new Map();
+    this._autoModeDevDrainTabs = new Set(); // routed Ask turns after Dev: drain diagnostics unless they hand off to Dev
     this._runProviderOverrides = new Map(); // tabId -> provider id for this run only
     this._standaloneChatRunTabs = new Set(); // tabIds using the provider-independent plain-chat boundary
     this._standaloneWebgpuRunTabs = new Set(); // tabIds using the compact, tool-free local-chat profile
+    this._tinyAskRunTabs = new Set(); // tabIds answering a side-panel Ask turn with an in-browser model (tiny-ask.js)
+    this._tinyAskCompactContext = new WeakMap(); // page-context block -> shorter text for the budget retry
+    this._tinyAskPageGrounded = new WeakSet(); // enriched tiny Ask messages that carry page or PDF text
     this._standaloneOfflineRagService = null;
     this.responseLanguagePolicies = new Map(); // tabId -> trusted, normalized language policy for the active run
     this.conversationIds = new Map(); // tabId -> stable conversationId (regenerated on clearConversation)
@@ -7233,6 +7250,7 @@ export class Agent extends LoopDetector {
         } : {}),
         standalone_chat_profile: this._standaloneChatRunTabs.has(tabId),
         standalone_webgpu_profile: this._standaloneWebgpuRunTabs.has(tabId),
+        tiny_ask_profile: this._tinyAskRunTabs.has(tabId),
       } : {}),
       image_detail: this.imageDetail,
       // The steps slider stores 0 for "unlimited", which the agent hydrates as
@@ -8070,8 +8088,10 @@ export class Agent extends LoopDetector {
    * available; callers then ask the user or do not proceed. Identical
    * questions are answered once. `mainModel: false` asks the decision model
    * only, for a check that is not worth a call to the chat model.
+   * `retryChoices` are answers that do not settle this question when they come
+   * from the cache or the decision model; the active model is asked instead.
    */
-  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
+  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [] } = {}) {
     const spec = semanticQuestion(kind);
     // Relationship decisions must read the entire latest user message. A
     // prefix-only verdict can mistake a correction or a new task at its end.
@@ -8080,7 +8100,7 @@ export class Agent extends LoopDetector {
     const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
     this._semanticDecisionCache ??= new Map();
     const cached = this._semanticDecisionCache.get(cacheKey);
-    if (cached) return { ...cached, source: 'cache' };
+    if (cached && !retryChoices.includes(cached.choice)) return { ...cached, source: 'cache' };
     const remember = result => {
       this._semanticDecisionCache.set(cacheKey, { choice: result.choice, evidence: result.evidence, answeredBy: result.source });
       while (this._semanticDecisionCache.size > 256) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
@@ -8104,7 +8124,7 @@ export class Agent extends LoopDetector {
         const choice = confidentChoice(answer, spec.authorizing.includes(answer?.choice) ? 0.85 : 0.7);
         this.recordSystemOneVerdict(tabId, { decision: choice ? 'semantic' : 'fallback', reason: choice ? kind : `${kind}_low_confidence`,
           model: verdict.model }, context);
-        if (choice) return remember({ choice, evidence: '', source: 'decision_model' });
+        if (choice && !retryChoices.includes(choice)) return remember({ choice, evidence: '', source: 'decision_model' });
       } else if (settings && !decisionFits) {
         this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_context_budget` }, context);
       }
@@ -10771,12 +10791,139 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * mentioned earlier in the thread. The heavier screenshot context is still
    * limited to the first real user turn.
    */
+  // Page text for a tiny Ask turn, gathered window by window up to
+  // TINY_ASK_READ_MAX_CHARS so the excerpt can come from any part of a long
+  // page. PDF tabs come back from read_pdf through read_page's redirect.
+  async _readTinyAskPage(tabId) {
+    const parts = [];
+    let total = 0;
+    let offset = 0;
+    let incomplete = false;
+    for (let windowIndex = 0; windowIndex < Math.ceil(TINY_ASK_READ_MAX_CHARS / TINY_ASK_READ_WINDOW_CHARS); windowIndex += 1) {
+      let result;
+      try {
+        result = await this.executeTool(tabId, 'read_page', { offset, limit: TINY_ASK_READ_WINDOW_CHARS });
+      } catch (error) {
+        if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        result = { success: false, error: String(error?.message || error) };
+      }
+      if (!result || result.success === false || result.error) {
+        if (!parts.length) return { unavailable: String(result?.error || 'read failed').slice(0, 120) };
+        incomplete = true;
+        break;
+      }
+      if (Array.isArray(result.pages)) {
+        const text = result.pages
+          .map((pageText, index) => String(pageText || '').trim()
+            ? `[Page ${(Number(result.fromPage) || 1) + index}]\n${String(pageText).trim()}` : '')
+          .filter(Boolean)
+          .join('\n\n');
+        return {
+          kind: 'pdf',
+          text: text.slice(0, TINY_ASK_READ_MAX_CHARS),
+          incomplete: result.truncated === true || (Number(result.totalPages) > Number(result.toPage))
+            || text.length > TINY_ASK_READ_MAX_CHARS,
+          ...(text.trim() ? {} : { unavailable: 'the PDF has no extractable text' }),
+        };
+      }
+      const text = typeof result.text === 'string' ? result.text : '';
+      parts.push(text);
+      total += text.length;
+      const next = Number(result.nextOffset);
+      if (result.hasMore !== true || !Number.isFinite(next) || next <= offset) break;
+      if (total >= TINY_ASK_READ_MAX_CHARS) { incomplete = true; break; }
+      offset = next;
+    }
+    return { kind: 'page', text: parts.join(''), incomplete };
+  }
+
+  // A tiny Ask turn carries a one-line trusted clock and the page (or PDF)
+  // text and selection, read by WebBrain before the single model call. Those
+  // blocks are ephemeral: the persisted turn keeps only the user's question.
+  async _enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata = {}, onUpdate = null) {
+    const { tabUrl: url, tabTitle: title } = await this._getTabUrlTitle(tabId);
+    let page = null;
+    let selection = '';
+    if (tinyAskPageReadable(url) || isPdfHandlerTabUrl(url)) {
+      onUpdate?.('thinking', { step: 0, note: 'Reading the page…' });
+      page = await this._readTinyAskPage(tabId);
+      if (page?.kind !== 'pdf') {
+        try {
+          const selected = await this.executeTool(tabId, 'get_selection', {});
+          selection = typeof selected?.text === 'string' ? selected.text : '';
+        } catch (error) {
+          if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        }
+      }
+    } else if (url) {
+      page = { unavailable: 'a browser page WebBrain cannot read' };
+    }
+    const questionText = this._messageText(userMessage);
+    const linkedUrl = tinyAskLinkedUrl(questionText, url);
+    let linked = null;
+    if (linkedUrl) {
+      onUpdate?.('thinking', { step: 0, note: 'Reading the linked page…' });
+      let fetched;
+      try {
+        fetched = await this.executeTool(tabId, 'fetch_url', { url: linkedUrl, maxChars: 7000 });
+      } catch (error) {
+        if (error?.name === 'AbortError' || this._checkAbort(tabId)) throw error;
+        fetched = { success: false, error: String(error?.message || error) };
+      }
+      const text = typeof fetched?.text === 'string' ? fetched.text
+        : (fetched?.json != null ? JSON.stringify(fetched.json) : '');
+      linked = fetched?.success === false || fetched?.error || !text.trim()
+        ? { url: linkedUrl, unavailable: String(fetched?.error || 'no readable text').slice(0, 120) }
+        : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
+      if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
+    }
+    let modelLabel = '';
+    try {
+      const provider = this._activeProvider(tabId);
+      modelLabel = webgpuModelDisplayName(provider?.model || provider?.config?.model || '');
+    } catch { /* The clock line is still useful without the model label. */ }
+    const runtimeLine = tinyAskRuntimeLine({ modelLabel });
+    const contextFor = (limits = {}) => [runtimeLine, tinyAskPageContext({
+      url,
+      title,
+      page,
+      selection,
+      linked,
+      question: questionText,
+      wrap: (kind, text) => this._wrapUntrusted(kind, text),
+      ...limits,
+    })].filter(Boolean).join('\n');
+    const block = { type: 'text', text: contextFor(), webbrainEphemeralPageContext: true };
+    // Rendered now, while the full text is at hand, so a budget retry can
+    // swap it in without cutting through an untrusted-content wrapper.
+    this._tinyAskCompactContext.set(block, contextFor({
+      pageMaxChars: TINY_ASK_COMPACT_PAGE_MAX_CHARS,
+      selectionMaxChars: TINY_ASK_COMPACT_SELECTION_MAX_CHARS,
+      linkedMaxChars: TINY_ASK_COMPACT_LINKED_MAX_CHARS,
+    }));
+    const question = Array.isArray(userMessage)
+      ? userMessage
+      : [{ type: 'text', text: typeof userMessage === 'string' ? userMessage : this._messageText(userMessage) }];
+    const enriched = {
+      role: 'user',
+      content: [block, ...question],
+      ...userAuthoredMetadata,
+    };
+    if (String(page?.text || '').trim() || String(selection || '').trim() || String(linked?.text || '').trim()) {
+      this._tinyAskPageGrounded.add(enriched);
+    }
+    return enriched;
+  }
+
   async _enrichUserMessageWithCurrentPage(tabId, messages, userMessage, costState = null, runOptions = {}, onUpdate = null) {
     const hasPriorUserTurn = messages.some(m => m.role === 'user');
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
     const standaloneChat = runOptions?.standaloneChat === true;
     const userAuthoredMetadata = runOptions?.scheduledResume === true
       ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) };
+    if (this._isTinyAskRun(runOptions)) {
+      return this._enrichTinyAskUserMessage(tabId, userMessage, userAuthoredMetadata, onUpdate);
+    }
     // Standalone is intentionally plain chat regardless of provider.
     // Do not add runtime state, recording/API guidance, tab metadata, adapter
     // notes, screenshots, or any other browser-derived context.
@@ -10955,11 +11102,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     };
   }
 
-  _standaloneWikipediaPriorTopic(messages) {
+  _standaloneWikipediaPriorTopic(messages, marker = 'webbrainStandaloneChat') {
     if (!Array.isArray(messages)) return { topic: '', languageQuery: '' };
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (message?.role !== 'user' || message.webbrainStandaloneChat !== true) continue;
+      if (message?.role !== 'user' || message[marker] !== true) continue;
       const text = userMessageToText(message.content);
       if (!shouldRetrieveLocalWikipedia(text)) continue;
       const topic = localWikipediaSearchQuery(text);
@@ -11052,6 +11199,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   async _applyStandaloneWikipediaRag(enriched, userMessage, runOptions = {}, options = {}) {
     if (!this._isStandaloneWebgpuRun(runOptions)) return null;
+    // In tiny Ask the current page is the source. Offline references are
+    // looked up only when there is no page text to answer from.
+    if (this._isTinyAskRun(runOptions) && this._tinyAskPageGrounded.has(enriched)) {
+      return { attempted: false, status: 'skipped', matchCount: 0, archiveDates: [] };
+    }
     const query = typeof userMessage === 'string' ? userMessage : userMessageToText(userMessage);
     const multiSource = typeof options.apocalypseSearch !== 'function';
     if (!(multiSource
@@ -11062,7 +11214,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // Carried on every result so the ungrounded fallback knows whether to use
     // the stronger health warning without re-parsing the question.
     const healthContext = isStandaloneEmergencyOrHealthQuery(query);
-    const prior = this._standaloneWikipediaPriorTopic(options.messages);
+    const prior = this._standaloneWikipediaPriorTopic(options.messages, this._standaloneHistoryMarker(runOptions));
     const priorTopic = prior.topic;
     const directQuery = localWikipediaSearchQuery(query);
     // Stop-word stripping can empty a query that still has a searchable topic in
@@ -11223,6 +11375,16 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const limit = Math.max(400, Number(limitChars) || STANDALONE_WEBGPU_RAG_RETRY_CHARS);
     let compacted = false;
     for (const block of enriched.content) {
+      const compactContext = block?.webbrainEphemeralPageContext === true
+        ? this._tinyAskCompactContext.get(block) : null;
+      if (compactContext != null) {
+        if (compactContext.length < String(block.text || '').length) {
+          block.text = compactContext;
+          compacted = true;
+        }
+        this._tinyAskCompactContext.delete(block);
+        continue;
+      }
       if (block?.webbrainEphemeralLocalWikipedia !== true) continue;
       const text = String(block.text || '');
       if (text.length <= limit) continue;
@@ -11237,7 +11399,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // gap becomes a caveat and the model still answers. The plan carries why the
   // grounding failed and whether the topic needs the stronger health warning.
   _standaloneOfflineGroundingGap(localWikipediaRag, runOptions = {}) {
-    if (!this._isStandaloneWebgpuRun(runOptions) || localWikipediaRag?.attempted !== true
+    // Tiny Ask answers from the page or the model; a missing archive is not a
+    // caveat there.
+    if (!this._isStandaloneWebgpuRun(runOptions) || this._isTinyAskRun(runOptions)
+        || localWikipediaRag?.attempted !== true
         || localWikipediaRag.status === 'matched') return null;
     const health = localWikipediaRag.healthContext === true;
     const status = STANDALONE_GAP_STATUSES.includes(localWikipediaRag.status)
@@ -11273,9 +11438,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     else if (Array.isArray(enriched.content)) enriched.content.push(block);
   }
 
+  // Tiny Ask has no archive caveat (see _standaloneOfflineGroundingGap), so a
+  // model that asked for a search it cannot have is told once to answer.
+  _appendTinyAskNoSearchPolicy(enriched) {
+    const block = {
+      type: 'text',
+      text: 'No search is available in this mode. Answer the question directly from the page text above and your own knowledge, without search markup.',
+      webbrainEphemeralLocalWikipedia: true,
+    };
+    if (typeof enriched.content === 'string') enriched.content = [{ type: 'text', text: enriched.content }, block];
+    else if (Array.isArray(enriched.content)) enriched.content.push(block);
+  }
+
   // The rewrite nudge must not point at references when the turn is ungrounded;
   // naming sources that were never attached is how the model invents them.
-  _standaloneIncompleteAnswerNudge(gap) {
+  _standaloneIncompleteAnswerNudge(gap, runOptions = {}) {
+    if (this._isTinyAskRun(runOptions)) {
+      return '[System recovery: The previous on-device response ended mid-sentence. Rewrite it as one complete, concise answer to the question, using the page text attached to it.]';
+    }
     const sourcePolicy = gap
       ? 'No offline references are attached, so answer from your own knowledge and do not cite or name any source.'
       : 'For factual claims, use only the Offline Wikipedia references attached to the original question; do not add model-memory facts.';
@@ -11311,23 +11491,24 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
   _standalonePersistedUserMessage(enriched, runOptions = {}) {
     if (!this._isStandaloneChatRun(runOptions)) return enriched;
+    const marker = this._standaloneHistoryMarker(runOptions);
     if (!Array.isArray(enriched?.content)) {
-      return { ...enriched, webbrainStandaloneChat: true };
+      return { ...enriched, [marker]: true };
     }
     const content = enriched.content
-      .filter(block => block?.webbrainEphemeralLocalWikipedia !== true)
+      .filter(block => block?.webbrainEphemeralLocalWikipedia !== true && block?.webbrainEphemeralPageContext !== true)
       .map(block => {
         if (!block || typeof block !== 'object') return block;
         const { webbrainEphemeralLocalWikipedia: _ephemeral, ...persisted } = block;
         return persisted;
       });
     if (content.length === 1 && content[0]?.type === 'text' && Object.keys(content[0]).length === 2) {
-      return { ...enriched, content: String(content[0].text || ''), webbrainStandaloneChat: true };
+      return { ...enriched, content: String(content[0].text || ''), [marker]: true };
     }
-    return { ...enriched, content, webbrainStandaloneChat: true };
+    return { ...enriched, content, [marker]: true };
   }
 
-  _messagesForStandaloneChatRun(messages, persistedUserMessage, enrichedUserMessage) {
+  _messagesForStandaloneChatRun(messages, persistedUserMessage, enrichedUserMessage, marker = 'webbrainStandaloneChat') {
     if (!Array.isArray(messages) || !persistedUserMessage) return [];
     const currentIndex = messages.indexOf(persistedUserMessage);
     if (currentIndex < 0) return [];
@@ -11336,12 +11517,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // standalone chat. Find the contiguous standalone segment containing the
     // current turn so page context and browser tool transcripts from the
     // sidepanel never cross this model boundary. The marker is persisted, so
-    // the boundary survives an MV3 service-worker restart.
+    // the boundary survives an MV3 service-worker restart. Tiny Ask turns use
+    // their own marker (webbrainTinyAsk), so each profile sees only its segment.
     let previousSidepanelUser = -1;
     for (let index = 1; index <= currentIndex; index += 1) {
       const message = messages[index];
       if (message?.role === 'user'
-          && message.webbrainStandaloneChat !== true
+          && message[marker] !== true
           && !this._isAgentInjectedUserMessage(message)) {
         previousSidepanelUser = index;
       }
@@ -11349,7 +11531,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let segmentStart = -1;
     for (let index = previousSidepanelUser + 1; index <= currentIndex; index += 1) {
       const message = messages[index];
-      if (message?.role === 'user' && message.webbrainStandaloneChat === true) {
+      if (message?.role === 'user' && message[marker] === true) {
         segmentStart = index;
         break;
       }
@@ -11363,6 +11545,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         const source = message === persistedUserMessage ? enrichedUserMessage : message;
         const {
           webbrainStandaloneChat: _standalone,
+          webbrainTinyAsk: _tinyAsk,
           tool_calls: _toolCalls,
           tool_call_id: _toolCallId,
           responseItems: _responseItems,
@@ -22879,7 +23062,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._continuationTaskTokens.delete(tabId);
       this._taskTokens.set(tabId, `task_${secureRandomBase36Token(12)}`);
     }
-    const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions)
+    // Tiny Ask reads the current page, so its trace keeps the page like Ask.
+    const { tabUrl, tabTitle } = this._isStandaloneChatRun(runOptions) && !this._isTinyAskRun(runOptions)
       ? { tabUrl: '', tabTitle: '' }
       : (tabInfo || await this._getTabUrlTitle(tabId));
     // Tracing must never break a run: a recorder failure returns null and the
@@ -22919,6 +23103,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (runId) {
       trace.recordTurnStart(runId, 0, { mode });
       this.currentRunId.set(tabId, runId);
+      // How an automatically routed turn chose its mode, and how long it waited.
+      if (runOptions?.modeRoute) {
+        try { trace.recordNote(runId, 0, 'mode_route', runOptions.modeRoute); } catch {}
+      }
       this._flushAdapterMatchTraces(tabId, runId);
       const pendingVisionRoutes = this.pendingVisionRouteTraces.get(tabId) || [];
       this.pendingVisionRouteTraces.delete(tabId);
@@ -24422,6 +24610,185 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     ];
   }
 
+  // ── Automatic mode selection (see auto-mode.js) ──────────────────────
+
+  // Starts an automatically routed turn. Run state alone decides when it
+  // can; otherwise the turn starts as Ask and is routed while its page
+  // context is gathered (_routeAutoRunMode, _settleAutoModeRun).
+  _beginAutoModeRun(tabId, userMessage, attachments, runOptions = {}, onUpdate = () => {}) {
+    const previousMode = this.conversationModes.get(tabId) || null;
+    let tier = '';
+    try { tier = this._resolvePromptTier(this._activeProvider(tabId)); } catch {}
+    const hard = autoModeHardRoute({
+      trustedContinuation: runOptions?.trustedContinuation === true,
+      previousMode,
+      inBrowserModel: this._isTinyAskRun(runOptions),
+      standaloneChat: this._isStandaloneChatRun(runOptions),
+      selectionScoped: isSelectionSourceGrounding(runOptions?.sourceGrounding) || this.selectionGroundingScopes.has(tabId),
+      cloudRun: runOptions?.cloudRun === true,
+      attachments,
+      tier,
+      text: this._messageText(userMessage),
+    });
+    if (hard) {
+      onUpdate('run_mode', { mode: hard.mode, source: hard.source });
+      return { mode: hard.mode, runOptions: { ...runOptions, modeRoute: { requested: AUTO_MODE, ...hard } } };
+    }
+    this._autoModeEscalationTabs.add(tabId);
+    this._autoModeRoutePendingTabs.add(tabId);
+    return { mode: 'ask', runOptions: { ...runOptions, autoModeRouting: { previousMode } } };
+  }
+
+  // The `run_mode` question of a routed turn, read before the turn joins the
+  // conversation: the user's words, the previous turn's mode and the earlier
+  // task, never page content.
+  _autoModeQuestion(messages, userMessage, previousMode = null) {
+    const binding = this._activeTaskBinding(messages || []);
+    const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
+    return {
+      request: this._messageText(userMessage),
+      page: {
+        previous_mode: isRunMode(previousMode) ? previousMode : 'none',
+        // An earlier selection prompt with page context is not the user's own words.
+        current_task: carriesUntrustedText(task) ? '' : task,
+      },
+    };
+  }
+
+  // The decision model's `run_mode` answer for a routed turn. It never asks
+  // the main model and never rejects: without a sure answer the turn starts
+  // read-only.
+  async _routeAutoRunMode(tabId, question) {
+    const startedAt = Date.now();
+    try {
+      const verdict = await this._semanticDecision(tabId, 'run_mode', question, { mainModel: false });
+      const tier = this._resolvePromptTier(this._activeProvider(tabId));
+      return {
+        mode: autoModeForChoice(verdict.choice, { tier }),
+        choice: verdict.choice || null,
+        source: verdict.choice ? verdict.source : 'ask_first',
+        latencyMs: Date.now() - startedAt,
+      };
+    } catch {
+      return { mode: 'ask', choice: null, source: 'ask_first', latencyMs: Date.now() - startedAt };
+    }
+  }
+
+  // Applies the route once the page context is ready, waiting for it only a
+  // short grace period. An action mode replaces the provisional Ask setup:
+  // run mode, system prompt, the turn's runtime line and dialog handling.
+  async _settleAutoModeRun(tabId, route, enriched, onUpdate, runOptions = {}) {
+    const waitStartedAt = Date.now();
+    const routed = await settleAutoModeRoute(route);
+    const previousMode = runOptions?.autoModeRouting?.previousMode || null;
+    const mode = routed.mode;
+    this._autoModeRoutePendingTabs.delete(tabId);
+    if (mode !== 'ask') {
+      this._autoModeEscalationTabs.delete(tabId);
+      this._runModeOverrides.set(tabId, mode);
+      this.getConversation(tabId, mode);
+      withRoutedRuntimeMode(enriched, mode);
+      if (!this._isStandaloneChatRun(runOptions)) {
+        await cdpClient.startDialogHandling(tabId, {
+          signal: this._runAbortSignal(tabId),
+        }).catch(error => {
+          if (error?.name === 'AbortError' || error?.code === 'dialog_startup_timeout') throw error;
+          // Restricted tabs can still use non-CDP tools.
+        });
+      }
+    }
+    // Leaving Dev drains its diagnostics. A read-only turn may still hand
+    // itself to Dev, so processMessage decides when the turn ends.
+    if (previousMode === 'dev' && mode === 'act') void cdpClient.disableDevDiagnostics(tabId);
+    else if (previousMode === 'dev' && mode === 'ask') this._autoModeDevDrainTabs.add(tabId);
+    onUpdate('run_mode', { mode, source: routed.source });
+    return {
+      mode,
+      runOptions: {
+        ...runOptions,
+        modeRoute: {
+          requested: AUTO_MODE,
+          mode,
+          source: routed.source,
+          choice: routed.choice ?? null,
+          routeMs: Number.isFinite(routed.latencyMs) ? routed.latencyMs : null,
+          waitedMs: Date.now() - waitStartedAt,
+        },
+      },
+    };
+  }
+
+  // Reads a `request_action_mode` call of a routed Ask turn. Its quote must
+  // come from the user's own words; and because the calling model has read
+  // the page, the page-free `run_mode` question must also answer act or dev
+  // (a sure decision-model "answer" from routing is reused from the cache).
+  // Returns { accepted: { mode, evidence } } or { refusal: text }.
+  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null) {
+    const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
+    const request = typeof enriched?.webbrainUserAuthoredText === 'string'
+      ? enriched.webbrainUserAuthoredText
+      : this._plannerUserAuthoredText(enriched);
+    const tier = this._resolvePromptTier(provider);
+    const requested = acceptModeEscalation(call?.function?.arguments, request, { tier });
+    if (!requested) {
+      return { refusal: 'request_action_mode was refused: `evidence` must quote the words of the user\'s latest message that ask for the action, exactly as written. Answer the request read-only if you can.' };
+    }
+    // A correction made during this turn, applied or still pending, belongs
+    // to the turn the restart replaces.
+    const corrected = () => {
+      const before = new Set(snapshot?.messages || []);
+      return this._hasPendingSteering(tabId)
+        || messages.some(message => message?.webbrainSteering && !before.has(message));
+    };
+    const steeredRefusal = { refusal: 'request_action_mode was refused because the user corrected the request during this turn. Answer the corrected request read-only; the user can send it again to have it done.' };
+    if (corrected()) return steeredRefusal;
+    // A sure "answer" from routing settles it; an "unclear" one asks again.
+    const verdict = await this._semanticDecision(tabId, 'run_mode', question || { request, page: {} }, { provider, retryChoices: ['unclear'] });
+    if (corrected()) return steeredRefusal;
+    const mode = confirmedEscalationMode(requested, verdict.choice, { tier });
+    if (!mode) {
+      return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
+    }
+    return { accepted: { mode, evidence: requested.evidence } };
+  }
+
+  // The conversation and per-tab turn state before a routed turn gathers its
+  // context. A hand-off restores it, so the action run that replaces the
+  // turn starts from the same state: approved plans, site notes, the API
+  // note, the follow-up allowance, a selection-scope restoration note and
+  // the durable-turn marker included.
+  _autoModeTurnSnapshot(tabId, messages) {
+    const entry = (map) => (map.has(tabId) ? { value: map.get(tabId) } : null);
+    return {
+      messages: messages.slice(),
+      lastSeenAdapter: entry(this.lastSeenAdapter),
+      submittedRunRequestId: entry(this.submittedRunRequestIds),
+      apiAllowedInjected: this.apiAllowedInjected.has(tabId),
+      plannerFollowUpSkip: this.plannerFollowUpSkipTabs.has(tabId),
+      selectionScopeRestorationPending: this.selectionGroundingRestorationPendingTabs.has(tabId),
+    };
+  }
+
+  _restoreAutoModeTurn(tabId, messages, snapshot) {
+    if (!snapshot) return;
+    const restore = (map, entry) => (entry ? map.set(tabId, entry.value) : map.delete(tabId));
+    const toggle = (set, on) => (on ? set.add(tabId) : set.delete(tabId));
+    messages.splice(0, messages.length, ...snapshot.messages);
+    restore(this.lastSeenAdapter, snapshot.lastSeenAdapter);
+    restore(this.submittedRunRequestIds, snapshot.submittedRunRequestId);
+    toggle(this.apiAllowedInjected, snapshot.apiAllowedInjected);
+    toggle(this.plannerFollowUpSkipTabs, snapshot.plannerFollowUpSkip);
+    toggle(this.selectionGroundingRestorationPendingTabs, snapshot.selectionScopeRestorationPending);
+  }
+
+  // The action mode a routed turn handed itself to, read once by the caller
+  // that restarts the turn in it.
+  takeModeEscalation(tabId) {
+    const escalation = this._pendingModeEscalations.get(tabId) || null;
+    this._pendingModeEscalations.delete(tabId);
+    return escalation;
+  }
+
   async _maybeEmitAskModeHandoff(tabId, mode, userMessage, finalResponse, onUpdate, runOptions = {}) {
     if (mode !== 'ask'
         || runOptions?.cloudRun
@@ -25832,6 +26199,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         modelMessages,
         runOptions._standalonePersistedUserMessage,
         currentUserMessage,
+        this._standaloneHistoryMarker(runOptions),
       );
     }
     const selectionScoped = isSelectionSourceGrounding(runOptions?.sourceGrounding);
@@ -31411,6 +31779,94 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       && String(runOptions?.providerId || '') === 'webgpu';
   }
 
+  // A side-panel Ask turn answered by an in-browser model. It runs on the
+  // standalone WebGPU machinery (one tool-free call, ephemeral evidence) but
+  // with the current page as its source; see tiny-ask.js.
+  _isTinyAskRun(runOptions = {}) {
+    return runOptions?.tinyAsk === true && this._isStandaloneWebgpuRun(runOptions);
+  }
+
+  _isInBrowserProvider(provider) {
+    return provider?.name === 'webgpu';
+  }
+
+  _providerForRunOptions(tabId, runOptions = {}) {
+    const requested = String(runOptions?.providerId || '').trim();
+    if (requested && typeof this.providerManager?.getProvider === 'function') {
+      return this.providerManager.getProvider(requested);
+    }
+    return this._activeProvider(tabId);
+  }
+
+  // Ask turns for an in-browser model become tiny Ask runs. Only the agent
+  // sets the flag: an incoming tinyAsk value is dropped, and standalone,
+  // selection-scoped and managed (cloud, bot memory) runs keep their own paths.
+  _withTinyAskRunOptions(tabId, mode, runOptions = {}) {
+    const { tinyAsk: _incoming, ...options } = runOptions || {};
+    if (mode !== 'ask' || options.standaloneChat === true || options.cloudRun || options.taskMemory
+        || isSelectionSourceGrounding(options.sourceGrounding) || this.selectionGroundingScopes?.has(tabId)) {
+      return options;
+    }
+    let provider = null;
+    try { provider = this._providerForRunOptions(tabId, options); } catch { return options; }
+    if (!this._isInBrowserProvider(provider)) return options;
+    return { ...options, standaloneChat: true, providerId: 'webgpu', tinyAsk: true };
+  }
+
+  // After a background restart a durable selected-text scope is back only once
+  // the tab is hydrated. A tiny Ask candidate on an unhydrated tab hydrates
+  // first and is decided against the restored state, so a full page read never
+  // bypasses the selection-only boundary an uninterrupted worker would keep.
+  // Callers await this only in that case: every other run still claims the
+  // tab synchronously.
+  _tinyAskNeedsHydration(tabId, options = {}) {
+    return options?.tinyAsk === true && !this.hydratedTabs.has(tabId);
+  }
+
+  async _hydratedTinyAskRunOptions(tabId, mode, requestedRunOptions = {}) {
+    try {
+      await this._hydrate(tabId);
+    } catch {
+      // The run hydrates again inside its own error handling; until that
+      // succeeds, nothing proves the tab has no scope, so stay on the normal path.
+      const { tinyAsk: _incoming, ...plain } = requestedRunOptions || {};
+      return plain;
+    }
+    return this._withTinyAskRunOptions(tabId, mode, requestedRunOptions);
+  }
+
+  // In-browser models only answer questions (tiny Ask): an Act or Dev run
+  // would re-prefill the full agent prompt and tool schemas on every step.
+  // Refused before enrichment, so no page read or classifier call runs.
+  _inBrowserActionTurn(tabId, mode, runOptions = {}) {
+    if (!this._isActionMode(mode) || this._isStandaloneChatRun(runOptions)) return false;
+    try { return this._isInBrowserProvider(this._activeProvider(tabId)); } catch { return false; }
+  }
+
+  async _refuseInBrowserActionTurn(tabId, messages, userMessage, onUpdate, runOptions = {}, attachments = []) {
+    const message = TINY_ASK_ACT_BLOCKED_MESSAGE;
+    if (Array.isArray(attachments) && attachments.length) {
+      const error = `${message} Attachments were not sent.`;
+      onUpdate('attachment_rejected', { error });
+      return error;
+    }
+    messages.push({
+      role: 'user',
+      content: userMessage,
+      ...(runOptions?.scheduledResume === true ? {} : { webbrainUserAuthoredText: this._messageText(userMessage) }),
+    });
+    messages.push({ role: 'assistant', content: message });
+    await this._persistSubmittedTurn(tabId, runOptions?.detachedRequestId);
+    onUpdate('warning', { message });
+    return message;
+  }
+
+  // The marker that keeps one run profile's turns together in history. The
+  // standalone window and tiny Ask never see each other's segments.
+  _standaloneHistoryMarker(runOptions = {}) {
+    return this._isTinyAskRun(runOptions) ? 'webbrainTinyAsk' : 'webbrainStandaloneChat';
+  }
+
   _effectiveRunMode(tabId, fallback = 'ask') {
     return this._runModeOverrides.get(tabId)
       || this.conversationModes.get(tabId)
@@ -31455,6 +31911,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * and on settings changes via _refreshSystemPrompts().
    */
   _buildSystemPrompt(mode, tabId = null) {
+    // Tiny Ask is also a standalone WebGPU run, so it is checked first.
+    if (tabId != null && this._tinyAskRunTabs.has(tabId)) {
+      const responseLanguagePolicy = this.responseLanguagePolicies.get(tabId);
+      return responseLanguagePolicy
+        ? `${TINY_ASK_SYSTEM_PROMPT}\n\n${formatResponseLanguagePolicyInstruction(responseLanguagePolicy, 'en', { form: 'brief' })}`
+        : TINY_ASK_SYSTEM_PROMPT;
+    }
     if (tabId != null && this._standaloneWebgpuRunTabs.has(tabId)) {
       const responseLanguagePolicy = this.responseLanguagePolicies.get(tabId);
       return responseLanguagePolicy
@@ -31477,6 +31940,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (botMemory) prompt += `\n\n${botMemory.systemNote()}\n\n${this._wrapUntrusted('bot_memory_observe', botMemory.contextData())}`;
     if (mode === 'dev') {
       prompt += `\n\n${SYSTEM_PROMPT_DEV_APPENDIX.trim()}`;
+    }
+    if (mode === 'ask' && tabId != null && this._autoModeEscalationTabs.has(tabId)) {
+      prompt += `\n\n${AUTO_MODE_ASK_NOTE}`;
     }
     if (this.webMcpEnabled && (!this._isActionMode(mode) || tier !== 'compact')) {
       const webMcpPrompt = this._isActionMode(mode) ? SYSTEM_PROMPT_WEBMCP_ACT : SYSTEM_PROMPT_WEBMCP_ASK;
@@ -32392,6 +32858,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   getConversation(tabId, mode = 'ask') {
+    // "auto" is a request to route the turn, never a conversation mode.
+    if (!isRunMode(mode)) mode = this.conversationModes.get(tabId) || 'ask';
     if (!this.conversations.has(tabId)) {
       this.conversations.set(tabId, [
         { role: 'system', content: this._buildSystemPrompt(mode, tabId) },
@@ -32413,7 +32881,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const messages = this.conversations.get(tabId);
     const lastMode = this.conversationModes.get(tabId);
     if (lastMode !== mode) {
-      if (lastMode === 'dev') void cdpClient.disableDevDiagnostics(tabId);
+      // A routed turn keeps Dev diagnostics until its mode is chosen.
+      if (lastMode === 'dev' && !this._autoModeRoutePendingTabs.has(tabId)) void cdpClient.disableDevDiagnostics(tabId);
       this.conversationModes.set(tabId, mode);
       this._conversationMode = mode;
     }
@@ -32469,6 +32938,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.responseLanguagePolicies.delete(tabId);
     this._standaloneChatRunTabs.delete(tabId);
     this._standaloneWebgpuRunTabs.delete(tabId);
+    this._tinyAskRunTabs.delete(tabId);
     this._continuationResponseLanguagePolicies.delete(tabId);
     this.mastodonStates.delete(tabId);
     this.lastAutoScreenshotTs.delete(tabId);
@@ -49768,6 +50238,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   }
 
   async processMessage(tabId, userMessage, onUpdate = () => {}, mode = 'ask', attachments = [], runOptions = {}) {
+    const requestedRunOptions = runOptions;
+    // In-browser models only answer questions, so an automatic turn they
+    // would answer is a tiny Ask candidate exactly like an Ask turn; the
+    // route then keeps it read-only (autoModeHardRoute: in_browser_model).
+    const tinyAskMode = mode === AUTO_MODE ? 'ask' : mode;
+    runOptions = this._withTinyAskRunOptions(tabId, tinyAskMode, runOptions);
+    if (this._tinyAskNeedsHydration(tabId, runOptions)) {
+      runOptions = await this._hydratedTinyAskRunOptions(tabId, tinyAskMode, requestedRunOptions);
+    }
     let runClaimed = false;
     let messageProcessingStarted = false;
     try {
@@ -49783,6 +50262,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     // cannot outlive the run that cleared them. The outer finally releases
     // the run even if this first storage read fails.
     await this._hydrate(tabId);
+    this._pendingModeEscalations.delete(tabId);
+    if (mode === AUTO_MODE) {
+      ({ mode, runOptions } = this._beginAutoModeRun(tabId, userMessage, attachments, runOptions, onUpdate));
+    } else if (runOptions?.modeEscalation && isRunMode(mode)) {
+      runOptions = { ...runOptions, modeRoute: { requested: AUTO_MODE, mode, source: 'escalation' } };
+      onUpdate('run_mode', { mode, source: 'escalation' });
+    }
     // Before any model or tool boundary, so a run resumed after a background
     // restart applies the corrections it had accepted before the old task acts.
     await this._restoreJournaledSteering(tabId);
@@ -49809,6 +50295,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previousStandaloneWebgpuRun = this._standaloneWebgpuRunTabs.has(tabId);
     if (this._isStandaloneWebgpuRun(runOptions)) this._standaloneWebgpuRunTabs.add(tabId);
     else this._standaloneWebgpuRunTabs.delete(tabId);
+    const previousTinyAskRun = this._tinyAskRunTabs.has(tabId);
+    if (this._isTinyAskRun(runOptions)) this._tinyAskRunTabs.add(tabId);
+    else this._tinyAskRunTabs.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     const readCompletenessRunToken = await this._beginReadCompleteness(tabId, userMessage, runOptions);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
@@ -49841,7 +50330,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       messageProcessingStarted = true;
       const result = await this._processMessageInner(tabId, userMessage, onUpdate, mode, attachments, runOptions);
-      void this._maybeEmitAskModeHandoff(tabId, mode, userMessage, result, onUpdate, runOptions);
+      void this._maybeEmitAskModeHandoff(tabId, this._effectiveRunMode(tabId, mode), userMessage, result, onUpdate, runOptions);
       return result;
     } finally {
       if (botMemorySession) await botMemorySession.close();
@@ -49866,6 +50355,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       else this._standaloneChatRunTabs.delete(tabId);
       if (previousStandaloneWebgpuRun) this._standaloneWebgpuRunTabs.add(tabId);
       else this._standaloneWebgpuRunTabs.delete(tabId);
+      if (previousTinyAskRun) this._tinyAskRunTabs.add(tabId);
+      else this._tinyAskRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
       if (continuationResponseLanguagePolicyStored) {
         try { await this._persistNow(tabId); } catch {}
@@ -49883,6 +50374,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
+      // A routed read-only turn after Dev drains its diagnostics now unless it
+      // handed itself to Dev, so the cleanup below can detach the debugger.
+      if (this._autoModeDevDrainTabs.delete(tabId) && this._pendingModeEscalations.get(tabId)?.mode !== 'dev') {
+        try { await cdpClient.disableDevDiagnostics(tabId); } catch {}
+      }
       try {
         await cdpClient.cleanupRun(tabId);
       } catch { /* the debugger may already be detached during teardown */ }
@@ -49900,6 +50396,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       return stopped;
     } finally {
       if (runClaimed) {
+        // A routed turn stopped before its mode was chosen leaves the
+        // conversation's mode as it found it.
+        if (this._autoModeRoutePendingTabs.has(tabId) && isRunMode(runOptions?.autoModeRouting?.previousMode)) {
+          this.conversationModes.set(tabId, runOptions.autoModeRouting.previousMode);
+        }
+        this._autoModeDevDrainTabs.delete(tabId);
+        this._autoModeEscalationTabs.delete(tabId);
+        this._autoModeRoutePendingTabs.delete(tabId);
         try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
       }
     }
@@ -50138,6 +50642,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    if (this._inBrowserActionTurn(tabId, mode, runOptions)) {
+      return this._refuseInBrowserActionTurn(tabId, messages, userMessage, onUpdate, runOptions, attachments);
+    }
     // An ordinary attachment send is an explicit source change. End the
     // inherited selected-text scope before enrichment so a chip deliberately
     // preserved by the side panel can be used without re-selecting the file.
@@ -50158,6 +50665,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this.currentCostState.set(tabId, costState);
     // New user turn: drop transient "allow once" / "deny once" permission grants.
     this.permissions.beginTurn(tabId);
+    // An automatically routed turn asks the decision model while its page
+    // context is gathered below (see auto-mode.js).
+    const autoModeQuestion = runOptions?.autoModeRouting
+      ? this._autoModeQuestion(messages, userMessage, runOptions.autoModeRouting.previousMode)
+      : null;
+    const autoModeRoute = autoModeQuestion ? this._routeAutoRunMode(tabId, autoModeQuestion) : null;
 
     // Resolve model-bound local vision metadata before enrichment captures a
     // screenshot or attachment validation consults provider.supportsVision.
@@ -50177,6 +50690,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ? this._selectionGroundingPriorMessageSet(tabId, messages)
       : null;
 
+    // What a hand-off restores before an action run replaces this turn.
+    const autoModeTurnStart = autoModeRoute ? this._autoModeTurnSnapshot(tabId, messages) : null;
     // What a short turn does is read while the page context is gathered.
     const userTurnKind = this._userTurnKind(tabId, messages, userMessage, mode, runOptions,
       selectionOnly || standaloneChatRun);
@@ -50184,7 +50699,14 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const enriched = await this._enrichUserMessageWithCurrentPage(
       tabId, selectionOnly ? [] : messages, userMessage, costState, runOptions, onUpdate,
     );
-    this._applyUserTurnKind(enriched, await userTurnKind);
+    if (autoModeRoute) {
+      ({ mode, runOptions } = await this._settleAutoModeRun(tabId, autoModeRoute, enriched, onUpdate, runOptions));
+    }
+    // A turn routed into an action mode reads how it relates to the earlier
+    // task the way an action-mode turn does.
+    this._applyUserTurnKind(enriched, autoModeRoute && mode !== 'ask'
+      ? await this._userTurnKind(tabId, messages, userMessage, mode, runOptions, selectionOnly || standaloneChatRun)
+      : await userTurnKind);
     let standaloneWikipediaReferences = [];
     const localWikipediaRag = await this._applyStandaloneWikipediaRag(enriched, userMessage, runOptions, {
       tabId,
@@ -50203,7 +50725,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const visible = this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
       const persistedUserMessage = runOptions?._standalonePersistedUserMessage;
       if (!standaloneChatRun || !persistedUserMessage) return visible;
-      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched);
+      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched,
+        this._standaloneHistoryMarker(runOptions));
     };
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
@@ -50468,6 +50991,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
       gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
       researchEscalationEnabled: this.researchEscalationEnabled,
+      autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
     });
     // The selected text is already present in the trusted run envelope.
     // Advertising page/network tools would let an injected selection induce a
@@ -50485,6 +51009,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     let emptyOutputRecoveryAttempted = false;
     let compressionPlaceholderRecoveryAttempted = false;
     let structuredOutputRecoveryAttempted = false;
+    let autoModeEscalationRefusals = 0;
     let completionPlainFinalRecoveryAttempted = 0;
     let forceCompletionVerificationTurn = false;
     let allowCompletionFailureTurn = false;
@@ -50756,6 +51281,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         carouselNavigation: !!getCarouselNavigationPolicy(await this._currentUrl(tabId)),
         gmailResultCounting: !!getGmailResultCountPolicy(await this._currentUrl(tabId)),
         researchEscalationEnabled: this.researchEscalationEnabled,
+        autoModeEscalation: mode === 'ask' && this._autoModeEscalationTabs.has(tabId),
       });
       tools = this._botMemoryRunTools(tabId, tools);
       if (selectionOnly || standaloneChatRun) tools = [];
@@ -51108,6 +51634,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
               this._appendStandaloneUngroundedPolicy(enriched, standaloneGroundingGap);
               continue;
             }
+            if (this._isTinyAskRun(runOptions)) {
+              this._appendTinyAskNoSearchPolicy(enriched);
+              continue;
+            }
           }
         } else if (localSearchQueries.length) {
           result.content = runOptions.localWikipediaRag?.status === 'matched'
@@ -51150,6 +51680,45 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         messages.push({ role: 'assistant', content: finalResponse });
         onUpdate('warning', { message: finalResponse });
         break;
+      }
+
+      if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
+          && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
+        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart);
+        const escalation = handoff.accepted;
+        if (escalation) {
+          // The caller restarts this turn in the requested mode, from the
+          // state the turn started with, so the request is recorded once.
+          this._restoreAutoModeTurn(tabId, messages, autoModeTurnStart);
+          this._pendingModeEscalations.set(tabId, escalation);
+          onUpdate('text', { content: '', replace: true });
+          _traceStatus = 'mode_escalated';
+          if (runId) {
+            try { trace.recordNote(runId, steps, 'mode_route', { requested: AUTO_MODE, mode: escalation.mode, source: 'escalation_requested' }); } catch {}
+          }
+          await this._persistNow(tabId);
+          return (finalResponse = '');
+        }
+        // A refused hand-off leaves the turn read-only and tells the model why;
+        // a second refusal withdraws the tool.
+        autoModeEscalationRefusals += 1;
+        if (autoModeEscalationRefusals >= 2) this._autoModeEscalationTabs.delete(tabId);
+        messages.push(this._withResponseItems({
+          role: 'assistant',
+          content: result.content || null,
+          tool_calls: result.toolCalls,
+        }, result.responseItems, result.reasoningContent, provider));
+        for (const call of result.toolCalls) {
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify(call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME
+              ? { success: false, error: handoff.refusal }
+              : { success: false, skipped: true, dispatched: false, noDispatch: true, error: 'Skipped because request_action_mode was called in the same response. Repeat this call if you still need it.' }),
+          });
+        }
+        onUpdate('text', { content: '', replace: true });
+        continue;
       }
 
       if (result.toolCalls && result.toolCalls.length > 0) {
@@ -51504,7 +52073,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           standaloneIncompleteAnswerRecoveryAttempted = true;
           messages.push(this._withResponseItems({ role: 'assistant', content: result.content }, result.responseItems, result.reasoningContent, provider));
           messages.push(this._appOwnedUserMessage(
-            this._standaloneIncompleteAnswerNudge(standaloneGroundingGap),
+            this._standaloneIncompleteAnswerNudge(standaloneGroundingGap, runOptions),
             'standalone_answer_recovery',
           ));
           onUpdate('warning', { message: 'The on-device response ended mid-sentence; retrying once.' });
@@ -51642,6 +52211,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   /**
    * Process a message with streaming output.
    */  async processMessageStream(tabId, userMessage, onUpdate = () => {}, mode = 'ask', runOptions = {}) {
+    // The streaming entry point is not routed; an automatic request starts read-only.
+    if (mode === AUTO_MODE) mode = 'ask';
+    const requestedRunOptions = runOptions;
+    runOptions = this._withTinyAskRunOptions(tabId, mode, runOptions);
+    if (this._tinyAskNeedsHydration(tabId, runOptions)) {
+      runOptions = await this._hydratedTinyAskRunOptions(tabId, mode, requestedRunOptions);
+    }
     let runClaimed = false;
     try {
     await this._claimRunEntry(tabId, 'interactive', runOptions, onUpdate);
@@ -51682,6 +52258,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const previousStandaloneWebgpuRun = this._standaloneWebgpuRunTabs.has(tabId);
     if (this._isStandaloneWebgpuRun(runOptions)) this._standaloneWebgpuRunTabs.add(tabId);
     else this._standaloneWebgpuRunTabs.delete(tabId);
+    const previousTinyAskRun = this._tinyAskRunTabs.has(tabId);
+    if (this._isTinyAskRun(runOptions)) this._tinyAskRunTabs.add(tabId);
+    else this._tinyAskRunTabs.delete(tabId);
     const completionRunToken = this._beginCompletionInvariant(tabId);
     const readCompletenessRunToken = await this._beginReadCompleteness(tabId, userMessage, runOptions);
     if (runOptions?.trustedContinuation !== true) this.persistenceDegradedTabs.delete(tabId);
@@ -51738,6 +52317,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       else this._standaloneChatRunTabs.delete(tabId);
       if (previousStandaloneWebgpuRun) this._standaloneWebgpuRunTabs.add(tabId);
       else this._standaloneWebgpuRunTabs.delete(tabId);
+      if (previousTinyAskRun) this._tinyAskRunTabs.add(tabId);
+      else this._tinyAskRunTabs.delete(tabId);
       this.responseLanguagePolicies.delete(tabId);
       if (continuationResponseLanguagePolicyStored) {
         try { await this._persistNow(tabId); } catch {}
@@ -51790,6 +52371,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     this._preactivateRecommendedActionSkill(tabId, runOptions, mode);
     const messages = this.getConversation(tabId, mode);
     this._expireCurrentToolReasoning(messages);
+    if (this._inBrowserActionTurn(tabId, mode, runOptions)) {
+      return this._refuseInBrowserActionTurn(tabId, messages, userMessage, onUpdate, runOptions);
+    }
     runOptions = this._selectionGroundedRunOptions(tabId, messages, runOptions);
     const costState = this._newCostRunState();
     this.currentCostState.set(tabId, costState);
@@ -51838,7 +52422,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const visible = this._messagesForSourceGroundedRun(messages, runOptions, enriched, sourceBoundPriorMessages);
       const persistedUserMessage = runOptions?._standalonePersistedUserMessage;
       if (!standaloneChatRun || !persistedUserMessage) return visible;
-      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched);
+      return this._messagesForStandaloneChatRun(visible, persistedUserMessage, enriched,
+        this._standaloneHistoryMarker(runOptions));
     };
     const modelMessagesForRun = () => {
       const rawMessages = rawModelMessagesForRun();
@@ -52462,6 +53047,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 onUpdate('text', { content: '', replace: true });
                 continue;
               }
+              if (this._isTinyAskRun(runOptions)) {
+                this._appendTinyAskNoSearchPolicy(enriched);
+                onUpdate('text', { content: '', replace: true });
+                continue;
+              }
             }
           } else if (localSearchQueries.length) {
             fullText = runOptions.localWikipediaRag?.status === 'matched'
@@ -52813,7 +53403,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             standaloneIncompleteAnswerRecoveryAttempted = true;
             messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
             messages.push(this._appOwnedUserMessage(
-              this._standaloneIncompleteAnswerNudge(standaloneGroundingGap),
+              this._standaloneIncompleteAnswerNudge(standaloneGroundingGap, runOptions),
               'standalone_answer_recovery',
             ));
             onUpdate('text', { content: '', replace: true });

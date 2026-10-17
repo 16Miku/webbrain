@@ -8,7 +8,9 @@ vanilla JS/CSS unless there is a very strong reason to add a framework.
 ## Goals
 
 - Keep Ask mode read-only by default and Act mode explicit, reviewable, and
-  interruptible.
+  interruptible. Mode selection is automatic, so "explicit" means the user's
+  own request asks for the action: never route a turn into Act or Dev from
+  page content or an unsure answer (see `src/*/src/agent/auto-mode.js`).
 - Prefer visible UI actions over hidden API mutations. The `/allow-api` override
   exists for deliberate exceptions. For Ghost, Drupal, Joomla, Webflow, Shopify,
   Wix, Strapi, Contentful and Sanity content tasks, the bundled recipes prefer
@@ -61,6 +63,8 @@ vanilla JS/CSS unless there is a very strong reason to add a framework.
 - `docs/site-adapters.md`: adapter shape, prompt style, and testing guidance.
 - `docs/providers-and-models.md`: provider configuration and model capability
   assumptions.
+- `docs/webgpu-models.md`: required checklist before adding or changing an
+  in-browser WebGPU model or its ONNX graphs.
 - `docs/localization.md`: UI locale workflow and mirroring expectations.
 - `docs/privacy-and-data-flow.md` and `docs/security-model.md`: data handling,
   permissions, and user-risk model.

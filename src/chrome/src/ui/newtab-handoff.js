@@ -283,7 +283,12 @@ export function createNewtabHandoff({
         pendingSends.set(Number(tabId), send);
         let sending;
         try {
-          sending = Promise.resolve(sendMessage(getIsProcessing() ? { __deliveryMode: 'queue' } : undefined));
+          // __mode pins the mode the user chose in the box: with automatic mode selection the
+          // panel would otherwise pick one itself, and Ask must stay read-only while Act acts.
+          sending = Promise.resolve(sendMessage({
+            ...(getIsProcessing() ? { __deliveryMode: 'queue' } : {}),
+            __mode: handoff.mode,
+          }));
         } catch (error) {
           sending = Promise.reject(error);
         }
