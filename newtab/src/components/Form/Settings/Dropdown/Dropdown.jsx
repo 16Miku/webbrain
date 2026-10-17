@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 import EventBus from 'utils/eventbus';
 
 import './Dropdown.scss';
+import { showReloadReminder } from 'utils/reminder';
 
 const Dropdown = memo((props) => {
   const [value, setValue] = useState(
@@ -51,8 +52,8 @@ const Dropdown = memo((props) => {
 
       if (props.element) {
         if (!document.querySelector(props.element)) {
-          document.querySelector('.reminder-info').style.display = 'flex';
-          return localStorage.setItem('showReminder', true);
+          showReloadReminder();
+          return;
         }
       }
 

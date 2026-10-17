@@ -83,8 +83,7 @@ function DateOptions() {
       <Header
         title={variables.getMessage('modals.main.settings.sections.date.title')}
         setting="date"
-        category="date"
-        element=".date"
+        category="widgets"
         zoomSetting="zoomDate"
         visibilityToggle={true}
       />

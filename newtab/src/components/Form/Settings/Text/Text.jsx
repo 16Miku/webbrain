@@ -6,6 +6,7 @@ import { MdRefresh } from 'react-icons/md';
 import EventBus from 'utils/eventbus';
 
 import './Text.scss';
+import { showReloadReminder } from 'utils/reminder';
 
 const Text = memo((props) => {
   const { name, upperCaseFirst, element, category, onChange, title, textarea, customcss, placeholder } = props;
@@ -29,8 +30,8 @@ const Text = memo((props) => {
 
       if (element) {
         if (!document.querySelector(element)) {
-          document.querySelector('.reminder-info').style.display = 'flex';
-          return localStorage.setItem('showReminder', true);
+          showReloadReminder();
+          return;
         }
       }
 

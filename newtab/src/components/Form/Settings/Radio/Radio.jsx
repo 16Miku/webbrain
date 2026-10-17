@@ -5,6 +5,7 @@ import { useTranslation } from 'contexts/TranslationContext';
 import EventBus from 'utils/eventbus';
 
 import './Radio.scss';
+import { showReloadReminder } from 'utils/reminder';
 
 const Radio = memo((props) => {
   const { changeLanguage } = useTranslation();
@@ -41,8 +42,8 @@ const Radio = memo((props) => {
 
       if (props.element) {
         if (!document.querySelector(props.element)) {
-          document.querySelector('.reminder-info').style.display = 'flex';
-          return localStorage.setItem('showReminder', true);
+          showReloadReminder();
+          return;
         }
       }
 

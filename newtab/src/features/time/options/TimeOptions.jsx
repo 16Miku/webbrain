@@ -236,8 +236,7 @@ const TimeOptions = () => {
       <Header
         title={variables.getMessage(`${TIME_SECTION}.title`)}
         setting="time"
-        category="clock"
-        element=".clock-container"
+        category="widgets"
         zoomSetting="zoomClock"
         visibilityToggle={true}
       />

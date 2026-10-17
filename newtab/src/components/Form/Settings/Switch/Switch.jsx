@@ -4,6 +4,7 @@ import { memo, useState, useCallback } from 'react';
 import EventBus from 'utils/eventbus';
 
 import './Switch.scss';
+import { showReloadReminder } from 'utils/reminder';
 
 const Switch = memo((props) => {
   const [checked, setChecked] = useState(localStorage.getItem(props.name) === 'true');
@@ -24,8 +25,8 @@ const Switch = memo((props) => {
 
     if (props.element) {
       if (!document.querySelector(props.element)) {
-        document.querySelector('.reminder-info').style.display = 'flex';
-        return localStorage.setItem('showReminder', true);
+        showReloadReminder();
+        return;
       }
     }
 

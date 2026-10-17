@@ -5,6 +5,7 @@ import { MdCheck } from 'react-icons/md';
 import EventBus from 'utils/eventbus';
 
 import './Checkbox.scss';
+import { showReloadReminder } from 'utils/reminder';
 
 const Checkbox = memo((props) => {
   const [checked, setChecked] = useState(localStorage.getItem(props.name) === 'true');
@@ -25,8 +26,8 @@ const Checkbox = memo((props) => {
 
     if (props.element) {
       if (!document.querySelector(props.element)) {
-        document.querySelector('.reminder-info').style.display = 'flex';
-        return localStorage.setItem('showReminder', true);
+        showReloadReminder();
+        return;
       }
     }
 

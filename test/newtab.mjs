@@ -874,3 +874,43 @@ test('round-14 inherited fixes: clock timer, custom overlay, video flags, colour
   assert.match(read('features/navbar/options/AppsOptions.jsx'), /iconError=\{appsModalInfo\.iconError\}/);
   assert.match(read('features/quicklinks/options/QuickLinksOptions.jsx'), /iconError=\{iconError\}/);
 });
+
+test('the reload reminder is shown through a null-safe helper (the notice may not be mounted)', () => {
+  const helper = readFileSync(nt('utils/reminder.js'), 'utf8');
+  assert.match(helper, /const el = document\.querySelector\('\.reminder-info'\);\s*if \(el\)/);
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.jsx?$/.test(entry.name) && full !== nt('utils/reminder.js')
+        && /querySelector\('\.reminder-info'\)\.style/.test(readFileSync(full, 'utf8'))) offenders.push(full);
+    }
+  };
+  walk(nt('.'));
+  assert.deepEqual(offenders, []);
+});
+
+test('widget Show buttons remount through the widget tree, not an element probe', () => {
+  for (const f of [
+    'features/greeting/options/GreetingOptions.jsx',
+    'features/message/options/MessageOptions.jsx',
+    'features/time/options/DateOptions.jsx',
+    'features/time/options/TimeOptions.jsx',
+  ]) {
+    const src = readFileSync(nt(f), 'utf8');
+    const at = src.indexOf('visibilityToggle', src.indexOf('setting="'));
+    const start = src.lastIndexOf('<Header', at);
+    const header = src.slice(start, src.indexOf('/>', at));
+    assert.match(header, /category="widgets"/, f);
+    assert.doesNotMatch(header, /element=/, f);
+  }
+});
+
+test('the date widget rolls over to a new day and the drag handler ignores a null drop target', () => {
+  const date = readFileSync(nt('features/time/Date.jsx'), 'utf8');
+  assert.match(date, /setInterval\(getDate, 60_000\)/);
+  assert.match(date, /clearInterval\(dayTimer\)/);
+  const overview = readFileSync(nt('features/misc/sections/Overview.jsx'), 'utf8');
+  assert.match(overview, /if \(over && active\.id !== over\.id\)/);
+});

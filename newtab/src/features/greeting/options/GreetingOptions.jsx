@@ -291,8 +291,7 @@ const GreetingOptions = ({ currentSubSection, onSubSectionChange, sectionName })
       <Header
         title={variables.getMessage(`${GREETING_SECTION}.title`)}
         setting="greeting"
-        category="greeting"
-        element=".greeting"
+        category="widgets"
         zoomSetting="zoomGreeting"
         visibilityToggle={true}
       />

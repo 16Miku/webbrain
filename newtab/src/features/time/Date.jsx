@@ -141,8 +141,13 @@ const DateWidget = () => {
     setFontSize(`${Number((localStorage.getItem('zoomDate') || 100) / 100)}em`);
     getDate();
 
+    // A tab left open past midnight (or the configured timezone's midnight) has to roll
+    // over to the new day; getDate() is cheap and the state setters bail out on equal values.
+    const dayTimer = setInterval(getDate, 60_000);
+
     EventBus.on('refresh', handleRefresh);
     return () => {
+      clearInterval(dayTimer);
       EventBus.off('refresh', handleRefresh);
     };
   }, []);

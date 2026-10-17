@@ -7,6 +7,7 @@ import { Header, Row, Content, Action, PreferencesWrapper } from 'components/Lay
 import { Textarea } from 'components/Form/Settings';
 import { Button } from 'components/Elements';
 import EventBus from 'utils/eventbus';
+import { showReloadReminder } from 'utils/reminder';
 
 const MessageOptions = () => {
   const [messages, setMessages] = useState(JSON.parse(localStorage.getItem('messages')) || []);
@@ -38,8 +39,7 @@ const MessageOptions = () => {
     setMessages(updatedMessages);
 
     localStorage.setItem('messages', JSON.stringify(updatedMessages));
-    document.querySelector('.reminder-info').style.display = 'flex';
-    localStorage.setItem('showReminder', true);
+    showReloadReminder();
   };
 
   const MESSAGE_SECTION = 'modals.main.settings.sections.message';
@@ -49,8 +49,7 @@ const MessageOptions = () => {
       <Header
         title={variables.getMessage(`${MESSAGE_SECTION}.title`)}
         setting="message"
-        category="message"
-        element=".message"
+        category="widgets"
         zoomSetting="zoomMessage"
         visibilityToggle={true}
       />

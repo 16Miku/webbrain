@@ -6,6 +6,7 @@ import { MdRefresh } from 'react-icons/md';
 import EventBus from 'utils/eventbus';
 
 import './Slider.scss';
+import { showReloadReminder } from 'utils/reminder';
 
 const SliderComponent = memo((props) => {
   const [value, setValue] = useState(localStorage.getItem(props.name) || props.default);
@@ -29,8 +30,8 @@ const SliderComponent = memo((props) => {
 
       if (props.element) {
         if (!document.querySelector(props.element)) {
-          document.querySelector('.reminder-info').style.display = 'flex';
-          return localStorage.setItem('showReminder', true);
+          showReloadReminder();
+          return;
         }
       }
 

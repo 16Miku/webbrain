@@ -68,7 +68,8 @@ const Overview = () => {
   const handleDragEnd = (event) => {
     const { active, over } = event;
 
-    if (active.id !== over.id) {
+    // Dropped outside the list / cancelled: dnd-kit passes over = null.
+    if (over && active.id !== over.id) {
       setItems((items) => {
         const oldIndex = items.indexOf(active.id);
         const newIndex = items.indexOf(over.id);
