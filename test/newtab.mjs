@@ -1654,6 +1654,12 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     await mod.importSettings(JSON.stringify({ theme: 'light' }));
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep']);
 
+    // the legacy URL list is rendered entry by entry, so every entry has to be a usable address
+    assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify([{}]) })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify(['']) })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ customBackground: JSON.stringify(['https://x.test/a.jpg']) })), true);
+    store.setItem('theme', 'light');
+
     // a widget listed twice would render twice and break drag-and-drop ordering
     assert.equal(await mod.importSettings(JSON.stringify({ order: JSON.stringify(['time', 'time']) })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ order: JSON.stringify(['time', 'date']) })), true);

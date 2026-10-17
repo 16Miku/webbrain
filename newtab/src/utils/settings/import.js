@@ -101,6 +101,8 @@ const isLinkEntry = (e) =>
 const JSON_ARRAY_ENTRIES = {
   applinks: isLinkEntry,
   backgroundExclude: isString,
+  // Older versions kept the uploads here as a list of URLs; the loader renders each one.
+  customBackground: (e) => isString(e) && isBackgroundUrl(e),
   customEvents: (e) => isObject(e) && isString(e.name) && Number.isFinite(e.month) && Number.isFinite(e.date),
   quicklinks: isLinkEntry,
   messages: isString,
