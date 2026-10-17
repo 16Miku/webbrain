@@ -281,14 +281,15 @@ const INLINE_FALLBACK_OUTPUT_CEILING = 4096;
 // Room kept for the prompt in a small context window: backends that enforce
 // input + max_tokens <= window reject a request whose output budget ignores it. The
 // provider's tokenizer is not available here, so the prompt is estimated per
-// character on the high side: Latin-range text at half a token, everything else
-// (CJK, Indic, Arabic, Cyrillic, emoji) at two, which covers the worst tokenizers.
-// Over-counting only makes a tight window end in a flagged cut-off or a hand-off to
-// the side panel instead of a refused request. Chat-template tokens are covered by
-// the reserve.
-const INLINE_LATIN_TOKENS_PER_CHAR = 0.5;
+// character as a worst case, not as prose: an ASCII character at one whole token (minified
+// code, identifiers, hashes and other high-entropy text can take that, and prose takes far
+// less), anything else (accented Latin, CJK, Indic, Arabic, Cyrillic, emoji) at two, which
+// covers byte-level fallbacks. Over-counting only makes a tight window end in a flagged
+// cut-off or a hand-off to the side panel instead of a refused request. Chat-template
+// tokens are covered by the reserve.
+const INLINE_ASCII_TOKENS_PER_CHAR = 1;
 const INLINE_OTHER_TOKENS_PER_CHAR = 2;
-const INLINE_LATIN_RANGE_END = 0x250;
+const INLINE_ASCII_RANGE_END = 0x80;
 const INLINE_PROMPT_TOKEN_RESERVE = 128;
 const INLINE_MIN_ANSWER_TOKENS = 256;
 
@@ -297,8 +298,8 @@ function estimateInlinePromptTokens(messages) {
   for (const message of Array.isArray(messages) ? messages : []) {
     if (typeof message?.content !== 'string') continue;
     for (const char of message.content) {
-      tokens += char.codePointAt(0) < INLINE_LATIN_RANGE_END
-        ? INLINE_LATIN_TOKENS_PER_CHAR
+      tokens += char.codePointAt(0) < INLINE_ASCII_RANGE_END
+        ? INLINE_ASCII_TOKENS_PER_CHAR
         : INLINE_OTHER_TOKENS_PER_CHAR;
     }
   }

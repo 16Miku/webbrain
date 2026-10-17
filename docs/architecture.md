@@ -522,7 +522,7 @@ cost allowance (90 s timeout) and returns the text. The output budget is sized t
 selection (at least 2,000 tokens; Translate and Proofread grow to about two tokens per
 character, up to 8,000) and never exceeds the provider's own output ceiling or the room its
 context window leaves after the prompt (estimated on the high side, since the provider's tokenizer
-is not available: half a token per Latin-range character, two per other character such as CJK,
+is not available: a whole token per ASCII character, as dense text such as minified code or hashes can need, two per other character such as accented letters or CJK,
 plus a reserve), so a small local window is not sent a request it would reject. When the prompt
 leaves less than 256 tokens for the answer, the background makes no call and answers with the
 cut-off shape, so the card hands the selection to the side panel. If the reply

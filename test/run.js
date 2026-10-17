@@ -52442,20 +52442,22 @@ test('inline card token budget follows the selection and never exceeds the provi
     // The prompt shares the context window with the answer.
     const prompt = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: 'x'.repeat(chars) }];
     const longText = 'x'.repeat(3000);
-    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: prompt(3500) }), 4096 - Math.ceil(4000 * 0.5) - 128,
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: prompt(2500) }), 4096 - 3000 - 128,
       `${label}: a 4k window leaves the answer only what the prompt does not use`);
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 4096, messages: prompt(3500) }), 0,
+      `${label}: a prompt that nearly fills a 4k window leaves no room, even though plain text would take far fewer tokens than characters`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 131_072, messages: prompt(3500) }), 6000,
       `${label}: a large window changes nothing`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 16_384, messages: prompt(3500) }), 6000,
       `${label}: an ordinary local window changes nothing for a card-sized selection`);
-    // Prompt estimate: 128 reserved + half a token per Latin character; two per other character.
-    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(2500) }), 2048 - 128 - 1500,
+    // Prompt estimate: 128 reserved + one token per ASCII character; two per other character.
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(1000) }), 2048 - 128 - 1500,
       `${label}: the answer gets what is left once the prompt is counted`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 2048, messages: prompt(3500) }), 0,
       `${label}: a prompt that leaves less than the answer floor is handed to the side panel`);
-    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 1900, messages: prompt(2500) }), 272,
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 1900, messages: prompt(1000) }), 272,
       `${label}: an answer at or above the floor is still attempted`);
-    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 1800, messages: prompt(2500) }), 0,
+    assert.equal(budget(longText, 'translate', 16_000, { contextWindow: 1800, messages: prompt(1000) }), 0,
       `${label}: just under the floor is handed off`);
     assert.equal(budget('short', 'translate', 100, { contextWindow: 2048, messages: prompt(10) }), 100,
       `${label}: a ceiling lower than the floor still wins`);
@@ -52466,12 +52468,20 @@ test('inline card token budget follows the selection and never exceeds the provi
     const cjk = (chars) => [{ role: 'system', content: 'x'.repeat(500) }, { role: 'user', content: '漢'.repeat(chars) }];
     assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(4000) }), 0,
       `${label}: a 4,000-character CJK selection does not fit a 4k window and is handed off`);
-    assert.equal(budget('漢'.repeat(1000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(1000) }), 4096 - 128 - 250 - 2000,
+    assert.equal(budget('漢'.repeat(1000), 'translate', 16_000, { contextWindow: 4096, messages: cjk(1000) }), 4096 - 128 - 500 - 2000,
       `${label}: a shorter one gets the window minus a two-token-per-character prompt`);
     assert.equal(budget('漢'.repeat(4000), 'translate', 16_000, { contextWindow: 131_072, messages: cjk(4000) }), 8000,
       `${label}: a large window still allows the full answer`);
     assert.equal(budget('Привет'.repeat(300), 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: 'Привет'.repeat(300) }] }), 4096 - 128 - 3600,
       `${label}: Cyrillic is counted as non-Latin text too`);
+    // High-entropy ASCII (hashes, minified code, identifiers) is not prose: a token per character.
+    const hashes = '0123456789abcdef'.repeat(250);
+    assert.equal(budget(hashes, 'translate', 16_000, { contextWindow: 4096, messages: [{ role: 'user', content: hashes }] }), 0,
+      `${label}: 4,000 characters of hex do not fit a 4k window, so the card hands them to the side panel`);
+    assert.equal(budget(hashes, 'translate', 16_000, { contextWindow: 8192, messages: [{ role: 'user', content: hashes }] }), 8192 - 128 - 4000,
+      `${label}: an 8k window keeps back a token per character of the prompt`);
+    assert.equal(budget('é'.repeat(300), 'translate', 16_000, { contextWindow: 1000, messages: [{ role: 'user', content: 'é'.repeat(300) }] }), 1000 - 128 - 600,
+      `${label}: accented letters can take two tokens, so they are counted as such`);
     assert.equal(budget('😀'.repeat(10), 'translate', 16_000, { contextWindow: 500, messages: [{ role: 'user', content: '😀'.repeat(10) }] }), 500 - 128 - 20,
       `${label}: an astral character counts once, not as two UTF-16 units`);
     assert.equal(budget(longText, 'translate', 16_000, { contextWindow: undefined, messages: prompt(3500) }), 6000,
