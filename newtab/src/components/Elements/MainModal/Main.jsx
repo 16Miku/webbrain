@@ -52,6 +52,11 @@ function MainModal({ modalClose, deepLinkData }) {
       } else if (!window.location.hash) {
         // Back left the settings route (to the bare new tab URL): the modal has to go too.
         modalClose?.();
+      } else if (linkData) {
+        // Back reached the bare #settings entry the modal was opened with: that route means
+        // the default section, so show it instead of leaving the last one on screen.
+        setNavigationTrigger({ type: 'settings-default', timestamp: Date.now() });
+        setCurrentSubSection(null);
       }
     };
 

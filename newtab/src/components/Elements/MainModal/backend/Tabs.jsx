@@ -41,6 +41,7 @@ const Tabs = ({
   const [currentName, setCurrentName] = useState(initial.name);
   const [showReminder, setShowReminder] = useState(localStorage.getItem('showReminder') === 'true');
   const contentRef = useRef(null);
+  const handledTriggerRef = useRef(null);
 
   const handleTabClick = (tab, name) => {
     if (name !== currentName) {
@@ -82,9 +83,26 @@ const Tabs = ({
 
   // Handle navigation trigger for settings sections (popstate)
   useEffect(() => {
+    // t and sections change with the language; a trigger already acted on must not run again
+    // (it would snap the modal back to that section).
+    if (!navigationTrigger || handledTriggerRef.current === navigationTrigger) return;
+    if (navigationTrigger?.type === 'settings-default') {
+      handledTriggerRef.current = navigationTrigger;
+      const first = children[0]?.props;
+      if (first) {
+        setCurrentTab(first.label);
+        setCurrentName(first.name);
+        if (contentRef.current) {
+          contentRef.current.scrollTop = 0;
+        }
+        onSectionChange?.(first.label, first.name, { fromHistory: true });
+      }
+      return;
+    }
     if (navigationTrigger?.type === 'settings-section' && sections) {
       const section = sections.find((s) => s.name === navigationTrigger.data);
       if (section) {
+        handledTriggerRef.current = navigationTrigger;
         const label = t(section.label);
         setCurrentTab(label);
         setCurrentName(section.name);

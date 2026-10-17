@@ -1484,3 +1484,15 @@ test('round-36: reset stops when uploads cannot be cleared', () => {
   assert.match(src, /catch \(error\) \{[\s\S]*toast\(variables\.getMessage\('toasts\.error'\)\);\s*return;/);
   assert.ok(src.indexOf('return;') < src.indexOf("setDefaultSettings('reset')"));
 });
+
+test('round-37: Back to a bare #settings entry shows the default section', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('components/Elements/MainModal/Main.jsx'), /else if \(linkData\) \{[\s\S]*type: 'settings-default'/);
+  assert.match(read('components/Elements/MainModal/backend/Tabs.jsx'), /type === 'settings-default'[\s\S]*children\[0\]\?\.props[\s\S]*fromHistory: true/);
+});
+
+test('round-37b: a navigation trigger is acted on once, not on every language change', () => {
+  const tabs = readFileSync(nt('components/Elements/MainModal/backend/Tabs.jsx'), 'utf8');
+  assert.match(tabs, /handledTriggerRef\.current === navigationTrigger\) return;/);
+  assert.equal((tabs.match(/handledTriggerRef\.current = navigationTrigger/g) || []).length, 2);
+});
