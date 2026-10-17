@@ -2548,3 +2548,13 @@ test('round-76: Act warns that it starts immediately, in every shipped language'
   const h = readFileSync(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'), 'utf8');
   assert.doesNotMatch(h, /handoff\.mode === 'ask' && !getIsBlocked/);
 });
+
+test('round-77: a queued handoff keeps the mode pinned by the new tab until it is sent', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const src = readFileSync(path.join(root, 'src', browser, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(src, /function enqueueQueuedComposerMessage\(tabId, text, mode = null\)/, browser);
+    assert.match(src, /text: queuedText,[\s\S]{0,260}\.\.\.\(\['ask', 'act', 'dev'\]\.includes\(mode\) \? \{ mode \} : \{\}\)/, browser);
+    assert.match(src, /return enqueueQueuedComposerMessage\(tabId, text, modeOverride\);/, browser);
+    assert.match(src, /__queuedComposerMessage: submission,\s*\.\.\.\(item\.mode \? \{ __mode: item\.mode \} : \{\}\)/, browser);
+  }
+});

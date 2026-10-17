@@ -2911,7 +2911,7 @@ function removeQueuedComposerMessage(tabId, queueId) {
   return item;
 }
 
-function enqueueQueuedComposerMessage(tabId, text) {
+function enqueueQueuedComposerMessage(tabId, text, mode = null) {
   const numericTabId = Number(tabId);
   const queuedText = String(text || '').trim();
   if (!Number.isFinite(numericTabId) || !queuedText) return false;
@@ -2919,6 +2919,9 @@ function enqueueQueuedComposerMessage(tabId, text) {
   queue.push({
     id: `queued-${Date.now()}-${++queuedComposerMessageSeq}`,
     text: queuedText,
+    // A mode the sender pinned (the new tab's Ask / Act) has to survive the wait: automatic
+    // mode selection would otherwise classify the message again when the queue drains.
+    ...(['ask', 'act', 'dev'].includes(mode) ? { mode } : {}),
   });
   setQueuedComposerMessages(numericTabId, queue);
   if (sameTabId(currentTabId, numericTabId)) {
@@ -3160,6 +3163,7 @@ function drainQueuedComposerMessageForCurrentTab() {
   inputEl.queuedComposerSubmission = submission;
   Promise.resolve().then(() => sendMessage({
     __queuedComposerMessage: submission,
+    ...(item.mode ? { __mode: item.mode } : {}),
   })).catch((e) => {
     addMessage('error', t('sp.error_prefix', { msg: e?.message || String(e) }));
   });
@@ -9451,7 +9455,7 @@ async function sendMessage(extraChatParams = {}) {
         || (extraChatParams?.__deliveryMode !== 'queue' && composerDeliveryMode === 'steer')) {
       return steerComposerMessage(tabId, text, { fromComposer: true });
     }
-    return enqueueQueuedComposerMessage(tabId, text);
+    return enqueueQueuedComposerMessage(tabId, text, modeOverride);
   }
   let runCaptureDirective = null;
   if (!retryOptions) {
