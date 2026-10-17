@@ -11,6 +11,10 @@ const FileUpload = memo(({ id, type, accept, loadFunction, multiple }) => {
 
     const handleChange = (e) => {
       const files = Array.from(e.target.files);
+      // Clear the input so choosing the same file again (after a failed import or a deleted
+      // background) fires `change` again; the File objects stay valid.
+      e.target.value = '';
+      if (files.length === 0) return;
 
       if (type === 'settings') {
         const reader = new FileReader();

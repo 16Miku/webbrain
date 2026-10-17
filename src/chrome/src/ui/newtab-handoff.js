@@ -68,6 +68,9 @@ export function createNewtabHandoff({
   getIsDocumentVisible = () => true,
   doc = globalThis.document,
   setMode,
+  // Optional: resolves false when Act cannot run here (in-browser model, selected-text scope). The
+  // panel explains why itself; the task then waits in the composer, unsent.
+  ensureActMode = null,
   getInputEl,
   autoResizeInput,
   sendMessage,
@@ -257,6 +260,23 @@ export function createNewtabHandoff({
         return false;
       }
 
+      let actBlocked = false;
+      // Checking Act eligibility may switch the panel to Act, which an existing draft must not
+      // be subjected to (the task is only added below it), so skip it in that case.
+      const draftBefore = String(getInputEl()?.value || '').trim();
+      if (handoff.mode === 'act' && ensureActMode && !(draftBefore && draftBefore !== handoff.text)) {
+        try {
+          actBlocked = (await ensureActMode()) === false;
+        } catch {
+          actBlocked = false; // a failed lookup must not block; sending is still checked by the panel
+        }
+        if (!sameTab()) {
+          handled.delete(handoff.id);
+          await stashForLater({ ...stored, createdAt: now() });
+          return false;
+        }
+      }
+
       const input = getInputEl();
       // Never overwrite what is already in the composer. The task goes below it,
       // and the panel keeps the mode that draft was written in: switching it would
@@ -266,7 +286,7 @@ export function createNewtabHandoff({
       const draft = String(input.value || '');
       const existing = draft.trim();
       const keepsDraft = Boolean(existing) && existing !== handoff.text;
-      if (!keepsDraft) setMode(handoff.mode);
+      if (!keepsDraft && !actBlocked) setMode(handoff.mode);
       const composerText = keepsDraft ? `${draft}\n\n${handoff.text}` : handoff.text;
       const fill = () => {
         input.value = composerText;
@@ -275,7 +295,7 @@ export function createNewtabHandoff({
       };
       fill();
       input.focus?.();
-      if (!getIsBlocked() && !keepsDraft) {
+      if (!getIsBlocked() && !keepsDraft && !actBlocked) {
         // sendMessage reads the composer synchronously when called, so starting it
         // here captures this task. It is not awaited: a send can last a whole run,
         // and that must not hold up later hand-offs or the panel's own startup.

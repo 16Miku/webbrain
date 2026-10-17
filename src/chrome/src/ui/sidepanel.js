@@ -1607,6 +1607,7 @@ const newtabHandoff = createNewtabHandoff({
   getIsBlocked: () => isConversationClearInProgress(),
   getIsDocumentVisible: () => document.visibilityState !== 'hidden',
   setMode,
+  ensureActMode,
   getInputEl: () => inputEl,
   autoResizeInput,
   sendMessage,

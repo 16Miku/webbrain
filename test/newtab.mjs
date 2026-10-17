@@ -686,6 +686,53 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(sent, ['task A', 'task B'], 'it is judged on its own age');
   });
 
+  test(`${browser}: Act is checked for eligibility before it is accepted`, async () => {
+    const run = async ({ allowed, draft = '', throws = false }) => {
+      const key3 = newtabHandoffKey(3);
+      const store = { [key3]: { id: 'r1', tabId: 3, text: 'book a table', mode: 'act', createdAt: 99_000 } };
+      const input = { value: draft, dispatchEvent() {}, focus() {} };
+      const log = { modes: [], sent: [], checks: 0 };
+      const handoff = createNewtabHandoff({
+        storage: {
+          get: async (k) => (k in store ? { [k]: store[k] } : {}),
+          remove: async (k) => { delete store[k]; },
+          set: async (o) => Object.assign(store, o),
+        },
+        getCurrentTabId: () => 3,
+        getIsProcessing: () => false,
+        getIsBlocked: () => false,
+        getIsDocumentVisible: () => true,
+        doc: { addEventListener() {} },
+        setMode: (m) => log.modes.push(m),
+        ensureActMode: async () => { log.checks += 1; if (throws) throw new Error('lookup failed'); return allowed; },
+        getInputEl: () => input,
+        autoResizeInput() {},
+        sendMessage: async (p) => { log.sent.push(p); input.value = ''; },
+        now: () => 100_000,
+      });
+      await handoff.start();
+      return { log, input, store };
+    };
+    // allowed: sent in Act, as before
+    const ok = await run({ allowed: true });
+    assert.deepEqual(ok.log.sent, [{ __mode: 'act' }]);
+    // not allowed (in-browser model, selected-text scope): nothing is sent or pinned, the task is
+    // kept in the composer for the user, and the panel's mode is untouched
+    const blocked = await run({ allowed: false });
+    assert.deepEqual(blocked.log.sent, []);
+    assert.deepEqual(blocked.log.modes, []);
+    assert.equal(blocked.input.value, 'book a table');
+    assert.equal(blocked.store[newtabHandoffKey(3)], undefined, 'the record was claimed, not lost');
+    // a failed lookup does not block (the panel still checks when sending)
+    const flaky = await run({ allowed: true, throws: true });
+    assert.deepEqual(flaky.log.sent, [{ __mode: 'act' }]);
+    // an existing draft is never subjected to the mode check or a mode switch
+    const withDraft = await run({ allowed: true, draft: 'my own text' });
+    assert.equal(withDraft.log.checks, 0);
+    assert.deepEqual(withDraft.log.modes, []);
+    assert.equal(withDraft.input.value, 'my own text\n\nbook a table');
+  });
+
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };
@@ -2557,4 +2604,13 @@ test('round-77: a queued handoff keeps the mode pinned by the new tab until it i
     assert.match(src, /return enqueueQueuedComposerMessage\(tabId, text, modeOverride\);/, browser);
     assert.match(src, /__queuedComposerMessage: submission,\s*\.\.\.\(item\.mode \? \{ __mode: item\.mode \} : \{\}\)/, browser);
   }
+});
+
+test('round-78: Act handoffs use the panel eligibility check; file inputs are cleared after a selection', () => {
+  for (const browser of ['chrome', 'firefox']) {
+    const src = readFileSync(path.join(root, 'src', browser, 'src/ui/sidepanel.js'), 'utf8');
+    assert.match(src, /setMode,\s*ensureActMode,\s*getInputEl: \(\) => inputEl/, browser);
+  }
+  const upload = readFileSync(nt('components/Form/Settings/FileUpload/FileUpload.jsx'), 'utf8');
+  assert.match(upload, /const files = Array\.from\(e\.target\.files\);[\s\S]*e\.target\.value = '';\s*if \(files\.length === 0\) return;/);
 });
