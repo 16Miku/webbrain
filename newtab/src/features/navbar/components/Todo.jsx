@@ -219,7 +219,17 @@ function Todo({ todoRef, floatRef, position, xPosition, yPosition }) {
                         <div className={'todoRow' + (todoItem.done ? ' done' : '')}>
                           <div
                             className={'todo-checkbox' + (todoItem.done ? ' checked' : '')}
+                            role="checkbox"
+                            aria-checked={Boolean(todoItem.done)}
+                            aria-label={todoItem.value || t('widgets.navbar.todo.title')}
+                            tabIndex={0}
                             onClick={() => updateTodo('done', index)}
+                            onKeyDown={(event) => {
+                              if (event.key === ' ' || event.key === 'Enter') {
+                                event.preventDefault();
+                                updateTodo('done', index);
+                              }
+                            }}
                           >
                             {todoItem.done && <MdCheck />}
                           </div>

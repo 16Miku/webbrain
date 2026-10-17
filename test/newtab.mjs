@@ -1319,6 +1319,9 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: 'nope' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '   ' }] })), false);
+    for (const bad of [{ name: {} }, { folder: 5 }, { blurHash: [] }, { fileSize: '10' }, { dimensions: { width: 'x', height: 1 } }, { dimensions: 4 }]) {
+      assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'https://example.com/a.jpg', ...bad }] })), false, JSON.stringify(bad));
+    }
     for (const url of ['data:image/png;', 'data:video/mp4,', 'data:image/png;base64,', 'not-a-url', 'data:text/plain,x', 'javascript:alert(1)', 'ftp://a.test/x.png']) {
       assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url }] })), false, url);
     }
@@ -1332,7 +1335,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 44);
+    assert.equal(globalThis.__toasts.length, 50);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
@@ -1517,4 +1520,14 @@ test('round-38: imported links are stored normalised; gallery urls must be loada
   const src = readFileSync(nt('utils/settings/import.js'), 'utf8');
   assert.match(src, /normalizeLinks\(content\);/);
   assert.match(src, /data:\(image\|video\)/);
+});
+
+test('round-42: background cards and todo checkboxes work from the keyboard; nested dropdown does not open the card', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const card = read('features/background/options/sections/NavigationCard.jsx');
+  assert.match(card, /role="button"[\s\S]*tabIndex=\{0\}[\s\S]*onKeyDown/);
+  assert.match(card, /event\.stopPropagation\(\)/);
+  assert.match(read('components/Layout/Settings/Section/Section.jsx'), /event\.stopPropagation\(\)/);
+  const todo = read('features/navbar/components/Todo.jsx');
+  assert.match(todo, /role="checkbox"[\s\S]*aria-checked[\s\S]*tabIndex=\{0\}[\s\S]*onKeyDown/);
 });

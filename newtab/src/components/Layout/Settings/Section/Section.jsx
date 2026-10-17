@@ -24,7 +24,10 @@ function Section({ title, subtitle, icon, onClick, children }) {
           <span className="subtitle">{subtitle}</span>
         </div>
       </div>
-      <div className="action">
+      <div
+        className="action"
+        onClick={React.Children.count(children) === 0 ? undefined : (event) => event.stopPropagation()}
+      >
         {React.Children.count(children) === 0 ? <MdOutlineKeyboardArrowRight /> : children}
       </div>
     </div>

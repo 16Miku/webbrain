@@ -177,8 +177,20 @@ const isBackgroundUrl = (url) => {
     return false;
   }
 };
-const isBackgroundList = (list) =>
-  Array.isArray(list) && list.every((record) => isObject(record) && isBackgroundUrl(record.url));
+// The gallery renders these straight into the page, so a wrong type (an object as `name`) would
+// crash React when the Source settings open. Absent / null is fine.
+const optional = (value, check) => value == null || check(value);
+const isFiniteNumber = (value) => typeof value === 'number' && Number.isFinite(value);
+const isBackgroundRecord = (record) =>
+  isObject(record) &&
+  isBackgroundUrl(record.url) &&
+  optional(record.name, isString) &&
+  optional(record.folder, isString) &&
+  optional(record.blurHash, isString) &&
+  optional(record.fileSize, isFiniteNumber) &&
+  optional(record.uploadDate, isFiniteNumber) &&
+  optional(record.dimensions, (d) => isObject(d) && isFiniteNumber(d.width) && isFiniteNumber(d.height));
+const isBackgroundList = (list) => Array.isArray(list) && list.every(isBackgroundRecord);
 
 const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again
 
