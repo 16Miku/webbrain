@@ -34,9 +34,16 @@ function recordedResults(agent, tabId, run) {
       if (!result || typeof result !== 'object' || Array.isArray(result)) return { tool };
       const entry = { tool };
       for (const key of ['success', 'dispatched', 'noDispatch', 'denied', 'cancelled', 'outcomeUnknown',
-        'verified', 'remoteStateVerified', 'stable']) if (typeof result[key] === 'boolean') entry[key] = result[key];
+        'verified', 'remoteStateVerified', 'stable', 'deletionDeclined', 'submitConfirmationRequired',
+        'permissionRequired']) if (typeof result[key] === 'boolean') entry[key] = result[key];
       for (const key of ['error', 'attachmentState', 'previousUrl', 'currentUrl']) {
         if (typeof result[key] === 'string') entry[key] = text(result[key]);
+      }
+      // The user's own refusal on a WebBrain card (a deletion, a submit or a
+      // permission), as structured data the continuation judge can rely on.
+      if (result.deletionDeclined === true
+          || (result.denied === true && (result.submitConfirmationRequired === true || result.permissionRequired === true))) {
+        entry.userDeclined = true;
       }
       return entry;
     }).filter(Boolean);
@@ -69,6 +76,10 @@ export async function incompleteCompletionBlock(agent, tabId, { outcome, summary
     let parentIdentity = identity;
     try { const composed = JSON.parse(identity); if (Array.isArray(composed)) parentIdentity = composed[0]; } catch {}
     if (pageState.documentIdentity && pageState.documentIdentity !== parentIdentity) return changed();
+    // A refusal settles only the action it answered. The judge still decides
+    // whether other requested work remains; it never reopens the refused one.
+    const results = recordedResults(agent, tabId, run);
+    const declined = results.some(entry => entry.userDeclined === true);
     const request = agent._progressTaskAnchorText(tabId) || agent._latestTaskText(tabId) || '';
     const reading = await agent._semanticDecision(tabId, 'incomplete_task', { request, page: {
       candidate_summary_not_proof: text(summary),
@@ -82,7 +93,7 @@ export async function incompleteCompletionBlock(agent, tabId, { outcome, summary
         label: text(control?.label), disabled: control?.disabled === true,
         busy: control?.busy === true, progress: text(control?.progress),
       })),
-      recorded_current_results: recordedResults(agent, tabId, run),
+      recorded_current_results: results,
       recorded_task_progress: { successfulTools: Number(guard.successfulTaskToolCalls || 0),
         consequentialTools: Number(guard.successfulConsequentialToolCalls || 0),
         verifiedSubmission: guard.verifiedSubmissionEvidence === true },
@@ -97,7 +108,8 @@ export async function incompleteCompletionBlock(agent, tabId, { outcome, summary
       recovery: reading.choice,
       error: reading.choice === 'wait_then_check'
         ? 'The authorized task is still in progress. Wait for the relevant completion control or state with wait_for_element, or use a bounded wait_for_stable followed by a fresh page/status read. Continue the authorized flow when ready. Do not re-upload or repeat a submission already dispatched. For a longer external wait, use schedule_resume only when available and appropriate; otherwise explain the concrete remaining blocker after checking.'
-        : 'The authorized task still has a reasonable next step. Inspect the current page and available source/history, retrieve the missing information when possible, and continue with the permitted tools. Use clarify for essential information only the user can provide. Do not repeat a consequential action already dispatched. Finish partial or failed only for a concrete blocker or after reasonable recovery has been tried.',
+        : (declined ? 'The user declined one action on WebBrain\'s card; that refusal is final. Do not retry it, ask again or reach it another way. ' : '')
+          + 'The authorized task still has a reasonable next step. Inspect the current page and available source/history, retrieve the missing information when possible, and continue with the permitted tools. Use clarify for essential information only the user can provide. Do not repeat a consequential action already dispatched. Finish partial or failed only for a concrete blocker or after reasonable recovery has been tried.',
     };
   } catch (error) {
     if (completionStopError(error, signal) || agent._isCostAllowanceError(error) || agent._checkAbort(tabId)) throw error;

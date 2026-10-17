@@ -112663,7 +112663,7 @@ test('content-script actions have a bounded unknown-outcome timeout', async () =
     assert.ok(fallbackScrollStart >= 0 && fallbackScrollEnd > fallbackScrollStart, `${label}: fallback scroll deadline boundary missing`);
     assert.match(
       fallbackScroll,
-      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*window\.__wbPageMonitor\?\.beforeLocalDispatch\(\);\s*dispatched = true;\s*scrollElementInstant/,
+      /if \(actionDeadlineExpired\(\)\) return deadlineFailure\(\);\s*window\.__wbPageMonitor\?\.beforeLocalDispatch\([^)]*\);\s*dispatched = true;\s*scrollElementInstant/,
       `${label}: fallback container scrolling can start after its deadline`,
     );
     assert.match(
@@ -116323,8 +116323,12 @@ test('run UI journal: streamed deltas coalesce durable snapshots without delayin
     const background = fs.readFileSync(path.join(ROOT, backgroundRel), 'utf8');
     assert.match(background, /change\?\.eventType === 'text_delta'[\s\S]*?runUiSnapshotPersistence\.defer\(tabId, snapshot\)/, `${label}: background should defer only text deltas`);
     assert.match(background, /runUiSnapshotPersistence\.flush\(tabId\) \|\| runUiPersistenceQueues\.get\(tabId\)/, `${label}: durability checkpoints should flush deferred deltas`);
-    assert.match(background, /function clearRunUiSnapshot\(tabId\) \{\s*(?:runUiSnapshotReads\.delete\(tabId\);\s*)?runUiSnapshotPersistence\.cancel\(tabId\)/, `${label}: clearing a run should synchronously cancel deferred persistence`);
-    assert.match(background, /function sendAgentUpdate\([\s\S]{0,700}?runtime\.sendMessage\(/, `${label}: live event broadcast should remain immediate`);
+    assert.match(background, /function clearRunUiSnapshot\(tabId\) \{\s*(?:clearPlanReviewAttention\(tabId\);\s*)?(?:runUiSnapshotReads\.delete\(tabId\);\s*)?runUiSnapshotPersistence\.cancel\(tabId\)/, `${label}: clearing a run should synchronously cancel deferred persistence`);
+    const sendStart = background.indexOf('function sendAgentUpdate(');
+    const sendBody = background.slice(sendStart, background.indexOf('\n}\n', sendStart));
+    const beforeBroadcast = sendBody.slice(0, sendBody.indexOf('runtime.sendMessage('));
+    assert.ok(sendStart >= 0 && sendBody.includes('runtime.sendMessage('), `${label}: live event broadcast should remain immediate`);
+    assert.doesNotMatch(beforeBroadcast, /\bawait\b|setTimeout|queueMicrotask|\.then\(|runUiSnapshotPersistence|runUiPersistenceQueues/, `${label}: live event broadcast should remain immediate`);
   }
 });
 
