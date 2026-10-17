@@ -1127,10 +1127,11 @@ let currentAssistantEl = null;
 let verboseMode = false;
 let compactProgressVisible = true;
 let agentMode = 'ask'; // 'ask' | 'act' | 'dev'
-// Settings → Mode selection. In Automatic the toggle is hidden, the composer
-// sends "auto" and the agent routes each turn (src/*/src/agent/auto-mode.js);
-// slash commands and the mode shortcuts choose a mode for one message.
-let autoModeSelection = false;
+// Settings → Mode selection, Automatic unless set to Manual. In Automatic the
+// toggle is hidden, the composer sends "auto" and the agent routes each turn
+// (src/*/src/agent/auto-mode.js); slash commands and the mode shortcuts
+// choose a mode for one message. The standalone window always stays in Ask.
+let autoModeSelection = !isStandaloneWindow;
 let abortRequested = false;
 const awaitingPlanReviewTabs = new Set();
 const processingTabs = new Set();
@@ -1991,7 +1992,7 @@ browser.storage.onChanged.addListener((changes, area) => {
 });
 
 function applyModeSelection(value) {
-  autoModeSelection = value === 'auto' && !isStandaloneWindow;
+  autoModeSelection = value !== 'manual' && !isStandaloneWindow;
   document.documentElement.dataset.modeSelection = autoModeSelection ? 'auto' : 'manual';
   // A mode pinned before switching to Automatic must not linger in the
   // composer styling; Automatic chooses per turn.
@@ -15463,10 +15464,17 @@ historyBtn?.addEventListener('click', async () => {
   if (historyPopover.matches(':popover-open')) { historyPopover.hidePopover(); return; }
   const request = ++historyPopoverRequest;
   const tabId = currentTabId;
+  // History sits in the header: open below it, end-aligned with the button.
+  // The rect is in zoomed pixels, while the popover's own lengths are not.
+  const zoom = uiScaleZoom();
   const anchor = historyBtn.getBoundingClientRect();
-  historyPopover.style.left = `${Math.max(8, Math.min(anchor.right - 320, window.innerWidth - 328))}px`;
-  historyPopover.style.bottom = `${window.innerHeight - anchor.top + 8}px`;
-  historyPopover.style.maxHeight = `${Math.max(60, Math.min(420, anchor.top - 16))}px`;
+  const width = 320 * zoom;
+  const left = Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8));
+  const top = anchor.bottom + 8;
+  historyPopover.style.left = `${left / zoom}px`;
+  historyPopover.style.top = `${top / zoom}px`;
+  historyPopover.style.bottom = 'auto';
+  historyPopover.style.maxHeight = `${Math.max(60, Math.min(420, (window.innerHeight - top - 8) / zoom))}px`;
   historyPopover.replaceChildren();
   const status = document.createElement('p');
   status.textContent = t('sp.history.loading');

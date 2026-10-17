@@ -612,7 +612,7 @@ async function init() {
     providerFilter = stored.providerFilter;
   }
   verboseToggle.checked = stored.verboseMode || false;
-  if (modeSelectionSelect) modeSelectionSelect.value = stored.modeSelection === 'auto' ? 'auto' : 'manual';
+  if (modeSelectionSelect) modeSelectionSelect.value = stored.modeSelection === 'manual' ? 'manual' : 'auto';
   if (composerDeliveryModeSelect) {
     composerDeliveryModeSelect.value = stored.composerDeliveryMode === 'steer' ? 'steer' : 'queue';
   }
@@ -1258,7 +1258,7 @@ if (globalThis.browser?.storage?.onChanged) {
 // --- Display Settings ---
 
 modeSelectionSelect?.addEventListener('change', async () => {
-  const modeSelection = modeSelectionSelect.value === 'auto' ? 'auto' : 'manual';
+  const modeSelection = modeSelectionSelect.value === 'manual' ? 'manual' : 'auto';
   await browser.storage.local.set({ modeSelection }).catch(() => {});
 });
 

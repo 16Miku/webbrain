@@ -622,11 +622,26 @@ for (const build of BUILDS) {
     assert.deepEqual([...context.keys.auto], [context.keys.ask[0], 'sp.input.act_placeholder', ...context.keys.ask.slice(1)], 'Automatic keeps each build\'s Ask tips');
   });
 
-  test(`${build}: Automatic hides the toggle through the document mode-selection state`, () => {
+  test(`${build}: Automatic is the default and hides the mode row through the document state`, () => {
     const css = readFileSync(new URL(`../src/${build}/styles/sidepanel.css`, import.meta.url), 'utf8');
-    assert.match(css, /html\[data-mode-selection="auto"\] #mode-toggle \{\s*display: none;/);
-    assert.match(panel, /document\.documentElement\.dataset\.modeSelection = autoModeSelection \? 'auto' : 'manual';/);
+    // Hidden until the panel knows the setting is Manual, so Automatic never flashes the row.
+    assert.match(css, /html:not\(\[data-mode-selection="manual"\]\) \.composer-control-row \{\s*display: none;/);
+    assert.match(panel, /let autoModeSelection = !isStandaloneWindow;/);
     assert.match(panel, /storage\.local\.get\('modeSelection'\)/);
+    const dataset = {};
+    const context = vm.createContext({
+      isStandaloneWindow: false, autoModeSelection: true, agentMode: 'ask', processingTabs: new Set(),
+      devDiagnosticsDrainDeferred: false, document: { documentElement: { dataset } },
+      setMode() {}, updateActWarning() {}, resetInputPlaceholderRotation() {},
+    });
+    vm.runInContext(extract(panel, 'applyModeSelection'), context);
+    for (const [stored, expected] of [[undefined, 'auto'], ['auto', 'auto'], ['manual', 'manual'], ['anything', 'auto']]) {
+      context.applyModeSelection(stored);
+      assert.deepEqual([dataset.modeSelection, context.autoModeSelection], [expected, expected === 'auto'], String(stored));
+    }
+    context.isStandaloneWindow = true;
+    context.applyModeSelection(undefined);
+    assert.deepEqual([dataset.modeSelection, context.autoModeSelection], ['manual', false], 'the standalone window stays in Ask');
   });
 
   test(`${build}: the background restarts a hand-off under the same request and reports the routed mode`, () => {
@@ -651,14 +666,15 @@ for (const build of BUILDS) {
     assert.equal(journal.get(5).mode, 'act');
   });
 
-  test(`${build}: Mode selection is a portable setting, Manual by default, in every language`, async () => {
+  test(`${build}: Mode selection is a portable setting, Automatic by default, in every language`, async () => {
     const settingsHtml = source(build, 'ui/settings.html');
-    assert.match(settingsHtml, /<select id="select-mode-selection"[^>]*>\s*<option value="manual"[^>]*><\/option>\s*<option value="auto"[^>]*><\/option>/);
+    assert.match(settingsHtml, /<select id="select-mode-selection"[^>]*>\s*<option value="auto"[^>]*><\/option>\s*<option value="manual"[^>]*><\/option>/);
     const settingsJs = source(build, 'ui/settings.js');
-    assert.match(settingsJs, /modeSelectionSelect\.value = stored\.modeSelection === 'auto' \? 'auto' : 'manual';/);
+    assert.match(settingsJs, /modeSelectionSelect\.value = stored\.modeSelection === 'manual' \? 'manual' : 'auto';/);
+    assert.match(settingsJs, /const modeSelection = modeSelectionSelect\.value === 'manual' \? 'manual' : 'auto';/);
     assert.match(settingsJs, /storage\.local\.set\(\{ modeSelection \}\)/);
     const config = await import(`../src/${build}/src/config-transfer.js`);
-    assert.equal(config.DEFAULT_CONFIG_SETTINGS.modeSelection, 'manual');
+    assert.equal(config.DEFAULT_CONFIG_SETTINGS.modeSelection, 'auto');
     assert.ok(config.CONFIG_STORAGE_KEYS.includes('modeSelection'));
     const directory = new URL(`../src/${build}/src/ui/locales/`, import.meta.url);
     const english = (await import(new URL('en.js', directory))).default;
