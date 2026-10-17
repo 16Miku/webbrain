@@ -1797,5 +1797,6 @@ test('round-53: video detection looks at the lower-cased path of the address', a
     assert.equal(videoCheck(url), false, url);
   }
   const privacy = readFileSync(path.join(root, 'docs/privacy-and-data-flow.md'), 'utf8');
+  assert.doesNotMatch(readFileSync(path.join(root, "docs/newtab.md"), "utf8"), /swept each time/);
   assert.doesNotMatch(privacy, /unclaimed\s+records are removed after about three minutes/);
 });

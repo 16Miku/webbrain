@@ -27,12 +27,18 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
    extension's own `newtab/index.html` tab, on Chrome adds the tab to the
    WebBrain group/`panelTabs` as the install page does. Records that are never claimed
-   are removed when their tab closes, and any older than three minutes are swept each time
-   the background starts and on every submit.
+   are removed when their tab closes and cleared when the browser starts. There is no
+   periodic sweep: storage has no compare-and-delete, so deleting a key from an earlier
+   read could take a task written in between. A stale record is simply ignored by the
+   panel and replaced by the next submission from that tab (the page's own lock outlasts
+   the longest age the panel accepts, so a live task is never replaced).
 3. `src/ui/newtab-handoff.js` (identical in both extensions) in the side panel claims
    the record for the tab it is showing. It must be ≤ 4000 characters, mode
    `ask`/`act`, addressed to that tab, and ≤ 30 s old (plus however long the panel's
-   own startup took, up to two minutes). Claimed and stale records are removed.
+   own startup took, up to two minutes). Claimed records are removed; stale ones are left
+   for the page to replace (see above). A task the panel has to hand back (a send declined
+   after a tab switch) is queued in `wbNewtabHandoff:retry:<tabId>`, which only the panel
+   writes, and is delivered when that tab is shown again.
    Nothing is claimed until the panel has finished restoring its chat (`start()`);
    after that it is tried on `storage.onChanged`, when the panel becomes visible, after
    a tab switch and after the visible-state refresh.
