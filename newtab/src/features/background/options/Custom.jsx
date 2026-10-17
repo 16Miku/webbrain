@@ -154,8 +154,9 @@ const CustomSettings = memo(() => {
           EventBus.emit('refresh', 'background');
         }
       } catch (error) {
+        // The caller (the batch upload) reports which file was not stored.
         console.error('Error saving background:', error);
-        toast(variables.getMessage('toasts.error'));
+        throw error;
       }
     },
     [],
@@ -252,7 +253,8 @@ const CustomSettings = memo(() => {
         await handleCustomBackground(files[i], result.dataUrl, result.metadata, true);
         setUploadProgress({ current: i + 1, total: files.length });
       } catch (error) {
-        if (error.message === 'no_storage') {
+        // A full origin can also surface as the database refusing the write.
+        if (error.message === 'no_storage' || error.name === 'QuotaExceededError') {
           toast(variables.getMessage('toasts.no_storage'));
           break;
         }

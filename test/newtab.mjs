@@ -2064,3 +2064,10 @@ test('round-63: remaining click-only controls are keyboard-operable', () => {
   assert.match(chips, /className="chipSelect-control"[\s\S]*onKeyDown=\{onActivateKey[\s\S]*role="combobox"[\s\S]*tabIndex=\{0\}/);
   assert.match(chips, /className=\{`chipSelect-option[\s\S]*onKeyDown=\{onActivateKey[\s\S]*role="option"[\s\S]*tabIndex=\{0\}/);
 });
+
+test('round-64: a failed gallery write reaches the batch uploader instead of counting as stored', () => {
+  const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
+  assert.match(src, /console\.error\('Error saving background:', error\);\s*throw error;/);
+  assert.match(src, /error\.name === 'QuotaExceededError'/);
+  assert.match(src, /errors\.push\(files\[i\]\.name\)/);
+});

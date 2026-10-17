@@ -27,7 +27,8 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
    extension's own `newtab/index.html` tab, on Chrome adds the tab to the
    WebBrain group/`panelTabs` as the install page does. Records that are never claimed
-   are removed when their tab closes and cleared when the browser starts. There is no
+   are removed when their tab closes and cleared when the browser starts (one written in the few
+   seconds before a crash is left until the start after that; the panel ignores it meanwhile). There is no
    periodic sweep: storage has no compare-and-delete, so deleting a key from an earlier
    read could take a task written in between. A stale record is simply ignored by the
    panel and replaced by the next submission from that tab (the page's own lock outlasts
