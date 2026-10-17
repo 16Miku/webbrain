@@ -2673,3 +2673,9 @@ test('round-80: a new background replaces the photo metadata; custom CSS and fon
   assert.match(load, /customStyle\.textContent = css;/);
   assert.match(load, /fontStyle\.textContent = /);
 });
+
+test('round-82: the Apps popup reads one appsPinned key everywhere', () => {
+  const apps = readFileSync(nt('features/navbar/components/Apps.jsx'), 'utf8');
+  assert.doesNotMatch(apps, /AppsPinned/);
+  assert.equal((apps.match(/getItem\('appsPinned'\)/g) || []).length, 3);
+});

@@ -49,7 +49,7 @@ const Apps = ({ appsRef, floatRef, position, xPosition, yPosition }) => {
   };
 
   const handleHideApps = () => {
-    setShowApps(localStorage.getItem('AppsPinned') === 'true');
+    setShowApps(localStorage.getItem('appsPinned') === 'true');
   };
 
   const appsInfo = apps;
