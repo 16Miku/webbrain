@@ -1301,7 +1301,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
     for (const bad of [
       { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' },
-      { favourite: '[1]' }, { theme: { nested: true } },
+      { favourite: '[1]' }, { favourite: '{}' }, { favourite: '{"url":"  "}' }, { favourite: '{"url":5}' }, { theme: { nested: true } },
     ]) {
       assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:image/png;base64,OTHER' }] })), false, JSON.stringify(bad));
     }
@@ -1332,7 +1332,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 34);
+    assert.equal(globalThis.__toasts.length, 37);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({

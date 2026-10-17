@@ -142,8 +142,11 @@ export function validateSettings(content) {
   if ('favourite' in content && content.favourite !== 'null') {
     try {
       const favourite = JSON.parse(content.favourite);
-      if (favourite !== null && (typeof favourite !== 'object' || Array.isArray(favourite))) {
-        return 'favourite is not an object';
+      if (favourite !== null && !isObject(favourite)) return 'favourite is not an object';
+      // getBackgroundData() shows it in place of the chosen source, so it has to be usable;
+      // the fork has no control left to clear a broken one.
+      if (favourite !== null && (!isString(favourite.url) || favourite.url.trim() === '')) {
+        return 'favourite has no url';
       }
     } catch {
       return 'favourite is not valid JSON';
