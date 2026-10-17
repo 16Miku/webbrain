@@ -1574,7 +1574,12 @@ async function answerInlineSelection(msg) {
       const notice = inlineCostNotice(error);
       return partial
         ? { ok: true, text: partial, truncated: true, ...(notice ? { notice } : {}) }
-        : { ok: false, truncated: true, error: 'The answer was cut off before any text was produced.' };
+        : {
+          ok: false,
+          truncated: true,
+          error: 'The answer was cut off before any text was produced.',
+          ...(notice ? { notice } : {}),
+        };
     }
     return { ok: false, error: String(error?.message || error).slice(0, 300) };
   } finally {

@@ -931,8 +931,8 @@
     parts.text.hidden = status !== 'ready';
     parts.error.hidden = status !== 'error' || cutOffOnly;
     parts.cut.hidden = !((status === 'ready' || cutOffOnly) && cardState.truncated);
-    parts.notice.hidden = !(status === 'ready' && cardState.notice);
-    parts.notice.textContent = status === 'ready' ? cardState.notice : '';
+    parts.notice.hidden = !((status === 'ready' || cutOffOnly) && cardState.notice);
+    parts.notice.textContent = status === 'ready' || cutOffOnly ? cardState.notice : '';
     if (status === 'ready') renderAnswer(parts.text, cardState.text, kind !== 'translate');
     if (status === 'error') {
       parts.errorText.textContent = str('inlineFailed');
@@ -1052,6 +1052,9 @@
       cardJobId = '';
       let answer = typeof response?.text === 'string' ? response.text.trim() : '';
       cardState.truncated = response?.truncated === true;
+      // This also applies to a textless cut-off, where it warns that continuing
+      // in the panel would be blocked by the exhausted allowance.
+      cardState.notice = typeof response?.notice === 'string' ? response.notice.slice(0, 300) : '';
       if (!response?.ok || !answer) {
         throw new Error(typeof response?.error === 'string' && !cardState.truncated ? response.error : '');
       }
@@ -1064,9 +1067,6 @@
       }
       cardState.status = 'ready';
       cardState.text = answer;
-      // Something the person should know about the answer they are looking at, such as
-      // the cost allowance having been reached by this very request.
-      cardState.notice = typeof response?.notice === 'string' ? response.notice.slice(0, 300) : '';
     } catch (error) {
       if (requestId !== cardRequestId || !cardState) return;
       cardJobId = '';
