@@ -3804,6 +3804,8 @@ async function handleMessage(msg, sender) {
       assertRunCanStart(tabId, msg);
       const isWorkflowRun = !!msg.workflowId;
       const mode = isWorkflowRun ? 'act' : (msg.mode || 'ask');
+      // "auto" turns report the mode they were routed to.
+      let effectiveMode = mode;
       const runUi = await beginContinuationRunUiSnapshot(tabId, msg.requestId, {
         mode,
         kind: 'chat',
@@ -3880,6 +3882,7 @@ async function handleMessage(msg, sender) {
           },
         };
         const publishUpdate = (type, data) => {
+          if (type === 'run_mode' && ['ask', 'act', 'dev'].includes(data?.mode)) effectiveMode = data.mode;
           updates.push({ type, data });
           sendAgentUpdate(tabId, runUi.requestId, type, data);
         };
@@ -3919,6 +3922,15 @@ async function handleMessage(msg, sender) {
           }
         } else {
           result = await agent.processMessage(tabId, msg.text, publishUpdate, mode, msg.attachments, runOptions);
+          // An automatically routed Ask turn may hand itself to Act or Dev; it
+          // restarts here under the same request, so Stop still cancels it.
+          const escalation = mode === 'auto' ? agent.takeModeEscalation(tabId) : null;
+          if (escalation) {
+            result = await agent.processMessage(tabId, msg.text, publishUpdate, escalation.mode, msg.attachments, {
+              ...runOptions,
+              modeEscalation: { mode: escalation.mode },
+            });
+          }
         }
 
         if (isWorkflowRun) {
@@ -3928,7 +3940,7 @@ async function handleMessage(msg, sender) {
           const userMemoryPayload = takeUserMemoryTurnExtractionPayload(tabId, {
             userText: msg.text,
             assistantText: result,
-            mode,
+            mode: effectiveMode,
             succeeded: runUpdatesSucceeded(updates),
           });
           userMemoryPayload.conversationId = await agent.getConversationId(tabId);
@@ -3966,7 +3978,7 @@ async function handleMessage(msg, sender) {
             runUi.requestId,
             terminalRunUiStatus(result, updates, runError),
             result || (runError ? `Error: ${runError.message}` : ''),
-            mode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
+            effectiveMode === 'ask' ? askCompletionSucceededForBadge(result, updates, runError) : false,
           );
           await sendAgentRunComplete(tabId, snapshot);
         }
@@ -3980,7 +3992,8 @@ async function handleMessage(msg, sender) {
       if (!tabId) throw new Error('No tab ID');
       const runProviderId = await standaloneRunProviderId(msg);
       assertNoActiveTabRun(tabId);
-      const mode = msg.mode || 'ask';
+      // The streaming entry point is not routed; "auto" starts read-only.
+      const mode = msg.mode && msg.mode !== 'auto' ? msg.mode : 'ask';
       const runUi = beginRunUiSnapshot(tabId, msg.requestId, {
         mode,
         kind: 'chat',

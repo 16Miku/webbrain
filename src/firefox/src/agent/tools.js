@@ -5,6 +5,7 @@ import { EXPANDED_TREE_PAGE_CHARS, STANDARD_TREE_PAGE_CHARS } from './read-compl
 import { OTP_EMAIL_TOOL, OTP_EMAIL_TOOL_NAME } from './otp-email-tool.js';
 import { BOT_MEMORY_TOOLS } from './bot-memory.js';
 import { MAX_BATCH_ACTIONS, BATCHABLE_ACTION_TOOLS, BATCH_TRAILING_OBSERVATION_TOOLS } from './browser-batch.js';
+import { REQUEST_ACTION_MODE_TOOL_NAME, requestActionModeTool } from './auto-mode.js';
 
 /**
  * Tool definitions for the WebBrain agent.
@@ -1372,7 +1373,7 @@ export const RETIRED_AGENT_TOOL_NAMES = new Set([
   'screenshot', 'full_page_screenshot', 'record_tab', 'stop_recording',
   'new_tab', 'list_tabs', 'activate_tab',
 ]);
-export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep', ...BOT_MEMORY_TOOLS.map(tool => tool.function.name)]);
+export const RESERVED_AGENT_TOOL_NAMES = new Set([...AGENT_TOOL_NAMES, ...RETIRED_AGENT_TOOL_NAMES, OTP_EMAIL_TOOL_NAME, 'done_json', 'load_skill', 'beep', REQUEST_ACTION_MODE_TOOL_NAME, ...BOT_MEMORY_TOOLS.map(tool => tool.function.name)]);
 export const DEV_ONLY_TOOL_NAMES = new Set(['read_page_source', 'inspect_element_styles', 'execute_js']);
 export const DEV_EXTENDED_TOOL_NAMES = new Set([
   ...DEV_ONLY_TOOL_NAMES,
@@ -1780,6 +1781,8 @@ function ordinaryClarifyTool(tool) {
  * `opts.compact` shrinks Act mode to COMPACT_TOOL_NAMES.
  * `opts.strictSecretMode` swaps in the strict `done` description. Ask receives
  * a research-only consent schema when research escalation is explicitly enabled.
+ * `opts.autoModeEscalation` adds `request_action_mode` to an automatically
+ * routed Ask turn.
  */
 export function getToolsForMode(mode, opts = {}) {
   // Back-compat: callers used to pass `compact: true/false`; the tier knob
@@ -1880,6 +1883,11 @@ export function getToolsForMode(mode, opts = {}) {
   }
   if (opts.watchBeep === true && normalizedMode === 'act') {
     base = [...base, WATCH_BEEP_TOOL];
+  }
+  // Only an automatically routed Ask turn can hand itself to an action mode
+  // (see auto-mode.js); an Ask the user chose stays Ask.
+  if (normalizedMode === 'ask' && opts.autoModeEscalation === true) {
+    base = [...base, requestActionModeTool()];
   }
   if (!devCompactBlocked && tier !== 'compact' && opts.skillLoaderTool?.function?.name === 'load_skill') {
     base = [...base, opts.skillLoaderTool];

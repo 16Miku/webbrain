@@ -43697,35 +43697,46 @@ test('sidepanel language picker uses the provider-style accessible listbox with 
   }
 });
 
-test('sidepanel separates mode navigation from compact composer conversation actions', () => {
+test('sidepanel keeps display tools and conversation actions in the header and the model picker in the composer', () => {
   for (const [label, prefix] of [
     ['chrome', 'src/chrome'],
     ['firefox', 'src/firefox'],
   ]) {
     const html = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.html'), 'utf8');
     const css = fs.readFileSync(path.join(ROOT, prefix, 'styles/sidepanel.css'), 'utf8');
+    const panel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
     const header = html.match(/<header id="header">[\s\S]*?<\/header>/)?.[0] || '';
     const inputStart = html.indexOf('<div id="input-area">');
     const inputEnd = html.indexOf('<div id="queued-messages"', inputStart);
     const controls = html.slice(inputStart, inputEnd);
 
+    const tools = header.match(/<div class="header-tools">[\s\S]*?\n      <\/div>\n/)?.[0] || '';
+    const conversation = header.slice(header.indexOf('class="conversation-action-group header-conversation"'));
     for (const id of ['btn-expand', 'btn-ui-scale', 'btn-settings']) {
-      assert.match(header, new RegExp(`id="${id}"`), `${label}: ${id} should remain in the primary header`);
+      assert.match(tools, new RegExp(`id="${id}"`), `${label}: ${id} should stay with the header display tools`);
     }
-    assert.match(header, /id="language-picker"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-settings"[\s\S]*?id="btn-expand"/, `${label}: primary actions should run the display preferences, then Settings, then pop-out`);
-    assert.doesNotMatch(header, /id="btn-(?:clear|history)"/, `${label}: conversation actions should leave the primary header`);
+    assert.match(tools, /id="language-picker"[\s\S]*?id="btn-ui-scale"[\s\S]*?id="btn-settings"[\s\S]*?id="btn-expand"/, `${label}: the display tools should run the display preferences, then Settings, then pop-out`);
+    assert.ok(header.indexOf('class="header-tools"') < header.indexOf('header-conversation'), `${label}: the display tools should lead the header and the conversation actions close it`);
+    assert.match(conversation, /id="btn-history"[\s\S]*?id="history-popover"[\s\S]*?id="btn-clear"/, `${label}: History and New chat should close the header, with the creation action at its edge`);
+    assert.doesNotMatch(header, /id="provider-picker"|id="mode-toggle"/, `${label}: the model picker and the modes should leave the header`);
     assert.doesNotMatch(html, /class="conversation-actions"/, `${label}: conversation actions should no longer float over chat content`);
-    assert.match(controls, /class="composer-control-row"[\s\S]*?id="mode-toggle"[\s\S]*?id="btn-mode-ask"[\s\S]*?id="btn-mode-act"[\s\S]*?id="btn-mode-dev"[\s\S]*?class="conversation-action-group"[\s\S]*?id="btn-history"[\s\S]*?id="btn-clear"/, `${label}: segmented modes should precede distinct History and New chat buttons, with the creation action at the row edge`);
-    assert.match(controls, /id="btn-clear"[\s\S]*?data-i18n-title="sp\.btn\.clear_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.clear_short"[\s\S]*?data-icon="plus"[\s\S]*?sp\.btn\.clear_short/, `${label}: New chat should have a plus icon, short tooltip, accessible name, and localized wide label`);
-    assert.match(controls, /id="btn-history"[\s\S]*?data-i18n-title="sp\.btn\.history_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.history_short"[\s\S]*?data-icon="history"[\s\S]*?sp\.btn\.history_short/, `${label}: History should have a native-theme icon, short tooltip, accessible name, and localized wide label`);
-    assert.match(css, /\.composer-control-row \{[\s\S]*?display: flex;[\s\S]*?gap: 6px;[\s\S]*?margin-bottom: 8px;/, `${label}: modes and conversation actions should share one compact row with visible group separation`);
+    assert.match(controls, /class="composer-control-row"[\s\S]*?id="mode-toggle"[\s\S]*?id="btn-mode-ask"[\s\S]*?id="btn-mode-act"[\s\S]*?id="btn-mode-dev"/, `${label}: the segmented mode controls keep their markup above the composer`);
+    assert.doesNotMatch(controls, /id="btn-(?:clear|history)"/, `${label}: the mode row should not repeat the conversation actions`);
+    const composer = html.slice(html.indexOf('<div id="input-wrapper">'), html.indexOf('<button id="selection-ask-action"'));
+    assert.match(composer, /id="input-text-layer"[\s\S]*?class="composer-toolbar"[\s\S]*?id="btn-attach"[\s\S]*?id="provider-picker"[\s\S]*?id="provider-picker-menu"[\s\S]*?id="status-dot"[\s\S]*?id="btn-mic"[\s\S]*?id="btn-send"/, `${label}: the composer should put the message first, then attach, the model picker and its status, mic and send`);
+    assert.match(css, /\.composer-toolbar \.provider-picker-menu \{\s*top: auto;\s*bottom: calc\(100% \+ 6px\);/, `${label}: the composer model menu should open upward`);
+    assert.match(css, /#input-wrapper \{[\s\S]*?flex-direction: column;/, `${label}: the composer should stack the message above its toolbar`);
+    assert.match(conversation, /id="btn-clear"[\s\S]*?data-i18n-title="sp\.btn\.clear_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.clear_short"[\s\S]*?data-icon="plus"[\s\S]*?sp\.btn\.clear_short/, `${label}: New chat should have a plus icon, short tooltip, accessible name, and localized wide label`);
+    assert.match(conversation, /id="btn-history"[\s\S]*?data-i18n-title="sp\.btn\.history_short"[\s\S]*?data-i18n-aria-label="sp\.btn\.history_short"[\s\S]*?data-icon="history"[\s\S]*?sp\.btn\.history_short/, `${label}: History should have a native-theme icon, short tooltip, accessible name, and localized wide label`);
+    assert.match(panel, /historyBtn\?\.addEventListener\('click'[\s\S]*?const top = anchor\.bottom \+ 8;[\s\S]*?historyPopover\.style\.top = `\$\{top \/ zoom\}px`;/, `${label}: History in the header should open its popover below the button`);
+    assert.match(css, /\/\* Mode selection is always Automatic[^*]*\*\/\n\.composer-control-row \{\s*display: none;/, `${label}: mode selection is always Automatic, so the Ask/Act/Dev row never shows`);
     assert.match(css, /#mode-toggle \{[\s\S]*?flex: 1 1 auto;[\s\S]*?min-width: 0;[\s\S]*?background: var\(--bg-input\);[\s\S]*?border: 1px solid var\(--border\);/, `${label}: Ask, Act, and Dev should remain one segmented control`);
     assert.match(css, /\.conversation-action-group \{[\s\S]*?gap: 4px;[\s\S]*?flex: 0 0 auto;/, `${label}: History and New chat should remain separate utility buttons`);
     assert.match(css, /\.conversation-action \{[\s\S]*?height: 30px;[\s\S]*?border: 1px solid var\(--border\);[\s\S]*?background: var\(--bg-input\);/, `${label}: utility actions should use standalone button chrome rather than segmented navigation styling`);
     assert.match(css, /@media \(max-width: 430px\) \{[\s\S]*?\.conversation-action \{[\s\S]*?width: 30px;[\s\S]*?\.conversation-action-label \{[\s\S]*?display: none;/, `${label}: narrow sidebars should reduce New chat and History to tooltip-backed icon buttons`);
     assert.match(css, /html\[data-ui-scale="150"\] \.conversation-action,[\s\S]*?html\[data-ui-scale="175"\] \.conversation-action[\s\S]*?width: 30px;[\s\S]*?html\[data-ui-scale="175"\] \.conversation-action-label[\s\S]*?display: none;/, `${label}: high supported UI scales should keep localized utility labels from clipping the composer row`);
-    assert.doesNotMatch(css, /@media \(max-width: 380px\) \{[\s\S]*?\.header-right \{ gap: 0; \}/, `${label}: narrow panels should preserve the normal spacing between the three primary icons`);
-    assert.doesNotMatch(css, /@media \(max-width: 380px\) \{[\s\S]*?#header \.header-right button[^\n]*padding-inline: 2px;/, `${label}: narrow panels should preserve the normal primary-icon padding`);
+    assert.doesNotMatch(css, /@media \(max-width: 380px\) \{[\s\S]*?\.header-tools \{ gap: 0; \}/, `${label}: narrow panels should preserve the normal spacing between the primary icons`);
+    assert.doesNotMatch(css, /@media \(max-width: 380px\) \{[\s\S]*?#header \.header-tools button[^\n]*padding-inline: 2px;/, `${label}: narrow panels should preserve the normal primary-icon padding`);
 
     if (label === 'chrome') {
       assert.match(html, /id="inspection-banner"[\s\S]*?id="recording-banner"[\s\S]*?class="recording-label"[\s\S]*?id="recording-timer"[\s\S]*?id="btn-recording-stop"[\s\S]*?id="scheduled-jobs"/, 'chrome: recording should return to its independent in-flow status bar');
@@ -47502,10 +47513,11 @@ test('sidepanel UI scale controls are available, persistent, and localized', asy
     assert.match(sidepanelJs, /if \(closeUiScalePopover\(\)\) \{[\s\S]*?return;[\s\S]*?if \(isProcessing\)[\s\S]*?abortRun\(\)/, `${label}: Escape should close the scale popover instead of aborting the active run`);
     assert.match(sidepanelJs, /await setSidepanelUiScale\(scaleAction\)\.catch\(\(\) => \{\}\)/, `${label}: keyboard scale steps should not reject unhandled when the write fails`);
     assert.match(sidepanelCss, /#header #ui-scale-popover button \{/, `${label}: popover chips should outrank the generic header icon button rule`);
-    assert.match(sidepanelCss, /#header \.header-right button\.language-picker-btn\[aria-expanded="true"\] \{/, `${label}: the open language trigger should outrank the generic header icon button rule`);
-    assert.match(sidepanelCss, /\.ui-scale-popover \{[\s\S]*?inset-inline-end: 0;/, `${label}: the scale popover should be offset logically so RTL locales open it inward`);
+    assert.match(sidepanelCss, /#header \.header-tools button\.language-picker-btn\[aria-expanded="true"\] \{/, `${label}: the open language trigger should outrank the generic header icon button rule`);
+    assert.match(sidepanelCss, /\.ui-scale-popover \{[\s\S]*?inset-inline-start: 0;/, `${label}: the scale popover should be offset logically so RTL locales open it inward from the header start`);
+    assert.match(sidepanelCss, /\.language-picker-menu \{\s*left: 0;\s*right: auto;[\s\S]*?html\[dir="rtl"\] \.language-picker-menu \{\s*left: auto;\s*right: 0;/, `${label}: the always-LTR language menu should open inward from the header start in both directions`);
     assert.ok(
-      sidepanelCss.indexOf('@media (max-width: 380px)') > sidepanelCss.lastIndexOf('#header .header-right button:not(.language-picker-option).active'),
+      sidepanelCss.indexOf('@media (max-width: 380px)') > sidepanelCss.lastIndexOf('#header .header-tools button:not(.language-picker-option).active'),
       `${label}: the narrow-panel header overrides must follow the header button rules they override`,
     );
     assert.doesNotMatch(sidepanelCss, /max-height: min\(320px, 50vh\)/, `${label}: viewport clamps inside the zoomed body should divide the zoom back out`);
@@ -53622,10 +53634,10 @@ test('standalone window transport, sizing, and translations are mirrored', async
     assert.doesNotMatch(markup, /id="btn-expand"[\s\S]*?M9 21H3v-6[\s\S]*?M3 21l7-7/, `${label}: standalone launcher still uses the maximize icon`);
     assert.match(bootstrap, /params\.get\('standalone'\) === 'true'[\s\S]*?setAttribute\('data-standalone', 'true'\)/, `${label}: standalone mode is not marked before first paint`);
     assert.match(css, /html\[data-standalone="true"\] \.composer-control-row \{\s*display: none;/, `${label}: standalone window still shows the History control bar`);
-    assert.match(bootstrap, /params\.get\('standalone'\) === 'true'[\s\S]*?window\.addEventListener\('DOMContentLoaded'[\s\S]*?document\.querySelector\('#header \.header-right'\)[\s\S]*?document\.getElementById\('btn-clear'\)[\s\S]*?headerActions\.insertBefore\(newChat, expand\);/, `${label}: standalone New chat control is not moved to the header before interaction`);
-    assert.match(css, /html\[data-standalone="true"\] #header #btn-expand \{\s*display: none;/, `${label}: standalone header still reserves the far-right position for its redundant launcher`);
-    assert.match(css, /html\[data-standalone="true"\] #header #btn-clear \{[\s\S]*?width: 26px;[\s\S]*?height: 26px;[\s\S]*?justify-content: center;/, `${label}: standalone New chat should be a compact header icon`);
-    assert.match(css, /html\[data-standalone="true"\] #header #btn-clear \.conversation-action-label \{\s*display: none;/, `${label}: standalone New chat should not retain its wide text label`);
+    assert.match(markup.match(/<header id="header">[\s\S]*?<\/header>/)?.[0] || '', /id="btn-clear"/, `${label}: standalone New chat control is not in the header`);
+    assert.doesNotMatch(bootstrap, /insertBefore\(newChat/, `${label}: New chat already lives in the header and should not be moved at load`);
+    assert.match(css, /html\[data-standalone="true"\] #header #btn-expand \{\s*display: none;/, `${label}: standalone header still shows its redundant launcher`);
+    assert.match(css, /html\[data-standalone="true"\] #header #btn-history \{\s*display: none;/, `${label}: standalone header should not offer History`);
     assert.match(panel, /function normalizeAgentMode\(mode\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: standalone mode is not pinned to Ask`);
     assert.match(panel, /function setMode\(mode\) \{\s*mode = normalizeAgentMode\(mode\);/, `${label}: visible mode changes bypass the standalone Ask boundary`);
     assert.match(panel, /function modeForMessageText\(text\) \{\s*if \(isStandaloneWindow\) return 'ask';/, `${label}: slash commands can change standalone mode`);
@@ -66845,7 +66857,8 @@ test('Chrome Dev diagnostics start on both run paths and stop when Dev mode ends
   const streamingPath = agentSource.slice(streamingStart);
   assert.match(standardPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
   assert.match(streamingPath, /if \(mode === 'dev' && !standaloneChatRun\) \{\s*try \{ await cdpClient\.enableDevDiagnostics\(tabId\); \} catch \{\}\s*\}/);
-  assert.match(agentSource, /if \(lastMode === 'dev'\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
+  // An automatically routed turn defers the drain until its mode is chosen (test/auto-mode.mjs).
+  assert.match(agentSource, /if \(lastMode === 'dev' && !this\._autoModeRoutePendingTabs\.has\(tabId\)\) void cdpClient\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /case 'disable_dev_diagnostics':/);
   assert.match(backgroundSource, /disabled: await agent\.disableDevDiagnostics\(tabId\)/);
   assert.match(backgroundSource, /msg\.all === true[\s\S]*disabled: await agent\.disableAllDevDiagnostics\(\)/);
