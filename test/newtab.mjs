@@ -552,6 +552,37 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(input.value, 'yesterday\n\nyes');
   });
 
+  test(`${browser}: a task waiting in the retry slot is picked up after a newer primary one`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const retry3 = newtabHandoffRetryKey(3);
+    const store = {
+      [key3]: { id: 'B', tabId: 3, text: 'task B', mode: 'act', createdAt: 99_500 },
+      [retry3]: [{ id: 'A-retry', tabId: 3, text: 'task A', mode: 'act', createdAt: 99_900 }],
+    };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => {},
+      now: () => 100_000,
+    });
+    await handoff.start();
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, 'task B\n\ntask A');
+    assert.deepEqual(Object.keys(store), [], 'both records were claimed');
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -642,10 +673,12 @@ for (const browser of ['chrome', 'firefox']) {
     const b = rec({ id: 'b', tabId: 4, text: 'second' });
     const h = await harness({ records: { [newtabHandoffKey(3)]: a, [newtabHandoffKey(4)]: b } });
     await h.handoff.consume();
+    await flush(); // the follow-up look for further tasks settles
     assert.equal(h.log.value, 'first');
     assert.equal(newtabHandoffKey(4) in h.store, true, "tab 4's task is untouched");
     h.state.tabId = 4;
     await h.handoff.consume();
+    await flush();
     assert.equal(h.log.value, 'second');
     assert.equal(Object.keys(h.store).length, 0);
   });

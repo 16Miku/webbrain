@@ -124,6 +124,7 @@ export function createNewtabHandoff({
     const primaryKey = newtabHandoffKey(Number(tabId));
     const retryKey = newtabHandoffRetryKey(Number(tabId));
     let key = primaryKey;
+    let claimedOne = false;
     consuming = true;
     // Only the first attempt after start() gets the startup allowance.
     const allowance = startupAllowanceMs;
@@ -227,12 +228,19 @@ export function createNewtabHandoff({
             }
           });
       }
+      // A task handed back earlier may be waiting behind the one just claimed (removing a
+      // primary record raises no change event this panel acts on), so look again if so.
+      if (key === primaryKey) {
+        try {
+          claimedOne = asList((await storage.get(retryKey))?.[retryKey]).length > 0;
+        } catch { /* best effort */ }
+      }
       return true;
     } catch {
       return false;
     } finally {
       consuming = false;
-      if (rerun) {
+      if (rerun || claimedOne) {
         rerun = false;
         queueMicrotask(() => { consume(); });
       }
