@@ -122,7 +122,6 @@ try {
   const preset = (await import('../src/chrome/src/providers/webgpu.js')).webgpuModelPreset(model);
   assert(preset, `${model} is not a WebGPU preset`);
   await message('update_provider', { providerId: 'webgpu', config: { model, dtype: preset.dtype } });
-  assert.equal((await message('set_active_provider', { providerId: 'webgpu' })).ok, true);
   let status = await message('get_webgpu_download_status', { model });
   if (!status?.ready) {
     assert(args.includes('--download'), `${model} is not cached in this profile; rerun with --download`);
@@ -136,6 +135,9 @@ try {
       if (Date.now() - started > 60 * 60_000) throw new Error('Download did not finish within an hour');
     }
   }
+  // The provider can be selected for chat only once its files are cached.
+  const selected = await message('set_active_provider', { providerId: 'webgpu' });
+  assert.equal(selected?.ok, true, `Could not select the WebGPU provider: ${JSON.stringify(selected)}`);
   let tab = null;
   let tabId = null;
   for (const task of tasks) {
