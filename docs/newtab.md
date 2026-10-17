@@ -18,17 +18,26 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
 
 1. In the submit handler (no `await` before it, to keep the user gesture) the page
    writes `{id, tabId, text, mode, createdAt}` to extension storage key
-   `wbNewtabHandoff` and opens the panel for that tab (Chrome
+   `wbNewtabHandoff:<tabId>` (one key per tab, so two new tab pages submitting at
+   once cannot overwrite each other) and opens the panel for that tab (Chrome
    `sidePanel.setOptions` + `open({tabId})`; Firefox `sidebarAction.open()`). If the
-   panel fails to open the page removes its own record again, so a failed submit can
+   panel fails to open, the page removes its own record again, so a failed submit can
    never be picked up and sent later when the panel is opened by hand.
 2. It then sends `WB_NEWTAB_PANEL_OPENED`. `background.js` accepts it only from the
-   extension's own `newtab/index.html` tab, and on Chrome adds the tab to the
-   WebBrain group/`panelTabs` as the install page does.
+   extension's own `newtab/index.html` tab, on Chrome adds the tab to the
+   WebBrain group/`panelTabs` as the install page does, and sweeps hand-off records
+   that were never claimed (older than two minutes).
 3. `src/ui/newtab-handoff.js` (identical in both extensions) in the side panel claims
-   the record: it must be ≤ 30 s old, ≤ 4000 characters, mode `ask`/`act`, and
-   addressed to the tab the panel is showing. Claimed and stale records are removed.
-   It runs at panel start and on `storage.onChanged`.
+   the record for the tab it is showing. It must be ≤ 4000 characters, mode
+   `ask`/`act`, addressed to that tab, and ≤ 30 s old (plus however long the panel's
+   own startup took, up to two minutes). Claimed and stale records are removed.
+   Nothing is claimed until the panel has finished restoring its chat (`start()`);
+   after that it is tried on `storage.onChanged`, when the panel becomes visible, after
+   a tab switch and after the visible-state refresh.
+   - **Ask** is filled in and sent. If a run is already active in that tab it is
+     queued behind it, like pressing Send. If the panel declines to send (plan review
+     pending, a refresh in progress) the text stays in the composer.
+   - **Act** is filled in with the panel switched to Act, and never sent.
 
 The text is user-typed, so it enters the panel exactly like typing in the composer;
 it is never treated as page content.

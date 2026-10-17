@@ -5161,7 +5161,7 @@ async function init() {
   refreshRecommendedActions();
   await consumePendingContextMenuPrompt();
   drainQueuedContextMenuPrompts();
-  await newtabHandoff.consume();
+  await newtabHandoff.start();
 
   // Reflect initial verbose state in the button.
   if (verboseBtn) verboseBtn.classList.toggle('active', verboseMode);
@@ -5361,6 +5361,7 @@ async function switchToTab(newTabId) {
   consumePendingContextMenuPrompt()
     .then(() => drainQueuedPromptsAfterRunSettles(newTabId))
     .catch(() => {});
+  newtabHandoff.consume().catch(() => {});
   if (visibleStateRefreshPending) requestVisibleSidePanelStateRefresh();
 }
 
@@ -5426,6 +5427,7 @@ function requestVisibleSidePanelStateRefresh() {
   refreshPromise.then((refreshed) => {
     if (!refreshed || refreshPromise !== visibleStateRefreshPromise) return;
     consumePendingContextMenuPrompt().then(() => drainQueuedContextMenuPrompts()).catch(() => {});
+    newtabHandoff.consume().catch(() => {});
   }).catch(() => {});
   return refreshPromise;
 }

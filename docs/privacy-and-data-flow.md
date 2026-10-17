@@ -443,12 +443,13 @@ saved metadata and must ask the user again for any still-needed value.
 
 The new tab page (`docs/newtab.md`) makes no network requests of its own: backgrounds
 are bundled, there are no fonts, favicons, link-title lookups, weather, quotes or
-analytics requests, and no error reporting. The one exception is something you choose:
-if you set a background image by URL, the page loads that image from the address you
-gave. Its settings, quick links and uploaded backgrounds stay in the
+analytics requests, and no error reporting. The exceptions are things you choose: if
+you set a background image by URL, or give a quick link or app link a custom icon URL,
+the page loads that image from the address you gave, each time it is shown. Links
+without a custom icon use a local letter tile; nothing is looked up. Its settings, quick links and uploaded backgrounds stay in the
 browser under a separate `wbnt:` prefix. Text typed into its box is held briefly in
-extension storage to hand it to the side panel and removed once claimed (or after
-30 seconds). **Search** mode uses the browser's own default search engine, so a
+extension storage (one record per tab) to hand it to the side panel and removed once
+claimed; unclaimed records are removed after a couple of minutes. **Search** mode uses the browser's own default search engine, so a
 query typed there goes to that engine as it would from the address bar.
 
 ### Settings

@@ -1393,6 +1393,21 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   }).catch(() => {});
 });
 
+// Hand-off records from the new tab are removed by the panel that claims them.
+// This drops any that were never claimed (the tab was closed first).
+async function sweepStaleNewtabHandoffs() {
+  try {
+    const all = await browser.storage.local.get(null);
+    const cutoff = Date.now() - 120_000;
+    const stale = Object.keys(all).filter(
+      (key) => key.startsWith('wbNewtabHandoff:') && !(Number(all[key]?.createdAt) > cutoff),
+    );
+    if (stale.length) await browser.storage.local.remove(stale);
+  } catch {
+    // best effort
+  }
+}
+
 // The new tab page opens the panel from its own submit handler (it must, to
 // keep the user gesture) and reports it here, mirroring the install page above.
 browser.runtime.onMessage.addListener((msg, sender) => {
@@ -1410,6 +1425,8 @@ browser.runtime.onMessage.addListener((msg, sender) => {
   ) {
     return;
   }
+
+  sweepStaleNewtabHandoffs();
 
   browser.tabs.get(tabId).then((tab) => {
     if (String(tab?.url || '').split(/[?#]/)[0] !== newtabUrl) return;

@@ -10,7 +10,10 @@
  *   - Act: fills the composer and switches to Act but does NOT send, so the
  *     user always confirms an Act run in the panel.
  */
-export const HANDOFF_KEY = 'wbNewtabHandoff';
+// One key per tab, so concurrent submissions from several new tab pages can never
+// overwrite each other. Mirrors src/*/src/ui/newtab-handoff.js (checked in test/newtab.mjs).
+export const HANDOFF_PREFIX = 'wbNewtabHandoff:';
+export const handoffKey = (tabId) => `${HANDOFF_PREFIX}${tabId}`;
 export const MAX_TASK_LENGTH = 4000;
 
 const hasFirefoxSidebar = () =>
@@ -54,7 +57,7 @@ export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
   if (!firefox && !api.sidePanel?.open) return Promise.reject(new Error('Side panel API unavailable'));
 
   const handoff = buildHandoff({ text, mode, tabId: tab.id });
-  const stored = Promise.resolve(api.storage.local.set({ [HANDOFF_KEY]: handoff }));
+  const stored = Promise.resolve(api.storage.local.set({ [handoffKey(tab.id)]: handoff }));
 
   let opened;
   try {
@@ -80,17 +83,18 @@ export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
       // out of storage, otherwise opening the panel by hand within the next 30 s
       // would pick it up and send it as if the submit had worked.
       await stored.catch(() => {});
-      await discardHandoff(api, handoff.id);
+      await discardHandoff(api, tab.id, handoff.id);
       throw error;
     },
   );
 }
 
 /** Removes the stored hand-off, but only if it is still the one we wrote. */
-export async function discardHandoff(api, id) {
+export async function discardHandoff(api, tabId, id) {
+  const key = handoffKey(tabId);
   try {
-    const current = (await api.storage.local.get(HANDOFF_KEY))?.[HANDOFF_KEY];
-    if (!current || current.id === id) await api.storage.local.remove(HANDOFF_KEY);
+    const current = (await api.storage.local.get(key))?.[key];
+    if (!current || current.id === id) await api.storage.local.remove(key);
   } catch {
     // best effort: the panel also drops anything older than 30 s
   }

@@ -9,7 +9,7 @@ const nt = (...p) => path.join(root, 'newtab', 'src', ...p);
 const load = (file) => import(pathToFileURL(file).href);
 
 const { createNamespacedStorage, NAMESPACE_PREFIX } = await load(nt('lib/storage-namespace.js'));
-const { buildHandoff, toNavigableUrl, submitTask, HANDOFF_KEY } = await load(nt('features/agent/handoff.js'));
+const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX } = await load(nt('features/agent/handoff.js'));
 const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
 const { normalizeLinkUrl } = await load(nt('utils/links/normalizeLinkUrl.js'));
 
@@ -72,7 +72,7 @@ test('submitTask stores the task, opens the panel from the same tick, then annou
   const p = submitTask({ text: 'hello', mode: 'act' }, api, { id: 42 });
   // Everything needed for the user gesture must have happened synchronously.
   assert.deepEqual(calls.map((c) => c[0]), ['set', 'setOptions', 'open']);
-  assert.equal(calls[0][1][HANDOFF_KEY].mode, 'act');
+  assert.equal(calls[0][1][handoffKey(42)].mode, 'act');
   assert.deepEqual(calls[2][1], { tabId: 42 });
   await p;
   assert.deepEqual(calls.at(-1)[1], { type: 'WB_NEWTAB_PANEL_OPENED', tabId: 42 });
@@ -99,28 +99,28 @@ function failingApi({ open, withSidePanel = true } = {}) {
 test('a failed panel open removes the stored task so it cannot be sent later', async () => {
   const rejected = failingApi({ open: () => Promise.reject(new Error('no gesture')) });
   await assert.rejects(() => submitTask({ text: 'secret plan', mode: 'ask' }, rejected, { id: 1 }), /no gesture/);
-  assert.equal(rejected._store.has(HANDOFF_KEY), false);
+  assert.equal(rejected._store.has(handoffKey(1)), false);
 
   const threw = failingApi({ open: () => { throw new Error('sync failure'); } });
   await assert.rejects(() => submitTask({ text: 'x', mode: 'ask' }, threw, { id: 1 }), /sync failure/);
-  assert.equal(threw._store.has(HANDOFF_KEY), false);
+  assert.equal(threw._store.has(handoffKey(1)), false);
 });
 
 test('an unavailable side panel API never stores the task', async () => {
   const api = failingApi({ withSidePanel: false });
   await assert.rejects(() => submitTask({ text: 'x', mode: 'ask' }, api, { id: 1 }));
-  assert.equal(api._store.has(HANDOFF_KEY), false);
+  assert.equal(api._store.has(handoffKey(1)), false);
 });
 
 test('cleanup never removes a newer task written by another submit', async () => {
   const api = failingApi({
     open: async () => {
-      api._store.set(HANDOFF_KEY, { id: 'newer', tabId: 1, text: 'later', mode: 'ask', createdAt: Date.now() });
+      api._store.set(handoffKey(1), { id: 'newer', tabId: 1, text: 'later', mode: 'ask', createdAt: Date.now() });
       throw new Error('late failure');
     },
   });
   await assert.rejects(() => submitTask({ text: 'first', mode: 'ask' }, api, { id: 1 }));
-  assert.equal(api._store.get(HANDOFF_KEY)?.id, 'newer');
+  assert.equal(api._store.get(handoffKey(1))?.id, 'newer');
 });
 
 test('link titles are derived locally and never fetched', async () => {
@@ -169,7 +169,7 @@ test('the only remaining fetch in the new tab source loads the chosen background
 });
 
 for (const browser of ['chrome', 'firefox']) {
-  const { normalizeNewtabHandoff, createNewtabHandoff, NEWTAB_HANDOFF_KEY } =
+  const { normalizeNewtabHandoff, createNewtabHandoff, newtabHandoffKey, NEWTAB_HANDOFF_PREFIX } =
     await load(path.join(root, 'src', browser, 'src/ui/newtab-handoff.js'));
 
   test(`${browser}: handoff normalisation rejects stale, malformed or oversized records`, () => {
@@ -185,18 +185,22 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(normalizeNewtabHandoff(null, now), null);
   });
 
-  function harness({ tabId = 3, processing = false, blocked = false, record, visible = true }) {
-    const store = { [NEWTAB_HANDOFF_KEY]: record };
+  async function harness({
+    tabId = 3, processing = false, blocked = false, records, record, visible = true,
+    start = true, sendResult, clock,
+  }) {
+    const seed = records ?? (record ? { [newtabHandoffKey(record.tabId)]: record } : {});
+    const store = start ? {} : { ...seed };
     const log = { mode: null, sent: [], value: '' };
     const input = { value: '', dispatchEvent() {}, focus() {} };
     const listeners = [];
-    const state = { visible };
+    const state = { visible, tabId, time: clock ?? 100_000 };
     const handoff = createNewtabHandoff({
       storage: {
         get: async (k) => (k in store ? { [k]: store[k] } : {}),
         remove: async (k) => { delete store[k]; },
       },
-      getCurrentTabId: () => tabId,
+      getCurrentTabId: () => state.tabId,
       getIsProcessing: () => processing,
       getIsBlocked: () => blocked,
       getIsDocumentVisible: () => state.visible,
@@ -204,24 +208,38 @@ for (const browser of ['chrome', 'firefox']) {
       setMode: (m) => { log.mode = m; },
       getInputEl: () => input,
       autoResizeInput() {},
-      sendMessage: async (params) => { log.sent.push(params); log.value = input.value; },
-      now: () => 100_000,
+      sendMessage: async (params) => {
+        log.sent.push(params);
+        log.value = input.value;
+        if (sendResult === false) return false;
+        input.value = '';
+        return undefined;
+      },
+      now: () => state.time,
     });
+    // A started panel with nothing waiting; the record then "arrives".
+    if (start) {
+      await handoff.start();
+      Object.assign(store, seed);
+    }
     return { handoff, store, log, input, state, listeners };
   }
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
+  const KEY = newtabHandoffKey(3);
 
   test(`${browser}: Ask is sent automatically and the record is claimed once`, async () => {
-    const h = harness({ record: rec() });
+    const h = await harness({ record: rec() });
     assert.equal(await h.handoff.consume(), true);
-    assert.deepEqual([h.log.mode, h.log.sent, h.log.value], ['ask', [undefined], 'summarise']);
-    assert.equal(NEWTAB_HANDOFF_KEY in h.store, false);
+    assert.equal(h.log.mode, 'ask');
+    assert.deepEqual(h.log.sent, [undefined]);
+    assert.equal(h.log.value, 'summarise');
+    assert.equal(KEY in h.store, false);
     assert.equal(await h.handoff.consume(), false);
     assert.equal(h.log.sent.length, 1);
   });
 
   test(`${browser}: Act is pre-filled but never sent`, async () => {
-    const h = harness({ record: rec({ mode: 'act', text: 'book a table' }) });
+    const h = await harness({ record: rec({ mode: 'act', text: 'book a table' }) });
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.log.mode, 'act');
     assert.equal(h.log.sent.length, 0);
@@ -229,42 +247,87 @@ for (const browser of ['chrome', 'firefox']) {
   });
 
   test(`${browser}: a record for another tab is left alone; a stale one is dropped`, async () => {
-    const other = harness({ record: rec({ tabId: 99 }) });
+    const other = await harness({ record: rec({ tabId: 99 }) });
     assert.equal(await other.handoff.consume(), false);
-    assert.equal(NEWTAB_HANDOFF_KEY in other.store, true);
+    assert.equal(newtabHandoffKey(99) in other.store, true);
+    // A record filed under this tab's key but naming another tab is refused too.
+    const mismatched = await harness({ records: { [KEY]: rec({ tabId: 99 }) } });
+    assert.equal(await mismatched.handoff.consume(), false);
+    assert.equal(mismatched.log.sent.length, 0);
     assert.equal(other.log.sent.length, 0);
 
-    const stale = harness({ record: rec({ createdAt: 1 }) });
+    const stale = await harness({ record: rec({ createdAt: 1 }), start: false });
+    await stale.handoff.start();
     assert.equal(await stale.handoff.consume(), false);
-    assert.equal(NEWTAB_HANDOFF_KEY in stale.store, false);
+    assert.equal(KEY in stale.store, false);
   });
 
   test(`${browser}: Ask during an active run is queued behind it, not dropped`, async () => {
-    const h = harness({ processing: true, record: rec() });
+    const h = await harness({ processing: true, record: rec() });
     assert.equal(await h.handoff.consume(), true);
     assert.deepEqual(h.log.sent, [{ __deliveryMode: 'queue' }]);
-    assert.equal(h.input.value, 'summarise');
-    assert.equal(NEWTAB_HANDOFF_KEY in h.store, false);
+    assert.equal(h.log.value, 'summarise');
+    assert.equal(KEY in h.store, false);
   });
 
   test(`${browser}: Ask while the conversation is being cleared is only pre-filled`, async () => {
-    const h = harness({ blocked: true, record: rec() });
+    const h = await harness({ blocked: true, record: rec() });
     await h.handoff.consume();
     assert.equal(h.log.sent.length, 0);
     assert.equal(h.input.value, 'summarise');
   });
 
   test(`${browser}: a hidden panel claims the task as soon as it becomes visible`, async () => {
-    const h = harness({ visible: false, record: rec() });
+    const h = await harness({ visible: false, record: rec() });
     h.handoff.watch();
     assert.equal(await h.handoff.consume(), false);
-    assert.equal(NEWTAB_HANDOFF_KEY in h.store, true);
+    assert.equal(KEY in h.store, true);
     h.state.visible = true;
     h.listeners.forEach((fn) => fn());
     await new Promise((r) => setTimeout(r, 0));
     await new Promise((r) => setTimeout(r, 0));
     assert.equal(h.log.sent.length, 1);
-    assert.equal(NEWTAB_HANDOFF_KEY in h.store, false);
+    assert.equal(KEY in h.store, false);
+  });
+
+  test(`${browser}: nothing is claimed before start(), and a slow startup does not make the task stale`, async () => {
+    const h = await harness({ record: rec({ createdAt: 99_000 }), start: false, clock: 100_000 });
+    assert.equal(await h.handoff.consume(), false);
+    assert.equal(KEY in h.store, true);
+    assert.equal(h.log.sent.length, 0);
+    // Startup took 45 s: the record is now 46 s old, beyond the normal 30 s window.
+    h.state.time = 145_000;
+    assert.equal(await h.handoff.start(), true);
+    assert.deepEqual(h.log.sent, [undefined]);
+    assert.equal(KEY in h.store, false);
+  });
+
+  test(`${browser}: the startup allowance applies once and is capped`, async () => {
+    const h = await harness({ record: rec({ createdAt: 99_000 }), start: false, clock: 100_000 });
+    h.state.time = 100_000 + 10 * 60_000; // ten minutes of startup
+    assert.equal(await h.handoff.start(), false); // allowance capped at 2 min, record far older
+    assert.equal(KEY in h.store, false);
+  });
+
+  test(`${browser}: submissions for different tabs never overwrite each other`, async () => {
+    const a = rec({ id: 'a', tabId: 3, text: 'first' });
+    const b = rec({ id: 'b', tabId: 4, text: 'second' });
+    const h = await harness({ records: { [newtabHandoffKey(3)]: a, [newtabHandoffKey(4)]: b } });
+    await h.handoff.consume();
+    assert.equal(h.log.value, 'first');
+    assert.equal(newtabHandoffKey(4) in h.store, true, "tab 4's task is untouched");
+    h.state.tabId = 4;
+    await h.handoff.consume();
+    assert.equal(h.log.value, 'second');
+    assert.equal(Object.keys(h.store).length, 0);
+  });
+
+  test(`${browser}: a declined send leaves the text in the composer`, async () => {
+    const h = await harness({ record: rec(), sendResult: false });
+    h.input.value = '';
+    assert.equal(await h.handoff.consume(), true);
+    assert.equal(h.log.sent.length, 1);
+    assert.equal(h.input.value, 'summarise');
   });
 
   test(`${browser}: manifest and background are wired`, () => {
@@ -276,6 +339,17 @@ for (const browser of ['chrome', 'firefox']) {
     assert.match(bg, /WB_NEWTAB_PANEL_OPENED/);
   });
 }
+
+test('new tab and side panel agree on the hand-off key', async () => {
+  const { NEWTAB_HANDOFF_PREFIX: panelPrefix, newtabHandoffKey } =
+    await load(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'));
+  assert.equal(HANDOFF_PREFIX, panelPrefix);
+  assert.equal(handoffKey(12), newtabHandoffKey(12));
+  for (const b of ['chrome', 'firefox']) {
+    const bg = readFileSync(path.join(root, 'src', b, 'src/background.js'), 'utf8');
+    assert.ok(bg.includes(`'${panelPrefix}'`), `${b} background sweeps ${panelPrefix}*`);
+  }
+});
 
 test('both extensions ship an identical handoff module', () => {
   const a = readFileSync(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'), 'utf8');
