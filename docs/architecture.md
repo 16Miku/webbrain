@@ -512,7 +512,8 @@ trace and diagnostic exports as privacy-sensitive data.
 
 Selecting text on a page shows a bar (Translate, Explain, Proofread, More…) drawn by a
 content script in a closed Shadow DOM, in the top frame and in the PDF viewer page.
-**More…** opens the full popup; its actions and question box queue a side-panel prompt as
+**More…** opens the full popup; its actions (Summarize, Quiz me, Humanize, with the three
+the bar already offers left out) and question box queue a side-panel prompt as
 described above. Translate, Explain and Proofread answer in place instead: the script sends
 one `WB_SELECTION_SHORTCUT_INLINE` message and the background builds the same allowlisted
 selection prompt (the selection inside its untrusted boundary, `selection_only` grounding)
@@ -535,8 +536,13 @@ before it waits for the language bundle, so a double click starts only one call.
 over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
 nodes (paragraphs, lists, bold, italic and code), never as HTML, and takes the source
 language from the browser's own detector, with no network call. A follow-up typed in a card
-continues in the side panel as a custom question. The card's answer travels inside the
-selection's untrusted boundary, labelled as an earlier answer that may contain mistakes and
+continues in the side panel as a custom question. In Chrome the background opens the panel
+only when none is showing in that window: re-running `sidePanel.setOptions()` + `open()` on an
+open panel closes it, so each panel reports its visibility over a long-lived port
+(`sidepanel-presence.js`) and the background reads that synchronously, before the user
+gesture can lapse, then hands an already-open panel the prompt by message. The card's
+answer travels inside the selection's untrusted boundary, labelled as an earlier answer that
+may contain mistakes and
 capped at 6,000 characters, so model output derived from page text never becomes trusted
 instruction. The selection and the answer go to the configured provider like any other
 model call.

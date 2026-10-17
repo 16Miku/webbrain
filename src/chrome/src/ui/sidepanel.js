@@ -9,6 +9,7 @@ import { appendGeneratedMedia, restoreGeneratedMedia } from './generated-media-v
  */
 
 import { createQuotaController } from './compass-quota.js';
+import { reportSidePanelPresence } from '../sidepanel-presence.js';
 import { t, getLocale, setLocale, LANGUAGES, applyDOMTranslations, translationsForKey } from './i18n.js';
 import { CAPABILITY_LABEL } from '../agent/permission-gate.js';
 import { sanitizeMarkdownLinks } from './markdown-link.js';
@@ -5062,6 +5063,15 @@ async function init() {
     getRenderedTabId: () => renderedTabId,
     switchToTab,
   });
+
+  // Lets the background reuse this panel instead of re-opening it (which closes it).
+  if (!isBtwWindow) {
+    reportSidePanelPresence({
+      runtime: chrome.runtime,
+      doc: document,
+      windowId: initialWindowId ?? tab?.windowId ?? null,
+    });
+  }
 
   if (windowScope) {
     chrome.tabs.onActivated.addListener(async (info) => {

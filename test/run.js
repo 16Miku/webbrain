@@ -52059,6 +52059,185 @@ test('WebGPU provider stops waiting and cancels the worker when its caller abort
   }
 });
 
+test('side panel presence: the background learns which windows show a panel, and only from the panel page', async () => {
+  const { createSidePanelPresence, reportSidePanelPresence, SIDEPANEL_PRESENCE_PORT } = await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/sidepanel-presence.js')).href
+  );
+  const panelUrl = 'chrome-extension://abc/src/ui/sidepanel.html';
+  const api = { runtime: { id: 'abc', getURL: relative => `chrome-extension://abc/${relative}` } };
+  const makePort = (overrides = {}) => {
+    const listeners = { message: [], disconnect: [] };
+    return {
+      name: SIDEPANEL_PRESENCE_PORT,
+      sender: { id: 'abc', url: panelUrl },
+      onMessage: { addListener: callback => listeners.message.push(callback) },
+      onDisconnect: { addListener: callback => listeners.disconnect.push(callback) },
+      say: message => listeners.message.forEach(callback => callback(message)),
+      close: () => listeners.disconnect.forEach(callback => callback()),
+      ...overrides,
+    };
+  };
+
+  const presence = createSidePanelPresence(api);
+  assert.equal(presence.isVisibleInWindow(7), false, 'nothing is visible before a panel reports');
+  const port = makePort();
+  assert.equal(presence.attach(port), true);
+  port.say({ visible: true, windowId: 7 });
+  assert.equal(presence.isVisibleInWindow(7), true);
+  assert.equal(presence.isVisibleInWindow(8), false, 'a panel in another window says nothing about this one');
+  assert.equal(presence.isVisibleInWindow(undefined), false);
+  assert.equal(presence.isVisibleInWindow('7'), false);
+  port.say({ visible: false, windowId: 7 });
+  assert.equal(presence.isVisibleInWindow(7), false, 'a hidden panel is not showing');
+  port.say({ visible: true, windowId: 7 });
+  port.close();
+  assert.equal(presence.isVisibleInWindow(7), false, 'a closed panel is forgotten');
+
+  // Two panels in one window: closing one must not hide the other.
+  const first = makePort();
+  const second = makePort();
+  presence.attach(first);
+  presence.attach(second);
+  first.say({ visible: true, windowId: 3 });
+  second.say({ visible: true, windowId: 3 });
+  first.close();
+  assert.equal(presence.isVisibleInWindow(3), true);
+  second.close();
+  assert.equal(presence.isVisibleInWindow(3), false);
+
+  // Pages that are not the side panel cannot claim a window.
+  for (const bad of [
+    makePort({ name: 'something-else' }),
+    makePort({ sender: { id: 'other', url: panelUrl } }),
+    makePort({ sender: { id: 'abc', url: 'https://example.com/src/ui/sidepanel.html' } }),
+    makePort({ sender: { id: 'abc', url: 'chrome-extension://abc/src/ui/settings.html' } }),
+    makePort({ sender: { id: 'abc' } }),
+  ]) {
+    assert.equal(presence.attach(bad), false);
+    bad.say({ visible: true, windowId: 9 });
+    assert.equal(presence.isVisibleInWindow(9), false);
+  }
+  assert.equal(presence.attach(makePort({ sender: { id: 'abc', url: `${panelUrl}?window=1#x` } })), true,
+    'a query string or hash on the panel URL is still the panel');
+
+  // The panel side: reports on connect and on every visibility change.
+  const posted = [];
+  const connections = [];
+  const timers = [];
+  let clock = 0;
+  const doc = {
+    visibilityState: 'visible',
+    listeners: [],
+    addEventListener(type, callback) { if (type === 'visibilitychange') this.listeners.push(callback); },
+    removeEventListener(type, callback) { this.listeners = this.listeners.filter(item => item !== callback); },
+  };
+  const runtime = {
+    lastError: undefined,
+    connect({ name }) {
+      const disconnectListeners = [];
+      const connection = {
+        name,
+        postMessage: message => posted.push(message),
+        onDisconnect: { addListener: callback => disconnectListeners.push(callback) },
+        drop: () => disconnectListeners.forEach(callback => callback()),
+        disconnect() { this.disconnected = true; },
+      };
+      connections.push(connection);
+      return connection;
+    },
+  };
+  const reporter = reportSidePanelPresence({
+    runtime,
+    doc,
+    windowId: 5,
+    schedule: (callback, delay) => timers.push({ callback, delay }),
+    now: () => clock,
+  });
+  assert.deepEqual(connections.map(connection => connection.name), [SIDEPANEL_PRESENCE_PORT]);
+  assert.deepEqual(posted, [{ visible: true, windowId: 5 }]);
+  doc.visibilityState = 'hidden';
+  doc.listeners.forEach(callback => callback());
+  assert.deepEqual(posted.at(-1), { visible: false, windowId: 5 });
+  doc.visibilityState = 'visible';
+  doc.listeners.forEach(callback => callback());
+  assert.deepEqual(posted.at(-1), { visible: true, windowId: 5 });
+
+  // A restarted background drops the port; the panel reconnects and says where it stands.
+  clock = 60_000;
+  connections[0].drop();
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 500);
+  timers.shift().callback();
+  assert.equal(connections.length, 2, 'the panel reopens its port');
+  assert.deepEqual(posted.at(-1), { visible: true, windowId: 5 });
+
+  // A port that keeps being refused backs off instead of spinning.
+  connections[1].drop();
+  assert.equal(timers[0].delay, 1_000);
+  timers.shift().callback();
+  connections[2].drop();
+  assert.equal(timers[0].delay, 2_000);
+  timers.shift().callback();
+  assert.equal(connections.length, 4);
+
+  reporter.stop();
+  assert.equal(connections.at(-1).disconnected, true);
+  assert.equal(doc.listeners.length, 0);
+  connections.at(-1).drop();
+  timers.splice(0).forEach(timer => timer.callback());
+  assert.equal(connections.length, 4, 'a stopped reporter does not reconnect');
+
+  // Without a window it reports nothing, which keeps the old always-open behaviour.
+  const anonymous = reportSidePanelPresence({ runtime, doc, windowId: null });
+  assert.equal(connections.length, 4);
+  anonymous.stop();
+});
+
+test('background does not re-open a side panel that is already showing, and still opens one that is not', () => {
+  const background = fs.readFileSync(path.join(ROOT, 'src/chrome/src/background.js'), 'utf8');
+  const start = background.indexOf('function openSidePanelForContextMenu(tab) {');
+  const end = background.indexOf('\nasync function handleContextMenuAsk', start);
+  assert.ok(start > 0 && end > start, 'openSidePanelForContextMenu should be found');
+  const source = background.slice(start, end);
+  assert.doesNotMatch(source.replace(/\/\/.*$/gm, ''), /\bawait\b/, 'open() has to run before any await so the user gesture survives');
+
+  const run = (visibleWindowId, tab) => {
+    const calls = [];
+    const context = vm.createContext({
+      panelTabs: new Set(),
+      savePanelTabs: () => calls.push('save'),
+      ensureWebBrainGroup: () => { calls.push('group'); return Promise.resolve(); },
+      sidePanelPresence: { isVisibleInWindow: windowId => windowId === visibleWindowId },
+      chrome: {
+        sidePanel: {
+          setOptions: options => calls.push(['setOptions', options.tabId]),
+          open: options => calls.push(['open', options.tabId]),
+        },
+      },
+    });
+    vm.runInContext(`${source}\nopenSidePanelForContextMenu(${JSON.stringify(tab)});`, context);
+    return calls;
+  };
+
+  assert.deepEqual(run(null, { id: 11, windowId: 4 }),
+    ['save', ['setOptions', 11], ['open', 11], 'group'],
+    'a closed panel is enabled and opened as before');
+  assert.deepEqual(run(4, { id: 11, windowId: 4 }), ['save', 'group'],
+    'a panel already showing in the tab\'s window is left alone');
+  assert.deepEqual(run(9, { id: 11, windowId: 4 }),
+    ['save', ['setOptions', 11], ['open', 11], 'group'],
+    'a panel showing in another window does not count');
+  assert.deepEqual(run(4, { id: 12 }),
+    ['save', ['setOptions', 12], ['open', 12], 'group'],
+    'a tab with no window id (the PDF viewer stub) keeps opening');
+
+  assert.match(background, /chrome\.runtime\.onConnect\.addListener\(\(port\) => \{ sidePanelPresence\.attach\(port\); \}\);/,
+    'the presence port must be accepted at the top level of the worker');
+  const panel = fs.readFileSync(path.join(ROOT, 'src/chrome/src/ui/sidepanel.js'), 'utf8');
+  assert.match(panel, /if \(!isBtwWindow\) \{\s*reportSidePanelPresence\(\{[\s\S]*?runtime: chrome\.runtime,[\s\S]*?windowId: initialWindowId \?\? tab\?\.windowId \?\? null,/,
+    'the side panel must tell the background when it is on screen');
+});
+
 test('WebGPU provider drops a request whose caller aborts while the offscreen document is starting', async () => {
   const previousChrome = globalThis.chrome;
   const sent = [];
@@ -53565,8 +53744,12 @@ test('selection shortcut is shipped, enabled by default, and keeps browser-speci
     assert.match(content, /attachShadow\(\{ mode: 'closed' \}\)/, `${label}: selection UI should use a closed Shadow DOM`);
     assert.match(content, /const STORAGE_KEY = 'selectionShortcutEnabled';/, `${label}: content script should use the persistent setting`);
     assert.match(content, /const LOCALE_STORAGE_KEY = 'wbLocale';/, `${label}: content script should use the plugin interface language`);
-    assert.match(content, /data-action="translate">[\s\S]*?<span class="action-label">Translate<\/span>[\s\S]*?<\/button>/, `${label}: floating popup should expose one-click Translate`);
-    assert.equal((content.match(/<svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">/g) || []).length, 6, `${label}: all six floating actions should use the same accessible icon shell`);
+    assert.deepEqual(
+      [...content.matchAll(/<button class="action" type="button" data-action="([a-z]+)">/g)].map(match => match[1]),
+      ['summarize', 'quiz', 'humanize'],
+      `${label}: More… should list only what the bar does not already offer (no Translate, Explain or Proofread)`,
+    );
+    assert.equal((content.match(/<svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">/g) || []).length, 3, `${label}: all three More… actions should use the same accessible icon shell`);
     assert.match(content, /\.action-icon \{[\s\S]*?width:17px; height:17px; flex:0 0 17px; color:var\(--accent\);[\s\S]*?stroke-width:1\.7;[\s\S]*?stroke-linecap:round; stroke-linejoin:round;/, `${label}: action icons should share one compact line-icon treatment`);
     assert.doesNotMatch(content, /knowledge-option|Use general knowledge|generalKnowledge|allowGeneralKnowledge/, `${label}: custom questions should not expose or retain a redundant grounding checkbox`);
     assert.match(content, /class="context-option"[\s\S]*?<input type="checkbox" checked>[\s\S]*?<span>Include page &amp; conversation context<\/span>/, `${label}: custom questions should expose a default-on page and conversation context choice`);

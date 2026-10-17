@@ -207,7 +207,7 @@
     host.dir = localization.dir;
     shortcut.setAttribute('aria-label', strings.askHighlightedText);
     popup.setAttribute('aria-label', strings.askHighlightedText);
-    for (const action of ['summarize', 'explain', 'quiz', 'proofread', 'humanize', 'translate']) {
+    for (const action of ['summarize', 'quiz', 'humanize']) {
       const label = shadow.querySelector(`[data-action="${action}"] .action-label`);
       if (label) label.textContent = strings[action];
     }
@@ -327,7 +327,7 @@
           color:var(--text); box-shadow:var(--shadow); pointer-events:auto;
           font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         }
-        .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:2px; }
+        .actions { display:grid; grid-template-columns:minmax(0,1fr); gap:2px; }
         .action,.hide {
           border:0; border-radius:10px; background:transparent;
           color:var(--text); text-align:start; cursor:pointer;
@@ -495,12 +495,6 @@
               </svg>
               <span class="action-label">Summarize</span>
             </button>
-            <button class="action" type="button" data-action="explain">
-              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
-                <path d="M6.5 11.5a5 5 0 1 1 7 0c-.9.8-1.3 1.6-1.4 2.5H7.9c-.1-.9-.5-1.7-1.4-2.5ZM8.2 17h3.6M8 14h4"/>
-              </svg>
-              <span class="action-label">Explain</span>
-            </button>
             <button class="action" type="button" data-action="quiz">
               <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
                 <circle cx="10" cy="10" r="7"/>
@@ -508,24 +502,12 @@
               </svg>
               <span class="action-label">Quiz me</span>
             </button>
-            <button class="action" type="button" data-action="proofread">
-              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
-                <path d="M5 3.5h7l3 3v10H5zM12 3.5v3h3M7.3 11.8l1.6 1.6 3.5-3.7"/>
-              </svg>
-              <span class="action-label">Proofread</span>
-            </button>
             <button class="action" type="button" data-action="humanize">
               <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
                 <circle cx="10" cy="7" r="2.5"/>
                 <path d="M4.8 16.5C5.6 13.5 7.4 12 10 12s4.4 1.5 5.2 4.5"/>
               </svg>
               <span class="action-label">Humanize</span>
-            </button>
-            <button class="action" type="button" data-action="translate">
-              <svg class="action-icon" viewBox="0 0 20 20" fill="none" aria-hidden="true" focusable="false">
-                <path d="M3.5 5h9M8 3v2M5.2 8.5c1.2 2 3 3.6 5.4 4.7M11.2 7.5c-1 2.6-3.2 4.8-6.5 6.5M12.5 16.5l2.8-7 2.8 7M13.5 14h3.6"/>
-              </svg>
-              <span class="action-label">Translate</span>
             </button>
           </div>
           <div class="question-wrap">
@@ -1274,7 +1256,9 @@
         ? Object.fromEntries(INLINE_ACTIONS.map((kind) => [kind, rectOf(`[data-inline="${kind}"]`)]))
         : null,
       summarizeRect: popup && !popup.hidden ? rectOf('[data-action="summarize"]') : null,
-      translateRect: popup && !popup.hidden ? rectOf('[data-action="translate"]') : null,
+      popupActions: popup
+        ? Array.from(popup.querySelectorAll('[data-action]'), (button) => button.dataset.action)
+        : [],
       hideRect: popup && !popup.hidden ? rectOf('.hide') : null,
       questionRect: popup && !popup.hidden ? question?.getBoundingClientRect().toJSON() || null : null,
       questionValue: question?.value || '',
@@ -1284,7 +1268,6 @@
       actionIconCount: shadow?.querySelectorAll('.action > .action-icon').length || 0,
       direction: host?.dir || 'ltr',
       summarizeLabel: shadow?.querySelector('[data-action="summarize"] .action-label')?.textContent || '',
-      explainLabel: shadow?.querySelector('[data-action="explain"] .action-label')?.textContent || '',
       quizLabel: shadow?.querySelector('[data-action="quiz"] .action-label')?.textContent || '',
       cardVisible: !!card && !card.hidden,
       cardKind: cardState?.kind || '',

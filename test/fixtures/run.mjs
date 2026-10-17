@@ -1680,9 +1680,9 @@ for (const [label, sourcePath, manualOpen] of [
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, locale: 'zh' });
     const localized = await selectFixtureText(page);
     if (localized.summarizeLabel !== '总结'
-        || localized.explainLabel !== '解释'
         || localized.quizLabel !== '测验我'
-        || localized.actionIconCount !== 6
+        || localized.popupActions.join('|') !== 'summarize|quiz|humanize'
+        || localized.actionIconCount !== 3
         || localized.barLabels.join('|') !== '翻译|解释|校对|更多…'
         || localized.followUpPlaceholder !== '继续追问'
         || localized.direction !== 'ltr') {
@@ -1701,7 +1701,7 @@ for (const [label, sourcePath, manualOpen] of [
     await page.evaluate(() => window.__setSelectionShortcutLocale('ar'));
     await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().direction === 'rtl');
     const rtl = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
-    if (rtl.summarizeLabel !== 'تلخيص' || rtl.actionIconCount !== 6) {
+    if (rtl.summarizeLabel !== 'تلخيص' || rtl.actionIconCount !== 3) {
       throw new Error(`live Arabic localization mismatch: ${JSON.stringify(rtl)}`);
     }
   });
@@ -1807,8 +1807,8 @@ for (const [label, sourcePath, manualOpen] of [
     }
     if (!openState.hideRect
         || openState.hideLabel !== 'Hide this'
-        || openState.hideRect.width >= openState.translateRect.width
-        || Math.abs(openState.hideRect.right - openState.translateRect.right) > 0.5) {
+        || openState.hideRect.width >= openState.summarizeRect.width
+        || Math.abs(openState.hideRect.right - openState.summarizeRect.right) > 0.5) {
       throw new Error(`Hide this should be a compact right-aligned footer action: ${JSON.stringify(openState)}`);
     }
     await page.mouse.click(
@@ -1943,20 +1943,20 @@ for (const [label, sourcePath, manualOpen] of [
       translationShortcutRect.left + translationShortcutRect.width / 2,
       translationShortcutRect.top + translationShortcutRect.height / 2,
     );
-    const translateState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
-    const translateRect = translateState.translateRect;
-    if (!translateRect) throw new Error('Translate action was not visible in the popup');
-    await page.mouse.click(translateRect.left + translateRect.width / 2, translateRect.top + translateRect.height / 2);
+    const presetState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    const presetRect = presetState.summarizeRect;
+    if (!presetRect) throw new Error('Summarize action was not visible in the popup');
+    await page.mouse.click(presetRect.left + presetRect.width / 2, presetRect.top + presetRect.height / 2);
     await page.waitForFunction(() => window.__selectionMessages.length === 3);
-    const translated = await page.evaluate(() => ({
+    const summarized = await page.evaluate(() => ({
       message: window.__selectionMessages[2],
       state: window.__webbrainSelectionShortcut.getState(),
     }));
-    if (translated.message.action !== 'translate' || translated.message.language !== 'tr') {
-      throw new Error(`translation request was not submitted correctly: ${JSON.stringify(translated.message)}`);
+    if (summarized.message.action !== 'summarize' || summarized.message.language !== 'tr') {
+      throw new Error(`popup preset was not submitted correctly: ${JSON.stringify(summarized.message)}`);
     }
-    if (translated.state.popupVisible || translated.state.shortcutVisible) {
-      throw new Error(`Translate should submit directly and dismiss the surface: ${JSON.stringify(translated.state)}`);
+    if (summarized.state.popupVisible || summarized.state.shortcutVisible) {
+      throw new Error(`a popup preset should submit directly and dismiss the surface: ${JSON.stringify(summarized.state)}`);
     }
 
     await page.evaluate(() => window.__setSelectionShortcutLocale('fr'));
@@ -1968,13 +1968,13 @@ for (const [label, sourcePath, manualOpen] of [
     );
     const updatedLocaleState = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
     await page.mouse.click(
-      updatedLocaleState.translateRect.left + updatedLocaleState.translateRect.width / 2,
-      updatedLocaleState.translateRect.top + updatedLocaleState.translateRect.height / 2,
+      updatedLocaleState.summarizeRect.left + updatedLocaleState.summarizeRect.width / 2,
+      updatedLocaleState.summarizeRect.top + updatedLocaleState.summarizeRect.height / 2,
     );
     await page.waitForFunction(() => window.__selectionMessages.length === 4);
     const updatedLocaleMessage = await page.evaluate(() => window.__selectionMessages[3]);
-    if (updatedLocaleMessage.action !== 'translate' || updatedLocaleMessage.language !== 'fr') {
-      throw new Error(`Translate did not follow the updated plugin locale: ${JSON.stringify(updatedLocaleMessage)}`);
+    if (updatedLocaleMessage.action !== 'summarize' || updatedLocaleMessage.language !== 'fr') {
+      throw new Error(`the popup preset did not follow the updated plugin locale: ${JSON.stringify(updatedLocaleMessage)}`);
     }
   });
 

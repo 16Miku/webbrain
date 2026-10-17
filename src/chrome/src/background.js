@@ -11,6 +11,10 @@ import { probeDecisionVision } from './agent/decision-vision-probe.js';
 import { installSafeSocialBackground } from './safesocial/background.js';
 import { createFeedbackHandoff } from './feedback-handoff.js';
 const feedbackHandoff = createFeedbackHandoff(chrome);
+import { createSidePanelPresence } from './sidepanel-presence.js';
+// Which side panels are on screen; see openSidePanelForContextMenu().
+const sidePanelPresence = createSidePanelPresence(chrome);
+chrome.runtime.onConnect.addListener((port) => { sidePanelPresence.attach(port); });
 import { ProviderManager } from './providers/manager.js';
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
@@ -1668,12 +1672,18 @@ function openSidePanelForContextMenu(tab) {
   if (!tab?.id) return;
   panelTabs.add(tab.id);
   savePanelTabs();
-  chrome.sidePanel.setOptions({
-    tabId: tab.id,
-    path: 'src/ui/sidepanel.html',
-    enabled: true,
-  });
-  chrome.sidePanel.open({ tabId: tab.id });
+  // A panel that is already showing in this window needs nothing here: callers hand it
+  // the prompt by message. Running setOptions + open again on an open panel makes
+  // Chrome tear it down, which is how a follow-up used to close the sidebar. This check
+  // must stay synchronous: open() loses the user's gesture across an await.
+  if (!sidePanelPresence.isVisibleInWindow(tab.windowId)) {
+    chrome.sidePanel.setOptions({
+      tabId: tab.id,
+      path: 'src/ui/sidepanel.html',
+      enabled: true,
+    });
+    chrome.sidePanel.open({ tabId: tab.id });
+  }
   ensureWebBrainGroup(tab).catch(() => {});
 }
 
