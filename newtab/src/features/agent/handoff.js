@@ -64,7 +64,7 @@ export function buildHandoff({ text, mode, tabId, now = Date.now() }) {
 const CLAIM_TIMEOUT_MS = 160_000;
 const inFlight = new Map(); // tabId -> { promise, release }
 
-function lockTab(tabId) {
+function lockTab(tabId, text = '') {
   let resolve;
   const promise = new Promise((r) => { resolve = r; });
   // `claimed` is false only when the wait ran out without the panel ever taking the task.
@@ -72,11 +72,14 @@ function lockTab(tabId) {
     if (inFlight.get(tabId)?.promise === promise) inFlight.delete(tabId);
     resolve(claimed);
   };
-  inFlight.set(tabId, { promise, release });
+  inFlight.set(tabId, { promise, release, text });
   return release;
 }
 
 export const isHandoffPending = (tabId) => inFlight.has(tabId);
+
+/** The text of the task this tab is still waiting on (to put back if the panel never takes it). */
+export const pendingHandoffText = (tabId) => inFlight.get(tabId)?.text ?? '';
 
 /**
  * Resolves true when the panel has claimed this tab's task (or the submit failed), false when the
@@ -99,7 +102,7 @@ export async function adoptPendingHandoff(api, tabId, now = Date.now()) {
   if (!record || inFlight.has(tabId)) return false;
   const remaining = CLAIM_TIMEOUT_MS - (now - Number(record.createdAt || 0));
   if (!(remaining > 0)) return false;
-  releaseWhenClaimed(api, tabId, lockTab(tabId), remaining);
+  releaseWhenClaimed(api, tabId, lockTab(tabId, String(record.text ?? '')), remaining);
   return true;
 }
 
@@ -134,7 +137,7 @@ export function submitTask({ text, mode }, api = extApi(), tab = currentTab) {
   const firefox = hasFirefoxSidebar();
   if (!firefox && !api.sidePanel?.open) return Promise.reject(new Error('Side panel API unavailable'));
 
-  const release = lockTab(tab.id);
+  const release = lockTab(tab.id, String(text ?? ''));
   const handoff = buildHandoff({ text, mode, tabId: tab.id });
 
   let stored;

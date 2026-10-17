@@ -9,7 +9,7 @@ const nt = (...p) => path.join(root, 'newtab', 'src', ...p);
 const load = (file) => import(pathToFileURL(file).href);
 
 const { createNamespacedStorage, NAMESPACE_PREFIX } = await load(nt('lib/storage-namespace.js'));
-const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX, isHandoffPending, whenClaimed, adoptPendingHandoff } = await load(nt('features/agent/handoff.js'));
+const { buildHandoff, toNavigableUrl, submitTask, handoffKey, HANDOFF_PREFIX, isHandoffPending, whenClaimed, adoptPendingHandoff, pendingHandoffText } = await load(nt('features/agent/handoff.js'));
 const { getTitleFromUrl } = await load(nt('utils/links/getTitleFromUrl.js'));
 const { normalizeLinkUrl } = await load(nt('utils/links/normalizeLinkUrl.js'));
 
@@ -228,7 +228,9 @@ test('round-66: a wait that times out is reported as unclaimed, a real claim as 
   const now = Date.now();
   store.set(handoffKey(188), { id: 'x', tabId: 188, text: 't', mode: 'ask', createdAt: now - 160_000 + 20 });
   assert.equal(await adoptPendingHandoff(api, 188, now), true);
+  assert.equal(pendingHandoffText(188), 't', 'an adopted record keeps its text to give back');
   assert.equal(await whenClaimed({ id: 188 }), false, 'timeout is not a claim');
+  assert.equal(pendingHandoffText(188), '', 'and nothing is held once it is released');
   assert.equal(isHandoffPending(188), false);
   // a record that is removed resolves as claimed
   store.set(handoffKey(189), { id: 'y', tabId: 189, text: 't', mode: 'ask', createdAt: now });
@@ -239,6 +241,7 @@ test('round-66: a wait that times out is reported as unclaimed, a real claim as 
   assert.equal(await whenClaimed({ id: 189 }), true);
   const box = readFileSync(nt('features/agent/TaskBox.jsx'), 'utf8');
   assert.match(box, /if \(claimed === false\) \{\s*setText\(\(current\) => current \|\| value\);\s*setError\(/);
+  assert.match(box, /const adoptedText = pendingHandoffText\(tab\.id\);[\s\S]*setText\(\(current\) => current \|\| adoptedText\);/);
 });
 
 test('quick link style option values match what the renderer checks', () => {

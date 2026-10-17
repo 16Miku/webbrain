@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MdArrowForward, MdChatBubbleOutline, MdSearch, MdSmartToy } from 'react-icons/md';
 import { wbT } from 'lib/wb-strings';
-import { canSearch, isHandoffPending, primeCurrentTab, runSearch, submitTask, whenClaimed } from './handoff';
+import { canSearch, isHandoffPending, pendingHandoffText, primeCurrentTab, runSearch, submitTask, whenClaimed } from './handoff';
 
 import './taskbox.scss';
 
@@ -36,10 +36,15 @@ function TaskBox() {
     primeCurrentTab().then((tab) => {
       if (alive && tab?.id != null && isHandoffPending(tab.id)) {
         setWaiting(true);
+        const adoptedText = pendingHandoffText(tab.id);
         whenClaimed(tab).then((claimed) => {
           if (!alive) return;
           setWaiting(false);
-          if (claimed === false) setError(wbT('wb.panel_failed'));
+          if (claimed === false) {
+            // The panel never took it: give the text back, as after a direct submit.
+            setText((current) => current || adoptedText);
+            setError(wbT('wb.panel_failed'));
+          }
         });
       }
     });
