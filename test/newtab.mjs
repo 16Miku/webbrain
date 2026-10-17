@@ -642,6 +642,45 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(input.value, '', 'a task created after startup uses the ordinary window');
   });
 
+  test(`${browser}: the hold allowance is dropped once the delayed task has been claimed`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 } };
+    const state = { clock: 100_000 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let releaseA;
+    const gateA = new Promise((r) => { releaseA = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { await gateA; input.value = ''; return true; },
+      now: () => state.clock,
+    });
+    await handoff.start();
+    // an Act task waits behind A's slow send (nothing is sent for it, so no later look follows)
+    store[key3] = { id: 'B', tabId: 3, text: 'task B', mode: 'act', createdAt: 99_800 };
+    await handoff.consume();
+    state.clock = 135_000; // B is 35 s old because of the hold
+    releaseA();
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, 'task B', 'the delayed task is accepted');
+    // a later, unrelated task that is genuinely stale (40 s) must not borrow the allowance
+    input.value = '';
+    store[key3] = { id: 'C', tabId: 3, text: 'task C', mode: 'act', createdAt: state.clock - 40_000 };
+    await handoff.consume();
+    assert.equal(input.value, '', 'it is judged on its own age');
+  });
+
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };

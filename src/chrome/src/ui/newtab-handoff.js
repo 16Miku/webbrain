@@ -318,7 +318,14 @@ export function createNewtabHandoff({
       }
       // A task handed back earlier may be waiting behind the one just claimed (removing a
       // primary record raises no change event this panel acts on), so look again if so.
-      if (key === primaryKey) claimedOne = await retryWaiting();
+      if (key === primaryKey) {
+        claimedOne = await retryWaiting();
+        // Nothing else was delayed by the hold: whatever arrives next is judged on its own age.
+        if (!claimedOne) heldAllowanceMs.delete(Number(tabId));
+      } else {
+        // A hand-back was claimed; look again, which finds the next one or clears the allowance.
+        claimedOne = true;
+      }
       return true;
     } catch {
       return false;
