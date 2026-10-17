@@ -14,7 +14,20 @@ import { BACKGROUNDS_BACKUP_KEY } from './export';
  * @param e - The JSON settings string to import
  */
 export async function importSettings(e, initial = false) {
-  const { [BACKGROUNDS_BACKUP_KEY]: backgrounds, ...content } = JSON.parse(e);
+  let backgrounds;
+  let content;
+  try {
+    const parsed = JSON.parse(e);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('settings file is not an object');
+    }
+    ({ [BACKGROUNDS_BACKUP_KEY]: backgrounds, ...content } = parsed);
+  } catch (error) {
+    // Truncated or foreign file: say so, and change nothing.
+    console.error('Could not read the settings file:', error);
+    toast(variables.getMessage('toasts.error'));
+    return false;
+  }
 
   // Uploaded images / videos live in IndexedDB; the backup replaces what is there. This goes
   // first and is all-or-nothing: if it fails the current gallery is put back and nothing else

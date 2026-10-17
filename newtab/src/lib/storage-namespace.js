@@ -89,6 +89,13 @@ function createMemoryStorage() {
 // The un-namespaced store, for the few WebBrain keys the new tab may read.
 let rawStorage = null;
 try {
+  // Getting the Storage object is not proof it works: blocked or full storage can hand one
+  // out whose methods throw. Probe a write and a read before relying on it.
+  const probeKey = `${NAMESPACE_PREFIX}__probe`;
+  window.localStorage.setItem(probeKey, '1');
+  const readBack = window.localStorage.getItem(probeKey);
+  window.localStorage.removeItem(probeKey);
+  if (readBack !== '1') throw new Error('localStorage did not keep a value');
   rawStorage = installNamespacedLocalStorage(window).real;
 } catch {
   try {

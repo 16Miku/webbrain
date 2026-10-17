@@ -1205,6 +1205,14 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     await mod.importSettings(JSON.stringify({ theme: 'light' }));
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep']);
 
+    // a truncated / foreign file is reported and changes nothing
+    globalThis.__toasts = [];
+    for (const bad of ['{"theme": "da', '[1,2]', 'null', '"str"']) {
+      assert.equal(await mod.importSettings(bad), false, bad);
+    }
+    assert.deepEqual(globalThis.__toasts, ['toasts.error', 'toasts.error', 'toasts.error', 'toasts.error']);
+    assert.equal(store.getItem('theme'), 'light');
+
     // an unreadable current gallery aborts instead of being wiped
     mod.db.unreadable = true;
     assert.equal(await mod.importSettings(backup([{ url: 'data:x' }])), false);
@@ -1227,4 +1235,26 @@ test('round-25: video remounts per url, migration drops the localStorage copy, N
   assert.match(nav, /\[backgroundEnabled, setBackgroundEnabled\] = useState/);
   assert.match(nav, /setBackgroundEnabled\(localStorage\.getItem\('background'\) === 'true'\)/);
   assert.doesNotMatch(nav, /const backgroundEnabled = localStorage/);
+});
+
+test('a Storage object whose methods throw falls back to in-memory storage', async () => {
+  const href = pathToFileURL(nt('lib/storage-namespace.js')).href;
+  const realWindow = globalThis.window;
+  try {
+    const broken = { setItem() { throw new DOMException('QuotaExceededError'); }, getItem() { return null; }, removeItem() {}, key: () => null, length: 0 };
+    globalThis.window = { localStorage: broken };
+    const mod = await import(`${href}?broken=${Date.now()}`);
+    assert.equal(mod.rawStorage, null, 'no persistent storage is claimed');
+    const ls = globalThis.window.localStorage;
+    ls.setItem('a', 'b');
+    assert.equal(ls.getItem('a'), 'b', 'the page still has working (in-memory) settings');
+
+    const working = memoryStorage();
+    globalThis.window = { localStorage: working };
+    const ok = await import(`${href}?ok=${Date.now()}`);
+    assert.equal(ok.rawStorage, working, 'real storage is used when it works');
+    assert.equal(working.getItem(`${NAMESPACE_PREFIX}__probe`), null, 'the probe leaves nothing behind');
+  } finally {
+    if (realWindow === undefined) delete globalThis.window; else globalThis.window = realWindow;
+  }
 });
