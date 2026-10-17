@@ -14,7 +14,7 @@ import { installPageFeedback, beforePageAgentDispatch, capturePageAgentInputComp
 import { JEV_FAST_KEYS, JEV_CLASSIFIER_THRESHOLD, JEV_BROWSER_THRESHOLD, confidentChoice, buildJevBrowserRequest, decideJevBrowser, jevVisualInputRequiresMainModel, JevFastSession } from './systemone-fast.js';
 import { redactSystemOneText, wrapSystemOneData, boundedSystemOneText, systemOneStateBytes } from './systemone-evidence.js';
 import { createSystemOneJudge, isSystemOneResponseContractError, systemOneFailureReason, SYSTEM_ONE_COST_PROVIDER } from './systemone-judge.js';
-import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
+import { AUTO_MODE, AUTO_MODE_ASK_NOTE, REQUEST_ACTION_MODE_TOOL_NAME, acceptModeEscalation, autoModeForChoice, autoModeHardRoute, carriesUntrustedText, confirmedEscalationMode, isRunMode, settleAutoModeRoute, withRoutedRuntimeMode } from './auto-mode.js';
 import { SEMANTIC_BATCH_LIMITS, SEMANTIC_DECISION_VERSION, acceptSemanticAnswer, acceptSemanticBatchAnswers, boundedSemanticData, controlEffectCommits, semanticBatchChunks, semanticBatchDecisionMessages, semanticDecisionMessages, semanticQuestion, semanticSystemOneBatchQuestions, semanticSystemOneQuestion, WORKFLOW_STATES } from './semantic-decisions.js';
 import { SOCIAL_PLATFORMS, socialPublicationApiPlatform, normalizePublicationContract, resolvePublicationText, publicationProgress, exactPublicationText, publicationMediaMatches, publicationContractMessages, publicationAuditMessages, parsePublicationJson, publicationAuditValidation } from './social-publish-contract.js';
 import { mastodonPublicationIntentMessages, normalizeMastodonPublicationIntent, captureNativeMastodonPublication, mastodonPublicationBinding, mastodonPublicationReceipt, mastodonPublicationNavigation } from './mastodon-publication.js';
@@ -8070,8 +8070,10 @@ export class Agent extends LoopDetector {
    * available; callers then ask the user or do not proceed. Identical
    * questions are answered once. `mainModel: false` asks the decision model
    * only, for a check that is not worth a call to the chat model.
+   * `retryChoices` are answers that do not settle this question when they come
+   * from the cache or the decision model; the active model is asked instead.
    */
-  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true } = {}) {
+  async _semanticDecision(tabId, kind, { request = '', page = {} } = {}, { provider = this._activeProvider(tabId), signal = null, mainModel = true, retryChoices = [] } = {}) {
     const spec = semanticQuestion(kind);
     // Relationship decisions must read the entire latest user message. A
     // prefix-only verdict can mistake a correction or a new task at its end.
@@ -8080,7 +8082,7 @@ export class Agent extends LoopDetector {
     const cacheKey = this._sha256TextSync(JSON.stringify([SEMANTIC_DECISION_VERSION, kind, trusted, data]));
     this._semanticDecisionCache ??= new Map();
     const cached = this._semanticDecisionCache.get(cacheKey);
-    if (cached) return { ...cached, source: 'cache' };
+    if (cached && !retryChoices.includes(cached.choice)) return { ...cached, source: 'cache' };
     const remember = result => {
       this._semanticDecisionCache.set(cacheKey, { choice: result.choice, evidence: result.evidence, answeredBy: result.source });
       while (this._semanticDecisionCache.size > 256) this._semanticDecisionCache.delete(this._semanticDecisionCache.keys().next().value);
@@ -8104,7 +8106,7 @@ export class Agent extends LoopDetector {
         const choice = confidentChoice(answer, spec.authorizing.includes(answer?.choice) ? 0.85 : 0.7);
         this.recordSystemOneVerdict(tabId, { decision: choice ? 'semantic' : 'fallback', reason: choice ? kind : `${kind}_low_confidence`,
           model: verdict.model }, context);
-        if (choice) return remember({ choice, evidence: '', source: 'decision_model' });
+        if (choice && !retryChoices.includes(choice)) return remember({ choice, evidence: '', source: 'decision_model' });
       } else if (settings && !decisionFits) {
         this.recordSystemOneVerdict(tabId, { decision: 'fallback', reason: `${kind}_context_budget` }, context);
       }
@@ -24459,11 +24461,13 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // task, never page content.
   _autoModeQuestion(messages, userMessage, previousMode = null) {
     const binding = this._activeTaskBinding(messages || []);
+    const task = binding.index >= 0 ? String(binding.requestText || binding.text || '') : '';
     return {
       request: this._messageText(userMessage),
       page: {
         previous_mode: isRunMode(previousMode) ? previousMode : 'none',
-        current_task: binding.index >= 0 ? String(binding.requestText || binding.text || '') : '',
+        // An earlier selection prompt with page context is not the user's own words.
+        current_task: carriesUntrustedText(task) ? '' : task,
       },
     };
   }
@@ -24511,7 +24515,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
     }
     // Leaving Dev drains its diagnostics. A read-only turn may still hand
-    // itself to Dev, so processMessage decides when that turn ends.
+    // itself to Dev, so processMessage decides when the turn ends.
     if (previousMode === 'dev' && mode === 'act') void cdpClient.disableDevDiagnostics(tabId);
     else if (previousMode === 'dev' && mode === 'ask') this._autoModeDevDrainTabs.add(tabId);
     onUpdate('run_mode', { mode, source: routed.source });
@@ -24536,7 +24540,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // the page, the page-free `run_mode` question must also answer act or dev
   // (a sure decision-model "answer" from routing is reused from the cache).
   // Returns { accepted: { mode, evidence } } or { refusal: text }.
-  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages) {
+  async _autoModeEscalation(tabId, toolCalls, enriched, provider, question, messages, snapshot = null) {
     const call = (toolCalls || []).find(item => item?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME);
     const request = typeof enriched?.webbrainUserAuthoredText === 'string'
       ? enriched.webbrainUserAuthoredText
@@ -24546,13 +24550,18 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     if (!requested) {
       return { refusal: 'request_action_mode was refused: `evidence` must quote the words of the user\'s latest message that ask for the action, exactly as written. Answer the request read-only if you can.' };
     }
-    // A correction applied during this turn lives after the turn, which the
-    // restart replaces.
-    const turnIndex = messages.lastIndexOf(enriched);
-    if (turnIndex >= 0 && messages.slice(turnIndex + 1).some(message => message?.webbrainSteering)) {
-      return { refusal: 'request_action_mode was refused because the user corrected the request during this turn. Answer the corrected request read-only; the user can send it again to have it done.' };
-    }
-    const verdict = await this._semanticDecision(tabId, 'run_mode', question || { request, page: {} }, { provider });
+    // A correction made during this turn, applied or still pending, belongs
+    // to the turn the restart replaces.
+    const corrected = () => {
+      const before = new Set(snapshot?.messages || []);
+      return this._hasPendingSteering(tabId)
+        || messages.some(message => message?.webbrainSteering && !before.has(message));
+    };
+    const steeredRefusal = { refusal: 'request_action_mode was refused because the user corrected the request during this turn. Answer the corrected request read-only; the user can send it again to have it done.' };
+    if (corrected()) return steeredRefusal;
+    // A sure "answer" from routing settles it; an "unclear" one asks again.
+    const verdict = await this._semanticDecision(tabId, 'run_mode', question || { request, page: {} }, { provider, retryChoices: ['unclear'] });
+    if (corrected()) return steeredRefusal;
     const mode = confirmedEscalationMode(requested, verdict.choice, { tier });
     if (!mode) {
       return { refusal: 'request_action_mode was refused: read on its own, the user\'s request does not ask for browser actions. Answer it read-only.' };
@@ -24563,7 +24572,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
   // The conversation and per-tab turn state before a routed turn gathers its
   // context. A hand-off restores it, so the action run that replaces the
   // turn starts from the same state: approved plans, site notes, the API
-  // note, the follow-up allowance and the durable-turn marker included.
+  // note, the follow-up allowance, a selection-scope restoration note and
+  // the durable-turn marker included.
   _autoModeTurnSnapshot(tabId, messages) {
     const entry = (map) => (map.has(tabId) ? { value: map.get(tabId) } : null);
     return {
@@ -24572,6 +24582,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       submittedRunRequestId: entry(this.submittedRunRequestIds),
       apiAllowedInjected: this.apiAllowedInjected.has(tabId),
       plannerFollowUpSkip: this.plannerFollowUpSkipTabs.has(tabId),
+      selectionScopeRestorationPending: this.selectionGroundingRestorationPendingTabs.has(tabId),
     };
   }
 
@@ -24584,6 +24595,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     restore(this.submittedRunRequestIds, snapshot.submittedRunRequestId);
     toggle(this.apiAllowedInjected, snapshot.apiAllowedInjected);
     toggle(this.plannerFollowUpSkipTabs, snapshot.plannerFollowUpSkip);
+    toggle(this.selectionGroundingRestorationPendingTabs, snapshot.selectionScopeRestorationPending);
   }
 
   // The action mode a routed turn handed itself to, read once by the caller
@@ -50068,6 +50080,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       this._clickAxCdpFallbacks.delete(tabId);
       this._clearCompletionInvariant(tabId, completionRunToken);
       this._clearReadCompleteness(tabId, readCompletenessRunToken);
+      // A routed read-only turn after Dev drains its diagnostics now unless it
+      // handed itself to Dev, so the cleanup below can detach the debugger.
+      if (this._autoModeDevDrainTabs.delete(tabId) && this._pendingModeEscalations.get(tabId)?.mode !== 'dev') {
+        try { await cdpClient.disableDevDiagnostics(tabId); } catch {}
+      }
       try {
         await cdpClient.cleanupRun(tabId);
       } catch { /* the debugger may already be detached during teardown */ }
@@ -50090,9 +50107,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         if (this._autoModeRoutePendingTabs.has(tabId) && isRunMode(runOptions?.autoModeRouting?.previousMode)) {
           this.conversationModes.set(tabId, runOptions.autoModeRouting.previousMode);
         }
-        if (this._autoModeDevDrainTabs.delete(tabId) && this._pendingModeEscalations.get(tabId)?.mode !== 'dev') {
-          void cdpClient.disableDevDiagnostics(tabId);
-        }
+        this._autoModeDevDrainTabs.delete(tabId);
         this._autoModeEscalationTabs.delete(tabId);
         this._autoModeRoutePendingTabs.delete(tabId);
         try { this._finishSteeringRun(tabId); } finally { this._releaseRunEntry(tabId); }
@@ -51367,7 +51382,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
 
       if (mode === 'ask' && this._autoModeEscalationTabs.has(tabId)
           && result.toolCalls?.some(call => call?.function?.name === REQUEST_ACTION_MODE_TOOL_NAME)) {
-        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages);
+        const handoff = await this._autoModeEscalation(tabId, result.toolCalls, enriched, provider, autoModeQuestion, messages, autoModeTurnStart);
         const escalation = handoff.accepted;
         if (escalation) {
           // The caller restarts this turn in the requested mode, from the
