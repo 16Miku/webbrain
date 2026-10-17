@@ -79,6 +79,16 @@ for (const [kind, engine] of [['chrome', chromium], ['firefox', firefox]]) {
       // and a fold hides text behind a widget: neither establishes the document.
       await open(editorHtml(rendered, '<div class="cm-gap" style="height: 2000px"></div>'));
       assert.equal((await verify(post)).verified, false, 'A partly rendered document is never certified');
+      // Even when the rendered lines alone are exactly what was asked for, the
+      // gap stands for more of the document: rendered text must not certify
+      // or fingerprint it.
+      const head = 'line one\nline two\nline three';
+      await open(editorHtml(head.split('\n').map(line).join(''), '<div class="cm-gap" style="height: 2000px"></div>'));
+      const partial = await verify(head);
+      assert.equal(partial.verified, false, JSON.stringify(partial));
+      const partialDigest = await call(page, 'field_value_digest', { ref_id: 'editor', expected: head });
+      assert.equal(partialDigest.success, false, JSON.stringify(partialDigest));
+      assert.equal(partialDigest.valueSha256, undefined, 'An incomplete view has no document fingerprint');
       await open(editorHtml(post.split('\n').map(line).join('').replace('<div class="cm-line"><span class="tok-meta">Las',
         '<div class="cm-line"><span class="cm-foldPlaceholder" contenteditable="false">…</span><span class="tok-meta">Las')));
       assert.equal((await verify(post)).verified, false, 'Folded text is not readable from the DOM');

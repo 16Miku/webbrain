@@ -2493,7 +2493,7 @@
             || _sameNativeChatCaretContext(nativeContextBefore, nativeContextAfter));
         const unknown = () => failure('The editor handled a cancelled beforeinput and changed. Its complete value could not be verified in the same scope. No additional text was dispatched.',
           { cancelled: true, recoveryRequired: 'verify_or_restore_field', retryable: false });
-        if (!sameScope || (draftJsEditor && readDraftJsText(el) === null)) return unknown();
+        if (!sameScope || (draftJsEditor && readDraftJsText(el) === null) || (el.isContentEditable && el.classList?.contains('cm-content') && readCodeMirrorText(el) === null)) return unknown();
         try {
           if (verifyNativeObservation) {
             if (!verifyNativeObservation()) throw Object.assign(new Error(`The native text observation lost its original operation or received browser intervention (${verifyNativeObservation.reason || 'observation_invalid'})${verifyNativeObservation.diagnostic ? ' [' + verifyNativeObservation.diagnostic + ']' : ''}.`), { code: 'page_feedback_pending' });
@@ -2590,6 +2590,10 @@
     if (actionDeadlineExpired()) return expired();
     if (draftJsEditor && readDraftJsText(el) === null) {
       return failure('The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+        { recoveryRequired: 'verify_or_restore_field', retryable: false });
+    }
+    if ((el.isContentEditable && el.classList?.contains('cm-content') && readCodeMirrorText(el) === null)) {
+      return failure('The CodeMirror editor shows only part of its document (a viewport gap or folded text), so its exact text cannot be read.',
         { recoveryRequired: 'verify_or_restore_field', retryable: false });
     }
     const value = readValue();
@@ -9942,6 +9946,10 @@
             'The DraftJS editor structure changed during typing and cannot establish its exact document text.',
             { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
           );
+          if ((el.isContentEditable && el.classList?.contains('cm-content') && readCodeMirrorText(el) === null)) return failure(
+            'The CodeMirror editor shows only part of its document (a viewport gap or folded text), so its exact text cannot be read.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
+          );
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verified = selectExpected !== null
             ? actual === selectExpected
@@ -10148,6 +10156,10 @@
           }
           if (isDraftJsEditor(el) && readDraftJsText(el) === null) return failure(
             'The DraftJS editor structure changed during typing and cannot establish its exact document text.',
+            { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
+          );
+          if ((el.isContentEditable && el.classList?.contains('cm-content') && readCodeMirrorText(el) === null)) return failure(
+            'The CodeMirror editor shows only part of its document (a viewport gap or folded text), so its exact text cannot be read.',
             { ref_id, verified: false, fieldMeta, recoveryRequired: 'verify_or_restore_field', failureScope: `field-value:${ref_id}`, retryable: false },
           );
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
@@ -10458,6 +10470,8 @@
           if (!el || !el.isConnected) return { success: false, verified: false, error: `ref_id ${ref_id} is stale` };
           if (isDraftJsEditor(el) && readDraftJsText(el) === null)
             return { success: false, verified: false, error: 'The DraftJS editor structure cannot establish its exact document text.' };
+          if ((el.isContentEditable && el.classList?.contains('cm-content') && readCodeMirrorText(el) === null))
+            return { success: false, verified: false, error: 'The CodeMirror editor shows only part of its document (a viewport gap or folded text), so its exact text cannot be read.' };
           const actual = el.isContentEditable ? _editableTextValue(el) : (el.value || '');
           const verifiesAppend = el.isContentEditable && typeof appendText === 'string';
           const expectedPrefix = verifiesAppend
@@ -10529,6 +10543,8 @@
           }
           if (isDraftJsEditor(el) && readDraftJsText(el) === null)
             return { success: false, verified: false, error: 'The DraftJS editor structure cannot establish its exact document text.' };
+          if ((el.isContentEditable && el.classList?.contains('cm-content') && readCodeMirrorText(el) === null))
+            return { success: false, verified: false, error: 'The CodeMirror editor shows only part of its document (a viewport gap or folded text), so its exact text cannot be read.' };
           const value = String(el.isContentEditable ? _editableTextValue(el) : (el.value || ''));
           if (!globalThis.crypto?.subtle) return { success: false, error: 'SHA-256 is unavailable' };
           const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
