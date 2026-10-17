@@ -88,6 +88,16 @@
 .fcard--captcha { --fc: #14a8b8; }
 .fcard--safesocial { --fc: #9b5cf6; }
 
+/* The Firefox page has no recording card (Firefox cannot record tabs), so its
+   last three cards share one row instead of leaving a hole in the grid. */
+@media (min-width: 901px) {
+  .bento--five .fcard--dl,
+  .bento--five .fcard--captcha,
+  .bento--five .fcard--safesocial {
+    grid-column: span 4;
+  }
+}
+
 .fcard {
   position: relative;
   min-width: 0;

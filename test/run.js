@@ -44123,7 +44123,10 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     // "Also built in": six animated feature cards under the hero showcase.
     const sceneCss = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/install-scenes.css'), 'utf8');
     const motionJs = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/install-motion.js'), 'utf8');
-    const featureCards = ['apocalypse', 'shot', 'dl', 'record', 'captcha', 'safesocial'];
+    // Firefox cannot record tabs (its sidepanel marks /record unsupported), so only
+    // the Chrome page may advertise the recording card.
+    const featureCards = ['apocalypse', 'shot', 'dl', 'record', 'captcha', 'safesocial']
+      .filter((card) => label === 'chrome' || card !== 'record');
     assert.match(html, /<link rel="stylesheet" href="install-scenes\.css">/, `${label}: install page should load its feature-scene styles`);
     assert.equal((html.match(/<article class="fcard fcard--\w+" data-reveal>/g) || []).length, featureCards.length, `${label}: install page should advertise every extra feature once`);
     for (const card of featureCards) {
@@ -44132,6 +44135,15 @@ test('first install opens a browser-aware panel launcher without fake toolbar co
     }
     assert.equal((html.match(/class="scene scene--\w+" aria-hidden="true"/g) || []).length, featureCards.length, `${label}: decorative feature mock-ups should be hidden from assistive tech`);
     assert.doesNotMatch(sceneCss, /\.fcard \{[^}]*--fc:/, `${label}: the shared .fcard rule must not override the per-card accent colours`);
+    const installSidepanel = fs.readFileSync(path.join(ROOT, prefix, 'src/ui/sidepanel.js'), 'utf8');
+    const recordUnsupported = /value: '\/record',[\s\S]{0,200}?unsupported: true/.test(installSidepanel);
+    assert.equal(recordUnsupported, label === 'firefox', `${label}: this test assumes only Firefox lacks /record; revisit the install page's recording card if that changes`);
+    if (label === 'firefox') {
+      assert.doesNotMatch(html, /fcard--record|install\.record\.|\/record/, 'firefox: the install page must not advertise tab recording, which Firefox does not support');
+      assert.match(html, /<div class="bento bento--five">/, 'firefox: five cards should use the five-card grid so the last row has no hole');
+    } else {
+      assert.match(html, /<div class="bento">/, 'chrome: six cards should use the default grid');
+    }
     assert.match(sceneCss, /@media \(prefers-reduced-motion: reduce\)/, `${label}: feature scenes should respect reduced motion`);
     assert.match(sceneCss, /\.js-motion \[data-reveal\]/, `${label}: content should only be hidden for reveal once the motion script is running`);
     assert.match(html, /\/screenshot --full-page|data-i18n-html="install\.shot\.body_html"/, `${label}: the screenshot card should show its command`);
