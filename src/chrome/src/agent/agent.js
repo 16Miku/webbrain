@@ -9366,6 +9366,7 @@ export class Agent extends LoopDetector {
     const stages = {};
     const startedAt = Date.now();
     let last = startedAt;
+    let emitted = false;
     (this._predispatchTimings ||= new Map()).set(tabId, stages);
     const add = (stage, ms) => {
       if (Number.isFinite(ms) && ms >= 0) stages[stage] = (stages[stage] || 0) + ms;
@@ -9376,9 +9377,12 @@ export class Agent extends LoopDetector {
       // The whole pipeline up to this point, e.g. until dispatch begins.
       since: stage => add(stage, Date.now() - startedAt),
       emit: (step, extra = {}) => {
+        if (emitted) return;
+        emitted = true;
         if (this._predispatchTimings?.get(tabId) === stages) this._predispatchTimings.delete(tabId);
         this._recordPredispatchTiming(tabId, step, { ...stages, totalMs: Date.now() - startedAt, ...extra });
       },
+      get emitted() { return emitted; },
     };
   }
 
@@ -9389,6 +9393,24 @@ export class Agent extends LoopDetector {
       const pending = trace.recordNote(runId, Number.isInteger(step) ? step : null, 'predispatch_timing', timing);
       if (pending?.catch) pending.catch(() => {});
     } catch {}
+  }
+
+  // A consequential call that stopped before its dispatch without a note (a
+  // failed preparation, a correction, Stop or any other early stop) gets one
+  // when the next call starts or its batch ends: its stages so far, the rest
+  // of its time as `stoppedMs`.
+  _flushPredispatchTiming(callState) {
+    const pending = callState?.predispatchTiming;
+    if (!pending) return;
+    callState.predispatchTiming = null;
+    const predispatch = pending.timer;
+    if (predispatch.emitted) return;
+    let consequential = false;
+    try { consequential = !!pending.consequential(); } catch {}
+    if (!consequential) return;
+    predispatch.lap('stoppedMs');
+    predispatch.emit(pending.step, { tool: pending.tool,
+      outcome: callState.dispatchState?.started === true ? 'dispatched' : 'not_dispatched' });
   }
 
   _predispatchStage(tabId, stage, ms) {
@@ -15132,6 +15154,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       throw error;
     } finally {
       this._settleUnverifiedStepScope(tabId);
+      this._flushPredispatchTiming(cancellationState.active);
       // Each child owns its nonce boundary and trusted notes. Never re-wrap.
       if (parentCalls.length) {
         const folded = foldBrowserBatchMessages(messages, { repairPending: true });
@@ -15409,6 +15432,8 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const callState = { index: toolIndex, invoked: false, consequential: false, result: null, dispatchState: null,
         guardAdvisories: this._trackGuardAdvisories([], tabId) };
+      // The call before this one, if it stopped before dispatch without a timing note.
+      this._flushPredispatchTiming(cancellationState.active);
       cancellationState.active = callState;
       // The user's 'once' answers this call relies on are spent with it.
       this._beginUnverifiedStepScope(tabId);
@@ -15549,6 +15574,20 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       // exactly like other tool results.
       const predispatch = this._predispatchTimer(tabId);
       const protectedPageFailure = await this._chromeProtectedPageFailure(tabId, fnName);
+      // Whether this call can change something: until the permission
+      // capabilities and the submit probe are known, its tool and arguments
+      // decide (reassigned below once they are).
+      let predispatchConsequential = () => !protectedPageFailure && (Agent.STATE_CHANGE_TOOLS.has(fnName)
+        || capabilitiesFor(fnName, fnArgs).length > 0);
+      // A consequential call that a check stops before dispatch still records
+      // where its time went, the wait on a card included. One that stops any
+      // other way gets its note when the next call starts or the batch ends
+      // (_flushPredispatchTiming).
+      const predispatchBlocked = stage => {
+        predispatch.lap(stage);
+        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
+      };
+      callState.predispatchTiming = { timer: predispatch, step, tool: fnName, consequential: () => predispatchConsequential() };
       if (!protectedPageFailure && fnName !== 'done' && !Agent.NAV_TOOLS.has(fnName)) {
         try {
           await this._adoptLiveSocialPublishWorkflow(tabId, provider);
@@ -15610,6 +15649,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         : this._captchaGateBlockResult(tabId, fnName, fnArgs);
       predispatch.lap('captchaGateMs');
       if (captchaGateBlock) {
+        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
         // This path returns before normal tool observation. Retain the signup
         // checkpoint even when the first detected challenge needs manual help.
         const signupRecoveryNote = await this._observeHuggingFaceSignupRecovery(
@@ -15707,6 +15747,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           content: JSON.stringify(mediaTargetGuard),
         });
         onUpdate('warning', { message: 'Find the visible media permalink before calling download_public_media from a feed.' });
+        predispatchBlocked('preparationMs');
         continue;
       }
 
@@ -15751,6 +15792,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             capabilities,
           );
       if (clarificationAuthorizationBlock) {
+        predispatchBlocked('clarificationMs');
         const blockedResult = clarificationAuthorizationBlock.result;
         onUpdate('tool_call', { name: fnName, args: fnArgs, outcomeUnknown: false });
         onUpdate('tool_result', { name: fnName, result: blockedResult });
@@ -15798,6 +15840,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       await this._ensureGateSetting();
       const skillEndpointRedirect = this._skillEndpointToolRedirect(fnName, fnArgs, tabId);
       if (skillEndpointRedirect) {
+        predispatchBlocked('clarificationMs');
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -15808,6 +15851,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       }
       const mediaDownloadRedirect = await this._downloadPublicMediaRedirectForSocial(tabId, fnName, fnArgs, allowedToolNames, messages);
       if (mediaDownloadRedirect) {
+        predispatchBlocked('clarificationMs');
         messages.push({
           role: 'tool',
           tool_call_id: tc.id,
@@ -15820,6 +15864,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         continue;
       }
       if (isNetworkMutation(fnName, fnArgs) && !apiMutationsAllowedForRun()) {
+        predispatchBlocked('clarificationMs');
         const askModeError = apiMutationsDeniedForRun
           ? `API mutations via ${fnName} are not allowed in Ask mode. Do not retry this mutating API call in this run; continue with read-only tools or return what you can observe.`
           : `API mutations via ${fnName} require the user to enable /allow-api for this conversation. Do not retry this mutating API call unless the user enables /allow-api; continue through the visible UI or ask the user to type /allow-api.`;
@@ -15951,15 +15996,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           tabId, fnName, fnArgs, detectedSubmitAction, provider, callState.guardAdvisories,
         ))
         || this._taskClickLockAsk(tabId, fnName, fnArgs, callState);
-      const predispatchConsequential = () => missingResponseOutcomeUnknown
+      // From here the permission capabilities and the submit probe decide.
+      predispatchConsequential = () => missingResponseOutcomeUnknown
         || detectedSubmitAction?.isSubmit === true || detectedSubmitAction?.publicationControl === true;
-      // A consequential call that a confirmation card or the permission gate
-      // stops still records where its time went, the wait on the card
-      // included.
-      const predispatchBlocked = stage => {
-        predispatch.lap(stage);
-        if (predispatchConsequential()) predispatch.emit(step, { tool: fnName, outcome: 'blocked' });
-      };
       let workflowPreSubmitBlock = await runWorkflowPreSubmitChecks();
       if (workflowPreSubmitBlock?.mutationConfirmation
           && this.scheduledRunPolicies.get(tabId)?.requireConsequentialConfirmation !== false) {
