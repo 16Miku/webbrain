@@ -51,9 +51,11 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
      draft, an unconfirmed Act task, a declined Ask). The new task is added below it for
      review; the panel keeps the mode that draft was written in, and an Ask is not sent
      automatically in that case.
-   - A later hand-off is held back (retried every 150 ms, for up to about 30 s) while an
+   - A later hand-off is held back (retried every 150 ms, for up to about 15 s) while an
      earlier Ask's text is still in the composer waiting for its send to commit, so one
-     task can never replace the other. The record stays in storage meanwhile.
+     task can never replace the other. The record stays in storage meanwhile; after the
+     15 s the polling stops, and the task is picked up as soon as that send settles (or the
+     next time the panel is triggered).
 
 The text is user-typed, so it enters the panel exactly like typing in the composer;
 it is never treated as page content.

@@ -2273,3 +2273,10 @@ test('round-64: a failed gallery write reaches the batch uploader instead of cou
   assert.match(src, /error\.name === 'QuotaExceededError'/);
   assert.match(src, /errors\.push\(files\[i\]\.name\)/);
 });
+
+test('round-69: the documented hold budget matches the constants', async () => {
+  const { NEWTAB_HANDOFF_SEND_RETRY_MS: every, NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES: max } =
+    await import(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'));
+  assert.equal((every * max) / 1000, 15);
+  assert.match(readFileSync(path.join(root, 'docs/newtab.md'), 'utf8'), /retried every 150 ms, for up to about 15 s/);
+});
