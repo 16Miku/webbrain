@@ -359,6 +359,40 @@ for (const browser of ['chrome', 'firefox']) {
     });
   }
 
+  test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };
+    const state = { tabId: 3 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { input.value = ''; await gate; return false; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    state.tabId = 4; // user switches while the send is pending...
+    release(); // ...and it is then declined
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, '', "tab 4's composer stays empty");
+    assert.equal(store[key3]?.text, 'for tab three', 'the task is waiting for tab 3 again');
+    assert.equal(store[key3].id, 'r1-retry');
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 

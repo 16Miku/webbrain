@@ -171,7 +171,16 @@ export function createNewtabHandoff({
             send.settled = true;
             // Declined or failed: the new tab already showed success and cleared its
             // box, so make sure the text is still sitting in the composer.
-            if (!sent && !String(input.value || '').trim()) fill();
+            if (sent) return;
+            if (sameTab()) {
+              if (!String(input.value || '').trim()) fill();
+            } else {
+              // The user moved to another tab while the send was being declined, and the
+              // composer now belongs to that tab. Hand the task back for its own tab instead.
+              storage.set?.({
+                [key]: { ...stored, id: `${handoff.id}-retry`, createdAt: now() },
+              })?.catch?.(() => {});
+            }
           });
       }
       return true;
