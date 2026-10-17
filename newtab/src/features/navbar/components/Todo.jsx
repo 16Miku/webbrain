@@ -153,8 +153,8 @@ function Todo({ todoRef, floatRef, position, xPosition, yPosition }) {
       <button
         className="navbarButton"
         onMouseEnter={handleShowTodo}
-        onFocus={handleHideTodo}
-        onBlur={handleShowTodo}
+        onFocus={handleShowTodo}
+        onBlur={handleHideTodo}
         ref={todoRef}
         style={{ fontSize: zoomFontSize }}
       >

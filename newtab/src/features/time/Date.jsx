@@ -63,14 +63,19 @@ const DateWidget = () => {
       let year = dateYear;
 
       switch (localStorage.getItem('dateFormat')) {
-        case 'MDY':
-          day = dateMonth;
-          month = dateDay;
+        // Reorder the already padded values so "Leading zero" survives the reordering.
+        case 'MDY': {
+          const [d, m] = [day, month];
+          day = m;
+          month = d;
           break;
-        case 'YMD':
-          day = dateYear;
-          year = dateDay;
+        }
+        case 'YMD': {
+          const d = day;
+          day = year;
+          year = d;
           break;
+        }
         // DMY
         default:
           break;

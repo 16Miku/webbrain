@@ -60,6 +60,9 @@ const Clock = () => {
             const secs = ('00' + now.getSeconds()).slice(-2);
             sec = `:${formatPaddedDigits(secs)}`;
             setFinalSeconds(formatPaddedDigits(secs));
+          } else {
+            // Seconds turned off: drop the last one, or the vertical clock keeps showing it.
+            setFinalSeconds('');
           }
 
           if (localStorage.getItem('timeformat') === 'twentyfourhour') {

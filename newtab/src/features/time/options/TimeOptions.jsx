@@ -157,7 +157,7 @@ const TimeOptions = () => {
               {hourColour}
             </label>
           </div>
-          <span className="link" onClick={() => localStorage.setItem('hourColour', '#ffffff')}>
+          <span className="link" onClick={() => updateColour('hourColour', { target: { value: '#ffffff' } })}>
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>
@@ -182,7 +182,7 @@ const TimeOptions = () => {
               {minuteColour}
             </label>
           </div>
-          <span className="link" onClick={() => localStorage.setItem('minuteColour', '#ffffff')}>
+          <span className="link" onClick={() => updateColour('minuteColour', { target: { value: '#ffffff' } })}>
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>
@@ -207,7 +207,7 @@ const TimeOptions = () => {
               {secondColour}
             </label>
           </div>
-          <span className="link" onClick={() => localStorage.setItem('secondColour', '#ffffff')}>
+          <span className="link" onClick={() => updateColour('secondColour', { target: { value: '#ffffff' } })}>
             <MdRefresh />
             {variables.getMessage('modals.main.settings.buttons.reset')}
           </span>

@@ -1059,3 +1059,15 @@ test('round-19: import applies by reloading; multiline messages split on real ne
   assert.doesNotMatch(date, /weekNumber !== null/);
   assert.equal('a\nb\r\nc'.split(/\r?\n/).length, 3);
 });
+
+test('round-20: todo focus handlers, vertical colour resets, padded date reordering, seconds clearing', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const todo = read('features/navbar/components/Todo.jsx');
+  assert.match(todo, /onFocus=\{handleShowTodo\}\s*onBlur=\{handleHideTodo\}/);
+  const time = read('features/time/options/TimeOptions.jsx');
+  assert.doesNotMatch(time, /onClick=\{\(\) => localStorage\.setItem\('(hour|minute|second)Colour'/);
+  assert.equal((time.match(/updateColour\('(hour|minute|second)Colour', \{ target: \{ value: '#ffffff' \} \}\)/g) || []).length, 3);
+  const date = read('features/time/Date.jsx');
+  assert.doesNotMatch(date, /day = dateMonth|month = dateDay|year = dateDay/);
+  assert.match(read('features/time/Clock.jsx'), /setFinalSeconds\(''\)/);
+});
