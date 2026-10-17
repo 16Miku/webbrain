@@ -330,8 +330,9 @@ function presentToPastName(name) {
 }
 
 // Prefill the first `count` prompt tokens in slices of `sliceTokens` (one
-// pass when 0) and return the recurrent/conv/KV cache.
-async function prefillBonsai2Cache(runtime, inputs, sliceTokens, count) {
+// pass when 0) and return the recurrent/conv/KV cache. `beforeSlice` runs
+// before each slice and may throw to stop (a cancelled decision).
+async function prefillBonsai2Cache(runtime, inputs, sliceTokens, count, beforeSlice = null) {
   const { model, library } = runtime;
   let embeds = await model.encode_text({ input_ids: inputs.input_ids });
   let attentionMask = inputs.attention_mask;
@@ -357,6 +358,7 @@ async function prefillBonsai2Cache(runtime, inputs, sliceTokens, count) {
   let cache = null;
   try {
     for (let start = 0; start < count; start += step) {
+      beforeSlice?.();
       const end = Math.min(start + step, count);
       const outputs = await model.forward({
         inputs_embeds: embeds.slice(null, [start, end], null),
@@ -1829,7 +1831,19 @@ function encodeFloat16Base64(values) {
 // use the chunked decoder whose cache the continuations share.
 const DECISION_QUESTION_MARKER = '\u2063WEBBRAIN_DECISION_QUESTION\u2063';
 
-async function runMultimodalDecision(payload) {
+function decisionCancelledError() {
+  const error = new Error('The in-browser decision was cancelled.');
+  error.name = 'AbortError';
+  error.code = 'webgpu_decision_cancelled';
+  return error;
+}
+
+// `isCancelled` reports a `cancel` for this request (a judge timeout or Stop).
+// It is checked before loading, between prefill slices and before every
+// continuation, so a timed-out decision frees the model queue promptly.
+async function runMultimodalDecision(payload, { isCancelled = () => false } = {}) {
+  const stopIfCancelled = () => { if (isCancelled()) throw decisionCancelledError(); };
+  stopIfCancelled();
   const modelId = assertOnnxTextModel(payload?.modelId);
   if (!WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
     throw new Error(`${modelId} does not support in-browser decisions.`);
@@ -1844,6 +1858,7 @@ async function runMultimodalDecision(payload) {
     owner: 'text',
     readiness: 'text',
   });
+  stopIfCancelled();
   const temperature = Number(payload?.temperature) > 0 ? Number(payload.temperature) : 1;
   const messages = [
     { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
@@ -1885,7 +1900,7 @@ async function runMultimodalDecision(payload) {
   const questionMs = [];
   let suffixTokens = 0;
   try {
-    cache = await prefillBonsai2Cache(runtime, prefix, bonsai2PrefillSliceTokens(payload?.prefillSliceTokens), prefixLength);
+    cache = await prefillBonsai2Cache(runtime, prefix, bonsai2PrefillSliceTokens(payload?.prefillSliceTokens), prefixLength, stopIfCancelled);
     const prefillMs = performance.now() - started;
     // `probe` (the default) scores each option's verify continuation with the
     // trained probe; `verify` returns the raw Yes margins; `readout` and
@@ -1907,6 +1922,7 @@ async function runMultimodalDecision(payload) {
         for (let index = 0; index < count; index++) {
           const suffix = tokenizer(`${decisionVerifyText(question, index)}${tailText}`, { add_special_tokens: false });
           suffixTokens += suffix.input_ids.dims.at(-1);
+          stopIfCancelled();
           const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
           margins.push(output.logits[yesId] - output.logits[noId]);
           if (variant === 'probe' && !output.hidden) {
@@ -1924,6 +1940,7 @@ async function runMultimodalDecision(payload) {
       }
       const suffix = tokenizer(`${decisionQuestionText(question)}${tailText}`, { add_special_tokens: false });
       suffixTokens += suffix.input_ids.dims.at(-1);
+      stopIfCancelled();
       const logits = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids);
       const ids = decisionOptions(question).codes.map(codeId);
       let top = -Infinity;
@@ -2234,8 +2251,22 @@ self.addEventListener('message', async event => {
       return;
     }
     if (type === 'multimodal-decide') {
-      const result = await enqueueModelOperation(() => runMultimodalDecision(payload));
-      self.postMessage({ id, ok: true, ...result });
+      // Cancellable through `cancel` like vision generations, while queued or running.
+      queuedVisionGenerations.add(id);
+      try {
+        const result = await enqueueModelOperation(async () => {
+          activeVisionGenerations.set(id, {});
+          try {
+            return await runMultimodalDecision(payload, { isCancelled: () => cancelledVisionGenerations.has(id) });
+          } finally {
+            activeVisionGenerations.delete(id);
+          }
+        });
+        self.postMessage({ id, ok: true, ...result });
+      } finally {
+        queuedVisionGenerations.delete(id);
+        cancelledVisionGenerations.delete(id);
+      }
       return;
     }
     if (type === 'multimodal-text-chat') {

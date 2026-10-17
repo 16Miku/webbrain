@@ -246,11 +246,10 @@ function syncWebgpuDecisionProvider() {
   const selected = decisionProviderInput?.value === 'webgpu_chat';
   const note = document.getElementById('webgpu-decision-note');
   if (note) note.hidden = !selected;
-  if (selected) {
-    decisionModelInput.value = WEBGPU_CHAT_DECISION_MODEL;
-    decisionModelInput.readOnly = true;
-  }
-  if (systemOneApiKeyInput && selected) systemOneApiKeyInput.disabled = true;
+  if (selected) decisionModelInput.value = WEBGPU_CHAT_DECISION_MODEL;
+  // Restore both controls when another provider is chosen.
+  if (decisionModelInput) decisionModelInput.readOnly = selected;
+  if (systemOneApiKeyInput) systemOneApiKeyInput.disabled = selected;
 }
 
 const systemOneApiKeyInput = document.getElementById('system-one-api-key');

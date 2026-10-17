@@ -21,6 +21,8 @@
 // --decoder-graph F install a replacement decoder graph in the cache first
 // --refresh         download a cached model again first, the Settings path
 //                   that replaces a stale decoder graph by hash
+// --cancel-check    after the run, cancel decisions in the offscreen worker
+//                   (mid-run and before dispatch) and time the next one
 // --return-hidden   with --prompt verify, record each option's hidden state
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -182,6 +184,28 @@ try {
     const promptVariant = option('--prompt', 'probe');
     const returnHidden = args.includes('--return-hidden');
     await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant, returnHidden } }));
+    if (args.includes('--cancel-check')) {
+      // Cancellation in the offscreen host and worker: a decision cancelled
+      // while it runs should end early and free the queue for the next one.
+      const request = requests.at(-1);
+      const base = { model: bonsaiModel, runtime: 'onnx-vl', device: 'webgpu', dtype: preset.dtype, state: request.state, images: await Promise.all(request.images.map(dataUrl)), questions: questionsOf(request), promptVariant };
+      result.engines.bonsai.cancelCheck = await harness.evaluate(async ({ base, delayMs }) => {
+        const send = message => new Promise(resolve => chrome.runtime.sendMessage(message, resolve));
+        const timed = async run => { const started = performance.now(); const reply = await run(); return { ok: reply?.ok !== false && !reply?.error, error: reply?.error || null, ms: Math.round(performance.now() - started) }; };
+        const full = await timed(() => send({ ...base, type: 'webgpu-decide', decisionId: 'cancel-check-full' }));
+        const cancelled = await timed(async () => {
+          const reply = send({ ...base, type: 'webgpu-decide', decisionId: 'cancel-check-mid' });
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+          send({ type: 'webgpu-decide-cancel', decisionId: 'cancel-check-mid' });
+          return reply;
+        });
+        const next = await timed(() => send({ ...base, type: 'webgpu-decide', decisionId: 'cancel-check-next' }));
+        await send({ type: 'webgpu-decide-cancel', decisionId: 'cancel-check-early' });
+        const early = await timed(() => send({ ...base, type: 'webgpu-decide', decisionId: 'cancel-check-early' }));
+        return { delayMs, full, cancelled, next, early };
+      }, { base, delayMs: 300 });
+      console.log('cancel check', JSON.stringify(result.engines.bonsai.cancelCheck));
+    }
     if (promptVariant === 'probe') {
       // The decision provider path Settings uses: judge -> provider -> worker.
       const started = Date.now();

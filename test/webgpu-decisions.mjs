@@ -9,7 +9,9 @@ import {
   normalizeDecisionRequest,
 } from '../src/chrome/src/offscreen/webgpu-decisions.js';
 // The worker module registers its message listener on import.
-globalThis.self ??= { addEventListener() {}, postMessage() {} };
+const workerListeners = [];
+const workerMessages = [];
+globalThis.self ??= { addEventListener(type, listener) { if (type === 'message') workerListeners.push(listener); }, postMessage(message) { workerMessages.push(message); } };
 const { bonsai2ContinuationLogits } = await import('../src/chrome/src/offscreen/inference-worker.js');
 
 const choice = { type: 'choice', instructions: 'Is the task done?', criteria: { completed: 'A final acknowledgement is visible.', not_completed: 'An error is visible.', unknown: '' } };
@@ -200,4 +202,112 @@ test('Settings offers the chat-model decision provider in Chrome only', async ()
   const { decisionEnglish, decisionTranslations } = await import('../src/chrome/src/ui/locales/decision-copy.mjs');
   assert.ok(decisionEnglish['st.decision.webgpu_chat'] && decisionEnglish['st.decision.webgpu_chat_note']);
   assert.ok(decisionTranslations.tr['st.decision.webgpu_chat']);
+});
+
+test('a cancelled decision stops in the worker before using the model', async () => {
+  assert.equal(workerListeners.length, 1);
+  const post = data => workerListeners[0]({ data });
+  const reply = id => workerMessages.find(message => message.id === id);
+  const settle = async id => { for (let i = 0; i < 50 && !reply(id); i++) await new Promise(resolve => setTimeout(resolve, 1)); return reply(id); };
+  const payload = { modelId: 'no-such/model', state: 'Page', questions: { q: { type: 'noul', instructions: 'Done?' } } };
+  // Without a cancel the request reaches the model checks.
+  const control = post({ id: 9001, type: 'multimodal-decide', payload });
+  assert.doesNotMatch((await settle(9001)).error, /cancelled/);
+  await control;
+  // A cancel that arrives while the decision is queued stops it first.
+  const decide = post({ id: 9002, type: 'multimodal-decide', payload });
+  await post({ id: 9003, type: 'cancel', payload: { requestId: 9002 } });
+  assert.equal(reply(9003).cancelled, true);
+  await decide;
+  assert.deepEqual(await settle(9002), { id: 9002, ok: false, error: 'The in-browser decision was cancelled.' });
+  const worker = await readFile(new URL('../src/chrome/src/offscreen/inference-worker.js', import.meta.url), 'utf8');
+  const run = worker.slice(worker.indexOf('async function runMultimodalDecision'), worker.indexOf('async function runText'));
+  assert.match(run, /prefixLength, stopIfCancelled\)/, 'prefill slices check for a cancel');
+  assert.equal((run.match(/stopIfCancelled\(\);\n\s*const (?:output|logits) = await bonsai2ContinuationLogits/g) || []).length, 2,
+    'every continuation checks for a cancel');
+});
+
+test('an aborted judge request cancels the in-browser decision in the offscreen worker', async () => {
+  const saved = { chrome: globalThis.chrome };
+  const sent = [];
+  let finishDecide;
+  globalThis.chrome = {
+    offscreen: { hasDocument: async () => true, createDocument: async () => {} },
+    runtime: {
+      lastError: null,
+      getURL: path => `chrome-extension://test/${path}`,
+      sendMessage(message, callback) {
+        sent.push(message);
+        if (message.type === 'webgpu-decide') { finishDecide = () => callback({ ok: false, error: 'The in-browser decision was cancelled.' }); return; }
+        callback(message.type === 'webgpu-download-status' ? { ready: true } : { ok: true });
+      },
+    },
+    storage: { local: { get: async () => ({}) } },
+  };
+  try {
+    const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
+    const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
+    const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+    const controller = new AbortController();
+    const pending = createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
+      .evaluate({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config, signal: controller.signal });
+    for (let i = 0; i < 50 && !finishDecide; i++) await new Promise(resolve => setTimeout(resolve, 1));
+    const decide = sent.find(message => message.type === 'webgpu-decide');
+    assert.ok(decide?.decisionId, 'each decision carries an id');
+    controller.abort(new Error('Stopped'));
+    await assert.rejects(pending);
+    for (let i = 0; i < 50 && !sent.some(message => message.type === 'webgpu-decide-cancel'); i++) await new Promise(resolve => setTimeout(resolve, 1));
+    const cancel = sent.find(message => message.type === 'webgpu-decide-cancel');
+    assert.equal(cancel?.decisionId, decide.decisionId, 'the abort cancels that decision');
+    finishDecide();
+    const host = await readFile(new URL('../src/chrome/src/offscreen/vision-inference-host.js', import.meta.url), 'utf8');
+    assert.match(host, /'webgpu-decide-cancel',/);
+    assert.match(host, /cancelledWebgpuDecisions\.delete\(decisionId\)/, 'a cancel before dispatch skips the decision');
+    assert.match(host, /type: 'cancel', payload: \{ requestId: decision\.requestId \}/, 'a dispatched decision is cancelled in its worker');
+  } finally {
+    if (saved.chrome === undefined) delete globalThis.chrome; else globalThis.chrome = saved.chrome;
+  }
+});
+
+test('in-browser decisions get their own timeout unless a caller sets a shorter one', async () => {
+  const saved = { chrome: globalThis.chrome, setTimeout: globalThis.setTimeout };
+  const delays = [];
+  // Record request deadlines without arming them.
+  globalThis.setTimeout = (fn, ms, ...rest) => { if (ms >= 1000) { delays.push(ms); return saved.setTimeout(() => {}, 0); } return saved.setTimeout(fn, ms, ...rest); };
+  globalThis.chrome = {
+    offscreen: { hasDocument: async () => true, createDocument: async () => {} },
+    runtime: {
+      lastError: null,
+      getURL: path => `chrome-extension://test/${path}`,
+      sendMessage(message, callback) {
+        callback(message.type === 'webgpu-download-status' ? { ready: true }
+          : message.type === 'webgpu-decide' ? { ok: true, model: message.model, answers: { q: { type: 'noul', noul: 0.8 } }, usage: { input_tokens: 900, output_tokens: 0 } } : { ok: true });
+      },
+    },
+    storage: { local: { get: async () => ({}) } },
+  };
+  try {
+    const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
+    const { createSystemOneJudge, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS } = await import('../src/chrome/src/agent/systemone-judge.js');
+    const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+    const ask = options => createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0, ...options })
+      .evaluate({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config });
+    for (const [options, expected] of [[{}, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS], [{ timeoutMs: 1000 }, 1000], [{ timeoutMs: 60_000 }, SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS]]) {
+      delays.length = 0;
+      await ask(options);
+      assert.ok(delays.includes(expected), `${JSON.stringify(options)} -> ${expected}, got ${delays}`);
+    }
+    assert.equal(SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS, 15000);
+  } finally {
+    globalThis.setTimeout = saved.setTimeout;
+    if (saved.chrome === undefined) delete globalThis.chrome; else globalThis.chrome = saved.chrome;
+  }
+});
+
+test('Settings restores the model and key fields after leaving the chat-model provider', async () => {
+  const settings = await readFile(new URL('../src/chrome/src/ui/settings.js', import.meta.url), 'utf8');
+  const sync = settings.slice(settings.indexOf('function syncWebgpuDecisionProvider'), settings.indexOf('const systemOneApiKeyInput'));
+  assert.match(sync, /decisionModelInput\.readOnly = selected;/);
+  assert.match(sync, /systemOneApiKeyInput\.disabled = selected;/);
+  assert.doesNotMatch(sync, /= true;/, 'nothing is locked only one way');
 });

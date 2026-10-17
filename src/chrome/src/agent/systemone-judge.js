@@ -18,6 +18,9 @@ export const SYSTEM_ONE_COMPLETION_THRESHOLD_KEY = 'systemOneCompletionThreshold
 export const SYSTEM_ONE_RETRY_BASE_MS = 250;
 export const SYSTEM_ONE_MAX_RETRIES = 2;
 export const SYSTEM_ONE_TIMEOUT_MS = 5000;
+// The in-browser chat model prefills its screenshot on this GPU (about a second
+// on a desktop card) and loads on first use after a browser restart.
+export const SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS = 15000;
 export const SYSTEM_ONE_MIN_THRESHOLD = 0.5;
 export const SYSTEM_ONE_MAX_THRESHOLD = 0.95;
 export const SYSTEM_ONE_DEFAULT_THRESHOLD = 0.7;
@@ -267,7 +270,8 @@ export function shouldDowngradeSuccess(answers, { threshold = SYSTEM_ONE_DEFAULT
 export function createSystemOneJudge({
   fetchImpl = globalThis.fetch,
   sleep = defaultSleep,
-  timeoutMs = SYSTEM_ONE_TIMEOUT_MS,
+  // Unset: each provider's own limit. A caller's budget is capped by it.
+  timeoutMs = null,
   maxRetries = SYSTEM_ONE_MAX_RETRIES,
   now = () => Date.now(),
 } = {}) {
@@ -280,9 +284,7 @@ export function createSystemOneJudge({
       validateState(state, config?.supportsVision === true);
       validateQuestions(questions);
       const started = now();
-      // The in-browser model prefills its screenshot on this GPU (about a second
-      // on a desktop card) and loads on first use after a browser restart.
-      const cap = config?.provider === 'webgpu_chat' ? 15000 : 5000;
+      const cap = config?.provider === 'webgpu_chat' ? SYSTEM_ONE_WEBGPU_CHAT_TIMEOUT_MS : SYSTEM_ONE_TIMEOUT_MS;
       const request = requestSignal(signal, Math.max(1, Math.min(cap, Number(timeoutMs) || cap)));
       const retries = Math.max(0, Math.min(2, Math.floor(Number(maxRetries) || 0)));
       try {

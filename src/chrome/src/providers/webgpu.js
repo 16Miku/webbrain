@@ -477,29 +477,44 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
    * Decision readout on the in-browser model: option probabilities from one
    * forward pass per question, in the d1 answer shape. Bonsai 2 Vision only.
    */
-  async decide({ state = '', images = [], questions, temperature, promptVariant, returnHidden = false } = {}) {
+  async decide({ state = '', images = [], questions, temperature, promptVariant, returnHidden = false, signal } = {}) {
     if (webgpuModelRuntime(this.model) !== WEBGPU_RUNTIME_ONNX_VL || !WEBGPU_DECISION_MODEL_IDS.has(this.model)) {
       throw new Error(`${webgpuModelDisplayName(this.model)} does not support in-browser decisions.`);
     }
+    const stopIfAborted = () => { if (signal?.aborted) throw signal.reason ?? new DOMException('The in-browser decision was cancelled.', 'AbortError'); };
+    stopIfAborted();
     const download = await this.downloadStatus();
     if (!download.ready) {
       throw new Error(`${webgpuModelDisplayName(this.model)} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it first.`);
     }
     const prefillSliceTokens = await this._prefillSliceTokens();
-    const response = await this._dispatch({
-      type: 'webgpu-decide',
-      model: this.model,
-      runtime: WEBGPU_RUNTIME_ONNX_VL,
-      device: this.device,
-      dtype: this.dtype,
-      state,
-      images,
-      questions,
-      ...(Number(temperature) > 0 ? { temperature: Number(temperature) } : {}),
-      ...(['readout', 'strict', 'verify', 'probe'].includes(promptVariant) ? { promptVariant } : {}),
-      ...(returnHidden === true ? { returnHidden: true } : {}),
-      ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
-    });
+    stopIfAborted();
+    // An abort (judge timeout, Stop) cancels the worker operation, so it does
+    // not keep the model queue busy ahead of the next request.
+    const decisionId = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const cancel = () => { this._dispatch({ type: 'webgpu-decide-cancel', decisionId }).catch(() => {}); };
+    signal?.addEventListener?.('abort', cancel, { once: true });
+    let response;
+    try {
+      response = await this._dispatch({
+        type: 'webgpu-decide',
+        decisionId,
+        model: this.model,
+        runtime: WEBGPU_RUNTIME_ONNX_VL,
+        device: this.device,
+        dtype: this.dtype,
+        state,
+        images,
+        questions,
+        ...(Number(temperature) > 0 ? { temperature: Number(temperature) } : {}),
+        ...(['readout', 'strict', 'verify', 'probe'].includes(promptVariant) ? { promptVariant } : {}),
+        ...(returnHidden === true ? { returnHidden: true } : {}),
+        ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
+      });
+    } finally {
+      signal?.removeEventListener?.('abort', cancel);
+    }
+    stopIfAborted();
     if (!response || response.ok === false || response.error) {
       throw new Error(`In-browser WebGPU: ${response?.error || 'no response from the inference worker'}`);
     }

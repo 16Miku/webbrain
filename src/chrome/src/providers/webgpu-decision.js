@@ -11,7 +11,7 @@ export async function evaluateWebgpuDecision({ state, images, questions, config,
   // D1 does, never as base64 text in the prompt.
   const input = splitD1State(state, images);
   const provider = new WebGPUProvider({ model: WEBGPU_DECISION_MODEL_ID });
-  const result = await provider.decide({ state: input.state, images: input.images, questions });
+  const result = await provider.decide({ state: input.state, images: input.images, questions, signal });
   if (signal?.aborted) throw signal.reason;
   return { model: result.model, provider: 'webgpu_chat', answers: result.answers, usage: result.usage };
 }
