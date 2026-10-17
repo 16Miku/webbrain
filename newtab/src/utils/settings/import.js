@@ -183,11 +183,26 @@ export function validateSettings(content) {
   return null;
 }
 
+// A data URL whose payload can't be decoded can't be shown either. Base64 must be well formed
+// (a truncated copy usually isn't a multiple of four); anything else must be valid percent-encoding.
+function isDecodablePayload(parameters, payload) {
+  if (/;base64$/i.test(parameters)) {
+    const compact = payload.replace(/\s+/g, '');
+    return compact.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(compact);
+  }
+  try {
+    decodeURIComponent(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // What the loader can show: an uploaded image / video (a data URL) or a remote http(s) address.
 const isBackgroundUrl = (url) => {
   if (typeof url !== 'string') return false;
-  // header, a comma, then a non-empty payload
-  if (/^data:(image|video)\/[^;,]+(?:;[^,]*)?,[\s\S]+$/i.test(url)) return true;
+  const dataUrl = /^data:(image|video)\/[^;,]+((?:;[^,]*)?),([\s\S]+)$/i.exec(url);
+  if (dataUrl) return isDecodablePayload(dataUrl[2], dataUrl[3]);
   try {
     return /^https?:$/.test(new URL(url).protocol);
   } catch {

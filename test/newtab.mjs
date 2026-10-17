@@ -689,6 +689,48 @@ for (const browser of ['chrome', 'firefox']) {
     }
   });
 
+  test(`${browser}: a task delayed by the panel's own hold is not stale when the send settles`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const clock = { t: 100_000 };
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_900 } };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let finishA;
+    const gateA = new Promise((r) => { finishA = r; });
+    let calls = 0;
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn) => { queueMicrotask(fn); return 0; };
+    try {
+      const handoff = createNewtabHandoff({
+        storage: {
+          get: async (k) => (k in store ? { [k]: store[k] } : {}),
+          remove: async (k) => { delete store[k]; },
+          set: async (o) => Object.assign(store, o),
+        },
+        getCurrentTabId: () => 3,
+        getIsProcessing: () => false,
+        getIsBlocked: () => false,
+        getIsDocumentVisible: () => true,
+        doc: { addEventListener() {} },
+        setMode() {},
+        getInputEl: () => input,
+        autoResizeInput() {},
+        sendMessage: async () => { calls += 1; if (calls === 1) await gateA; input.value = ''; return true; },
+        now: () => clock.t,
+      });
+      await handoff.start();
+      store[key3] = { id: 'B', tabId: 3, text: 'task B', mode: 'ask', createdAt: clock.t };
+      await handoff.consume(); // B waits behind A: the hold starts here
+      for (let i = 0; i < 400; i++) await Promise.resolve();
+      clock.t += 45_000; // A's preflight takes 45 s: B is older than the 30 s a record is accepted for
+      finishA();
+      for (let i = 0; i < 20; i++) await new Promise((r) => realSetTimeout(r, 0));
+      assert.equal(calls, 2, 'B was still delivered');
+      assert.equal(key3 in store, false);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1521,7 +1563,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // failure part-way: the old gallery is back, nothing else is imported, no success
     mod.db.adds = 0; mod.db.failAddAt = 1;
     globalThis.__toasts = []; globalThis.__reloads = 0;
-    const failed = await mod.importSettings(backup([{ id: 9, url: 'data:image/png;base64,N1' }, { url: 'data:image/png;base64,N2' }, { url: 'data:image/png;base64,N3' }]));
+    const failed = await mod.importSettings(backup([{ id: 9, url: 'data:image/png;base64,N1==' }, { url: 'data:image/png;base64,N2==' }, { url: 'data:image/png;base64,N3==' }]));
     assert.equal(failed, false);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:old-1', 'data:old-2']);
     assert.equal(store.getItem('theme'), null, 'settings were not applied');
@@ -1530,9 +1572,9 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
 
     // success replaces the gallery and applies settings
     mod.db.adds = 0; mod.db.failAddAt = -1; globalThis.__toasts = [];
-    const ok = await mod.importSettings(backup([{ id: 9, url: 'data:image/png;base64,N1' }, { url: 'data:image/png;base64,N2' }]));
+    const ok = await mod.importSettings(backup([{ id: 9, url: 'data:image/png;base64,N1==' }, { url: 'data:image/png;base64,N2==' }]));
     assert.equal(ok, true);
-    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:image/png;base64,N1', 'data:image/png;base64,N2']);
+    assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:image/png;base64,N1==', 'data:image/png;base64,N2==']);
     // bare hosts in a backup are stored the way the add/edit dialogs would save them
     const reloads0 = globalThis.__reloads, toasts0 = globalThis.__toasts.length;
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: JSON.stringify([{ name: 'a', url: 'example.com', key: 'k' }]), applinks: JSON.stringify([{ name: 'b', url: 'HTTP://b.test/x', key: 'j' }]) })), true);
@@ -1565,7 +1607,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
       { customEvents: 'not-json' }, { messages: '{"a":1}' }, { applinks: '' }, { order: 'null' }, { order: '["__proto__"]' }, { order: '["time","nope"]' },
       { timezone: 'Not/AZone' }, { timezone: '' }, { favourite: '[1]' }, { favourite: '{}' }, { favourite: '{"url":"  "}' }, { favourite: '{"url":5}' }, { favourite: '{"url":"not-a-url"}' }, { favourite: '{"type":"photo","url":"data:text/plain,x"}' }, { theme: { nested: true } },
     ]) {
-      assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:image/png;base64,OTHER' }] })), false, JSON.stringify(bad));
+      assert.equal(await mod.importSettings(JSON.stringify({ ...bad, [K]: [{ url: 'data:image/png;base64,OTHE' }] })), false, JSON.stringify(bad));
     }
     for (const bad of [
       { customEvents: '[null]' }, { customEvents: '[{"name":"x","month":"1","date":1}]' }, { messages: '[1]' },
@@ -1577,14 +1619,14 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // a malformed gallery record is refused as a whole; it must not clear the current gallery
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [null] })), false);
-    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'data:image/png;base64,OK' }, { name: 'no url' }] })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'data:image/png;base64,OK==' }, { name: 'no url' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: 'nope' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '' }] })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: '   ' }] })), false);
     for (const bad of [{ name: {} }, { folder: 5 }, { blurHash: [] }, { fileSize: '10' }, { dimensions: { width: 'x', height: 1 } }, { dimensions: 4 }]) {
       assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'https://example.com/a.jpg', ...bad }] })), false, JSON.stringify(bad));
     }
-    for (const url of ['data:image/png;', 'data:video/mp4,', 'data:image/png;base64,', 'not-a-url', 'data:text/plain,x', 'javascript:alert(1)', 'ftp://a.test/x.png']) {
+    for (const url of ['data:image/png;base64,%%%', 'data:image/png;base64,AAA', 'data:image/png,%E0%A4%A', 'data:image/png;', 'data:video/mp4,', 'data:image/png;base64,', 'not-a-url', 'data:text/plain,x', 'javascript:alert(1)', 'ftp://a.test/x.png']) {
       assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url }] })), false, url);
     }
     mod.db.rows = [{ id: 1, url: 'data:keep' }];
@@ -1597,7 +1639,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 52);
+    assert.equal(globalThis.__toasts.length, 55);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
@@ -1617,7 +1659,7 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     for (const tz of ['auto', 'Europe/Istanbul', 'UTC']) {
       assert.equal(await mod.importSettings(JSON.stringify({ timezone: tz })), true, tz);
     }
-    for (const ok of ['{"type":"random_colour","url":"#ff00aa"}', '{"url":"https://img.test/a.jpg"}', '{"url":"data:image/png;base64,AA"}']) {
+    for (const ok of ['{"type":"random_colour","url":"#ff00aa"}', '{"url":"https://img.test/a.jpg"}', '{"url":"data:image/png;base64,AA=="}']) {
       assert.equal(await mod.importSettings(JSON.stringify({ favourite: ok })), true, ok);
     }
 
@@ -1836,10 +1878,10 @@ test('round-52: a video favourite is flagged so it renders as a video', () => {
 test('round-53: video detection looks at the lower-cased path of the address', async () => {
   const videoCheck = (await load(nt('features/background/api/videoCheck.js'))).default;
   for (const url of [
-    'https://cdn.example/clip.mp4?token=abc', 'https://cdn.example/CLIP.MP4#t=3', 'data:video/mp4;base64,AA',
+    'https://cdn.example/clip.mp4?token=abc', 'https://cdn.example/CLIP.MP4#t=3', 'data:video/mp4;base64,AA==',
     'video/webm', 'https://a.test/x.OGG', 'clip.webm?x=1',
   ]) assert.equal(videoCheck(url), true, url);
-  for (const url of ['https://cdn.example/pic.jpg?name=a.mp4', 'https://a.test/mp4', 'data:image/png;base64,AA', '']) {
+  for (const url of ['https://cdn.example/pic.jpg?name=a.mp4', 'https://a.test/mp4', 'data:image/png;base64,AA==', '']) {
     assert.equal(videoCheck(url), false, url);
   }
   const privacy = readFileSync(path.join(root, 'docs/privacy-and-data-flow.md'), 'utf8');

@@ -84,6 +84,9 @@ export function createNewtabHandoff({
   // The Ask most recently handed to sendMessage, while its text may still be in
   // the composer waiting for the send's own checks to finish.
   let pendingSend = null;
+  // When a look at storage was first put off because a send still held the composer. A task that
+  // sat waiting behind that send is not stale for the time the panel itself kept it waiting.
+  let heldSince = null;
   // Writes to the retry slot (a list, written only by this panel) run one after another, so
   // two hand-backs or a hand-back and a claim never overwrite each other.
   let retrySlotWrites = Promise.resolve();
@@ -125,17 +128,20 @@ export function createNewtabHandoff({
     const tabId = getCurrentTabId();
     if (tabId == null) return false;
     if (sendStillHoldsComposer()) {
+      if (heldSince == null) heldSince = now();
       retrySoon();
       return false;
     }
     retries = 0;
+    const heldMs = heldSince == null ? 0 : Math.min(now() - heldSince, NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS);
+    heldSince = null;
     const primaryKey = newtabHandoffKey(Number(tabId));
     const retryKey = newtabHandoffRetryKey(Number(tabId));
     let key = primaryKey;
     let claimedOne = false;
     consuming = true;
     // Only the first attempt after start() gets the startup allowance.
-    const allowance = startupAllowanceMs;
+    const allowance = startupAllowanceMs + heldMs;
     startupAllowanceMs = 0;
     // The shared composer belongs to whichever tab is active now. If the user switches
     // tabs while storage is being read or written, this tab's task must not be applied
