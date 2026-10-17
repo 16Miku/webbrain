@@ -976,6 +976,7 @@ export default {
   "sp.mode.dev.title": "소스, 스타일 및 페이지 디버깅 도구 사용",
   "sp.mode.dev.confirm": "개발 모드는 실행 모드에 페이지 소스, 스타일 검사, DOM/프레임 검사 및 디버깅 도구를 추가합니다.\n\nHTML/CSS, 페이지 편집 및 문제 해결 작업에 사용하세요. 컴팩트 등급 공급자에서는 사용할 수 없습니다.\n\n계속하시겠습니까?",
   "sp.mode.dev.compact_blocked": "개발 모드는 컴팩트 등급 공급자에서 사용할 수 없습니다. {provider}은(는) 현재 컴팩트입니다. 미드/풀 등급 공급자로 전환하거나 프롬프트 등급을 변경하세요.",
+  "sp.mode.webgpu.ask_only": "브라우저 내 WebGPU 모델은 Ask 모드에서 질문에 답하기만 합니다. Act 또는 Dev 모드를 사용하려면 공급자 메뉴에서 다른 공급자를 선택하세요.",
   "sp.input.dev_placeholder": "이 페이지에서 검사하거나 편집할 내용을 알려 주세요...",
   "sp.slash.remember": "사용자 기본 설정 기억",
   "sp.slash.show_memory": "저장된 사용자 메모리 표시",

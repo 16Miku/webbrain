@@ -20,6 +20,7 @@ function messageContentChars(content) {
 function systemPromptVariant(prompt) {
   const text = String(prompt || '');
   if (text.startsWith("You are WebBrain's private on-device chat assistant")) return 'standalone_webgpu';
+  if (text.startsWith("You are WebBrain's on-device page assistant")) return 'tiny_ask';
   if (text.startsWith("You are WebBrain's standalone chat assistant")) return 'standalone_chat';
   if (text.startsWith('You are WebBrain, a helpful AI browser assistant running in Ask mode.')) return 'ask';
 
@@ -38,7 +39,7 @@ function systemPromptVariant(prompt) {
 }
 
 function variantMode(variant) {
-  if (variant === 'ask' || variant === 'standalone_chat' || variant === 'standalone_webgpu') return 'ask';
+  if (variant === 'ask' || variant === 'standalone_chat' || variant === 'standalone_webgpu' || variant === 'tiny_ask') return 'ask';
   if (variant.startsWith('act_')) return 'act';
   if (variant.startsWith('dev_')) return 'dev';
   return null;
@@ -80,7 +81,8 @@ export function buildPromptTraceProvenance(rawMessages, rawTools, runtimeMode = 
     ? String(runtimeMode).toLowerCase()
     : null;
   const envelope = runtimeEnvelope(messages);
-  const runtimeEnvelopeRequired = variant !== 'standalone_chat' && variant !== 'standalone_webgpu';
+  // Tiny Ask carries a one-line trusted clock instead of the full envelope.
+  const runtimeEnvelopeRequired = variant !== 'standalone_chat' && variant !== 'standalone_webgpu' && variant !== 'tiny_ask';
   const roleCounts = { system: 0, user: 0, assistant: 0, tool: 0, other: 0 };
   let messageChars = 0;
   for (const message of messages) {

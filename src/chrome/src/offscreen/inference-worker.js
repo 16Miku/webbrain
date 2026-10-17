@@ -7,6 +7,8 @@
  * request/response messages to it.
  */
 
+import { BONSAI2_TOKENIZER_CONFIG } from '../../vendor/bonsai2/tokenizer-config.js';
+
 let libraryPromise = null;
 let libraryVersion = null;
 let workerConfig = null;
@@ -33,6 +35,46 @@ const WEBGPU_LFM25_VL_3B_MODEL_ID = 'LiquidAI/LFM2.5-VL-3B-ONNX';
 const WEBGPU_NANBEIGE42_3B_MODEL_ID = 'Michionlion/Nanbeige4.2-3B-ONNX-WebGPU';
 const WEBGPU_MINICPM5_2B_MODEL_ID = 'RASMUS/MiniCPM5-2B-ONNX';
 const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
+const WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS = new Set([
+  'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU',
+  'danyalmalik/Ternary-Bonsai-2-4B-ONNX-WebGPU',
+]);
+const WEBGPU_BONSAI2_VISION_MODEL_IDS = new Set([
+  'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision',
+  'webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision',
+]);
+const WEBGPU_BONSAI2_MODEL_IDS = new Set([
+  ...WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS,
+  ...WEBGPU_BONSAI2_VISION_MODEL_IDS,
+  'Mike0021/Ternary-Bonsai-2-4B-text-ONNX',
+]);
+// Parallel-prefill decoder graphs (chunked GatedDeltaNet; see
+// scripts/models/bonsai/chunk_gdn_prefill.py). Earlier revisions prefilled with
+// an ONNX Scan that WebGPU runs one token at a time on the CPU. Installs that
+// cached that graph keep it under the same URL, so replace just this small file;
+// the unchanged weight files stay cached.
+const BONSAI2_DECODER_GRAPH_FILE = 'onnx/decoder_model_merged_q2f16.onnx';
+const BONSAI2_DECODER_GRAPH_SHA256 = new Map([
+  ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '2768d880f4fdab46a984d697b901db6e8ac54dc9b896524cb8cb769bbb339df0'],
+  ['webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', '52424fbb7094ed0a1036d8795e78c3da349fce1838ee6bd077523929b0bb7bb2'],
+]);
+// A refresh must never stall model loading on a flaky network; one attempt per
+// worker lifetime, after which the working cached graph is used.
+const BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS = 15_000;
+const checkedBonsai2DecoderGraphs = new Set();
+// Cache-only loads remember a stale graph so inference does not re-hash it.
+const staleBonsai2DecoderGraphs = new Set();
+// The Qwen3.5 generation_config sidecar omitted by Danyal's split exports.
+// Per-request decoding still controls do_sample and the output token budget.
+const BONSAI2_GENERATION_CONFIG = {
+  bos_token_id: 248044,
+  eos_token_id: [248046, 248044],
+  pad_token_id: 248044,
+  do_sample: true,
+  temperature: 0.6,
+  top_k: 20,
+  top_p: 0.95,
+};
 const WEBGPU_LFM25_MAX_NEW_TOKENS = 2048;
 const WEBGPU_LFM25_TEXT_MODEL_IDS = new Set([
   WEBGPU_LFM25_MODEL_ID,
@@ -61,6 +103,7 @@ const WEBGPU_LONG_OUTPUT_MODEL_IDS = new Set([
   ...WEBGPU_LFM25_TEXT_MODEL_IDS,
   WEBGPU_NANBEIGE42_3B_MODEL_ID,
   WEBGPU_MINICPM5_2B_MODEL_ID,
+  ...WEBGPU_BONSAI2_MODEL_IDS,
 ]);
 // Publisher-recommended decoding for the shipped reasoning presets. Custom
 // repositories keep Transformers.js greedy defaults.
@@ -146,6 +189,236 @@ function assertOnnxTextModel(modelId) {
 
 function isLfm25VlModel(modelId) {
   return WEBGPU_LFM25_VL_MODEL_IDS.has(String(modelId || '').trim());
+}
+
+function isMultimodalTextModel(modelId) {
+  return isLfm25VlModel(modelId) || WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId);
+}
+
+export function bonsai2CompatibilityMetadata(input) {
+  // Supply missing sidecars from packaged metadata without borrowing a tokenizer
+  // from another remote model or changing any unrecognized repository.
+  try {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input?.url);
+    const match = /^\/([^/]+\/[^/]+)\/resolve\/[^/]+\/(tokenizer_config|generation_config)\.json$/.exec(url.pathname);
+    if (url.origin !== 'https://huggingface.co' || !WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(match?.[1])) return null;
+    return match[2] === 'tokenizer_config' ? BONSAI2_TOKENIZER_CONFIG : BONSAI2_GENERATION_CONFIG;
+  } catch {
+    return null;
+  }
+}
+
+function packagedMetadataResponse(metadata, head = false) {
+  const body = JSON.stringify(metadata);
+  return new Response(head ? null : body, {
+    headers: { 'content-type': 'application/json', 'content-length': String(new TextEncoder().encode(body).length) },
+  });
+}
+
+async function cacheBonsai2CompatibilityMetadata(modelId) {
+  if (!WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(modelId) || typeof caches === 'undefined') return;
+  const cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+  for (const file of ['tokenizer_config.json', 'generation_config.json']) {
+    const url = `https://huggingface.co/${modelId}/resolve/main/${file}`;
+    if (!await cache.match(url)) await cache.put(url, packagedMetadataResponse(bonsai2CompatibilityMetadata(url)));
+  }
+}
+
+async function sha256Hex(buffer) {
+  const digest = await crypto.subtle.digest('SHA-256', buffer);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Make a cached Bonsai 2 Vision decoder graph the parallel-prefill revision.
+ * Inference loads are cache-only, so they only detect a stale graph
+ * ('stale'); the replacement is fetched solely from explicit download flows
+ * (`allowNetwork`). Offline or unexpected responses keep the cached graph,
+ * which still produces the same answers, only with slower prefill.
+ */
+export async function refreshBonsai2DecoderGraph(modelId, {
+  allowNetwork = false,
+  expected = BONSAI2_DECODER_GRAPH_SHA256.get(modelId),
+  timeoutMs = BONSAI2_DECODER_GRAPH_REFRESH_TIMEOUT_MS,
+} = {}) {
+  if (!expected || checkedBonsai2DecoderGraphs.has(modelId)) return 'skipped';
+  if (!allowNetwork && staleBonsai2DecoderGraphs.has(modelId)) return 'stale';
+  if (typeof caches === 'undefined' || !globalThis.crypto?.subtle) return 'unavailable';
+  const url = `https://huggingface.co/${modelId}/resolve/main/${BONSAI2_DECODER_GRAPH_FILE}`;
+  let cache;
+  try {
+    cache = await caches.open(TRANSFORMERS_CACHE_NAME);
+    const cached = await cache.match(url);
+    if (!cached) {
+      // Not downloaded yet: the regular download fetches the current graph.
+      checkedBonsai2DecoderGraphs.add(modelId);
+      return 'not-cached';
+    }
+    if (await sha256Hex(await cached.arrayBuffer()) === expected) {
+      checkedBonsai2DecoderGraphs.add(modelId);
+      return 'current';
+    }
+  } catch {
+    return 'unavailable';
+  }
+  // Cache-only loads (inference) never download; an explicit download replaces it.
+  if (!allowNetwork) {
+    staleBonsai2DecoderGraphs.add(modelId);
+    console.info(`[webgpu] ${modelId}: the cached decoder graph predates parallel prefill; download the model again to update it.`);
+    return 'stale';
+  }
+  const fetcher = typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : nativeFetch;
+  if (!fetcher) return 'unavailable';
+  // Known offline (Apocalypse Mode): load the cached graph now and retry on a
+  // later load instead of waiting for the network deadline.
+  if (globalThis.navigator?.onLine === false) return 'unavailable';
+  checkedBonsai2DecoderGraphs.add(modelId);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetcher(url, { cache: 'no-store', signal: controller.signal });
+    if (!response?.ok) return 'unavailable';
+    const bytes = await response.arrayBuffer();
+    if (await sha256Hex(bytes) !== expected) return 'unexpected';
+    await cache.put(url, new Response(bytes, {
+      headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength) },
+    }));
+    staleBonsai2DecoderGraphs.delete(modelId);
+    return 'updated';
+  } catch {
+    return 'unavailable';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Long Bonsai 2 Vision prompts are prefilled in slices so no single GPU pass
+// covers the whole prompt. On a GPU shared with the display (Apple silicon, a
+// display-attached discrete card) one multi-second prefill starves window
+// compositing and the desktop stutters; slices bound each pass. Each slice
+// continues from the previous slice's recurrent/conv/KV cache, which the
+// chunked decoder graph computes exactly like a single pass.
+export const BONSAI2_DEFAULT_PREFILL_SLICE_TOKENS = 512;
+const BONSAI2_MIN_PREFILL_SLICE_TOKENS = 64;
+const BONSAI2_MAX_PREFILL_SLICE_TOKENS = 8192;
+
+/** 0 disables slicing; invalid values use the default. */
+export function bonsai2PrefillSliceTokens(value) {
+  if (value === 0 || value === '0') return 0;
+  const tokens = Math.round(Number(value));
+  if (!Number.isFinite(tokens) || tokens <= 0) return BONSAI2_DEFAULT_PREFILL_SLICE_TOKENS;
+  return Math.min(BONSAI2_MAX_PREFILL_SLICE_TOKENS, Math.max(BONSAI2_MIN_PREFILL_SLICE_TOKENS, tokens));
+}
+
+function presentToPastName(name) {
+  return name
+    .replace('present_conv', 'past_conv')
+    .replace('present_recurrent', 'past_recurrent')
+    .replace('present', 'past_key_values');
+}
+
+/**
+ * Prefill all but the last prompt token in slices and return the cache, or
+ * null when the prompt fits in one slice. generate() then continues from the
+ * cache: the Qwen VL input preparation computes the full rotary positions and
+ * feeds only the remaining token.
+ */
+export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
+  const { model, library } = runtime;
+  const length = inputs.input_ids.dims.at(-1);
+  if (!sliceTokens || length - 1 <= sliceTokens) return null;
+  let embeds = await model.encode_text({ input_ids: inputs.input_ids });
+  let attentionMask = inputs.attention_mask;
+  if (inputs.pixel_values) {
+    const imageFeatures = await model.encode_image({
+      pixel_values: inputs.pixel_values,
+      image_grid_thw: inputs.image_grid_thw,
+    });
+    ({ inputs_embeds: embeds, attention_mask: attentionMask } = model._merge_input_ids_with_image_features({
+      image_features: imageFeatures,
+      inputs_embeds: embeds,
+      input_ids: inputs.input_ids,
+      attention_mask: attentionMask,
+    }));
+  }
+  const [positionIds] = model.get_rope_index(
+    inputs.input_ids,
+    inputs.image_grid_thw ?? null,
+    inputs.video_grid_thw ?? null,
+    attentionMask,
+  );
+  let cache = null;
+  try {
+    for (let start = 0; start < length - 1; start += sliceTokens) {
+      const end = Math.min(start + sliceTokens, length - 1);
+      const outputs = await model.forward({
+        inputs_embeds: embeds.slice(null, [start, end], null),
+        attention_mask: attentionMask.slice(null, [0, end]),
+        position_ids: positionIds.slice(null, null, [start, end]),
+        past_key_values: cache,
+      });
+      const present = {};
+      for (const [name, tensor] of Object.entries(outputs)) {
+        if (name.startsWith('present')) present[presentToPastName(name)] = tensor;
+        else if (tensor?.location === 'gpu-buffer') tensor.dispose();
+      }
+      if (cache) cache.update(present);
+      else cache = new library.DynamicCache(present);
+    }
+    return cache;
+  } catch (error) {
+    await cache?.dispose?.();
+    throw error;
+  }
+}
+
+export function normalizeBonsai2Config(config) {
+  return {
+    ...config,
+    // The source export omits generation_config.json. Its base-model EOS is
+    // only <|endoftext|>; chat must also stop at <|im_end|> or it generates
+    // subsequent assistant turns after an otherwise complete answer.
+    text_config: {
+      ...config.text_config,
+      eos_token_id: [248046, 248044],
+      pad_token_id: 248044,
+    },
+    // Danyal's metadata still describes the original Qwen q4/fp16 shards;
+    // both Bonsai q2f16 components have exactly one external data file.
+    'transformers.js_config': {
+      ...(config['transformers.js_config'] || {}),
+      use_external_data_format: {
+        'embed_tokens_q2f16.onnx': 1,
+        'decoder_model_merged_q2f16.onnx': 1,
+      },
+      kv_cache_dtype: { q2f16: 'float16' },
+    },
+  };
+}
+
+export function applyBonsai2RotaryCompatibility(modelId, model) {
+  if ((!WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(modelId) && !WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId))
+      || typeof model?._get_text_only_rope_index !== 'function') return;
+  const original = model._get_text_only_rope_index;
+  model._get_text_only_rope_index = function (inputIds, attentionMask) {
+    const [positions, deltas] = original.call(this, inputIds, attentionMask);
+    if (attentionMask) {
+      // Transformers.js 4.2 adds the prompt length to the pure-text MRoPE
+      // delta instead of subtracting it. Cached decoding then jumps from
+      // position N-1 to 3N. Recompute the delta from the actual positions;
+      // image prompts use a separate, correct method and remain untouched.
+      const [batchSize, sequenceLength] = attentionMask.dims;
+      for (let batch = 0; batch < batchSize; batch++) {
+        let maximum = -1n;
+        const offset = batch * sequenceLength;
+        for (let i = 0; i < sequenceLength; i++) {
+          if (positions.data[offset + i] > maximum) maximum = positions.data[offset + i];
+        }
+        deltas.data[batch] = maximum + 1n - BigInt(sequenceLength);
+      }
+    }
+    return [positions, deltas];
+  };
 }
 
 function lfm25VlProcessorOptions(modelId) {
@@ -237,6 +510,8 @@ async function markVisionModelReady(modelId) {
 }
 
 async function controlledFetch(input, init = {}) {
+  const metadata = bonsai2CompatibilityMetadata(input);
+  if (metadata) return packagedMetadataResponse(metadata, init.method === 'HEAD');
   if (!nativeFetch) throw new Error('Fetch is unavailable in the WebGPU worker.');
   if (textDownloadAbortController && fetchTargetsActiveTextModel(input)) {
     return nativeFetch(input, { ...init, signal: textDownloadAbortController.signal });
@@ -453,17 +728,32 @@ function noteWebgpuExecutionSuccess() {
   webgpuExecutionFailureStreak = 0;
 }
 
+export function perFileProgressEvents(event) {
+  if (event?.status !== 'progress_total') return [event];
+  // Transformers.js emits an aggregate snapshot immediately before the same
+  // file's progress event. Account for its known files, never for its model
+  // total as an additional file (which doubles every downloaded byte).
+  return Object.entries(event?.files || {}).map(([file, progress]) => ({
+    status: 'progress', file,
+    loaded: Number(progress?.loaded || 0),
+    total: Number(progress?.total || 0),
+  }));
+}
+
 function postProgress(modelId, event) {
+  const fileEvents = perFileProgressEvents(event);
   if (modelId === activeTextDownloadModelId && !textDownloadCancelMode) {
-    const file = String(event?.file || event?.name || '');
-    if (file) {
+    const file = String(event?.file || (event?.status === 'progress_total' ? textDownloadState.file : event?.name) || '');
+    for (const fileEvent of fileEvents) {
+      const file = String(fileEvent?.file || '');
+      if (!file) continue;
       const previous = textDownloadFiles.get(file) || { loaded: 0, total: 0, status: '' };
-      const total = Number(event?.total || previous.total || 0);
-      const loaded = event?.status === 'done' && total > 0
+      const total = Number(fileEvent?.total || previous.total || 0);
+      const loaded = fileEvent?.status === 'done' && total > 0
         ? total
-        : Number(event?.loaded ?? previous.loaded ?? 0);
+        : Number(fileEvent?.loaded ?? previous.loaded ?? 0);
       textDownloadFiles.set(file, {
-        status: event?.status || previous.status,
+        status: fileEvent?.status || previous.status,
         loaded: Math.max(0, loaded),
         total: Math.max(0, total),
       });
@@ -487,15 +777,17 @@ function postProgress(modelId, event) {
     };
     postTextDownloadState({ force: event?.status === 'done' });
   }
-  self.postMessage({
-    type: 'progress',
-    modelId,
-    status: event?.status || '',
-    file: event?.file || event?.name || '',
-    loaded: Number(event?.loaded || 0),
-    total: Number(event?.total || 0),
-    progress: Number(event?.progress || 0),
-  });
+  for (const fileEvent of fileEvents) {
+    self.postMessage({
+      type: 'progress',
+      modelId,
+      status: fileEvent?.status || '',
+      file: fileEvent?.file || '',
+      loaded: Number(fileEvent?.loaded || 0),
+      total: Number(fileEvent?.total || 0),
+      progress: Number(fileEvent?.progress || 0),
+    });
+  }
 }
 
 async function disposeRuntime(runtime) {
@@ -568,6 +860,13 @@ async function getVisionRuntime(modelId, dtype, device, {
   // A device loss flagged between turns leaves both resident sessions poisoned;
   // dispose them before the cached gate so we never hand out a dead session.
   await disposeWebgpuRuntimesIfDirty();
+  // Before any resident-session shortcut: download flows replace a stale
+  // decoder graph (and drop the session built from it); cache-only loads
+  // only notice it.
+  if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+    const graph = await refreshBonsai2DecoderGraph(modelId, { allowNetwork: !localFilesOnly });
+    if (graph === 'updated' && visionRuntimeKey.startsWith(`vision|${modelId}|`)) await disposeVisionRuntime();
+  }
   if (visionRuntime && visionRuntimeKey === key) {
     visionRuntimeOwner = owner;
     return visionRuntime;
@@ -599,7 +898,9 @@ async function getVisionRuntime(modelId, dtype, device, {
     await disposeVisionRuntime();
     const progress_callback = event => postProgress(modelId, event);
     const config = await legacyLfm25VlConfig(library, modelId, progress_callback, localFilesOnly);
-    const processorOptions = lfm25VlProcessorOptions(modelId);
+    const processorOptions = WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
+      ? { image_processor_config_file: 'processor_config.json', chat_template_file: 'chat_template.jinja' }
+      : lfm25VlProcessorOptions(modelId);
     const previousAllowLocalModels = library.env?.allowLocalModels;
     if (localFilesOnly && library.env) library.env.allowLocalModels = true;
     let processorResult;
@@ -646,6 +947,12 @@ async function getVisionRuntime(modelId, dtype, device, {
     }
     const processor = processorResult.value;
     const model = modelResult.value;
+    applyBonsai2RotaryCompatibility(modelId, model);
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId) && processor.image_processor) {
+      // Bound the visual token count for browser screenshots. Upstream Qwen's
+      // 16M-pixel ceiling is intended for server GPUs and can exhaust WebGPU.
+      processor.image_processor.max_pixels = 1024 * 1024;
+    }
     bindWebGpuDeviceDiagnostics(library);
     visionRuntime = { library, processor, model };
     visionRuntimeKey = key;
@@ -778,9 +1085,19 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
     if (localFilesOnly && library.env) library.env.allowLocalModels = true;
     let pipeline;
     try {
+      // Seed omitted metadata before local_files_only loading, including older
+      // browser caches created before these compatibility sidecars were added.
+      await cacheBonsai2CompatibilityMetadata(modelId);
+      const config = WEBGPU_BONSAI2_SPLIT_TEXT_MODEL_IDS.has(modelId)
+        ? normalizeBonsai2Config(await library.AutoConfig.from_pretrained(modelId, {
+          local_files_only: localFilesOnly,
+          progress_callback: event => postProgress(modelId, event),
+        }))
+        : null;
       pipeline = await library.pipeline('text-generation', modelId, {
         device,
         dtype,
+        ...(config ? { config } : {}),
         ...(WEBGPU_TEXT_MODEL_FILE_NAMES.has(modelId)
           ? { model_file_name: WEBGPU_TEXT_MODEL_FILE_NAMES.get(modelId) }
           : {}),
@@ -802,6 +1119,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
       if (localFilesOnly && library.env) library.env.allowLocalModels = previousAllowLocalModels;
     }
     bindWebGpuDeviceDiagnostics(library);
+    applyBonsai2RotaryCompatibility(modelId, pipeline.model);
     textRuntime = {
       library,
       pipeline,
@@ -825,7 +1143,7 @@ async function getTextRuntime(modelId, dtype, device, { localFilesOnly = false }
 }
 
 async function getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly = false } = {}) {
-  if (isLfm25VlModel(modelId)) {
+  if (isMultimodalTextModel(modelId)) {
     return getVisionRuntime(modelId, dtype, device, {
       localFilesOnly,
       owner: 'text',
@@ -836,8 +1154,8 @@ async function getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly
 }
 
 async function disposeDownloadedTextRuntime(modelId = '') {
-  if (!modelId || isLfm25VlModel(modelId)) await disposeVisionRuntime('text');
-  if (!modelId || !isLfm25VlModel(modelId)) await disposeTextRuntime();
+  if (!modelId || isMultimodalTextModel(modelId)) await disposeVisionRuntime('text');
+  if (!modelId || !isMultimodalTextModel(modelId)) await disposeTextRuntime();
 }
 
 function chatTemplateText(value) {
@@ -853,7 +1171,7 @@ export function tokenizerSupportsTools(tokenizer) {
 }
 
 function assertToolCapableTextRuntime(runtime, modelId) {
-  if (tokenizerSupportsTools(runtime?.tokenizer)) return;
+  if (tokenizerSupportsTools(runtime?.tokenizer ?? runtime?.processor?.tokenizer)) return;
   throw new Error(`${modelId} is not compatible with WebBrain: custom repositories must provide a chat template that accepts tools.`);
 }
 
@@ -902,6 +1220,14 @@ async function downloadTextModel(payload, { onStarted } = {}) {
   }
   await clearLegacyLfm25VlWrongPrecisionCache(modelId, dtype);
   if (await isTextModelReady(modelId, dtype)) {
+    // An explicit download of a cached model is the update path for its graph.
+    // Model operations are serialized, so no load can race this replacement.
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)
+        && await refreshBonsai2DecoderGraph(modelId, { allowNetwork: true }) === 'updated'
+        && visionRuntimeKey.startsWith(`vision|${modelId}|`)) {
+      // The resident session was built from the replaced graph.
+      await disposeVisionRuntime();
+    }
     if (payload?.requireTools === true) {
       const runtime = await getDownloadedTextRuntime(modelId, dtype, device, { localFilesOnly: true });
       assertToolCapableTextRuntime(runtime, modelId);
@@ -1134,6 +1460,40 @@ export function prepareMultimodalMessages(messages) {
   return { messages: prepared, imageUrls };
 }
 
+export async function processMultimodalInputs(runtime, modelId, images, prompt) {
+  // Qwen's processor takes (text, images), while LFM takes (images, text).
+  // Keep this distinction at the runtime boundary so screenshot messages and
+  // their untrusted-content framing stay identical throughout the agent.
+  if (!WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+    return runtime.processor(images, prompt, { add_special_tokens: false });
+  }
+  if (!Array.isArray(images) || images.length < 2) {
+    return runtime.processor(prompt, images, { add_special_tokens: false });
+  }
+  // The bundled Qwen image processor treats a batch as video frames. Screenshot
+  // history consists of independent images, potentially with different shapes.
+  // Process each separately, then join patches and one grid row per image.
+  const marker = '<|image_pad|>';
+  const chunks = prompt.split(marker);
+  if (chunks.length !== images.length + 1) {
+    throw new Error('The screenshot count does not match the image placeholders in the prompt.');
+  }
+  const imageInputs = [];
+  for (const image of images) imageInputs.push(await runtime.processor.image_processor(image));
+  const mergeArea = runtime.processor.image_processor.config.merge_size ** 2;
+  let expanded = chunks[0];
+  for (let i = 0; i < imageInputs.length; i++) {
+    const grid = imageInputs[i].image_grid_thw.tolist()[0];
+    const tokens = Number(grid.reduce((product, dimension) => product * dimension, 1n)) / mergeArea;
+    expanded += marker.repeat(tokens) + chunks[i + 1];
+  }
+  return {
+    ...runtime.processor.tokenizer(expanded, { add_special_tokens: false }),
+    pixel_values: runtime.library.cat(imageInputs.map(input => input.pixel_values), 0),
+    image_grid_thw: runtime.library.cat(imageInputs.map(input => input.image_grid_thw), 0),
+  };
+}
+
 function createVisionProbeImage(RawImage) {
   if (!RawImage) throw new Error('The packaged runtime does not expose RawImage.');
   // LFM2.5-VL-450M is much more dependable at coarse visual classification
@@ -1188,15 +1548,16 @@ async function runVision(payload, requestId) {
     });
     const { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
     if (imageUrls.length !== 1) {
-      throw new Error(`LFM2.5-VL requires exactly one screenshot; received ${imageUrls.length}.`);
+      throw new Error(`${modelId} requires exactly one screenshot; received ${imageUrls.length}.`);
     }
     const prompt = runtime.processor.apply_chat_template(messages, {
       add_generation_prompt: true,
+      ...(WEBGPU_BONSAI2_MODEL_IDS.has(modelId) ? { enable_thinking: false } : {}),
     });
     const image = payload?.options?.visionProbe === true
       ? createVisionProbeImage(runtime.library.RawImage)
       : await runtime.library.load_image(imageUrls[0]);
-    const inputs = await runtime.processor(image, prompt, { add_special_tokens: false });
+    const inputs = await processMultimodalInputs(runtime, modelId, image, prompt);
     const requestedTokens = Number(payload?.options?.maxTokens);
     const maxNewTokens = Number.isFinite(requestedTokens)
       ? Math.max(1, Math.min(1600, Math.round(requestedTokens)))
@@ -1327,7 +1688,7 @@ function addLegacyVlTools(messages, tools) {
 
 async function runMultimodalText(payload) {
   const modelId = assertOnnxTextModel(payload?.modelId);
-  if (!isLfm25VlModel(modelId)) {
+  if (!isMultimodalTextModel(modelId)) {
     throw new Error(`${modelId} is not a shipped WebGPU multimodal model.`);
   }
   const device = payload?.device || 'webgpu';
@@ -1344,19 +1705,19 @@ async function runMultimodalText(payload) {
     owner: 'text',
     readiness: 'text',
   });
+  if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   let { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
   if (modelId === WEBGPU_LFM25_VL_16B_MODEL_ID) messages = addLegacyVlTools(messages, tools);
   const prompt = runtime.processor.apply_chat_template(messages, {
     add_generation_prompt: true,
     tools: tools.length ? tools : undefined,
+    ...(WEBGPU_BONSAI2_MODEL_IDS.has(modelId) ? { enable_thinking: false } : {}),
   });
   let inputs;
   if (imageUrls.length) {
     const images = await Promise.all(imageUrls.map(url => runtime.library.load_image(url)));
-    inputs = await runtime.processor(images.length === 1 ? images[0] : images, prompt, {
-      add_special_tokens: false,
-    });
+    inputs = await processMultimodalInputs(runtime, modelId, images.length === 1 ? images[0] : images, prompt);
   } else {
     inputs = runtime.processor.tokenizer(prompt, { add_special_tokens: false });
   }
@@ -1367,15 +1728,28 @@ async function runMultimodalText(payload) {
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
   let outputs;
+  let prefilled = null;
   try {
+    if (WEBGPU_BONSAI2_VISION_MODEL_IDS.has(modelId)) {
+      prefilled = await prefillBonsai2InSlices(
+        runtime,
+        inputs,
+        bonsai2PrefillSliceTokens(payload?.options?.prefillSliceTokens),
+      );
+    }
     outputs = await runtime.model.generate({
       ...inputs,
+      ...(prefilled ? { past_key_values: prefilled } : {}),
       do_sample: false,
       max_new_tokens: maxNewTokens,
     });
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
     throw error;
+  } finally {
+    // generate() keeps a caller-supplied cache alive; release its GPU buffers
+    // without masking a generation error.
+    if (prefilled) await prefilled.dispose().catch(() => {});
   }
   const inputLength = inputs.input_ids.dims.at(-1);
   const generated = outputs.slice(null, [inputLength, null]);
