@@ -90,59 +90,17 @@ kbd {
   flex-direction: column;
 }
 
-.install-header {
-  min-height: 88px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  border-bottom: 1px solid var(--line);
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-family: var(--display);
-  font-size: 16px;
-  font-weight: 760;
-  letter-spacing: -0.02em;
-}
-
-.brand img {
-  border-radius: 11px;
-}
-
-.status-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 11px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--success) 14%, transparent);
-}
-
 .install-hero {
   flex: 1;
-  padding: clamp(54px, 8vh, 92px) 0 70px;
+  /* Fill the first screen: the next section starts at the fold and the feature
+     pills (last grid row) sit at the bottom of it. */
+  min-height: 100svh;
+  padding: clamp(40px, 7vh, 80px) 0 clamp(24px, 4vh, 40px);
   display: grid;
   grid-template-columns: minmax(280px, 0.72fr) minmax(540px, 1.45fr);
+  grid-template-rows: 1fr auto;
   align-items: center;
-  gap: clamp(42px, 6vw, 78px);
+  gap: clamp(24px, 4vh, 40px) clamp(42px, 6vw, 78px);
 }
 
 .install-copy {
@@ -294,7 +252,7 @@ kbd {
 
 .feature-tabs {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 10px;
   border-bottom: 1px solid var(--line);
@@ -303,6 +261,7 @@ kbd {
 
 .feature-tab {
   --feature-color: var(--accent);
+  position: relative;
   min-width: 0;
   min-height: 43px;
   padding: 8px 10px;
@@ -332,10 +291,6 @@ kbd {
 
 .feature-tab[data-feature="model"] {
   --feature-color: #28a96b;
-}
-
-.feature-tab[data-feature="apocalypse"] {
-  --feature-color: #f0a72f;
 }
 
 .feature-tab:hover {
@@ -416,16 +371,6 @@ kbd {
   line-height: 1.4;
 }
 
-.feature-copy-eyebrow {
-  margin: 0 0 0.15rem;
-  color: #e0b24a;
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
 .feature-panel[data-feature-panel="act"] .feature-copy {
   right: 0;
   bottom: auto;
@@ -450,18 +395,84 @@ kbd {
   --showcase-wash: #e8f5ee;
 }
 
-.feature-panel[data-feature-panel="apocalypse"] {
-  --showcase-wash: #1a140c;
+/* Hero tabs rotate on their own until the visitor takes over (install-motion.js);
+   the active tab's progress bar is the timer, so pausing is just play-state. */
+.feature-tab::after {
+  content: "";
+  position: absolute;
+  right: 11px;
+  bottom: 5px;
+  left: 11px;
+  height: 2px;
+  border-radius: 2px;
+  opacity: 0;
+  background: var(--feature-color);
+  transform: scaleX(0);
+  transform-origin: left center;
 }
 
-.feature-panel[data-feature-panel="apocalypse"] .feature-copy {
-  color: #cbbfa6;
+.feature-showcase.is-autoplaying .feature-tab.is-active::after {
+  opacity: 0.9;
+  animation: tab-progress var(--autoplay-ms, 7000ms) linear forwards;
 }
 
-.feature-panel[data-feature-panel="apocalypse"] .feature-copy h2 {
-  color: #f6edd8;
-  font-weight: 600;
+.feature-showcase.is-paused .feature-tab.is-active::after {
+  animation-play-state: paused;
 }
+
+/* Slow ambient glow behind the page. Transform-only motion, so it stays cheap. */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(70px);
+  will-change: transform;
+}
+
+body::before {
+  top: -14vw;
+  left: -10vw;
+  width: 46vw;
+  height: 46vw;
+  opacity: 0.55;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-strong) 46%, transparent), transparent 68%);
+  animation: aurora-a 26s ease-in-out infinite alternate;
+}
+
+body::after {
+  top: 36vh;
+  right: -12vw;
+  width: 40vw;
+  height: 40vw;
+  opacity: 0.45;
+  background: radial-gradient(circle, rgba(224, 69, 123, 0.32), transparent 68%);
+  animation: aurora-b 32s ease-in-out infinite alternate;
+}
+
+:root[data-theme="light"] body::before {
+  opacity: 0.3;
+}
+
+:root[data-theme="light"] body::after {
+  opacity: 0.22;
+}
+
+/* First-paint entrance. fill-mode "backwards" (not "both") so the final
+   keyframe does not keep overriding the button's hover transform. */
+.install-copy > *,
+.feature-showcase {
+  animation: rise 800ms cubic-bezier(0.2, 0.7, 0.2, 1) backwards;
+}
+
+.install-copy > :nth-child(2) { animation-delay: 60ms; }
+.install-copy > :nth-child(3) { animation-delay: 120ms; }
+.install-copy > :nth-child(4) { animation-delay: 180ms; }
+.install-copy > :nth-child(5),
+.install-copy > :nth-child(6) { animation-delay: 240ms; }
+.feature-showcase { animation-delay: 160ms; }
 
 .visually-hidden {
   position: absolute !important;
@@ -473,6 +484,31 @@ kbd {
   clip: rect(0, 0, 0, 0) !important;
   white-space: nowrap !important;
   border: 0 !important;
+}
+
+@keyframes tab-progress {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+}
+
+@keyframes aurora-a {
+  to {
+    transform: translate3d(8vw, 10vh, 0) scale(1.12);
+  }
+}
+
+@keyframes aurora-b {
+  to {
+    transform: translate3d(-10vw, -8vh, 0) scale(1.15);
+  }
 }
 
 @keyframes feature-reveal {
@@ -493,8 +529,9 @@ kbd {
 
   .install-hero {
     grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
     gap: 44px;
-    padding-top: 54px;
+    padding-top: 40px;
   }
 
   .install-copy {
@@ -515,12 +552,8 @@ kbd {
     width: min(100% - 24px, 560px);
   }
 
-  .install-header {
-    min-height: 76px;
-  }
-
   .install-hero {
-    padding: 44px 0 46px;
+    padding: 32px 0 28px;
     gap: 36px;
   }
 
@@ -530,10 +563,6 @@ kbd {
 
   .feature-showcase {
     border-radius: 20px;
-  }
-
-  .feature-tabs {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .feature-tab {
@@ -556,10 +585,6 @@ kbd {
 }
 
 @media (max-width: 420px) {
-  .status-chip {
-    display: none;
-  }
-
   .open-panel-button {
     width: 100%;
   }
@@ -576,7 +601,15 @@ kbd {
     transition: none;
   }
 
-  .feature-panel {
+  .feature-panel,
+  .install-copy > *,
+  .feature-showcase,
+  body::before,
+  body::after {
     animation: none;
+  }
+
+  .feature-tab::after {
+    display: none;
   }
 }

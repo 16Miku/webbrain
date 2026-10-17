@@ -731,6 +731,35 @@
     return false;
   }
 
+  let treeHiddenStateCache = null;
+  function isHiddenTreeNode(el) {
+    const cache = treeHiddenStateCache || new WeakMap();
+    const pending = [];
+    let node = el;
+    for (; node?.nodeType === Node.ELEMENT_NODE && !cache.has(node); node = composedParent(node)) pending.push(node);
+    let suppressed = cache.get(node)?.suppressed === true;
+    let transparent = cache.get(node)?.transparent === true;
+    while (pending.length) {
+      const current = pending.pop();
+      const style = window.getComputedStyle(current);
+      const generatesBox = style.display !== 'contents';
+      suppressed ||= current.getAttribute('aria-hidden') === 'true'
+        || style.display === 'none' || (generatesBox && style.contentVisibility === 'hidden');
+      // Top-layer boxes escape ancestor opacity, but not display/content
+      // suppression or aria-hidden. Their own opacity still applies.
+      if (transparent && (current.matches(':modal')
+          || (current.hasAttribute('popover') && 'popover' in current && current.matches(':popover-open'))
+          || current.matches(':fullscreen'))) transparent = false;
+      // Box effects on display:contents do not affect its rendered children.
+      transparent ||= generatesBox && style.opacity === '0';
+      // Visibility can be restored by a child. Cache the inherited states
+      // separately so siblings and anchored reads keep the same semantics.
+      cache.set(current, { suppressed, transparent, hidden: suppressed || transparent || ['hidden', 'collapse'].includes(style.visibility) });
+    }
+    // Offscreen text, display:contents and CSS overrides of [hidden] render.
+    return cache.get(el)?.hidden === true;
+  }
+
   function deepestOpenShadowHit(x, y) {
     let hit = document.elementFromPoint(x, y);
     const seen = new Set();
@@ -1079,6 +1108,12 @@
         if (ariaHidden || notRendered || (!isVisible(el) && !visuallyReplaced)) {
           line += ' hidden=true';
         }
+      } catch {}
+    } else {
+      // filter=all keeps inactive status/error templates as well as controls.
+      // Without this marker their text can be mistaken for a live outcome.
+      try {
+        if (isHiddenTreeNode(el)) line += ' hidden=true';
       } catch {}
     }
     try {
@@ -1839,6 +1874,8 @@
   }
 
   function generateAccessibilityTree(filter, maxDepth, maxChars, refId, page, expectedTreeRevision) {
+    const previousHiddenStateCache = treeHiddenStateCache;
+    treeHiddenStateCache = new WeakMap();
     jevCollector = filter === 'interactive' && !refId && (!page || page === 1) ? new Map() : null;
     lastJevSnapshot = null;
     jevSensitiveControlSeen = false;
@@ -2043,6 +2080,7 @@
         viewport: { width: window.innerWidth, height: window.innerHeight },
       };
     } finally {
+      treeHiddenStateCache = previousHiddenStateCache;
       if (jevCollector) {
         const controls = [...jevCollector.values()];
         const structure = fingerprintTreeContent(JSON.stringify(controls.map(({ value, checked, signature, ...control }) => control)));

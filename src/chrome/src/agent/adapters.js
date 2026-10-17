@@ -15680,6 +15680,18 @@ function isMastodonAppPath(hostname, path) {
     && /^\/(?:home|deck|web|notifications|explore|public|public\/local|settings|lists|publish|start|get-started|get-started\/profile|getting-started)(?:\/|$)/i.test(path);
 }
 
+// The web app's other columns (Favourites, Bookmarks, ...) are the same
+// Mastodon app as Home: its adapter notes, publication receipts and native
+// post handling follow a task there too, for example a reply started from
+// Favourites. isMastodonUrl keeps its narrower list for the page observers
+// (isMastodonPageUrl) and the finance-site exclusion.
+function isMastodonAdapterUrl(url) {
+  if (isMastodonUrl(url)) return true;
+  const u = new URL(url);
+  return /^https?:$/.test(u.protocol) && isLikelyMastodonHost(u.hostname)
+    && /^\/(?:favourites|bookmarks|conversations|followed_tags|pinned|directory|follow_requests|mutes|blocks|domain_blocks|search|tags)(?:\/|$)/i.test(safeDecodePath(u.pathname));
+}
+
 function isMastodonLocalProfilePath(hostname, path) {
   return isLikelyMastodonHost(hostname) && /^\/@[A-Za-z0-9_]+\/?$/.test(path);
 }
@@ -15898,8 +15910,8 @@ const ADAPTERS = [
     notes: `
 - Username may only contain alphanumeric characters or single hyphens, and cannot begin or end with a hyphen.
 - Creating a release: navigate to /<owner>/<repo>/releases/new, choose/create the tag with the "Choose a tag" combobox, and verify the "Previous tag" range. If the user supplied no exact notes, prefer "Generate release notes" and review its output; otherwise preserve their text. Finish with "Publish release" or the adjacent "Save draft" as requested.
-- On the release form, use named controls rather than unstable indexes (never reuse remembered element #38). The release body is a CodeMirror editor: click its "Describe this release" surface before typing.
-- EDITING an existing release (URL pattern /<owner>/<repo>/releases/edit/<tag>): the file upload input is \`input#releases-upload\` (NOT a generic input[type="file"] — there are several on the page). Use \`upload_file({selector: "input#releases-upload", filePath: "..."})\` for each binary. After each upload, GitHub renders a small chip listing the filename in the "Attach binaries" area below the body editor — verify the chip appears with the correct filename before moving on. The commit button is green and says "Update release"; navigating away from the edit page WITHOUT clicking it discards the uploads. If you can't see "Update release" without scrolling, scroll down before clicking — don't navigate back to the dist folder thinking you need to re-fetch.
+- On the release form, use named controls rather than unstable indexes (never reuse remembered element #38). The release body is a CodeMirror editor: click its "Describe this release" surface before typing. Read current upload status with filter="visible"; filter="all" also includes hidden loading/error templates, which do not establish an active failure.
+- Release binaries on both /releases/new and /releases/edit/<tag>: call \`get_interactive_elements\` and use the exact selector on the asset input record (normally #releases-upload). The other file input belongs to Markdown attachments. Reuse each saved downloadId with \`upload_file\`; never guess a name selector or use generic input[type="file"]. After each attachment, inspect the visible asset row/status before attaching the next file. Finish with "Publish release", "Save draft", or "Update release" as requested, then verify every filename on the saved release page; navigating away before saving loses staged changes.
 - Files in a /tree/.../<folder> view (e.g. /tree/main/dist) can be downloaded via raw URLs of the form https://github.com/<owner>/<repo>/raw/<branch>/<path>. Once downloaded, the file is on local disk; do not re-download to "verify".
 - Creating a pull request: when no exact title was supplied, prefer the title field's Copilot button; for a blank description, prefer Copilot > "Summary". Review both suggestions and add missing rationale/testing context. Summary ignores existing description text, so preserve repository templates and user content; if Copilot is unavailable, draft normally. PR descriptions/comments use CodeMirror with a separate Markdown preview.
 - File browser: pressing "t" opens the fuzzy file finder (faster than navigating folders). When editing a repository file, verify the complete editor value before clicking "Commit changes"; then open or observe the new /commit/<sha> link so WebBrain can verify the raw file at that exact commit and reject duplicated or partial content.
@@ -17934,7 +17946,7 @@ const ADAPTERS = [
     // known sites (for example TikTok) preserve their own guidance.
     name: 'mastodon',
     category: 'general',
-    matches: isMastodonUrl,
+    matches: isMastodonAdapterUrl,
     fullPageCapture: { infiniteScroll: isMastodonInfiniteScrollUrl },
     notes: `
 - For public media downloads, call an enabled \`download_public_media\` skill first with the exact status permalink (/@<user>/<id> or /users/<user>/statuses/<id>); on a timeline/profile, identify the visible post and its link first. FreeSkillz supports public Mastodon media across instances without browser cookies. Never send followers-only/direct posts; use \`download_social_media\` only if the skill is unavailable or fails.
@@ -17943,7 +17955,9 @@ const ADAPTERS = [
 - After submitting the home domain, expect a redirect to the user's own instance with a remote URL like \`https://mastoturk.org/@user@remote.example\`; wait_for_stable there. For account/profile follow flows, click Follow; for status or authorize_interaction flows, complete the requested action on the home-instance page (reply, boost, favorite, or follow).
 - Do NOT manually synthesize the home-instance URL before this handoff. The home instance may need the remote-profile lookup/redirect to recognize the account.
 - Label variants by version/language: "Sign in to continue", "Continue on your server", "Authorize interaction", "Proceed to follow"; Turkish: Takip et=Follow, sunucu/domain=server domain.
-- If the user's Mastodon home domain is not already known from the conversation or account UI, clarify once before entering anything.`,
+- If the user's Mastodon home domain is not already known from the conversation or account UI, clarify once before entering anything.
+- Liked (favourited) posts are listed at /favourites. To reply, click that post's Reply button ("Yanıtla" in Turkish; the composer's submit has the same label). The composer opens with the thread's @mentions prefilled (narrow layouts open it at /publish): start your text with them exactly once instead of clearing them.
+- After a reply posts, the composer empties and narrow layouts go back to the previous column; Favourites does not show your reply. Verify it under the replied-to post: open its timestamp link (the post's permalink) and find your reply below it. If a submit's outcome is uncertain, check there before any retry; never post the same reply twice. With several posts to reply to, finish and verify one, then move to the next.`,
   },
   ...CMS_ADAPTERS,
 ];

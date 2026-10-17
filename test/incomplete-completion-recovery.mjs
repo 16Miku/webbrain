@@ -130,6 +130,40 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal((await h.check()).recovery, 'wait_then_check');
   });
 
+  test(`${build}: a refusal on WebBrain's card settles that action only; other requested work can still resume`, async () => {
+    for (const [declinedResult, otherWorkLeft] of [
+      [{ success: false, noDispatch: true, deletionDeclined: true, error: 'The user chose not to delete this item.' }, true],
+      [{ success: false, denied: true, submitConfirmationRequired: true, error: 'The user did not confirm submitting.' }, true],
+      [{ success: false, denied: true, permissionRequired: true, error: 'The user did not allow it.' }, false],
+    ]) {
+      const h = unitFixture();
+      h.agent.conversations.set(1, [
+        { role: 'assistant', tool_calls: [{ id: 'refused', function: { name: 'click_ax' } }, { id: 'other', function: { name: 'set_field' } }] },
+        { role: 'tool', tool_call_id: 'refused', content: JSON.stringify(declinedResult) },
+        { role: 'tool', tool_call_id: 'other', content: JSON.stringify({ success: false, denied: true, error: 'Not a user refusal.' }) },
+      ]);
+      let seen;
+      h.agent._semanticDecision = async (_tab, kind, context) => {
+        assert.equal(kind, 'incomplete_task');
+        seen = context.page.recorded_current_results;
+        return { choice: otherWorkLeft ? 'continue_now' : 'stop_required' };
+      };
+      const block = await h.check();
+      assert.deepEqual(seen.map(entry => entry.userDeclined === true), [true, false], 'Only the card refusal is marked as the user\'s');
+      if (otherWorkLeft) {
+        assert.equal(block.recovery, 'continue_now', 'Unfinished sibling work still resumes after one refusal');
+        assert.match(block.error, /refusal is final\. Do not retry it, ask again or reach it another way/);
+      } else {
+        assert.equal(block, null, 'A refusal of the only outstanding work ends honestly');
+      }
+    }
+  });
+
+  test(`${build}: without a refusal the continuation text says nothing about one`, async () => {
+    const h = unitFixture('continue_now');
+    assert.doesNotMatch((await h.check()).error, /declined/);
+  });
+
   for (const streaming of [false, true]) for (const scenario of ['upload', 'missing-source']) {
     test(`${build}: ${streaming ? 'stream' : 'chat'} recovers ${scenario} through the real done and tool-batch paths`, async () => {
       const tab = nextTab++, updates = [], actions = [], offered = [];

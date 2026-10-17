@@ -12,7 +12,7 @@
 //
 // This file is shared byte for byte by the Chrome and Firefox builds.
 
-export const SEMANTIC_DECISION_VERSION = 2;
+export const SEMANTIC_DECISION_VERSION = 3;
 
 // A choice listed in `authorizing` lets an action go ahead without asking the
 // user, so it needs a surer answer than the others: a higher decision-model
@@ -96,7 +96,11 @@ export const SEMANTIC_QUESTIONS = Object.freeze({
       + 'the task is impossible. Judge in any language. Never invent source facts, credentials, permission, an '
       + 'attestation or a user answer; never propose repeating an uncertain or already dispatched submission. '
       + 'A bounded read or wait can reconcile such a dispatch. Choose continuation only when a concrete '
-      + 'reasonable step remains within the existing task and normal tool permissions.',
+      + 'reasonable step remains within the existing task and normal tool permissions. A recorded result with '
+      + '`userDeclined` is the user\'s final refusal of that one action on WebBrain\'s own card: never choose a '
+      + 'continuation to retry it, ask again or reach it another way, and do not treat it as missing permission '
+      + 'for the rest of the task. Choose continue_now only when other requested work, unrelated to the refused '
+      + 'action, still remains; if the refused action was the only outstanding work, choose stop_required.',
     choices: Object.freeze({
       continue_now: 'A reasonable permitted inspection, source retrieval, correction or untried approach remains; the agent stopped before trying it.',
       wait_then_check: 'The requested flow is still loading, uploading, validating or otherwise running, and a bounded wait followed by a fresh observation can let it continue.',
