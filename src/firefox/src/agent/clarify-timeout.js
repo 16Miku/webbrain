@@ -11,9 +11,10 @@
 // A question whose answer would authorize one of the short list of
 // consequential actions (deleting data, spending money, credentials, who
 // receives a message, publishing something the user did not ask for) always
-// uses 'safe', whatever the setting, so walking away never approves one. The
-// model classifies every question with `consequence`; only 'none' lets a
-// timeout finish the task, so a question it did not classify fails closed.
+// uses 'safe', whatever the setting, and its timeout authorizes nothing, even
+// with safe_first, so walking away never approves one. The model classifies
+// every question with `consequence`; only 'none' lets a timeout finish the
+// task, so a question it did not classify fails closed.
 // WebBrain's own confirmation cards (permissions, form submits, recipients,
 // deletions) are separate prompts and never time out.
 //
@@ -51,7 +52,9 @@ export function clarifyQuestionIsHard(consequence) {
 /**
  * Decide, when the question is asked, what a timeout will answer.
  * `options` are the displayed options after validation; `finishOption` must
- * already match one of them exactly. Returns
+ * already match one of them exactly. A hard question answers options[0] and
+ * is never authorized: safe_first is the model's own hint, and the model may
+ * have put the consequential option first. Returns
  * { policy, answer, authorized, chosen } where `chosen` is one of
  * 'finish_option' | 'safe_first' | 'continue' | 'first_option' | 'none'.
  */
@@ -76,7 +79,7 @@ export function clarifyTimeoutChoice({
   return {
     policy: effective,
     answer: list.length > 0 ? list[0] : CLARIFY_TIMEOUT_ANSWER,
-    authorized: safeFirst === true && list.length > 0,
+    authorized: !hardQuestion && safeFirst === true && list.length > 0,
     chosen: list.length > 0 ? 'first_option' : 'none',
   };
 }

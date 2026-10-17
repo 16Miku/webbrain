@@ -248,8 +248,11 @@ The model classifies every question with `consequence`. A question whose
 answer would approve a deletion, a payment, credentials, the recipient of a
 message, or a publication the user did not ask for (any `consequence` other
 than `none`, or a recipient `purpose`) always times out to its safe first
-option, whatever the setting. So does a question the model did not classify:
-only `consequence: "none"` lets a timeout finish the task. Instant (a timeout
+option, whatever the setting, and that answer authorizes nothing, even when
+the model marked it `safe_first`: consequential actions and a success
+completion stay blocked until the user answers directly. So does a question
+the model did not classify: only `consequence: "none"` lets a timeout finish
+the task. Instant (a timeout
 of 0) answers by the same rules. A timed-out answer is never recorded as the
 user's own words in the task authority or the publication contract. WebBrain's
 own confirmation cards (site permissions, form submits, recipients, deletions)

@@ -55,6 +55,11 @@ for (const { build, Agent, policy, Capability } of builds) {
     assert.deepEqual(clarifyTimeoutChoice({ policy: 'safe', options: [] }),
       { policy: 'safe', answer: CLARIFY_TIMEOUT_ANSWER, authorized: false, chosen: 'none' });
     assert.equal(clarifyTimeoutChoice({ policy: 'safe', options, safeFirst: true }).authorized, true);
+    for (const policyName of ['finish', 'safe']) {
+      assert.deepEqual(clarifyTimeoutChoice({ policy: policyName, options, safeFirst: true, hardQuestion: true }),
+        { policy: 'safe', answer: 'Keep the draft', authorized: false, chosen: 'first_option' },
+        `${policyName}: safe_first must not authorize a hard question`);
+    }
   });
 
   test(`${build}: only a question classified 'none' may finish on its own; anything else fails closed`, () => {
@@ -149,6 +154,33 @@ for (const { build, Agent, policy, Capability } of builds) {
       assert.equal(result.authorized, false, `${args.question}: a timeout approved a consequential action`);
       assert.match(result.note, /NOT a real user confirmation/);
       assert.ok(agent._clarificationAuthorizationBlock(tab, 'click_ax', {}, [Capability.CLICK]), `${args.question}: consequential actions stay blocked`);
+    }
+  });
+
+  test(`${build}: safe_first does not let a consequential or unclassified question approve itself`, async () => {
+    const cases = [
+      { question: 'Delete all 40 archived emails?', options: ['Delete them', 'Keep them'], safe_first: true, consequence: 'deletion' },
+      { question: 'Delete all 40 archived emails?', options: ['Delete them', 'Keep them'], safe_first: true },
+      { question: 'Who should get this message?', options: ['Alex', 'Nobody yet'], safe_first: true, purpose: 'message_recipient', consequence: 'none' },
+    ];
+    for (const [index, args] of cases.entries()) {
+      for (const [mode, timeoutSec] of [['waited', 30], ['instant', 0]]) {
+        for (const timeoutPolicy of ['finish', 'safe']) {
+          const agent = new Agent({});
+          agent.clarifyTimeoutSec = timeoutSec;
+          agent.clarifyTimeoutPolicy = timeoutPolicy;
+          const tab = 9170 + index * 4 + (mode === 'instant' ? 2 : 0) + (timeoutPolicy === 'safe' ? 1 : 0);
+          const label = `${args.consequence || 'unclassified'}${args.purpose ? `/${args.purpose}` : ''} ${mode} ${timeoutPolicy}`;
+          const result = mode === 'instant'
+            ? await agent.executeTool(tab, 'clarify', args, () => {})
+            : (await askAndTimeOut(agent, tab, args, { answer: args.options[0] })).result;
+          assert.equal(result.answer, args.options[0], `${label}: the first option is the timed answer`);
+          assert.equal(result.authorized, false, `${label}: safe_first approved a consequential question`);
+          assert.equal(result.requiresExplicitConfirmation, true, label);
+          assert.ok(agent._clarificationAuthorizationBlock(tab, 'click_ax', {}, [Capability.CLICK]), `${label}: consequential actions stay blocked`);
+          assert.ok(agent._clarificationAuthorizationBlock(tab, 'done', { outcome: 'success' }, []), `${label}: success stays blocked`);
+        }
+      }
     }
   });
 
