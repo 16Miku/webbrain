@@ -2,11 +2,19 @@ import { memo } from 'react';
 import variables from 'config/variables';
 import { MdClose, MdRestartAlt } from 'react-icons/md';
 import { setDefaultSettings } from 'utils/settings';
+import { clearAllBackgrounds } from 'utils/customBackgroundDB';
 import { Tooltip, Button } from 'components/Elements';
 
 function ResetModal({ modalClose }) {
-  const reset = () => {
+  const reset = async () => {
     variables.stats.postEvent('setting', 'Reset');
+    // Uploaded backgrounds live in IndexedDB, not localStorage; the reset promises to
+    // delete everything, so they go too (and stop taking up space).
+    try {
+      await clearAllBackgrounds();
+    } catch {
+      // The settings reset below still goes ahead.
+    }
     setDefaultSettings('reset');
     window.location.reload();
   };

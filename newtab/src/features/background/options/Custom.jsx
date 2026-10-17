@@ -8,8 +8,6 @@ import {
   MdPersonalVideo,
   MdOutlineFileUpload,
   MdFolder,
-  MdChevronLeft,
-  MdChevronRight,
   MdDelete,
   MdInfo,
 } from 'react-icons/md';
@@ -40,15 +38,12 @@ import { Checkbox, FileUpload, Dropdown } from 'components/Form/Settings';
 import { Tooltip, Button } from 'components/Elements';
 import Modal from 'react-modal';
 
-import CustomURLModal from './CustomURLModal';
 import FolderTaggingModal from './FolderTaggingModal';
 
 const CustomSettings = memo(() => {
   const [customBackground, setCustomBackground] = useState([]);
-  const [customURLModal, setCustomURLModal] = useState(false);
   const [folderTaggingModal, setFolderTaggingModal] = useState(false);
   const [pendingFiles, setPendingFiles] = useState([]);
-  const [urlError, setUrlError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
@@ -349,64 +344,6 @@ const CustomSettings = memo(() => {
   const uploadCustomBackground = useCallback(() => {
     document.getElementById('bg-input').click();
   }, []);
-
-  const addCustomURL = useCallback(
-    async (e) => {
-      // regex: https://ihateregex.io/expr/url/
-      const urlRegex =
-        /https?:\/\/(www\.)?[-a-zA-Z0-9@:%._~#=]{1,256}\.[a-zA-Z0-9()]{1,63}\b([-a-zA-Z0-9()!@:%_.~#?&=]*)/;
-      if (urlRegex.test(e) === false) {
-        return setUrlError(variables.getMessage('widgets.quicklinks.url_error'));
-      }
-
-      setCustomURLModal(false);
-
-      try {
-        // Extract filename from URL
-        const urlParts = e.split('/');
-        const filename = urlParts[urlParts.length - 1].split('?')[0] || 'Remote Image';
-
-        // Try to extract metadata from the remote image
-        let dimensions = null;
-        let blurHash = null;
-        try {
-          dimensions = await getImageDimensions(e);
-          blurHash = await generateBlurHash(e);
-        } catch (metadataError) {
-          console.warn('Could not extract metadata from remote image:', metadataError);
-        }
-
-        const backgroundData = {
-          url: e,
-          name: filename,
-          uploadDate: Date.now(),
-          dimensions,
-          fileSize: null, // Cannot determine file size for remote URLs without fetching
-          folder: '',
-          blurHash,
-        };
-
-        await addBackground(backgroundData);
-        const backgrounds = await getAllBackgroundsWithMetadata();
-        setCustomBackground(backgrounds);
-      } catch (error) {
-        console.error('Error adding URL:', error);
-        toast(variables.getMessage('toasts.error'));
-      }
-
-      try {
-        localStorage.setItem(
-          'customBackground',
-          JSON.stringify(updatedBackgrounds.map((bg) => bg.url)),
-        );
-      } catch (_quotaError) {
-        localStorage.setItem('customBackgroundCount', updatedBackgrounds.length.toString());
-      }
-
-      EventBus.emit('refresh', 'background');
-    },
-    [customBackground.length],
-  );
 
   const handleFileInputChange = async (files) => {
     if (files.length > 1) {
@@ -713,7 +650,7 @@ const CustomSettings = memo(() => {
         <div className="dropzone-content">
           {sortedBackgrounds.length > 0 ? (
             <div className={`images-grid ${selectedImages.size > 0 ? 'selection-mode' : ''}`}>
-              {sortedBackgrounds.map((bg, index) => {
+              {sortedBackgrounds.map((bg) => {
                 const originalIndex = customBackground.findIndex((item) => item === bg);
                 const isVideo = bg && videoCheck(bg.url);
 
@@ -723,7 +660,7 @@ const CustomSettings = memo(() => {
                     className="image-card"
                     onClick={(e) => {
                       // Only select if clicking the card itself, not its buttons
-                      if (!e.target.closest('.image-nav-buttons, .delete-button')) {
+                      if (!e.target.closest('.delete-button')) {
                         toggleImageSelection(originalIndex);
                       }
                     }}
@@ -768,32 +705,6 @@ const CustomSettings = memo(() => {
                           style={{ position: 'relative', zIndex: 1 }}
                         />
                       )}
-                      <div className="image-nav-buttons">
-                        <button
-                          className="nav-button nav-prev"
-                          onClick={() => {
-                            if (index > 0) {
-                              const prevBg = sortedBackgrounds[index - 1];
-                              EventBus.emit('refresh', 'background', prevBg.url);
-                            }
-                          }}
-                          disabled={index === 0}
-                        >
-                          <MdChevronLeft />
-                        </button>
-                        <button
-                          className="nav-button nav-next"
-                          onClick={() => {
-                            if (index < sortedBackgrounds.length - 1) {
-                              const nextBg = sortedBackgrounds[index + 1];
-                              EventBus.emit('refresh', 'background', nextBg.url);
-                            }
-                          }}
-                          disabled={index === sortedBackgrounds.length - 1}
-                        >
-                          <MdChevronRight />
-                        </button>
-                      </div>
                     </div>
                     <div className="image-metadata">
                       <span className="image-name" title={bg.name}>
@@ -883,21 +794,6 @@ const CustomSettings = memo(() => {
           />
         </>
       )}
-
-      <Modal
-        closeTimeoutMS={100}
-        onRequestClose={() => setCustomURLModal(false)}
-        isOpen={customURLModal}
-        className="Modal resetmodal mainModal"
-        overlayClassName="Overlay resetoverlay"
-        ariaHideApp={false}
-      >
-        <CustomURLModal
-          modalClose={addCustomURL}
-          urlError={urlError}
-          modalCloseOnly={() => setCustomURLModal(false)}
-        />
-      </Modal>
 
       <Modal
         closeTimeoutMS={100}

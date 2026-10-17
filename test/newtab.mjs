@@ -766,6 +766,24 @@ test('the task box can be hidden from settings', () => {
 
 test('deleting a custom background does not also select a card', () => {
   const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
-  assert.match(src, /closest\('\.image-nav-buttons, \.delete-button'\)/);
+  assert.match(src, /closest\('\.delete-button'\)/);
   assert.match(src, /e\.stopPropagation\(\);\s*modifyCustomBackground\('remove', originalIndex\)/);
+});
+
+test('reset also deletes the uploaded backgrounds', () => {
+  const src = readFileSync(nt('components/Elements/ResetModal/ResetModal.jsx'), 'utf8');
+  assert.match(src, /import \{ clearAllBackgrounds \} from 'utils\/customBackgroundDB'/);
+  assert.ok(src.indexOf('await clearAllBackgrounds()') < src.indexOf("setDefaultSettings('reset')"));
+});
+
+test('the gallery has no arrows that emit a URL the event bus drops', () => {
+  const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
+  assert.doesNotMatch(src, /image-nav-buttons|nav-prev|nav-next/);
+  assert.doesNotMatch(src, /EventBus\.emit\('refresh', 'background', [^)]*\.url\)/);
+});
+
+test('the unreachable custom-URL background flow is gone', () => {
+  const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
+  assert.doesNotMatch(src, /addCustomURL|CustomURLModal|setCustomURLModal/);
+  assert.equal(existsSync(nt('features/background/options/CustomURLModal.jsx')), false);
 });
