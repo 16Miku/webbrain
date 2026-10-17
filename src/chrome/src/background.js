@@ -1870,9 +1870,7 @@ async function queueSelectionShortcutPromptAfterProviders(msg, tab, sendResponse
       msg.selectionText,
       msg.priorAction,
       msg.priorAnswer,
-      // With the page as context the run manages its own context, so only a selection-only
-      // follow-up is sized to the window.
-      includePageContext ? {} : { contextWindow, question: msg.question, language: msg.language },
+      { contextWindow, question: msg.question, language: msg.language },
     )
     : msg.selectionText;
   // A cut-off card answer resumes where it stopped instead of running the action again,

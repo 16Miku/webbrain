@@ -499,8 +499,10 @@ export function buildContinuationSelectionPrompt(selectionText, action, partialA
   // the end, so only the end is sent, trimmed to what the window leaves. A window that cannot
   // even take the selection keeps the whole text and is refused, with a reason, when it runs.
   const room = priorAnswerRoom(contextWindow, wrapSelectedPageText(head, trusted, SELECTION_ONLY_SOURCE_GROUNDING));
-  if (room > 0) {
-    const tail = sliceWithinTokens(body, room, true);
+  if (room !== null && room >= 0) {
+    // A zero room comes from the conservative reply reserve. Keep the last
+    // token so the side panel can still resume a selection that itself fits.
+    const tail = sliceWithinTokens(body, Math.max(room, 1), true);
     if (tail.length < body.length) {
       body = tail;
       trimmed = true;
