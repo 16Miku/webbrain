@@ -856,8 +856,29 @@ export function registerMessageRecipientNavigationFixtures({
         Function('return (' + source + ')')()(tool, args), { source: AgentClass._submitActionProbe.toString(), tool: name, args: passArgs }),
       tool, args);
       // The task started on another site: no LinkedIn workflow, and no
-      // private message named. Its plan requires the submission.
+      // private message named. Its plan requires the submission. The first
+      // Post binds the live LinkedIn publish-post job, so the post is
+      // recorded and verified as a LinkedIn task's post, and waits for the
+      // next turn. Under that job the post goes through.
+      const resolved = [];
+      agent._ensureWorkflowMetadataRequirements = async (tabId, _opts, _taskText, pageScope) => {
+        resolved.push(pageScope);
+        const state = agent._planExecutionGuards.get(tabId);
+        state.workflowMetadataRequirements = [{ field: 'body', value: 'Announcement' }];
+        state.workflowMetadataRequirementsResolved = true;
+        state.workflowMetadataRequirementsIncomplete = false;
+      };
       plan();
+      await composeShareScreen(page);
+      const adopted = await guard('click', { selector: '#publish' });
+      assert.equal(adopted?.reasonCode, 'publish_workflow_adopted', JSON.stringify(adopted));
+      assert.equal(adopted.noDispatch, true);
+      assert.equal(adopted.workflowRearmed, true);
+      const bound = agent._planExecutionGuards.get(1);
+      assert.equal(bound.siteWorkflow?.adapterName, 'linkedin');
+      assert.equal(bound.siteWorkflow?.job?.id, 'publish-post');
+      assert.equal(bound.workflowMetadataRequirementsResolved, true);
+      assert.deepEqual(resolved, [page.url()]);
       for (const postLabel of ['Post', 'Gönder']) {
         await composeShareScreen(page, { postLabel });
         const ref = await page.evaluate(() => window.__wb_ax_ref(document.querySelector('#publish span')));
@@ -871,6 +892,27 @@ export function registerMessageRecipientNavigationFixtures({
           assert.equal(submit.publicationControl, true, `${postLabel} ${tool}: the post is a publication`);
         }
       }
+      assert.equal(resolved.length, 1, 'the job is bound once');
+      // The submission record binds the post's stable URL and content.
+      const binding = agent._workflowSubmitBindingForAttempt(1, page.url(), {}, { isSubmit: true, publicationControl: true });
+      assert.equal(binding?.verificationKind, 'published_resource');
+      assert.equal(binding.adapterName, 'linkedin');
+      assert.deepEqual(binding.metadataRequirements, [{ field: 'body', value: 'Announcement' }]);
+      // A run set up for another task's workflow does not post.
+      plan({ siteWorkflow: agent._resolvePlannerSiteWorkflow('https://github.com/acme/site/edit/main/README.md',
+        { request_kind: 'execute', site_job: 'edit-file-and-commit' }) });
+      assert.equal(agent._planExecutionGuards.get(1).siteWorkflow?.adapterName, 'github');
+      const otherTask = await guard('click', { selector: '#publish' });
+      assert.equal(otherTask?.reasonCode, 'public_post_not_authorized');
+      assert.match(otherTask.error, /set up for a different task/);
+      assert.equal(agent._planExecutionGuards.get(1).siteWorkflow?.adapterName, 'github');
+      // With site adapters off no job can be bound, as on any other site: the
+      // planned post goes through the normal submission gates.
+      plan();
+      agent.useSiteAdapters = false;
+      assert.equal(await guard('click', { selector: '#publish' }), null);
+      assert.equal(agent._planExecutionGuards.get(1).siteWorkflow, null);
+      agent.useSiteAdapters = true;
       // The draft's other controls are not sends, and not the post.
       await composeShareScreen(page);
       for (const selector of ['#emoji', '#audience', '[contenteditable="true"]']) {

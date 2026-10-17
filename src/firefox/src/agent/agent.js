@@ -2621,6 +2621,36 @@ export class Agent extends LoopDetector {
     };
   }
 
+  // A task that started on another site reaches LinkedIn's share composer
+  // with no LinkedIn workflow bound. Its post is held to what a LinkedIn
+  // task's post is: the live publish-post job is bound, as a GitHub
+  // conditional repair binds its commit job above, and what the post must
+  // contain is resolved for it. The post's submission record then binds its
+  // stable URL and payload (_workflowSubmitBindingForAttempt). Returns the
+  // bound workflow, or null when none can be bound.
+  async _adoptLiveLinkedInPublishWorkflow(tabId, pageUrl) {
+    const guard = this._planExecutionGuards.get(tabId);
+    if (!guard?.enabled || guard.siteWorkflow?.job) return null;
+    const live = this._resolvePlannerSiteWorkflow(pageUrl, { request_kind: 'execute', site_job: 'publish-post' });
+    if (live?.adapterName !== 'linkedin' || live.job?.id !== 'publish-post') return null;
+    guard.siteWorkflow = live;
+    guard.siteWorkflowUrl = pageUrl;
+    guard.requiresStateChange = true;
+    guard.requiresSubmission = true;
+    guard.verifiedSubmissionEvidence = false;
+    guard.workflowTerminalEvidence = null;
+    guard.workflowMetadataRequirementsResolved = false;
+    guard.workflowMetadataRequirementsIncomplete = true;
+    this._armWorkflowJobRequiredEvidence(tabId, guard);
+    const messages = this.conversations.get(tabId);
+    if (messages?.[0]?.role === 'system') messages[0].content = this._buildSystemPrompt(this._effectiveRunMode(tabId), tabId);
+    this._recordAdapterWorkflowTrace(this.currentRunId.get(tabId), live);
+    await this._ensureWorkflowMetadataRequirements(tabId, {
+      provider: this._activeProvider(tabId), costState: this.currentCostState.get(tabId) || null,
+    }, guard.taskText, pageUrl);
+    return live;
+  }
+
   async _workflowPreSubmitDispatchBlock(tabId, name, args = {}, detectedSubmit = null, provider = this._activeProvider(tabId)) {
     const socialBlock = await this._socialPublicationPreSubmitBlock(tabId, name, args, detectedSubmit, provider);
     if (socialBlock) return socialBlock;
@@ -25805,15 +25835,37 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       const linkedInPublicPost = policy.adapterName === 'linkedin' && probe.publicPost === true;
       const publishWorkflowAuthorized = guard?.siteWorkflow?.adapterName === 'linkedin'
         && guard?.siteWorkflow?.job?.id === 'publish-post';
+      if (!linkedInPublicPost || publishWorkflowAuthorized) return null;
       // A public Post control is not a message send, but it is still a
       // consequential action. The explicit LinkedIn publish workflow
-      // authorizes it, and so does a plan that requires a submission without
-      // naming a private message to send: a task that started on another
-      // site has no LinkedIn workflow yet. The normal submission gates still
-      // apply to the post.
+      // authorizes it. A plan that requires a submission without naming a
+      // private message to send asks for it too, but a task that started on
+      // another site has no LinkedIn workflow yet. Its post is held to what a
+      // LinkedIn task's post is: the live publish-post job is bound first, so
+      // the post's stable URL and content are recorded and verified, and the
+      // click waits for the next turn under that job.
       const planAuthorizesPublication = !!guard && guard.requiresSubmission === true
         && guard.requiresStateChange === true && !target;
-      if (!linkedInPublicPost || publishWorkflowAuthorized || planAuthorizesPublication) return null;
+      const otherWorkflow = !!guard?.siteWorkflow?.job;
+      if (planAuthorizesPublication && !otherWorkflow) {
+        if (await this._adoptLiveLinkedInPublishWorkflow(tabId, resolvedPageUrl)) {
+          return {
+            success: false,
+            blocked: true,
+            noDispatch: true,
+            dispatched: false,
+            retryable: true,
+            workflowRearmed: true,
+            workflowJob: 'publish-post',
+            messageRecipientGuard: true,
+            reasonCode: 'publish_workflow_adopted',
+            error: 'Nothing was posted yet: this post now follows the LinkedIn publish workflow, so it can be verified once it is published. Read the composer again, check the exact text, then click Post.',
+          };
+        }
+        // With site adapters off no workflow can be bound, as on any other
+        // site; the normal submission gates still apply to the post.
+        if (!this.useSiteAdapters) return null;
+      }
       return {
         success: false,
         blocked: true,
@@ -25823,7 +25875,11 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         reasonCode: 'public_post_not_authorized',
         error: target
           ? 'LinkedIn Post blocked because this task authorizes a private message, not a public post.'
-          : 'LinkedIn Post blocked because this task does not ask to publish anything, so nothing was posted. Do not post; report what is ready instead.',
+          : !planAuthorizesPublication
+          ? 'LinkedIn Post blocked because this task does not ask to publish anything, so nothing was posted. Do not post; report what is ready instead.'
+          : otherWorkflow
+          ? 'LinkedIn Post blocked because this run is set up for a different task, not a LinkedIn post, so nothing was posted. Do not post; report what is ready instead.'
+          : 'LinkedIn Post blocked because the LinkedIn publish workflow could not be bound, so nothing was posted. Do not post; report what is ready instead.',
       };
     }
     // Gmail reply editors can be collapsed when planning begins. Allow only a
