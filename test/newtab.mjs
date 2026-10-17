@@ -1800,3 +1800,14 @@ test('round-53: video detection looks at the lower-cased path of the address', a
   assert.doesNotMatch(readFileSync(path.join(root, "docs/newtab.md"), "utf8"), /swept each time/);
   assert.doesNotMatch(privacy, /unclaimed\s+records are removed after about three minutes/);
 });
+
+test('round-54: a remote picture that fails to load is retried as a video; the composer hold stays under the record age', async () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('features/background/hooks/useBackgroundRenderer.js'), /!loaded && \/\^https\?:\/i\.test\(backgroundData\.url\)/);
+  assert.match(read('features/background/Background.jsx'), /updateBackground\(\{ video: true \}\)/);
+  for (const b of ['chrome', 'firefox']) {
+    const mod = await load(path.join(root, `src/${b}/src/ui/newtab-handoff.js`));
+    const hold = mod.NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES * mod.NEWTAB_HANDOFF_SEND_RETRY_MS;
+    assert.ok(hold <= mod.NEWTAB_HANDOFF_MAX_AGE_MS / 2, `${b}: hold ${hold} ms must be well under ${mod.NEWTAB_HANDOFF_MAX_AGE_MS}`);
+  }
+});

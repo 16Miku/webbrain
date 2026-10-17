@@ -37,8 +37,10 @@ export const NEWTAB_HANDOFF_MAX_AGE_MS = 30_000;
 export const NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS = 120_000;
 export const NEWTAB_HANDOFF_MAX_TEXT = 4000;
 export const NEWTAB_HANDOFF_SEND_RETRY_MS = 150;
-// Give up holding a later hand-off back after this many retries (~30 s).
-export const NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES = 200;
+// Give up holding a later hand-off back after this many retries (~15 s). It has to stay well
+// under NEWTAB_HANDOFF_MAX_AGE_MS: a record held longer than it is accepted would come out
+// stale, unclaimed, after the new tab had already reported success.
+export const NEWTAB_HANDOFF_SEND_HOLD_MAX_RETRIES = 100;
 
 /** Returns a clean record, or null when it is malformed, stale or from the future. */
 export function normalizeNewtabHandoff(raw, now = Date.now(), maxAgeMs = NEWTAB_HANDOFF_MAX_AGE_MS) {

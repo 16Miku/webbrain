@@ -13,8 +13,11 @@ const TRANSITION_DURATION = 1200; // milliseconds
 /**
  * Hook for rendering backgrounds to the DOM
  */
-export function useBackgroundRenderer(backgroundData) {
+export function useBackgroundRenderer(backgroundData, onRemoteImageFailed) {
   const blobRef = useRef(null);
+  // Read when a load fails, so a new callback each render doesn't restart the effect below.
+  const onRemoteImageFailedRef = useRef(onRemoteImageFailed);
+  onRemoteImageFailedRef.current = onRemoteImageFailed;
 
   useEffect(() => {
     if (backgroundData.video) return;
@@ -79,11 +82,19 @@ export function useBackgroundRenderer(backgroundData) {
         const img = new Image();
         img.src = finalUrl;
 
-        await new Promise((resolve) => {
-          img.onload = resolve;
-          img.onerror = resolve;
+        const loaded = await new Promise((resolve) => {
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
         });
         if (cancelled) return;
+
+        // A remote address with no recognisable extension (https://cdn.example/media/123) may be
+        // a video: the type is only known from the response, so when it won't load as a picture
+        // let the caller try it as a video.
+        if (!loaded && /^https?:/i.test(backgroundData.url)) {
+          onRemoteImageFailedRef.current?.(backgroundData.url);
+          return;
+        }
 
         // CRITICAL: Reset overlay to invisible FIRST
         overlay.style.transition = 'none';

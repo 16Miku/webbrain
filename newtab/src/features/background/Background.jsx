@@ -18,7 +18,10 @@ export default function Background() {
   const filterStyle = useBackgroundFilters(backgroundData);
   const overlayFilterStyle = useBackgroundOverlayFilters(backgroundData);
 
-  useBackgroundRenderer(backgroundData);
+  // Unknown remote type: a picture that won't load is retried as a video (once per address).
+  useBackgroundRenderer(backgroundData, (failedUrl) => {
+    if (failedUrl === backgroundData.url && !backgroundData.video) updateBackground({ video: true });
+  });
   useBackgroundEvents(backgroundData, refreshBackground);
 
   return (
