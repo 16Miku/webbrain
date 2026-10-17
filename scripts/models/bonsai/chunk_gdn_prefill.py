@@ -75,19 +75,23 @@ def _require(condition, message):
         raise ValueError(f"Prefill evidence rejected: {message}")
 
 
-def verify_prefill_evidence(reports, graph_sha256, chunk_tokens):
+def verify_prefill_evidence(reports, graph_sha256, chunk_tokens, source_sha256):
     """Check attached reports and return the verified ones by kind.
 
     Raises on an unknown report kind or any failed comparison, so a bundle can
     never be sealed with evidence that contradicts its model card. CPU parity
     must cover the rewrite's own chunk size: a prompt ending exactly on a chunk
     boundary and one spanning several chunks (which exercises the prefix scan).
+    Every report must name both the rewritten graph and the original (Scan)
+    graph it was compared against.
     """
     verified = {}
     for report in reports:
         kind = report.get("kind")
         if kind == CPU_EVIDENCE_KIND:
             _require(report.get("rewritten_graph_sha256") == graph_sha256, "CPU report is for a different graph")
+            _require(report.get("original_graph_sha256") == source_sha256,
+                     "CPU report did not compare against this bundle's original graph")
             rows = list(report.get("fresh_prefill") or [])
             continuation = report.get("continuation_from_cache")
             _require(rows and continuation, "CPU report needs fresh prefills and a cached continuation")
@@ -116,6 +120,8 @@ def verify_prefill_evidence(reports, graph_sha256, chunk_tokens):
                 _require(row.get("decode_step_top1_equal") is True, f"decode step differs ({row})")
         elif kind == WEBGPU_EVIDENCE_KIND:
             _require(report.get("rewritten_graph_sha256") == graph_sha256, "WebGPU report is for a different graph")
+            _require(report.get("original_graph_sha256") == source_sha256,
+                     "WebGPU report did not time this bundle's original graph")
             rewritten = [row for row in report.get("prefill") or [] if row.get("variant") == "rewritten"]
             original = [row for row in report.get("prefill") or [] if row.get("variant") == "original"]
             comparisons = list(report.get("webgpu_logit_comparison") or [])
@@ -138,8 +144,8 @@ def rewritten_chunk_tokens(graph_path):
     raise ValueError(f"{graph_path} was not rewritten by chunk_gdn_prefill.py")
 
 
-def model_card_section(reports, graph_sha256, chunk_tokens=128):
-    verified = verify_prefill_evidence(reports, graph_sha256, chunk_tokens)
+def model_card_section(reports, graph_sha256, chunk_tokens, source_sha256):
+    verified = verify_prefill_evidence(reports, graph_sha256, chunk_tokens, source_sha256)
     text = MODEL_CARD_INTRO.format(chunk=chunk_tokens) + "\n"
     if CPU_EVIDENCE_KIND in verified:
         text += ("`chunked-prefill-validation.json` records CPU comparisons with the original\n"

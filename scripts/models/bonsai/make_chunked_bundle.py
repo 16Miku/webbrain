@@ -109,7 +109,8 @@ def build_bundle(source, output, manifest, args):
         scratch.rename(output / GRAPH)
 
     evidence = [read_json(path) for path in args.evidence]
-    card_section = model_card_section(evidence, report["output_sha256"], report["chunk_tokens"])  # rejects failed evidence
+    card_section = model_card_section(evidence, report["output_sha256"], report["chunk_tokens"],
+                                      report["source_sha256"])  # rejects failed evidence
     write_json(output / DERIVED_MARKER, {
         "rewrite": report,
         "external_data_unchanged": "onnx/decoder_model_merged_q2f16.onnx_data",
