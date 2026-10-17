@@ -968,6 +968,7 @@ export default {
   "sp.mode.dev.title": "Używaj narzędzi kodu źródłowego, stylów i debugowania strony",
   "sp.mode.dev.confirm": "Tryb Dev dodaje do trybu Działaj narzędzia kodu źródłowego strony, inspekcji stylów, inspekcji DOM/ramek i debugowania.\n\nUżywaj go do pracy z HTML/CSS, edycji stron i rozwiązywania problemów. Jest niedostępny dla dostawców na poziomie Kompaktowym.\n\nKontynuować?",
   "sp.mode.dev.compact_blocked": "Tryb Dev jest niedostępny dla dostawców na poziomie Kompaktowym. {provider} korzysta obecnie z poziomu Kompaktowego; przełącz się na dostawcę poziomu Średniego/Pełnego lub zmień jego poziom promptu.",
+  "sp.mode.webgpu.ask_only": "Modele WebGPU działające w przeglądarce odpowiadają na pytania tylko w trybie Ask. Aby użyć trybu Act lub Dev, wybierz innego dostawcę w menu dostawców.",
   "sp.input.dev_placeholder": "Powiedz, co sprawdzić lub zmienić na tej stronie...",
   "sp.slash.remember": "Zapamiętaj preferencję użytkownika",
   "sp.slash.show_memory": "Pokaż zapisaną pamięć użytkownika",

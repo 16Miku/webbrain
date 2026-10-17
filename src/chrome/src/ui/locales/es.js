@@ -976,6 +976,7 @@ export default {
   "sp.mode.dev.title": "Usar herramientas de código fuente, estilos y depuración de páginas",
   "sp.mode.dev.confirm": "El modo Dev añade herramientas de código fuente, inspección de estilos, inspección del DOM/marcos y depuración al modo Actuar.\n\nÚsalo para trabajar con HTML/CSS, editar páginas y solucionar problemas. Está bloqueado para proveedores de nivel Compacto.\n\n¿Continuar?",
   "sp.mode.dev.compact_blocked": "El modo Dev está bloqueado para proveedores de nivel Compacto. {provider} está actualmente en Compacto; cambia a un proveedor de nivel Medio/Completo o cambia su nivel de instrucciones.",
+  "sp.mode.webgpu.ask_only": "Los modelos WebGPU del navegador solo responden preguntas en el modo Ask. Para usar el modo Act o Dev, elige otro proveedor en el menú de proveedores.",
   "sp.input.dev_placeholder": "Dime qué inspeccionar o editar en esta página...",
   "sp.slash.remember": "Recordar una preferencia del usuario",
   "sp.slash.show_memory": "Mostrar la memoria del usuario guardada",

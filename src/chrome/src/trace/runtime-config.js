@@ -18,6 +18,7 @@ const BOOLEAN_FIELDS = Object.freeze([
   'selection_grounded',
   'standalone_chat_profile',
   'standalone_webgpu_profile',
+  'tiny_ask_profile',
   'lossless_trace',
   'selection_scope_anchor_present',
 ]);

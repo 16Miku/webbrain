@@ -976,6 +976,7 @@ export default {
   "sp.mode.dev.title": "使用源代码、样式和页面调试工具",
   "sp.mode.dev.confirm": "开发模式在操作模式的基础上增加页面源代码、样式检查、DOM/框架检查和调试工具。\n\n它适用于 HTML/CSS、页面编辑和故障排查。紧凑级别的提供商无法使用此模式。\n\n是否继续？",
   "sp.mode.dev.compact_blocked": "紧凑级别的提供商无法使用开发模式。{provider} 当前为紧凑级别；请切换到中等/完整级别的提供商，或更改其提示词级别。",
+  "sp.mode.webgpu.ask_only": "浏览器内的 WebGPU 模型仅在 Ask 模式下回答问题。要使用 Act 或 Dev 模式，请在提供商菜单中选择其他提供商。",
   "sp.input.dev_placeholder": "告诉我需要检查或编辑此页面的哪些内容...",
   "sp.slash.remember": "记住用户偏好",
   "sp.slash.show_memory": "显示已保存的用户记忆",

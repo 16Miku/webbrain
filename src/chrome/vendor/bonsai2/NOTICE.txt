@@ -1,0 +1,9 @@
+This software is copyright 2026-present Prism ML, Inc. It is available under the Apache 2.0 license.
+If you publicly deploy or redistribute this software, we would appreciate attribution such as: "Created using Bonsai by Prism ML."
+
+This software is built from Qwen3.5-4B, Copyright 2026 Alibaba Cloud, which is available under the Apache 2.0 License: https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE
+
+
+WebBrain packages tokenizer_config.json from Mike0021/Ternary-Bonsai-2-4B-text-ONNX
+revision f82021c254bc8044aa77cc4cbd3af181ba538afa as a JavaScript data export.
+Used only to restore missing tokenizer metadata for danyalmalik's Ternary Bonsai 2 ONNX exports.

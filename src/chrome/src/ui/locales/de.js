@@ -200,6 +200,7 @@ export default {
   'sp.mode.dev.title': 'Quellcode-, Stil- und Debugging-Werkzeuge nutzen',
   'sp.mode.dev.confirm': 'Der Dev-Modus fügt dem Handeln-Modus Seitenquellcode-, Stilinspektion, DOM/Rahmen-Inspektion und Debugging-Werkzeuge hinzu.\n\nVerwenden Sie ihn für HTML/CSS-/Seitenbearbeitung und Fehlersuche. Er ist für Compact-Level-Anbieter gesperrt.\n\nFortfahren?',
   'sp.mode.dev.compact_blocked': 'Der Dev-Modus ist für Compact-Level-Anbieter gesperrt. {provider} ist derzeit Compact; wechseln Sie zu einem Mid/Full-Level-Anbieter oder ändern Sie dessen Prompt-Level.',
+  'sp.mode.webgpu.ask_only': 'WebGPU-Modelle im Browser beantworten Fragen nur im Ask-Modus. Wählen Sie für den Act- oder Dev-Modus im Anbietermenü einen anderen Anbieter.',
   'sp.input.ask_placeholder': 'Fragen Sie alles über diese Seite...',
   'sp.input.placeholder_tip.help': 'Verwenden Sie /help, um mehr über Slash-Befehle zu erfahren',
   'sp.input.placeholder_tip.record': 'Sagen Sie „Diese Seite aufnehmen", um die Interaktion dieses Tabs/Fensters zu speichern',

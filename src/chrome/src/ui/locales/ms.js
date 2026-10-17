@@ -976,6 +976,7 @@ export default {
   "sp.mode.dev.title": "Gunakan alat sumber, gaya dan penyahpepijatan halaman",
   "sp.mode.dev.confirm": "Mod Dev menambahkan alat sumber halaman, pemeriksaan gaya, pemeriksaan DOM/bingkai dan penyahpepijatan di atas mod Lakukan.\n\nGunakannya untuk kerja HTML/CSS, penyuntingan halaman dan penyelesaian masalah. Mod ini disekat untuk pembekal peringkat Kompak.\n\nTeruskan?",
   "sp.mode.dev.compact_blocked": "Mod Dev disekat untuk pembekal peringkat Kompak. {provider} kini berada pada peringkat Kompak; tukar kepada pembekal peringkat Pertengahan/Penuh atau ubah peringkat prompt-nya.",
+  "sp.mode.webgpu.ask_only": "Model WebGPU dalam pelayar hanya menjawab soalan dalam mod Ask. Untuk menggunakan mod Act atau Dev, pilih pembekal lain dalam menu pembekal.",
   "sp.input.dev_placeholder": "Beritahu perkara yang perlu diperiksa atau disunting pada halaman ini...",
   "sp.slash.remember": "Ingat keutamaan pengguna",
   "sp.slash.show_memory": "Tunjukkan memori pengguna yang disimpan",

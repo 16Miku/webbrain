@@ -1881,7 +1881,7 @@ export class ProviderManager {
     return this._webgpuProvider().downloadStatus(msg);
   }
 
-  /** Configure a shipped Apocalypse text preset and start Compass cache fill. */
+  /** Start the selected shipped Apocalypse chat model, defaulting to Compass. */
   async enableAndStartWebgpuTextDownload() {
     try {
       const currentModel = this.getAll().webgpu?.model;
@@ -1891,8 +1891,6 @@ export class ProviderManager {
       await this.updateProvider('webgpu', {
         model,
         dtype,
-        contextWindow: preset?.contextWindow || 32768,
-        promptTier: 'compact',
       });
       const provider = this._webgpuProvider();
       const probe = await provider.testConnection();
@@ -2010,14 +2008,15 @@ export class ProviderManager {
     if (id === 'webgpu' && Object.hasOwn(updates, 'model')) {
       merged.model = normalizeWebgpuModelId(merged.model);
       const preset = webgpuModelPreset(merged.model);
-      if (preset?.contextWindow && !Object.hasOwn(updates, 'contextWindow')) {
+      const modelChanged = merged.model !== normalizeWebgpuModelId(current.model);
+      if (modelChanged && preset?.contextWindow && !Object.hasOwn(updates, 'contextWindow')) {
         merged.contextWindow = preset.contextWindow;
       }
       // A retained Bonsai dtype ('q1') must not leak into a new target: a
       // custom ONNX repository would otherwise request model_q1.onnx instead
       // of the documented q4f16 graph. Reset to the preset (or ONNX default)
       // whenever the model changes unless the update explicitly supplies one.
-      if (!Object.hasOwn(updates, 'dtype')) {
+      if (modelChanged && !Object.hasOwn(updates, 'dtype')) {
         merged.dtype = preset?.dtype || WEBGPU_DTYPE;
       }
     }

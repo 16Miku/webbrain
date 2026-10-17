@@ -72,11 +72,13 @@ import { canonicalizeOllamaBaseUrl } from '../providers/context-windows.js';
 import {
   WEBGPU_COMPASS_TINY_V2_MODEL_ID,
   WEBGPU_MODEL_PRESETS,
+  WEBGPU_SELECTABLE_MODEL_PRESETS,
   WEBGPU_VISION_AUTO_SELECTED_KEY,
   WEBGPU_VISION_CONSENT_VERSION,
   WEBGPU_VISION_CONSENT_VERSION_KEY,
   WEBGPU_VISION_ENABLED_KEY,
   normalizeWebgpuModelId,
+  webgpuModelSupportsVision,
 } from '../providers/webgpu.js';
 import { AUTO_GROUP_TABS_KEY } from '../tab-group-preference.js';
 
@@ -92,7 +94,7 @@ const SUBSCRIPTION_GUIDE_PRODUCTS = Object.freeze({
 
 // Version shown in the subtitle. Kept here so it only needs one update per
 // release; the subtitle string itself is translated.
-const EXT_VERSION = '41.0.1';
+const EXT_VERSION = '41.1.4';
 
 const providersContainer = document.getElementById('providers');
 const displaySettings = document.getElementById('display-settings');
@@ -2976,6 +2978,11 @@ function renderWebgpuDownloadControl(id, state) {
   }
 }
 
+function refreshWebgpuVisionCheckbox(model) {
+  const checkbox = document.querySelector('input[data-provider="webgpu"][data-key="supportsVision"]');
+  if (checkbox) checkbox.checked = webgpuModelSupportsVision(model);
+}
+
 function getDisplayedWebgpuModel(id = 'webgpu') {
   const input = document.querySelector(`input[data-provider="${id}"][data-key="model"]`);
   try {
@@ -3287,13 +3294,15 @@ function renderProviders() {
           labelKey: 'st.provider.field.model',
           type: 'text',
           placeholder: 'owner/repository',
-          suggestions: [WEBGPU_COMPASS_TINY_V2_MODEL_ID],
-          suggestionLabels: Object.fromEntries(WEBGPU_MODEL_PRESETS.filter(option => option.id === WEBGPU_COMPASS_TINY_V2_MODEL_ID).map(option => [
+          suggestions: WEBGPU_SELECTABLE_MODEL_PRESETS.map(option => option.id),
+          suggestionLabels: Object.fromEntries(WEBGPU_SELECTABLE_MODEL_PRESETS.map(option => [
             option.id,
             `${option.label} — ${option.id}${option.supportsVision ? ` — ${t('st.provider.field.supports_vision')}` : ''}`,
           ])),
         },
         WEBGPU_CONTEXT_WINDOW_FIELD,
+        // Vision support is fixed by the selected WebGPU model's graph files.
+        { key: 'supportsVision', labelKey: 'st.provider.field.supports_vision', type: 'checkbox', disabled: true },
         PROMPT_TIER_FIELD,
       ],
     },
@@ -3628,13 +3637,15 @@ function renderProviders() {
           fieldHTML += `<div class="field-hint" ${statusAttribute}${current === 'auto' ? '' : ' hidden'} style="margin:-4px 0 10px;font-size:12px;color:var(--text2);">${escapeHtml(t(visionStatusKey(id, config)))}</div>`;
         }
       } else if (field.type === 'checkbox') {
-        const isChecked = !!config[field.key];
+        const isChecked = definitionId === 'webgpu' && field.key === 'supportsVision'
+          ? webgpuModelSupportsVision(config.model)
+          : !!config[field.key];
         const checked = isChecked ? 'checked' : '';
         fieldHTML += `
           <div class="field" style="display:flex;align-items:center;gap:8px;flex-direction:row;">
-            <input type="checkbox" data-provider="${id}" data-key="${field.key}" data-type="checkbox" ${checked}
-                   style="width:auto;cursor:pointer;">
-            <label style="margin:0;cursor:pointer;">${escapeHtml(label)}</label>
+            <input type="checkbox" id="provider-${id}-${field.key}" data-provider="${id}" data-key="${field.key}" data-type="checkbox" ${checked} ${field.disabled ? 'disabled' : ''}
+                   style="width:auto;cursor:${field.disabled ? 'default' : 'pointer'};">
+            <label for="provider-${id}-${field.key}" style="margin:0;cursor:${field.disabled ? 'default' : 'pointer'};">${escapeHtml(label)}</label>
           </div>
         `;
         if (field.hintKey) {
@@ -3869,7 +3880,10 @@ function renderProviders() {
       markProviderDirty(providerId);
       refreshProviderCompatibilitySummary(providerId);
       refreshVisionStatus(providerId);
-      if (providerId === 'webgpu') refreshWebgpuDownloadControls();
+      if (providerId === 'webgpu') {
+        refreshWebgpuVisionCheckbox(input.value);
+        refreshWebgpuDownloadControls();
+      }
     });
   });
   document.querySelectorAll('select[data-key="visionMode"]').forEach((select) => {
@@ -3892,7 +3906,10 @@ function renderProviders() {
       refreshProviderCompatibilitySummary(input.dataset.provider);
       refreshVisionStatus(input.dataset.provider);
       if (providerDefinitionId(input.dataset.provider) === 'ollama') refreshVisionStatus(input.dataset.provider);
-      if (input.dataset.provider === 'webgpu' && input.dataset.key === 'model') refreshWebgpuDownloadControls();
+      if (input.dataset.provider === 'webgpu' && input.dataset.key === 'model') {
+        refreshWebgpuVisionCheckbox(input.value);
+        refreshWebgpuDownloadControls();
+      }
     });
   });
   document.querySelectorAll('.btn-reset-compatibility').forEach((button) => {
