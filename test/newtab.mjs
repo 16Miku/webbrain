@@ -2444,3 +2444,86 @@ test('round-73: icon-only buttons have an accessible name', () => {
   walk(nt());
   assert.deepEqual(unnamed, [], 'icon-only <button>s need an aria-label');
 });
+
+test('round-74: gallery writes resolve only once the IndexedDB transaction has committed', async (t) => {
+  let esbuild;
+  try {
+    esbuild = await import(pathToFileURL(path.join(root, 'newtab/node_modules/esbuild/lib/main.js')).href);
+  } catch {
+    return t.skip('newtab dependencies are not installed');
+  }
+  const out = await esbuild.build({
+    entryPoints: [nt('utils/customBackgroundDB.js')],
+    bundle: true, write: false, format: 'esm', platform: 'node',
+  });
+  // A tiny IndexedDB: every request "succeeds" a tick after it is made, the transaction settles
+  // later, and with failCommit it aborts at that point (storage full) without applying anything.
+  const state = { rows: [], next: 1, failCommit: false };
+  const later = (fn, ms = 1) => globalThis.setTimeout(fn, ms);
+  const makeTx = () => {
+    const ops = [];
+    const tx = { oncomplete: null, onerror: null, onabort: null, error: null };
+    const request = (result, op) => {
+      const req = { result: undefined, onsuccess: null, onerror: null };
+      if (op) ops.push(op);
+      later(() => { req.result = typeof result === 'function' ? result() : result; req.onsuccess?.(); });
+      return req;
+    };
+    const store = {
+      add: (data) => { const id = state.next++; return request(id, () => state.rows.push({ ...data, id })); },
+      put: (item) => request(item.id, () => { const at = state.rows.findIndex((r) => r.id === item.id); if (at >= 0) state.rows[at] = item; }),
+      get: (id) => request(() => { const row = state.rows.find((r) => r.id === id); return row && { ...row }; }),
+      getAll: () => request(() => state.rows.map((r) => ({ ...r }))),
+      delete: (id) => request(undefined, () => { state.rows = state.rows.filter((r) => r.id !== id); }),
+      clear: () => request(undefined, () => { state.rows = []; }),
+      count: () => request(() => state.rows.length),
+    };
+    tx.objectStore = () => store;
+    later(() => {
+      if (state.failCommit) {
+        tx.error = new Error('QuotaExceededError');
+        tx.onabort?.();
+      } else {
+        ops.forEach((op) => op());
+        tx.oncomplete?.();
+      }
+    }, 15);
+    return tx;
+  };
+  const db = { objectStoreNames: { contains: () => true }, transaction: () => makeTx() };
+  const realIDB = globalThis.indexedDB;
+  Object.defineProperty(globalThis, 'indexedDB', {
+    configurable: true,
+    value: { open: () => { const req = { result: db, onsuccess: null }; later(() => req.onsuccess?.()); return req; } },
+  });
+  try {
+    const mod = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+    // committed: the row exists by the time the promise resolves
+    const id = await mod.addBackground({ url: 'data:image/png;base64,AAAA', name: 'a' });
+    assert.equal(id, 1);
+    assert.equal(state.rows.length, 1);
+    await mod.updateBackgroundMetadata(1, { name: 'b' });
+    assert.equal(state.rows[0].name, 'b');
+    // every request succeeds, then the commit aborts: each write reports the failure
+    state.failCommit = true;
+    await assert.rejects(() => mod.addBackground({ url: 'data:image/png;base64,BBBB', name: 'c' }), /Quota/);
+    await assert.rejects(() => mod.deleteBackground(0), /Quota/);
+    await assert.rejects(() => mod.deleteMultipleBackgrounds([0]), /Quota/);
+    await assert.rejects(() => mod.clearAllBackgrounds(), /Quota/);
+    await assert.rejects(() => mod.updateBackgroundMetadata(1, { name: 'z' }), /Quota/);
+    await assert.rejects(() => mod.updateBackground(0, { name: 'z' }), /Quota/);
+    assert.deepEqual(state.rows.map((r) => r.name), ['b'], 'nothing from the aborted transactions was kept');
+    state.failCommit = false;
+    await mod.deleteMultipleBackgrounds([0]);
+    assert.equal(state.rows.length, 0);
+    await assert.rejects(() => mod.updateBackgroundMetadata(99, {}), /not found/);
+  } finally {
+    if (realIDB === undefined) delete globalThis.indexedDB;
+    else Object.defineProperty(globalThis, 'indexedDB', { configurable: true, value: realIDB });
+  }
+});
+
+test('round-74: gallery selection checkboxes are named', () => {
+  const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
+  assert.match(src, /onChange=\{\(\) => toggleImageSelection\(originalIndex\)\}\s+aria-label=\{bg\.name \|\| `\$\{originalIndex \+ 1\}`\}/);
+});

@@ -86,20 +86,36 @@ export async function getAllBackgrounds() {
 }
 
 /**
- * Add a new background with metadata
- * @param {Object} backgroundData - The background data object
- * @param {string} backgroundData.url - The background URL (data URL or remote URL)
- * @param {string} backgroundData.name - The filename
+ * Settles when the transaction has committed (or failed to). A request's own success only means
+ * it was queued without error: the transaction can still abort while committing (storage full),
+ * and then nothing was saved.
+ */
+const committed = (transaction) => {
+  const finished = new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error || new Error('IndexedDB request failed'));
+    transaction.onabort = () => reject(transaction.error || new Error('IndexedDB transaction aborted'));
+  });
+  finished.catch(() => {}); // the caller awaits it; this only keeps an early failure from being "unhandled"
+  return finished;
+};
+
+/**
+ * Add a new background to the database
+ * @param {Object|string} backgroundData - Background data object or URL string (for backward compatibility)
+ * @param {string} backgroundData.url - The data URL of the image/video
+ * @param {string} backgroundData.name - Name of the file
  * @param {number} backgroundData.uploadDate - Upload timestamp
- * @param {Object} backgroundData.dimensions - {width, height}
+ * @param {Object} backgroundData.dimensions - Image dimensions {width, height}
  * @param {number} backgroundData.fileSize - File size in bytes
  * @param {string} backgroundData.folder - Folder name (optional)
  * @param {string} backgroundData.blurHash - BlurHash string (optional)
- * @returns {Promise<number>} The ID of the added background
+ * @returns {Promise<number>} The ID of the added background, once it is committed
  */
 export async function addBackground(backgroundData) {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readwrite');
+  const finished = committed(transaction);
   const store = transaction.objectStore(STORE_NAME);
 
   // Support old string format for backward compatibility
@@ -109,11 +125,8 @@ export async function addBackground(backgroundData) {
       : { ...backgroundData, uploadDate: backgroundData.uploadDate || Date.now() };
 
   const request = store.add(data);
-
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
-  });
+  await finished;
+  return request.result;
 }
 
 /**
@@ -125,35 +138,34 @@ export async function addBackground(backgroundData) {
 export async function updateBackground(index, backgroundData) {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readwrite');
+  const finished = committed(transaction);
   const store = transaction.objectStore(STORE_NAME);
 
   // Get all items to find the one at the specified index
   const getAllRequest = store.getAll();
+  let missing = false;
 
-  return new Promise((resolve, reject) => {
-    getAllRequest.onsuccess = () => {
-      const items = getAllRequest.result;
-      if (items[index]) {
-        const item = items[index];
+  getAllRequest.onsuccess = () => {
+    const items = getAllRequest.result;
+    if (items[index]) {
+      const item = items[index];
 
-        // Support old string format
-        if (typeof backgroundData === 'string') {
-          item.url = backgroundData;
-        } else {
-          Object.assign(item, backgroundData);
-        }
-        item.updatedAt = Date.now();
-
-        const updateRequest = store.put(item);
-        updateRequest.onsuccess = () => resolve();
-        updateRequest.onerror = () => reject(updateRequest.error);
+      // Support old string format
+      if (typeof backgroundData === 'string') {
+        item.url = backgroundData;
       } else {
-        // If index doesn't exist, add it
-        addBackground(backgroundData).then(resolve).catch(reject);
+        Object.assign(item, backgroundData);
       }
-    };
-    getAllRequest.onerror = () => reject(getAllRequest.error);
-  });
+      item.updatedAt = Date.now();
+      store.put(item);
+    } else {
+      missing = true;
+    }
+  };
+
+  await finished;
+  // If index doesn't exist, add it
+  if (missing) await addBackground(backgroundData);
 }
 
 /**
@@ -164,24 +176,17 @@ export async function updateBackground(index, backgroundData) {
 export async function deleteBackground(index) {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readwrite');
+  const finished = committed(transaction);
   const store = transaction.objectStore(STORE_NAME);
 
   // Get all items to find the one at the specified index
   const getAllRequest = store.getAll();
+  getAllRequest.onsuccess = () => {
+    const item = getAllRequest.result[index];
+    if (item) store.delete(item.id); // an index that doesn't exist has nothing to delete
+  };
 
-  return new Promise((resolve, reject) => {
-    getAllRequest.onsuccess = () => {
-      const items = getAllRequest.result;
-      if (items[index]) {
-        const deleteRequest = store.delete(items[index].id);
-        deleteRequest.onsuccess = () => resolve();
-        deleteRequest.onerror = () => reject(deleteRequest.error);
-      } else {
-        resolve(); // Index doesn't exist, nothing to delete
-      }
-    };
-    getAllRequest.onerror = () => reject(getAllRequest.error);
-  });
+  await finished;
 }
 
 /**
@@ -192,38 +197,19 @@ export async function deleteBackground(index) {
 export async function deleteMultipleBackgrounds(indices) {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readwrite');
+  const finished = committed(transaction);
   const store = transaction.objectStore(STORE_NAME);
 
   // Get all items first
   const getAllRequest = store.getAll();
+  getAllRequest.onsuccess = () => {
+    const items = getAllRequest.result;
+    indices
+      .filter((index) => items[index])
+      .forEach((index) => store.delete(items[index].id));
+  };
 
-  return new Promise((resolve, reject) => {
-    getAllRequest.onsuccess = () => {
-      const items = getAllRequest.result;
-      const idsToDelete = indices.filter((index) => items[index]).map((index) => items[index].id);
-
-      // Delete all selected items
-      let completed = 0;
-      const total = idsToDelete.length;
-
-      if (total === 0) {
-        resolve();
-        return;
-      }
-
-      idsToDelete.forEach((id) => {
-        const deleteRequest = store.delete(id);
-        deleteRequest.onsuccess = () => {
-          completed++;
-          if (completed === total) {
-            resolve();
-          }
-        };
-        deleteRequest.onerror = () => reject(deleteRequest.error);
-      });
-    };
-    getAllRequest.onerror = () => reject(getAllRequest.error);
-  });
+  await finished;
 }
 
 /**
@@ -233,13 +219,9 @@ export async function deleteMultipleBackgrounds(indices) {
 export async function clearAllBackgrounds() {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readwrite');
-  const store = transaction.objectStore(STORE_NAME);
-  const request = store.clear();
-
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve();
-    request.onerror = () => reject(request.error);
-  });
+  const finished = committed(transaction);
+  transaction.objectStore(STORE_NAME).clear();
+  await finished;
 }
 
 /**
@@ -267,24 +249,24 @@ export async function getBackgroundCount() {
 export async function updateBackgroundMetadata(id, metadata) {
   const db = await openDB();
   const transaction = db.transaction(STORE_NAME, 'readwrite');
+  const finished = committed(transaction);
   const store = transaction.objectStore(STORE_NAME);
   const request = store.get(id);
+  let found = true;
 
-  return new Promise((resolve, reject) => {
-    request.onsuccess = () => {
-      const item = request.result;
-      if (item) {
-        Object.assign(item, metadata);
-        item.updatedAt = Date.now();
-        const updateRequest = store.put(item);
-        updateRequest.onsuccess = () => resolve();
-        updateRequest.onerror = () => reject(updateRequest.error);
-      } else {
-        reject(new Error('Background not found'));
-      }
-    };
-    request.onerror = () => reject(request.error);
-  });
+  request.onsuccess = () => {
+    const item = request.result;
+    if (item) {
+      Object.assign(item, metadata);
+      item.updatedAt = Date.now();
+      store.put(item);
+    } else {
+      found = false;
+    }
+  };
+
+  await finished;
+  if (!found) throw new Error('Background not found');
 }
 
 /**

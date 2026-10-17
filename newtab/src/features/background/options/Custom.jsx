@@ -672,6 +672,7 @@ const CustomSettings = memo(() => {
                         type="checkbox"
                         checked={selectedImages.has(originalIndex)}
                         onChange={() => toggleImageSelection(originalIndex)}
+                        aria-label={bg.name || `${originalIndex + 1}`}
                       />
                     </div>
                     <div className="image-preview">
