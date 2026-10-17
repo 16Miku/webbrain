@@ -552,6 +552,56 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(sends.includes('task A2'), true, 'A2 goes out once A has settled');
   });
 
+  test(`${browser}: the time a task waited behind a send is kept for its own tab`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 } };
+    const state = { tabId: 3, clock: 100_000 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const sends = [];
+    let releaseA;
+    const gateA = new Promise((r) => { releaseA = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => {
+        const text = input.value;
+        sends.push(text);
+        if (text === 'task A') { await gateA; input.value = ''; }
+        return true;
+      },
+      now: () => state.clock,
+    });
+    await handoff.start();
+    store[key3] = { id: 'A2', tabId: 3, text: 'task A2', mode: 'ask', createdAt: 99_800 };
+    await handoff.consume(); // held behind A: the wait starts counting here
+    assert.deepEqual(sends, ['task A']);
+    state.clock = 135_000; // the send is slow; A2 is now 35 s old
+    // the user looks at another tab, which has nothing waiting
+    state.tabId = 4;
+    input.value = '';
+    await handoff.consume();
+    releaseA();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    // and returns: A2 is older than 30 s only because the panel kept it waiting
+    state.tabId = 3;
+    input.value = '';
+    await handoff.consume();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(sends.includes('task A2'), true, 'the waiting task is still accepted');
+  });
+
   test(`${browser}: a declined send never refills another tab's composer; the task goes back to its own tab`, async () => {
     const key3 = newtabHandoffKey(3);
     const store = { [key3]: { id: 'r1', tabId: 3, text: 'for tab three', mode: 'ask', createdAt: 99_000 } };
