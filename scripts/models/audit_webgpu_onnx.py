@@ -4,9 +4,10 @@ Catches the problems that made Ternary Bonsai 2 prefill take minutes in the
 browser (see docs/webgpu-models.md):
 
 * control-flow ops that ONNX Runtime Web's WebGPU execution provider does not
-  implement (`Scan`, `Loop`), including inside `If` branches. ONNX Runtime
-  places them on the CPU and their bodies then run once per iteration with a
-  GPU round trip, so a per-token recurrence becomes a per-token CPU loop;
+  implement (`Scan`, `Loop`), including inside `If` branches and model-local
+  functions. ONNX Runtime places them on the CPU and their bodies then run
+  once per iteration with a GPU round trip, so a per-token recurrence becomes
+  a per-token CPU loop;
 * a `logits` output that keeps the sequence dimension, so prefill computes and
   downloads `[sequence_length, vocab]` scores (0.5 MB per prompt token for a
   248k vocabulary in FP16) and can exceed a 2 GB WebGPU buffer limit.
@@ -62,7 +63,11 @@ def audit(path, text_generate_only=False):
 
     control_flow = collections.defaultdict(list)
     op_counts = collections.Counter()
-    for node, location in walk(graph):
+    # Model-local functions are inlined by ONNX Runtime, so audit their bodies too.
+    bodies = [(graph, "")] + [(function, f"function:{function.domain}::{function.name}")
+                              for function in model.functions]
+    nodes = [entry for body, location in bodies for entry in walk(body, location)]
+    for node, location in nodes:
         domain = node.domain or "ai.onnx"
         op_counts[f"{domain}::{node.op_type}"] += 1
         if node.op_type in CPU_ONLY_CONTROL_FLOW and domain == "ai.onnx":
@@ -104,11 +109,13 @@ def audit(path, text_generate_only=False):
                                      "the only caller.")
                 blockers.append(entry)
 
-    contrib = sorted(k for k in op_counts if not k.startswith("ai.onnx::"))
+    local_functions = {f"{function.domain}::{function.name}" for function in model.functions}
+    contrib = sorted(k for k in op_counts if not k.startswith("ai.onnx::") and k not in local_functions)
     info.update({
         "opsets": {o.domain or "ai.onnx": o.version for o in model.opset_import},
         "nodes": sum(op_counts.values()),
         "if_nodes": op_counts.get("ai.onnx::If", 0),
+        "local_functions": sorted(local_functions),
         "contrib_ops": {k: op_counts[k] for k in contrib},
         "external_data_files": sorted({
             entry.value for tensor in graph.initializer if tensor.data_location == onnx.TensorProto.EXTERNAL

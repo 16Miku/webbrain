@@ -20,8 +20,12 @@
 //   node scripts/check-webgpu-long-prompts.mjs --model webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
 //     --vision --profile .build/bonsai/chunked-2b-profile --offline --lengths 1000,4000,8000 --slices 0,512
 //
-// A repository whose name ends in -Vision always uses the multimodal path, as
-// in production; --vision forces it for other repositories.
+// Shipped presets use their production path and dtype from
+// src/chrome/src/providers/webgpu.js: `onnx-vl` presets run multimodal chat,
+// and other ONNX presets run text chat with their preset dtype (q4f16 by
+// default, as for custom repositories). --vision forces multimodal chat and
+// --dtype (a name or a JSON object) overrides the dtype. The `bitgpu` runtime
+// does not use this worker and is rejected.
 //
 // Options mirror check-bonsai-webgpu.mjs: --local-repo owner/repo=dir serves
 // unpublished files, --offline requires a cached model and blocks Hugging Face,
@@ -34,17 +38,21 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import {
+  WEBGPU_RUNTIME_BITGPU, WEBGPU_RUNTIME_ONNX_VL, webgpuModelDtype, webgpuModelRuntime,
+} from '../src/chrome/src/providers/webgpu.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 ? fallback : args[i + 1]; };
 const model = option('--model', 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision');
-// The Vision presets always run through the multimodal path in production.
-const vision = args.includes('--vision') || /-Vision$/i.test(model);
+const runtime = webgpuModelRuntime(model);
+assert(runtime !== WEBGPU_RUNTIME_BITGPU, `${model} uses the ${runtime} runtime, which this ONNX worker check does not cover`);
+// As in production, onnx-vl presets always use the multimodal path.
+const vision = args.includes('--vision') || runtime === WEBGPU_RUNTIME_ONNX_VL;
 const offline = args.includes('--offline');
-const dtype = option('--dtype', null)
-  ? JSON.parse(option('--dtype'))
-  : vision ? { embed_tokens: 'q2f16', vision_encoder: 'fp16', decoder_model_merged: 'q2f16' } : 'q2f16';
+const parseDtype = value => { try { return JSON.parse(value); } catch { return value; } };
+const dtype = option('--dtype', null) ? parseDtype(option('--dtype')) : webgpuModelDtype(model);
 const lengths = option('--lengths', '1000,4000,8000').split(',').map(Number);
 const slices = option('--slices', '0,512').split(',').map(Number);
 const maxTokens = Number(option('--max-tokens', 48));
