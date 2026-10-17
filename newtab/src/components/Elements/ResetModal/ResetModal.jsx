@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { toast } from 'react-toastify';
+import { onActivateKey } from 'utils/keyboard';
 import variables from 'config/variables';
 import { MdClose, MdRestartAlt } from 'react-icons/md';
 import { setDefaultSettings } from 'utils/settings';
@@ -33,7 +34,16 @@ function ResetModal({ modalClose }) {
         <Tooltip
           title={variables.getMessage('modals.main.settings.sections.advanced.reset_modal.cancel')}
         >
-          <div className="close" onClick={modalClose}>
+          <div
+            className="close"
+            role="button"
+            tabIndex={0}
+            aria-label={variables.getMessage(
+              'modals.main.settings.sections.advanced.reset_modal.cancel',
+            )}
+            onClick={modalClose}
+            onKeyDown={onActivateKey(modalClose)}
+          >
             <MdClose />
           </div>
         </Tooltip>

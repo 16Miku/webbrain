@@ -10,9 +10,14 @@ const ReminderInfo = ({ isVisible, onHide }) => {
     <div className="reminder-info">
       <div className="shareHeader">
         <span className="title">{variables.getMessage('modals.main.settings.reminder.title')}</span>
-        <span className="closeModal" onClick={onHide}>
+        <button
+          type="button"
+          className="closeModal"
+          onClick={onHide}
+          aria-label={variables.getMessage('modals.welcome.buttons.close')}
+        >
           <MdClose />
-        </span>
+        </button>
       </div>
       <span className="subtitle">
         {variables.getMessage('modals.main.settings.reminder.message')}

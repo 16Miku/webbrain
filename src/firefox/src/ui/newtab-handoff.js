@@ -142,6 +142,13 @@ export function createNewtabHandoff({
         await storage.set?.({ [retryKey]: [...queue, record] });
       } catch { /* best effort */ }
     });
+    const retryWaiting = async () => {
+      try {
+        return asList((await storage.get(retryKey))?.[retryKey]).length > 0;
+      } catch {
+        return false;
+      }
+    };
     // Takes the record just read out of storage: the primary key is simply removed, the retry
     // slot drops that one entry and keeps the others.
     const removeClaimed = (record) => {
@@ -162,6 +169,8 @@ export function createNewtabHandoff({
       const handoff = normalizeNewtabHandoff(stored, now(), NEWTAB_HANDOFF_MAX_AGE_MS + allowance);
       if (!handoff) {
         await removeClaimed(stored);
+        // Dropping a stale primary raises no event this panel acts on; a live retry may be behind it.
+        if (key === primaryKey) claimedOne = await retryWaiting();
         return false;
       }
       if (handoff.tabId !== Number(tabId) || handled.has(handoff.id)) return false;
@@ -230,11 +239,7 @@ export function createNewtabHandoff({
       }
       // A task handed back earlier may be waiting behind the one just claimed (removing a
       // primary record raises no change event this panel acts on), so look again if so.
-      if (key === primaryKey) {
-        try {
-          claimedOne = asList((await storage.get(retryKey))?.[retryKey]).length > 0;
-        } catch { /* best effort */ }
-      }
+      if (key === primaryKey) claimedOne = await retryWaiting();
       return true;
     } catch {
       return false;

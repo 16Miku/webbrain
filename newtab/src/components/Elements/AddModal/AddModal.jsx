@@ -1,4 +1,5 @@
 import variables from 'config/variables';
+import { onActivateKey } from 'utils/keyboard';
 
 import { useState, memo } from 'react';
 import { MdAddLink, MdClose } from 'react-icons/md';
@@ -19,7 +20,14 @@ function AddModal({ urlError, iconError, addLink, closeModal, edit, editData, ed
             : variables.getMessage('widgets.quicklinks.new')}
         </span>
         <Tooltip title={variables.getMessage('modals.welcome.buttons.close')}>
-          <div className="close" onClick={() => closeModal()}>
+          <div
+            className="close"
+            role="button"
+            tabIndex={0}
+            aria-label={variables.getMessage('modals.welcome.buttons.close')}
+            onClick={() => closeModal()}
+            onKeyDown={onActivateKey(() => closeModal())}
+          >
             <MdClose />
           </div>
         </Tooltip>

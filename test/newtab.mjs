@@ -583,6 +583,37 @@ for (const browser of ['chrome', 'firefox']) {
     assert.deepEqual(Object.keys(store), [], 'both records were claimed');
   });
 
+  test(`${browser}: a live retry behind a stale primary record is still delivered`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const retry3 = newtabHandoffRetryKey(3);
+    const store = {
+      [key3]: { id: 'OLD', tabId: 3, text: 'too old', mode: 'act', createdAt: 1_000 },
+      [retry3]: [{ id: 'A-retry', tabId: 3, text: 'task A', mode: 'act', createdAt: 99_900 }],
+    };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => 3,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => {},
+      now: () => 100_000,
+    });
+    await handoff.start();
+    for (let i = 0; i < 6; i++) await new Promise((r) => setTimeout(r, 0));
+    assert.equal(input.value, 'task A');
+    assert.deepEqual(Object.keys(store), []);
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1702,4 +1733,13 @@ test('round-46: the stale-record sweep understands the retry queue', () => {
     assert.match(src, /Array\.isArray\(all\[key\]\) \? all\[key\] : \[all\[key\]\]/, file);
     assert.match(src, /entries\.some\(\(entry\) => Number\(entry\?\.createdAt\) > cutoff\)/, file);
   }
+});
+
+test('round-48: dialog close controls work from the keyboard', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  for (const f of ['components/Elements/AddModal/AddModal.jsx', 'components/Elements/ResetModal/ResetModal.jsx']) {
+    assert.match(read(f), /className="close"\s+role="button"\s+tabIndex=\{0\}[\s\S]*onActivateKey\(/, f);
+  }
+  assert.match(read('components/Elements/MainModal/components/ReminderInfo.jsx'), /<button\s+type="button"\s+className="closeModal"/);
+  assert.match(read('utils/keyboard.js'), /event\.key === 'Enter' \|\| event\.key === ' '/);
 });
