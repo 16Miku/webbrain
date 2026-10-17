@@ -14,9 +14,11 @@
 // --extension DIR    unpacked extension to load (default src/chrome). The
 //                    extension ID, and so the model cache, follows the path:
 //                    reuse one directory and profile to compare two builds.
-//                    Chrome keeps running a cached service worker for an
-//                    unchanged extension, so the script reloads the extension
-//                    once at start to pick up the files on disk.
+// --reset-service-worker
+//                    Chrome keeps running the service worker it registered
+//                    for the previous build. This removes the profile's
+//                    service-worker registrations and script cache (not the
+//                    model cache) so the build on disk is loaded.
 // --model ID         WebGPU preset (default Bonsai 2 2B Vision)
 // --download         download the model if it is not cached yet
 // --tasks a,b        run only these tasks
@@ -101,6 +103,11 @@ const tasks = [
 
 await fs.mkdir(path.dirname(output), { recursive: true });
 const result = { model, extension, startedAt: new Date().toISOString(), tasks: [] };
+if (args.includes('--reset-service-worker')) {
+  for (const name of ['ScriptCache', 'Database']) {
+    await fs.rm(path.join(profile, 'Default', 'Service Worker', name), { recursive: true, force: true });
+  }
+}
 let context;
 try {
   context = await chromium.launchPersistentContext(profile, {
@@ -112,14 +119,7 @@ try {
   });
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker', { timeout: 30000 });
   const id = new URL(worker.url()).host;
-  let harness = await context.newPage();
-  await harness.goto(`chrome-extension://${id}/src/ui/settings.html`);
-  // A persistent profile can keep serving the previous build's service
-  // worker; chrome.runtime.reload() makes Chrome read the files again.
-  const reloaded = context.waitForEvent('serviceworker', { timeout: 30000 });
-  await harness.evaluate(() => chrome.runtime.reload()).catch(() => {});
-  await reloaded;
-  harness = await context.newPage();
+  const harness = await context.newPage();
   await harness.goto(`chrome-extension://${id}/src/ui/settings.html`);
   const message = (action, data = {}) => harness.evaluate(({ action, data }) => chrome.runtime.sendMessage({ target: 'background', action, ...data }), { action, data });
   await harness.evaluate(() => chrome.storage.local.set({
