@@ -10834,6 +10834,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       linked = fetched?.success === false || fetched?.error || !text.trim()
         ? { url: linkedUrl, unavailable: String(fetched?.error || 'no readable text').slice(0, 120) }
         : { url: linkedUrl, text, incomplete: fetched.hasMore === true };
+      if (linked.unavailable) onUpdate?.('thinking', { step: 0, note: 'Could not read the linked page.' });
     }
     let modelLabel = '';
     try {

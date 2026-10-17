@@ -39,6 +39,10 @@ export const TINY_ASK_COMPACT_SELECTION_MAX_CHARS = 800;
 // once, as the user asked; fetch_url returns at most 7000 characters.
 export const TINY_ASK_LINKED_MAX_CHARS = 6000;
 export const TINY_ASK_COMPACT_LINKED_MAX_CHARS = 1500;
+// When the question has a more specific source (a selection or a linked page)
+// the current page is background: it gets less room, and the specific source
+// is placed after it, next to the question, where a small model weighs it most.
+export const TINY_ASK_BACKGROUND_PAGE_MAX_CHARS = 3000;
 // read_page returns at most 6000 characters per window. Longer pages are read
 // up to this cap so the excerpt can come from anywhere in the document.
 export const TINY_ASK_READ_WINDOW_CHARS = 6000;
@@ -268,14 +272,11 @@ export function tinyAskPageContext({
     lines.push(`[Current page — applies to this question and supersedes older page context. URL: ${tinyAskSafeField(url)}${title ? ` — Title: ${tinyAskSafeField(title)}` : ''}]`);
   }
   const selectedText = String(selection || '').trim();
-  if (selectedText) {
-    const clipped = selectedText.length > selectionMaxChars
-      ? `${selectedText.slice(0, selectionMaxChars)}\n[…]` : selectedText;
-    lines.push('Text the user has selected on the page:', wrap('get_selection', clipped));
-  }
+  const specificSource = !!selectedText || !!linked?.url;
   const pageText = String(page?.text || '').trim();
   if (pageText) {
-    const excerpt = selectPageExcerpt(pageText, question, pageMaxChars);
+    const excerpt = selectPageExcerpt(pageText, question,
+      specificSource ? Math.min(pageMaxChars, TINY_ASK_BACKGROUND_PAGE_MAX_CHARS) : pageMaxChars);
     const partial = excerpt.truncated || page?.incomplete === true;
     const label = page?.kind === 'pdf' ? 'PDF text' : 'Page text';
     lines.push(partial
@@ -291,11 +292,17 @@ export function tinyAskPageContext({
     if (linkedText) {
       const excerpt = selectPageExcerpt(linkedText, question, linkedMaxChars);
       const partial = excerpt.truncated || linked.incomplete === true;
-      lines.push(`Text of the page linked in the question (${tinyAskSafeField(linked.url)})${partial ? ', excerpt; […] marks omitted parts' : ''}:`,
+      lines.push(`The question links to another page (${tinyAskSafeField(linked.url)}). Answer about that page from its text${partial ? ' (excerpt; […] marks omitted parts)' : ''}, not from the current page:`,
         wrap('fetch_url', excerpt.text));
     } else {
-      lines.push(`[The page linked in the question (${tinyAskSafeField(linked.url)}) could not be read${linked.unavailable ? ` (${tinyAskSafeField(linked.unavailable, 120)})` : ''}.]`);
+      lines.push(`[The page linked in the question (${tinyAskSafeField(linked.url)}) could not be read${linked.unavailable ? ` (${tinyAskSafeField(linked.unavailable, 120)})` : ''}. Say so instead of describing the current page.]`);
     }
+  }
+  if (selectedText) {
+    const clipped = selectedText.length > selectionMaxChars
+      ? `${selectedText.slice(0, selectionMaxChars)}\n[…]` : selectedText;
+    lines.push('The user has selected this text on the page; "this", "it" or "the selected text" in the question refers to it:',
+      wrap('get_selection', clipped));
   }
   return lines.join('\n');
 }

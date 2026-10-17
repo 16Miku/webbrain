@@ -190,7 +190,8 @@ try {
       const exported = await message('export_traces', { tabId });
       promptVariants = [...String(exported?.markdown || '').matchAll(/\bprompt ([a-z_]+)/g)].map(match => match[1]);
     } catch { /* Tracing is diagnostic only. */ }
-    const entry = { name: task.name, seconds, steps, passed, promptVariants, answer, ...(error ? { error } : {}) };
+    const notes = updates.filter(update => update.type === 'thinking' && update.data?.note).map(update => update.data.note);
+    const entry = { name: task.name, seconds, steps, passed, promptVariants, notes, answer, ...(error ? { error } : {}) };
     result.tasks.push(entry);
     console.log(JSON.stringify({ ...entry, answer: answer.slice(0, 160) }));
   }
