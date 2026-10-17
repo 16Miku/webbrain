@@ -296,6 +296,8 @@ export function inlineErrorWasCut(error) {
 }
 
 export function inlineAnswerWasCut(result, maxTokens) {
+  // The in-browser WebGPU models have no finish reason; their worker reports the limit directly.
+  if (result?.outputTruncated === true) return true;
   const raw = result?.raw;
   const reason = [
     result?.finishReason,

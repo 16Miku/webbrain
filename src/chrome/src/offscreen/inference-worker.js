@@ -102,6 +102,57 @@ let visionDownloadAbortController = null;
 const activeVisionGenerations = new Map();
 const queuedVisionGenerations = new Set();
 const cancelledVisionGenerations = new Set();
+// Text generations that carry a requestKey (the in-page answer cards do) can be
+// cancelled: one still queued never starts, and a running one is interrupted at
+// its next token instead of finishing a result nobody is waiting for.
+const queuedTextGenerations = new Set();
+const activeTextGenerations = new Map();
+const cancelledTextGenerations = new Set();
+const TEXT_REQUEST_KEY_PATTERN = /^[a-z0-9-]{8,64}$/i;
+// A re-tokenized answer that used this much of its budget is reported as cut off.
+const WEBGPU_OUTPUT_LIMIT_RATIO = 0.97;
+
+function textRequestKey(payload) {
+  const key = typeof payload?.requestKey === 'string' ? payload.requestKey : '';
+  return TEXT_REQUEST_KEY_PATTERN.test(key) ? key : '';
+}
+
+function throwIfTextCancelled(requestKey) {
+  if (!requestKey || !cancelledTextGenerations.has(requestKey)) return;
+  const error = new Error('The generation was cancelled.');
+  error.name = 'AbortError';
+  throw error;
+}
+
+function beginTextGeneration(requestKey, library) {
+  if (!requestKey || !library?.InterruptableStoppingCriteria) return null;
+  const criteria = new library.InterruptableStoppingCriteria();
+  activeTextGenerations.set(requestKey, criteria);
+  return criteria;
+}
+
+function endTextGeneration(requestKey) {
+  if (requestKey) activeTextGenerations.delete(requestKey);
+}
+
+// Tokens in a generated text, counted with the model's own tokenizer; null when it cannot.
+function countGeneratedTokens(tokenizer, text) {
+  try {
+    if (typeof tokenizer !== 'function' || !text) return null;
+    const count = Number(tokenizer(text, { add_special_tokens: false })?.input_ids?.dims?.at?.(-1));
+    return Number.isFinite(count) ? count : null;
+  } catch {
+    return null;
+  }
+}
+
+// The worker has no finish reason for these models, so a generation that used
+// (nearly) all of its token budget is reported as cut off for the caller to act on.
+function outputLimitField(generatedTokens, maxNewTokens, ratio = WEBGPU_OUTPUT_LIMIT_RATIO) {
+  return Number.isFinite(generatedTokens) && maxNewTokens > 0
+    ? { outputTruncated: generatedTokens >= Math.max(1, Math.floor(maxNewTokens * ratio)) }
+    : {};
+}
 let lastTextProgressPostAt = 0;
 let webGpuAdapterProbePromise = null;
 let webGpuAdapterSummary = '';
@@ -1326,6 +1377,8 @@ function addLegacyVlTools(messages, tools) {
 }
 
 async function runMultimodalText(payload) {
+  const requestKey = textRequestKey(payload);
+  throwIfTextCancelled(requestKey);
   const modelId = assertOnnxTextModel(payload?.modelId);
   if (!isLfm25VlModel(modelId)) {
     throw new Error(`${modelId} is not a shipped WebGPU multimodal model.`);
@@ -1344,6 +1397,7 @@ async function runMultimodalText(payload) {
     owner: 'text',
     readiness: 'text',
   });
+  throwIfTextCancelled(requestKey);
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   let { messages, imageUrls } = prepareMultimodalMessages(payload?.messages);
   if (modelId === WEBGPU_LFM25_VL_16B_MODEL_ID) messages = addLegacyVlTools(messages, tools);
@@ -1366,26 +1420,38 @@ async function runMultimodalText(payload) {
     : 800;
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
+  const criteria = beginTextGeneration(requestKey, runtime.library);
   let outputs;
   try {
     outputs = await runtime.model.generate({
       ...inputs,
       do_sample: false,
       max_new_tokens: maxNewTokens,
+      ...(criteria ? { stopping_criteria: [criteria] } : {}),
     });
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
     throw error;
+  } finally {
+    endTextGeneration(requestKey);
   }
+  throwIfTextCancelled(requestKey);
   const inputLength = inputs.input_ids.dims.at(-1);
   const generated = outputs.slice(null, [inputLength, null]);
   const decoded = runtime.processor.batch_decode(generated, { skip_special_tokens: true });
   const result = splitThinking(String(decoded?.[0] || '').trim());
   noteWebgpuExecutionSuccess();
-  return { content: result.content, reasoningContent: result.reasoningContent };
+  // The generated tensor is exact, so reaching the budget means no end-of-text token came first.
+  return {
+    content: result.content,
+    reasoningContent: result.reasoningContent,
+    ...outputLimitField(Number(generated?.dims?.at?.(-1)), maxNewTokens, 1),
+  };
 }
 
 async function runText(payload) {
+  const requestKey = textRequestKey(payload);
+  throwIfTextCancelled(requestKey);
   const modelId = assertOnnxTextModel(payload?.modelId);
   const device = payload?.device || 'webgpu';
   const dtype = payload?.dtype || 'q4f16';
@@ -1397,6 +1463,7 @@ async function runText(payload) {
     throw new Error(`${modelId} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`);
   }
   const runtime = await getTextRuntime(modelId, dtype, device, { localFilesOnly: true });
+  throwIfTextCancelled(requestKey);
   if (payload?.requireTools === true) assertToolCapableTextRuntime(runtime, modelId);
   const requestedTokens = Number(payload?.options?.maxTokens);
   const maxTokenLimit = usesLongOutputBudget
@@ -1408,12 +1475,14 @@ async function runText(payload) {
   const tools = Array.isArray(payload?.options?.tools) ? payload.options.tools : [];
   lastWebGpuDeviceError = '';
   lastWebGpuDeviceLost = '';
+  const criteria = beginTextGeneration(requestKey, runtime.library);
   let output;
   try {
     output = await runtime.pipeline(prepareTextMessages(payload?.messages), {
       do_sample: Boolean(sampling),
       ...(sampling || {}),
       max_new_tokens: maxNewTokens,
+      ...(criteria ? { stopping_criteria: [criteria] } : {}),
       tools: tools.length ? tools : undefined,
       // Reasoning templates re-open `<think>` for the pending turn and collapse
       // completed thinking in history; the rest suppress thinking outright.
@@ -1424,7 +1493,10 @@ async function runText(payload) {
   } catch (error) {
     if (isWebGpuExecutionFailure(error)) throw await handleWebGpuExecutionFailure(error);
     throw error;
+  } finally {
+    endTextGeneration(requestKey);
   }
+  throwIfTextCancelled(requestKey);
   const generated = output?.[0]?.generated_text;
   const content = Array.isArray(generated)
     ? generated.at(-1)?.content
@@ -1437,7 +1509,11 @@ async function runText(payload) {
     throw new Error(`${modelId} used its generation budget before finishing reasoning. Retry with a shorter prompt.`);
   }
   noteWebgpuExecutionSuccess();
-  return { content: result.content, reasoningContent: result.reasoningContent };
+  return {
+    content: result.content,
+    reasoningContent: result.reasoningContent,
+    ...outputLimitField(countGeneratedTokens(runtime.tokenizer, content), maxNewTokens),
+  };
 }
 
 async function probeRuntime() {
@@ -1499,6 +1575,18 @@ self.addEventListener('message', async event => {
         queued: queued && !active,
         active,
       });
+      return;
+    }
+    if (type === 'cancel-text') {
+      const requestKey = typeof payload?.requestKey === 'string' ? payload.requestKey : '';
+      const queued = queuedTextGenerations.has(requestKey);
+      const active = activeTextGenerations.has(requestKey);
+      const cancellable = TEXT_REQUEST_KEY_PATTERN.test(requestKey) && (queued || active);
+      if (cancellable) {
+        cancelledTextGenerations.add(requestKey);
+        activeTextGenerations.get(requestKey)?.interrupt?.();
+      }
+      self.postMessage({ id, ok: true, cancelled: cancellable, queued: queued && !active, active });
       return;
     }
     if (type === 'init') {
@@ -1649,24 +1737,25 @@ self.addEventListener('message', async event => {
       }
       return;
     }
-    if (type === 'text-chat') {
-      const result = await enqueueModelOperation(() => runText(payload));
-      self.postMessage({
-        id,
-        ok: true,
-        ...result,
-        raw: { model: payload?.modelId || '' },
-      });
-      return;
-    }
-    if (type === 'multimodal-text-chat') {
-      const result = await enqueueModelOperation(() => runMultimodalText(payload));
-      self.postMessage({
-        id,
-        ok: true,
-        ...result,
-        raw: { model: payload?.modelId || '' },
-      });
+    if (type === 'text-chat' || type === 'multimodal-text-chat') {
+      const requestKey = textRequestKey(payload);
+      if (requestKey) queuedTextGenerations.add(requestKey);
+      try {
+        const result = await enqueueModelOperation(
+          () => (type === 'text-chat' ? runText(payload) : runMultimodalText(payload)),
+        );
+        self.postMessage({
+          id,
+          ok: true,
+          ...result,
+          raw: { model: payload?.modelId || '' },
+        });
+      } finally {
+        if (requestKey) {
+          queuedTextGenerations.delete(requestKey);
+          cancelledTextGenerations.delete(requestKey);
+        }
+      }
       return;
     }
     throw new Error(`Unknown WebGPU worker message: ${type || 'missing type'}`);

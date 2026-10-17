@@ -538,6 +538,7 @@ async function ensureVisionWorker() {
 
 const WEBGPU_MESSAGE_TYPES = new Set([
   'webgpu-chat',
+  'webgpu-chat-cancel',
   'webgpu-download-start',
   'webgpu-download-pause',
   'webgpu-download-stop',
@@ -716,6 +717,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse(disposed[0] || { ok: true, disposed: true });
         return;
       }
+      if (message.type === 'webgpu-chat-cancel') {
+        // Stop a text generation its caller no longer wants. Both workers are asked
+        // because the host does not know which model the request was routed to.
+        const requestKey = typeof message.requestKey === 'string' ? message.requestKey : '';
+        const cancels = [];
+        if (visionWorker) cancels.push(sendVisionWorkerMessage('cancel-text', { requestKey }).catch(() => null));
+        if (bonsaiWorker) cancels.push(sendBonsaiWorkerMessage('cancel-text', { requestKey }).catch(() => null));
+        await Promise.all(cancels);
+        sendResponse({ ok: true });
+        return;
+      }
       if (message.type === 'webgpu-chat') {
         const workerMessageType = message.runtime === 'onnx-vl'
           ? 'multimodal-text-chat'
@@ -725,6 +737,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           device: message.device,
           dtype: message.dtype,
           requireTools: message.requireTools === true,
+          requestKey: typeof message.requestKey === 'string' ? message.requestKey : '',
           messages: message.messages || [],
           options: message.options || {},
         }, { exclusive: true, runtime: message.runtime }));

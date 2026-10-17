@@ -51805,6 +51805,8 @@ test('inline card detects an answer that stopped at the output cap on every prov
     assert.equal(wasCut({ content: 'x', usage: { completion_tokens: 400 } }, 2000), false, `${label}: a short answer is complete`);
     assert.equal(wasCut({ content: 'x' }, 2000), false, `${label}: no signal at all is treated as complete`);
     assert.equal(wasCut(null, 2000), false, `${label}: a missing result is not a cut-off`);
+    assert.equal(wasCut({ content: 'x', outputTruncated: true, usage: null }, 2000), true, `${label}: the in-browser WebGPU worker reports its own limit`);
+    assert.equal(wasCut({ content: 'x', outputTruncated: false }, 2000), false, `${label}: a WebGPU answer that finished is complete`);
   }
 });
 
@@ -51845,6 +51847,239 @@ test('inline card treats a Responses output-limit error as a cut-off with any pa
     assert.equal(wasCutError(new Error('network error')), false, `${label}: ordinary errors stay errors`);
     assert.equal(wasCutError(null), false, `${label}: no error is not a cut-off`);
   }
+});
+
+test('WebGPU worker interrupts a cancelled text generation, skips a queued one and reports a cut-off answer', async () => {
+  const previousSelf = globalThis.self;
+  const previousState = globalThis.__webgpuCancelTest;
+  let workerListener = null;
+  const posted = [];
+  try {
+    globalThis.self = {
+      addEventListener(type, listener) {
+        if (type === 'message') workerListener = listener;
+      },
+      postMessage(message) {
+        posted.push(message);
+      },
+    };
+    globalThis.__webgpuCancelTest = { calls: [], criteria: [], release: false, content: 'one two three four' };
+    const workerUrl = `${pathToFileURL(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js')).href}?text-cancel-test`;
+    await import(workerUrl);
+    const runtimeModule = `
+      export const env = { version: 'test', backends: { onnx: { wasm: {} } } };
+      export class InterruptableStoppingCriteria {
+        constructor() { this.interrupted = false; globalThis.__webgpuCancelTest.criteria.push(this); }
+        interrupt() { this.interrupted = true; }
+        reset() { this.interrupted = false; }
+      }
+      export async function pipeline() {
+        const instance = async (input, generation) => {
+          const state = globalThis.__webgpuCancelTest;
+          state.calls.push(generation);
+          // Generate until released, or until the stopping criteria is interrupted.
+          while (!state.release && !generation.stopping_criteria?.[0]?.interrupted) {
+            await new Promise(resolve => setTimeout(resolve, 1));
+          }
+          return [{ generated_text: [...input, { role: 'assistant', content: state.content }] }];
+        };
+        instance.model = {};
+        // One token per word: enough to exercise the worker's cut-off check.
+        instance.tokenizer = Object.assign(
+          text => ({ input_ids: { dims: [1, String(text).split(/\\s+/).filter(Boolean).length] } }),
+          { chat_template: '{% if tools %}{{ tools }}{% endif %}{{ messages }}' },
+        );
+        instance.dispose = async () => {};
+        return instance;
+      }
+    `;
+    let requestId = 1;
+    const send = async (type, payload = {}) => {
+      const id = requestId++;
+      await workerListener({ data: { id, type, payload } });
+      return posted.find(message => message.id === id);
+    };
+    const start = (type, payload) => {
+      const id = requestId++;
+      const done = workerListener({ data: { id, type, payload } }).then(() => posted.find(message => message.id === id));
+      return { id, done };
+    };
+    const until = async (condition, what) => {
+      for (let attempt = 0; attempt < 200 && !condition(); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      assert.ok(condition(), `timed out waiting for ${what}`);
+    };
+    const state = globalThis.__webgpuCancelTest;
+    const initialized = await send('init', {
+      transformersUrl: `data:text/javascript,${encodeURIComponent(runtimeModule)}`,
+      wasmMjsUrl: 'test.mjs',
+      wasmUrl: 'test.wasm',
+    });
+    assert.equal(initialized.ok, true);
+    const payload = {
+      modelId: 'text-model',
+      device: 'webgpu',
+      dtype: 'q4f16',
+      messages: [{ role: 'user', content: 'Translate this.' }],
+      options: { maxTokens: 4 },
+    };
+    assert.equal((await send('download-text', payload)).ok, true);
+
+    // A generation that used its whole token budget is reported as cut off; a shorter one is not.
+    state.release = true;
+    const full = await send('text-chat', payload);
+    assert.equal(full.ok, true, full.error);
+    assert.equal(full.outputTruncated, true, 'an answer that used the whole budget must be flagged');
+    assert.equal(state.calls.at(-1).stopping_criteria, undefined, 'a caller without a request key gets no stopping criteria');
+    state.content = 'one two';
+    const short = await send('text-chat', payload);
+    assert.equal(short.outputTruncated, false, 'an answer well inside the budget is complete');
+    state.content = 'one two three four';
+
+    // Cancelling a running generation interrupts it and the caller gets a cancellation, not a result.
+    state.release = false;
+    const callsBefore = state.calls.length;
+    const running = start('text-chat', { ...payload, requestKey: 'card-running-0001' });
+    await until(() => state.calls.length === callsBefore + 1, 'the generation to start');
+    assert.ok(state.calls.at(-1).stopping_criteria?.[0], 'a keyed generation must be interruptible');
+    const cancelled = await send('cancel-text', { requestKey: 'card-running-0001' });
+    assert.deepEqual([cancelled.cancelled, cancelled.active], [true, true]);
+    const runningResult = await running.done;
+    assert.equal(runningResult.ok, false);
+    assert.match(runningResult.error, /cancelled/);
+    assert.equal(state.criteria.at(-1).interrupted, true, 'the stopping criteria must have been interrupted');
+
+    // A generation still queued behind another is skipped without ever reaching the model.
+    const first = start('text-chat', { ...payload, requestKey: 'card-first-00001' });
+    await until(() => state.calls.length === callsBefore + 2, 'the first generation to start');
+    const second = start('text-chat', { ...payload, requestKey: 'card-second-0002' });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const queuedCancel = await send('cancel-text', { requestKey: 'card-second-0002' });
+    assert.deepEqual([queuedCancel.cancelled, queuedCancel.queued, queuedCancel.active], [true, true, false]);
+    state.release = true;
+    assert.equal((await first.done).ok, true);
+    const secondResult = await second.done;
+    assert.equal(secondResult.ok, false);
+    assert.match(secondResult.error, /cancelled/);
+    assert.equal(state.calls.length, callsBefore + 2, 'a cancelled queued generation must never start');
+
+    // Unknown, malformed and finished keys cancel nothing.
+    for (const requestKey of ['not-a-job', 'x'.repeat(200), 'card-running-0001', '']) {
+      const response = await send('cancel-text', { requestKey });
+      assert.equal(response.cancelled, false, `a stray key (${requestKey.slice(0, 12)}) must not cancel anything`);
+    }
+    state.release = true;
+    const afterwards = await send('text-chat', { ...payload, requestKey: 'card-running-0001' });
+    assert.equal(afterwards.ok, true, 'a finished job must not leave a stale cancellation behind');
+  } finally {
+    if (previousSelf === undefined) delete globalThis.self;
+    else globalThis.self = previousSelf;
+    if (previousState === undefined) delete globalThis.__webgpuCancelTest;
+    else globalThis.__webgpuCancelTest = previousState;
+  }
+});
+
+test('WebGPU provider stops waiting and cancels the worker when its caller aborts, and passes the cut-off flag on', async () => {
+  const previousChrome = globalThis.chrome;
+  const sent = [];
+  let respondToChat = null;
+  try {
+    globalThis.chrome = {
+      offscreen: { hasDocument: async () => true },
+      runtime: {
+        lastError: undefined,
+        sendMessage(message, callback) {
+          sent.push(message);
+          if (message.type === 'webgpu-download-status') callback?.({ ok: true, ready: true });
+          else if (message.type === 'webgpu-chat') respondToChat = callback;
+          else callback?.({ ok: true });
+        },
+      },
+    };
+    const until = async (condition, what) => {
+      for (let attempt = 0; attempt < 200 && !condition(); attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 2));
+      }
+      assert.ok(condition(), `timed out waiting for ${what}`);
+    };
+    const provider = new WebGPUProvider({ model: WEBGPU_MODEL_ID });
+    const messages = [{ role: 'user', content: 'Translate this.' }];
+    const chatMessages = () => sent.filter(message => message.type === 'webgpu-chat');
+    const cancelMessages = () => sent.filter(message => message.type === 'webgpu-chat-cancel');
+
+    // Aborting rejects at once with the caller's reason and tells the worker which job to stop.
+    const controller = new AbortController();
+    const aborted = provider.chat(messages, { maxTokens: 50, signal: controller.signal });
+    await until(() => chatMessages().length === 1, 'the chat request');
+    const key = chatMessages()[0].requestKey;
+    assert.match(key, /^[a-z0-9-]{8,64}$/i, 'a cancellable request carries a worker-safe key');
+    assert.equal(cancelMessages().length, 0);
+    controller.abort(new Error('The card was closed.'));
+    await assert.rejects(aborted, /The card was closed\./);
+    assert.deepEqual(cancelMessages().map(message => message.requestKey), [key], 'the worker is told which job to stop');
+    respondToChat({ ok: true, content: 'late answer' });
+
+    // A signal that is already aborted never sends anything to the worker.
+    const before = sent.length;
+    const preAborted = new AbortController();
+    preAborted.abort();
+    await assert.rejects(provider.chat(messages, { signal: preAborted.signal }), /abort/i);
+    assert.equal(sent.length, before, 'an aborted request must not reach the worker');
+
+    // Without a signal nothing changes: no key, no cancel, and the answer comes back as before.
+    const plain = provider.chat(messages, { maxTokens: 50 });
+    await until(() => chatMessages().length === 2, 'the unsigned chat request');
+    assert.equal('requestKey' in chatMessages()[1], false);
+    respondToChat({ ok: true, content: 'Hallo', outputTruncated: true });
+    const plainResult = await plain;
+    assert.equal(plainResult.content, 'Hallo');
+    assert.equal(plainResult.outputTruncated, true, 'the worker\'s cut-off flag reaches the caller');
+    assert.equal(cancelMessages().length, 1);
+
+    // A signed request that completes keeps its answer and removes its abort listener.
+    const finished = new AbortController();
+    const done = provider.chat(messages, { maxTokens: 50, signal: finished.signal });
+    await until(() => chatMessages().length === 3, 'the third chat request');
+    respondToChat({ ok: true, content: 'Done', outputTruncated: false });
+    const doneResult = await done;
+    assert.equal(doneResult.outputTruncated, false);
+    finished.abort();
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(cancelMessages().length, 1, 'aborting after the answer arrived must not cancel anything');
+
+    // Results without the flag stay as they were for every other caller.
+    const legacy = provider.chat(messages, { maxTokens: 50 });
+    await until(() => chatMessages().length === 4, 'the fourth chat request');
+    respondToChat({ ok: true, content: 'Old shape' });
+    assert.equal('outputTruncated' in await legacy, false);
+  } finally {
+    if (previousChrome === undefined) delete globalThis.chrome;
+    else globalThis.chrome = previousChrome;
+  }
+});
+
+test('WebGPU host and workers carry the cancel request to the generation they stop', () => {
+  const host = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/vision-inference-host.js'), 'utf8');
+  const worker = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/inference-worker.js'), 'utf8');
+  const bonsai = fs.readFileSync(path.join(ROOT, 'src/chrome/src/offscreen/bonsai-worker.js'), 'utf8');
+
+  assert.match(host, /'webgpu-chat',\s*'webgpu-chat-cancel',/, 'the host must accept the cancel message');
+  assert.match(host, /requestKey: typeof message\.requestKey === 'string' \? message\.requestKey : '',\s*messages: message\.messages/, 'the host passes the key to the worker that runs the chat');
+  const cancel = host.slice(host.indexOf("message.type === 'webgpu-chat-cancel'"), host.indexOf("message.type === 'webgpu-chat') {"));
+  assert.match(cancel, /if \(visionWorker\) cancels\.push\(sendVisionWorkerMessage\('cancel-text'/, 'the ONNX worker is asked to cancel');
+  assert.match(cancel, /if \(bonsaiWorker\) cancels\.push\(sendBonsaiWorkerMessage\('cancel-text'/, 'the BitGPU worker is asked to cancel');
+
+  // The ONNX worker interrupts the running generation in both text paths.
+  assert.equal((worker.match(/stopping_criteria: \[criteria\]/g) || []).length, 2, 'text and multimodal generation both take the stopping criteria');
+  assert.equal((worker.match(/throwIfTextCancelled\(requestKey\)/g) || []).length >= 6, true, 'a cancelled request is dropped before and after generation in both paths');
+  assert.match(worker, /\.\.\.outputLimitField\(Number\(generated\?\.dims\?\.at\?\.\(-1\)\), maxNewTokens, 1\)/, 'the multimodal path compares the exact generated length with its budget');
+  assert.match(worker, /\.\.\.outputLimitField\(countGeneratedTokens\(runtime\.tokenizer, content\), maxNewTokens\)/, 'the text path compares the re-tokenized answer with its budget');
+
+  // The BitGPU worker aborts the runtime's decode loop and reports its own finish reason.
+  assert.match(bonsai, /\.\.\.\(signal \? \{ signal \} : \{\}\),/, 'the abort signal reaches the runtime');
+  assert.match(bonsai, /controller\?\.abort\(\);/, 'a cancel message aborts the tracked request');
+  assert.match(bonsai, /outputTruncated: finishReason === 'length'/, 'a length stop is reported as a cut-off');
 });
 
 test('inline card claims its request before waiting, cancels what it abandons and finishes cut-off answers in the panel', () => {
@@ -67054,7 +67289,7 @@ test('WebGPU worker follows local text-generation and WebBrain VL vision contrac
   assert.match(bonsaiWorker, /opfsPartialName/);
   assert.match(bonsaiWorker, /tools: tools\.length \? tools : undefined/);
   assert.match(bonsaiWorker, /function normalizeBitgpuToolCalls/);
-  assert.match(bonsaiWorker, /return \{ content, reasoningContent, toolCalls \}/);
+  assert.match(bonsaiWorker, /return \{\s*content,\s*reasoningContent,\s*toolCalls,/);
   assert.match(bonsaiWorker, /if \(queuedTextDownload === request\) queuedTextDownload = null/,
     'a completed download request must not clear a newer queued resume for the same model');
   assert.match(apocalypseScript, /if \(!preset \|\| preset\.id !== WEBGPU_COMPASS_TINY_V2_MODEL_ID\)[\s\S]*?setWebgpuDownloadState\(state, \{ syncActiveTransfer: true \}\)[\s\S]*?ensureFixedWebgpuProvider\(\{ force: true \}\)[\s\S]*?get_webgpu_download_status/,

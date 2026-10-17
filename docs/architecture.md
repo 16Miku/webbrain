@@ -527,7 +527,10 @@ answers with whatever text the provider returned) the response
 is flagged `truncated`, and the card says so and offers **Continue in side panel** instead
 of passing a cut-off translation off as complete. Each call carries a job id, and a card
 that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the
-background aborts the paid request it no longer needs; the card also claims its request id
+background aborts the paid request it no longer needs (for the in-browser WebGPU models the
+provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running
+generation or drops a queued one; those workers report `outputTruncated` when an answer used
+its token budget, since they have no finish reason); the card also claims its request id
 before it waits for the language bundle, so a double click starts only one call. Selections
 over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
 nodes (paragraphs, lists, bold, italic and code), never as HTML, and takes the source
