@@ -4622,7 +4622,7 @@ async function handleMessage(msg, sender) {
         if (!fixture || typeof fixture !== 'object' || Array.isArray(fixture)) throw new Error('Invalid decision fixture.');
         const provider = providerManager.getProvider('webgpu');
         if (typeof provider?.decide !== 'function') throw new Error('The WebGPU provider is unavailable.');
-        return { success: true, result: await provider.decide({ state: fixture.state, images: fixture.images || [], questions: fixture.questions, temperature: fixture.temperature, promptVariant: fixture.promptVariant }) };
+        return { success: true, result: await provider.decide({ state: fixture.state, images: fixture.images || [], questions: fixture.questions, temperature: fixture.temperature, promptVariant: fixture.promptVariant, returnHidden: fixture.returnHidden === true }) };
       } catch (error) { return { success: false, error: error.message }; }
     }
 

@@ -16,7 +16,9 @@
 //                   the case where dense attention memory used to grow
 // --limit N         first N test requests only
 // --temperature T   Bonsai readout temperature (default 1)
-// --prompt NAME     Bonsai decision prompt: default or strict
+// --prompt NAME     Bonsai decision prompt: default, strict or verify
+// --decoder-graph F install a replacement decoder graph in the cache first
+// --return-hidden   with --prompt verify, record each option's hidden state
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,9 +144,22 @@ try {
         if (Date.now() - started > 60 * 60_000) throw new Error('Download did not finish within an hour');
       }
     }
+    const graphFile = option('--decoder-graph', '');
+    if (graphFile) {
+      // Replace the cached decoder graph (same external weights) before the
+      // worker first loads the model, e.g. one that exposes decision_hidden.
+      const data = (await fs.readFile(graphFile)).toString('base64');
+      await harness.evaluate(async ({ url, data }) => {
+        const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0));
+        const cache = await caches.open('transformers-cache');
+        await cache.put(url, new Response(bytes, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.length) } }));
+      }, { url: `https://huggingface.co/${bonsaiModel}/resolve/main/onnx/decoder_model_merged_q2f16.onnx`, data });
+      result.decoderGraph = graphFile;
+    }
     const temperature = Number(option('--temperature', 1));
     const promptVariant = option('--prompt', 'default');
-    await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant } }));
+    const returnHidden = args.includes('--return-hidden');
+    await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant, returnHidden } }));
   }
 } catch (error) {
   result.error = String(error?.stack || error);

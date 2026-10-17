@@ -71,6 +71,28 @@ export function decisionQuestionText(question) {
     'Answer with one letter.'].join('\n');
 }
 
+// The verify variant asks about one option at a time ("is this proposed
+// answer correct?") and compares the Yes margins across options, so every
+// option gets its own continuation and its own last-position hidden state.
+// Evaluated through the diagnostic fixture path only.
+export function decisionOptionText(question, index) {
+  const { names } = decisionOptions(question);
+  if (question.type === 'noul') {
+    const criteria = question.criteria && typeof question.criteria === 'object' ? question.criteria : {};
+    const detail = index ? (criteria.true ?? criteria.yes) : (criteria.false ?? criteria.no);
+    return `${index ? 'Yes' : 'No'}${detail != null && detail !== '' ? ` (${describe(detail)})` : ''}`;
+  }
+  if (question.type === 'score') return `level ${index}: ${describe(question.criteria[index])}`;
+  const detail = question.criteria[names[index]];
+  return `${names[index]}${detail != null && detail !== '' ? `: ${describe(detail)}` : ''}`;
+}
+
+export function decisionVerifyText(question, index) {
+  return [`Question: ${String(question.instructions || '').trim()}`,
+    `Proposed answer: ${decisionOptionText(question, index)}`,
+    'Is the proposed answer correct? Answer Yes or No.'].join('\n');
+}
+
 export function decisionStateText(state) {
   const text = typeof state === 'string' ? state : JSON.stringify(state ?? '');
   return `Page state:\n${text}`;

@@ -13,6 +13,7 @@ import {
   decisionAnswer,
   decisionOptions,
   decisionQuestionText,
+  decisionVerifyText,
   decisionStateText,
   normalizeDecisionRequest,
 } from './webgpu-decisions.js';
@@ -392,7 +393,7 @@ export async function prefillBonsai2InSlices(runtime, inputs, sliceTokens) {
  * prefix cache is only read: the continuation's cache outputs are released,
  * so every question starts from the same page state.
  */
-export async function bonsai2ContinuationLogits(runtime, prefixInputs, cache, suffixIds) {
+export async function bonsai2ContinuationLogits(runtime, prefixInputs, cache, suffixIds, { withHidden = false } = {}) {
   const { model, library } = runtime;
   const prefixLength = prefixInputs.input_ids.dims.at(-1), suffixLength = suffixIds.dims.at(-1);
   const total = prefixLength + suffixLength;
@@ -407,7 +408,12 @@ export async function bonsai2ContinuationLogits(runtime, prefixInputs, cache, su
     past_key_values: cache,
   });
   try {
-    return Float32Array.from(outputs.logits.slice(null, -1, null).to('float32').data);
+    const logits = Float32Array.from(outputs.logits.slice(null, -1, null).to('float32').data);
+    if (!withHidden) return logits;
+    // Present only in a decoder graph that exposes `decision_hidden`
+    // (scripts/models/bonsai/add_decision_hidden.py).
+    const hidden = outputs.decision_hidden ? Float32Array.from(outputs.decision_hidden.to('float32').data) : null;
+    return { logits, hidden };
   } finally {
     for (const tensor of Object.values(outputs)) {
       if (tensor?.location === 'gpu-buffer') tensor.dispose();
@@ -1802,6 +1808,19 @@ async function runMultimodalText(payload) {
   return { content: result.content, reasoningContent: result.reasoningContent };
 }
 
+function encodeFloat16Base64(values) {
+  const half = new Uint16Array(values.length), view = new DataView(new ArrayBuffer(4));
+  for (let i = 0; i < values.length; i++) {
+    view.setFloat32(0, values[i]);
+    const bits = view.getUint32(0), sign = (bits >>> 16) & 0x8000, exponent = ((bits >>> 23) & 0xff) - 112, mantissa = (bits >>> 13) & 0x3ff;
+    half[i] = exponent <= 0 ? sign : exponent >= 31 ? sign | 0x7c00 : sign | (exponent << 10) | mantissa;
+  }
+  let binary = '';
+  const bytes = new Uint8Array(half.buffer);
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
 // Option probabilities read from one forward pass per question (see
 // webgpu-decisions.js). Only the Bonsai 2 Vision presets are supported: they
 // use the chunked decoder whose cache the continuations share.
@@ -1865,8 +1884,26 @@ async function runMultimodalDecision(payload) {
   try {
     cache = await prefillBonsai2Cache(runtime, prefix, bonsai2PrefillSliceTokens(payload?.prefillSliceTokens), prefixLength);
     const prefillMs = performance.now() - started;
+    const verify = payload?.promptVariant === 'verify';
+    const returnHidden = payload?.returnHidden === true;
+    const yesId = verify ? codeId('Yes') : null, noId = verify ? codeId('No') : null;
     for (const [id, question] of request.entries) {
       const questionStarted = performance.now();
+      if (verify) {
+        // One continuation per option; the answer compares their Yes margins.
+        const margins = [], hidden = [];
+        const count = decisionOptions(question).names.length;
+        for (let index = 0; index < count; index++) {
+          const suffix = tokenizer(`${decisionVerifyText(question, index)}${tailText}`, { add_special_tokens: false });
+          suffixTokens += suffix.input_ids.dims.at(-1);
+          const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
+          margins.push(output.logits[yesId] - output.logits[noId]);
+          if (returnHidden) hidden.push(output.hidden ? encodeFloat16Base64(output.hidden) : null);
+        }
+        answers[id] = { ...decisionAnswer(question, margins, { temperature }), ...(returnHidden ? { margins, hidden } : {}) };
+        questionMs.push(Math.round(performance.now() - questionStarted));
+        continue;
+      }
       const suffix = tokenizer(`${decisionQuestionText(question)}${tailText}`, { add_special_tokens: false });
       suffixTokens += suffix.input_ids.dims.at(-1);
       const logits = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids);

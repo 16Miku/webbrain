@@ -727,6 +727,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           questions: message.questions,
           temperature: message.temperature,
           promptVariant: message.promptVariant,
+          returnHidden: message.returnHidden === true,
           prefillSliceTokens: message.prefillSliceTokens,
         }, { exclusive: true, runtime: message.runtime }));
         return;
