@@ -179,12 +179,14 @@ import {
 import { mergeRedactionFrameRegions, mapRegionsToImage, pixelateDataUrl } from './screenshot-redaction.js';
 import { buildTrustedRuntimeContext, stripTrustedRuntimeContext } from './runtime-context.js';
 import {
+  fitAnswerToContext,
   isSelectionSourceGrounding,
   isSelectionProseAction,
   normalizeSelectionAction,
   normalizeSelectionSourceGrounding,
   SELECTION_CONTEXT_SOURCE_GROUNDING,
   SELECTION_ONLY_SOURCE_GROUNDING,
+  SELECTION_TOO_LONG_FOR_CONTEXT,
 } from '../context-menu-storage.js';
 import { firefoxHostPermissionFailure, firefoxRestrictedDomainFailure } from '../firefox-restricted-domains.js';
 import { filenameInConfiguredDownloadDirectory } from '../download-directory.js';
@@ -23182,13 +23184,21 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       ...modelMessages.slice(modelMessages[0]?.role === 'system' ? 1 : 0),
     ];
     const prunedMessages = this._pruneOldImages(this._completionEvidenceMessages(tabId, contextMessages, runOptions), provider);
+    // A selection-only run skips context management, and a resumed or follow-up prompt carries
+    // the earlier answer as well as the selection, so the reply is sized to what the model's
+    // window leaves rather than to the provider's full output ceiling.
+    let maxTokens = this._providerMaxOutputTokens(provider);
+    if (selectionScoped && phase === 'response_only') {
+      maxTokens = fitAnswerToContext({ contextWindow: provider?.contextWindow, messages: prunedMessages, wanted: maxTokens });
+      if (maxTokens === 0) return SELECTION_TOO_LONG_FOR_CONTEXT;
+    }
     // Voluntary research sharing needs the exact model-facing request (with
     // the context-only system prompt). Callers pass a holder when the result
     // may be shared; recovery phases omit it and are never shared.
     if (shareCapture) shareCapture.request = prunedMessages;
     const chatOpts = {
       temperature: ['delivery_recovery', 'step_limit_recovery'].includes(phase) ? 0.2 : 0.3,
-      maxTokens: this._providerMaxOutputTokens(provider),
+      maxTokens,
       ...(Array.isArray(tools) && tools.length ? { tools } : {}),
       ...(toolChoice ? { toolChoice } : {}),
     };

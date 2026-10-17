@@ -306,6 +306,22 @@ function estimateInlinePromptTokens(messages) {
   return Math.ceil(tokens);
 }
 
+// The output a request may ask for so that its prompt and answer both fit the model's
+// context window, or 0 when the prompt leaves less than the floor (or `wanted`, if that is
+// lower). An unknown window changes nothing. Callers that skip context management, as a
+// selection-only run does, use this so a long selection plus an earlier answer is not sent
+// to a small local model that would reject it.
+export function fitAnswerToContext({ contextWindow, messages, wanted }) {
+  const window = Math.floor(Number(contextWindow));
+  if (!(window > 0)) return wanted;
+  const room = window - estimateInlinePromptTokens(messages);
+  if (room < Math.min(INLINE_MIN_ANSWER_TOKENS, wanted)) return 0;
+  return Math.min(wanted, room);
+}
+
+// Said in place of an answer when a side-panel selection run has no room left for one.
+export const SELECTION_TOO_LONG_FOR_CONTEXT = 'This selection, with the earlier text it builds on, is too long for the model\'s context window, so it was not sent. Select less text, or switch to a model with a larger context window.';
+
 // 0 means the prompt alone leaves the answer less than its floor in the provider's
 // context window, so the card should hand the selection to the side panel.
 export function inlineSelectionMaxTokens(selectionText, action, providerCeiling, { contextWindow, messages } = {}) {
@@ -315,11 +331,7 @@ export function inlineSelectionMaxTokens(selectionText, action, providerCeiling,
     : Math.max(INLINE_ANSWER_MIN_TOKENS, Math.min(INLINE_ANSWER_MAX_TOKENS, chars * 2));
   const limit = Math.floor(Number(providerCeiling));
   const budget = Math.min(wanted, limit > 0 ? limit : INLINE_FALLBACK_OUTPUT_CEILING);
-  const window = Math.floor(Number(contextWindow));
-  if (!(window > 0)) return budget;
-  const room = window - estimateInlinePromptTokens(messages);
-  if (room < Math.min(INLINE_MIN_ANSWER_TOKENS, budget)) return 0;
-  return Math.min(budget, room);
+  return fitAnswerToContext({ contextWindow, messages, wanted: budget });
 }
 
 // Whether the model stopped because it ran out of output budget. Providers report

@@ -696,6 +696,8 @@ const {
   inlineAnswerWasCut: inlineAnswerWasCutCh,
   inlineErrorWasCut: inlineErrorWasCutCh,
   inlineSelectionMaxTokens: inlineSelectionMaxTokensCh,
+  fitAnswerToContext: fitAnswerToContextCh,
+  SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_CH,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptCh,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_CH,
   buildFollowUpSelectionText: buildFollowUpSelectionTextCh,
@@ -721,6 +723,8 @@ const {
   inlineAnswerWasCut: inlineAnswerWasCutFx,
   inlineErrorWasCut: inlineErrorWasCutFx,
   inlineSelectionMaxTokens: inlineSelectionMaxTokensFx,
+  fitAnswerToContext: fitAnswerToContextFx,
+  SELECTION_TOO_LONG_FOR_CONTEXT: SELECTION_TOO_LONG_FOR_CONTEXT_FX,
   buildContinuationSelectionPrompt: buildContinuationSelectionPromptFx,
   INLINE_CONTINUE_PARTIAL_MAX_CHARS: INLINE_CONTINUE_PARTIAL_MAX_CHARS_FX,
   buildFollowUpSelectionText: buildFollowUpSelectionTextFx,
@@ -54321,6 +54325,57 @@ test('an OpenAI Responses call that ends at the output limit is still metered', 
     provider.chat = async () => ({ content: 'Done', toolCalls: null, usage: { prompt_tokens: 3, completion_tokens: 2 } });
     await agent._chatWithCostAllowance(provider, messages, {}, agent._newCostRunState());
     assert.equal(recorded.length, 1);
+  }
+});
+
+test('a side-panel selection reply is sized to the room the context window leaves', async () => {
+  for (const [label, AgentClass, grounding, fit, tooLong] of [
+    ['chrome', AgentCh, SELECTION_ONLY_SOURCE_GROUNDING_CH, fitAnswerToContextCh, SELECTION_TOO_LONG_FOR_CONTEXT_CH],
+    ['firefox', AgentFx, SELECTION_ONLY_SOURCE_GROUNDING_FX, fitAnswerToContextFx, SELECTION_TOO_LONG_FOR_CONTEXT_FX],
+  ]) {
+    // The helper: an unknown window changes nothing, a roomy one allows the ceiling, a tight one is clamped, none refuses.
+    const prompt = (chars) => [{ role: 'user', content: 'x'.repeat(chars) }];
+    assert.equal(fit({ contextWindow: undefined, messages: prompt(9000), wanted: 8192 }), 8192, `${label}: an unknown window is not guessed at`);
+    assert.equal(fit({ contextWindow: 131_072, messages: prompt(9000), wanted: 8192 }), 8192, `${label}: a large window allows the full ceiling`);
+    assert.equal(fit({ contextWindow: 8192, messages: prompt(6000), wanted: 8192 }), 8192 - 6000 - 128, `${label}: a tight window is clamped to what the prompt leaves`);
+    assert.equal(fit({ contextWindow: 8192, messages: prompt(8000), wanted: 8192 }), 0, `${label}: a prompt that leaves under the floor is refused`);
+    assert.equal(fit({ contextWindow: 8192, messages: prompt(8000), wanted: 100 }), 0, `${label}: and so is one that cannot fit even a small ceiling`);
+
+    const run = async ({ contextWindow, chars, maxOutputTokens = 8192, runOptions = { sourceGrounding: grounding }, phase = 'response_only' }) => {
+      const requested = [];
+      const provider = {
+        supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow, maxOutputTokens,
+        model: 'test-model', name: 'test-provider',
+        chat: async (_messages, options) => { requested.push(options.maxTokens); return { content: 'The rest.', toolCalls: null }; },
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+      const messages = [{ role: 'user', content: 'y'.repeat(chars) }];
+      const text = await agent._generateContextOnlyResponse(
+        1, messages, provider, agent._newCostRunState(), null, { phase, step: 1, runOptions, currentUserMessage: messages[0] },
+      );
+      return { text, requested };
+    };
+
+    // An 8k local model asked to resume a long answer: the reply may not ask for the 8k ceiling.
+    let result = await run({ contextWindow: 8192, chars: 5000 });
+    assert.equal(result.requested.length, 1, `${label}: the model is asked`);
+    assert.ok(result.requested[0] <= 8192 - 5000 && result.requested[0] >= 256, `${label}: the reply is limited to what the prompt leaves: ${result.requested[0]}`);
+    assert.equal(result.text, 'The rest.');
+    // Too long to leave any room: nothing is sent, and the person is told why.
+    result = await run({ contextWindow: 8192, chars: 9000 });
+    assert.deepEqual(result.requested, [], `${label}: a prompt that fills the window is not sent`);
+    assert.equal(result.text, tooLong, `${label}: the reply says the selection is too long for the model`);
+    // A large window is unaffected, and so is a run that is not selection-only.
+    result = await run({ contextWindow: 131_072, chars: 9000 });
+    assert.equal(result.requested[0], 8192, `${label}: a roomy window keeps the provider's ceiling`);
+    result = await run({ contextWindow: 8192, chars: 9000, runOptions: {} });
+    assert.equal(result.requested[0], 8192, `${label}: only selection-only runs, which skip context management, are clamped`);
+    result = await run({ contextWindow: undefined, chars: 9000 });
+    assert.equal(result.requested[0], 8192, `${label}: an unknown window is not guessed at`);
+    result = await run({ contextWindow: 8192, chars: 9000, phase: 'step_limit_recovery' });
+    assert.equal(result.requested[0], 8192, `${label}: only the reply itself is clamped, not a recovery phase`);
   }
 });
 

@@ -537,7 +537,7 @@ cut-off, the error), and the card shows it under that answer, since the next car
 fail with no warning. Continue sends the unfinished text as
 `continueFrom`; the background wraps it inside the selection's untrusted block (whole, up to the
 most a card can produce, because the side panel shows that block to the user) with a trusted request to resume from where it stops, because running the action again
-would meet the same output limit. A resumed Proofread gets its own instruction, without the ordinary request for one complete corrected version, so a model asked for only the remainder is not also asked to write the corrected text again. A side-panel reply that is cut off again says so (the
+would meet the same output limit. The side-panel reply to a continuation or a card follow-up carries the earlier answer as well as the selection, and a selection-only run skips context management, so that reply is sized to the room the model's context window leaves (the same worst-case estimate, `fitAnswerToContext`) rather than asking for the provider's full output ceiling; when the window leaves no room it says the selection is too long for the model and sends nothing. A resumed Proofread gets its own instruction, without the ordinary request for one complete corrected version, so a model asked for only the remainder is not also asked to write the corrected text again. A side-panel reply that is cut off again says so (the
 response-only path appends a notice when the provider reports a length finish, WebGPU
 reports `outputTruncated`, or OpenAI Responses raises the limit as an error carrying
 `partialContent`, whose text is then shown), so a long remainder never passes as complete
