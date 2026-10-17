@@ -48469,6 +48469,28 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
                 throw new Error('Focused typing verification returned no response.');
               }
               tokenConsumed = true;
+              // A native field's value read back as another value is a known
+              // mismatch: reported as cdpClient.typeText reports one, so it
+              // ends a batch before a submit runs on it.
+              if (verification.verified !== true && verification.compared === true && verification.reader === 'exact') {
+                return {
+                  success: false,
+                  dispatched: true,
+                  verified: false,
+                  mutationMayHaveOccurred: true,
+                  unverified: { reason: 'readback_mismatch', reader: 'exact' },
+                  readbackExact: true,
+                  method: 'cdp-insert-focused',
+                  focusedField: {
+                    tag: prepared.tag,
+                    type: prepared.type,
+                    name: prepared.name,
+                    contentEditable: prepared.contentEditable === true,
+                  },
+                  fieldMeta: verification.fieldMeta || null,
+                  error: 'Text was inserted, but the focused field reads back a different value.',
+                };
+              }
 
               const fieldIdent = `focused:${prepared.tag}|${prepared.name}`;
               let warning;
@@ -48769,13 +48791,38 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
             await sendTrustedCdpInput(options => cdpClient.sendCommand(tabId, 'Input.insertText',
               { text: nativeText }, '', options), { beforeSend: throwIfEarlyCdpAborted, onSent: markEarlyCdpDispatched });
             throwIfEarlyCdpAborted();
-            const verified = await cdpClient.verifyTextEntry(tabId, {
+            const readback = await cdpClient.verifyTextEntry(tabId, {
               focused: true,
               text: nativeText,
               clear: !!args.clear,
               beforeSignature,
+              details: true,
             });
+            const verification = readback && typeof readback === 'object' ? readback : { verified: readback === true };
+            const verified = verification.verified === true;
             throwIfEarlyCdpAborted();
+            // A native field's value, or an editor's own model, read back as
+            // another value is a known mismatch: reported as cdpClient.typeText
+            // reports one, so it ends a batch before a submit runs on it.
+            if (!verified && verification.found && verification.compared
+                && (verification.reader === 'exact' || verification.reader === 'semantic')) {
+              return {
+                success: false,
+                dispatched: true,
+                verified: false,
+                mutationMayHaveOccurred: true,
+                unverified: { reason: 'readback_mismatch', reader: verification.reader },
+                readbackExact: true,
+                method: 'cdp-insert-focused',
+                focusedField: {
+                  tag: focus.tag,
+                  type: focus.type,
+                  name: focus.name,
+                  contentEditable: focus.contentEditable === true,
+                },
+                error: 'Text was inserted, but the focused field reads back a different value.',
+              };
+            }
 
             // Track field for duplicate-typing detection
             const fieldIdent = `focused:${focus.tag}|${focus.name}`;

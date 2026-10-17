@@ -5726,11 +5726,23 @@ export class CDPClient {
    * fails it too. Reporting those as unproven keeps them out of the failure
    * path; only a positive `true` is ever asserted.
    */
+  // Positive proof of a text write: true, else null. With `details`, an
+  // object instead: { found, verified, reader, compared }. `reader` is
+  // 'exact' for a native field's value, 'semantic' for an editor's own model
+  // (ProseMirror, DraftJS) and 'rendered' for textContent; `compared` says
+  // the readback was actually compared with the expected value, so a
+  // compared, unverified exact or semantic reading is a known mismatch.
   async verifyTextEntry(tabId, {
     selector = '', nodeId = null, text = '', clear = false, focused = false, beforeSignature = null,
+    details = false,
   } = {}) {
     await new Promise(resolve => setTimeout(resolve, 30));
     const expected = String(text || '');
+    const outcome = value => (details
+      ? { found: value?.found === true, verified: value?.verified === true,
+        reader: ['exact', 'semantic', 'rendered'].includes(value?.reader) ? value.reader : 'unknown',
+        compared: value?.compared === true }
+      : (value?.verified === true ? true : null));
     const verifyFunction = `function (expected, shouldClear, beforeSignature) {
       const el = this;
       if (!el || el.nodeType !== 1 || !el.isConnected) return { found: false, verified: false };
@@ -5759,6 +5771,9 @@ export class CDPClient {
       };
       return {
         found: true,
+        reader: semantic !== null ? 'semantic' : (el.isContentEditable ? 'rendered' : 'exact'),
+        compared: shouldClear || (!!beforeSignature && /^\\d+:/.test(beforeSignature) && !!expected
+          && value.length <= ${TEXT_ENTRY_PROOF_MAX_CHARS}),
         verified: shouldClear
           ? value === expected && !(expected === '' && semantic === null && el.isContentEditable
             && (el.innerText !== '' || el.querySelector('br')))
@@ -5772,7 +5787,7 @@ export class CDPClient {
         await this.sendCommand(tabId, 'DOM.enable');
         const resolved = await this.sendCommand(tabId, 'DOM.resolveNode', { nodeId });
         objectId = resolved?.object?.objectId || null;
-        if (!objectId) return null;
+        if (!objectId) return outcome(null);
         const result = await this.sendCommand(tabId, 'Runtime.callFunctionOn', {
           objectId,
           returnByValue: true,
@@ -5783,9 +5798,9 @@ export class CDPClient {
             { value: typeof beforeSignature === 'string' ? beforeSignature : '' },
           ],
         });
-        return result?.result?.value?.verified === true ? true : null;
+        return outcome(result?.result?.value);
       } catch {
-        return null;
+        return outcome(null);
       } finally {
         if (objectId) {
           this.releaseObject(tabId, objectId);
@@ -5846,6 +5861,9 @@ export class CDPClient {
         };
         return {
           found: true,
+          reader: semantic !== null ? 'semantic' : (el.isContentEditable ? 'rendered' : 'exact'),
+          compared: shouldClear || (!!beforeSignature && /^\\d+:/.test(beforeSignature) && !!expected
+            && value.length <= ${TEXT_ENTRY_PROOF_MAX_CHARS}),
           verified: shouldClear
             ? value === expected && !(expected === '' && semantic === null && el.isContentEditable
               && (el.innerText !== '' || el.querySelector('br')))
@@ -5853,7 +5871,7 @@ export class CDPClient {
         };
       })()
     `).catch(() => null);
-    return result?.result?.value?.verified === true ? true : null;
+    return outcome(result?.result?.value);
   }
 
   async _cleanupRichTextToolbarTargetMarker(tabId, attribute, marker, { includeClosed = false } = {}) {
@@ -6631,25 +6649,34 @@ export class CDPClient {
         };
       }
 
-      const verified = await this.verifyTextEntry(tabId, {
+      const readback = await this.verifyTextEntry(tabId, {
         selector,
         nodeId: info.nodeId,
         text: insertionText,
         clear,
         beforeSignature,
+        details: true,
       });
+      const verification = readback && typeof readback === 'object' ? readback : { verified: readback === true };
       // The text went out in both cases below; `unverified` lets the agent's
       // policy report it as a failure (Strict checks) or a noted success.
       // verifyTextEntry reads textContent for generic editors, which drops
-      // block line breaks, so its doubt is not proof of a wrong value.
-      if (verified !== true) {
+      // block line breaks, so its doubt is not proof of a wrong value. A
+      // native field's value, or an editor's own model, read back as another
+      // value is: readbackExact ends a batch before a submit runs on it.
+      if (verification.verified !== true) {
+        const exact = verification.found && verification.compared
+          && (verification.reader === 'exact' || verification.reader === 'semantic');
         return {
           success: false,
           dispatched: true,
           verified: false,
           mutationMayHaveOccurred: true,
-          unverified: { reason: 'readback_unproven', reader: 'unknown' },
-          error: 'Text was inserted, but the complete settled field value could not be verified exactly.',
+          unverified: exact ? { reason: 'readback_mismatch', reader: verification.reader }
+            : { reason: 'readback_unproven', reader: 'unknown' },
+          ...(exact ? { readbackExact: true } : {}),
+          error: exact ? 'Text was inserted, but the field reads back a different value.'
+            : 'Text was inserted, but the complete settled field value could not be verified exactly.',
         };
       }
       if (finishInput && !await finishInput()) {

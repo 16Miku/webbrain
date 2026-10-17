@@ -675,6 +675,165 @@ test('firefox: a trusted BiDi readback mismatch is an unverified write, not debt
   assert.equal(agent._uncertainTextMutations.get(tabId)?.size, 1);
 });
 
+test('chrome: a CDP readback of a native field as another value is known and ends the batch', async () => {
+  const { Agent, batch } = builds.find(item => item.build === 'chrome');
+  const { CDPClient } = await import('../src/chrome/src/cdp/cdp-client.js');
+  // verifyTextEntry's details say which reader read the field and whether it
+  // compared the value; its default answer stays true or null.
+  const reader = new CDPClient();
+  const field = { nodeType: 1, isConnected: true, tagName: 'INPUT', isContentEditable: false, value: 'Release notes',
+    classList: { contains: () => false }, querySelector: () => null, querySelectorAll: () => [], closest: () => null,
+    getAttribute: () => null, hasAttribute: () => false, matches: () => false, childNodes: [], children: [], textContent: '' };
+  reader.evaluate = async (_tab, code) => ({ result: { value: vm.runInNewContext(code, {
+    document: { querySelector: () => field, activeElement: field, createTreeWalker: () => ({ currentNode: null, nextNode: () => null }) },
+    NodeFilter: { SHOW_ELEMENT: 1 } }) } });
+  const check = details => reader.verifyTextEntry(1, { selector: '#title', text: 'Release notes', clear: true, details });
+  assert.deepEqual(await check(true), { found: true, verified: true, reader: 'exact', compared: true });
+  field.value = 'Release note';
+  assert.deepEqual(await check(true), { found: true, verified: false, reader: 'exact', compared: true });
+  assert.equal(await check(false), null, 'the default answer is unchanged');
+  // typeText reports a compared exact or semantic mismatch as known, so the
+  // write ends its batch; a rendered readback stays unproven.
+  const typing = new CDPClient();
+  typing.resolveSelector = async () => ({ inViewport: false, hitOk: false, nodeId: null, tag: 'INPUT', x: 10, y: 20, width: 30, height: 40 });
+  typing.sendCommand = async () => ({});
+  typing.evaluate = async () => ({ result: { value: null } });
+  for (const [readerName, compared, known] of [['exact', true, true], ['semantic', true, true], ['rendered', true, false], ['exact', false, false]]) {
+    typing.verifyTextEntry = async (_tab, options) => (options.details
+      ? { found: true, verified: false, reader: readerName, compared } : null);
+    const label = `${readerName} compared=${compared}`;
+    const result = await typing.typeText(42, '#title', 'Release notes', false);
+    assert.equal(result.success, false, label);
+    assert.equal(result.dispatched, true, label);
+    assert.deepEqual(result.unverified, known ? { reason: 'readback_mismatch', reader: readerName }
+      : { reason: 'readback_unproven', reader: 'unknown' }, label);
+    assert.equal(result.readbackExact, known ? true : undefined, label);
+    const agent = setup(Agent);
+    const advisory = await agent._finalizeTextMutationResult(tabId, 'set_field', args, result);
+    assert.equal(advisory.unverifiedWrite, true, label);
+    assert.equal(batch.textWriteRefuted(advisory), known, label);
+    assert.equal(batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(advisory) }).failed, known, label);
+  }
+});
+
+test('chrome: a bound focused type_text read back as another value is known and ends the batch', async () => {
+  const { Agent, batch } = builds.find(item => item.build === 'chrome');
+  // The content script's check says which reader compared the value.
+  const source = fs.readFileSync(new URL('../src/chrome/src/content/content.js', import.meta.url), 'utf8');
+  const bindings = new Map();
+  const context = vm.createContext({ _dispatchBindings: bindings, location: { href: 'https://example.com/form' },
+    setTimeout, clearTimeout, _fieldMeta: el => ({ tag: String(el.tagName).toLowerCase() }) });
+  vm.runInContext(functionSource(source, '_verifyFocusedTypeDispatch'), context);
+  const rect = () => ({ x: 0, y: 0, width: 10, height: 10 });
+  const check = (el, params) => {
+    bindings.set('focused-token', { el, prepared: true, pageUrl: 'https://example.com/form' });
+    return context._verifyFocusedTypeDispatch({ dispatchBinding: { token: 'focused-token' }, ...params });
+  };
+  const input = { isConnected: true, tagName: 'INPUT', isContentEditable: false, value: 'Release note', getBoundingClientRect: rect };
+  const editor = { isConnected: true, tagName: 'DIV', isContentEditable: true, textContent: 'Release note', getBoundingClientRect: rect };
+  const pick = result => ({ verified: result.verified, reader: result.reader, compared: result.compared });
+  assert.deepEqual(pick(await check(input, { text: 'Release notes', clear: true })), { verified: false, reader: 'exact', compared: true });
+  assert.deepEqual(pick(await check(editor, { text: 'Release notes', clear: true })), { verified: false, reader: 'rendered', compared: true });
+  input.value = 'Release notes';
+  assert.deepEqual(pick(await check(input, { text: 'Release notes', clear: true })), { verified: true, reader: 'exact', compared: true });
+  // An append is compared through the insertion proof, within its size cap.
+  vm.runInContext(functionSource(source, '_richTextToolbarValueSignature'), context);
+  vm.runInContext(functionSource(source, '_richTextToolbarExactInsertion'), context);
+  const cap = Number(/const RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS = (\d+);/.exec(source)?.[1]);
+  assert(cap > 0);
+  context.RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS = cap;
+  const empty = context._richTextToolbarValueSignature('');
+  assert.deepEqual(pick(await check(input, { text: 'Release notes', beforeSignature: empty })), { verified: true, reader: 'exact', compared: true });
+  input.value = 'Release note';
+  assert.deepEqual(pick(await check(input, { text: 'Release notes', beforeSignature: empty })), { verified: false, reader: 'exact', compared: true });
+  assert.deepEqual(pick(await check(input, { text: 'Release notes', beforeSignature: '' })), { verified: false, reader: 'exact', compared: false });
+  const long = 'x'.repeat(cap);
+  input.value = `${long}y`;
+  assert.deepEqual(pick(await check(input, { text: 'y', beforeSignature: context._richTextToolbarValueSignature(long) })),
+    { verified: false, reader: 'exact', compared: false }, 'a value above the cap was not compared');
+  // The agent reports a compared exact mismatch as known, so it ends the
+  // batch; the rendered text of an editor leaves the write unproven.
+  const originalAttach = cdpClient.attach;
+  const originalSendCommand = cdpClient.sendCommand;
+  const originalSendMessage = api.tabs.sendMessage;
+  try {
+    cdpClient.attach = async () => ({ attached: true });
+    cdpClient.sendCommand = async () => ({});
+    for (const [reader, known] of [['exact', true], ['rendered', false]]) {
+      api.tabs.sendMessage = async (_tab, message) => {
+        if (message.action === 'prepare_focused_type_dispatch') {
+          return { success: true, tag: reader === 'exact' ? 'INPUT' : 'DIV', type: reader === 'exact' ? 'text' : '', name: 'title',
+            contentEditable: reader !== 'exact', beforeSignature: '12:cbf29ce484222325', rect: { x: 0, y: 0, w: 10, h: 10 } };
+        }
+        if (message.action === 'verify_focused_type_dispatch') {
+          return { success: true, verified: false, reader, compared: true, fieldMeta: { tag: reader === 'exact' ? 'input' : 'div' } };
+        }
+        return { success: true };
+      };
+      const agent = new Agent({});
+      // executeTool returns the finalized write: an advised success either way.
+      const result = await agent.executeTool(tabId, 'type_text', { text: 'Release notes' }, null,
+        { dispatchBinding: { token: 'focused-token', frameId: 0 } });
+      assert.equal(result.success, true, reader);
+      assert.equal(result.unverifiedWrite, true, reader);
+      if (known) {
+        assert.deepEqual(result.unverified, { reason: 'readback_mismatch', reader: 'exact' });
+        assert.equal(result.readbackExact, true);
+        assert.match(advisoryOf(result, 'text-write-readback-unverified')?.note || '', /reads back a different value/);
+      } else {
+        assert.notEqual(result.readbackExact, true, 'an unproven write is not refuted');
+      }
+      assert.equal(batch.textWriteRefuted(result), known, reader);
+      assert.equal(batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(result) }).failed, known, reader);
+    }
+  } finally {
+    cdpClient.attach = originalAttach;
+    cdpClient.sendCommand = originalSendCommand;
+    api.tabs.sendMessage = originalSendMessage;
+  }
+});
+
+test('chrome: an unbound focused type_text read back as another value is known and ends the batch', async () => {
+  // With no bound field, type_text types into the focused field and reads it
+  // back with verifyTextEntry's details.
+  const { Agent, batch } = builds.find(item => item.build === 'chrome');
+  const saved = Object.fromEntries(['attach', 'sendCommand', 'evaluate', 'textEntrySignature', 'verifyTextEntry']
+    .map(name => [name, cdpClient[name]]));
+  try {
+    cdpClient.attach = async () => ({ attached: true });
+    cdpClient.sendCommand = async () => ({});
+    cdpClient.evaluate = async () => ({ result: { value: { focused: true, editable: true, contentEditable: false, tag: 'INPUT',
+      type: 'text', name: 'title', value: '', rect: { x: 0, y: 0, w: 10, h: 10 } } } });
+    cdpClient.textEntrySignature = async () => '0:811c9dc5';
+    for (const [reader, compared, known] of [['exact', true, true], ['semantic', true, true], ['rendered', true, false], ['exact', false, false]]) {
+      const label = `${reader} compared=${compared}`;
+      const reads = [];
+      cdpClient.verifyTextEntry = async (_tab, options) => {
+        reads.push(options);
+        return options.details ? { found: true, verified: false, reader, compared } : null;
+      };
+      const agent = new Agent({});
+      const result = await agent.executeTool(tabId, 'type_text', { text: 'Release notes' });
+      assert.deepEqual(reads.map(options => [options.focused, options.details, options.beforeSignature]),
+        [[true, true, '0:811c9dc5']], label);
+      // executeTool returns the finalized write: an advised success either way.
+      assert.equal(result.success, true, label);
+      assert.equal(result.unverifiedWrite, true, label);
+      if (known) {
+        assert.deepEqual(result.unverified, { reason: 'readback_mismatch', reader }, label);
+        assert.equal(result.readbackExact, true, label);
+        assert.match(advisoryOf(result, 'text-write-readback-unverified')?.note || '', /reads back a different value/, label);
+      } else {
+        assert.notEqual(result.readbackExact, true, `${label}: an unproven write is not refuted`);
+      }
+      assert.equal(batch.textWriteRefuted(result), known, label);
+      assert.equal(batch.browserBatchResultStatus({ role: 'tool', content: JSON.stringify(result) }).failed, known, label);
+    }
+  } finally {
+    Object.assign(cdpClient, saved);
+  }
+});
+
 test('firefox: a trusted BiDi mismatch in a native input or textarea is known and ends the batch', async () => {
   // The companion reads a native field back by its exact value: a mismatch
   // there means the field holds another value, so a batched submit must not

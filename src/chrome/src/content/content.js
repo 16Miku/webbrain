@@ -6526,6 +6526,11 @@
     if (!el.isConnected || record.pageUrl !== location.href) return { success: true, verified: false };
     const tag = String(el.tagName || '').toUpperCase();
     let verified = false;
+    // Which reader compared the value: a native field's own value is exact,
+    // an editor's textContent is its rendered text. `compared` says the
+    // value was actually compared, so a compared exact mismatch is known.
+    let reader = 'exact';
+    let compared = true;
     if (tag === 'SELECT') {
       const option = el.options?.[el.selectedIndex];
       verified = String(el.value || '') === String(params.targetValue || '')
@@ -6533,21 +6538,24 @@
     } else {
       const expected = String(params.text || '');
       const value = String(el.isContentEditable ? (el.textContent || '') : (el.value || ''));
+      if (el.isContentEditable) reader = 'rendered';
+      else if (!['INPUT', 'TEXTAREA'].includes(tag)) reader = 'unknown';
       if (params.clear === true) {
         verified = value === expected;
       } else {
-        verified = _richTextToolbarExactInsertion(
-          null,
-          value,
-          expected,
-          String(params.beforeSignature || ''),
-        );
+        const beforeSignature = String(params.beforeSignature || '');
+        // The insertion proof gives up above its size cap without comparing.
+        compared = /^\d+:/.test(beforeSignature) && !!expected
+          && value.length <= RICH_TEXT_TOOLBAR_PROOF_MAX_CHARS;
+        verified = _richTextToolbarExactInsertion(null, value, expected, beforeSignature);
       }
     }
     const rect = el.getBoundingClientRect();
     return {
       success: true,
       verified,
+      reader,
+      compared,
       fieldMeta: _fieldMeta(el),
       rect: {
         x: Math.round(rect.x),
