@@ -2187,7 +2187,7 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
-  test(`${label}: a failed card answer offers a retry and a follow-up without a stale answer`, async (page) => {
+  test(`${label}: a failed card answer offers a retry, and a follow-up waits for an answer`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {
       window.__selectionInlineCalls = 0;
@@ -2222,10 +2222,44 @@ for (const [label, sourcePath, manualOpen] of [
     await clickRectCenter(page, state.followUpRect);
     await page.keyboard.type('Still there?');
     await page.keyboard.press('Enter');
+    await page.waitForTimeout(60);
+    state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    const sentAfterFailure = await page.evaluate(() => window.__selectionMessages.length);
+    if (sentAfterFailure !== 0 || !state.cardVisible || state.followUpValue !== 'Still there?' || !state.followUpSendDisabled) {
+      throw new Error(`a follow-up must not be sent when there is no answer to continue from: ${JSON.stringify({ sentAfterFailure, state })}`);
+    }
+  });
+
+  test(`${label}: a follow-up typed while the answer loads is held until it arrives`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
+    await page.evaluate(() => {
+      window.__selectionInlineHandler = () => new Promise((resolve) => { window.__resolveInline = resolve; });
+    });
+    await openInlineCard(page, 'explain');
+    let state = await waitForCardStatus(page, 'loading');
+    await clickRectCenter(page, state.followUpRect);
+    await page.keyboard.type('And why?');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(60);
+    state = await page.evaluate(() => window.__webbrainSelectionShortcut.getState());
+    const early = await page.evaluate(() => ({
+      sent: window.__selectionMessages.length,
+      cancels: window.__selectionCancelMessages.length,
+    }));
+    if (early.sent !== 0 || early.cancels !== 0 || state.cardStatus !== 'loading'
+        || state.followUpValue !== 'And why?' || !state.followUpSendDisabled) {
+      throw new Error(`sending while loading must neither dismiss the card nor cancel its request: ${JSON.stringify({ early, state })}`);
+    }
+    await page.evaluate(() => window.__resolveInline({ ok: true, text: 'Because it matters.' }));
+    state = await waitForCardStatus(page, 'ready');
+    if (state.followUpSendDisabled || state.followUpValue !== 'And why?') {
+      throw new Error(`the typed follow-up should become sendable once the answer is there: ${JSON.stringify(state)}`);
+    }
+    await page.keyboard.press('Enter');
     await page.waitForFunction(() => window.__selectionMessages.length === 1);
     const message = await page.evaluate(() => window.__selectionMessages[0]);
-    if (message.question !== 'Still there?' || 'priorAnswer' in message || 'priorAction' in message) {
-      throw new Error(`a follow-up after a failure must not claim an earlier answer: ${JSON.stringify(message)}`);
+    if (message.question !== 'And why?' || message.priorAnswer !== 'Because it matters.' || message.priorAction !== 'explain') {
+      throw new Error(`the follow-up should carry the answer it continues from: ${JSON.stringify(message)}`);
     }
   });
 

@@ -51813,7 +51813,9 @@ test('inline card answers are one tool-less, bounded model call behind validated
 
     // A card follow-up reaches the side panel only as a custom question, never as a preset.
     assert.match(content, /\.\.\.\(action === 'custom' && extra\.priorAnswer\s*\? \{ priorAction: extra\.priorAction, priorAnswer: extra\.priorAnswer \}\s*: \{\}\)/, `${prefix}: only a custom follow-up carries the earlier answer`);
-    assert.match(content, /submitSelection\('custom', value, '', \{\s*priorAction: cardState\.kind,\s*priorAnswer: cardState\.status === 'ready' \? cardState\.text : '',/, `${prefix}: a follow-up after a failed answer must not claim one`);
+    assert.match(content, /function submitFollowUp\(\) \{\s*const value = cardParts\?\.followUp\.value\.trim\(\);\s*if \(!value \|\| cardState\?\.status !== 'ready'\) return;[\s\S]*?submitSelection\('custom', value, '', \{\s*priorAction: cardState\.kind,\s*priorAnswer: cardState\.text,/, `${prefix}: a follow-up is only sent once the card has an answer to continue from`);
+    assert.match(content, /cardParts\.send\.disabled = !\(cardParts\.followUp\.value\.trim\(\) && cardState\?\.status === 'ready'\);/, `${prefix}: the send button waits for an answer`);
+    assert.match(content, /cardParts\.followUp\.addEventListener\('input', syncFollowUpSend\);[\s\S]*?syncFollowUpSend\(\);\s*positionCard\(\);/, `${prefix}: the send button follows the card's state`);
     assert.match(background, /const selectionText = selectionAction === 'custom'\s*\? buildFollowUpSelectionText\(msg\.selectionText, msg\.priorAction, msg\.priorAnswer\)\s*: msg\.selectionText;/, `${prefix}: the background adds the earlier answer inside the selection, for custom questions only`);
 
     assert.match(background, /if \(msg\?\.type !== 'WB_SELECTION_SHORTCUT_INLINE'\) return;\s*answerInlineSelection\(msg\)\.then\(sendResponse\);\s*return true;/, `${prefix}: the inline listener should answer asynchronously`);

@@ -622,9 +622,7 @@
     cardParts.continueButton.addEventListener('click', (event) => {
       if (event.isTrusted) continueInPanel();
     });
-    cardParts.followUp.addEventListener('input', () => {
-      cardParts.send.disabled = !cardParts.followUp.value.trim();
-    });
+    cardParts.followUp.addEventListener('input', syncFollowUpSend);
     cardParts.send.addEventListener('click', (event) => {
       if (event.isTrusted) submitFollowUp();
     });
@@ -918,8 +916,17 @@
       parts.errorDetail.textContent = cardState.error;
       parts.errorDetail.hidden = !cardState.error;
     }
+    syncFollowUpSend();
     positionCard();
     updateResultFade();
+  }
+
+  // A follow-up continues from the card's answer, so it can only be sent once there is one.
+  // The field stays typeable meanwhile; sending while the answer is still loading would
+  // cancel that request and ask a question with no answer behind it.
+  function syncFollowUpSend() {
+    if (!cardParts) return;
+    cardParts.send.disabled = !(cardParts.followUp.value.trim() && cardState?.status === 'ready');
   }
 
   async function openCard(kind, opener) {
@@ -1034,13 +1041,13 @@
 
   function submitFollowUp() {
     const value = cardParts?.followUp.value.trim();
-    if (!value || !cardState) return;
+    if (!value || cardState?.status !== 'ready') return;
     // A follow-up continues in the side panel with the card's answer as context.
     // It takes the question box's default for page context, which is on whenever
     // that box is closed.
     submitSelection('custom', value, '', {
       priorAction: cardState.kind,
-      priorAnswer: cardState.status === 'ready' ? cardState.text : '',
+      priorAnswer: cardState.text,
     });
   }
 
