@@ -722,8 +722,8 @@ const CustomSettings = memo(() => {
                     key={originalIndex}
                     className="image-card"
                     onClick={(e) => {
-                      // Only select if clicking the card itself, not navigation buttons
-                      if (!e.target.closest('.image-nav-buttons')) {
+                      // Only select if clicking the card itself, not its buttons
+                      if (!e.target.closest('.image-nav-buttons, .delete-button')) {
                         toggleImageSelection(originalIndex);
                       }
                     }}
@@ -816,7 +816,12 @@ const CustomSettings = memo(() => {
                     >
                       <button
                         className="delete-button"
-                        onClick={() => modifyCustomBackground('remove', originalIndex)}
+                        onClick={(e) => {
+                          // The card selects itself on click; deleting must not select
+                          // whatever slides into this index afterwards.
+                          e.stopPropagation();
+                          modifyCustomBackground('remove', originalIndex);
+                        }}
                       >
                         <MdCancel />
                       </button>

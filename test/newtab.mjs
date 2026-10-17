@@ -538,6 +538,7 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.input.value, 'book a table\n\nbook a table at 8');
     assert.equal(h.log.sent.length, 0);
+    assert.equal(h.log.mode, null, 'the draft keeps the mode it was written in');
 
     // The same text twice is not duplicated; an empty composer is simply filled.
     const same = await harness({ record: rec({ mode: 'act', text: 'x' }) });
@@ -555,6 +556,7 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(await h.handoff.consume(), true);
     assert.equal(h.input.value, 'my half-written email to Sam\n\nsummarise this');
     assert.equal(h.log.sent.length, 0, 'the combined text is left for the user to review and send');
+    assert.equal(h.log.mode, null, 'an Act draft is not turned into an Ask (or the reverse)');
     assert.equal(KEY in h.store, false);
   });
 
@@ -755,4 +757,15 @@ test('components unsubscribe the handler they registered', () => {
   ]) {
     assert.doesNotMatch(readFileSync(nt(file), 'utf8'), /EventBus\.off\('refresh'\)/, file);
   }
+});
+
+test('the task box can be hidden from settings', () => {
+  const src = readFileSync(nt('features/agent/TaskBoxOptions.jsx'), 'utf8');
+  assert.match(src, /setting="taskBox"[^>]*visibilityToggle=\{true\}/);
+});
+
+test('deleting a custom background does not also select a card', () => {
+  const src = readFileSync(nt('features/background/options/Custom.jsx'), 'utf8');
+  assert.match(src, /closest\('\.image-nav-buttons, \.delete-button'\)/);
+  assert.match(src, /e\.stopPropagation\(\);\s*modifyCustomBackground\('remove', originalIndex\)/);
 });

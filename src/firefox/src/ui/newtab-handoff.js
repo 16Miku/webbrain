@@ -10,8 +10,9 @@
  *     If the panel declines to send (plan review pending, state refresh, ...) the
  *     text stays in the composer for the user to send.
  *     If the composer already holds a different draft (the user's own, or an
- *     unconfirmed Act task) nothing is overwritten and nothing is sent: the task is
- *     added below the draft for the user to review and send.
+ *     unconfirmed Act task) nothing is overwritten, the mode is left as it is, and
+ *     nothing is sent: the task is added below the draft for the user to review
+ *     and send.
  *   - Act: the task is filled in and the panel switches to Act, but nothing is
  *     sent. Act always needs the user's own Enter in the panel.
  *
@@ -126,11 +127,14 @@ export function createNewtabHandoff({
       handled.add(handoff.id);
       await storage.remove(key);
 
-      setMode(handoff.mode);
       const input = getInputEl();
-      // Never overwrite what is already in the composer. The task goes below it.
+      // Never overwrite what is already in the composer. The task goes below it,
+      // and the panel keeps the mode that draft was written in: switching it would
+      // change what confirming the combined draft does (an Ask draft would become
+      // an Act, or the reverse).
       const existing = String(input.value || '').trim();
       const keepsDraft = Boolean(existing) && existing !== handoff.text;
+      if (!keepsDraft) setMode(handoff.mode);
       const composerText = keepsDraft ? `${existing}\n\n${handoff.text}` : handoff.text;
       const fill = () => {
         input.value = composerText;

@@ -17,6 +17,7 @@ function TaskBoxOptions() {
         title={variables.getMessage('wb.settings_taskbox')}
         setting="taskBox"
         category="widgets"
+        visibilityToggle={true}
       />
       <Row>
         <Content

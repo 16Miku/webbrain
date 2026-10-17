@@ -41,8 +41,9 @@ No search engine is hard-coded and nothing is sent to WebBrain's servers by the 
      pending, a refresh in progress) the text stays in the composer.
    - **Act** is filled in with the panel switched to Act, and never sent.
    - Neither mode ever overwrites what is already in the composer (the user's own
-     draft, an unconfirmed Act task, a declined Ask). The new task is added below it
-     for review and, in that case, an Ask is not sent automatically.
+     draft, an unconfirmed Act task, a declined Ask). The new task is added below it for
+     review; the panel keeps the mode that draft was written in, and an Ask is not sent
+     automatically in that case.
    - A later hand-off is held back (retried every 150 ms, for up to about 30 s) while an
      earlier Ask's text is still in the composer waiting for its send to commit, so one
      task can never replace the other. The record stays in storage meanwhile.
