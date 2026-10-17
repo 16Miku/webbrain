@@ -162,7 +162,7 @@ import { generateImage, readMediaConfig } from './generative-media.js';
 import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
-import { emptyOutputFailureMessage, modelOutputDiagnostics } from './model-output-diagnostics.js';
+import { RESPONSE_CUT_OFF_NOTICE, emptyOutputFailureMessage, modelOutputDiagnostics, outputWasCutOff } from './model-output-diagnostics.js';
 import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpRedactRefs, otpServiceDisplay, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
@@ -26081,7 +26081,12 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
     const displayContent = phase === 'terminal_recovery'
       ? terminalRecoveryFinalText(result?.content)
       : String(result?.content || '').trim();
-    return repairAssistantDisplayText(displayContent);
+    const displayText = repairAssistantDisplayText(displayContent);
+    // A reply that ran into the output limit must not read as finished. A selection
+    // card's "Continue" lands here too, and the remainder can be cut off again.
+    return phase === 'response_only' && displayText && outputWasCutOff(result)
+      ? `${displayText}${RESPONSE_CUT_OFF_NOTICE}`
+      : displayText;
   }
 
   _consumeContextOnlyAbort(tabId, messages, onUpdate) {

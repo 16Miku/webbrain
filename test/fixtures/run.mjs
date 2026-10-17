@@ -2500,6 +2500,33 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: a long selection is handed over at once, not after the language bundle loads`, async (page) => {
+    // The side panel can only be opened inside the click's user gesture, so the hand-over
+    // must not wait for localization.
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, holdLocalization: true });
+    await page.evaluate(() => {
+      const article = document.createElement('article');
+      article.id = 'long-selection';
+      for (let index = 0; index < 400; index += 1) {
+        const line = document.createElement('div');
+        line.textContent = `Selected article line ${index + 1}`;
+        article.appendChild(line);
+      }
+      document.body.appendChild(article);
+    });
+    const selected = await selectFixtureText(page, '#long-selection');
+    await clickRectCenter(page, selected.inlineRects.translate);
+    await page.waitForFunction(() => window.__selectionMessages.length === 1, null, { timeout: 2000 });
+    const result = await page.evaluate(() => ({
+      message: window.__selectionMessages[0],
+      inline: window.__selectionInlineMessages.length,
+    }));
+    if (result.message.action !== 'translate' || result.inline !== 0) {
+      throw new Error(`a long selection should reach the side panel flow while localization is still loading: ${JSON.stringify(result)}`);
+    }
+    await page.evaluate(() => window.__releaseLocalization?.());
+  });
+
   test(`${label}: the card opens below a selection near the top edge`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {

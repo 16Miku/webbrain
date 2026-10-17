@@ -931,17 +931,19 @@
 
   async function openCard(kind, opener) {
     if (!snapshot || submitting || !INLINE_ACTIONS.includes(kind)) return;
+    if (snapshot.text.length > INLINE_MAX_CHARS) {
+      // Too long for a card: the side panel is the better place to read it. This is
+      // decided before anything is awaited, because the panel can only be opened
+      // inside the click's user gesture, which the localization wait would outlive.
+      submitSelection(kind, '', interfaceLanguage);
+      return;
+    }
     // Claim the card before anything is awaited: a second click while the
     // localization loads takes a newer id, so this call stops instead of opening
     // a second card and starting a second paid request.
     const requestId = ++cardRequestId;
     if (!localization) await refreshLocalization(interfaceLanguage);
     if (requestId !== cardRequestId || !snapshot || submitting) return;
-    if (snapshot.text.length > INLINE_MAX_CHARS) {
-      // Too long for a card: the side panel is the better place to read it.
-      submitSelection(kind, '', interfaceLanguage);
-      return;
-    }
     ensureSurface();
     applyLocalization();
     closePopup(false);

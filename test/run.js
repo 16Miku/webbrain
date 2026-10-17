@@ -53695,6 +53695,65 @@ test('selection-only response-only phases carry the scope note', async () => {
   }
 });
 
+test('a response-only reply that hit the output limit says so instead of reading as finished', async () => {
+  const { outputWasCutOff: cutCh, RESPONSE_CUT_OFF_NOTICE: noticeCh } = await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/agent/model-output-diagnostics.js')).href
+  );
+  const { outputWasCutOff: cutFx, RESPONSE_CUT_OFF_NOTICE: noticeFx } = await import(
+    pathToFileURL(path.join(ROOT, 'src/firefox/src/agent/model-output-diagnostics.js')).href
+  );
+  assert.equal(noticeCh, noticeFx);
+  for (const outputWasCutOff of [cutCh, cutFx]) {
+    for (const result of [
+      { finishReason: 'length' },
+      { finishReason: 'max_tokens' },
+      { stop_reason: 'max_tokens' },
+      { finishReason: 'MAX_TOKENS' },
+      { finishReason: 'output_limit' },
+      { raw: { choices: [{ finish_reason: 'length' }] } },
+      { outputTruncated: true },
+    ]) {
+      assert.equal(outputWasCutOff(result), true, JSON.stringify(result));
+    }
+    for (const result of [
+      {}, null, undefined, { finishReason: 'stop' }, { finishReason: 'end_turn' },
+      { outputTruncated: false }, { outputTruncated: 'true' }, { raw: { choices: [{ finish_reason: 'stop' }] } },
+      { finishReason: 'tool_calls' },
+    ]) {
+      assert.equal(outputWasCutOff(result), false, JSON.stringify(result));
+    }
+  }
+
+  for (const [label, AgentClass, notice] of [['chrome', AgentCh, noticeCh], ['firefox', AgentFx, noticeFx]]) {
+    const run = async (reply, phase = 'response_only') => {
+      const provider = {
+        supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+        model: 'test-model', name: 'test-provider',
+        chat: async () => reply,
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+      return agent._generateContextOnlyResponse(
+        1, [{ role: 'system', content: 'rules' }, { role: 'user', content: 'Translate it.' }],
+        provider, agent._newCostRunState(), null, { phase, step: 1 },
+      );
+    };
+    assert.equal(await run({ content: 'Partial translation', toolCalls: null, outputTruncated: true }),
+      `Partial translation${notice}`, `${label}: a worker-reported cut-off is flagged`);
+    assert.equal(await run({ content: 'Partial translation', toolCalls: null, finishReason: 'length' }),
+      `Partial translation${notice}`, `${label}: a length finish is flagged`);
+    assert.equal(await run({ content: 'Whole translation', toolCalls: null, finishReason: 'stop' }),
+      'Whole translation', `${label}: a finished reply is left alone`);
+    assert.equal(await run({ content: 'Whole translation', toolCalls: null, outputTruncated: false }),
+      'Whole translation', `${label}: a worker that finished is left alone`);
+    assert.equal(await run({ content: '', toolCalls: null, finishReason: 'length' }),
+      '', `${label}: an empty cut-off reply keeps its existing empty-output handling`);
+    assert.ok(!(await run({ content: '{"final_text":"Recovered"}', toolCalls: null, finishReason: 'length' }, 'terminal_recovery')).includes('output limit'),
+      `${label}: only the response-only phase gets the notice`);
+  }
+});
+
 test('ordinary attachments leave selection grounding and remain usable', async () => {
   for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
     ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],
