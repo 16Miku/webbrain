@@ -2359,6 +2359,26 @@ for (const [label, sourcePath, manualOpen] of [
     }
   });
 
+  test(`${label}: More clicked while an action's language bundle loads replaces that action without a model call`, async (page) => {
+    await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen, holdLocalization: true });
+    const selected = await selectFixtureText(page);
+    await clickRectCenter(page, selected.inlineRects.explain);
+    await clickRectCenter(page, selected.moreRect);
+    // The start-up request plus one per click are now waiting on the held bundle.
+    await page.waitForFunction(() => window.__selectionLocalizationRequests >= 3);
+    await page.evaluate(() => window.__releaseLocalization());
+    await page.waitForFunction(() => window.__webbrainSelectionShortcut.getState().popupVisible);
+    await page.waitForTimeout(60);
+    const result = await page.evaluate(() => ({
+      inline: window.__selectionInlineMessages.length,
+      cancels: window.__selectionCancelMessages.length,
+      state: window.__webbrainSelectionShortcut.getState(),
+    }));
+    if (result.inline !== 0 || result.cancels !== 0 || result.state.cardVisible || !result.state.popupVisible) {
+      throw new Error(`the abandoned action still reached the model or showed a card: ${JSON.stringify(result)}`);
+    }
+  });
+
   test(`${label}: closing, retargeting or retrying a card cancels the call it abandons`, async (page) => {
     await setupSelectionShortcut(page, sourcePath, { requiresManualOpen: manualOpen });
     await page.evaluate(() => {

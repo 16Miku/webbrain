@@ -769,7 +769,13 @@
 
   async function openPopup() {
     if (!snapshot || submitting) return;
-    if (!localization) await refreshLocalization(interfaceLanguage);
+    if (!localization) {
+      // A card asked for while the language bundle loads is replaced by this popup, so
+      // take a newer request id now: its continuation then stops, instead of starting a
+      // paid model call that closeCard would only cancel a moment later.
+      cardRequestId += 1;
+      await refreshLocalization(interfaceLanguage);
+    }
     if (!snapshot || submitting) return;
     ensureSurface();
     applyLocalization();

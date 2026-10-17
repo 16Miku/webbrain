@@ -540,7 +540,7 @@ same cancel from `pagehide`, since it can no longer close the card itself; for t
 provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running
 generation or drops a queued one, and the offscreen host remembers a cancel that arrives while the request is still being routed to a worker, so the generation never starts; those workers report `outputTruncated` when an answer used
 its token budget, since they have no finish reason); the card also claims its request id
-before it waits for the language bundle, so a double click starts only one call. Selections
+before it waits for the language bundle, so a double click starts only one call, and **More…** takes a newer id on the same wait, so an action clicked just before it never reaches the model. Selections
 over 4,000 characters skip the card and use the side-panel flow. The card draws the answer as DOM
 nodes (paragraphs, lists, bold, italic and code), never as HTML, and takes the source
 language from the browser's own detector, with no network call. A follow-up typed in a card
