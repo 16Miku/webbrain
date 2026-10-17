@@ -99,12 +99,6 @@ const server = http.createServer(async (request, response) => {
 });
 await fs.mkdir(path.dirname(output), { recursive: true });
 await new Promise((resolve, reject) => { server.once('error', reject); server.listen(Number(option('--port', 8769)), '127.0.0.1', resolve); });
-const context = await chromium.launchPersistentContext(profile, {
-  headless: true,
-  channel: 'chromium',
-  args: ['--enable-unsafe-webgpu', '--force-high-performance-gpu',
-    ...(option('--adapter-luid', '') ? [`--use-adapter-luid=${option('--adapter-luid')}`] : [])],
-});
 const words = text => String(text || '').trim().split(/\s+/).filter(Boolean);
 const commonPrefixWords = (a, b) => {
   const left = words(a), right = words(b);
@@ -116,7 +110,14 @@ const result = {
   model, vision, dtype, maxSecondsPer1k, minCommonWords, startedAt: new Date().toISOString(),
   runs: [], divergences: [], failures: [],
 };
+let context;
 try {
+  context = await chromium.launchPersistentContext(profile, {
+    headless: true,
+    channel: 'chromium',
+    args: ['--enable-unsafe-webgpu', '--force-high-performance-gpu',
+      ...(option('--adapter-luid', '') ? [`--use-adapter-luid=${option('--adapter-luid')}`] : [])],
+  });
   const page = await context.newPage();
   page.on('console', message => { if (message.type() === 'error') console.log(`[browser:error] ${message.text().slice(0, 300)}`); });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
@@ -208,10 +209,16 @@ try {
     }
   }
   result.passed = result.failures.length === 0;
+} catch (error) {
+  // A timeout, worker error or failed probe aborts the run; record it as a failure.
+  result.passed = false;
+  result.error = String(error?.stack || error);
+  result.failures.push({ check: 'run-error', error: String(error?.message || error) });
+  console.error(error);
 } finally {
   result.finishedAt = new Date().toISOString();
   await fs.writeFile(output, JSON.stringify(result, null, 2));
-  await context.close();
+  await context?.close().catch(() => {});
   server.close();
 }
 for (const divergence of result.divergences) console.log(`divergence: ${JSON.stringify(divergence)}`);

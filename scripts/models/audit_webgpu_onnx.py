@@ -122,17 +122,19 @@ def audit(path, text_generate_only=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("graphs", type=Path, nargs="+")
-    parser.add_argument("--json", action="store_true", help="print the full report as JSON")
+    parser.add_argument("--json", action="store_true",
+                        help='print one JSON document: {"blocked": bool, "graphs": [report, ...]}')
     parser.add_argument("--text-generate-only", action="store_true",
                         help="the graph runs only through Transformers.js text generate(), which passes "
                              "num_logits_to_keep=1; downgrade full-sequence logits with that input to a warning")
     args = parser.parse_args()
     failed = False
+    reports = []
     for path in args.graphs:
         report = audit(path, text_generate_only=args.text_generate_only)
         failed = failed or bool(report["blockers"])
+        reports.append(report)
         if args.json:
-            print(json.dumps(report, indent=2))
             continue
         status = "BLOCKED" if report["blockers"] else "ok"
         print(f"{status}: {path}")
@@ -144,6 +146,8 @@ def main():
         info = report["info"]
         print(f"  logits {info.get('logits_shape')}, {info['nodes']} nodes, {info['if_nodes']} If, "
               f"contrib {', '.join(info['contrib_ops']) or 'none'}")
+    if args.json:
+        print(json.dumps({"blocked": failed, "graphs": reports}, indent=2))
     sys.exit(1 if failed else 0)
 
 
