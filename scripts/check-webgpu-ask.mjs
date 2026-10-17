@@ -11,14 +11,13 @@
 // answer, which is checked against a loose expectation. Follow-up tasks reuse
 // the previous task's tab and conversation.
 //
-// --extension DIR    unpacked extension to load (default src/chrome). The
-//                    extension ID, and so the model cache, follows the path:
-//                    reuse one directory and profile to compare two builds.
-// --reset-service-worker
-//                    Chrome keeps running the service worker it registered
-//                    for the previous build. This removes the profile's
-//                    service-worker registrations and script cache (not the
-//                    model cache) so the build on disk is loaded.
+// --extension DIR    unpacked extension to load (default src/chrome).
+// --profile DIR      browser profile. Use a fresh profile for each build you
+//                    compare: a persistent profile keeps running the service
+//                    worker registered for the build it first loaded, even
+//                    after the files change, so a reused profile can silently
+//                    test the old code. The trace check below reports the
+//                    prompt variant that actually answered.
 // --model ID         WebGPU preset (default Bonsai 2 2B Vision)
 // --download         download the model if it is not cached yet
 // --tasks a,b        run only these tasks
@@ -103,11 +102,6 @@ const tasks = [
 
 await fs.mkdir(path.dirname(output), { recursive: true });
 const result = { model, extension, startedAt: new Date().toISOString(), tasks: [] };
-if (args.includes('--reset-service-worker')) {
-  for (const name of ['ScriptCache', 'Database']) {
-    await fs.rm(path.join(profile, 'Default', 'Service Worker', name), { recursive: true, force: true });
-  }
-}
 let context;
 try {
   context = await chromium.launchPersistentContext(profile, {
