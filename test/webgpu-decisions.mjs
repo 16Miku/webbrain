@@ -101,3 +101,97 @@ test('the worker routes decisions through the offscreen host and provider', asyn
   assert.match(branch, /src\/ui\/settings\.html/, 'decision fixtures are Settings-only');
   assert.match(branch, /strictSecretMode/);
 });
+
+test('the trained probe scores each option from its margin and hidden state', async () => {
+  const { BONSAI_DECISION_PROBE, bonsaiProbeScores } = await import('../src/chrome/src/offscreen/bonsai-decision-probe.js');
+  const { WEBGPU_DECISION_MODEL_ID } = await import('../src/chrome/src/providers/webgpu.js');
+  const { WEBGPU_CHAT_DECISION_MODEL } = await import('../src/chrome/src/agent/decision-config.js');
+  assert.equal(BONSAI_DECISION_PROBE.model, WEBGPU_DECISION_MODEL_ID);
+  assert.equal(WEBGPU_CHAT_DECISION_MODEL, WEBGPU_DECISION_MODEL_ID, 'decision-config keeps the probe model id in sync');
+  const width = BONSAI_DECISION_PROBE.hiddenSize;
+  const zero = new Float32Array(width);
+  const [a, b] = bonsaiProbeScores([2, 0], [zero, zero]);
+  assert.ok(Math.abs(a - b - 2 * BONSAI_DECISION_PROBE.margin) < 1e-9, 'with equal hidden states only the margins differ');
+  const unit = new Float32Array(width).fill(1);
+  const [c, d] = bonsaiProbeScores([0, 0], [unit, zero]);
+  assert.ok(Number.isFinite(c - d) && c !== d, 'the hidden state moves the score');
+  assert.throws(() => bonsaiProbeScores([0], [null]), /hidden state/);
+  assert.throws(() => bonsaiProbeScores([0], [new Float32Array(3)]), /hidden state/);
+});
+
+test('decisions default to the probe and refuse a decoder without decision_hidden', async () => {
+  const worker = await readFile(new URL('../src/chrome/src/offscreen/inference-worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /payload\.promptVariant : 'probe';/, 'the probe is the default decision mode');
+  assert.match(worker, /variant === 'probe' && !output\.hidden\) \{\n\s*throw new Error\('In-browser decisions need the updated Ternary Bonsai 2 2B Vision decoder/);
+  assert.match(worker, /\['webbrain-one\/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '240c07e1191911a2306faf106ee537382a1b4d5e6ecdd32b618da160db9145c1'\]/,
+    'the 2B decoder pin is the graph that exposes decision_hidden');
+});
+
+test('the in-browser chat model is an explicit, key-free, local decision provider that needs independent success proof', async () => {
+  for (const build of ['chrome', 'firefox']) {
+    const config = await import(`../src/${build}/src/agent/decision-config.js`);
+    const transfer = await import(`../src/${build}/src/config-transfer.js`);
+    const selected = config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+    assert.equal(selected.provider, 'webgpu_chat');
+    assert.equal(selected.model, config.WEBGPU_CHAT_DECISION_MODEL);
+    assert.equal(selected.local, true); assert.equal(selected.apiKey, ''); assert.equal(selected.enabled, true);
+    assert.equal(selected.doneEnabled, false, 'completion outsourcing stays opt-in');
+    assert.equal(selected.requiresIndependentSuccessConfirmation, true);
+    assert.equal(selected.config.inputCostPerMillionUsd, 0);
+    assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true }, { baseUrl: 'https://api.webbrain.one/v1' }).provider, 'webgpu_chat',
+      'an explicit local choice overrides Compass, as D1 does');
+    assert.equal(config.resolveDecisionConfig({ decisionProvider: 'webgpu_chat' }).enabled, false);
+    assert.equal((await config.listDecisionModels(selected, () => { throw new Error('no network'); })).length, 1);
+    const imported = transfer.parseConfigImport(JSON.stringify({ schema: transfer.CONFIG_SCHEMA, settings: { decisionProvider: 'webgpu_chat' } })).settings;
+    assert.equal(imported.decisionProvider, 'webgpu_chat');
+  }
+});
+
+test('the judge answers webgpu_chat decisions through the offscreen worker in Chrome and refuses them in Firefox', async () => {
+  const saved = { chrome: globalThis.chrome };
+  const sent = [];
+  const answers = { q: { type: 'noul', noul: 0.8 } };
+  globalThis.chrome = {
+    offscreen: { hasDocument: async () => true, createDocument: async () => {} },
+    runtime: {
+      lastError: null,
+      getURL: path => `chrome-extension://test/${path}`,
+      sendMessage(message, callback) {
+        sent.push(message.type);
+        const reply = message.type === 'webgpu-download-status' ? { ready: true }
+          : message.type === 'webgpu-decide' ? { ok: true, model: message.model, answers, usage: { input_tokens: 900, output_tokens: 0 } }
+            : { ok: true };
+        callback(reply);
+      },
+    },
+    storage: { local: { get: async () => ({}) } },
+  };
+  try {
+    const { resolveDecisionConfig } = await import('../src/chrome/src/agent/decision-config.js');
+    const { createSystemOneJudge } = await import('../src/chrome/src/agent/systemone-judge.js');
+    const config = resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+    const result = await createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
+      .evaluate({ state: 'Page', images: [], questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config });
+    assert.deepEqual(result.answers, answers);
+    assert.equal(result.usage.output_tokens, 0);
+    assert.equal(result.estimatedCostUsd, 0);
+    assert.ok(sent.includes('webgpu-decide'));
+    const firefox = await import('../src/firefox/src/agent/systemone-judge.js');
+    const firefoxConfig = (await import('../src/firefox/src/agent/decision-config.js')).resolveDecisionConfig({ decisionProvider: 'webgpu_chat', systemOneEnabled: true });
+    await assert.rejects(firefox.createSystemOneJudge({ fetchImpl: () => { throw new Error('no cloud request'); }, maxRetries: 0 })
+      .evaluate({ state: 'Page', questions: { q: { type: 'noul', instructions: 'Is it done?' } }, config: firefoxConfig }), /Chrome only/);
+  } finally {
+    if (saved.chrome === undefined) delete globalThis.chrome; else globalThis.chrome = saved.chrome;
+  }
+});
+
+test('Settings offers the chat-model decision provider in Chrome only', async () => {
+  const chromeHtml = await readFile(new URL('../src/chrome/src/ui/settings.html', import.meta.url), 'utf8');
+  const firefoxHtml = await readFile(new URL('../src/firefox/src/ui/settings.html', import.meta.url), 'utf8');
+  assert.match(chromeHtml, /<option value="webgpu_chat" data-i18n="st\.decision\.webgpu_chat"><\/option>/);
+  assert.match(chromeHtml, /id="webgpu-decision-note" hidden data-i18n="st\.decision\.webgpu_chat_note"/);
+  assert.doesNotMatch(firefoxHtml, /webgpu_chat/);
+  const { decisionEnglish, decisionTranslations } = await import('../src/chrome/src/ui/locales/decision-copy.mjs');
+  assert.ok(decisionEnglish['st.decision.webgpu_chat'] && decisionEnglish['st.decision.webgpu_chat_note']);
+  assert.ok(decisionTranslations.tr['st.decision.webgpu_chat']);
+});

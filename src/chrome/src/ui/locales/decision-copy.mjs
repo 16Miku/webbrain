@@ -1,5 +1,7 @@
 export const decisionEnglish = {
   'st.d1.provider': 'Local decision model - Experimental',
+  'st.decision.webgpu_chat': 'In-browser chat model (Ternary Bonsai 2 2B Vision) - Experimental',
+  'st.decision.webgpu_chat_note': 'Answers decisions with the in-browser WebGPU chat model and a small trained readout, with no extra download. Download Ternary Bonsai 2 2B Vision under Providers first. The first decision after a browser restart loads the model and may fall back to the active model. Not a sole completion authority.',
   'st.d1.warning': 'Experimental on-device decision model, about 0.95 GB download plus tokenizer. Requires hardware WebGPU and substantial GPU memory. Not a chat model or sole completion authority. CPU/WASM control operators may run. Browser support and model decisions are not universally validated.',
   'st.d1.consent': 'I accept the experimental local model download from Hugging Face and its memory requirements.',
   'st.d1.need_consent': 'Accept the experimental model download consent first.',
@@ -25,6 +27,8 @@ export const decisionEnglish = {
 export const decisionTranslations = {
   tr: {
     'st.d1.provider': 'Yerel karar modeli — Deneysel',
+    'st.decision.webgpu_chat': 'Tarayıcı içi sohbet modeli (Ternary Bonsai 2 2B Vision) — Deneysel',
+    'st.decision.webgpu_chat_note': 'Kararları tarayıcı içi WebGPU sohbet modeli ve küçük bir eğitilmiş okuma katmanıyla verir; ek indirme gerekmez. Önce Sağlayıcılar altında Ternary Bonsai 2 2B Vision modelini indirin. Tarayıcı yeniden başladıktan sonraki ilk karar modeli yükler ve etkin modele geri düşebilir. Tek başına tamamlanma yetkilisi değildir.',
     'st.d1.warning': 'Deneysel yerel karar modeli; tokenizer ile birlikte yaklaşık 0,95 GB indirme. Donanım WebGPU ve yüksek GPU belleği gerekir. Sohbet modeli veya tek başına tamamlanma yetkilisi değildir. CPU/WASM kontrol işlemleri çalışabilir. Her tarayıcı, GPU ve model kararı doğrulanmış değildir.',
     'st.d1.consent': 'Hugging Face üzerinden deneysel yerel model indirmesini ve bellek gereksinimlerini kabul ediyorum.',
     'st.d1.need_consent': 'Önce deneysel model indirme onayını kabul edin.',

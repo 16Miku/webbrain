@@ -16,7 +16,8 @@
 //                   the case where dense attention memory used to grow
 // --limit N         first N test requests only
 // --temperature T   Bonsai readout temperature (default 1)
-// --prompt NAME     Bonsai decision prompt: default, strict or verify
+// --prompt NAME     Bonsai decision mode: probe (default, what Settings uses),
+//                   readout, strict or verify
 // --decoder-graph F install a replacement decoder graph in the cache first
 // --return-hidden   with --prompt verify, record each option's hidden state
 import fs from 'node:fs/promises';
@@ -157,9 +158,16 @@ try {
       result.decoderGraph = graphFile;
     }
     const temperature = Number(option('--temperature', 1));
-    const promptVariant = option('--prompt', 'default');
+    const promptVariant = option('--prompt', 'probe');
     const returnHidden = args.includes('--return-hidden');
     await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant, returnHidden } }));
+    if (promptVariant === 'probe') {
+      // The decision provider path Settings uses: judge -> provider -> worker.
+      const started = Date.now();
+      const tested = await message('test_system_one', { settings: { decisionProvider: 'webgpu_chat', systemOneEnabled: true, decisionVisionMode: 'on' } });
+      result.engines.bonsai.settingsTest = { ...tested, seconds: (Date.now() - started) / 1000 };
+      console.log('settings test', JSON.stringify(result.engines.bonsai.settingsTest));
+    }
   }
 } catch (error) {
   result.error = String(error?.stack || error);

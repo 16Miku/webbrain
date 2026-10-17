@@ -17,6 +17,7 @@ import {
   decisionStateText,
   normalizeDecisionRequest,
 } from './webgpu-decisions.js';
+import { BONSAI_DECISION_PROBE, bonsaiProbeScores } from './bonsai-decision-probe.js';
 
 let libraryPromise = null;
 let libraryVersion = null;
@@ -61,10 +62,12 @@ const WEBGPU_BONSAI2_MODEL_IDS = new Set([
 // scripts/models/bonsai/chunk_gdn_prefill.py). Earlier revisions prefilled with
 // an ONNX Scan that WebGPU runs one token at a time on the CPU. Installs that
 // cached that graph keep it under the same URL, so replace just this small file;
-// the unchanged weight files stay cached.
+// the unchanged weight files stay cached. The 2B graph also exposes the
+// last-position hidden state as `decision_hidden` for the decision probe
+// (scripts/models/bonsai/add_decision_hidden.py); logits and caches are as before.
 const BONSAI2_DECODER_GRAPH_FILE = 'onnx/decoder_model_merged_q2f16.onnx';
 const BONSAI2_DECODER_GRAPH_SHA256 = new Map([
-  ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '2768d880f4fdab46a984d697b901db6e8ac54dc9b896524cb8cb769bbb339df0'],
+  ['webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision', '240c07e1191911a2306faf106ee537382a1b4d5e6ecdd32b618da160db9145c1'],
   ['webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision', '52424fbb7094ed0a1036d8795e78c3da349fce1838ee6bd077523929b0bb7bb2'],
 ]);
 // A refresh must never stall model loading on a flaky network; one attempt per
@@ -1884,7 +1887,15 @@ async function runMultimodalDecision(payload) {
   try {
     cache = await prefillBonsai2Cache(runtime, prefix, bonsai2PrefillSliceTokens(payload?.prefillSliceTokens), prefixLength);
     const prefillMs = performance.now() - started;
-    const verify = payload?.promptVariant === 'verify';
+    // `probe` (the default) scores each option's verify continuation with the
+    // trained probe; `verify` returns the raw Yes margins; `readout` and
+    // `strict` read the option codes in one pass. All but `probe` are for the
+    // diagnostic fixture path.
+    const variant = ['readout', 'default', 'strict', 'verify', 'probe'].includes(payload?.promptVariant) ? payload.promptVariant : 'probe';
+    const verify = variant === 'verify' || variant === 'probe';
+    if (variant === 'probe' && modelId !== BONSAI_DECISION_PROBE.model) {
+      throw new Error(`No decision probe is trained for ${modelId}.`);
+    }
     const returnHidden = payload?.returnHidden === true;
     const yesId = verify ? codeId('Yes') : null, noId = verify ? codeId('No') : null;
     for (const [id, question] of request.entries) {
@@ -1898,9 +1909,16 @@ async function runMultimodalDecision(payload) {
           suffixTokens += suffix.input_ids.dims.at(-1);
           const output = await bonsai2ContinuationLogits(runtime, prefix, cache, suffix.input_ids, { withHidden: true });
           margins.push(output.logits[yesId] - output.logits[noId]);
-          if (returnHidden) hidden.push(output.hidden ? encodeFloat16Base64(output.hidden) : null);
+          if (variant === 'probe' && !output.hidden) {
+            throw new Error('In-browser decisions need the updated Ternary Bonsai 2 2B Vision decoder. Download the model again in Settings > Providers > WebGPU.');
+          }
+          hidden.push(output.hidden);
         }
-        answers[id] = { ...decisionAnswer(question, margins, { temperature }), ...(returnHidden ? { margins, hidden } : {}) };
+        const scores = variant === 'probe' ? bonsaiProbeScores(margins, hidden) : margins;
+        answers[id] = {
+          ...decisionAnswer(question, scores, { temperature }),
+          ...(returnHidden ? { margins, hidden: hidden.map(vector => (vector ? encodeFloat16Base64(vector) : null)) } : {}),
+        };
         questionMs.push(Math.round(performance.now() - questionStarted));
         continue;
       }
@@ -1930,7 +1948,7 @@ async function runMultimodalDecision(payload) {
         question_ms: questionMs,
         total_ms: Math.round(performance.now() - started),
         temperature,
-        prompt_variant: payload?.promptVariant || 'default',
+        prompt_variant: variant,
       },
     };
   } catch (error) {
