@@ -16,6 +16,7 @@
 //                   the case where dense attention memory used to grow
 // --limit N         first N test requests only
 // --temperature T   Bonsai readout temperature (default 1)
+// --prompt NAME     Bonsai decision prompt: default or strict
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -142,7 +143,8 @@ try {
       }
     }
     const temperature = Number(option('--temperature', 1));
-    await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature } }));
+    const promptVariant = option('--prompt', 'default');
+    await run('bonsai', fixture => message('webgpu_decide_fixture', { fixture: { ...fixture, temperature, promptVariant } }));
   }
 } catch (error) {
   result.error = String(error?.stack || error);

@@ -726,6 +726,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           images: message.images || [],
           questions: message.questions,
           temperature: message.temperature,
+          promptVariant: message.promptVariant,
           prefillSliceTokens: message.prefillSliceTokens,
         }, { exclusive: true, runtime: message.runtime }));
         return;

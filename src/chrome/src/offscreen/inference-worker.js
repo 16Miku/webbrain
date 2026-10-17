@@ -9,7 +9,7 @@
 
 import { BONSAI2_TOKENIZER_CONFIG } from '../../vendor/bonsai2/tokenizer-config.js';
 import {
-  DECISION_SYSTEM_PROMPT,
+  decisionSystemPrompt,
   decisionAnswer,
   decisionOptions,
   decisionQuestionText,
@@ -1824,7 +1824,7 @@ async function runMultimodalDecision(payload) {
   });
   const temperature = Number(payload?.temperature) > 0 ? Number(payload.temperature) : 1;
   const messages = [
-    { role: 'system', content: [{ type: 'text', text: DECISION_SYSTEM_PROMPT }] },
+    { role: 'system', content: [{ type: 'text', text: decisionSystemPrompt(payload?.promptVariant) }] },
     { role: 'user', content: [
       ...request.images.map(() => ({ type: 'image' })),
       { type: 'text', text: `${decisionStateText(request.state)}\n\n${DECISION_QUESTION_MARKER}` },
@@ -1893,6 +1893,7 @@ async function runMultimodalDecision(payload) {
         question_ms: questionMs,
         total_ms: Math.round(performance.now() - started),
         temperature,
+        prompt_variant: payload?.promptVariant || 'default',
       },
     };
   } catch (error) {

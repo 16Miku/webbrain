@@ -476,7 +476,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
    * Decision readout on the in-browser model: option probabilities from one
    * forward pass per question, in the d1 answer shape. Bonsai 2 Vision only.
    */
-  async decide({ state = '', images = [], questions, temperature } = {}) {
+  async decide({ state = '', images = [], questions, temperature, promptVariant } = {}) {
     if (webgpuModelRuntime(this.model) !== WEBGPU_RUNTIME_ONNX_VL || !WEBGPU_DECISION_MODEL_IDS.has(this.model)) {
       throw new Error(`${webgpuModelDisplayName(this.model)} does not support in-browser decisions.`);
     }
@@ -495,6 +495,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       images,
       questions,
       ...(Number(temperature) > 0 ? { temperature: Number(temperature) } : {}),
+      ...(promptVariant === 'strict' ? { promptVariant } : {}),
       ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
     });
     if (!response || response.ok === false || response.error) {
