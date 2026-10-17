@@ -5,10 +5,11 @@ unchanged files are hardlinked. Browser evidence recorded against the previous
 graph is not carried over: rerun scripts/check-bonsai-webgpu.mjs on the new
 bundle and record it with record_browser_validation.py.
 
-The bundle is assembled in `<output>.partial` and swapped into place after
-sealing, so rerunning into the same --output replaces the previous derived
-bundle instead of inheriting its files. An unrelated non-empty --output is
-refused.
+The bundle is assembled in a unique temporary sibling directory and swapped
+into place after sealing, so rerunning into the same --output replaces the
+previous derived bundle instead of inheriting its files. An unrelated
+non-empty --output is refused, and a failed run leaves the previous bundle
+intact.
 
   python scripts/models/bonsai/make_chunked_bundle.py \
       --source .build/bonsai/exports/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
@@ -19,6 +20,7 @@ refused.
 import argparse
 import json
 import shutil
+import tempfile
 from pathlib import Path
 
 from build_vision import digest, link_or_copy, read_json, seal_manifest, write_json
@@ -37,46 +39,31 @@ CARD_LANGUAGE_NEW = "The ternary language weights and Hadamard transforms come u
 DERIVED_MARKER = "chunked-prefill-validation.json"
 
 
-def prepare_staging(source, output):
-    """Build into a fresh sibling directory so reruns never inherit stale files."""
+def check_output(source, output):
+    """Allow only a new/empty directory or one this tool created earlier."""
     if output == source or source in output.parents or output in source.parents:
         raise ValueError("--output must be separate from --source")
     if output.exists() and any(output.iterdir()) and not (output / DERIVED_MARKER).is_file():
         raise ValueError(f"{output} is not empty and was not created by this tool; choose a new --output")
-    staging = output.with_name(output.name + ".partial")
-    if staging.exists():
-        shutil.rmtree(staging)
-    (staging / "onnx").mkdir(parents=True)
+
+
+def make_staging(output):
+    """A unique sibling directory owned by this run, so reruns never inherit stale files."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.", suffix=".partial", dir=output.parent))
+    (staging / "onnx").mkdir()
     return staging
 
 
 def replace_output(staging, output):
     """Swap the sealed staging bundle into place; only a previous derived bundle is removed."""
     if output.exists():
+        check_output(staging, output)
         shutil.rmtree(output)
     staging.rename(output)
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--source", type=Path, required=True, help="sealed bundle with the original graph")
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--graph", type=Path, help="already rewritten graph to use (checked against --source)")
-    parser.add_argument("--chunk", type=int, default=128)
-    parser.add_argument("--evidence", type=Path, action="append", default=[], help="JSON reports to embed")
-    args = parser.parse_args()
-    source, output = args.source.resolve(), args.output.resolve()
-    size = "2B" if "-2B-" in source.name else "4B"
-
-    manifest = read_json(source / "manifest.json")
-    for entry in manifest["files"]:
-        if digest(source / entry["path"]) != entry["sha256"]:
-            raise ValueError(f"Source bundle changed after sealing: {entry['path']}")
-    if digest(source / GRAPH) != SOURCE_GRAPH_SHA256[size]:
-        raise ValueError("Source decoder graph is not the validated upstream graph")
-
-    final_output = output
-    output = prepare_staging(source, final_output)
+def build_bundle(source, output, manifest, args):
     for entry in manifest["files"]:
         path = entry["path"]
         if path == GRAPH or path in STALE_EVIDENCE:
@@ -100,12 +87,10 @@ def main():
             if a.SerializeToString(deterministic=True) != b.SerializeToString(deterministic=True):
                 raise ValueError("--graph differs from a fresh rewrite of the source graph")
         scratch.unlink()
-        (output / GRAPH).unlink(missing_ok=True)
         shutil.copy2(args.graph, output / GRAPH)
         report["output_sha256"] = digest(output / GRAPH)
         report["output_bytes"] = (output / GRAPH).stat().st_size
     else:
-        (output / GRAPH).unlink(missing_ok=True)
         scratch.rename(output / GRAPH)
 
     write_json(output / DERIVED_MARKER, {
@@ -133,9 +118,37 @@ def main():
             card += "\n## Observed OCR limitation" + ocr[2].rstrip() + (
                 "\n\nOCR reports in this repository were recorded with the previous (Scan) graph.\n")
     (output / "README.md").write_text(card, encoding="utf-8")
-    total = seal_manifest(output)
-    replace_output(output, final_output)
-    print(json.dumps({"output": str(final_output), "graph_sha256": report["output_sha256"], "total_bytes": total}, indent=2))
+    return report, seal_manifest(output)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--source", type=Path, required=True, help="sealed bundle with the original graph")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--graph", type=Path, help="already rewritten graph to use (checked against --source)")
+    parser.add_argument("--chunk", type=int, default=128)
+    parser.add_argument("--evidence", type=Path, action="append", default=[], help="JSON reports to embed")
+    args = parser.parse_args()
+    source, output = args.source.resolve(), args.output.resolve()
+    size = "2B" if "-2B-" in source.name else "4B"
+
+    manifest = read_json(source / "manifest.json")
+    for entry in manifest["files"]:
+        if digest(source / entry["path"]) != entry["sha256"]:
+            raise ValueError(f"Source bundle changed after sealing: {entry['path']}")
+    if digest(source / GRAPH) != SOURCE_GRAPH_SHA256[size]:
+        raise ValueError("Source decoder graph is not the validated upstream graph")
+
+    check_output(source, output)
+    staging = make_staging(output)
+    try:
+        report, total = build_bundle(source, staging, manifest, args)
+        replace_output(staging, output)
+    except BaseException:
+        # Only this run's own temporary directory is ever deleted on failure.
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    print(json.dumps({"output": str(output), "graph_sha256": report["output_sha256"], "total_bytes": total}, indent=2))
 
 
 if __name__ == "__main__":
