@@ -3,7 +3,7 @@ export const D1_CONSENT_VERSION = 1;
 export const D1_CONSENT_KEY = 'd1WebgpuConsentVersion';
 export const D1_CACHE_NAME = 'webbrain-d1-fp16-v1';
 // Immutable release package; downloaded data is verified before local loading.
-export const D1_RELEASE = Object.freeze({ revision: 'd83c32b1db90861948fa5ce2bf926b46445fc7bd', manifestSha256: '3e0f61917b8e21cb2b7603cbc37680d225934cabb35e9dbd0db0c23c1aebaf1c' });
+export const D1_RELEASE = Object.freeze({ revision: 'd4916f0c47d46f16e7876e425eb12a122671d3eb', manifestSha256: 'a94fb80ba47cc6c3e05cc3dbda45f9f2b99f4f1999b0770a0a09ba59e0c861ed' });
 export const D1_REQUIRED_FILES = Object.freeze(['config.json', 'tokenizer.json', 'tokenizer_config.json', 'tiling-ratios.json', 'onnx/decision.onnx', 'onnx/decision.data', 'onnx/vision.onnx', 'onnx/vision.data', 'onnx/projector.onnx', 'onnx/projector.data']);
 
 export function d1BaseURL() {

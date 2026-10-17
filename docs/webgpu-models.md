@@ -205,6 +205,70 @@ Use the tools in `scripts/models/bonsai/`:
 - **Cache-only inference.** Chat never downloads. Only explicit download or
   preload flows fetch model files.
 
+## Decisions on WebGPU
+
+Two on-device paths answer typed decision questions (`choice`, `noul`,
+`score`) without generating text. `scripts/check-webgpu-decisions.mjs` runs
+both through the real extension on the same labelled questions:
+
+```bash
+node scripts/check-webgpu-decisions.mjs --test <final_test.json> --images <dir> \
+  --engines d1,bonsai --stress --download --profile <fresh profile> \
+  --adapter-luid 0,82094 --output result.json
+```
+
+The labelled set is d1's balanced-V3 held-out test (72 synthetic screenshots,
+144 questions). It is not in this repository.
+
+- **d1 (the decision model).** A bidirectional encoder that scores option
+  markers, published as
+  [`webbrain-one/d1-browser-decision-fp16`](https://huggingface.co/webbrain-one/d1-browser-decision-fp16).
+  - Its graphs pass the static audit, but its six full-attention layers are
+    dense: each row materializes a 16 × length × length FP32 score tensor.
+    The old batching budgeted tokens (65,536), not that tensor, and every
+    question is its own row with the whole state. On the 5090, 16 questions
+    on a ~2k-token state needed a 2.6 GB buffer and failed; 4k overflowed.
+  - `d1-runtime.js` now bounds batches by the score tensor (256 MiB, and never
+    more than the adapter's storage-binding limit), caps text-only rows at
+    2,048 tokens, runs tiled screenshots through the vision tower in crop
+    groups under the same budget, and keeps screenshot features on the GPU
+    between graphs.
+  - The FP16 package stores the FP32 release's weights rounded once and
+    computes in FP32. Against FP32 it agrees on 144/144 decisions with a
+    largest probability difference of 0.010, on the CPU and on WebGPU.
+  - Package checks for a re-export: `scripts/models/d1/convert_fp16.py`,
+    `scripts/models/d1/parity-cpu.mjs` (the extension's runtime on
+    onnxruntime-node, both packages, scored against the labels) and
+    `scripts/models/d1/package_fp16.py`.
+- **The chat model's decision readout** (`src/chrome/src/offscreen/webgpu-decisions.js`).
+  Bonsai 2 Vision prefills the state and screenshots once, appends each
+  question as a short continuation of that cache and reads the probabilities
+  of the option-code tokens (A, B, …; Yes/No; 0–9). This is the readout
+  Perplexity's decider uses; it needs no training. It is reachable only
+  through the Settings-only `webgpu_decide_fixture` diagnostic action, not as
+  a decision provider.
+
+Results on the held-out test, RTX 5090, through the extension:
+
+| | d1 FP32, main | d1 FP32, new runtime | d1 FP16, new runtime | Bonsai 2 2B Vision readout |
+|---|---:|---:|---:|---:|
+| Categorical | 92/126 | 92/126 | 92/126 | 74/126 |
+| Completion found | 22/24 | 22/24 | 22/24 | 24/24 |
+| False completions | 1/48 | 1/48 | 1/48 | 30/48 |
+| Other choice / yes-no | 10/36, 13/18 | 10/36, 13/18 | 10/36, 13/18 | 18/36, 14/18 |
+| Score MAE | 0.574 | 0.574 | 0.573 | 0.459 |
+| Latency p50 / p95 (s per request) | 0.83 / 0.97 | 0.74 / 0.84 | 0.75 / 0.88 | 1.65 / 2.16 |
+| 16 questions on 1k / 2k / 4k / 8k-token states | ok / fail / fail / fail | all ok | all ok | not run |
+
+- The readout followed the answer format (median 99.9% of the next-token
+  probability on the option codes), and on the auxiliary questions it beat
+  d1. It never chose "unknown" for the completion question and called 30 of
+  48 pending or failed views completed, so it cannot verify completion
+  without training. A stricter prompt, chosen on the validation split, only
+  moved false completions from 30 to 26 on the test.
+- Bonsai's cost is the prefill: about 1.1 s for a screenshot of about 1,000
+  tokens, then about 0.15 s per question from the shared cache.
+
 ## Updating a published graph
 
 Prefer a new repository or file name for a changed graph. If a file must

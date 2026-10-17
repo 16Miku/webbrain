@@ -109,6 +109,8 @@ def main():
     provenance = out / "provenance"
     provenance.mkdir()
     shutil.copy2(args.converted / "conversion-report.json", provenance / "conversion-report.json")
+    if (args.converted / "hardware-eval.json").exists():
+        shutil.copy2(args.converted / "hardware-eval.json", provenance / "hardware-eval.json")
     shutil.copy2(ROOT / "scripts/models/d1/convert_fp16.py", provenance / "convert_fp16.py")
     shutil.copy2(ROOT / "scripts/models/d1/parity-cpu.mjs", provenance / "parity-cpu.mjs")
     shutil.copy2(ROOT / "scripts/models/d1/decision-metrics.mjs", provenance / "decision-metrics.mjs")
