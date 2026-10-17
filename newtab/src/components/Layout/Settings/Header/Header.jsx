@@ -57,7 +57,7 @@ function Header(props) {
       <Button
         type="settings"
         onClick={() =>
-          window.open(variables.constants.BUG_REPORT + props.title.split(' ').join('+'), '_blank')
+          window.open(`${variables.constants.BUG_REPORT}?title=${encodeURIComponent(props.title)}`, '_blank')
         }
         icon={<MdFlag />}
         label={variables.getMessage('modals.main.settings.sections.header.report_issue')}

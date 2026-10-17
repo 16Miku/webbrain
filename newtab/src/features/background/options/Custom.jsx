@@ -40,6 +40,18 @@ import Modal from 'react-modal';
 
 import FolderTaggingModal from './FolderTaggingModal';
 
+// The media itself lives in IndexedDB. Mirroring every data URL into localStorage would hit its
+// small quota after a few uploads (and a failed write leaves the old multi-megabyte value
+// behind), so only the count is kept there and any copy from an older version is dropped.
+const syncBackgroundCount = (backgrounds) => {
+  try {
+    localStorage.removeItem('customBackground');
+    localStorage.setItem('customBackgroundCount', String(backgrounds.length));
+  } catch {
+    // best effort: nothing else reads these
+  }
+};
+
 const CustomSettings = memo(() => {
   const [customBackground, setCustomBackground] = useState([]);
   const [folderTaggingModal, setFolderTaggingModal] = useState(false);
@@ -135,12 +147,7 @@ const CustomSettings = memo(() => {
         const backgrounds = await getAllBackgroundsWithMetadata();
         setCustomBackground(backgrounds);
 
-        try {
-          localStorage.setItem('customBackground', JSON.stringify(backgrounds.map((bg) => bg.url)));
-        } catch (_quotaError) {
-          console.warn('localStorage quota exceeded, storing count only');
-          localStorage.setItem('customBackgroundCount', backgrounds.length.toString());
-        }
+        syncBackgroundCount(backgrounds);
 
         // Only emit refresh if not part of a batch upload
         if (!skipRefresh) {
@@ -282,13 +289,7 @@ const CustomSettings = memo(() => {
       const backgrounds = await getAllBackgroundsWithMetadata();
       setCustomBackground(backgrounds);
 
-      // Store in localStorage with quota handling
-      try {
-        localStorage.setItem('customBackground', JSON.stringify(backgrounds.map((bg) => bg.url)));
-      } catch (_quotaError) {
-        console.warn('localStorage quota exceeded, storing count only');
-        localStorage.setItem('customBackgroundCount', backgrounds.length.toString());
-      }
+      syncBackgroundCount(backgrounds);
 
       EventBus.emit('refresh', 'background');
     } catch (error) {
@@ -311,12 +312,7 @@ const CustomSettings = memo(() => {
       setCustomBackground(backgrounds);
       setSelectedImages(new Set());
 
-      // Update localStorage
-      try {
-        localStorage.setItem('customBackground', JSON.stringify(backgrounds.map((bg) => bg.url)));
-      } catch (_quotaError) {
-        localStorage.setItem('customBackgroundCount', backgrounds.length.toString());
-      }
+      syncBackgroundCount(backgrounds);
 
       EventBus.emit('refresh', 'background');
       toast(variables.getMessage('toasts.deleted'));

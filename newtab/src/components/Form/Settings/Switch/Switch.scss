@@ -60,4 +60,10 @@
     opacity: 0;
     pointer-events: none;
   }
+
+  // The input is visually hidden, so show its keyboard focus on the track.
+  &:has(.switch-input:focus-visible) .switch-track {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
 }

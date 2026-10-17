@@ -1080,3 +1080,16 @@ test('round-21: Apps popup closes on blur; Maximise restores the page when it un
   assert.match(max, /hiddenRef\.current = true/);
   assert.match(max, /hiddenRef\.current = false/);
 });
+
+test('round-22: switch is an accessible control; report link uses ?title=; uploads are not mirrored into localStorage', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  const sw = read('components/Form/Settings/Switch/Switch.jsx');
+  assert.match(sw, /role="switch"/);
+  assert.match(sw, /aria-label=\{label\}/);
+  assert.doesNotMatch(sw, /className="switch-input"[\s\S]{0,80}aria-hidden="true"/);
+  assert.match(read('components/Form/Settings/Switch/Switch.scss'), /switch-input:focus-visible/);
+  assert.match(read('components/Layout/Settings/Header/Header.jsx'), /BUG_REPORT\}\?title=\$\{encodeURIComponent\(props\.title\)\}/);
+  const custom = read('features/background/options/Custom.jsx');
+  assert.doesNotMatch(custom, /localStorage\.setItem\('customBackground', JSON/);
+  assert.equal((custom.match(/syncBackgroundCount\(backgrounds\)/g) || []).length, 3);
+});
