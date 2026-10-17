@@ -6,6 +6,7 @@ import { Header, Row, Content, Action, PreferencesWrapper } from 'components/Lay
 import { Checkbox, Dropdown } from 'components/Form/Settings';
 import { Button } from 'components/Elements';
 import Modal from 'react-modal';
+import { pageElement } from 'utils/pageElement';
 
 import { AddModal } from 'components/Elements/AddModal';
 import { SortableList } from './components';
@@ -313,7 +314,8 @@ const QuickLinksOptions = () => {
         isOpen={showAddModal}
         className="Modal resetmodal mainModal"
         overlayClassName="Overlay resetoverlay"
-        ariaHideApp={false}
+        appElement={pageElement()}
+        aria={{ modal: true }}
       >
         <AddModal
           urlError={urlError}

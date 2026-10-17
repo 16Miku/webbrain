@@ -6,9 +6,11 @@
  * the side panel usually is not loaded yet when the user submits. The panel
  * reads it on start-up (ui/newtab-handoff.js in each extension), checks it is fresh and
  * addressed to its own tab, and then:
- *   - Ask: fills the composer and sends (Ask is read-only);
- *   - Act: fills the composer and switches to Act but does NOT send, so the
- *     user always confirms an Act run in the panel.
+ *   - Ask and Act: fills the composer and sends straight away, pinned to the chosen
+ *     mode. Act therefore starts acting without a further confirmation (Plan before Act
+ *     still applies when it is on, and the box warns about it before the user submits);
+ *     if Act is not allowed for the panel's current provider or scope, the text is left
+ *     in the composer, unsent.
  */
 // One key per tab, so concurrent submissions from several new tab pages can never
 // overwrite each other. Mirrors src/*/src/ui/newtab-handoff.js (checked in test/newtab.mjs).

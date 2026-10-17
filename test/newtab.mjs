@@ -2701,3 +2701,24 @@ test('round-85: the handoff module contract says Act is sent immediately', () =>
   assert.doesNotMatch(src, /Act always needs the user's own Enter/);
   assert.match(src, /Ask and Act: the task is filled in and sent straight away/);
 });
+
+test('round-85: inactive settings are inert, dialogs hide the page from assistive technology, the producer contract matches', () => {
+  const wrapper = readFileSync(nt('components/Layout/Settings/PreferencesWrapper/PreferencesWrapper.jsx'), 'utf8');
+  assert.match(wrapper, /className=\{shown \? 'preferences' : 'preferencesInactive'\} inert=\{!shown\}/);
+  const files = [
+    'features/misc/modals/Modals.jsx',
+    'features/misc/sections/Advanced.jsx',
+    'features/background/options/Custom.jsx',
+    'features/navbar/options/AppsOptions.jsx',
+    'features/quicklinks/options/QuickLinksOptions.jsx',
+  ];
+  for (const f of files) {
+    const src = readFileSync(nt(f), 'utf8');
+    assert.doesNotMatch(src, /ariaHideApp=\{false\}/, f);
+    assert.match(src, /appElement=\{pageElement\(\)\}/, f);
+    if (!f.endsWith('Modals.jsx')) assert.match(src, /aria=\{\{ modal: true \}\}/, f);
+  }
+  const handoff = readFileSync(nt('features/agent/handoff.js'), 'utf8');
+  assert.doesNotMatch(handoff, /does NOT send|user always confirms an Act run/);
+  assert.match(handoff, /Ask and Act: fills the composer and sends straight away/);
+});

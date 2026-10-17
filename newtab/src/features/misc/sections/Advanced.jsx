@@ -1,6 +1,7 @@
 import variables from 'config/variables';
 import { useState } from 'react';
 import Modal from 'react-modal';
+import { pageElement } from 'utils/pageElement';
 import {
   MdUpload as ImportIcon,
   MdDownload as ExportIcon,
@@ -103,7 +104,8 @@ function AdvancedOptions({ currentSubSection, onSubSectionChange, sectionName })
             isOpen={resetModal}
             className="Modal resetmodal mainModal"
             overlayClassName="Overlay resetoverlay"
-            ariaHideApp={false}
+            appElement={pageElement()}
+            aria={{ modal: true }}
           >
             <ResetModal modalClose={() => setResetModal(false)} />
           </Modal>

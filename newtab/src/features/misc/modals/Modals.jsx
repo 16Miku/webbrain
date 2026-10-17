@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import Modal from 'react-modal';
+import { pageElement } from 'utils/pageElement';
 
 import { MainModal } from 'components/Elements';
 import Navbar from '../../navbar/Navbar';
@@ -63,7 +64,7 @@ const Modals = () => {
         isOpen={mainModal}
         className="Modal mainModal"
         overlayClassName="Overlay"
-        ariaHideApp={false}
+        appElement={pageElement()}
       >
         <MainModal modalClose={() => toggleMainModal(false)} deepLinkData={deepLinkData} />
       </Modal>

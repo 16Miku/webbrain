@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useT } from 'contexts';
 
 import Modal from 'react-modal';
+import { pageElement } from 'utils/pageElement';
 import EventBus from 'utils/eventbus';
 import { MdAddLink } from 'react-icons/md';
 
@@ -165,7 +166,8 @@ function AppsOptions({ appsEnabled }) {
         isOpen={appsModalInfo.edit || appsModalInfo.newLink}
         className="Modal resetmodal mainModal"
         overlayClassName="Overlay resetoverlay"
-        ariaHideApp={false}
+        appElement={pageElement()}
+        aria={{ modal: true }}
       >
         <AddModal
           urlError={appsModalInfo.urlError}

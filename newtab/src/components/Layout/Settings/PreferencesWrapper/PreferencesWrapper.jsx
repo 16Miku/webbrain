@@ -21,7 +21,9 @@ const PreferencesWrapper = ({ children, ...props }) => {
   }, [props.setting]);
 
   return (
-    <div className={shown ? 'preferences' : 'preferencesInactive'}>
+    // `inert` takes the greyed-out controls out of the tab order and the accessibility tree too;
+    // the CSS class alone only blocks the pointer.
+    <div className={shown ? 'preferences' : 'preferencesInactive'} inert={!shown}>
       {props.zoomSetting && (
         <Row>
           <Content
