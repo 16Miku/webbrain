@@ -27,10 +27,11 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     would refuse is accepted, and the final answer ends with one line,
     "WebBrain could not verify everything: …" (at most four items).
   - A completion accepted over a guard that knows the claim is wrong (the
-    completion judge's "not done", an unauthorized mutation, missing or
-    failed progress rows, text that went into a formatting toolbar) ends the
-    run as `partial`, not `success`. Missing evidence alone keeps the
-    model's outcome.
+    completion judge's "not done", an unauthorized mutation, missing, failed
+    or unfinished progress rows, unread pages of a whole thread the user
+    asked for, text that went into a formatting toolbar) ends the run as
+    `partial`, not `success`. Missing evidence alone keeps the model's
+    outcome.
   - A write that went out but could not be read back exactly (GitHub's
     CodeMirror editor is the usual case) is an unverified success: it locks
     nothing, arms no text-write debt and is not a loop failure.

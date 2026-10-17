@@ -330,15 +330,33 @@ function selectionScopedResponseLanguagePolicy(locale) {
   };
 }
 
+// Completion guards whose decided case means the task as claimed is not
+// done. A success accepted over one of them ends the run as partial.
+//   completion-verifier-not-done: the completion judge's sure verdict.
+//   plan-unauthorized-mutation-recorded: a forbidden submit or blocked repair.
+//   progress-success-claim-checks: missing, skipped or failed items.
+//   progress-ledger-unresolved: items still pending or acted on.
+//   read-coverage-incomplete: pages of a requested whole read never read
+//     (an unconfirmed Gmail expansion is its undecided case).
+//   done-rich-text-toolbar-obligation: text typed into a toolbar.
+// Left out, because their decided case can be wrong about a finished task
+// or says nothing about it:
+//   completion-page-warning: the open dialog or form error may be unrelated.
+//   done-summary-meta-only, plan-done-summary-shape: the summary's wording.
+//   pure-calculation-done-checks: how the summary writes the result.
+//   exact-table-done: a rowCount that disagrees with rows that may be complete.
+//   plain-final-done-protocol, plan-plain-final-protocol: how the answer
+//     ended, not the task.
+//   incomplete-task-redirect: it only sees partial or failed endings.
+//   done-invariant-shape-checks: a missing outcome already counts as partial.
+//   github-committed-file-verification: never decided; an unread raw blob
+//     and a mismatched one both reach it as missing evidence.
+const OUTCOME_DOWNGRADING_GUARDS = new Set(['completion-verifier-not-done', 'plan-unauthorized-mutation-recorded',
+  'progress-success-claim-checks', 'progress-ledger-unresolved', 'read-coverage-incomplete',
+  'done-rich-text-toolbar-obligation']);
+
 // What the user is told when a run ends with plain text after the "end with
 // done" note was given once (Strict checks off).
-// Completion guards whose decided case means the task is not done (a
-// judge's sure verdict, a forbidden submission, failed or missing items,
-// text typed into a toolbar). Accepted over their advice, a success claim
-// ends the run as partial.
-const OUTCOME_DOWNGRADING_GUARDS = new Set(['completion-verifier-not-done', 'plan-unauthorized-mutation-recorded',
-  'progress-success-claim-checks', 'done-rich-text-toolbar-obligation']);
-
 const PLAIN_FINAL_PROTOCOL_CAVEAT = 'The task ended with a plain answer instead of a checked completion.';
 
 function defaultPlanExecutionBlockNudge({

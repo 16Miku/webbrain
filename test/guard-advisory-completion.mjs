@@ -274,6 +274,31 @@ for (const build of ['chrome', 'firefox']) {
       }
     });
 
+    test(`${label}: a plain final accepted over unfinished progress rows ends the run as partial`, async () => {
+      for (const status of ['pending', 'acted']) {
+        const tab = nextTab++;
+        let n = 0;
+        const agent = loopAgent(Agent, async () => {
+          n++;
+          return { content: 'Processed both items.' };
+        });
+        agent._currentTaskLedgerRows = () => [{ id: 'item-1', label: 'First', status: 'processed' },
+          { id: 'item-2', label: 'Second', status }];
+        const runStatuses = [];
+        let finished = null;
+        const onUpdate = (type, data) => { if (type === 'run_status') runStatuses.push(data?.status); };
+        const options = { detachedRequestId: `guard-${tab}`, onRunFinished: value => { finished = value; } };
+        const result = streaming
+          ? await agent.processMessageStream(tab, 'Process both items.', onUpdate, 'act', options)
+          : await agent.processMessage(tab, 'Process both items.', onUpdate, 'act', [], options);
+        assert.ok(n > 1, `${label} ${status}: the first plain final gets its progress note`);
+        assert.ok(String(result).startsWith(`Processed both items.\n\n${CAVEAT}`), `${label} ${status}: caveat missing from ${JSON.stringify(result)}`);
+        assert.match(result, /1 of 2 items in the task's progress list were not finished\./);
+        assert.equal(finished, 'partial', `${label} ${status}: the run finished as a success with an item unfinished`);
+        assert.deepEqual(runStatuses, ['partial'], `${label} ${status}: the scheduler did not hear the partial ending`);
+      }
+    });
+
     test(`${label}: a plain final after a chat send saves the delivery receipt first`, async () => {
       // A plain final ends a run where done would have saved the receipt
       // (native-chat-receipt-not-durable), so it runs the same check.
@@ -528,6 +553,22 @@ for (const build of ['chrome', 'firefox']) {
     '1 of 2 items in the task\'s progress list were not finished.', `${build} unresolved rows`);
   });
 
+  test(`${build}: a success accepted over unfinished progress rows ends as partial`, async () => {
+    for (const status of ['pending', 'acted']) {
+      const h = batchAgent(Agent);
+      h.agent._currentTaskLedgerRows = () => [{ id: 'item-1', label: 'First', status: 'processed' },
+        { id: 'item-2', label: 'Second', status }];
+      const done = ['done', { summary: 'Both items are done.', outcome: 'success' }];
+      assert.equal((await h.batch([done])).action, 'continue', `${build} ${status}: the first success claim gets its note`);
+      const updates = [];
+      const accepted = await h.batch([done], updates);
+      assert.equal(accepted.action, 'return', `${build} ${status}: the second success claim is accepted`);
+      assert.ok(String(accepted.value).includes(`${CAVEAT}1 of 2 items in the task's progress list were not finished.`));
+      const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+      assert.equal(doneResult?.outcome, 'partial', `${build} ${status}: a success with an item unfinished was not downgraded`);
+    }
+  });
+
   test(`${build}: a success claim over skipped or failed progress rows is advised once`, async () => {
     const rows = [{ id: 'item-1', label: 'First', status: 'processed' }, { id: 'item-2', label: 'Second', status: 'skipped' }];
     await refusedOnceThenAccepted(Agent, {
@@ -536,7 +577,7 @@ for (const build of ['chrome', 'firefox']) {
     'Some items in the task\'s progress list are missing, incomplete, skipped or failed.', `${build} skipped rows`);
   });
 
-  // ── Read coverage (Ask-mode Gmail) ─────────────────────────────────────
+  // ── Read coverage ──────────────────────────────────────────────────────
   test(`${build}: Ask keeps the answer and adds the Gmail expansion limitation after one note`, async () => {
     for (const strict of [false, true]) {
       const h = batchAgent(Agent, { mode: 'ask', strict });
@@ -563,6 +604,44 @@ for (const build of ['chrome', 'firefox']) {
       const second = await h.batch([done]);
       assert.equal(second.action, 'return');
       assert.equal(second.value, `The visible messages discuss the launch date.\n\n${CAVEAT}Ask mode cannot expand collapsed Gmail messages, so some messages in the conversation may be missing.`);
+    }
+  });
+
+  test(`${build}: a success accepted over unread pages of a requested whole read ends as partial`, async () => {
+    // decided: page 2 of the thread was never read (the check knows).
+    // Undecided: Act mode could not confirm Gmail's expansion.
+    for (const decided of [true, false]) {
+      const h = batchAgent(Agent, { task: 'Summarize this whole conversation.' });
+      h.agent._currentUrl = async () => decided ? 'https://outlook.live.com/mail/0/inbox/id/AQMkADAwATM0MDAAMS1i'
+        : 'https://mail.google.com/mail/u/0/#inbox/FMfc123';
+      await h.agent._beginReadCompleteness(h.tab, 'Summarize this whole conversation.', {});
+      h.agent._armReadCompletenessFromPlan(h.tab, { request_kind: 'execute', read_scope: 'complete_thread' });
+      if (decided) {
+        h.agent._recordReadCompleteness(h.tab, 'get_accessibility_tree', { filter: 'all', maxDepth: 15 }, {
+          pageContent: 'main\n listitem "First message"', page: 1, totalChars: 9000, hasMore: true, truncated: false, nextPage: 2 });
+      } else {
+        const root = `ref_${build}_root`;
+        h.agent._recordReadCompleteness(h.tab, 'get_accessibility_tree', { filter: 'visible', maxDepth: 12 }, {
+          pageContent: 'main\n button "Expand all"', page: 1, hasMore: false, truncated: false,
+          conversationRootRefId: root, conversationExpansionState: 'collapsed' });
+        h.agent._recordReadCompleteness(h.tab, 'get_accessibility_tree', { filter: 'all', maxDepth: 15, ref_id: root }, {
+          pageContent: 'main\n button "Expand all"\n listitem "Latest visible message"', page: 1, totalChars: 1200,
+          hasMore: false, truncated: false, continuationArgs: null, conversationRootRefId: root,
+          conversationExpansionState: 'collapsed', treeRevision: 'fnv1a64:4444444444444444' });
+      }
+      const state = h.agent.readCompletenessStates.get(h.tab);
+      assert.equal(state?.required === true && state.complete === false, true, `${build}: the whole read must be required and incomplete`);
+      const done = ['done', { summary: 'The thread settles the launch date.', outcome: 'success' }];
+      assert.equal((await h.batch([done])).action, 'continue', `${build}: the first completion gets its coverage note`);
+      const updates = [];
+      const accepted = await h.batch([done], updates);
+      assert.equal(accepted.action, 'return', `${build}: the second completion is accepted`);
+      assert.match(String(accepted.value), decided ? /Not every part of the conversation was confirmed as read\./
+        : /Some Gmail messages may have stayed collapsed/);
+      const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+      assert.equal(doneResult?.outcome, decided ? 'partial' : 'success', decided
+        ? `${build}: a success over unread pages was not downgraded`
+        : `${build}: an unconfirmed Gmail expansion alone must not downgrade the outcome`);
     }
   });
 
