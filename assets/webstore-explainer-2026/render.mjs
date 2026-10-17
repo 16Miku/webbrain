@@ -693,7 +693,7 @@ const scenes = [
   hero(true), planScene(true),
   // The install page renders localized HTML over these copy-free variants.
   // Keep the Web Store artwork above unchanged: its English copy is intentional.
-  actScene(true), askScene(true), modelsScene(true), apocalypseScene({ onboarding: true }),
+  actScene(true), askScene(true), modelsScene(true),
 ];
 
 function html(scene) {

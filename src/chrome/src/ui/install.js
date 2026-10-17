@@ -1,4 +1,10 @@
 import { applyDOMTranslations, t } from './i18n.js';
+import {
+  initializeCardSpotlight,
+  initializeScenePlayback,
+  initializeShowcaseAutoplay,
+  startRecordingClock,
+} from './install-motion.js';
 
 const GUIDES = {
   chrome: { name: 'Google Chrome', openKey: 'install.open_panel', failureKey: 'install.open_failed_chromium' },
@@ -129,9 +135,25 @@ async function getInstallTab(build) {
   }
 }
 
+/**
+ * The page is complete without any motion, so a failure here must never get in
+ * the way of the open-panel action that the rest of hydration wires up.
+ */
+function initializeMotion() {
+  try {
+    initializeShowcaseAutoplay({ select: (feature) => selectInstallFeature(feature) });
+    initializeScenePlayback();
+    initializeCardSpotlight();
+    startRecordingClock();
+  } catch (error) {
+    console.warn('[WebBrain] Install page motion unavailable:', error);
+  }
+}
+
 async function hydrateGuide() {
   applyDOMTranslations(document);
   initializeFeatureShowcase();
+  initializeMotion();
 
   const build = document.documentElement.dataset.build;
   const [browserKey, installTab] = await Promise.all([
@@ -145,14 +167,28 @@ async function hydrateGuide() {
   const openButton = document.getElementById('open-panel-button');
   const openLabel = document.getElementById('open-panel-label');
   const status = document.getElementById('open-panel-status');
+  // The closing call-to-action repeats the button for visitors who scrolled
+  // the whole page. It forwards to the primary button (so one click handler,
+  // one in-flight open) and mirrors its status line.
+  const mirrorButtons = Array.from(document.querySelectorAll('[data-open-panel-mirror]'));
+  const statusLines = [status, ...document.querySelectorAll('[data-open-panel-status-mirror]')];
+  const showStatus = (text, isError = false) => {
+    for (const line of statusLines) {
+      line.classList.toggle('is-error', isError);
+      line.textContent = text;
+    }
+  };
+  const setMirrorsDisabled = (disabled) => {
+    for (const mirror of mirrorButtons) mirror.disabled = disabled;
+  };
   openLabel.textContent = t(guide.openKey);
 
   openButton.addEventListener('click', () => {
     openButton.classList.add('is-opening');
     openButton.disabled = true;
+    setMirrorsDisabled(true);
     openButton.setAttribute('aria-busy', 'true');
-    status.classList.remove('is-error');
-    status.textContent = '';
+    showStatus('');
 
     let opening;
     try {
@@ -164,18 +200,23 @@ async function hydrateGuide() {
     Promise.resolve(opening).then(() => {
       openButton.classList.remove('is-opening');
       openButton.disabled = false;
+      setMirrorsDisabled(false);
       openButton.removeAttribute('aria-busy');
-      status.textContent = '';
+      showStatus('');
       reportInstalledPanelOpened({ build, tabId: installTab?.id }).catch(() => {});
     }).catch(() => {
       openButton.classList.remove('is-opening');
       openButton.disabled = false;
+      setMirrorsDisabled(false);
       openButton.removeAttribute('aria-busy');
-      status.classList.add('is-error');
-      status.textContent = t(guide.failureKey);
+      showStatus(t(guide.failureKey), true);
     });
   });
+  for (const mirror of mirrorButtons) {
+    mirror.addEventListener('click', () => openButton.click());
+  }
   openButton.disabled = false;
+  setMirrorsDisabled(false);
 
   if (build === 'firefox') {
     document.getElementById('shortcut-hint')?.remove();
