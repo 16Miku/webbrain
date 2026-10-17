@@ -1023,6 +1023,17 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(KEY in h.store, false);
   });
 
+  test(`${browser}: an existing draft keeps its own whitespace when the task is added below it`, async () => {
+    const h = await harness({ record: rec({ text: 'summarise this' }) });
+    h.input.value = '    indented code\n  more  ';
+    assert.equal(await h.handoff.consume(), true);
+    assert.equal(h.input.value, '    indented code\n  more  \n\nsummarise this');
+    const blank = await harness({ record: rec({ mode: 'act', text: 'task' }) });
+    blank.input.value = '   \n ';
+    await blank.handoff.consume();
+    assert.equal(blank.input.value, 'task', 'a whitespace-only composer counts as empty');
+  });
+
   test(`${browser}: manifest and background are wired`, () => {
     const manifest = JSON.parse(readFileSync(path.join(root, 'src', browser, 'manifest.json'), 'utf8'));
     assert.equal(manifest.chrome_url_overrides?.newtab, 'newtab/index.html');

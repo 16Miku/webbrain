@@ -229,10 +229,12 @@ export function createNewtabHandoff({
       // and the panel keeps the mode that draft was written in: switching it would
       // change what confirming the combined draft does (an Ask draft would become
       // an Act, or the reverse).
-      const existing = String(input.value || '').trim();
+      // `existing` is only for the emptiness / equality checks; the draft itself is kept as typed.
+      const draft = String(input.value || '');
+      const existing = draft.trim();
       const keepsDraft = Boolean(existing) && existing !== handoff.text;
       if (!keepsDraft) setMode(handoff.mode);
-      const composerText = keepsDraft ? `${existing}\n\n${handoff.text}` : handoff.text;
+      const composerText = keepsDraft ? `${draft}\n\n${handoff.text}` : handoff.text;
       const fill = () => {
         input.value = composerText;
         input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -263,10 +265,10 @@ export function createNewtabHandoff({
             // box, so make sure the text is still sitting in the composer.
             if (sent) return;
             if (sameTab()) {
-              const current = String(input.value || '').trim();
-              if (!current) {
+              const current = String(input.value || '');
+              if (!current.trim()) {
                 fill();
-              } else if (current !== handoff.text && !current.endsWith(`\n\n${handoff.text}`)) {
+              } else if (current.trim() !== handoff.text && !current.endsWith(`\n\n${handoff.text}`)) {
                 // The user typed something else while the send was pending: keep their draft and
                 // put the task below it (the record is gone, so this is the only copy left).
                 input.value = `${current}\n\n${handoff.text}`;
