@@ -168,6 +168,13 @@ export function validateSettings(content) {
         const isColour = favourite.type === 'random_colour' || favourite.type === 'random_gradient';
         const usable = isColour ? isCssBackground(favourite.url) : isBackgroundUrl(favourite.url);
         if (!usable) return 'favourite has no usable url';
+        // The credit line, colour and blur hash are rendered / applied as they are.
+        const metadataOk =
+          optional(favourite.credit, isString) &&
+          optional(favourite.colour, isString) &&
+          optional(favourite.blur_hash, isString) &&
+          optional(favourite.hidden, (v) => typeof v === 'boolean');
+        if (!metadataOk) return 'favourite has malformed display details';
       }
     } catch {
       return 'favourite is not valid JSON';

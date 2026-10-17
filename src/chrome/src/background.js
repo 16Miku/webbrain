@@ -1639,51 +1639,27 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 });
 
 // Hand-off records from the new tab are removed by the panel that claims them.
-// This drops any that were never claimed (the tab was closed first).
-async function sweepStaleNewtabHandoffs() {
-  try {
-    // Past the longest age the panel still accepts (150 s), so nothing claimable is removed.
-    const cutoff = Date.now() - 180_000;
-    const staleKeys = (all) =>
-      Object.keys(all).filter(
-        // The panel's retry slot (`wbNewtabHandoff:retry:<tabId>`) is written by the panel
-        // while it is alive, so it is not judged from a snapshot: it goes with its tab, or
-        // at browser start.
-        (key) => key.startsWith('wbNewtabHandoff:') && !key.startsWith('wbNewtabHandoff:retry:') &&
-          !(Number(all[key]?.createdAt) > cutoff),
-      );
-    const stale = staleKeys(await chrome.storage.local.get(null));
-    if (!stale.length) return;
-    // Look again just before deleting: a fresh task may have been stored since the snapshot.
-    const fresh = await chrome.storage.local.get(stale);
-    const confirmed = staleKeys(fresh);
-    if (confirmed.length) await chrome.storage.local.remove(confirmed);
-  } catch {
-    // best effort
-  }
-}
-
-// Handed-back tasks (retry slots) from a previous browser session belong to tabs that no
-// longer exist.
+// Handed-off tasks (and handed-back ones) from a previous browser session belong to tabs that
+// no longer exist. Cleared once, at browser start, before any new tab can have submitted one;
+// a sweep at other times could delete a task stored a moment after it looked, and storage has
+// no compare-and-delete. Within a session the panel removes what it claims, stale records are
+// ignored by their age, and closing a tab removes its records.
 chrome.runtime.onStartup?.addListener?.(async () => {
   try {
     const all = await chrome.storage.local.get(null);
-    const retryKeys = Object.keys(all).filter((key) => key.startsWith('wbNewtabHandoff:retry:'));
-    if (retryKeys.length) await chrome.storage.local.remove(retryKeys);
+    const keys = Object.keys(all).filter((key) => key.startsWith('wbNewtabHandoff:'));
+    if (keys.length) await chrome.storage.local.remove(keys);
   } catch {
     // best effort
   }
 });
 
-// A tab that closes before its panel claimed the task takes the task with it, and
-// anything left over from a previous browser session is dropped on every start of
-// the background (top level runs at browser start and when the worker wakes).
+// A tab that closes before its panel claimed the task takes the task with it.
 chrome.tabs.onRemoved.addListener((closedTabId) => {
   chrome.storage.local
     .remove([`wbNewtabHandoff:${closedTabId}`, `wbNewtabHandoff:retry:${closedTabId}`])
     .catch(() => {});
 });
-sweepStaleNewtabHandoffs();
 
 // The new tab page opens the panel from its own submit handler (it must, to
 // keep the user gesture) and reports it here, mirroring the install page above.
@@ -1702,8 +1678,6 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   ) {
     return;
   }
-
-  sweepStaleNewtabHandoffs();
 
   chrome.tabs.get(tabId).then((tab) => {
     if (String(tab?.url || '').split(/[?#]/)[0] !== newtabUrl) return;

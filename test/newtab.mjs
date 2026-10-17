@@ -891,7 +891,7 @@ for (const browser of ['chrome', 'firefox']) {
     assert.match(bg, /WB_NEWTAB_PANEL_OPENED/);
     // Unclaimed records are cleaned up without waiting for another submission.
     assert.match(bg, /tabs\.onRemoved\.addListener\(\(closedTabId\)[^]*?wbNewtabHandoff:\$\{closedTabId\}/);
-    assert.match(bg, /\nsweepStaleNewtabHandoffs\(\);/);
+    assert.match(bg, /runtime\.onStartup\?\.addListener\?\.\(async \(\) => \{\s*try \{[\s\S]*startsWith\('wbNewtabHandoff:'\)/);
   });
 }
 
@@ -1051,7 +1051,7 @@ test('picking a colour refreshes the visible background even though the type is 
   assert.match(hook, /type === 'colour'/);
 });
 
-test('the producer lock and the background sweep outlast the panel\'s accepted record age', async () => {
+test('the producer lock outlasts the panel\'s accepted record age', async () => {
   const { NEWTAB_HANDOFF_MAX_AGE_MS, NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS } =
     await load(path.join(root, 'src/chrome/src/ui/newtab-handoff.js'));
   const longest = NEWTAB_HANDOFF_MAX_AGE_MS + NEWTAB_HANDOFF_MAX_STARTUP_ALLOWANCE_MS;
@@ -1059,11 +1059,6 @@ test('the producer lock and the background sweep outlast the panel\'s accepted r
 
   const lock = number(readFileSync(nt('features/agent/handoff.js'), 'utf8'), /CLAIM_TIMEOUT_MS = ([\d_]+)/);
   assert.ok(lock > longest, `producer lock ${lock} must exceed ${longest}`);
-  for (const b of ['chrome', 'firefox']) {
-    const bg = readFileSync(path.join(root, 'src', b, 'src/background.js'), 'utf8');
-    const cutoff = number(bg, /const cutoff = Date\.now\(\) - ([\d_]+);/);
-    assert.ok(cutoff > longest, `${b} sweep cutoff ${cutoff} must exceed ${longest}`);
-  }
 });
 
 test('the recent-chats switch refreshes the widgets', () => {
@@ -1564,6 +1559,9 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     globalThis.CSS = { supports: (_p, v) => /^(#|rgb|linear-gradient)/.test(v) };
     try {
       assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"type":"random_colour","url":"not-a-colour"}' })), false);
+      assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"url":"https://img.test/a.jpg","credit":{}}' })), false);
+      assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"url":"https://img.test/a.jpg","blur_hash":[],"hidden":"no"}' })), false);
+      assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"url":"https://img.test/a.jpg","credit":"Ada","colour":"#fff"}' })), true);
       assert.equal(await mod.importSettings(JSON.stringify({ favourite: '{"type":"random_gradient","url":"linear-gradient(red, blue)"}' })), true);
     } finally {
       delete globalThis.CSS;
@@ -1764,12 +1762,12 @@ test('round-43: todo delete icon is a keyboard control', () => {
   assert.match(todo, /<MdDelete\s+role="button"\s+tabIndex=\{0\}/);
 });
 
-test('round-46/49: the stale-record sweep leaves the panel-owned retry slot alone and re-checks before deleting', () => {
+test('round-51: handoff records are cleared at browser start, never swept from a snapshot', () => {
   for (const [file, api] of [['src/chrome/src/background.js', 'chrome'], ['src/firefox/src/background.js', 'browser']]) {
     const src = readFileSync(path.join(root, file), 'utf8');
-    assert.match(src, /!key\.startsWith\('wbNewtabHandoff:retry:'\)/, file);
-    assert.match(src, /Look again just before deleting/, file);
-    assert.match(src, /onStartup\?\.addListener\?\.\(async \(\) => \{\s*try \{[\s\S]*wbNewtabHandoff:retry:/, file);
+    assert.doesNotMatch(src, /sweepStaleNewtabHandoffs/, file);
+    assert.match(src, /onStartup\?\.addListener\?\.\(async \(\) => \{\s*try \{[\s\S]*startsWith\('wbNewtabHandoff:'\)/, file);
+    assert.match(src, /wbNewtabHandoff:retry:\$\{closedTabId\}/, file);
   }
 });
 
