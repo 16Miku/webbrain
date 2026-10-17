@@ -11,7 +11,6 @@ const TRANSITION_DURATION = 1200; // milliseconds
  */
 export function useBackgroundRenderer(backgroundData) {
   const blobRef = useRef(null);
-  const abortControllerRef = useRef(null);
 
   useEffect(() => {
     if (backgroundData.video) return;
@@ -19,11 +18,10 @@ export function useBackgroundRenderer(backgroundData) {
     const element = document.getElementById('backgroundImage');
     if (!element) return;
 
-    // Abort any pending image loads
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    abortControllerRef.current = new AbortController();
+    // Set by the cleanup below: an earlier load that resumes after a newer
+    // background was chosen must not paint over it.
+    let cancelled = false;
+    let swapTimer = null;
 
     const applyBackground = async () => {
       if (backgroundData.url) {
@@ -60,6 +58,10 @@ export function useBackgroundRenderer(backgroundData) {
 
         // Load the full image
         const blobUrl = await createBlobUrl(backgroundData.url);
+        if (cancelled) {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          return;
+        }
         const finalUrl = blobUrl || backgroundData.url;
 
         if (blobUrl) {
@@ -77,6 +79,7 @@ export function useBackgroundRenderer(backgroundData) {
           img.onload = resolve;
           img.onerror = resolve;
         });
+        if (cancelled) return;
 
         // CRITICAL: Reset overlay to invisible FIRST
         overlay.style.transition = 'none';
@@ -102,7 +105,7 @@ export function useBackgroundRenderer(backgroundData) {
         overlay.style.opacity = '1';
 
         // After fade completes, swap to main element and reset overlay
-        setTimeout(() => {
+        swapTimer = setTimeout(() => {
           element.style.backgroundImage = `url(${finalUrl})`;
           overlay.style.opacity = '0';
           overlay.style.backgroundImage = '';
@@ -115,14 +118,13 @@ export function useBackgroundRenderer(backgroundData) {
     applyBackground();
 
     return () => {
+      cancelled = true;
+      clearTimeout(swapTimer);
+
       // Cleanup blob URL
       if (blobRef.current) {
         URL.revokeObjectURL(blobRef.current);
-      }
-
-      // Abort pending image loads
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
+        blobRef.current = null;
       }
 
       // Remove overlay element to prevent memory leak

@@ -787,3 +787,16 @@ test('the unreachable custom-URL background flow is gone', () => {
   assert.doesNotMatch(src, /addCustomURL|CustomURLModal|setCustomURLModal/);
   assert.equal(existsSync(nt('features/background/options/CustomURLModal.jsx')), false);
 });
+
+test('a superseded background load is cancelled instead of painting over the newer one', () => {
+  const src = readFileSync(nt('features/background/hooks/useBackgroundRenderer.js'), 'utf8');
+  assert.match(src, /let cancelled = false/);
+  assert.match(src, /cancelled = true;\s*clearTimeout\(swapTimer\)/);
+  assert.equal((src.match(/if \(cancelled\)/g) || []).length >= 2, true);
+  assert.doesNotMatch(src, /abortControllerRef/);
+});
+
+test('the background settings header has a Hide/Show toggle', () => {
+  const src = readFileSync(nt('features/background/options/BackgroundOptions.jsx'), 'utf8');
+  assert.match(src, /setting="background"[\s\S]{0,120}visibilityToggle=\{true\}/);
+});

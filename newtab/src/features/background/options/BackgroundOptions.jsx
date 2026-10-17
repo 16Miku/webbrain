@@ -82,6 +82,7 @@ const BackgroundOptions = memo(({ currentSubSection, onSubSectionChange, section
         setting="background"
         category="background"
         element="#backgroundImage"
+        visibilityToggle={true}
       />
     );
   };
