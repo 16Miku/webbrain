@@ -14,13 +14,14 @@ import 'react-toastify/dist/ReactToastify.css';
 
 import { initTranslations } from 'lib/translations';
 import { resolveMueLanguage } from 'lib/locale';
+import { applyDocumentLanguage } from 'lib/document-language';
 import { isWbKey, wbT } from 'lib/wb-strings';
 
 const languagecode = resolveMueLanguage();
 localStorage.setItem('language', languagecode);
 variables.language = initTranslations(languagecode);
 variables.languagecode = languagecode;
-document.documentElement.lang = languagecode.replace('_', '-');
+applyDocumentLanguage();
 
 variables.getMessage = (text, optional) =>
   isWbKey(text)

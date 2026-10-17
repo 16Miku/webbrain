@@ -6,6 +6,8 @@ import {
   getAllBackgroundsWithMetadata,
   getBackgroundCount,
 } from 'utils/customBackgroundDB';
+import EventBus from 'utils/eventbus';
+import { rawStorage } from 'lib/storage-namespace';
 import { BACKGROUNDS_BACKUP_KEY } from './export';
 
 /**
@@ -29,22 +31,33 @@ export async function importSettings(e, initial = false) {
     return false;
   }
 
-  // Uploaded images / videos live in IndexedDB; the backup replaces what is there. This goes
-  // first and is all-or-nothing: if it fails the current gallery is put back and nothing else
-  // is imported, rather than reporting success for a half-restored profile.
-  if (Array.isArray(backgrounds)) {
-    try {
-      await replaceBackgrounds(backgrounds);
-    } catch (error) {
-      console.error('Could not restore uploaded backgrounds:', error);
-      toast(variables.getMessage('toasts.error'));
-      return false;
-    }
-  }
+  // Everything below is all-or-nothing. Uploaded images / videos live in IndexedDB and the
+  // backup replaces them; settings go to localStorage, which can hit its quota part-way.
+  // On any failure both stores are put back and the user is told, instead of being left
+  // with a half-imported profile.
+  let restoreGallery = null;
+  const previousValues = new Map();
+  try {
+    if (Array.isArray(backgrounds)) restoreGallery = await replaceBackgrounds(backgrounds);
 
-  Object.keys(content).forEach((key) => {
-    localStorage.setItem(key, content[key]);
-  });
+    Object.keys(content).forEach((key) => {
+      if (!previousValues.has(key)) previousValues.set(key, localStorage.getItem(key));
+      localStorage.setItem(key, content[key]);
+    });
+  } catch (error) {
+    console.error('Settings import failed, rolling back:', error);
+    previousValues.forEach((value, key) => {
+      try {
+        if (value === null) localStorage.removeItem(key);
+        else localStorage.setItem(key, value);
+      } catch {
+        // nothing more to do for this key
+      }
+    });
+    if (restoreGallery) await restoreGallery();
+    toast(variables.getMessage('toasts.error'));
+    return false;
+  }
 
   toast(variables.getMessage('toasts.imported'));
   // don't show achievements on welcome
@@ -52,14 +65,20 @@ export async function importSettings(e, initial = false) {
     variables.stats.postEvent('tab', 'Settings imported');
   }
 
-  // Widgets, theme and the settings controls hold the old values in state; a reload (after
-  // the toast has had a moment to show) is what applies the imported ones.
-  setTimeout(() => window.location.reload(), 1200);
+  // Widgets, theme and the settings controls hold the old values in state, so they have to be
+  // rebuilt. A reload does that (after the toast has had a moment to show) - unless storage
+  // only lives in memory, where a reload would throw the import away: remount instead.
+  if (rawStorage) {
+    setTimeout(() => window.location.reload(), 1200);
+  } else {
+    EventBus.emit('settingsimported');
+  }
   return true;
 }
 
 const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again
 
+/** Replaces the gallery with `incoming`; resolves to a function that puts the old one back. */
 async function replaceBackgrounds(incoming) {
   const records = incoming
     .filter((background) => background && typeof background.url === 'string')
@@ -70,17 +89,21 @@ async function replaceBackgrounds(incoming) {
   const previous = count > 0 ? (await getAllBackgroundsWithMetadata()).map(withoutId) : [];
   if (previous.length !== count) throw new Error('current gallery could not be read');
 
-  try {
-    await clearAllBackgrounds();
-    for (const record of records) await addBackground(record);
-  } catch (error) {
-    // Roll back to what the user had.
+  const restore = async () => {
     try {
       await clearAllBackgrounds();
       for (const record of previous) await addBackground(record);
     } catch (rollbackError) {
       console.error('Rollback of the background gallery failed:', rollbackError);
     }
+  };
+
+  try {
+    await clearAllBackgrounds();
+    for (const record of records) await addBackground(record);
+  } catch (error) {
+    await restore();
     throw error;
   }
+  return restore;
 }

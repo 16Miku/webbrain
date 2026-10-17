@@ -47,6 +47,9 @@ export function useBackgroundEvents(backgroundData, refreshBackground) {
     };
 
     const applyFilters = () => {
+      // Maximised shows the picture without effects; Maximise puts the stored ones back.
+      if (document.documentElement.dataset.bgMaximised === 'true') return;
+
       // For video backgrounds, apply filters directly to the video element
       if (backgroundData.video) {
         const filter = getBackgroundFilterStyle();

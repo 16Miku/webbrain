@@ -1184,21 +1184,30 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     'react-toastify': 'export const toast = (m) => { (globalThis.__toasts ||= []).push(m); };',
     'config/variables': 'export default { getMessage: (k) => k, stats: { postEvent() {} } };',
   };
-  const plugin = {
-    name: 'fakes',
-    setup(build) {
-      build.onResolve({ filter: /^(utils\/customBackgroundDB|react-toastify|config\/variables)$/ }, (a) => ({ path: a.path, namespace: 'fake' }));
-      build.onLoad({ filter: /.*/, namespace: 'fake' }, (a) => ({ contents: fakes[a.path], loader: 'js' }));
-    },
+  const bundleImport = async (persistent) => {
+    const all = {
+      ...fakes,
+      'lib/storage-namespace': `export const rawStorage = ${persistent ? '{}' : 'null'};`,
+      'utils/eventbus': 'export default class EventBus { static emit(name) { (globalThis.__events ||= []).push(name); } }',
+    };
+    const plugin = {
+      name: 'fakes',
+      setup(build) {
+        build.onResolve({ filter: /^(utils\/customBackgroundDB|react-toastify|config\/variables|lib\/storage-namespace|utils\/eventbus)$/ }, (a) => ({ path: a.path, namespace: 'fake' }));
+        build.onLoad({ filter: /.*/, namespace: 'fake' }, (a) => ({ contents: all[a.path], loader: 'js' }));
+      },
+    };
+    const out = await esbuild.build({
+      stdin: {
+        contents: "export { importSettings } from 'utils/settings/import'; export { BACKGROUNDS_BACKUP_KEY } from 'utils/settings/export'; export { db } from 'utils/customBackgroundDB';",
+        resolveDir: nt(), loader: 'js',
+      },
+      bundle: true, write: false, format: 'esm', nodePaths: [nt()], platform: 'node', plugins: [plugin],
+    });
+    return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
   };
-  const out = await esbuild.build({
-    stdin: {
-      contents: "export { importSettings } from 'utils/settings/import'; export { BACKGROUNDS_BACKUP_KEY } from 'utils/settings/export'; export { db } from 'utils/customBackgroundDB';",
-      resolveDir: nt(), loader: 'js',
-    },
-    bundle: true, write: false, format: 'esm', nodePaths: [nt()], platform: 'node', plugins: [plugin],
-  });
-  const mod = await import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
+  const mod = await bundleImport(true);
+  const memoryMod = await bundleImport(false);
 
   const realLs = globalThis.localStorage;
   const realTimeout = globalThis.setTimeout;
@@ -1247,6 +1256,36 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
     assert.deepEqual(globalThis.__toasts, ['toasts.error', 'toasts.error', 'toasts.error', 'toasts.error']);
     assert.equal(store.getItem('theme'), 'light');
 
+    // a settings write that fails part-way (quota) rolls back both stores
+    {
+      const failing = memoryStorage({ theme: 'light', keep: 'me' });
+      let writes = 0;
+      const realSet = failing.setItem.bind(failing);
+      failing.setItem = (k, v) => { if (++writes === 3) throw new DOMException('QuotaExceededError'); realSet(k, v); };
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: failing });
+      mod.db.rows = [{ id: 1, url: 'data:keep' }];
+      globalThis.__toasts = []; globalThis.__reloads = 0;
+      const res = await mod.importSettings(JSON.stringify({ theme: 'dark', a: '1', b: '2', [K]: [{ url: 'data:replacement' }] }));
+      assert.equal(res, false);
+      assert.equal(failing.getItem('theme'), 'light', 'earlier writes are undone');
+      assert.equal(failing.getItem('a'), null);
+      assert.equal(failing.getItem('keep'), 'me');
+      assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'the old gallery is back');
+      assert.deepEqual(globalThis.__toasts, ['toasts.error']);
+      assert.equal(globalThis.__reloads, 0);
+      Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: store });
+    }
+
+    // with in-memory storage an import remounts instead of reloading (a reload would drop it)
+    {
+      globalThis.__events = []; globalThis.__reloads = 0;
+      memoryMod.db.rows = [];
+      assert.equal(await memoryMod.importSettings(JSON.stringify({ theme: 'sepia' })), true);
+      assert.equal(store.getItem('theme'), 'sepia');
+      assert.equal(globalThis.__reloads, 0);
+      assert.deepEqual(globalThis.__events, ['settingsimported']);
+    }
+
     // an unreadable current gallery aborts instead of being wiped
     mod.db.unreadable = true;
     assert.equal(await mod.importSettings(backup([{ url: 'data:x' }])), false);
@@ -1291,4 +1330,17 @@ test('a Storage object whose methods throw falls back to in-memory storage', asy
   } finally {
     if (realWindow === undefined) delete globalThis.window; else globalThis.window = realWindow;
   }
+});
+
+test('round-27: document language follows the WebBrain locale; effects wait while maximised; import remount wired', () => {
+  const read = (f) => readFileSync(nt(f), 'utf8');
+  assert.match(read('index.jsx'), /applyDocumentLanguage\(\);/);
+  assert.doesNotMatch(read('index.jsx'), /documentElement\.lang = languagecode/);
+  const ctx = read('contexts/TranslationContext.jsx');
+  assert.doesNotMatch(ctx, /documentElement\.lang = /);
+  assert.equal((ctx.match(/applyDocumentLanguage\(\)/g) || []).length, 2);
+  assert.match(read('lib/document-language.js'), /WB_STRINGS\[resolved\.lang\] \? resolved : \{ lang: 'en', dir: 'ltr' \}/);
+  assert.match(read('features/background/hooks/useBackgroundEvents.js'), /dataset\.bgMaximised === 'true'\) return/);
+  assert.match(read('features/navbar/components/Maximise.jsx'), /dataset\.bgMaximised = 'true'/);
+  assert.match(read('App.jsx'), /EventBus\.on\('settingsimported', importedHandler\)[\s\S]*EventBus\.off\('settingsimported', importedHandler\)/);
 });

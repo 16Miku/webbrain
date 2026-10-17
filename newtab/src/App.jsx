@@ -33,12 +33,17 @@ const useAppSetup = (onDefaultsApplied) => {
       }
     };
 
+    // Import while storage is only in memory: a reload would discard it, so rebuild instead.
+    const importedHandler = () => onDefaultsApplied?.();
+
     EventBus.on('refresh', refreshHandler);
+    EventBus.on('settingsimported', importedHandler);
 
     variables.stats.tabLoad();
 
     return () => {
       EventBus.off('refresh', refreshHandler);
+      EventBus.off('settingsimported', importedHandler);
     };
   }, []);
 };

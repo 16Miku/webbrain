@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { initTranslations, translations } from 'lib/translations';
 import variables from 'config/variables';
+import { applyDocumentLanguage } from 'lib/document-language';
 import EventBus from 'utils/eventbus';
 import { isWbKey, wbT } from 'lib/wb-strings';
 
@@ -25,7 +26,7 @@ export function TranslationProvider({ children, initialLanguage }) {
     }
     variables.language = i18nInstance.current;
     variables.languagecode = currentLanguage;
-    document.documentElement.lang = currentLanguage.replace('_', '-');
+    applyDocumentLanguage();
   }, [currentLanguage, initialLanguage]);
 
   // Change language function
@@ -35,7 +36,7 @@ export function TranslationProvider({ children, initialLanguage }) {
       i18nInstance.current = initTranslations(newLanguage);
       variables.language = i18nInstance.current;
       variables.languagecode = newLanguage;
-      document.documentElement.lang = newLanguage.replace('_', '-');
+      applyDocumentLanguage();
 
       // Update tab name if it's still the default
       const currentTabName = localStorage.getItem('tabName');

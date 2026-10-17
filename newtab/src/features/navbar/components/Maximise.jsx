@@ -19,6 +19,11 @@ const Maximise = memo(({ fontSize }) => {
   // Image effects live on #backgroundFilterOverlay (see useBackgroundEvents) and a video
   // takes the filter on the <video> itself, so those are the elements to clear / restore.
   const setEffects = useCallback((on) => {
+    // Lets effect changes made in Settings while maximised wait for un-maximise
+    // (see useBackgroundEvents.applyFilters).
+    if (on) delete document.documentElement.dataset.bgMaximised;
+    else document.documentElement.dataset.bgMaximised = 'true';
+
     const video = document.getElementById('backgroundVideo');
     if (video) {
       video.style.webkitFilter = on ? getBackgroundFilterStyle() : 'blur(0px) brightness(100%)';

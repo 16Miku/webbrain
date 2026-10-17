@@ -35,6 +35,19 @@ export function resolveWebBrainLocale() {
   return String(globalThis.navigator?.language || 'en').slice(0, 2).toLowerCase();
 }
 
+const RTL = new Set(['ar', 'fa', 'he', 'ur']);
+
+/**
+ * What the document should announce. The WebBrain-specific strings are translated for every
+ * WebBrain locale, so the page language is the WebBrain one even where Mue's own screens fall
+ * back to English; only the translation lookup uses the Mue fallback.
+ */
+export function resolveDocumentLanguage() {
+  const code = resolveWebBrainLocale();
+  const lang = String(code || 'en').replace('_', '-');
+  return { lang, dir: RTL.has(lang.slice(0, 2).toLowerCase()) ? 'rtl' : 'ltr' };
+}
+
 export function resolveMueLanguage() {
   return WB_TO_MUE[resolveWebBrainLocale()] || 'en_GB';
 }
