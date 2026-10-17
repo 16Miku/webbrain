@@ -291,6 +291,7 @@ const scheduler = new ScheduledJobManager({
   systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
+    await clarifyTimeoutReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await imageGenConfigReady;
@@ -592,7 +593,9 @@ async function loadClarifyTimeout() {
   );
   agent.clarifyTimeoutPolicy = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
 }
-loadClarifyTimeout();
+// A question's timeout answer is decided when it is asked, so a run must
+// not start before the user's timeout setting is loaded.
+const clarifyTimeoutReady = loadClarifyTimeout().catch(() => {});
 
 async function loadAutoScreenshot() {
   const stored = await chrome.storage.local.get('autoScreenshot');
@@ -3297,7 +3300,7 @@ async function handleMessage(msg, sender) {
     // Agent toggles and prompt add-ons hydrate once at SW boot — await those
     // promises so the first chat can't race ahead of hydration, without a
     // storage round-trip on every message.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady, clarifyTimeoutReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await webMcpEnabledReady;

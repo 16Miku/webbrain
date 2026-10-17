@@ -273,6 +273,11 @@ for (const { build, Agent, policy, Capability } of builds) {
     assert.match(settings, /clarifyTimeoutPolicySelect\.value = stored\.clarifyTimeoutPolicy === 'safe' \? 'safe' : 'finish'/);
     assert.match(background, /agent\.clarifyTimeoutPolicy = stored\.clarifyTimeoutPolicy === 'safe' \? 'safe' : 'finish'/);
     assert.match(background, /if \(changes\.clarifyTimeoutPolicy\) \{\s*agent\.clarifyTimeoutPolicy = changes\.clarifyTimeoutPolicy\.newValue === 'safe' \? 'safe' : 'finish';/);
+    // A cold service worker must not start a run (side panel or schedule)
+    // before the setting is loaded: the timeout answer is fixed when asked.
+    assert.match(background, /const clarifyTimeoutReady = loadClarifyTimeout\(\)\.catch\(\(\) => \{\}\);/);
+    assert.match(background, /await Promise\.all\(\[planBeforeActReady,[^\]]*\bclarifyTimeoutReady\]\);/);
+    assert.match(background, /loadProviders: async \(\) => \{[^}]*await clarifyTimeoutReady;/);
     assert.equal(config.DEFAULT_CONFIG_SETTINGS.clarifyTimeoutPolicy, 'finish');
     assert.ok(config.CONFIG_STORAGE_KEYS.includes('clarifyTimeoutPolicy'));
     assert.match(panel, /data\.timeoutAnswer/);

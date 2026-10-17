@@ -219,6 +219,7 @@ const scheduler = new ScheduledJobManager({
   systemOneJudge: createSystemOneJudge(),
   loadProviders: async () => {
     await customSkillsReady;
+    await clarifyTimeoutReady;
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await imageGenConfigReady;
@@ -499,7 +500,9 @@ async function loadClarifyTimeout() {
   );
   agent.clarifyTimeoutPolicy = stored.clarifyTimeoutPolicy === 'safe' ? 'safe' : 'finish';
 }
-loadClarifyTimeout();
+// A question's timeout answer is decided when it is asked, so a run must
+// not start before the user's timeout setting is loaded.
+const clarifyTimeoutReady = loadClarifyTimeout().catch(() => {});
 
 async function loadAutoScreenshot() {
   const stored = await browser.storage.local.get('autoScreenshot');
@@ -2913,7 +2916,7 @@ async function handleMessage(msg, sender) {
     }
     // Hydrate agent toggles and prompt add-ons once at boot (not per message);
     // onChanged keeps them in sync afterward.
-    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady]);
+    await Promise.all([planBeforeActReady, planReviewReady, customSkillsReady, userMemoryReady, imageGenConfigReady, browserBatchEnabledReady, clarifyTimeoutReady]);
     await alwaysAllowApiMutationsReady;
     await strictSecretModeReady;
     await screenshotRedactionReady;
