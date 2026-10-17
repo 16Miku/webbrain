@@ -504,6 +504,8 @@ function selectionScopedResponseLanguagePolicy(locale) {
 //   read-coverage-incomplete: pages of a requested whole read never read
 //     (an unconfirmed Gmail expansion is its undecided case).
 //   done-rich-text-toolbar-obligation: text typed into a toolbar.
+//   text-write-readback-unverified: a field an exact reader read back as
+//     another value than was written to it (its decided case).
 // Left out, because their decided case can be wrong about a finished task
 // or says nothing about it:
 //   completion-page-warning: the open dialog or form error may be unrelated.
@@ -520,7 +522,7 @@ function selectionScopedResponseLanguagePolicy(locale) {
 //     and a mismatched one both reach it as missing evidence.
 const OUTCOME_DOWNGRADING_GUARDS = new Set(['completion-verifier-not-done', 'plan-unauthorized-mutation-recorded',
   'progress-success-claim-checks', 'progress-ledger-unresolved', 'read-coverage-incomplete',
-  'done-rich-text-toolbar-obligation']);
+  'done-rich-text-toolbar-obligation', 'text-write-readback-unverified']);
 
 // What the user is told when a run ends with plain text after the "end with
 // done" note was given once (Strict checks off).
@@ -2627,6 +2629,12 @@ export class Agent extends LoopDetector {
         reason: 'rich_text_toolbar_target_unresolved',
         error: 'Success is blocked because the last text-entry attempt targeted a rich-text formatting toolbar. Enter the requested content in the editor body, verify that non-toolbar edit on a fresh turn, then complete; otherwise report a partial or failed outcome.',
         lastAction: toolbarObligation,
+      };
+    }
+    if (outcome === 'success' && skip?.has?.('text_write_refuted') !== true && this._refutedTextWriteRecord(tabId)) {
+      return {
+        reason: 'text_write_refuted',
+        error: 'Success is blocked because a field written in this task reads back a different value than the text written to it. Check that field and write the requested value again, or report a partial outcome that says what the field holds.',
       };
     }
     const state = this.completionInvariants.get(tabId);
@@ -5399,6 +5407,10 @@ export class Agent extends LoopDetector {
       return { id: 'done-rich-text-toolbar-obligation', decided: true,
         caveat: 'The last text may have gone into a formatting toolbar instead of the editor.' };
     }
+    if (reason === 'text_write_refuted') {
+      return { id: 'text-write-readback-unverified', decided: true,
+        caveat: 'A field still reads back a different value than the text written to it.' };
+    }
     if (reason === 'iframe_form_verification_required') {
       return { id: 'done-iframe-form-unverified', decided: false,
         caveat: 'The form fields edited inside an embedded frame were not read back.' };
@@ -5434,6 +5446,7 @@ export class Agent extends LoopDetector {
     // that already advised is accepted and the next one is checked.
     const guards = [];
     if (this._richTextToolbarGuard.hasPending(tabId)) guards.push(this._completionInvariantGuard(tabId, 'rich_text_toolbar_target_unresolved'));
+    if (this._refutedTextWriteRecord(tabId)) guards.push(this._completionInvariantGuard(tabId, 'text_write_refuted'));
     if (state?.iframeFormVerificationDebt) guards.push(this._completionInvariantGuard(tabId, 'iframe_form_verification_required'));
     if (state?.verificationDebt) guards.push(this._completionInvariantGuard(tabId, 'verification_required'));
     if (guards.length) {
@@ -34299,6 +34312,15 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
    * (any page when empty) that passes `match(record)` wins. Records written
    * by another task are ignored.
    */
+  // A text write of this task that an exact reader read back as another
+  // value, not superseded by a verified write to the same field: WebBrain
+  // knows that field does not hold what was written to it.
+  _refutedTextWriteRecord(tabId) {
+    return this._unverifiedTextWriteRecord(tabId, {
+      match: record => record.reason === 'readback_mismatch' && record.readbackExact === true,
+    });
+  }
+
   _unverifiedTextWriteRecord(tabId, { key = '', pageUrl = '', match = null } = {}) {
     const records = this._unverifiedTextWrites?.get(tabId);
     if (!(records instanceof Map) || records.size === 0) return null;
@@ -37865,6 +37887,9 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         || result.missingToolResponse
         || result.outcomeUnknown) return false;
     if (result.error && result.success !== true) return false;
+    // A text write an exact reader read back as another value went out, but
+    // the field does not hold what was asked: no evidence of success.
+    if (textWriteRefuted(result)) return false;
     return true;
   }
 

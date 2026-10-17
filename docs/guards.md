@@ -33,7 +33,8 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     completion judge's "not done", an unauthorized mutation, missing, failed
     or unfinished progress rows, unread pages of a whole thread the user
     asked for, text that went into a formatting toolbar, an exact table that
-    can no longer be delivered) ends the run as `partial`, not `success`, whether it ended with `done`, a structured
+    can no longer be delivered, a field read back as another value than was
+    written to it) ends the run as `partial`, not `success`, whether it ended with `done`, a structured
     Cloud run's `done_json` or a plain answer. Missing evidence alone keeps
     the model's outcome.
   - A write that went out but could not be read back exactly (GitHub's
@@ -41,7 +42,9 @@ the action is wrong (`onDecided`) and when it cannot tell (`onCannotDecide`):
     nothing, arms no text-write debt and is not a loop failure. A write that
     an exact reader reads back as a different value is reported the same
     way, but it ends a batch: the next action is planned once the model has
-    seen it.
+    seen it. It is no evidence that the task's action succeeded, and a
+    success claim while the field still reads back that value is refused
+    once, then accepted as `partial`.
   - A GitHub commit sent by an action that can also rewrite the fields
     (`set_field` with a submit, Enter, `execute_js`) goes through with a note
     when the verified file binding covers it: the committed file is checked

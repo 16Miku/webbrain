@@ -535,6 +535,64 @@ for (const build of ['chrome', 'firefox']) {
     assert.equal(second.endStatus, undefined, `${build}: missing evidence alone must not end the run as partial`);
   });
 
+  test(`${build}: a success over a field read back as another value is refused once, then ends as partial`, async () => {
+    // An exact reader read the field back as another value than was written
+    // to it (an advised, refuted write): WebBrain knows the field is wrong.
+    const refute = (h, extra = {}) => h.agent._unverifiedTextWrites.set(h.tab, new Map([['ax:doc-1:ref_title', {
+      key: 'ax:doc-1:ref_title', locatorType: 'ax', refId: 'ref_title', selector: null, documentToken: 'doc-1', pageUrl: PAGE,
+      tool: 'set_field', replacesValue: true, expectedLength: 13, expectedSha256: 'a', observedLength: 12, observedSha256: 'b',
+      readbackExact: true, reason: 'readback_mismatch', textSent: true, fieldMeta: { tag: 'input' },
+      taskToken: h.agent._taskTokens?.get(h.tab) || null, recordedAt: Date.now(), ...extra }]]));
+    const done = ['done', { summary: 'Updated the title.', outcome: 'success' }];
+    const h = batchAgent(Agent);
+    refute(h);
+    assert.equal((await h.batch([done])).action, 'continue', `${build}: the first success claim gets its note`);
+    const refusal = h.agent.conversations.get(h.tab).filter(message => message.role === 'tool').map(message => JSON.parse(message.content)).at(-1);
+    assert.equal(refusal.reason, 'text_write_refuted');
+    const updates = [];
+    const accepted = await h.batch([done], updates);
+    assert.equal(accepted.action, 'return');
+    assert.equal(accepted.value, `Updated the title.\n\n${CAVEAT}A field still reads back a different value than the text written to it.`);
+    const doneResult = updates.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+    assert.equal(doneResult?.outcome, 'partial', `${build}: a success over a known-wrong field was not downgraded`);
+    assert.equal(accepted.endStatus, 'partial');
+
+    // A plain final over it is refused once too, and its run ends as partial.
+    const plain = batchAgent(Agent);
+    refute(plain);
+    assert.equal(plain.agent._completionPlainFinalRefuses(plain.tab), true);
+    assert.equal(plain.agent._completionPlainFinalRefuses(plain.tab), false);
+    assert.equal(plain.agent._completionOutcomeDowngraded(plain.tab), true);
+
+    // Not refused: a rendered readback (only unconfirmed), an honest partial,
+    // or another task's write.
+    for (const [label, extra, args] of [['rendered', { readbackExact: false }, done[1]],
+      ['partial', {}, { summary: 'The title field holds another value.', outcome: 'partial' }],
+      ['another task', { taskToken: 'another-task' }, done[1]]]) {
+      const other = batchAgent(Agent);
+      refute(other, extra);
+      const updatesOther = [];
+      assert.equal((await other.batch([['done', args]], updatesOther)).action, 'return', `${build} ${label}`);
+      const result = updatesOther.filter(update => update.type === 'tool_result' && update.data.name === 'done').at(-1)?.data.result;
+      assert.equal(result?.outcome, args.outcome, `${build} ${label}`);
+    }
+
+    // A refuted write is no evidence that the task's action succeeded; an
+    // unconfirmed one still is.
+    const refutedResult = { success: true, dispatched: true, unverifiedWrite: true, verified: false, readbackExact: true,
+      unverified: { reason: 'readback_mismatch', reader: 'exact' } };
+    const unconfirmed = { success: true, dispatched: true, unverifiedWrite: true, readbackExact: false,
+      unverified: { reason: 'readback_mismatch', reader: 'rendered' } };
+    assert.equal(h.agent._isSuccessfulExecutionEvidence(refutedResult), false);
+    assert.equal(h.agent._isSuccessfulExecutionEvidence(unconfirmed), true);
+    const plan = { enabled: true, successfulTaskToolCalls: 0, successfulConsequentialToolCalls: 0, pendingDownloadIds: [] };
+    h.agent._planExecutionGuards.set(h.tab, plan);
+    h.agent._markPlanExecutionToolCall(h.tab, 'set_field', refutedResult, { consequential: true });
+    assert.deepEqual([plan.successfulTaskToolCalls, plan.successfulConsequentialToolCalls], [0, 0]);
+    h.agent._markPlanExecutionToolCall(h.tab, 'set_field', unconfirmed, { consequential: true });
+    assert.deepEqual([plan.successfulTaskToolCalls, plan.successfulConsequentialToolCalls], [1, 1]);
+  });
+
   test(`${build}: a chat run's success accepted over a decided check ends with the chat partial contract`, async () => {
     const { chatRunEndedNotice, createChatSession } = await import(`../src/${build}/src/agent/chat-workflow.js`);
     for (const decided of [true, false]) {
