@@ -154,7 +154,7 @@ import { generateImage, readMediaConfig } from './generative-media.js';
 import { GENERATIVE_MEDIA_SETUP_NOTE, isImageGenConfigured, mediaPermissionUrl, validateMediaConfig } from './media-config.js';
 import { extractFirstJsonObject } from './json-extract.js';
 import { repairAssistantDisplayText, repairClarifyText, sanitizeText as sanitizePlannerText } from './text-sanitize.js';
-import { RESPONSE_CUT_OFF_NOTICE, emptyOutputFailureMessage, modelOutputDiagnostics, outputWasCutOff } from './model-output-diagnostics.js';
+import { RESPONSE_CUT_OFF_NOTICE, cutOffPartialFromError, emptyOutputFailureMessage, modelOutputDiagnostics, outputWasCutOff } from './model-output-diagnostics.js';
 import { stepLimitUserMessage, terminalGuardUserMessage } from './terminal-messages.js';
 import { buildCustomSkillsPrompt, buildSkillLoaderDefinition, buildSkillToolDefinitions, buildSkillToolRegistry, getEligibleCustomSkills, getEligibleSkillCatalog, normalizeCustomSkills } from './skills.js';
 import { OTP_EMAIL_PROVIDER_IDS, OTP_EMAIL_SKILL_ID, OTP_EMAIL_TOOL_NAME, otpEmailCandidates, otpEmailProviderForUrl, otpEmailUrlLooksLikeMessage, otpOpenMessageRootRef, otpRedactRefs, otpServiceDisplay, otpServiceKey, otpVerificationMessageExcerpt, selectOtpMailboxTab, selectUniqueOtpCandidateByPreview } from './otp-email-tool.js';
@@ -23204,13 +23204,26 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       } catch {}
     }
     const startedAt = Date.now();
-    const result = await this._chatWithCostAllowance(
-      provider,
-      prunedMessages,
-      chatOpts,
-      costState,
-      { tabId, generationName: phase },
-    );
+    let result;
+    try {
+      result = await this._chatWithCostAllowance(
+        provider,
+        prunedMessages,
+        chatOpts,
+        costState,
+        { tabId, generationName: phase },
+      );
+    } catch (error) {
+      // A reply that stopped at the output limit is an error on some providers. The
+      // side-panel answer still shows what was written, marked as cut off below.
+      const partial = phase === 'response_only' ? cutOffPartialFromError(error) : '';
+      if (!partial) throw error;
+      result = {
+        content: Agent._stripReasoningTags(partial),
+        toolCalls: [],
+        finishReason: String(error.incompleteReason),
+      };
+    }
     const latencyMs = Date.now() - startedAt;
     this._logDebug({
       type: `${phase}_response`,

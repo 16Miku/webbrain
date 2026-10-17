@@ -53754,6 +53754,55 @@ test('a response-only reply that hit the output limit says so instead of reading
   }
 });
 
+test('a response-only reply cut off as a Responses error keeps its text and says so', async () => {
+  const { cutOffPartialFromError: partialCh, RESPONSE_CUT_OFF_NOTICE: noticeCh } = await import(
+    pathToFileURL(path.join(ROOT, 'src/chrome/src/agent/model-output-diagnostics.js')).href
+  );
+  const { cutOffPartialFromError: partialFx } = await import(
+    pathToFileURL(path.join(ROOT, 'src/firefox/src/agent/model-output-diagnostics.js')).href
+  );
+  for (const cutOffPartial of [partialCh, partialFx]) {
+    assert.equal(cutOffPartial({ incompleteReason: 'max_output_tokens', partialContent: '  Half  ' }), 'Half');
+    assert.equal(cutOffPartial({ incompleteReason: 'MAX_OUTPUT_TOKENS', partialContent: 'Half' }), 'Half');
+    assert.equal(cutOffPartial({ incompleteReason: 'max_completion_tokens', partialContent: 'Half' }), 'Half');
+    assert.equal(cutOffPartial({ incompleteReason: 'max_output_tokens' }), '', 'no text, nothing to show');
+    assert.equal(cutOffPartial({ incompleteReason: 'content_filter', partialContent: 'Half' }), '', 'a filter is a failure');
+    assert.equal(cutOffPartial({ incompleteReason: 'missing_response_completed', partialContent: 'Half' }), '');
+    assert.equal(cutOffPartial(new Error('network')), '');
+    assert.equal(cutOffPartial(null), '');
+  }
+
+  for (const [label, AgentClass, Provider] of [['chrome', AgentCh, OpenAIProviderCh], ['firefox', AgentFx, OpenAIProviderFx]]) {
+    const responses = new Provider({
+      category: 'cloud', providerName: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-5.6-terra',
+    });
+    const incomplete = (reason, text) => ({
+      status: 'incomplete',
+      incomplete_details: { reason },
+      output: text == null ? [{ type: 'reasoning', summary: [] }] : [{ type: 'message', content: [{ type: 'output_text', text }] }],
+    });
+    const run = async (data, phase = 'response_only') => {
+      const provider = {
+        supportsTools: false, supportsVision: false, promptTier: 'full', contextWindow: 128000,
+        model: 'test-model', name: 'test-provider',
+        chat: async () => responses._parseResponsesData(data),
+      };
+      const agent = new AgentClass({ getActive: () => provider, getVisionProvider: async () => null });
+      agent._checkCostAllowance = async () => null;
+      agent._recordCostUsage = async () => null;
+      return agent._generateContextOnlyResponse(
+        1, [{ role: 'system', content: 'rules' }, { role: 'user', content: 'Translate it.' }],
+        provider, agent._newCostRunState(), null, { phase, step: 1 },
+      );
+    };
+    assert.equal(await run(incomplete('max_output_tokens', 'Second half of the ')),
+      `Second half of the${noticeCh}`, `${label}: the remainder that hit the limit is shown with the notice`);
+    await assert.rejects(run(incomplete('max_output_tokens', null)), /Responses incomplete/, `${label}: a limit spent before any text is still an error`);
+    await assert.rejects(run(incomplete('content_filter', 'Half')), /Responses incomplete/, `${label}: a content filter is still an error`);
+    await assert.rejects(run(incomplete('max_output_tokens', 'Half'), 'terminal_recovery'), /Responses incomplete/, `${label}: only the response-only phase keeps a partial`);
+  }
+});
+
 test('ordinary attachments leave selection grounding and remain usable', async () => {
   for (const [label, AgentClass, buildSelectionPrompt, sourceGrounding] of [
     ['chrome', AgentCh, buildSelectionPromptCh, SELECTION_ONLY_SOURCE_GROUNDING_CH],

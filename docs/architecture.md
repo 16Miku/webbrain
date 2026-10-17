@@ -530,9 +530,10 @@ of passing a cut-off translation off as complete. Continue sends the unfinished 
 `continueFrom`; the background wraps it inside the selection's untrusted block (keeping its
 end) with a trusted request to resume from where it stops, because running the action again
 would meet the same output limit. A side-panel reply that is cut off again says so (the
-response-only path appends a notice when the provider reports a length finish or WebGPU
-reports `outputTruncated`), so a long remainder never passes as complete and can be
-continued by asking. Each call carries a job id, and a card
+response-only path appends a notice when the provider reports a length finish, WebGPU
+reports `outputTruncated`, or OpenAI Responses raises the limit as an error carrying
+`partialContent`, whose text is then shown), so a long remainder never passes as complete
+and can be continued by asking. Each call carries a job id, and a card
 that is closed, retried or retargeted sends `WB_SELECTION_SHORTCUT_INLINE_CANCEL` so the
 background aborts the paid request it no longer needs (for the in-browser WebGPU models the
 provider also sends `webgpu-chat-cancel`, and the offscreen worker interrupts the running
