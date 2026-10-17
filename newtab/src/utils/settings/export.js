@@ -1,5 +1,6 @@
 import { saveFile } from 'utils/saveFile';
 import variables from 'config/variables';
+import { toast } from 'react-toastify';
 import { getAllBackgroundsWithMetadata, getBackgroundCount } from 'utils/customBackgroundDB';
 
 // Reserved key in the backup file for the uploaded images / videos, which live in IndexedDB
@@ -21,13 +22,16 @@ export async function exportSettings() {
     // a failure into []; an unreadable store must not be written to the backup as "empty".
     const count = await getBackgroundCount();
     const backgrounds = count > 0 ? await getAllBackgroundsWithMetadata() : [];
-    if (backgrounds.length === count) {
-      // Written even when empty: importing such a backup then clears the target profile's
-      // uploads, restoring the backed-up state. ids are assigned again on import.
-      settings[BACKGROUNDS_BACKUP_KEY] = backgrounds.map(({ id: _id, ...rest }) => rest);
-    }
+    if (backgrounds.length !== count) throw new Error('uploaded backgrounds could not be read');
+    // Written even when empty: importing such a backup then clears the target profile's
+    // uploads, restoring the backed-up state. ids are assigned again on import.
+    settings[BACKGROUNDS_BACKUP_KEY] = backgrounds.map(({ id: _id, ...rest }) => rest);
   } catch (error) {
+    // A file without the uploads would look like a good backup and lose them on reset or
+    // reinstall, so don't write one at all.
     console.error('Could not include uploaded backgrounds in the backup:', error);
+    toast(variables.getMessage('toasts.error'));
+    return false;
   }
 
   const date = new Date();
@@ -36,4 +40,5 @@ export async function exportSettings() {
   const filename = `webbrain_newtab_settings_backup_${formattedDate}.json`;
   saveFile(settings, filename);
   variables.stats.postEvent('tab', 'Settings exported');
+  return true;
 }

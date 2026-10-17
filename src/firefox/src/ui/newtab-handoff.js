@@ -118,6 +118,14 @@ export function createNewtabHandoff({
     // tabs while storage is being read or written, this tab's task must not be applied
     // to the other tab's composer; the switch's own consume() picks up the right one.
     const sameTab = () => Number(getCurrentTabId()) === Number(tabId);
+    // Put a record back only if nothing newer took its place: the new tab unlocks as soon as a
+    // record is removed and may already have stored the next task under the same key.
+    const restoreIfEmpty = async (record) => {
+      try {
+        const current = (await storage.get(key))?.[key];
+        if (current == null) await storage.set?.({ [key]: record });
+      } catch { /* best effort */ }
+    };
     try {
       const stored = (await storage.get(key))?.[key];
       if (stored == null || !sameTab()) return false;
@@ -133,7 +141,7 @@ export function createNewtabHandoff({
       if (!sameTab()) {
         // Switched during the removal: put the record back for when this tab is shown again.
         handled.delete(handoff.id);
-        try { await storage.set?.({ [key]: stored }); } catch { /* best effort */ }
+        await restoreIfEmpty(stored);
         return false;
       }
 
@@ -177,9 +185,7 @@ export function createNewtabHandoff({
             } else {
               // The user moved to another tab while the send was being declined, and the
               // composer now belongs to that tab. Hand the task back for its own tab instead.
-              storage.set?.({
-                [key]: { ...stored, id: `${handoff.id}-retry`, createdAt: now() },
-              })?.catch?.(() => {});
+              restoreIfEmpty({ ...stored, id: `${handoff.id}-retry`, createdAt: now() });
             }
           });
       }

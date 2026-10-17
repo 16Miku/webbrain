@@ -26,6 +26,10 @@ export async function importSettings(e, initial = false) {
     ({ [BACKGROUNDS_BACKUP_KEY]: backgrounds, ...content } = parsed);
     const problem = validateSettings(content);
     if (problem) throw new Error(`invalid settings: ${problem}`);
+    // Dropping a bad record quietly would still clear the gallery and report success.
+    if (backgrounds !== undefined && !isBackgroundList(backgrounds)) {
+      throw new Error(`invalid settings: ${BACKGROUNDS_BACKUP_KEY} has an entry of the wrong shape`);
+    }
   } catch (error) {
     // Truncated or foreign file: say so, and change nothing.
     console.error('Could not read the settings file:', error);
@@ -128,13 +132,14 @@ export function validateSettings(content) {
   return null;
 }
 
+const isBackgroundList = (list) =>
+  Array.isArray(list) && list.every((record) => isObject(record) && typeof record.url === 'string');
+
 const withoutId = ({ id: _id, ...record }) => record; // ids are assigned again
 
 /** Replaces the gallery with `incoming`; resolves to a function that puts the old one back. */
 async function replaceBackgrounds(incoming) {
-  const records = incoming
-    .filter((background) => background && typeof background.url === 'string')
-    .map(withoutId);
+  const records = incoming.map(withoutId); // already validated by isBackgroundList
 
   // getBackgroundCount() rejects on failure; the all-records helper would hide it as [].
   const count = await getBackgroundCount();

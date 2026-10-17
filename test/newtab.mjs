@@ -393,6 +393,39 @@ for (const browser of ['chrome', 'firefox']) {
     assert.equal(store[key3].id, 'r1-retry');
   });
 
+  test(`${browser}: a declined send does not overwrite a newer task stored for the same tab`, async () => {
+    const key3 = newtabHandoffKey(3);
+    const store = { [key3]: { id: 'A', tabId: 3, text: 'task A', mode: 'ask', createdAt: 99_000 } };
+    const state = { tabId: 3 };
+    const input = { value: '', dispatchEvent() {}, focus() {} };
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const handoff = createNewtabHandoff({
+      storage: {
+        get: async (k) => (k in store ? { [k]: store[k] } : {}),
+        remove: async (k) => { delete store[k]; },
+        set: async (o) => Object.assign(store, o),
+      },
+      getCurrentTabId: () => state.tabId,
+      getIsProcessing: () => false,
+      getIsBlocked: () => false,
+      getIsDocumentVisible: () => true,
+      doc: { addEventListener() {} },
+      setMode() {},
+      getInputEl: () => input,
+      autoResizeInput() {},
+      sendMessage: async () => { input.value = ''; await gate; return false; },
+      now: () => 100_000,
+    });
+    await handoff.start();
+    store[key3] = { id: 'B', tabId: 3, text: 'task B', mode: 'ask', createdAt: 99_500 }; // new tab unlocked
+    state.tabId = 4;
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(store[key3].id, 'B', 'the newer task is kept');
+  });
+
   const rec = (over = {}) => ({ id: 'r1', tabId: 3, text: 'summarise', mode: 'ask', createdAt: 99_000, ...over });
   const KEY = newtabHandoffKey(3);
 
@@ -1141,6 +1174,7 @@ test('round-23: popups keep focus inside; reminder mounts via event; backups car
   const exp = read('utils/settings/export.js');
   assert.match(exp, /BACKGROUNDS_BACKUP_KEY = 'wbBackgroundsBackup'/);
   assert.match(exp, /getAllBackgroundsWithMetadata\(\)/);
+  assert.match(exp, /could not be read[\s\S]*return false;/);
   const imp = read('utils/settings/import.js');
   assert.match(imp, /export async function importSettings/);
   assert.match(imp, /\[BACKGROUNDS_BACKUP_KEY\]: backgrounds/);
@@ -1158,7 +1192,7 @@ test('round-24: filters follow the background, backups record an empty gallery, 
   assert.match(bg, /useBackgroundOverlayFilters\(backgroundData\)/);
   const exp = read('utils/settings/export.js');
   assert.match(exp, /await getBackgroundCount\(\)/);
-  assert.match(exp, /if \(backgrounds\.length === count\)/);
+  assert.match(exp, /if \(backgrounds\.length !== count\) throw/);
   assert.doesNotMatch(exp, /if \(backgrounds\.length > 0\)/);
   const custom = read('features/background/options/Custom.jsx');
   assert.equal((custom.match(/EventBus\.emit\('refresh', 'backgroundrefresh'\)/g) || []).length, 2);
@@ -1272,11 +1306,16 @@ test('importSettings restores uploaded backgrounds atomically and rolls back on 
       assert.equal(await mod.importSettings(JSON.stringify(bad)), false, JSON.stringify(bad));
     }
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[null]' })), false);
+    // a malformed gallery record is refused as a whole; it must not clear the current gallery
+    mod.db.rows = [{ id: 1, url: 'data:keep' }];
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [null] })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: [{ url: 'data:ok' }, { name: 'no url' }] })), false);
+    assert.equal(await mod.importSettings(JSON.stringify({ [K]: 'nope' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"x"}]' })), false);
     // delete / drag-and-drop identify links by key: it must be present and unique
     assert.equal(await mod.importSettings(JSON.stringify({ quicklinks: '[{"name":"a","url":"https://a.test"}]' })), false);
     assert.equal(await mod.importSettings(JSON.stringify({ applinks: '[{"name":"a","url":"u","key":"k"},{"name":"b","url":"u","key":"k"}]' })), false);
-    assert.equal(globalThis.__toasts.length, 17);
+    assert.equal(globalThis.__toasts.length, 20);
     assert.equal(globalThis.__reloads, 0);
     assert.deepEqual(mod.db.rows.map((r) => r.url), ['data:keep'], 'nothing was touched');
     assert.equal(await mod.importSettings(JSON.stringify({
