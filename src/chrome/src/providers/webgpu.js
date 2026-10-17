@@ -14,8 +14,18 @@ export const WEBGPU_LFM25_VL_3B_MODEL_ID = 'LiquidAI/LFM2.5-VL-3B-ONNX';
 export const WEBGPU_NANBEIGE42_3B_MODEL_ID = 'Michionlion/Nanbeige4.2-3B-ONNX-WebGPU';
 export const WEBGPU_MINICPM5_2B_MODEL_ID = 'RASMUS/MiniCPM5-2B-ONNX';
 export const WEBGPU_COMPASS_TINY_V2_MODEL_ID = 'webbrain-one/webbrain-compass-tiny-v2.1';
+export const WEBGPU_BONSAI2_2B_MODEL_ID = 'danyalmalik/Ternary-Bonsai-2-2B-ONNX-WebGPU';
+export const WEBGPU_BONSAI2_4B_MODEL_ID = 'Mike0021/Ternary-Bonsai-2-4B-text-ONNX';
+export const WEBGPU_BONSAI2_VL_2B_MODEL_ID = 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision';
+export const WEBGPU_BONSAI2_VL_4B_MODEL_ID = 'webbrain-one/Ternary-Bonsai-2-4B-ONNX-WebGPU-Vision';
 export const WEBGPU_BONSAI27_MODEL_ID = 'prism-ml/Bonsai-27B-gguf';
 export const WEBGPU_DTYPE = 'q4f16';
+export const WEBGPU_BONSAI2_DTYPE = 'q2f16';
+export const WEBGPU_BONSAI2_VL_DTYPE = Object.freeze({
+  embed_tokens: 'q2f16',
+  vision_encoder: 'fp16',
+  decoder_model_merged: 'q2f16',
+});
 export const WEBGPU_BONSAI27_DTYPE = 'q1';
 export const WEBGPU_RUNTIME_ONNX = 'onnx';
 export const WEBGPU_RUNTIME_ONNX_VL = 'onnx-vl';
@@ -120,6 +130,48 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
     supportsVision: false,
   }),
   Object.freeze({
+    id: WEBGPU_BONSAI2_2B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX,
+    label: 'Ternary Bonsai 2 2B',
+    size: '787 MB',
+    dtype: WEBGPU_BONSAI2_DTYPE,
+    dtypeLabel: WEBGPU_BONSAI2_DTYPE,
+    // Bound the native 262k context for browser GPU memory. Full-attention
+    // KV slots cost about 12 KB/token at 2B and 32 KB/token at 4B in FP16.
+    contextWindow: 16384,
+    supportsVision: false,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI2_4B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX,
+    label: 'Ternary Bonsai 2 4B',
+    size: '1.50 GB',
+    dtype: WEBGPU_BONSAI2_DTYPE,
+    dtypeLabel: WEBGPU_BONSAI2_DTYPE,
+    contextWindow: 16384,
+    supportsVision: false,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI2_VL_2B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX_VL,
+    label: 'Ternary Bonsai 2 2B Vision',
+    size: '1.45 GB',
+    dtype: WEBGPU_BONSAI2_VL_DTYPE,
+    dtypeLabel: 'Q2/FP16',
+    contextWindow: 16384,
+    supportsVision: true,
+  }),
+  Object.freeze({
+    id: WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+    runtime: WEBGPU_RUNTIME_ONNX_VL,
+    label: 'Ternary Bonsai 2 4B Vision',
+    size: '2.15 GB',
+    dtype: WEBGPU_BONSAI2_VL_DTYPE,
+    dtypeLabel: 'Q2/FP16',
+    contextWindow: 16384,
+    supportsVision: true,
+  }),
+  Object.freeze({
     id: WEBGPU_BONSAI27_MODEL_ID,
     runtime: WEBGPU_RUNTIME_BITGPU,
     label: 'Basic text model',
@@ -130,11 +182,36 @@ export const WEBGPU_MODEL_PRESETS = Object.freeze([
     supportsVision: false,
   }),
 ]);
+// Keep legacy presets loadable without offering them for new selections.
+// Both Chrome pickers use this order; Firefox has no offscreen chat runtime.
+// The Apocalypse Mode markup lists every preset here in the same order.
+export const WEBGPU_PICKER_MODEL_IDS = Object.freeze([
+  WEBGPU_COMPASS_TINY_V2_MODEL_ID,
+  WEBGPU_BONSAI2_2B_MODEL_ID,
+  WEBGPU_BONSAI2_4B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_2B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+]);
+// Shipped and loadable, but not offered in the pickers yet. To show one again,
+// remove its id here. A saved selection still loads: Settings shows it as a
+// custom model, and Apocalypse Mode switches to an offered preset.
+export const WEBGPU_HIDDEN_MODEL_IDS = Object.freeze([
+  WEBGPU_BONSAI2_2B_MODEL_ID,
+  WEBGPU_BONSAI2_4B_MODEL_ID,
+  WEBGPU_BONSAI2_VL_4B_MODEL_ID,
+]);
+export const WEBGPU_SELECTABLE_MODEL_PRESETS = Object.freeze(WEBGPU_PICKER_MODEL_IDS
+  .filter(id => !WEBGPU_HIDDEN_MODEL_IDS.includes(id))
+  .map(id => WEBGPU_MODEL_PRESETS.find(preset => preset.id === id)));
 export const WEBGPU_MODEL_NOT_READY_ERROR = `${WEBGPU_COMPASS_TINY_V2_MODEL_ID} is not downloaded. Open Settings > Providers > WebGPU or Apocalypse Mode > WebGPU to download it before chatting.`;
 // Chrome-only selection state. Keep this separate from the synced
 // `visionModel` endpoint so enabling the fallback never overwrites a user's
 // remote vision credentials or sends a Chromium-only provider type to Firefox.
 export const WEBGPU_VISION_ENABLED_KEY = 'webgpuVisionEnabled';
+// Optional chrome.storage.local override for the Bonsai 2 Vision prefill slice
+// (prompt tokens per GPU pass; 0 disables slicing). Smaller slices keep a GPU
+// shared with the display responsive at a small throughput cost.
+export const WEBGPU_PREFILL_SLICE_TOKENS_KEY = 'webgpuPrefillSliceTokens';
 // Legacy provenance key retained only so the one-time consent migration can
 // remove selections made automatically by older Apocalypse Mode builds.
 export const WEBGPU_VISION_AUTO_SELECTED_KEY = 'webgpuVisionAutoSelected';
@@ -216,6 +293,12 @@ export function webgpuModelPreset(modelId) {
 
 export function isShippedWebgpuPreset(modelId) {
   return webgpuModelPreset(modelId) != null;
+}
+
+export function isSelectableWebgpuPreset(modelId) {
+  if (!String(modelId || '').trim()) return false;
+  const preset = webgpuModelPreset(modelId);
+  return !!preset && WEBGPU_SELECTABLE_MODEL_PRESETS.includes(preset);
 }
 
 export function webgpuModelRuntime(modelId) {
@@ -386,6 +469,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
     // A caller that can abort gets a key the worker can use to interrupt this generation.
     const signal = options.signal || null;
     const requestKey = signal ? newWebgpuRequestKey() : '';
+    const prefillSliceTokens = await this._prefillSliceTokens();
     const response = await this._dispatch({
       type: 'webgpu-chat',
       model: this.model,
@@ -398,6 +482,7 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       options: {
         maxTokens: options.maxTokens,
         tools: Array.isArray(options.tools) ? options.tools : [],
+        ...(prefillSliceTokens == null ? {} : { prefillSliceTokens }),
       },
     }, { signal, onAbort: requestKey ? () => this._cancelChat(requestKey) : null });
     if (!response || response.error) {
@@ -421,6 +506,15 @@ export class WebGPUProvider extends WebGPUOffscreenProvider {
       // answer used up its token budget so callers can tell a cut-off from a finish.
       ...(typeof response.outputTruncated === 'boolean' ? { outputTruncated: response.outputTruncated } : {}),
     };
+  }
+
+  async _prefillSliceTokens() {
+    try {
+      const stored = await chrome.storage.local.get(WEBGPU_PREFILL_SLICE_TOKENS_KEY);
+      return stored?.[WEBGPU_PREFILL_SLICE_TOKENS_KEY] ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** Probe the packaged runtime and adapter without downloading model weights. */

@@ -4572,7 +4572,6 @@ async function handleMessage(msg, sender) {
 
     case 'get_providers': {
       const providers = providerManager.getAll({ includeSidepanelOnly: msg.includeSidepanelOnly === true });
-      delete providers.webgpu;
       return { providers, active: providerManager.activeProviderId };
     }
 

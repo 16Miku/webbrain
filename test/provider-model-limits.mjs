@@ -8,7 +8,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 for (const browser of ['chrome', 'firefox']) {
   const prefix = path.join(ROOT, 'src', browser, 'src');
   const { BaseLLMProvider } = await import(pathToFileURL(path.join(prefix, 'providers', 'base.js')).href);
-  const { inferMaxOutputTokens, resolveMaxOutputTokens } = await import(
+  const { inferContextWindow, inferMaxOutputTokens, resolveMaxOutputTokens } = await import(
     pathToFileURL(path.join(prefix, 'providers', 'context-windows.js')).href
   );
 
@@ -26,8 +26,11 @@ for (const browser of ['chrome', 'firefox']) {
   assert.equal(inferMaxOutputTokens({ model: 'gpt-4o' }), 16384, `${browser}: GPT-4o output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'deepseek-v4-flash' }), 384000, `${browser}: DeepSeek V4 output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'deepseek-flash' }), 384000, `${browser}: current DeepSeek output ceiling`);
+  assert.equal(inferMaxOutputTokens({ model: 'deepseek/deepseek-v4.1-flash-1017' }), 384000, `${browser}: OpenRouter DeepSeek V4.1 snapshot output ceiling`);
   assert.equal(inferMaxOutputTokens({ model: 'deepseek-v4-pro' }), 8192, `${browser}: retired DeepSeek Pro stays conservative`);
   assert.equal(inferMaxOutputTokens({ model: 'deepseek-chat' }), 8192, `${browser}: legacy DeepSeek chat output ceiling`);
+  assert.equal(inferContextWindow({ category: 'router', model: 'deepseek/deepseek-v4.1-flash-1017' }), 1000000, `${browser}: OpenRouter DeepSeek V4.1 snapshot context window`);
+  assert.equal(inferContextWindow({ category: 'router', model: 'deepseek/deepseek-v4.1-flash' }), 1000000, `${browser}: OpenRouter DeepSeek V4.1 alias context window`);
   assert.equal(
     resolveMaxOutputTokens({ model: 'claude-haiku-4-5', maxOutputTokens: 128000 }),
     64000,

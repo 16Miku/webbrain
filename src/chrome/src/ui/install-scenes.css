@@ -1,0 +1,1645 @@
+/*
+ * "Also built in" showcase on the first-install page.
+ *
+ * Each card is a small live scene (HTML + CSS, no images) that loops while it
+ * is on screen. Scenes are decorative (aria-hidden); the card copy carries the
+ * meaning and is localized through data-i18n. The base styles below describe
+ * each scene's FINISHED state, so reduced-motion users, and browsers that never
+ * run the animations, still see a complete, readable picture.
+ *
+ * Loops use animation-delay only to offset siblings against each other. Every
+ * element in a scene shares one period, so the offset repeats on each pass.
+ */
+
+:root {
+  --scene-h: 360px;
+  --mock-bg: #242946;
+  --mock-fill: rgba(255, 255, 255, 0.07);
+  --mock-line: rgba(255, 255, 255, 0.13);
+  --mock-ink: #f4f5fb;
+  --mock-mute: #9aa3bd;
+  --mock-shadow: 0 28px 64px rgba(3, 5, 18, 0.55);
+  --ok: #4fd08f;
+  --ok-soft: rgba(79, 208, 143, 0.16);
+}
+
+:root[data-theme="light"] {
+  --mock-bg: #ffffff;
+  --mock-fill: rgba(28, 34, 64, 0.045);
+  --mock-line: rgba(28, 34, 64, 0.12);
+  --mock-ink: #141828;
+  --mock-mute: #66708a;
+  --mock-shadow: 0 28px 64px rgba(40, 44, 80, 0.2);
+  --ok: #12865c;
+  --ok-soft: rgba(18, 134, 92, 0.12);
+}
+
+/* ───────────────────────── section chrome ───────────────────────── */
+
+.more {
+  padding: clamp(28px, 5vw, 64px) 0 12px;
+}
+
+.more-head {
+  max-width: 780px;
+  margin: 0 auto clamp(34px, 5vw, 56px);
+  text-align: center;
+}
+
+.more-title {
+  margin: 14px 0 0;
+  font-family: var(--display);
+  font-size: clamp(38px, 5vw, 66px);
+  font-weight: 800;
+  font-variation-settings: "opsz" 84;
+  line-height: 0.98;
+  letter-spacing: -0.05em;
+  text-wrap: balance;
+}
+
+.more-body {
+  max-width: 560px;
+  margin: 20px auto 0;
+  color: var(--muted);
+  font-size: clamp(15px, 1.4vw, 18px);
+  font-weight: 520;
+  line-height: 1.55;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.bento {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: clamp(14px, 1.8vw, 22px);
+}
+
+.fcard--apocalypse { grid-column: span 7; }
+.fcard--shot { grid-column: span 5; }
+.fcard--dl { grid-column: span 5; }
+.fcard--record { grid-column: span 7; }
+.fcard--captcha { grid-column: span 6; }
+.fcard--safesocial { grid-column: span 6; }
+
+.fcard--apocalypse { --fc: #f0a72f; }
+.fcard--shot { --fc: #5b8def; }
+.fcard--dl { --fc: #e0457b; }
+.fcard--record { --fc: #e5484d; }
+.fcard--captcha { --fc: #14a8b8; }
+.fcard--safesocial { --fc: #9b5cf6; }
+
+/* The Firefox page has no recording card (Firefox cannot record tabs), so its
+   last three cards share one row instead of leaving a hole in the grid. */
+@media (min-width: 901px) {
+  .bento--five .fcard--dl,
+  .bento--five .fcard--captcha,
+  .bento--five .fcard--safesocial {
+    grid-column: span 4;
+  }
+}
+
+.fcard {
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transition:
+    opacity 700ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--rd, 0) * 110ms),
+    translate 700ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--rd, 0) * 110ms),
+    transform 260ms ease,
+    border-color 260ms ease;
+}
+
+/* Pointer spotlight; --mx/--my are written by install-motion.js. */
+.fcard::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    380px circle at var(--mx, 50%) var(--my, 70%),
+    color-mix(in srgb, var(--fc) 20%, transparent),
+    transparent 64%
+  );
+  transition: opacity 300ms ease;
+}
+
+.fcard > * {
+  position: relative;
+  z-index: 1;
+}
+
+.fcard:hover {
+  transform: translateY(-4px);
+  border-color: color-mix(in srgb, var(--fc) 42%, var(--line));
+}
+
+.fcard:hover::before {
+  opacity: 1;
+}
+
+.fcard-copy {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: clamp(20px, 2.4vw, 30px);
+}
+
+.fcard-copy h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(24px, 2.5vw, 34px);
+  font-weight: 800;
+  font-variation-settings: "opsz" 72;
+  line-height: 1.04;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
+}
+
+.fcard-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: clamp(14px, 1.2vw, 16px);
+  font-weight: 520;
+  line-height: 1.5;
+}
+
+.fcard-copy code {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--fc) 14%, transparent);
+  color: color-mix(in srgb, var(--fc) 70%, var(--text));
+  direction: ltr;
+  font-family: var(--mono);
+  font-size: 0.88em;
+  font-weight: 650;
+  unicode-bidi: isolate;
+  white-space: nowrap;
+}
+
+.fcard-copy .fcard-kicker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--fc);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.fcard-kicker svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+/* ───────────────────────── scene frame ───────────────────────── */
+
+.scene {
+  position: relative;
+  height: var(--scene-h);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  background:
+    radial-gradient(90% 70% at 16% 0%, color-mix(in srgb, var(--fc) 26%, transparent), transparent 70%),
+    radial-gradient(70% 60% at 100% 100%, color-mix(in srgb, var(--fc) 15%, transparent), transparent 70%),
+    color-mix(in srgb, var(--fc) 6%, var(--surface-strong));
+  /* The mockups depict LTR product UI, so they never mirror in RTL locales. */
+  direction: ltr;
+}
+
+.scene::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image: radial-gradient(color-mix(in srgb, var(--fc) 38%, transparent) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  -webkit-mask-image: radial-gradient(70% 70% at 50% 50%, #000, transparent);
+  mask-image: radial-gradient(70% 70% at 50% 50%, #000, transparent);
+}
+
+.mock {
+  position: relative;
+  z-index: 1;
+  width: min(calc(100% - 48px), 430px);
+  padding: 18px;
+  border: 1px solid var(--mock-line);
+  border-radius: 20px;
+  background: var(--mock-bg);
+  box-shadow: var(--mock-shadow);
+  color: var(--mock-ink);
+  font-family: var(--ui);
+  transform: rotate(-1.4deg);
+  transition: transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.fcard:hover .mock {
+  transform: rotate(0deg) scale(1.025);
+}
+
+.mock-label {
+  color: var(--mock-mute);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mock-note {
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--mock-line);
+  color: var(--mock-mute);
+  font-size: 12px;
+  font-weight: 560;
+  line-height: 1.45;
+}
+
+/* Translated mock copy follows its own script direction inside the LTR scene. */
+.mock-note,
+.cap-text,
+.cap-steps li > span:last-child,
+.safe-show,
+.ap-name {
+  unicode-bidi: plaintext;
+}
+
+/* Scenes only run while visible; install-motion.js toggles .is-playing. */
+.scene:not(.is-playing),
+.scene:not(.is-playing) *,
+.scene:not(.is-playing) *::before,
+.scene:not(.is-playing) *::after {
+  animation-play-state: paused !important;
+}
+
+/* Shared composer (typed slash command + send button). */
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid var(--mock-line);
+  border-radius: 14px;
+  background: var(--mock-fill);
+}
+
+.typed {
+  flex: 1;
+  min-width: 0;
+  color: var(--mock-ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.typed-text {
+  --chars: 8;
+  display: inline-block;
+  width: calc(var(--chars) * 1ch);
+  max-width: 100%;
+  overflow: hidden;
+  border-right: 2px solid var(--accent);
+  vertical-align: bottom;
+  white-space: nowrap;
+  animation:
+    typing var(--loop, 9s) steps(var(--chars), end) infinite,
+    caret 1s steps(1) infinite;
+}
+
+.typed-text--shot { --chars: 23; }
+.typed-text--record { --chars: 7; }
+
+.send {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--accent-strong);
+  color: #fff;
+  animation: send-press var(--loop, 9s) ease infinite;
+}
+
+.send svg,
+.dl-check svg,
+.cap-dot svg,
+.cap-box svg,
+.shot-done svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.send svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: 2.2;
+}
+
+@keyframes typing {
+  0%,
+  3% { width: 0; }
+  24%,
+  100% { width: calc(var(--chars) * 1ch); }
+}
+
+@keyframes caret {
+  50% { border-color: transparent; }
+}
+
+@keyframes send-press {
+  0%,
+  24% { transform: scale(1); }
+  27% { transform: scale(0.86); }
+  31% { transform: scale(1.08); }
+  36%,
+  100% { transform: scale(1); }
+}
+
+/* ───────────────────────── Apocalypse Mode ───────────────────────── */
+
+.scene--ap {
+  --mock-bg: #1d1a12;
+  --mock-fill: rgba(255, 244, 214, 0.06);
+  --mock-line: rgba(255, 226, 160, 0.15);
+  --mock-ink: #f6edd8;
+  --mock-mute: #a99d82;
+  --mock-shadow: 0 28px 64px rgba(0, 0, 0, 0.55);
+  background:
+    radial-gradient(80% 70% at 14% 0%, rgba(240, 167, 47, 0.22), transparent 70%),
+    radial-gradient(60% 60% at 100% 100%, rgba(240, 167, 47, 0.1), transparent 70%),
+    #14120d;
+}
+
+.ap-card {
+  width: min(calc(100% - 48px), 460px);
+}
+
+.ap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--mock-line);
+}
+
+.ap-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-list li {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "tile name chip"
+    "tile prog chip";
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 7px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--mock-line);
+}
+
+.ap-list li:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.ap-tile {
+  grid-area: tile;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: rgba(240, 167, 47, 0.14);
+  color: #f0a72f;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.ap-name {
+  grid-area: name;
+  align-self: end;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-prog {
+  grid-area: prog;
+  align-self: start;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--mock-fill);
+}
+
+.ap-prog i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #f0a72f, #ffd27a);
+  transform-origin: left center;
+  animation: ap-fill 10s cubic-bezier(0.4, 0, 0.2, 1) infinite both;
+}
+
+.ap-list .chip {
+  grid-area: chip;
+  animation: ap-chip 10s ease infinite both;
+}
+
+.ap-list li:nth-child(1) { --d: 0s; }
+.ap-list li:nth-child(2) { --d: 0.7s; }
+.ap-list li:nth-child(3) { --d: 1.4s; }
+.ap-list li:nth-child(4) { --d: 2.1s; }
+
+.ap-list li .ap-prog i,
+.ap-list li .chip {
+  animation-delay: var(--d, 0s);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.chip--amber,
+.chip--ready {
+  background: rgba(240, 167, 47, 0.15);
+  color: #f2b552;
+}
+
+.chip--green {
+  background: rgba(79, 208, 143, 0.15);
+  color: #5fdc9c;
+}
+
+.chip--ready {
+  animation: ap-ready 10s ease infinite both;
+}
+
+.chip--ready i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@keyframes ap-fill {
+  0%,
+  3% { opacity: 1; transform: scaleX(0); }
+  30%,
+  88% { opacity: 1; transform: scaleX(1); }
+  96%,
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
+@keyframes ap-chip {
+  0%,
+  26% { opacity: 0; transform: translateX(8px) scale(0.92); }
+  33%,
+  88% { opacity: 1; transform: none; }
+  96%,
+  100% { opacity: 0; transform: none; }
+}
+
+@keyframes ap-ready {
+  0%,
+  60% { background: rgba(240, 167, 47, 0.15); color: #f2b552; }
+  72%,
+  92% { background: rgba(79, 208, 143, 0.17); color: #5fdc9c; }
+  100% { background: rgba(240, 167, 47, 0.15); color: #f2b552; }
+}
+
+/* ───────────────────────── Full-page screenshot ───────────────────────── */
+
+.shot-card {
+  padding: 16px 16px 14px;
+}
+
+.shot-page {
+  position: relative;
+  height: 148px;
+  margin-top: 12px;
+  overflow: hidden;
+  border: 1px solid var(--mock-line);
+  border-radius: 12px;
+  background: var(--mock-fill);
+}
+
+.shot-scroll {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  left: 10px;
+  display: grid;
+  gap: 8px;
+  animation: shot-scroll 9s ease-in-out infinite both;
+}
+
+.blk {
+  display: block;
+  height: 34px;
+  border-radius: 8px;
+}
+
+.blk--title {
+  width: 58%;
+  height: 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mock-mute) 45%, transparent);
+}
+
+.blk--plain {
+  height: 16px;
+  background: color-mix(in srgb, var(--mock-mute) 16%, transparent);
+}
+
+.blk--violet { background: rgba(124, 108, 255, 0.3); }
+.blk--rose { background: rgba(255, 107, 150, 0.28); }
+.blk--mint { background: rgba(79, 208, 143, 0.26); }
+.blk--sky { background: rgba(77, 163, 255, 0.28); }
+
+.shot-frame {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(100% - 6px);
+  height: calc(100% - 6px);
+  pointer-events: none;
+  animation: shot-frame 9s ease infinite both;
+}
+
+.shot-frame rect {
+  fill: none;
+  stroke: var(--accent);
+  stroke-dasharray: 7 6;
+  stroke-width: 2px;
+  vector-effect: non-scaling-stroke;
+  animation: march 0.8s linear infinite;
+}
+
+.shot-scan {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 2px;
+  opacity: 0;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  box-shadow: 0 0 16px 2px var(--accent);
+  animation: shot-scan 9s ease-in-out infinite both;
+}
+
+.shot-flash {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  background: #fff;
+  animation: shot-flash 9s ease infinite both;
+}
+
+.shot-done {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+  color: #fff;
+  animation: shot-done 9s ease infinite both;
+}
+
+.shot-done svg {
+  stroke-width: 3;
+}
+
+.scene--shot { --loop: 9s; }
+
+@keyframes shot-scroll {
+  0%,
+  30% { opacity: 1; transform: translateY(0); }
+  66%,
+  94% { opacity: 1; transform: translateY(-122px); }
+  98% { opacity: 0; transform: translateY(-122px); }
+  100% { opacity: 0; transform: translateY(0); }
+}
+
+@keyframes shot-frame {
+  0%,
+  26% { opacity: 0; }
+  31%,
+  92% { opacity: 1; }
+  98%,
+  100% { opacity: 0; }
+}
+
+@keyframes shot-scan {
+  0%,
+  30% { top: 0; opacity: 0; }
+  32% { top: 0; opacity: 1; }
+  66% { top: calc(100% - 2px); opacity: 1; }
+  68%,
+  100% { top: calc(100% - 2px); opacity: 0; }
+}
+
+@keyframes shot-flash {
+  0%,
+  67% { opacity: 0; }
+  69% { opacity: 0.8; }
+  75%,
+  100% { opacity: 0; }
+}
+
+@keyframes shot-done {
+  0%,
+  70% { opacity: 0; transform: scale(0.3); }
+  76% { opacity: 1; transform: scale(1.18); }
+  80%,
+  93% { opacity: 1; transform: scale(1); }
+  98%,
+  100% { opacity: 0; transform: scale(1); }
+}
+
+@keyframes march {
+  to { stroke-dashoffset: -13; }
+}
+
+/* ───────────────────────── Bulk downloads ───────────────────────── */
+
+.dl-list {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dl-list li {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid var(--mock-line);
+  border-radius: 13px;
+  background: var(--mock-fill);
+  animation: dl-item 9s ease infinite both;
+}
+
+.dl-list li:nth-child(1) { --d: 0s; }
+.dl-list li:nth-child(2) { --d: 0.28s; }
+.dl-list li:nth-child(3) { --d: 0.56s; }
+.dl-list li:nth-child(4) { --d: 0.84s; }
+
+.dl-list li,
+.dl-list li .dl-bar,
+.dl-list li .dl-check {
+  animation-delay: var(--d, 0s);
+}
+
+.dl-meta {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.dl-meta b {
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dl-meta small {
+  color: var(--mock-mute);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fmt {
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+}
+
+.fmt--mp4 { background: rgba(154, 163, 189, 0.22); color: var(--mock-ink); }
+.fmt--yt { background: rgba(255, 90, 95, 0.18); color: #ff7a7f; }
+.fmt--jpg { background: rgba(255, 107, 150, 0.18); color: #ff7da4; }
+.fmt--pdf { background: rgba(88, 140, 255, 0.2); color: #7fa6ff; }
+
+:root[data-theme="light"] .fmt--yt { color: #d63c42; }
+:root[data-theme="light"] .fmt--jpg { color: #d4416f; }
+:root[data-theme="light"] .fmt--pdf { color: #3a6ae0; }
+
+.dl-check {
+  width: 26px;
+  height: 26px;
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--ok-soft);
+  color: var(--ok);
+  animation: dl-check 9s ease infinite both;
+}
+
+.dl-check svg {
+  stroke-width: 3;
+}
+
+.dl-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  opacity: 0;
+  background: linear-gradient(90deg, var(--fc), color-mix(in srgb, var(--fc) 50%, #fff));
+  transform-origin: left center;
+  animation: dl-bar 9s cubic-bezier(0.4, 0, 0.2, 1) infinite both;
+}
+
+@keyframes dl-item {
+  0% { opacity: 0; transform: translateY(16px) scale(0.98); }
+  8%,
+  88% { opacity: 1; transform: none; }
+  96%,
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+@keyframes dl-bar {
+  0%,
+  8% { opacity: 1; transform: scaleX(0); }
+  38% { opacity: 1; transform: scaleX(1); }
+  42%,
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
+@keyframes dl-check {
+  0%,
+  38% { opacity: 0; transform: scale(0.4); }
+  45% { opacity: 1; transform: scale(1.18); }
+  50%,
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ───────────────────────── CAPTCHA assistance ───────────────────────── */
+
+.cap-widget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid var(--mock-line);
+  border-radius: 14px;
+  background: var(--mock-fill);
+  animation: cap-widget 10s ease infinite both;
+}
+
+.cap-box {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 3px;
+  border: 2px solid color-mix(in srgb, var(--mock-mute) 70%, transparent);
+  border-radius: 7px;
+  background: transparent;
+  color: #fff;
+  animation: cap-box 10s ease infinite both;
+}
+
+.cap-box svg {
+  stroke-width: 3.4;
+  animation: cap-tick 10s ease infinite both;
+}
+
+.cap-text {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+
+.cap-steps {
+  display: grid;
+  gap: 9px;
+  margin: 14px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cap-steps li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 26px;
+  font-size: 13.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.cap-dot {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+
+.cap-dot--ok {
+  padding: 5px;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.cap-dot--ok svg {
+  stroke-width: 3;
+}
+
+.cap-dot--wait {
+  display: none;
+  background: color-mix(in srgb, var(--accent-strong) 85%, transparent);
+}
+
+.cap-dot--wait i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #fff;
+  animation: cap-pulse 1.2s ease-in-out infinite;
+}
+
+.cap-s1 { animation: cap-s1 10s ease infinite both; }
+.cap-s2 { animation: cap-s2 10s ease infinite both; }
+.cap-s3 { animation: cap-s3 10s ease infinite both; }
+
+/* The finished state shows three checks; the loop swaps the third one. */
+.scene--captcha .cap-s3 .cap-dot--wait {
+  display: grid;
+  position: absolute;
+  left: 0;
+  animation: cap-wait 10s ease infinite both;
+}
+
+.scene--captcha .cap-s3 .cap-dot--final {
+  animation: cap-final 10s ease infinite both;
+}
+
+@keyframes cap-s1 {
+  0%,
+  6% { opacity: 0; transform: translateX(-10px); }
+  13%,
+  90% { opacity: 1; transform: none; }
+  97%,
+  100% { opacity: 0; transform: none; }
+}
+
+@keyframes cap-s2 {
+  0%,
+  22% { opacity: 0; transform: translateX(-10px); }
+  29%,
+  90% { opacity: 1; transform: none; }
+  97%,
+  100% { opacity: 0; transform: none; }
+}
+
+@keyframes cap-s3 {
+  0%,
+  38% { opacity: 0; transform: translateX(-10px); }
+  45%,
+  90% { opacity: 1; transform: none; }
+  97%,
+  100% { opacity: 0; transform: none; }
+}
+
+@keyframes cap-wait {
+  0%,
+  44% { opacity: 0; transform: scale(0.6); }
+  50%,
+  76% { opacity: 1; transform: scale(1); }
+  80%,
+  100% { opacity: 0; transform: scale(0.6); }
+}
+
+@keyframes cap-final {
+  0%,
+  78% { opacity: 0; transform: scale(0.5); }
+  84% { opacity: 1; transform: scale(1.2); }
+  88%,
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes cap-box {
+  0%,
+  80% {
+    border-color: color-mix(in srgb, var(--mock-mute) 70%, transparent);
+    background: transparent;
+  }
+  86%,
+  92% {
+    border-color: var(--ok);
+    background: var(--ok);
+  }
+  98%,
+  100% {
+    border-color: color-mix(in srgb, var(--mock-mute) 70%, transparent);
+    background: transparent;
+  }
+}
+
+@keyframes cap-tick {
+  0%,
+  80% { opacity: 0; transform: scale(0.4); }
+  86%,
+  92% { opacity: 1; transform: scale(1); }
+  98%,
+  100% { opacity: 0; transform: scale(0.4); }
+}
+
+@keyframes cap-widget {
+  0%,
+  80% { border-color: var(--mock-line); }
+  86%,
+  92% { border-color: color-mix(in srgb, var(--ok) 55%, transparent); }
+  98%,
+  100% { border-color: var(--mock-line); }
+}
+
+@keyframes cap-pulse {
+  50% { transform: scale(0.55); opacity: 0.7; }
+}
+
+/* Static (finished) state: a ticked checkbox and three checks. */
+.cap-box {
+  border-color: var(--ok);
+  background: var(--ok);
+}
+
+/* ───────────────────────── SafeSocial ───────────────────────── */
+
+.safe-frame {
+  position: relative;
+  height: 156px;
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--mock-line);
+  border-radius: 12px;
+  background: var(--mock-fill);
+}
+
+.safe-nav {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 13px;
+  padding: 8px 0;
+  filter: blur(1.5px);
+  opacity: 0.8;
+}
+
+.safe-nav i {
+  width: 16px;
+  height: 16px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--mock-mute) 55%, transparent);
+}
+
+.safe-nav i:nth-child(3) {
+  background: #ff5c7a;
+}
+
+.safe-photo {
+  position: relative;
+  overflow: hidden;
+  border-radius: 0 11px 11px 0;
+  background: linear-gradient(180deg, #ffb36b 0%, #ff7a6b 46%, #8c5cff 100%);
+  /* Blurred by default: the point of the scene is the calmer feed. */
+  filter: blur(14px) saturate(0.85);
+  transform: scale(1.12);
+  animation: safe-blur 10s ease infinite both;
+}
+
+.safe-sun {
+  position: absolute;
+  top: 24%;
+  left: 52%;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #fff3c4;
+  box-shadow: 0 0 28px 10px rgba(255, 236, 170, 0.6);
+}
+
+.safe-hill {
+  position: absolute;
+  right: -10%;
+  bottom: -2px;
+  left: -10%;
+  height: 46%;
+  background: #4a3a8f;
+  clip-path: polygon(0 100%, 0 62%, 18% 36%, 36% 58%, 58% 24%, 80% 54%, 100% 40%, 100% 100%);
+}
+
+.safe-hill--near {
+  height: 32%;
+  background: #2b2166;
+  clip-path: polygon(0 100%, 0 54%, 24% 28%, 46% 60%, 70% 30%, 100% 58%, 100% 100%);
+}
+
+.safe-show {
+  position: absolute;
+  top: 50%;
+  left: calc(46px + (100% - 46px) / 2);
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: #1b2133;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  transform: translate(-50%, -50%);
+  animation: safe-show 10s ease infinite both;
+}
+
+.safe-cursor {
+  position: absolute;
+  top: 50%;
+  left: calc(46px + (100% - 46px) / 2);
+  width: 16px;
+  height: 20px;
+  opacity: 0;
+  background: #fff;
+  clip-path: polygon(0 0, 0 100%, 28% 76%, 48% 100%, 64% 92%, 46% 68%, 82% 68%);
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));
+  animation: safe-cursor 10s ease infinite both;
+}
+
+@keyframes safe-blur {
+  0%,
+  40% { filter: blur(14px) saturate(0.85); transform: scale(1.12); }
+  47%,
+  80% { filter: blur(0) saturate(1); transform: scale(1); }
+  88%,
+  100% { filter: blur(14px) saturate(0.85); transform: scale(1.12); }
+}
+
+@keyframes safe-show {
+  0%,
+  41% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  43% { opacity: 1; transform: translate(-50%, -50%) scale(0.92); }
+  47%,
+  86% { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  92%,
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes safe-cursor {
+  0%,
+  14% { opacity: 0; transform: translate(70px, 54px); }
+  22% { opacity: 1; transform: translate(70px, 54px); }
+  38%,
+  44% { opacity: 1; transform: translate(14px, 14px); }
+  54% { opacity: 1; transform: translate(60px, 40px); }
+  62%,
+  100% { opacity: 0; transform: translate(80px, 60px); }
+}
+
+/* ───────────────────────── Video recording ───────────────────────── */
+
+.scene--record { --loop: 12s; }
+
+.rec-card {
+  padding: 16px 16px 14px;
+}
+
+.rec-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rec-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #ff5a62;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.rec-pill b {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff3b47;
+  box-shadow: 0 0 0 0 rgba(255, 59, 71, 0.6);
+  animation: rec-dot 1.2s ease infinite;
+}
+
+.rec-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 7px;
+  border-radius: 14px;
+  background: #1b1f30;
+}
+
+.rec-tile {
+  position: relative;
+  height: 56px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+}
+
+.rec-tile--a { background: #d9d2ff; --av: #6a58c8; }
+.rec-tile--b { background: #cdeadf; --av: #2f8a67; }
+.rec-tile--c { background: #f6d9c7; --av: #b26a42; }
+.rec-tile--d { background: #cfdcf7; --av: #4a70bd; }
+
+.rec-av {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--av);
+  color: #fff;
+  font-family: var(--ui);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+  animation: rec-speak 6s ease infinite both;
+}
+
+.rec-tile--a .rec-av { animation-delay: 0s; }
+.rec-tile--b .rec-av { animation-delay: 1.5s; }
+.rec-tile--c .rec-av { animation-delay: 3s; }
+.rec-tile--d .rec-av { animation-delay: 4.5s; }
+
+.rec-av svg {
+  width: 20px;
+  height: 20px;
+  fill: #fff;
+}
+
+.rec-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.rec-play {
+  flex: none;
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid var(--mock-mute);
+}
+
+.rec-track {
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--mock-fill);
+}
+
+.rec-track i {
+  display: block;
+  width: 62%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transform-origin: left center;
+  animation: rec-track 12s linear infinite both;
+}
+
+.rec-card .composer {
+  margin-top: 10px;
+}
+
+.rec-cmds {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  color: var(--mock-mute);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.rec-cmds b {
+  margin-inline-end: 4px;
+  color: var(--mock-ink);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rec-cmds b::after {
+  content: ":";
+}
+
+@keyframes rec-dot {
+  0% { box-shadow: 0 0 0 0 rgba(255, 59, 71, 0.55); opacity: 1; }
+  70% { box-shadow: 0 0 0 7px rgba(255, 59, 71, 0); opacity: 0.55; }
+  100% { box-shadow: 0 0 0 0 rgba(255, 59, 71, 0); opacity: 1; }
+}
+
+@keyframes rec-speak {
+  0%,
+  26%,
+  100% { box-shadow: 0 0 0 0 transparent; transform: scale(1); }
+  8% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--av) 35%, transparent); transform: scale(1.06); }
+  16% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--av) 0%, transparent); transform: scale(1); }
+}
+
+@keyframes rec-track {
+  0% { transform: scaleX(0.05); }
+  100% { transform: scaleX(1); }
+}
+
+/* ───────────────────────── page CTA ───────────────────────── */
+
+.install-cta {
+  margin: clamp(36px, 5vw, 64px) 0 clamp(56px, 8vw, 96px);
+  padding: clamp(26px, 4vw, 46px);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px 40px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-radius: 30px;
+  background:
+    radial-gradient(90% 170% at 0% 0%, color-mix(in srgb, var(--accent-strong) 26%, transparent), transparent 70%),
+    var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.install-cta h2 {
+  margin: 0;
+  font-family: var(--display);
+  font-size: clamp(30px, 3.8vw, 50px);
+  font-weight: 800;
+  font-variation-settings: "opsz" 84;
+  line-height: 1;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+
+.install-cta-copy p {
+  max-width: 440px;
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 17px;
+  font-weight: 520;
+  line-height: 1.5;
+}
+
+.install-cta-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.install-cta .open-panel-button {
+  margin-top: 0;
+}
+
+/* ───────────────────────── reveal on scroll ───────────────────────── */
+
+/* Hidden only once install-motion.js has confirmed it can reveal them. */
+.js-motion [data-reveal] {
+  opacity: 0;
+  translate: 0 28px;
+  transition:
+    opacity 700ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--rd, 0) * 110ms),
+    translate 700ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--rd, 0) * 110ms);
+}
+
+.js-motion .fcard[data-reveal] {
+  transition:
+    opacity 700ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--rd, 0) * 110ms),
+    translate 700ms cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--rd, 0) * 110ms),
+    transform 260ms ease,
+    border-color 260ms ease;
+}
+
+.js-motion [data-reveal].is-revealed {
+  opacity: 1;
+  translate: 0 0;
+}
+
+/* A pill that jumps to a card that has not been revealed yet measures it while
+   it is still 28px low, so leave room for the slide and it settles at the top. */
+.fcard {
+  scroll-margin-top: 28px;
+}
+
+/* ───────────────────────── quick features ───────────────────────── */
+
+/* Pills at the bottom of the first screen: they say what is further down and
+   jump to it. On wide windows the row sticks to the bottom edge for as long as
+   the hero is on screen, so it stays visible however short the window is. */
+
+html {
+  scroll-padding-top: 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+.quick-features {
+  grid-column: 1 / -1;
+  align-self: end;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.qf-chip {
+  --fc: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 18px 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--fc) 32%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fc) 10%, color-mix(in srgb, var(--surface-strong) 86%, transparent));
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+  backdrop-filter: blur(14px) saturate(1.3);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.005em;
+  text-decoration: none;
+  white-space: nowrap;
+  transition:
+    translate 180ms ease,
+    border-color 160ms ease,
+    background-color 160ms ease;
+  animation: rise 700ms cubic-bezier(0.2, 0.8, 0.2, 1) 560ms backwards;
+}
+
+.qf-chip:nth-child(2) { animation-delay: 630ms; }
+.qf-chip:nth-child(3) { animation-delay: 700ms; }
+.qf-chip:nth-child(4) { animation-delay: 770ms; }
+.qf-chip:nth-child(5) { animation-delay: 840ms; }
+
+.qf-chip svg {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: var(--fc);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.qf-chip--apocalypse { --fc: #f0a72f; }
+.qf-chip--record { --fc: #e5484d; }
+.qf-chip--shot { --fc: #5b8def; }
+.qf-chip--dl { --fc: #e0457b; }
+
+.qf-chip:hover {
+  translate: 0 -2px;
+  border-color: var(--fc);
+  background: color-mix(in srgb, var(--fc) 18%, color-mix(in srgb, var(--surface-strong) 90%, transparent));
+}
+
+.qf-chip:focus-visible {
+  outline: 2px solid var(--fc);
+  outline-offset: 3px;
+}
+
+/* The last pill is the generic "keep scrolling" one, so it gets the accent and
+   a nudging arrow. */
+.qf-chip--more {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  background: color-mix(in srgb, var(--accent) 20%, color-mix(in srgb, var(--surface-strong) 86%, transparent));
+  box-shadow: 0 10px 30px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.qf-chip--more svg {
+  stroke-width: 2.4;
+  animation: qf-bob 1.6s ease-in-out 1.4s infinite;
+}
+
+@keyframes qf-bob {
+  0%,
+  100% {
+    translate: 0 -2px;
+  }
+
+  50% {
+    translate: 0 3px;
+  }
+}
+
+@media (min-width: 981px) {
+  .quick-features {
+    position: sticky;
+    bottom: 20px;
+    z-index: 20;
+  }
+}
+
+@media (max-width: 620px) {
+  .quick-features {
+    gap: 8px;
+  }
+
+  .qf-chip {
+    padding: 9px 15px 9px 12px;
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qf-chip {
+    animation: none;
+    transition: none;
+  }
+
+  .qf-chip--more svg {
+    animation: none;
+  }
+}
+
+/* ───────────────────────── responsive ───────────────────────── */
+
+@media (max-width: 1080px) {
+  :root {
+    --scene-h: 340px;
+  }
+}
+
+@media (max-width: 900px) {
+  .fcard--apocalypse,
+  .fcard--record {
+    grid-column: span 12;
+  }
+
+  .fcard--shot,
+  .fcard--dl,
+  .fcard--captcha,
+  .fcard--safesocial {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 680px) {
+  .fcard--shot,
+  .fcard--dl,
+  .fcard--captcha,
+  .fcard--safesocial {
+    grid-column: span 12;
+  }
+
+  .fcard {
+    border-radius: 22px;
+  }
+
+  .install-cta {
+    border-radius: 24px;
+  }
+
+  .install-cta-action,
+  .install-cta .open-panel-button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 420px) {
+  .mock {
+    width: calc(100% - 28px);
+    padding: 14px;
+  }
+
+  .ap-list li {
+    column-gap: 10px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scene *,
+  .scene *::before,
+  .scene *::after {
+    animation: none !important;
+  }
+
+  .mock,
+  .fcard,
+  .fcard::before,
+  .fcard[data-reveal],
+  [data-reveal] {
+    transition: none !important;
+  }
+
+  .fcard:hover,
+  .fcard:hover .mock {
+    transform: none;
+  }
+
+  .js-motion [data-reveal] {
+    opacity: 1;
+    translate: 0 0;
+  }
+
+  /* Finished-state details that the animation would otherwise drive. */
+  .shot-scan,
+  .shot-flash {
+    display: none;
+  }
+
+  .shot-scroll {
+    transform: translateY(-40px);
+  }
+
+  .cap-s3 .cap-dot--wait {
+    display: none !important;
+  }
+}
