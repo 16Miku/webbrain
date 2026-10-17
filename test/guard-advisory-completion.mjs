@@ -238,6 +238,41 @@ for (const build of ['chrome', 'firefox']) {
         }
       }
     });
+
+    test(`${label}: a plain final accepted over a check that knows the task is not done ends the run as partial`, async () => {
+      // decided: the last text went into a formatting toolbar (the check
+      // knows). Undecided: the page was not read after the last action.
+      for (const decided of [true, false]) {
+        const tab = nextTab++;
+        let n = 0;
+        const agent = loopAgent(Agent, async () => {
+          n++;
+          if (!decided && n === 1) return call('save', 'click_ax', { ref_id: 'ref_save' });
+          return { content: 'Wrote the post.' };
+        });
+        if (decided) {
+          agent._richTextToolbarGuard.hasPending = () => true;
+          agent._richTextToolbarGuard.completionAction = () => ({ name: 'type_ax', ref_id: 'ref_bold' });
+        }
+        const runStatuses = [];
+        let finished = null;
+        const onUpdate = (type, data) => { if (type === 'run_status') runStatuses.push(data?.status); };
+        const options = { detachedRequestId: `guard-${tab}`, onRunFinished: status => { finished = status; } };
+        const result = streaming
+          ? await agent.processMessageStream(tab, 'Write the post.', onUpdate, 'act', options)
+          : await agent.processMessage(tab, 'Write the post.', onUpdate, 'act', [], options);
+        assert.ok(String(result).startsWith(`Wrote the post.\n\n${CAVEAT}`), `${label}: the plain final is accepted with its caveat`);
+        if (decided) {
+          assert.match(result, /formatting toolbar instead of the editor\./);
+          assert.equal(finished, 'partial', `${label}: the run finished as a success over a check that knows it is not done`);
+          assert.deepEqual(runStatuses, ['partial'], `${label}: the scheduler did not hear the partial ending`);
+        } else {
+          assert.match(result, /The page was not checked again after the last action\./);
+          assert.equal(finished, 'done', `${label}: missing evidence alone must not downgrade the run`);
+          assert.deepEqual(runStatuses, []);
+        }
+      }
+    });
   }
 
   test(`${build}: each untraced run gets its own one refusal per guard`, async () => {

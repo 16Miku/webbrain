@@ -4844,6 +4844,14 @@ export class Agent extends LoopDetector {
     return this._guardAdvises(id, { decided }) && this._guardRunState(tabId).advised.has(id);
   }
 
+  // A completion accepted over a check that KNOWS the task is not done
+  // (OUTCOME_DOWNGRADING_GUARDS) ends the run as partial. The done tool
+  // downgrades its own outcome; a plain final has no outcome of its own, so
+  // its run reports partial (trace status, run_status, onRunFinished).
+  _completionOutcomeDowngraded(tabId) {
+    return (this._guardRunState(tabId).outcomeDowngrades?.size || 0) > 0;
+  }
+
   // Adds the "WebBrain could not verify everything" line, if any, to the
   // answer of an accepted completion. _guardRunState first drops a previous
   // run's caveats.
@@ -14899,7 +14907,7 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
           }
         }
         if (!scheduledResume && toolResult.outcome === 'success'
-            && this._guardRunState(tabId).outcomeDowngrades?.size) {
+            && this._completionOutcomeDowngraded(tabId)) {
           // Accepted over a guard that knows the claim is wrong: end the run,
           // but as partial so schedules and watches do not count a success.
           toolResult.outcome = 'partial';
@@ -44843,6 +44851,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
       finalResponse = this._withCompletionCaveat(tabId, finalResponse);
       messages.push(this._withResponseItems({ role: 'assistant', content: finalResponse }, result.responseItems, result.reasoningContent, provider));
       onUpdate('text', { content: finalResponse });
+      if (this._completionOutcomeDowngraded(tabId)) {
+        _traceStatus = 'partial';
+        onUpdate('run_status', { status: 'partial', message: finalResponse });
+      }
       break;
     }
 
@@ -46030,6 +46042,10 @@ Rules: no prose intro, no conclusion, no "this screenshot shows...", no layout d
         messages.push(this._withResponseItems({ role: 'assistant', content: fullText }, responseItems, reasoningContent, provider));
         this._persist(tabId);
         closeTraceStep({ ok: true });
+        if (this._completionOutcomeDowngraded(tabId)) {
+          onUpdate('run_status', { status: 'partial', message: fullText });
+          return finish(fullText, 'partial');
+        }
         return finish(fullText);
 
       } catch (e) {
