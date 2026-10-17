@@ -11,11 +11,17 @@ browser (see docs/webgpu-models.md):
   downloads `[sequence_length, vocab]` scores (0.5 MB per prompt token for a
   248k vocabulary in FP16) and can exceed a 2 GB WebGPU buffer limit.
 
+A `num_logits_to_keep` input does not lift the logits blocker by default:
+Transformers.js passes 1 only from text `generate()`; its multimodal path and
+direct `forward()` calls pass 0, which keeps every position. Pass
+`--text-generate-only` for a graph that is used only through text
+`generate()`, and the finding becomes a warning.
+
 Only the graph structure is read (external weights are not loaded). Exit code
 1 means at least one blocker was found. This is a static check: also confirm
 node placement and prefill scaling on hardware WebGPU as the doc describes.
 
-  python scripts/models/audit_webgpu_onnx.py path/to/decoder_model_merged_q4f16.onnx [--json]
+  python scripts/models/audit_webgpu_onnx.py path/to/decoder_model_merged_q4f16.onnx [--json] [--text-generate-only]
 """
 
 import argparse
@@ -49,7 +55,7 @@ def dims(value_info):
     return [d.dim_param or d.dim_value for d in value_info.type.tensor_type.shape.dim]
 
 
-def audit(path):
+def audit(path, text_generate_only=False):
     model = onnx.load(path, load_external_data=False)
     graph = model.graph
     blockers, warnings, info = [], [], {}
@@ -86,11 +92,16 @@ def audit(path):
                        + (f" ({vocab * 2 / 1e6:.2f} MB per token in FP16)" if vocab else "")
                        + "; generation reads only the last position.",
             }
-            if "num_logits_to_keep" in inputs:
-                entry["why"] += (" The graph accepts num_logits_to_keep, but Transformers.js passes 0 (keep all) "
-                                 "on its multimodal forward path, so slice to the last position in the graph.")
+            if "num_logits_to_keep" in inputs and text_generate_only:
+                entry["why"] += (" The graph accepts num_logits_to_keep, which Transformers.js sets to 1 in text "
+                                 "generate(); --text-generate-only says no other path runs this graph.")
                 warnings.append(entry)
             else:
+                if "num_logits_to_keep" in inputs:
+                    entry["why"] += (" The graph accepts num_logits_to_keep, but Transformers.js passes 0 (keep all) "
+                                     "on its multimodal path and in direct forward() calls, so slice to the last "
+                                     "position in the graph, or pass --text-generate-only if text generate() is "
+                                     "the only caller.")
                 blockers.append(entry)
 
     contrib = sorted(k for k in op_counts if not k.startswith("ai.onnx::"))
@@ -112,10 +123,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("graphs", type=Path, nargs="+")
     parser.add_argument("--json", action="store_true", help="print the full report as JSON")
+    parser.add_argument("--text-generate-only", action="store_true",
+                        help="the graph runs only through Transformers.js text generate(), which passes "
+                             "num_logits_to_keep=1; downgrade full-sequence logits with that input to a warning")
     args = parser.parse_args()
     failed = False
     for path in args.graphs:
-        report = audit(path)
+        report = audit(path, text_generate_only=args.text_generate_only)
         failed = failed or bool(report["blockers"])
         if args.json:
             print(json.dumps(report, indent=2))

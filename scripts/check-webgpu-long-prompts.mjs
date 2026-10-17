@@ -20,6 +20,9 @@
 //   node scripts/check-webgpu-long-prompts.mjs --model webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision \
 //     --vision --profile .build/bonsai/chunked-2b-profile --offline --lengths 1000,4000,8000 --slices 0,512
 //
+// A repository whose name ends in -Vision always uses the multimodal path, as
+// in production; --vision forces it for other repositories.
+//
 // Options mirror check-bonsai-webgpu.mjs: --local-repo owner/repo=dir serves
 // unpublished files, --offline requires a cached model and blocks Hugging Face,
 // --adapter-luid high,low (decimal) selects a Windows GPU, and --timeout-ms
@@ -36,7 +39,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const option = (name, fallback) => { const i = args.indexOf(name); return i < 0 ? fallback : args[i + 1]; };
 const model = option('--model', 'webbrain-one/Ternary-Bonsai-2-2B-ONNX-WebGPU-Vision');
-const vision = args.includes('--vision');
+// The Vision presets always run through the multimodal path in production.
+const vision = args.includes('--vision') || /-Vision$/i.test(model);
 const offline = args.includes('--offline');
 const dtype = option('--dtype', null)
   ? JSON.parse(option('--dtype'))

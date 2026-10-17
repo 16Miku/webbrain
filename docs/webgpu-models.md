@@ -58,9 +58,12 @@ Do all of these on the exact files you will publish.
    `Mike0021/Ternary-Bonsai-2-4B-text-ONNX` (which uses the
    `com.microsoft::LinearAttention` and `CausalConvWithState` contrib ops) and
    the rewritten Bonsai 2 Vision graphs pass.
-   - A `num_logits_to_keep` input is not enough on its own. On the
-     multimodal forward path Transformers.js passes `0` (keep all), so slice to
-     the last position inside the graph, as `chunk_gdn_prefill.py` does.
+   - A `num_logits_to_keep` input is not enough on its own. Transformers.js
+     sets it to `1` only in text `generate()`. Its multimodal path and direct
+     `forward()` calls (including sliced prefill) pass `0`, which keeps every
+     position. Slice to the last position inside the graph, as
+     `chunk_gdn_prefill.py` does. The audit blocks such graphs unless
+     `--text-generate-only` says text `generate()` is the only caller.
 2. **Node placement on real WebGPU.** Create the session in a browser with
    `ort.env.logLevel = 'verbose'` and `logSeverityLevel: 0`, then read the
    `Node placements` block. Small shape ops (`Shape`, `Gather`, `Equal` on
